@@ -48,9 +48,17 @@ SOURCES: list[SourceSpec] = [
     ),
     SourceSpec(
         id="fearless-steps",
+        # NOT a plain HTTP GET target — `corpus acquire fearless-steps` will fail against this
+        # URL. Fearless Steps requires a manual, human registration step before any file is
+        # downloadable (challenge form + data-portal request, or full-corpus request form /
+        # email); see docs/reference/fearless-steps-acquisition.md for the exact steps and the
+        # local staging path this source expects once acquired.
         name="Fearless Steps (Apollo-11)",
-        url="https://data.mendeley.com/datasets/xps6b5vpxr",
-        licence="Fearless Steps EULA (research use, free)",
+        url="https://fearless-steps.github.io/ChallengePhase2/",
+        licence=(
+            "100h Challenge Corpus: CC-BY-4.0 (registration required to download). "
+            "Full 19,000h corpus: NASA Media Usage Guidelines, request-form gated."
+        ),
         kind="public",
         covers="Degraded analog comms loops with diarization labels; speaker separation",
         fold_policy="mixed",

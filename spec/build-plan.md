@@ -54,6 +54,16 @@ underlying breakdown each prompt draws on.
 **Yours, not a session:** record the validation hour and write the labelling protocol (Q16).
 Do it any time after P2; P6's probes and P7's harness both get better once it exists.
 
+**Yours, not a session — R4's corpus.** Fearless Steps needs a human registration step no
+session can do unattended (challenge sign-up + data-portal request, or a full-corpus request
+form / email to CRSS at UT Dallas) — see
+[`docs/reference/fearless-steps-acquisition.md`](../docs/reference/fearless-steps-acquisition.md)
+for the exact steps. Start with the CC-licensed 100-hour Challenge Corpus's SD (speaker
+diarization) track — it's what R4 actually needs, not the full ~19,000-hour archive. Once it's
+on disk, a session can wire it into `corpus/src/corpus/probes/speaker_separation.py`'s
+`probe_r4` and install a real WeSpeaker/3D-Speaker embedder to get R4's actual verdict — see
+`results/r4-speaker-separation.md` for what's blocked pending this.
+
 **After the fork.** M5 reader · M6 identity and voice library · M7 rig · M8 streaming · M9
 digest, station knowledge, contribution · M10 tiers and reprocessing · M11 reference levers.
 **Deliberately not decomposed** — M4 can delete Pass C, which changes what several of them

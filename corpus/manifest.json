@@ -198,14 +198,14 @@
     {
       "id": "fearless-steps",
       "kind": "public",
-      "licence": "Fearless Steps EULA (research use, free)",
+      "licence": "100h Challenge Corpus: CC-BY-4.0 (registration required to download). Full 19,000h corpus: NASA Media Usage Guidelines, request-form gated.",
       "name": "Fearless Steps (Apollo-11)",
       "synthetic": false,
       "upstream_checksum": {
         "algo": "sha256",
         "value": "pending"
       },
-      "url": "https://data.mendeley.com/datasets/xps6b5vpxr"
+      "url": "https://fearless-steps.github.io/ChallengePhase2/"
     },
     {
       "id": "atc-merge",
