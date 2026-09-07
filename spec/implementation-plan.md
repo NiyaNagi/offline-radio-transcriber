@@ -379,18 +379,38 @@ marked unverified), because only the first two can feed the priors.
 
 Speaker embeddings, incremental clustering, back-propagation on `CONFIRMED`, correction
 propagation with `CORRECTED` locks, cluster split, decay and cross-day re-confirmation.
-Threading keys on channel identity where available, frequency otherwise (Q4).
+Threading keys on frequency for v1 (Q4 deferred channel identity to v2 with the SDS150).
 
-*Gate:* **R4.** Test embedding separation on the M0 tape **before building the milestone** —
-if narrowband off-air audio does not separate, threading degrades but per-transmission
-attribution survives intact, which is a fine product. Do not build clustering into a negative
-result.
+**Grew after the September decisions** — now the largest milestone after M2:
+
+- **Persistent voice library** (D28, FR-SPK-11..26) — enrolment at two confirmations across two
+  sessions, cross-session matches `INFERRED` only, a stricter *measured* threshold, one-tap
+  manual binding to a callsign and/or a name, library management, deletion that destroys the
+  embedding, and cross-session precision reported separately from clustering (FR-SPK-19).
+- **Net detection** (D30, FR-SPK-27..30) — advisory only, with check-in list output.
+
+*Gate:* **R4**, and now **R15**. Test embedding separation **before building the milestone** —
+if narrowband off-air audio does not separate, threading degrades while per-transmission
+attribution survives intact, which is still a fine product. Do not build clustering into a
+negative result, and **do not build the voice library on a clustering result that did not
+measure**: a durable wrong attribution repeating every night is worse than no library.
+
+Fearless Steps ships diarization labels on degraded analog comms (§14A.3), so **R4 is testable
+now, before any tape exists** — worth doing early, because a negative result deletes much of
+this milestone and part of the digest with it.
 
 ### M7 — Rig interface · **M**
 
 Null module first-class, descriptor engine, TH-D75A descriptor, connection test screen showing
-raw traffic (FR-RIG-12), scripted fake in `:testing`. Three hardware verifications remain:
-frequency read command, VID/PID under Android, safe `BY` poll rate (§11, Q1).
+raw traffic (FR-RIG-12), scripted fake in `:testing`.
+
+**The command set is now known** — `FQ` frequency, `BY` squelch, `FO` mode, `BC` band control,
+`AI` auto-information — see [`docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md).
+Two consequences for this milestone: the descriptor format needs an **`unsolicited` section**
+(the radio pushes state with `AI` on; the §9.2 sketch is poll-only), and every state command is
+**band-scoped** while the audio is mixed, so transmissions are attributed to a band by squelch
+(D23). Three hardware verifications remain: VID/PID under Android, the command terminator, and
+whether `AI` actually pushes `BY` transitions — one evening with the radio and a cable.
 
 *Payoff beyond frequency:* squelch fusion (FR-SEG-5 → AC-68) converts segmentation from an
 inference into a measurement, against the #1 failure mode. Worth pulling earlier if M3's
@@ -406,8 +426,19 @@ is unchanged either way; only what feeds Pass D changes.
 
 ### M9 — Digest and export · **M**
 
-Deterministic digest (FR-DIG-2), ADIF/CSV/POTA export with confidence carried and `INFERRED`
-never exported as `CONFIRMED` (FR-EXP-4 → AC-33).
+Deterministic digest (FR-DIG-2), **salience ordering** (FR-DIG-2a..c), ADIF/CSV/POTA export
+with confidence carried and `INFERRED` never exported as `CONFIRMED` (FR-EXP-4 → AC-33).
+
+**Also here (D29):** the **station knowledge** layer — deterministic, re-derivable station
+facts and the link graph across sessions, stations, threads and transmissions (FR-DIG-7..10),
+plus the cross-session digest views. The optional LLM topic-summary half (FR-DIG-11) is T3 and
+should be built last, or not at all — Q7's own prediction is that if stations-heard and
+new-stations are what you actually read, the LLM adds nothing. **FR-DIG-12's no-profiling rule
+and AC-119's adversarial test are part of this milestone, not a later hardening pass.**
+
+**And the contribution channel** (D25, FR-CON-1..8) — client, review UI, opt-in flow, and the
+payload recomputed from the closed set rather than serialised from entities. It cannot ship
+before Q17 is answered; it now is (D31), so this is buildable.
 
 *Do Q7 first:* sketch the digest on paper against real M0 data before writing code. G1 is the
 primary user-facing deliverable and currently the least specified. If items 1 and 2 of Q7's

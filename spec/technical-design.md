@@ -1091,10 +1091,23 @@ NFR-6 and FR-OBS-5 are enforced structurally, not by policy:
    build otherwise (§2).
 2. No analytics, telemetry or crash-reporting dependency exists in any build variant,
    including debug. A build check greps the merged dependency graph for a denylist.
-3. Every `:net` entry point requires a `UserInitiated` token that can only be minted from a UI
-   action, so "the capture path makes no network call" is a type-level property.
-4. AC-59 verifies it empirically with a packet capture over a complete capture-and-process
-   cycle.
+3. Every `:net` entry point requires a **capability token**, and there are exactly two kinds:
+   `UserInitiated`, mintable only from a UI action (lexicon download, export, QRZ), and
+   `ContributionGrant`, mintable only while contribution is enabled **and** no capture session
+   is active (FR-CON-2). Neither is reachable from `:capture-*` or from pass execution in
+   `:pipeline`, so **"the capture and processing paths make no network call" remains a
+   type-level property**.
+
+   *Draft 1.1 had only `UserInitiated`, which D25's automatic contribution contradicted
+   outright. Splitting the token rather than relaxing the rule preserves the guarantee AC-59
+   actually tests, and makes "never during capture" a compile-time shape instead of a runtime
+   check someone can forget.*
+4. **Voiceprints, embeddings, station knowledge and user-supplied names are excluded from every
+   outbound payload** (FR-SPK-20, FR-SPK-25, FR-DIG-13). Enforced by the contribution payload
+   being *recomputed* from the FR-CON-3 closed set rather than serialised from an entity graph —
+   a new field cannot leak by being added to a table.
+5. AC-59 verifies it empirically with a packet capture over a complete capture-and-process
+   cycle, **with contribution enabled**: the upload must stay silent until capture ends.
 
 Location never leaves the device, is stored at grid-square precision only, and is excluded
 from diagnostic bundles unless explicitly included (FR-LEX-24 → AC-57, AC-58).

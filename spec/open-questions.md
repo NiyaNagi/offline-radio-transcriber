@@ -8,14 +8,24 @@ because of R10) and **Q14** (continuous archive, because segmentation turns out 
 irreversible decision in the pipeline). Both are product calls wanted before M2 writes storage
 code. Q5 is folded into Q13 and should be answered there.
 
-Questions that remain open after the initial requirements interview. Each carries a
-recommendation, so none of them blocks progress by default — but the ones marked
-**blocking** should be closed before technical design begins.
+## Status, 7 September 2026 — the register is nearly empty
 
-**Status at draft 3:** Q1 largely closed by documentation already in this repo. **Q3 closed
-(OPPO Find X9 Ultra) and Q10 answered (split by session, §14A.2).** Only **Q2 — actually
-going out and recording the tape — remains blocking**, and it is the one thing no amount of
-specification can substitute for.
+**Closed:** Q3–Q11, Q13, Q14, Q15 and Q17, recorded as D19–D32 in spec §3. Q1 is closed but for
+three hardware verifications (VID/PID, command terminator, whether `AI` pushes `BY`) — see
+[`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md). **Q12 is settled by
+rule**: a reference-tier lever that does not measure on the eval fold is deleted, not disabled.
+
+**Two remain, and both concern the same hour of audio:**
+
+| # | Question | Why it is still open |
+|---|---|---|
+| **Q2** | Record the tape | Much smaller than it was — ~1 h of validation audio rather than 3–5 h of training data (§14A.3) — but it is the one thing no amount of specification substitutes for |
+| **Q16** | The labelling protocol | Gates labelling that hour. Also much smaller now: callsigns and speaker turns only |
+
+Everything that could be decided on paper has been decided.
+
+*Entries below keep their original reasoning, with the answer recorded where one was reached.
+Answers are authoritative in spec §3; this file records how they were reached.*
 
 Two risks moved on the strength of these answers: **R1 (fine-tune export) dropped from Severe
 to Low** — see §14A.1, the export enum already carries `distil-*` variants and a merged LoRA
@@ -120,7 +130,11 @@ settle this before any model complicates the diagnosis.
 
 ---
 
-### Q4 — Frequency granularity and channel identity · owner: product
+### Q4 — Frequency granularity and channel identity · **CLOSED** · owner: product
+
+**Answer: frequency only for v1.** Channel names and channel-based threading move to v2 with
+the SDS150 module (§1.5). `channelName` stays in the Transmission entity so it is not a
+migration later — the recommendation below was adopted structurally and deferred in the UI.
 
 **Question.** When the SDS150 is scanning and changes channel several times per second, what
 does "the frequency of this transmission" mean? And should a transmission be tagged with a
@@ -156,7 +170,11 @@ Make time-based retention available for users who want it, with the FR-REP-4 war
 
 ---
 
-### Q6 — Multiple radios simultaneously · owner: product
+### Q6 — Multiple radios simultaneously · **CLOSED** · owner: product
+
+**Answer: no for v1**, as recommended. `sourceId` is already in Session and Transmission, so
+adding it later is not a migration. Note that D23 makes the TH-D75A's *two bands* a
+simultaneous-source problem already, solved by squelch attribution rather than by two pipelines.
 
 **Question.** Should v1 support capturing from the TH-D75A and the SDS150 at the same time,
 on separate audio inputs?
@@ -171,7 +189,23 @@ the point where tier headroom matters, and the value is unproven.
 
 ---
 
-### Q7 — What "digest" actually contains · owner: product
+### Q7 — What "digest" actually contains · **CLOSED — and it grew** · owner: product
+
+**Answer: all four candidates, ordered by salience, plus accumulation.** Stations with
+confirmed/inferred counts, new stations, POTA/SOTA references and anomalies (FR-DIG-2a).
+
+Beyond the list, the product owner asked for knowledge that **accumulates** — across nights and
+per station, forming a graph that reveals more the longer the app listens. That became **D29**
+and FR-DIG-7..14: deterministic station *facts*, optional and clearly-marked LLM *topic
+summaries*, and links across sessions, stations, threads and transmissions.
+
+The split is the load-bearing part. FR-DIG-12 keeps the product on the side of logging what was
+transmitted rather than profiling a person, and R16 records why: a hallucinated claim about
+someone's circumstances persists, is about a real person, and cannot be checked by the reader.
+
+*This entry's original prediction — that if items 1 and 2 were what you actually read, the LLM
+adds nothing and FR-DIG-3 should be cut — still stands and is still worth testing against real
+M0 data.*
 
 **Question.** FR-DIG-2 specifies a deterministic digest but the content list is a guess.
 What do you actually want to read after eight hours away?
@@ -194,7 +228,11 @@ should be cut.
 
 ---
 
-### Q8 — Correction UX depth · owner: design
+### Q8 — Correction UX depth · **CLOSED** · owner: design
+
+**Answer: tiered**, as recommended — ranked candidates, then lexicon search, then free text
+marked unverified. Only the first two feed the priors. Recorded as D32, and it is also the
+natural home for manual voice binding (FR-SPK-23).
 
 **Question.** FR-UI-6 says "one-tap correction of any attribution". Correcting *to what*?
 Free text? A picker over candidates? A search over the lexicon?
@@ -208,7 +246,18 @@ feed the recency prior.
 
 ---
 
-### Q9 — Handling nets and controlled sessions · owner: product
+### Q9 — Handling nets and controlled sessions · **CLOSED — reversed** · owner: product
+
+**Answer: detect nets in v1**, against this entry's own recommendation to defer.
+
+The reasoning that changed it is the one already written below: a check-in roll call is a
+sequence of callsigns read aloud deliberately, one at a time, often repeated back by the
+control operator — the richest source of clearly-spoken callsigns this product will ever hear.
+The voice library (D28) makes the dominant voice easy to identify, so detection got cheaper at
+the same time its value became clearer.
+
+Detection is **advisory, never structural** (FR-SPK-28): a misdetection changes presentation and
+never the record. Recorded as D30, FR-SPK-27..30.
 
 **Question.** A net has a control operator, a check-in list, and a rigid turn structure —
 very different from a two-station QSO. Should the threading model know about nets?
@@ -279,7 +328,15 @@ evidence base available, at the cost of the worst background-execution behaviour
 
 ---
 
-### Q13 — Audio retention format and the reprocessing horizon · **NEW, draft 3.2** · owner: product
+### Q13 — Audio retention format and the reprocessing horizon · **CLOSED** · owner: product
+
+**Answer: storage budgets, not time limits** (D26) — independent user-set budgets for gated
+audio and the continuous archive, "unlimited" allowed, and bulk export-and-prune over a date
+range when one is reached rather than silent deletion (FR-STO-3a..c). On format, **lossless
+stands** until FR-STO-2b's measured comparison justifies otherwise, which retires R10.
+
+*The storage table below is still the right arithmetic; note that Q14's answer makes the
+continuous-archive row the one that dominates in practice.*
 
 **Question.** Lossless (FLAC) or lossy (Opus) retention, at what bitrate, for how long? This
 supersedes and finally forces **Q5**, which asked only about duration.
@@ -310,7 +367,11 @@ Time-based retention stays available for users who want it, with the FR-REP-4 wa
 
 ---
 
-### Q14 — Is continuous-archive capture worth its storage? · **NEW, draft 3.2** · owner: product
+### Q14 — Is continuous-archive capture worth its storage? · **CLOSED** · owner: product
+
+**Answer: yes, and keep it always available** (D24) — broader than this entry recommended,
+which was to enable it only for M0 recording. Segmentation is otherwise permanent (CON-SEG-1),
+and this is the only mechanism that makes it reprocessable. Default off; budgeted under D26.
 
 **Question.** FR-SEG-9 offers an optional mode retaining the *unsegmented* stream. Ship it in
 v1, defer it, or drop it?
@@ -334,7 +395,13 @@ the value for one shift's worth of disk.
 
 ---
 
-### Q15 — Where does the app's code live? · **NEW** · owner: product
+### Q15 — Where does the app's code live? · **CLOSED** · owner: product
+
+**Answer: its own public repository**, `offline-radio-transcriber` (D27), migrated in September
+2026 with full commit history via `git subtree split`. The channel-plan repo keeps the radio
+data and will supply a versioned lexicon asset bundle; the coupling runs one way, through a
+file. Kenwood's copyrighted PDFs stayed behind — the facts the rig module needs are recorded in
+`docs/reference/th-d75a-cat.md` with attribution.
 
 **Question.** Android project inside this repository, or its own?
 
@@ -380,6 +447,25 @@ The questions a protocol has to answer, none of which are obvious at 11pm with h
 pilot: label it, notice what was ambiguous, write the rules those ambiguities imply, then
 relabel session one under the finished protocol. That costs one session's labelling and is the
 cheapest possible insurance on the project's most expensive irreversible artifact.
+
+---
+
+### Q17 — May contributed audio ever be published? · **CLOSED** · owner: product
+
+**Question.** The contribution channel (D25) accumulates recordings of third parties. Can any
+of it ever be released as an open dataset?
+
+**Why it mattered.** It is the irreversible half of R14. Publishing cannot be undone, the
+people recorded never consented, and a research field with no public amateur-radio corpus
+(§14A.3) makes the temptation real — this project could plausibly create the first one.
+
+**Answer: never publish contributed audio. Derived artifacts only** (D31) — fine-tuned models,
+aggregate statistics, lexicon data, and measurements. Recordings stay access-controlled.
+
+This closes R14's irreversible half permanently and leaves the reversible half — custody of the
+archive — as an ordinary operational responsibility. It also means FR-CON-7's preference for
+contributing corrections and metadata *without* audio is now the main path rather than a
+nicety, which conveniently matches GitHub's storage limits for the destination chosen.
 
 ---
 

@@ -1661,7 +1661,26 @@ databaseHit (bool), selected (bool)
 isUserPinned, notes?
 
 **Voiceprint** — id, embedding, memberCount, centroidUpdatedAt, boundStationId?,
-bindingConfidence, lastConfirmedAt
+bindingConfidence, lastConfirmedAt, **isEnrolled (bool), enrolmentObservationCount,
+enrolmentSessionIds[], enrolledAt?, lastMatchedAt?, bindingSource (`auto` | `manual`),
+embeddingModelId, embeddingModelVersion** *(D28. Never leaves the device — FR-SPK-20)*
+
+**Station** additionally carries — `userName?` *(user content, never inferred, never contributed
+— FR-SPK-25)*, and the **station-knowledge facts** of FR-DIG-7: frequenciesHeard[],
+activityByHourDow, potaRefs[], spokenGrids[], ituRegionFromPrefix, overCountsByAttributionState,
+firstHeardAt, lastHeardAt. All **re-derivable** from records (FR-DIG-8), all local-only
+(FR-DIG-13).
+
+**StationSummary** — id, stationId, windowStart, windowEnd, text, modelId, sourceTransmissionIds[],
+generatedAt. *Optional, LLM-produced, always marked and attributed (FR-DIG-11); never asserts a
+characteristic of a person (FR-DIG-12).*
+
+**Thread** additionally carries — `kind` (`qso` | `net` | `scanner` | `unknown`),
+`kindSource` (`detected` | `user`), `participantOrder[]` *(D30, FR-SPK-27..30)*
+
+**ContributionItem** — id, transmissionId, state (`pending` | `sent` | `excluded`), sentAt?,
+installToken. *The queue for FR-CON; carries no payload of its own, so what is sent is always
+recomputed from the FR-CON-3 closed set rather than snapshotted.*
 
 **Thread** — id, sessionId, startedAt, endedAt, frequencyHz?, transmissionCount,
 participantStationIds[], digestText?
@@ -1836,8 +1855,16 @@ be fully functional with no accelerator present.
 
 ### 10.6 Privacy and legal
 
-**NFR-6 (M)** — No network access in the capture or processing path. Network is used only
-for explicitly user-initiated actions (lexicon download, QRZ enrichment, export).
+**NFR-6 (M)** — **No network access in the capture or processing path**, ever. Outside those
+paths, network is used only for (a) explicitly user-initiated actions — lexicon download, QRZ
+enrichment, export — and (b) the corpus contribution channel (FR-CON-1..8, D25), which is off
+until enabled, never runs during active capture, and carries only the closed set in FR-CON-3.
+
+> *Draft 3.2 amends this. It previously read "network is used only for explicitly user-initiated
+> actions", which D25's automatic contribution contradicts outright. The guarantee that survives
+> — and the one AC-59 tests — is narrower and more precise than the old wording: **the capture
+> and processing paths make no network calls at all.** What changed is that a background upload
+> may now happen outside them, with the user's prior consent.*
 
 **NFR-6a (M)** — All data app-private by default.
 
@@ -2139,6 +2166,13 @@ Input to the test plan. Grouped by what a test would have to establish.
   or a cloud backup (FR-SPK-20).
 - **AC-110** With the voice library disabled, the product functions fully and cross-session
   recall drops without any loss of precision (FR-SPK-22, NFR-1b).
+- **AC-121** A voice bound by hand in one tap enrols immediately, is flagged `CORRECTED`, and
+  survives subsequent automatic re-propagation (FR-SPK-23).
+- **AC-122** A voiceprint named but with no callsign displays its name with the `INFERRED`
+  marker and is **excluded from callsign exports** (FR-SPK-24, FR-EXP-4).
+- **AC-123** A detected net is marked, displayed as a check-in list, and **threaded identically
+  to an undetected one** — clearing the marking changes presentation only, never the record
+  (FR-SPK-27, FR-SPK-28, FR-SPK-30).
 
 ### 14.5 Rig interface
 
@@ -2240,7 +2274,18 @@ Input to the test plan. Grouped by what a test would have to establish.
 - **AC-58** Where the rig reports position, no Android location permission is requested at all
   (FR-LEX-22).
 - **AC-59** No network traffic originates from the app during a complete capture-and-process
-  cycle, verified by packet capture (NFR-6, FR-OBS-5).
+  cycle, verified by packet capture — **including with contribution enabled**, which must stay
+  silent until capture ends (NFR-6, FR-CON-2, FR-OBS-5).
+- **AC-111** Contribution is off on a fresh install, and declining it at onboarding leaves every
+  other function working (FR-CON-1).
+- **AC-112** An enabled contribution uploads only the FR-CON-3 closed set: no location finer
+  than grid square, no diagnostics, no profile names, **no voiceprints or embeddings**, no
+  station knowledge, no user-supplied names (FR-CON-3, FR-SPK-20, FR-SPK-25, FR-DIG-13).
+  Verified by inspecting a captured payload.
+- **AC-113** The user can review what has been and will be sent, exclude a session, and turn
+  contribution off with immediate effect (FR-CON-4).
+- **AC-114** A deletion request removes everything previously contributed under that install
+  token (FR-CON-5).
 - **AC-60** Captured audio does not appear in cloud backup (FR-PLT-5).
 - **AC-61** The notification never contains transcript text (FR-PLT-3).
 - **AC-62** **The four attribution states are distinguishable in greyscale** and under
@@ -2297,6 +2342,12 @@ NFR-2 stated latency targets that nothing tested.
   stops capture silently (FR-STO-4, F6).
 - **AC-79** A pinned thread survives a retention pass that would otherwise delete it
   (FR-STO-7).
+- **AC-124** Reaching a storage budget warns and offers export-and-prune by date range rather
+  than deleting silently; automatic pruning happens only where opted in (FR-STO-3, FR-STO-3a).
+- **AC-125** An **interrupted** export-and-prune leaves every record in place (FR-STO-3b).
+- **AC-126** Station and frequency views show activity patterns that **distinguish "not heard"
+  from "not listening"**, verified against a session containing a capture gap (FR-UI-11,
+  FR-UI-12).
 - **AC-80** Full database and audio export completes and re-imports on another device,
   offering reprocessing for anything eligible (FR-STO-6, FR-REP-10).
 - **AC-81** Captured audio is not exposed to the system media store (FR-STO-8).
@@ -2320,6 +2371,19 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
   is idle, charging and thermally unconstrained (FR-DIG-5).
 - **AC-88** G1 is met end to end: after an unattended overnight run, the digest conveys what
   happened **in under two minutes of reading**, verified against the hand-labelled tape.
+- **AC-115** The digest orders by salience, states how much it is not showing, and every
+  surfaced item says why it was surfaced (FR-DIG-2a..c).
+- **AC-116** Station facts are **re-derivable**: recomputing them from stored records reproduces
+  the station record exactly (FR-DIG-8).
+- **AC-117** Every station record links to the sessions, threads and transmissions that produced
+  it, and back (FR-DIG-9).
+- **AC-118** A location claim states its source and precision, and a callsign prefix is never
+  presented as the operator's location (FR-DIG-10).
+- **AC-119** **No generated text asserts a characteristic of a person** — mood, health,
+  employment, relationships. Verified adversarially against transcripts that invite it
+  (FR-DIG-12, R16).
+- **AC-120** Station knowledge appears in no contribution payload and no diagnostic bundle
+  (FR-DIG-13).
 
 ### 14.9 Export
 
@@ -2687,6 +2751,18 @@ product; all of them are what make the reference experience world-class.
 | D12 Worldwide callsigns | FR-LEX-7, FR-LEX-8, FR-LEX-9, R12 |
 | D19 Reference device | §10.7, §10.8, NFR-7..10, FR-SVC-5a..c, AC-64..66 |
 | D20 Fine-tune base in the export enum | §14A.1, FR-ASR-9, M0a, R1, R12 |
+| D21 Public corpora first | §14A.3, FR-TST-8, FR-TST-9, R13, M0.A–M0.D |
+| D22 Synthesis: TTS + splicing, learned channel | §14A.3, FR-TST-9, R13, M0.B, M0.C |
+| D23 TH-D75A both bands, squelch attribution | FR-RIG-1, FR-RIG-9, FR-SEG-5, `docs/reference/th-d75a-cat.md` |
+| D24 Continuous archive first-class | FR-SEG-9, CON-SEG-1, AC-96, Q14 |
+| D25 Opt-in then automatic contribution | FR-CON-1..8, FR-OBS-5a, NFR-6, R14, AC-111..114 |
+| D26 Retention is a storage budget | FR-STO-3, FR-STO-3a..c, AC-124, AC-125 |
+| D27 Own public repository | §2.1 (technical design), Q15 |
+| D28 Persistent voice library | FR-SPK-11..26, R15, AC-104..110, AC-121, AC-122 |
+| D29 Station knowledge accumulates | FR-DIG-7..14, R16, AC-116..120 |
+| D30 Net detection in v1 | FR-SPK-27..30, AC-123 |
+| D31 Contributed audio never published | FR-CON-6, R14, Q17 |
+| D32 Tiered correction | FR-UI-6, FR-SPK-7, FR-SPK-23, Q8 |
 
 Requirement groups added in drafts 3 and 3.2, mapped to the goal or property they serve:
 
