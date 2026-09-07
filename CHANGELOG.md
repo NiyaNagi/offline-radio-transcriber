@@ -32,6 +32,166 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (night — P11 partial: the M3 text-derived wiring, M4 left open)
+
+### P11 · End-to-end, then the M4 fork (`:pipeline`, `:lexicon`, `:app`)
+
+**Scope:** `:pipeline` (new `passb/`, `latency/`, `backlog/` packages), `:lexicon` (new
+`UnitSpotter.kt`, `fake/FakeUnitSpotter.kt`), `:app` (new `transmissions/` package,
+`AndroidManifest.xml`). `:capture-android`, `:data`, `:onnx`, `:asr-api`, `:asr-sherpa` untouched
+beyond consuming their existing public API (no edits to any of their files); `dependencyRules`
+confirms no new module edge was introduced anywhere.
+
+**Requirements/ACs:** AC-15 (text-derived lattice resolves identically to an acoustic one — now
+proven through a real `Pass`, not just `TextDerivedLatticeBuilder` in isolation), FR-LEX-6/11,
+FR-SPK-10 (non-optional attribution state — already true of `:core`'s `Attribution` from an
+earlier prompt; this session's addition is that an attribution now reaches a *screen*),
+FR-A11Y-1 (the four states distinguishable without colour, tested on a real rendered view, not
+just the intermediate view-state), constitution III (Pass B carries its `PassFingerprint`).
+**AC-73, AC-75 and M3's dev-fold callsign precision/recall are NOT MEASURED** — see below. **The
+M4 fork decision (proceed / collapse to text / tier-gate) is explicitly left OPEN** — not chosen,
+per this session's own constraints; see below.
+
+**What changed:**
+
+- **Merged P9 and P10 into this worktree first**, as instructed. Both had branched from the same
+  P8 changelog commit and diverged, so this was two sequential merges (`worktree-agent-
+  a67daa1ff68391962` fast-forwarded cleanly, `worktree-agent-aa1031e59afecdbf5` conflicted only
+  in `CHANGELOG.md` — two independent appends, resolved by keeping both entries in full, P10's
+  first). No file outside `CHANGELOG.md` conflicted; `git diff --stat` between the pre-merge and
+  post-merge trees showed exactly the 45 non-changelog files P10's own changelog entry already
+  describes (`:onnx`, `:asr-api`, `:asr-sherpa`), confirming the merge brought in nothing beyond
+  what P9 and P10 each already landed. Verified: `./gradlew build dependencyRules` green
+  immediately after the merge, before any P11 code was written (829 tasks, JDK 17, Windows).
+- **`:pipeline/passb/PassB.kt`** — the real Pass B (build-plan P11, M3): a `Pass` (P8's
+  interface) composing `:asr-api`'s `RejectionPipeline` (P10) → a per-token text-derived
+  `PhoneticLattice` (deliberately *not* `TextDerivedLatticeBuilder.build`, which throws on the
+  first unrecognised word — a real transcript of continuous speech contains many non-phonetic
+  words, so unrecognised tokens are excluded rather than aborting the whole spot; documented in
+  the class kdoc as this session's explicit, necessarily-degraded T0 approximation, since
+  spotting a callsign embedded in running speech is exactly M4's job) → `:lexicon`'s
+  `CallsignGrammar`/`PriorCombiner` (P3/P7) → the new `CallsignResolver` → an `Attribution`.
+  Carries a `PassFingerprint` end to end (constitution III), grouped via the new
+  `PassBResolutionChain` data class to keep the primary constructor under detekt's parameter-count
+  threshold. `SegmentAudioProvider` and `PassBResultSink` are new seams this session owns — real
+  audio decode (`:capture-android`'s `FlacStore`) and real attribution persistence (a `:data` DAO
+  write path) are both explicitly left for a follow-up that can touch those modules; see below.
+- **`:pipeline/passb/CallsignResolver.kt`** — the M1 resolver (technical design §9.2/§9.3,
+  FR-LEX-11): ranked candidates → one of the four closed `AttributionState`s. Only `CONFIRMED`,
+  `AMBIGUOUS` and `UNKNOWN` are reachable — never `INFERRED`, because a text-derived candidate's
+  callsign text came directly out of *this* transmission's own transcript (constitution I: "heard
+  and resolved in this transmission"), which is exactly what makes `CONFIRMED` legitimate here
+  and not a violation of "never promote a voice match to it".
+- **`:lexicon/UnitSpotter.kt`** (M4.1, technical design §9.7) — `fun interface UnitSpotter { fun
+  spot(audio: FloatArray): PhoneticLattice }`, exactly as specified, plus
+  `TextDerivedUnitSpotter`, wrapping the same per-token expansion `PassB` uses behind the
+  interface so the M4 comparison can drive every candidate spotter — including the text baseline
+  — through one uniform type. `:lexicon/fake/FakeUnitSpotter.kt` is its behavioural fake
+  (constitution II), scriptable to a fixed lattice or "spotted nothing".
+- **`:pipeline/passb/SpotterComparisonTest.kt`** — proves the *plumbing* M4.8 needs ("same audio,
+  same resolver, same folds" for multiple spotters): `TextDerivedUnitSpotter` and two
+  `FakeUnitSpotter`s driven through the identical grammar → priors → `CallsignResolver` chain
+  produce independently inspectable attributions. This is a mechanism proof over synthetic data,
+  explicitly not a claim about any acoustic spotter's real accuracy.
+- **`:pipeline/latency/LatencyRecorder.kt`** (AC-73's mechanism) — nearest-rank p95 over
+  recorded segment-close-to-visible durations; `null` (never a fabricated zero) with no samples.
+- **`:pipeline/backlog/BacklogGrowthMonitor.kt`** (AC-75's mechanism) — least-squares slope of
+  backlog-depth samples, flagged as growth only when positive and large relative to the mean
+  depth (an oscillating-but-draining backlog is not growth; a monotonic climb is), so a single
+  noisy sample cannot flip the verdict either way.
+- **`:app/transmissions/`** — the first point in the project an `Attribution` reaches a screen
+  (M3, not M5's full reader): `TransmissionRow`/`TransmissionListRowViewState`/
+  `TransmissionListViewStateMapper` (pure, Room-independent by design) and
+  `TransmissionListActivity` (plain Android views, same choice `StatusActivity` made in P8).
+  Every one of the four states renders a distinct plain-text label carrying the state's name plus
+  a distinct ASCII marker (✓ / ~ / ? / —) — FR-A11Y-1's "distinguishable without colour" tested as
+  a plain-string assertion, which is what makes it checkable with no display, greyscale or
+  otherwise. Registered in `AndroidManifest.xml`, not yet the app's launcher (same reasoning as
+  `StatusActivity`).
+- **TD2 probe (M4.3), attempted and answered — negative for the public API:** sherpa-onnx's
+  documented C API (`sherpa-onnx/c-api/c-api.h`) and its generated Kotlin API
+  (`OfflineRecognizer.kt`) expose only final decode results — `text`, `tokens`, `timestamps`,
+  `json` — with no function returning encoder hidden states, embeddings or any intermediate
+  tensor. The Whisper ONNX export docs describe the encoder/decoder `.onnx` files themselves but
+  document no runtime path to their intermediate activations through sherpa-onnx's recognizer
+  wrapper. **Conclusion: sherpa-onnx does NOT expose Whisper encoder hidden states on Android
+  through its public API today.** Getting them would mean forking sherpa-onnx's C++ source to add
+  an extraction path, or exporting a custom ONNX graph with the hidden-state tensor as an extra
+  named output and running it directly via bare ONNX Runtime — bypassing sherpa-onnx's recognizer
+  entirely, a materially heavier and different engineering path than "sherpa-onnx exposes it".
+  Per M4.3's own framing ("gates option 2 entirely... if it fails, skip that option"), **Option 2
+  (CB-Whisper-style encoder-similarity spotting) is skipped** on this finding; only Option 1
+  (open-vocabulary KWS) remains a live M4 candidate for a future session with a real device and a
+  real sherpa-onnx artifact. Sources: `github.com/k2-fsa/sherpa-onnx` (`sherpa-onnx/c-api/c-api.h`,
+  `sherpa-onnx/kotlin-api/OfflineRecognizer.kt`) and `k2-fsa.github.io/sherpa/onnx/pretrained_models/
+  whisper/export-onnx.html`, fetched 2026-09-07. This is a documentation-level finding, not a
+  from-source verification of every internal code path — a from-source audit could still be
+  wrong if an undocumented API exists; flagged as the residual uncertainty a future session
+  should note if a real device changes this answer.
+
+**Verified:** `./gradlew build dependencyRules` — BUILD SUCCESSFUL, 830 tasks, no forbidden
+module edge (`:lexicon -> :core` and `:pipeline -> ...` unchanged from pre-P11). `./gradlew
+:pipeline:testDebugUnitTest :lexicon:test :app:testDebugUnitTest` — every new test green:
+`CallsignResolverTest` (5), `PassBTest` (3, including the full spelled-callsign → CONFIRMED path
+and the rejected-segment → UNKNOWN path), `SpotterComparisonTest` (1), `LatencyRecorderTest` (5),
+`BacklogGrowthMonitorTest` (5), `UnitSpotterTest` (3), `FakeUnitSpotterTest` (2),
+`TransmissionListViewStateMapperTest` (3), `TransmissionListActivityTest` (2) — 29 new tests, all
+written and confirmed failing to compile for the right reason (the class under test did not yet
+exist) before each implementation was added, then green after. `./gradlew coverageMatrix` — 413
+requirements, 100 covered (was 92 pre-P11); the tool's own id-regex cannot parse `FR-A11Y-1`
+(`[A-Z]{2,5}` excludes the digit in `A11Y`), so it is listed among the pre-existing orphan-test
+warnings alongside P10's already-unaddressed `F13`/`TECHNICAL-DESIGN-*` — a tool limitation, not
+a missing requirement (`spec/functional-spec.md:1606` defines `FR-A11Y-1`); out of this prompt's
+file scope to fix (`buildSrc`). `python tools/spec-check/spec_check.py` — all 7 checks PASS,
+including after the `spec/build-plan.md` checklist edit. JDK 17, Windows, local machine
+throughout; no fold applicable to any of the above (JVM/Robolectric unit tests over synthetic
+fixtures and fakes, not a corpus measurement).
+
+**Left open / not done — read this before assuming M3 or M4 landed:**
+
+- **AC-73 and AC-75 are NOT MEASURED.** No reference device and no real segment timings exist in
+  this sandbox. `LatencyRecorder` and `BacklogGrowthMonitor` are genuine, tested mechanisms that
+  would report AC-73/AC-75 correctly if fed real device timings — that is what their own test
+  suites prove — but no real p95 latency number or real sustained-backlog trend was measured, and
+  none is claimed here.
+- **M3's "record the harness's callsign precision/recall on the dev fold" — the line M4 must
+  beat — could NOT be produced.** This needs real labelled dev-fold occurrences (real transmitted
+  callsigns with ground truth), which do not exist in this repository (the same gap P7's session
+  hit and recorded; `spec/open-questions.md` Q2/Q16 remain open). `SpotterComparisonTest` and
+  `PassBTest` exercise the identical resolver chain against synthetic fixtures, which proves the
+  *mechanism* computes attributions correctly — it is not, and is not presented as, the dev-fold
+  number the build plan asks for.
+- **Real audio decode is not wired.** `PassB`'s `SegmentAudioProvider` seam is real and tested,
+  but nothing in this session connects it to `:capture-android`'s `FlacStore`/`LosslessCodec` —
+  doing so is straightforward but was left out because it touches no new logic worth testing
+  beyond what `FlacStore`'s own P8 tests already cover, and the prompt's file-ownership boundary
+  (`:capture-android` untouched except by consuming its API) made a same-session change to wire
+  it in without a real device to verify against feel like exactly the "half-finished" the
+  constitution warns against.
+- **Real attribution persistence is not wired, and this is a genuine gap this session found,
+  not a choice.** `:data`'s `TransmissionDao` has no write path for `attributionState`/
+  `stationId`/`attributionConfidence` — only `setProcessingState` and `setReprocessCandidate`
+  exist as partial updates. `PassBResultSink` is the seam `PassB` writes through instead;
+  `TransmissionListActivity` renders whatever `TransmissionRow`s it is handed, but nothing in
+  this session produces those rows from a live database, because doing so needs a `:data` DAO
+  method this prompt's file-ownership boundary explicitly reserves for a session that owns
+  `:data` (per the prompt: "if a real gap forces a change to one of those, stop and report it
+  rather than reaching across the boundary"). **Reported, not silently worked around.**
+- **The M4 fork decision is explicitly OPEN, not chosen.** No real KWS implementation was built
+  (no real sherpa-onnx JNI artifact was available in this sandbox — the same gap P10's session
+  hit for Pass B's engine), no encoder-similarity implementation was attempted (skipped on the
+  TD2 finding above), and no real 3-way comparison was run on real audio or the dev fold. Per the
+  build plan's own M4 exit criteria, a fork decision requires exactly that comparison; picking a
+  branch without it would be the fabricated-confidence failure mode the constitution exists to
+  prevent. A future session with a real device, a real sherpa-onnx KWS binding and real labelled
+  dev-fold audio should run `SpotterComparisonTest`'s shape for real and record the decision in
+  the functional spec before M5, per the build plan's "Done when".
+- Per-unit precision/recall reporting (M4.6) and calibration refit on acoustic-lattice scores
+  (M4.7) are not attempted — both depend on the KWS/encoder-similarity implementations this
+  session could not build for real.
+
+---
+
 ## 2026-09-07 (evening — P10 lands)
 
 ### P10 · ASR and hallucination control (`:onnx`, `:asr-api`, `:asr-sherpa`)
