@@ -37,7 +37,7 @@ underlying breakdown each prompt draws on.
 
 - [x] **P3 · Lexicon: grammar** — units, ITU trie, FSA, confusion scoring *(`:lexicon`)* — done 2026-09-07
 - [x] **P4 · Capture and segmentation** — source, resampler, ring, VAD *(`:capture-api`, `:segment`)* — done 2026-09-07
-- [ ] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)*
+- [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07
 - [ ] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)*
 
 **Wave C — composition.**
