@@ -124,6 +124,22 @@
       ]
     },
     {
+      "audio": "sessions/synth-callsigns/dev-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 600.0,
+      "fold": "dev",
+      "id": "synth-callsigns/dev-01",
+      "kind": "speech",
+      "source": "synth-callsigns",
+      "stations": [
+        "N7XYZ",
+        "VE7ABC"
+      ]
+    },
+    {
       "audio": "sessions/local/validation-fm-01/audio.flac",
       "checksum": {
         "algo": "sha256",
