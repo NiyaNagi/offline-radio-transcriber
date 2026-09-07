@@ -7,6 +7,25 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
+# R1 (spec/build-plan.md S1.7): the real LoRA fine-tune / merge / sherpa-onnx export / load /
+# transcribe toolchain. Not needed to run the fake-backed test suite — only RealLoraTrainer,
+# RealSherpaOnnxExporter and RealSherpaOnnxRuntime in corpus.probes.lora_export import these,
+# and they do so lazily. Versions pinned to what was verified mutually compatible on
+# Windows/py3.13, CPU-only torch, in the session that produced results/r1-lora-export.md.
+r1-real = [
+    "torch==2.11.0",
+    "transformers==5.16.1",
+    "peft==0.20.0",
+    "accelerate==1.14.0",
+    "sherpa-onnx==1.13.7",
+    "openai-whisper==20250625",
+    "onnx==1.22.0",
+    "onnxruntime==1.29.0",
+    "onnxscript==0.7.1",
+    "datasets==5.0.1",
+    "soundfile==0.13.1",
+    "huggingface_hub==1.30.0",
+]
 
 [project.scripts]
 corpus = "corpus.cli:main"
