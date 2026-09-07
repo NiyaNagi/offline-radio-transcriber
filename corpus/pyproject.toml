@@ -1,0 +1,27 @@
+[project]
+name = "ort-corpus"
+version = "0.1.0"
+description = "Corpus pipeline for the offline-radio-transcriber: acquisition, fold gate, evaluation harness v0 (functional-spec §14A.2/§14A.3, implementation-plan M0)."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+corpus = "corpus.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]

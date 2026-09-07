@@ -30,6 +30,30 @@ jobs:
           python -m pip install --quiet pytest
           python -m pytest tools/spec-check -q
 
+  corpus:
+    name: corpus pipeline (Python, §14A.3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: python -m pip install --quiet -e "corpus[dev]"
+      - name: manifest is validated and not drifted (M0 exit criteria)
+        run: python -m corpus build --check
+      - name: fold checker enforces §14A.2
+        run: python -m corpus check-folds
+      - name: eval fold is refused without the flag (AC-100)
+        run: |
+          echo '{}' > /tmp/t.json
+          python -m corpus evaluate --fold eval --transcripts /tmp/t.json && exit 1 || true
+          python -m corpus evaluate --fold dev --transcripts /tmp/t.json > /dev/null
+      - name: unit tests (TDD)
+        run: cd corpus && python -m pytest
+      - name: lint
+        run: cd corpus && python -m ruff check .
+
   lint:
     name: lint + dependency rules
     runs-on: ubuntu-latest

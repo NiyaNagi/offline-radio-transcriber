@@ -1,0 +1,244 @@
+{
+  "sessions": [
+    {
+      "audio": "sessions/paderborn-hf/eval-dx-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 2400.0,
+      "fold": "eval",
+      "id": "paderborn-hf/eval-dx-01",
+      "kind": "speech",
+      "source": "paderborn-hf",
+      "stations": [
+        "DL8XYZ",
+        "VK3ABC"
+      ]
+    },
+    {
+      "audio": "sessions/paderborn-hf/eval-dx-02/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 2100.0,
+      "fold": "eval",
+      "id": "paderborn-hf/eval-dx-02",
+      "kind": "speech",
+      "source": "paderborn-hf",
+      "stations": [
+        "G4ABC",
+        "JA1XYZ"
+      ]
+    },
+    {
+      "audio": "sessions/fearless-steps/train-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 3600.0,
+      "fold": "train",
+      "id": "fearless-steps/train-01",
+      "kind": "speech",
+      "source": "fearless-steps",
+      "stations": [
+        "CAPCOM",
+        "CDR"
+      ]
+    },
+    {
+      "audio": "sessions/fearless-steps/dev-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 900.0,
+      "fold": "dev",
+      "id": "fearless-steps/dev-01",
+      "kind": "speech",
+      "source": "fearless-steps",
+      "stations": [
+        "CMP"
+      ]
+    },
+    {
+      "audio": "sessions/atc-merge/train-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 3000.0,
+      "fold": "train",
+      "id": "atc-merge/train-01",
+      "kind": "speech",
+      "source": "atc-merge",
+      "stations": [
+        "DLH456",
+        "N1234A"
+      ]
+    },
+    {
+      "audio": "sessions/atc-merge/dev-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 600.0,
+      "fold": "dev",
+      "id": "atc-merge/dev-01",
+      "kind": "speech",
+      "source": "atc-merge",
+      "stations": [
+        "BAW77"
+      ]
+    },
+    {
+      "audio": "sessions/isolet/train-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 1800.0,
+      "fold": "train",
+      "id": "isolet/train-01",
+      "kind": "speech",
+      "source": "isolet",
+      "stations": []
+    },
+    {
+      "audio": "sessions/synth-callsigns/train-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 3600.0,
+      "fold": "train",
+      "id": "synth-callsigns/train-01",
+      "kind": "speech",
+      "source": "synth-callsigns",
+      "stations": [
+        "W1AW",
+        "K2ABC"
+      ]
+    },
+    {
+      "audio": "sessions/local/validation-fm-01/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 1800.0,
+      "fold": "dev",
+      "id": "local/validation-fm-01",
+      "kind": "speech",
+      "source": "local",
+      "stations": [
+        "KC1ABC",
+        "W2DEF"
+      ]
+    },
+    {
+      "audio": "sessions/local/noise-eval/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 1200.0,
+      "fold": "eval",
+      "id": "local/noise-eval",
+      "kind": "noise",
+      "source": "local",
+      "stations": []
+    },
+    {
+      "audio": "sessions/local/noise-dev/audio.flac",
+      "checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "duration_s": 1200.0,
+      "fold": "dev",
+      "id": "local/noise-dev",
+      "kind": "noise",
+      "source": "local",
+      "stations": []
+    }
+  ],
+  "sources": [
+    {
+      "id": "paderborn-hf",
+      "kind": "public",
+      "licence": "CC-BY-4.0",
+      "name": "Paderborn HF Ham Radio DB",
+      "synthetic": false,
+      "upstream_checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "url": "https://zenodo.org/records/4247491"
+    },
+    {
+      "id": "fearless-steps",
+      "kind": "public",
+      "licence": "Fearless Steps EULA (research use, free)",
+      "name": "Fearless Steps (Apollo-11)",
+      "synthetic": false,
+      "upstream_checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "url": "https://data.mendeley.com/datasets/xps6b5vpxr"
+    },
+    {
+      "id": "atc-merge",
+      "kind": "public",
+      "licence": "ATCO2 test set CC-BY-NC-SA-4.0; UWB-ATCC CC-BY-NC-SA-3.0",
+      "name": "ATC merge (ATCO2 test set + UWB-ATCC)",
+      "synthetic": false,
+      "upstream_checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "url": "https://www.atco2.org/data"
+    },
+    {
+      "id": "isolet",
+      "kind": "public",
+      "licence": "CC-BY-4.0",
+      "name": "ISOLET spoken letter names",
+      "synthetic": false,
+      "upstream_checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "url": "https://archive.ics.uci.edu/dataset/54/isolet"
+    },
+    {
+      "id": "synth-callsigns",
+      "kind": "synthetic",
+      "licence": "generated",
+      "name": "Synthetic callsign generator (D22)",
+      "synthetic": true,
+      "upstream_checksum": {
+        "algo": "sha256",
+        "value": "pending"
+      },
+      "url": "local://corpus/M0.C"
+    },
+    {
+      "id": "local",
+      "kind": "recorded",
+      "licence": "own recordings, not redistributed",
+      "name": "Local recordings (validation hour + two noise tapes)",
+      "synthetic": false,
+      "upstream_checksum": {
+        "algo": "sha256",
+        "value": "n/a \u2014 recorded, per-session checksums"
+      },
+      "url": "local://corpus/M0.3-M0.4"
+    }
+  ],
+  "version": "0"
+}
