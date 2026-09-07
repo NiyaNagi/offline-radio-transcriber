@@ -1,8 +1,24 @@
 # Offline Radio Transcriber — Functional Specification
 
-**Draft 3.1 · September 2026 · Ready for technical design and implementation planning**
+**Draft 3.2 · September 2026 · Ready for implementation**
 
-*Draft 3.1 is an audit pass. A mechanical check for dangling references, duplicate IDs and
+*Draft 3.2 is an adversarial audit pass, run against this spec and against the technical
+design and implementation plan it produced. Where draft 3.1 checked for **missing** coverage,
+this one checked for **wrong** coverage: statements that contradict each other, thresholds
+that cannot both hold, and requirements whose acceptance criterion tests something else.
+Fourteen defects were fixed here and the full record — including the findings against the
+downstream documents — is in [`audit-2026-09-06.md`](audit-2026-09-06.md). Three of them were
+substantive: the transmission state machine and the data model disagreed about what states
+exist (§8); the tier-detection trigger let a device qualify for T3 without the RAM to hold
+T3's working set (§6.2); and **the eval-fold discipline sealed away the only noise tape,
+making the project's most important test (AC-6) unrunnable until M11** (§14A.2). Two new
+constraints and three new risks were added for issues neither document had noticed at all —
+segmentation permanence (§7.2 CON-SEG-1), lossy retention versus the reprocessing horizon
+(§7.7 CON-STO-1), and R10–R12. Re-verified after the changes: **103 contiguous acceptance
+criteria**, zero duplicates, zero gaps, zero dangling references across all five spec
+documents.*
+
+*Draft 3.1 was an audit pass. A mechanical check for dangling references, duplicate IDs and
 requirement-to-test coverage found seven requirement groups and two non-functional targets
 with **no acceptance criteria at all** — including the digest, which is goal G1, and the
 latency budget in NFR-2. Twenty-seven criteria were added to close them (AC-67..93).
@@ -24,7 +40,8 @@ and an architecture baseline (§17).*
 
 Downstream documents this feeds:
 
-- **Technical design spec** — sections 5–11
+- **Technical design spec** — sections 5–11. *Exists: [`technical-design.md`](technical-design.md)*
+- **Implementation plan** — section 15. *Exists: [`implementation-plan.md`](implementation-plan.md)*
 - **Test plan** — section 14, plus the non-functional budgets in section 10
 - **Visual / UX design guide** — section 13, plus the domain model in section 4
 
@@ -87,7 +104,7 @@ determines whether the product is useful.
 | Digital voice decode (DMR, P25, D-STAR, Fusion) | Requires demodulation, not transcription | v3+ |
 | Transmit / logging back to the radio | Different product | Never |
 | Multi-device sync | On-device only by decision | v3 |
-| On-device LLM digest | Optional, not required for the product to work | v2, tier-gated |
+| On-device LLM digest **as a required feature** | Optional, not required for the product to work. FR-DIG-3 is Must **only where the tier and the user's setting both enable it**, and the product ships complete with it absent — see FR-DIG-3a | v2 for the default-on case |
 
 ---
 
@@ -293,10 +310,22 @@ Detected at runtime from measured throughput, available RAM and accelerator avai
 
 | Tier | Trigger | What it adds over the tier below | Resident budget |
 |---|---|---|---|
-| **T3 — Reference** | ≥6 GB app-available RAM **and** a supported NPU (FR-ACC), or measured Pass B RTF ≥ 8x | `large-v3-turbo` on the accelerator · ensemble fusion of Pass A and Pass B · LLM n-best rescoring · LLM prose digest · full-size active lexicon slice | ~2.5 GB |
-| **T2 — Full** | ≥2.5 GB app-available RAM, measured Pass B RTF ≥ 2.0x | Pass A live streaming · Pass E speaker identity and threading · decode-time hotword biasing | ~1.4 GB |
-| **T1 — Standard** | ≥1.5 GB app-available RAM, measured Pass B RTF ≥ 1.0x | Pass C acoustic phonetic spotting · a larger Pass B model | ~800 MB |
+| **T3 — Reference** | ≥6 GB app-available RAM **and** (a supported NPU (FR-ACC) **or** measured Pass B RTF ≥ 8x) | `large-v3-turbo` on the accelerator · ensemble fusion of Pass A and Pass B · LLM n-best rescoring · LLM prose digest · full-size active lexicon slice | ~2.5 GB |
+| **T2 — Full** | ≥2.5 GB app-available RAM **and** measured Pass B RTF ≥ 2.0x | Pass A live streaming · Pass E speaker identity and threading · decode-time hotword biasing | ~1.4 GB |
+| **T1 — Standard** | ≥1.5 GB app-available RAM **and** measured Pass B RTF ≥ 1.0x | Pass C acoustic phonetic spotting · a larger Pass B model | ~800 MB |
 | **T0 — Minimal** | Any device that runs the app | SEG · Pass B (Moonshine tiny) · Pass D from a text-derived lattice · storage · reader | ~300 MB |
+
+**The RAM condition is conjunctive at every tier, and the parenthesisation above is a fix, not
+a restatement.** As drafted, T3's `A and B, or C` read as `(A and B) or C`, which let a 3 GB
+phone with a fast CPU qualify for a tier whose working set is 2.5 GB — it would be admitted
+and then thrash or be killed. Throughput and residency are independent constraints and
+**both** must hold: RTF says the device can finish the work, resident budget says it can hold
+the models while doing it.
+
+**FR-TIER-8 (M)** — The resident budget column is a **requirement on the tier, not an
+estimate**. The sum of concurrently loaded models at a tier SHALL fit within it, and a tier
+whose model set exceeds its budget on the detector's measurement SHALL not be entered. Model
+residency and eviction are the technical design's to specify; the ceiling is this spec's.
 
 **The fine-tuned model (D13) is available at every tier**, including T0. It is a model file,
 not a capability. This is why T0 under this spec is meaningfully better than T0 under the
@@ -343,10 +372,23 @@ higher passes to a later reprocess rather than degrading the transcription perma
 and allow explicit selection, filtering for `TYPE_USB_DEVICE`, `TYPE_WIRED_HEADSET`,
 `TYPE_BUILTIN_MIC`.
 
+**FR-CAP-2a (M)** — Capture SHALL request 16 kHz mono from the input device, and where the
+device does not offer it — most USB Audio Class adapters expose 44.1 or 48 kHz only — SHALL
+capture at the device's native rate and resample to 16 kHz in the app. The resampler SHALL be
+deterministic (FR-TST-4) and its identity SHALL be recorded on the session, because it is part
+of the signal chain every accuracy number is measured through.
+
 **FR-CAP-3 (M)** — After binding, verify the actual route with `getRoutedDevice()` and
 **halt with a visible error if it does not match the selection.** A silent fallback to the
 built-in mic records the room instead of the radio and is the highest-consequence silent
 failure in the system.
+
+**FR-CAP-3a (M)** — The halt condition is **route ≠ selection**, not *route = built-in mic*.
+The built-in mic is a legitimate selection (FR-CAP-2 lists it, and it is how the app is tested
+without a radio attached); what is never acceptable is landing on it *without having been
+chosen*. Where the built-in mic is the deliberate selection, the UI SHALL say so persistently,
+because a session recorded from the room and one recorded from the radio must never be
+confusable after the fact.
 
 **FR-CAP-4 (M)** — Maintain a continuous ring buffer with **≥1.0 s of pre-roll**, so a
 segment includes audio from before VAD triggered. Callsigns are frequently spoken in the
@@ -386,6 +428,38 @@ command (FR-RIG-3). Priority is **M** where the capability exists, **N/A** where
 
 **FR-SEG-6 (M)** — Discard segments below the minimum-duration floor without invoking any
 ASR model, recording them as `rejected:too_short` rather than deleting them.
+
+**CON-SEG-1 — Segmentation is the one decision reprocessing cannot undo.**
+
+Every other pass is a pure function of retained audio (§5.2), and §6.1 leans on that to claim
+tier is a property of processing rather than of the record. **Segmentation is the exception,
+and it was unstated in drafts 1–3.1.** Only gated segments are retained; the continuous stream
+between them is not. A boundary error is therefore baked in permanently — a transmission split
+in two stays split, two transmissions merged stay merged, and a callsign clipped by a
+too-short pre-roll is gone from the audio, not merely from the transcript. No later tier, no
+better model and no rig connected afterwards can recover it.
+
+Three consequences, all of which bind now rather than later:
+
+**FR-SEG-7 (M)** — Segmentation parameters SHALL NOT vary by tier. A weak device SHALL segment
+identically to the reference device, because segmentation is the one thing it cannot be
+forgiven for later. Tier may reduce what is *derived* from a segment; it may never change
+where the segment's edges are.
+
+**FR-SEG-8 (M)** — Pre-roll SHALL be generous rather than tight (FR-CAP-4), and the retained
+segment SHALL include a configurable **post-roll** past the VAD close for the same reason.
+Retaining audio that turns out to be silence is cheap; discovering a clipped callsign after the
+fact is unrecoverable.
+
+**FR-SEG-9 (S)** — Where storage permits, offer a **continuous-archive** capture mode that
+retains the unsegmented stream for a bounded window, so segmentation itself becomes
+reprocessable. This is the only mechanism that fully closes the gap, and it is a Should rather
+than a Must because at ~1 GB per 8-hour shift it is affordable on the reference device and not
+on the floor device. Where enabled, records SHALL be marked as re-segmentable.
+
+> This also bounds AC-39. A T0 capture reprocessed at T3 matches a native T3 capture **only
+> because both were segmented identically**, which FR-SEG-7 is what guarantees. Without it,
+> AC-39 would be testing a claim that is not true.
 
 ### 7.2a FR-ENH · Speech enhancement
 
@@ -800,6 +874,30 @@ transcripts.
 
 **FR-STO-2 (M)** — Store segment audio as Opus, gated (only transmissions, not silence).
 
+**CON-STO-1 — The retention codec is an accuracy decision, not a storage decision, and it is
+made before the pass that cares about it exists.**
+
+FR-REP-4 requires retained audio sufficient to re-run **every** pass. Opus at conversational
+bitrates is a lossy perceptual codec tuned for intelligible speech, and Pass C (FR-LEX-4) is a
+sub-phoneme acoustic discrimination task over exactly the material — narrowband, noisy,
+compressed off-air voice — where perceptual coding discards most aggressively. The ordering
+hazard is the problem: **the codec is chosen in M2 and Pass C is not measured until M4**, so a
+lossy default could silently cap the project's core accuracy thesis and be misread at M4 as
+the thesis failing.
+
+**FR-STO-2a (M)** — Until Pass C is measured (M4), captured audio SHALL be retained
+**losslessly** (PCM or FLAC). FLAC on this material is roughly 50–60% of PCM and is exactly
+reversible.
+
+**FR-STO-2b (M)** — The choice of a lossy retention codec SHALL be justified by a **measured
+comparison on the evaluation harness** — the same pipeline, the same fold, lossless versus each
+candidate bitrate — reporting the effect on callsign precision and recall, not on file size
+alone. Absent that measurement, lossless retention stands.
+
+**FR-STO-2c (M)** — Where a lossy codec is adopted, records SHALL state the codec, bitrate and
+the measurement that justified it, so a later reprocess knows whether its input was already
+degraded.
+
 **FR-STO-3 (M)** — Provide a configurable retention policy with independent controls for
 audio and text. Default: audio 30 days, text indefinite.
 
@@ -858,6 +956,12 @@ stations, longest threads), and volume statistics. No LLM required.
 
 **FR-DIG-3 (M / T3)** — Where an on-device LLM is available and enabled, generate prose
 summaries per thread as an *addition* to the deterministic digest, never a replacement.
+
+**FR-DIG-3a (M)** — FR-DIG-3 is **conditionally Must**: the requirement binds the *behaviour*
+if the feature is built, and does not require the feature to be built. §1.5 places a
+default-on LLM digest out of scope for v1, and Q7 may delete FR-DIG-3 entirely — if the
+deterministic digest is what the operator actually reads, the LLM adds nothing. Shipping v1
+with no LLM present is a conforming build, and AC-84 is the criterion that proves it.
 
 **FR-DIG-4 (M)** — The LLM SHALL be given already-resolved entities and SHALL NOT be
 permitted to emit a callsign. Enforce with grammar-constrained decoding where the runtime
@@ -957,8 +1061,17 @@ distribution.
 audio unless explicitly included) for bug reports.
 
 **FR-OBS-4 (M)** — Offer a "record a labelled sample" mode that captures audio plus
-ground-truth annotations, for building the evaluation set. **Promoted to Must**: M0 is the
-blocking milestone for the entire project and this is the tool that produces it.
+ground-truth annotations, for building the evaluation set.
+
+> **Corrected in draft 3.2.** Draft 3.1 justified this as "M0 is blocking and this is the tool
+> that produces it", which contradicted §15's own — and correct — claim that M0 needs no code.
+> It cannot be both: M0 blocks M2, so a tool that ships in the app cannot be what produces M0.
+> **M0 is built with desktop tooling and a recorder**, and FR-OBS-4 is what keeps the corpus
+> *growing* afterwards, from real sessions, in the field, in the format the harness already
+> reads. That is a genuine and durable requirement — the corpus is never finished, and the
+> cheapest labelled minute is the one captured where the operator already noticed something
+> interesting — but it is a **v1 feature, not an M0 prerequisite**. It lands in M5 with the
+> reader, where correction UI already exists and is most of the same surface.
 
 **FR-OBS-5 (M)** — There SHALL be **no analytics, telemetry, crash reporting or any other
 automatic transmission of data off the device**, in any build. Diagnostics leave only when
@@ -1035,6 +1148,14 @@ count; `REJECTED` is a result.
 **FR-RUN-10 (M)** — Retries SHALL be bounded, and a transmission exceeding the limit SHALL
 remain in `FAILED` with its error recorded, visible in the UI, and eligible for manual retry.
 
+**FR-RUN-10a (M)** — Every pass execution SHALL be bounded by a **timeout** proportional to
+the segment duration and the tier's expected RTF, and a pass exceeding it SHALL be cancelled
+and treated as `FAILED`. FR-RUN-9 and F18 cover a pass that *errors*; a pass that **hangs** is
+a different failure and was uncovered — an unbounded native inference call occupies the single
+inference slot forever, so one bad segment stops all processing while capture continues
+filling the queue behind it. The timeout is what stops a stuck pass from becoming a stuck
+product.
+
 #### Audio interruption
 
 Guaranteed to occur during an 8-hour run, and absent from draft 2 entirely.
@@ -1049,8 +1170,9 @@ counted in health statistics. Silence that was never listened to must be disting
 silence that was.
 
 **FR-RUN-13 (M)** — Route changes mid-session (device unplugged, headset attached) SHALL be
-detected and SHALL re-verify the route per FR-CAP-3 before resuming. A route change that
-lands on the built-in mic SHALL halt, never continue.
+detected and SHALL re-verify the route per FR-CAP-3 before resuming. A route change that lands
+on **any device other than the selected one** SHALL halt, never continue — including, and
+especially, the built-in mic (FR-CAP-3a).
 
 **FR-RUN-14 (S)** — Where the platform permits concurrent capture, request it, so a phone
 call degrades to a gap rather than terminating the session.
@@ -1196,10 +1318,18 @@ Field lists are functional, not a schema. Types and indices belong in the techni
 terminationReason (`user` | `crash` | `killed` | `storage` | `unknown`)
 
 **Transmission** — id, sessionId, threadId?, startedAt, endedAt, durationMs,
-audioRef, audioFormat, preRollMs, frequencyHz?, frequencyProvenance, mode?,
+audioRef, audioFormat, preRollMs, postRollMs, frequencyHz?, frequencyProvenance, mode?,
 signalStrength?, channelName?, voiceprintId?, attributionState, stationId?,
 attributionConfidence?, attributionSourceTransmissionId?, corrected (bool),
-processingState (`pending` | `complete` | `rejected` | `partial`), rejectionReason?
+processingState (`CAPTURED` | `PROCESSING` | `COMPLETE` | `REJECTED` | `FAILED`),
+rejectionReason?
+
+> `processingState` takes its values from the FR-RUN-7 lifecycle and **only** from there.
+> Draft 3 added that state machine and left this field carrying draft 2's independent set
+> (`pending | complete | rejected | partial`), which shared no vocabulary with it and had no
+> `FAILED` — so the data model could not represent the state F18 puts a record into. `STALE`
+> is intentionally absent: it is *derived* from the stored pass fingerprints (FR-REP-2) rather
+> than stored, so that a flag and its cause can never disagree.
 
 **Transcript** — id, transmissionId, pass (`A` | `B` | `reprocess`), text,
 modelId, modelVersion, quantization, decodeParams, noSpeechProb?, confidence?,
@@ -1626,6 +1756,12 @@ Input to the test plan. Grouped by what a test would have to establish.
   and the session is killed anyway (NFR-8, FR-SVC-5b).
 - **AC-66** Onboarding shows Oppo-specific steps on the reference device and generic steps on
   a device with no known OEM quirks (NFR-9, FR-SVC-5a).
+- **AC-97** With a USB adapter that offers only 48 kHz, capture succeeds and the resampled
+  16 kHz stream is bit-identical across runs; the resampler identity is recorded on the session
+  (FR-CAP-2a).
+- **AC-98** Selecting the built-in mic deliberately captures successfully and is persistently
+  labelled as such; a route that lands on the built-in mic when a USB device was selected halts
+  (FR-CAP-3a, FR-RUN-13, F1).
 
 ### 14.2 Segmentation and hallucination
 
@@ -1637,7 +1773,11 @@ Input to the test plan. Grouped by what a test would have to establish.
 
 ### 14.3 Callsign resolution
 
-- **AC-9** On the hand-labelled evaluation set, `CONFIRMED` precision ≥90% (NFR-1).
+- **AC-9** On the hand-labelled evaluation set, `CONFIRMED` precision meets **the active
+  tier's row of the NFR-1 table** — 95/92/90/85% for T3/T2/T1/T0 — reported per tier and never
+  as one aggregate. *Draft 3.1 stated a flat ≥90% here, which contradicted the per-tier table
+  it cited, was unmeetable at T3 as a target and too lax at T0's precision floor, and directly
+  violated NFR-1c and AC-36's prohibition on a single aggregate number.* See AC-36.
 - **AC-10** A structurally valid callsign with a non-US ITU prefix and no database entry
   resolves as a candidate (FR-LEX-8). Test with a DX callsign absent from ULS.
 - **AC-11** A structurally *invalid* parse (unallocated prefix) does not surface as a
@@ -1743,6 +1883,9 @@ Input to the test plan. Grouped by what a test would have to establish.
   frequency provenance to `inherited` (FR-RUN-17).
 - **AC-51** A repeatedly failing pass lands in `FAILED` with a recorded error and does not
   block the queue (FR-RUN-10, F18).
+- **AC-99** A pass that **hangs** — verified with an injected non-returning inference call — is
+  cancelled at its timeout, marked `FAILED`, and the queue continues draining. Capture is
+  unaffected throughout (FR-RUN-10a).
 
 ### 14.8b Assets, calibration and migration
 
@@ -1788,14 +1931,25 @@ the embedding and the thread simultaneously — and draft 3 had no criteria for 
   ear.*
 - **AC-72** Segments below the duration floor are recorded as `rejected:too_short` without any
   ASR model being invoked (FR-SEG-6).
+- **AC-94** **Segmentation is bit-identical across tiers.** The same tape segmented at forced
+  T0 and forced T3 produces the same boundaries to the sample (FR-SEG-7). *This is the
+  precondition AC-39 silently assumed.*
+- **AC-95** A transmission whose speech begins before the VAD trigger and ends after the VAD
+  close is retained complete, demonstrating pre-roll and post-roll together (FR-SEG-8).
+- **AC-96** Where continuous-archive mode is enabled, a session can be **re-segmented** with
+  different VAD parameters and produces a different, valid set of transmissions from the same
+  archived stream (FR-SEG-9).
 
 ### 14.8e Latency
 
 NFR-2 stated latency targets that nothing tested.
 
-- **AC-73** On the reference device at T2+, a 10-second transmission produces a visible Pass B
-  result within **2 s of segment close**, measured at the 95th percentile over a
-  representative session, not as a mean (NFR-2).
+- **AC-73** At **T1 and above**, a 10-second transmission produces a visible Pass B result
+  within **2 s of segment close**, measured at the 95th percentile over a representative
+  session, not as a mean (NFR-2). Measured on the reference device for T2/T3 and on the floor
+  device — or with the tier forced down — for T1, since NFR-2 binds the tier, not the handset.
+  *Draft 3.1 wrote T2+ here against NFR-2's T1+, which would have left the T1 latency budget
+  untested.*
 - **AC-74** At T2+, the first Pass A partial appears within **1 s of speech onset** (NFR-2a).
 - **AC-75** At 15% simulated activity the system keeps up indefinitely with no backlog growth
   over a sustained run (NFR-2b).
@@ -1857,6 +2011,17 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
   voiceprint decay — is testable via clock injection without waiting in real time (FR-TST-2).
 - **AC-92** A scripted fake rig replays a timed state sequence, exercising frequency
   correlation and disconnection with no hardware attached (FR-TST-3).
+- **AC-100** The harness refuses to run against the `eval` fold without an explicit opt-in
+  flag, and every report states which fold produced it (FR-TST-7). *A number whose fold is
+  unstated is not evidence.*
+- **AC-101** AC-6 is demonstrated against the **development** noise tape from M3 onward, and
+  re-demonstrated against the sealed eval noise tape at M11, with both results reported
+  (FR-TST-7, §14A.2).
+- **AC-102** A lossy retention codec is adopted only with a harness comparison against
+  lossless retention on the same fold, reporting callsign precision and recall for each
+  (FR-STO-2b). Absent that report, the build retains losslessly (FR-STO-2a).
+- **AC-103** At each tier, the sum of concurrently resident model memory is measured and falls
+  within that tier's resident budget (FR-TIER-8, §6.2).
 
 ---
 
@@ -1875,6 +2040,9 @@ Distinct from §12, which enumerates *runtime* failures. These are risks to the 
 | R7 | Solo build stalls on an unfamiliar subsystem — NPU toolchain, DSP, migration | Medium | Medium | Every hard subsystem has a working fallback by design: CPU path, null rig module, text-derived lattice | Continuous |
 | R8 | Evaluation set is too small or contaminated | Medium | **Severe** — every number becomes unfalsifiable | Split train/eval folds by session **before** labelling (Q10). Hold the eval fold until M11 | M0 |
 | R9 | Model or lexicon licensing blocks the Play Store path | Low | Medium — forecloses D11 | Record licence per asset from day one (FR-AST-1, FR-LEX-28) | M0a |
+| R10 | **Lossy audio retention silently caps Pass C, and the damage is invisible until M4** | Medium | **High — reads at M4 as the core thesis failing when it is the codec failing** | Lossless retention until measured (CON-STO-1, FR-STO-2a..c). The codec decision is made in M2; the pass that cares is measured in M4 | **M2 decision, M4 measurement** |
+| R11 | **Segmentation errors are permanent** — no tier, model or later rig connection can recover a clipped or merged transmission | Medium | Medium–High — a silent, uncorrectable accuracy floor under every other number | Tier-invariant segmentation (FR-SEG-7), generous pre/post-roll (FR-SEG-8), optional continuous archive (FR-SEG-9), boundary metrics from M2 (AC-69) | M2 |
+| R12 | An English-only base model (`distil-small.en`, per D20) meets worldwide DX traffic (D12) — accented English and non-English speech | Medium | Medium — recall drops on exactly the HF/DX material the eval fold is loaded with | Measure DX separately from local traffic; the grammar path (FR-LEX-8) does not depend on the prose being right; a multilingual base remains selectable per profile (FR-ASR-11) | M0a / M4 |
 
 **R5 is now the top risk**, because the reference device was chosen for its accuracy ceiling
 and carries the worst background-execution behaviour on the market. It is also the earliest
@@ -1934,7 +2102,7 @@ The concrete recipe:
 | 2 | Assign **whole sessions** to train or eval. Never split a session |
 | 3 | Target roughly **70/30 train/eval by duration** |
 | 4 | Ensure the eval fold contains **at least one session with no station appearing in train** — this is the only measurement of true generalisation |
-| 5 | The **noise tape** (squelch, no speech) goes in **eval only**. AC-6 must be measured on noise the model never saw |
+| 5 | The **noise tape** (squelch, no speech) goes in **eval only**. AC-6 must be measured on noise the model never saw. **Record a second, separate development noise tape** — see below; without it this rule makes AC-6 unrunnable for the whole build |
 | 6 | Put **HF/DX traffic in eval**, since non-US callsigns test FR-LEX-8 — the grammar path that works without a database |
 | 7 | Record the assignment in a manifest committed alongside the audio, so it cannot drift |
 | 8 | **Do not look at the eval fold** until M11. Not for debugging, not for "a quick check" |
@@ -1942,6 +2110,35 @@ The concrete recipe:
 **If in doubt, put a session in eval.** Under-training costs a few WER points that more data
 later recovers; contaminating the eval fold destroys the ability to measure anything, and it
 is not recoverable — you cannot un-see it.
+
+#### The development fold, and why sealing everything is a trap
+
+Rules 5 and 8 above are correct and, taken together as drafted, they made the project's single
+most important test unrunnable for its entire duration. AC-6 — *zero accepted transcripts from
+pure squelch noise* — is the acceptance gate for F4, the #1 practical failure mode, and it is
+what M3 exists to satisfy. Step 5 puts all the noise in eval; step 8 seals eval until M11.
+**So the hallucination controls would have been tuned blind and first measured at the last
+milestone**, which is exactly backwards for the highest-risk, easiest-to-get-wrong subsystem in
+the pipeline.
+
+The same trap applies more weakly to everything else: a build with no measurable audio at all
+cannot tell progress from regression.
+
+**The fix costs one afternoon**, because noise needs no labelling:
+
+| Fold | Content | Sealed? | Used for |
+|---|---|---|---|
+| **train** | ~70% of labelled sessions | No | Fine-tuning (M0a) |
+| **dev** | A held-out slice of train, **plus a separately recorded 20-minute development noise tape** | No | Day-to-day measurement, threshold tuning, AC-6 during M2–M10, regression detection |
+| **eval** | ~30% of sessions, the HF/DX material, and the **eval noise tape** | **Yes, until M11** | Every number in §10, reported once |
+
+**FR-TST-7 (M)** — The corpus manifest SHALL carry three folds, not two, and the harness SHALL
+refuse to run against `eval` unless explicitly and loudly opted in. Sealing by discipline alone
+does not survive a debugging session at 2 a.m.; the tool should enforce it.
+
+The two noise tapes must be **separately recorded** — different session, different squelch
+tails, ideally a different day — not two halves of one file, for the same reason the speech
+folds split by session.
 
 > The ATC precedent reached a 54.8% relative WER reduction from **55 clips**, so the training
 > fold does not need to be large. Given a 3–5 hour tape, spending the extra material on a
@@ -1952,7 +2149,9 @@ is not recoverable — you cannot un-see it.
 ## 15. Release plan
 
 Ordered by dependency and by information value. Each milestone answers a question that
-changes what comes after.
+changes what comes after. **Expanded into executable work in
+[`implementation-plan.md`](implementation-plan.md)**; this section remains the authority on
+sequence and rationale, that document on task breakdown and exit criteria.
 
 **Shaped by D18 (solo, heavily AI-assisted).** Implementation throughput is high, so the
 plan front-loads **interfaces, testability and decision gates** — the things that are
@@ -1971,7 +2170,13 @@ another domain.** Highest-value work in the project, and it needs no code.
 > 13.7% WER — a 54.8% relative reduction — from **55 hand-transcribed clips**. The same
 > labelled tape is therefore both the evaluation set *and* the fine-tuning set for M0a. One
 > labelling effort, two deliverables, and the second is the largest accuracy lever in the
-> project. Split the tape into train/eval folds before doing anything else with it.
+> project. Split the tape into **train / dev / eval** folds before doing anything else with it
+> (§14A.2), and record **two** noise tapes — one for the sealed eval fold, one for daily use.
+> The second one costs an afternoon and is what makes AC-6 testable before M11.
+
+Record losslessly (FR-STO-2a). The corpus is the one artifact in the project that can never be
+re-derived, it is the input to every accuracy number, and re-recording it because it was
+archived through a perceptual codec is the most expensive avoidable mistake available here.
 
 ### M0a — Domain fine-tune (D13)
 
@@ -2092,9 +2297,23 @@ product; all of them are what make the reference experience world-class.
 | D17 Location sourcing | FR-LEX-22..24, FR-PLT-1, AC-57, AC-58 |
 | D18 Solo, AI-assisted | §15 preamble, M2 scope, FR-TST-1..6 |
 | D9 Modular rig | FR-RIG-1..12 |
-| D10 LLM optional | FR-DIG-2..6 |
+| D10 LLM optional | FR-DIG-2..6, FR-DIG-3a |
 | D11 Open then store | NFR-6b |
-| D12 Worldwide callsigns | FR-LEX-7, FR-LEX-8, FR-LEX-9 |
+| D12 Worldwide callsigns | FR-LEX-7, FR-LEX-8, FR-LEX-9, R12 |
+| D19 Reference device | §10.7, §10.8, NFR-7..10, FR-SVC-5a..c, AC-64..66 |
+| D20 Fine-tune base in the export enum | §14A.1, FR-ASR-9, M0a, R1, R12 |
+
+Requirement groups added in drafts 3 and 3.2, mapped to the goal or property they serve:
+
+| Group | Serves |
+|---|---|
+| FR-RUN-1..18 | D16, NFR-4, G5 — the record survives overload, crash, interruption and clock change |
+| FR-AST-1..9 | D13, D2, NFR-4b — assets and schema evolve without destroying the record |
+| FR-PLT-1..6 | D1, NFR-6, G5 — the platform integration G5 depends on |
+| FR-TST-1..7 | D18, §14 — none of §14 is executable without these |
+| FR-A11Y-1..6 | G4, P1 — an uncertainty-first UI that cannot be read fails G4 |
+| FR-SEG-7..9, CON-SEG-1 | D8, AC-39 — the precondition cross-tier reprocessing assumed |
+| FR-STO-2a..c, CON-STO-1 | D4, FR-REP-4 — the retained audio must still support the passes |
 
 ---
 
@@ -2153,6 +2372,12 @@ Tracked in [`open-questions.md`](open-questions.md).
 is now settled: Q1 (rig protocol) by documentation already in this repo, Q3 (reference device)
 as D19, Q10 (train/eval split) in §14A.2, and Q11 (NPU vendor scope) as a consequence of Q3.
 Q4–Q9 and Q12 carry recommendations and do not block.
+
+**Draft 3.2 opened two more**, both raised by the audit and both needing a product answer
+before M2 commits code: **Q13** (audio retention format and the reprocessing horizon, which
+also finally forces the Q5 answer) and **Q14** (whether continuous-archive capture is worth its
+storage, given that segmentation is otherwise permanent). Neither blocks M0 — record
+losslessly and the question stays open.
 
 Six questions were closed during the draft-3 review — architecture baseline, build capacity,
 location sourcing, overload policy, reference device and fine-tune base — recorded as D15–D20

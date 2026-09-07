@@ -1,6 +1,14 @@
 # Offline Radio Transcriber — Implementation Plan
 
-**Draft 1 · September 2026 · Companion to [`technical-design.md`](technical-design.md)**
+**Draft 1.1 · September 2026 · Companion to [`technical-design.md`](technical-design.md)**
+
+*Draft 1.1 applies the adversarial audit ([`audit-2026-09-06.md`](audit-2026-09-06.md)). The
+plan-level findings: **FR-OBS-4 had no milestone at all** — draft 1 dropped it when it moved
+corpus building to desktop tooling, leaving a Must requirement unassigned; **the harness was
+planned as desktop-only**, which cannot measure T3 and so could not satisfy AC-36 for the
+reference tier the whole design is built around; and **M0 would have produced a corpus that
+seals away the only noise tape**, making AC-6 unrunnable until M11. M0 and M2 gained tasks;
+the coverage check gained the rows it was missing.*
 
 Milestone sequencing from functional spec §15, expanded into executable work. **M0–M4 are
 detailed; M5–M11 are outlined only**, deliberately — M4 is an architectural fork (R3) whose
@@ -70,8 +78,9 @@ measure anything at all.
 | M0.1 | Build the capture rig: TH-D75A and SDS150 audio out → USB-C adapter → phone or laptop, gain set against open squelch | S | Buy **two dongles from different makers** (`research/02` §5.03). Verifies T7 early |
 | M0.2 | Define the corpus manifest and label formats (below) **before recording** | S | This is the harness's input contract; getting it wrong costs a relabel |
 | M0.3 | Record **8–12 discrete sessions**, 3–5 h total, across different days, times, bands and both radios | L | Per Q2's content table. Calendar time, not work time |
-| M0.4 | Record the **noise tape** — 20 min of squelch, no speech, both radios | S | AC-6 depends on it and it must be from real squelch tails |
-| M0.5 | Assign whole sessions to train/eval, ~70/30 by duration, per §14A.2 | S | Manifest committed. **Tiebreak: if unsure, put it in eval** |
+| M0.4 | Record **two noise tapes** — 20 min each of squelch, no speech, both radios, on different days | S | One for `eval`, one for `dev`. AC-6 depends on it, and with only the eval tape it is unrunnable until M11 (§14A.2, AC-101) |
+| M0.4a | Record **losslessly** (FLAC or PCM), and enable continuous-archive capture for these sessions if it exists yet | S | FR-STO-2a. The corpus is the one artifact that cannot be re-derived, and M0's own boundaries are the ones you will most want to redo (Q14) |
+| M0.5 | Assign whole sessions to **train / dev / eval**, ~70/30 by duration with dev held out of train, per §14A.2 | S | Manifest committed. **Tiebreak: if unsure, put it in eval** |
 | M0.6 | Hand-label: callsigns, speaker turns, thread bounds, frequency, keying boundaries | XL | The dominant cost. Audacity label tracks → converter, or Label Studio |
 | M0.7 | Label-quality pass: relabel a 10% sample blind, report disagreement | M | If self-disagreement is high, every downstream number inherits it |
 | M0.8 | `:eval` harness v0 — manifest loader, metric implementations, report writer | M | Runs on hand transcripts before any model exists |
@@ -80,11 +89,16 @@ measure anything at all.
 
 ```
 corpus/
-  manifest.json          # sessions, fold assignment, radio, band, date, duration, checksum
-  sessions/<id>/audio.wav            # 16 kHz mono PCM16 — the harness's only input format
+  manifest.json          # sessions, fold (train|dev|eval), radio, band, date, duration, checksum
+  sessions/<id>/audio.flac           # lossless, 16 kHz mono — the harness's only input format
   sessions/<id>/labels.tsv           # startMs, endMs, speaker, callsign?, freqHz?, threadId, notes
   sessions/<id>/boundaries.tsv       # true keying start/end — feeds AC-69
 ```
+
+**Three folds, not two** (§14A.2, FR-TST-7). The manifest is the enforcement point: the harness
+refuses to read `eval` without an explicit flag and stamps the fold on every report (AC-100).
+Sealing by discipline alone does not survive a debugging session at 2 a.m., and the cost of
+one lapse is that no number the project publishes afterwards means anything.
 
 `labels.tsv` is deliberately flat and hand-editable. `speaker` is a per-session opaque id (S1,
 S2…) — the ground truth for clustering (AC-18) — and `callsign` is present only where a human
@@ -92,10 +106,13 @@ actually heard it, with an `uncertain` flag for the weak-signal material.
 
 ### Exit criteria
 
-- Manifest committed, folds assigned, **at least one eval session contains no station present
-  in train** (§14A.2 step 4), noise tape and HF/DX traffic both in eval.
-- Harness v0 reports callsign precision/recall and WER against hand transcripts.
+- Manifest committed, three folds assigned, **at least one eval session contains no station
+  present in train** (§14A.2 step 4), eval noise tape and HF/DX traffic both in eval, **dev
+  noise tape available and unsealed**.
+- Harness v0 reports callsign precision/recall and WER against hand transcripts, stamped with
+  the fold it read.
 - Inter-pass label disagreement measured and stated.
+- Audio retained losslessly; no perceptual codec anywhere in the corpus chain.
 
 ### Risks
 
@@ -191,15 +208,20 @@ plugs into. Under D18 these are exactly the decisions that are cheap now and exp
 | M2.1 | Gradle module skeleton + the dependency-rule task that fails the build on a forbidden edge | M | §2. Do it before there is anything to violate it |
 | M2.2 | `:core` — ids, `Clock`, `PassId`, `PassFingerprint`, config schema, `Result` | M | §3 |
 | M2.3 | `CaptureSource` interface + **`WavFileSource`** | M | §5.1, FR-TST-1 → AC-89. **Ships here, not later** |
-| M2.4 | `AudioRecordSource`: device enumeration, preferred-device binding, **route verification with halt** | L | §5.2, FR-CAP-1..3 → AC-1, AC-2 |
+| M2.4 | `AudioRecordSource`: device enumeration, preferred-device binding, **route verification with halt** | L | §5.2, FR-CAP-1..3, FR-CAP-3a → AC-1, AC-2, AC-98 |
+| M2.4a | **Deterministic resampler** (48/44.1 → 16 kHz) and native-rate negotiation | M | §5.1, FR-CAP-2a → AC-97. Most USB adapters do not offer 16 kHz |
 | M2.5 | Lock-free ring buffer with ≥1.2 s pre-roll | M | §5.3 → AC-3 |
 | M2.6 | Level meter, clipping/silence detection | S | §5.4, FR-CAP-6, FR-CAP-7 |
-| M2.7 | Silero VAD + segmenter state machine, max-length splitting, too-short rejection | L | §6 → AC-70, AC-71, AC-72 |
-| M2.8 | PCM staging + Opus encode step + verify-then-delete | M | §6.1, TD1 |
+| M2.7 | Silero VAD + segmenter state machine, max-length splitting, too-short rejection, **post-roll**, incremental write | L | §6 → AC-70, AC-71, AC-72, AC-95 |
+| M2.7a | **Tier-invariance lock on segmentation** — the segmenter takes no `Tier` | S | FR-SEG-7 → AC-94. The precondition AC-39 assumed |
+| M2.8 | PCM staging + **FLAC** encode step + decode-and-compare-then-delete | M | §6.1, FR-STO-2a, TD1. **Not Opus** — see R10 |
+| M2.8a | Continuous-archive writer, off by default | M | FR-SEG-9, Q14 → AC-96. Cheap now, unbuildable later |
 | M2.9 | Room schema, FTS5, indices, WAL, migration harness + first fixture | L | §12 |
-| M2.10 | Durable work queue: leasing, crash recovery, transaction boundary | L | §7.1 → AC-45, AC-47 |
+| M2.10 | Durable work queue: leasing, crash recovery, transaction boundary, **partial-unique active index** | L | §7.1 → AC-45, AC-47. The unconditional constraint would have broken every reprocess |
+| M2.10a | **Pass execution timeout + watchdog cancellation** | S | §7.1, FR-RUN-10a → AC-99. One hung inference call otherwise stops all processing forever |
 | M2.11 | Transmission lifecycle state machine + legal-transition test | M | §7.2, FR-RUN-7..10 → AC-51 |
-| M2.12 | Shed controller with hysteresis, `shed_event` logging | M | §7.3 → AC-46 |
+| M2.12 | Shed controller with hysteresis, `shed_event` logging, **battery→level-4 mapping** | M | §7.3 → AC-46 |
+| M2.12a | `ModelResidency` classes and tier-budget enforcement | M | §4.3, FR-TIER-8 → AC-103 |
 | M2.13 | Interruption/focus/route-change handling and `CaptureGap` | L | §5.5, FR-RUN-11..14 → AC-48, AC-49 |
 | M2.14 | Clock model: `SampleClock`, monotonic + UTC + offset persistence | M | §3.2, FR-RUN-15..18 |
 | M2.15 | `CaptureService`, wake lock, notification (no transcript text) | M | §5.6 → AC-61 |
@@ -209,6 +231,7 @@ plugs into. Under D18 these are exactly the decisions that are cheap now and exp
 | M2.19 | Capture status surface (FR-UI-7) and a minimal raw transmission list | M | P4. Enough UI to see the machine working |
 | M2.20 | Permissions flow, each requested in context | M | FR-PLT-1..4 |
 | M2.21 | Synthetic traffic generator | S | FR-TST-6 → AC-29, AC-75 |
+| M2.21a | **On-device harness runner** — same manifest, same report format, instrumented entry point | M | §17, AC-36. A desktop-only harness structurally cannot measure T3 |
 | M2.22 | Reconciliation job | S | §12.4 → AC-54 |
 | M2.23 | Storage projection, retention job, exhaustion ladder | M | FR-STO-3..5 → AC-77, AC-78 |
 | M2.24 | Backup exclusion, media-store exclusion, no-network build check | S | §16 → AC-59, AC-60, AC-81 |
@@ -248,7 +271,7 @@ First end-to-end useful output: audio in, transcript on screen, nothing invented
 | M3.1 | `:asr-api` interfaces; `:asr-sherpa` offline engine, same code path on JVM and Android | L | §8.1 |
 | M3.2 | Model registry, descriptors, side-loading, fallback on invalid model | M | §8.4, FR-ASR-8 → F13 |
 | M3.3 | Install the M0a fine-tuned model as the default where available | S | FR-ASR-9 |
-| M3.4 | The six hallucination controls as named rules, ordered cheapest-first | M | §8.2 → AC-7 |
+| M3.4 | The six hallucination controls as named rules, ordered cheapest-first, **thresholds fitted against the dev noise tape** rather than inherited from Whisper defaults | M | §8.2, TD3 → AC-7, AC-101 |
 | M3.5 | `REJECTED` as a first-class result with audio retained and a UI filter | M | FR-ASR-6 → AC-8 |
 | M3.6 | Transcript versioning with the single-current partial index | M | §8.3 → AC-31 |
 | M3.7 | Pass B wired into the queue as a real `Pass` with fingerprinting | M | §3.1, §3.4 |
@@ -258,8 +281,9 @@ First end-to-end useful output: audio in, transcript on screen, nothing invented
 
 ### Exit criteria
 
-- **AC-6**: the noise tape produces **zero** accepted transcripts, every segment rejected with
-  a recorded reason. This is the single most important test in the plan.
+- **AC-6**: the **development** noise tape produces **zero** accepted transcripts, every
+  segment rejected with a recorded reason. This is the single most important test in the plan,
+  and it is re-run against the sealed eval noise tape at M11 (AC-101).
 - **AC-73**: p95 Pass B latency ≤ 2 s for a 10-second transmission on the reference device.
 - **AC-75**: no backlog growth at 15% simulated activity over a sustained run.
 - The full text path — capture → VAD → Pass B → text lattice → resolver → attribution — works
@@ -326,6 +350,14 @@ search with filters, playback, one-tap correction, and the inspection surface th
 lattice, candidates and per-prior breakdown (P2, FR-UI-8). Accessibility is a build constraint
 here, not a later pass: greyscale-distinguishable states (AC-62), screen-reader navigation and
 maximum font scale (AC-63).
+
+Also lands here: **FR-OBS-4, the "record a labelled sample" mode** — a Must that draft 1 of
+this plan left with no milestone at all, having moved corpus building to desktop tooling in M0
+and then never rehoused the requirement. It belongs in M5 rather than M0 (a tool shipping in
+the app cannot be what produces the corpus that gates the app) and it belongs with the reader
+rather than alone, because correction UI is most of the same surface. Its job is keeping the
+corpus **growing** from real sessions in the format the harness already reads — the cheapest
+labelled minute is the one captured where the operator just noticed something interesting.
 
 *M4 effect:* the inspection surface renders whatever lattice source survives — one screen,
 either way. Adopt Q8's tiered correction (pick from candidates → search lexicon → free text
@@ -412,10 +444,23 @@ Where each acceptance-criteria group is first satisfied:
 | 14.8e Latency | M3 |
 | 14.8g Digest | M9 |
 | 14.9 Export | M9 |
-| 14.10 Harness | M0 (v0) → M1 (v1) → M11 (full per-lever) |
+| 14.10 Harness | M0 (v0, AC-100) → M1 (v1) → M2 (AC-89, AC-90, AC-91, on-device runner) → M7 (AC-92) → M11 (full per-lever) |
 
-Two AC groups have no home before M5 and that is intentional: AC-62/63 (accessibility) need a
-real UI, and AC-84..88 (digest) need real captured data to be worth designing against.
+Criteria added in draft 3.2:
+
+| Criterion | Milestone |
+|---|---|
+| AC-94 tier-invariant segmentation · AC-95 pre/post-roll · AC-97 resampling · AC-98 built-in mic · AC-99 pass timeout · AC-103 residency budget | M2 |
+| AC-96 re-segmentation from continuous archive | M2 (writer) → M10 (re-segmentation flow) |
+| AC-100 harness fold gating | M0 |
+| AC-101 AC-6 on dev tape, then eval tape | M3, re-run at M11 |
+| AC-102 lossy-codec justification | M4 (measurement) — until then, lossless stands |
+
+AC-92 was previously filed under the harness group and belongs to **M7**, since a scripted fake
+rig cannot exist before the rig contract does. Two groups still have no home before M5 and that
+is intentional: AC-62/63 (accessibility) need a real UI, and AC-84..88 (digest) need real
+captured data to be worth designing against. AC-93 (installs on the minimum API level) is a CI
+check from M2 onward rather than a milestone deliverable.
 
 ---
 
@@ -435,3 +480,9 @@ Stated so it is checkable rather than assumed:
    subsequent number unfalsifiable.
 5. **A lever survives M11 without measuring.** Q12's kill rule exists because "disabled" is how
    complexity becomes permanent.
+6. **M2 commits to a lossy retention codec to save space.** The pass that cares about it is not
+   measured until M4, so the cost would be misread as the accuracy thesis failing (R10). This
+   is the one storage decision that is an accuracy decision.
+7. **The dev/eval noise split is skipped as bureaucracy.** It costs one afternoon of recording
+   and it is the difference between tuning the hallucination controls against a measurement and
+   tuning them against a feeling.

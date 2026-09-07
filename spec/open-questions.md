@@ -1,6 +1,12 @@
 # Open Questions
 
-**Decision register · functional spec draft 1 · September 2026**
+**Decision register · current against functional spec draft 3.2 · September 2026**
+
+**Draft 3.2 update.** The adversarial audit ([`audit-2026-09-06.md`](audit-2026-09-06.md))
+opened **Q13** (retention format — supersedes Q5, and it is now the more urgent question
+because of R10) and **Q14** (continuous archive, because segmentation turns out to be the one
+irreversible decision in the pipeline). Both are product calls wanted before M2 writes storage
+code. Q5 is folded into Q13 and should be answered there.
 
 Questions that remain open after the initial requirements interview. Each carries a
 recommendation, so none of them blocks progress by default — but the ones marked
@@ -131,7 +137,11 @@ let the v1 data model foreclose it — hence `channelName` already in the Transm
 
 ---
 
-### Q5 — Audio retention default versus reprocessing horizon · owner: product
+### Q5 — Audio retention default versus reprocessing horizon · **SUPERSEDED BY Q13** · owner: product
+
+*Q5 asked only how long to keep audio. The audit found the harder half of the question — in
+what **format** — which changes the storage arithmetic below by 4x and carries an accuracy risk
+(R10) that duration does not. Answer Q13; it subsumes this.*
 
 **Question.** FR-STO-3 defaults audio retention to 30 days. FR-REP-4 notes that retention
 shorter than the reprocessing horizon defeats reprocessing. What is the intended horizon?
@@ -266,6 +276,61 @@ FR-ACC-4 already requires graceful absence, so this costs nothing but a smaller 
 The Q3 answer resolved the tension noted here — a Pixel reference would have meant Tensor,
 where the published evidence for this model is much thinner. The device chosen has the best
 evidence base available, at the cost of the worst background-execution behaviour (§10.8).
+
+---
+
+### Q13 — Audio retention format and the reprocessing horizon · **NEW, draft 3.2** · owner: product
+
+**Question.** Lossless (FLAC) or lossy (Opus) retention, at what bitrate, for how long? This
+supersedes and finally forces **Q5**, which asked only about duration.
+
+**Why it matters, and why it is more urgent than it looks.** FR-REP-4 requires retained audio
+sufficient to re-run *every* pass, and Pass C (FR-LEX-4) is sub-phoneme acoustic
+discrimination on narrowband noisy speech — the worst case for a perceptual codec. The
+ordering is the hazard: **the codec is chosen in M2, and the pass that cares is not measured
+until M4.** A lossy default would be indistinguishable, at M4, from the core accuracy thesis
+simply failing. That is R10.
+
+Storage, for the actual decision:
+
+| Format | Per wall-clock hour @15% duty | Per 8 h shift | Per year of daily 8 h |
+|---|---:|---:|---:|
+| Opus ~24 kbps | ~1.1 MB | ~9 MB | ~3.2 GB |
+| FLAC 16 kHz mono | ~4.5 MB | ~36 MB | ~13 GB |
+| PCM 16 kHz mono | ~9 MB | ~72 MB | ~26 GB |
+| Continuous FLAC (Q14, no gating) | ~30 MB | ~240 MB | ~88 GB |
+
+**Recommendation.** **FLAC, indefinite, with storage-pressure pruning of the oldest audio
+first.** 13 GB/year is affordable on the reference device, it is exactly reversible so no
+future pass can be blamed on it, and it retires R10 outright rather than managing it. Revisit
+only if FR-STO-2b's measurement shows Opus costs nothing — and note that a measurement showing
+"no effect on Pass B" is not the same as "no effect on Pass C", which is the point.
+
+Time-based retention stays available for users who want it, with the FR-REP-4 warning.
+
+---
+
+### Q14 — Is continuous-archive capture worth its storage? · **NEW, draft 3.2** · owner: product
+
+**Question.** FR-SEG-9 offers an optional mode retaining the *unsegmented* stream. Ship it in
+v1, defer it, or drop it?
+
+**Why it matters.** CON-SEG-1 established that segmentation is the one decision reprocessing
+cannot undo — a clipped callsign, a merged pair of overs, a transmission split in two are
+permanent, because the audio between gated segments is never kept. Every other quality
+decision in the product is revisable; this one is not. Continuous archive is the only
+mechanism that fully closes it, and it converts VAD tuning from an irreversible commitment
+into just another reprocessable pass.
+
+Against that: ~30 MB per wall-clock hour, ~88 GB per year of daily 8-hour shifts. Affordable
+on a 512 GB flagship, not on the floor device, and it makes the gated-Opus storage argument
+irrelevant since the archive dominates.
+
+**Recommendation.** **Build it, default it off, offer it during M0 recording specifically.**
+The M0 tape is the one recording session whose segmentation you will certainly want to redo —
+VAD parameters are untuned at that point, and every boundary metric (AC-69, AC-71) is measured
+against it. Turning it on for M0 and leaving it off by default afterwards captures nearly all
+the value for one shift's worth of disk.
 
 ---
 

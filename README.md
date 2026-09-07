@@ -14,10 +14,11 @@ This directory holds the complete research record and the functional specificati
 | Phone platform feasibility research | Complete | [`research/02-phone-platform-study.md`](research/02-phone-platform-study.md) |
 | Accuracy, lexicon and identity research | Complete | [`research/03-accuracy-lexicon-identity.md`](research/03-accuracy-lexicon-identity.md) |
 | Flagship capability research | Complete | [`research/04-flagship-capability.md`](research/04-flagship-capability.md) |
-| **Functional specification** | **Draft 3.1 — audited, ready for implementation** | [`spec/functional-spec.md`](spec/functional-spec.md) |
-| Open decisions register | Active — 1 blocking (Q2, record the tape) | [`spec/open-questions.md`](spec/open-questions.md) |
-| **Technical design specification** | **Draft 1 — M0–M4 in detail, M5–M11 interfaces only** | [`spec/technical-design.md`](spec/technical-design.md) |
-| **Implementation plan** | **Draft 1 — M0–M4 detailed, M5–M11 outlined** | [`spec/implementation-plan.md`](spec/implementation-plan.md) |
+| **Functional specification** | **Draft 3.2 — adversarially audited, ready for implementation** | [`spec/functional-spec.md`](spec/functional-spec.md) |
+| Open decisions register | Active — 1 blocking (Q2, record the tape); Q13–Q14 want answers before M2 | [`spec/open-questions.md`](spec/open-questions.md) |
+| **Technical design specification** | **Draft 1.1 — M0–M4 in detail, M5–M11 interfaces only** | [`spec/technical-design.md`](spec/technical-design.md) |
+| **Implementation plan** | **Draft 1.1 — M0–M4 detailed, M5–M11 outlined** | [`spec/implementation-plan.md`](spec/implementation-plan.md) |
+| Adversarial audit | Complete — 41 findings, all addressed | [`spec/audit-2026-09-06.md`](spec/audit-2026-09-06.md) |
 | Test plan | Not started — §14 and the harness spec cover most of it | — |
 | Visual / UX design guide | Not started | — |
 
@@ -94,6 +95,22 @@ information. Full rationale in the functional spec, section 3.
     are distinct states in the data model and in the UI.
 11. **Open source, self-build now; Play Store later.** No decision may foreclose the store
     path.
+12. **Stack chosen (D15):** Kotlin, Compose, Room/SQLite+FTS5, Coroutines/Flow, Hilt,
+    WorkManager, sherpa-onnx behind interfaces — with the lexicon and evaluation modules
+    deliberately Android-free so the accuracy work runs on a desktop JVM.
+13. **Reference device (D19): OPPO Find X9 Ultra.** The exact chipset Qualcomm benchmarked
+    `large-v3-turbo` on, which makes T3's headline number a measurement rather than an
+    extrapolation — and it runs ColorOS, which is why background-killing is the top risk.
+14. **Fine-tune a base already in sherpa-onnx's export enum (D20).** Converts the project's
+    biggest risk into a naming detail.
+
+Two more, added by the September audit and load-bearing enough to belong here:
+
+15. **Segmentation is permanent.** It is the one pass reprocessing cannot redo, so its
+    parameters never vary by tier and its pre-roll is generous by policy.
+16. **Audio is retained losslessly until a lossy codec is proven harmless to Pass C** — a
+    storage decision that is really an accuracy decision, and one made two milestones before
+    the pass that cares about it can be measured.
 
 ## A note on the RTF convention
 

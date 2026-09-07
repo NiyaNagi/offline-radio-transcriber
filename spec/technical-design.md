@@ -1,6 +1,17 @@
 # Offline Radio Transcriber — Technical Design Specification
 
-**Draft 1 · September 2026 · Input: functional spec draft 3.1**
+**Draft 1.1 · September 2026 · Input: functional spec draft 3.2**
+
+*Draft 1.1 applies the adversarial audit ([`audit-2026-09-06.md`](audit-2026-09-06.md)).
+Sixteen defects fixed, of which five were real bugs rather than wording: the work queue's
+uniqueness constraint made re-enqueueing a completed pass impossible, which silently broke
+reprocessing — the mechanism half the architecture rests on; no pass had an execution timeout,
+so one hung inference call would stop all processing forever; `:segment`'s declared
+dependencies could not have compiled, since Silero VAD arrives through the ONNX runtime;
+capture assumed a 16 kHz input device, which most USB audio adapters are not; and the FTS5
+schema as written is not valid SQLite. Two design gaps were filled — model residency (§4.3)
+and the digest/export interfaces (§15a) — and one unilateral spec deviation was withdrawn
+(§6.1).*
 
 This document owns *how*. The functional spec owns *what* and *why*, and where the two
 disagree the functional spec wins — raise a change against it rather than diverging here.
@@ -42,9 +53,10 @@ Gradle multi-module, Kotlin, JVM toolchain 17, `compileSdk` current, `minSdk` 26
 
 ```
 :core            [JVM]  domain types, ids, Clock, Result, PassId, fingerprints, config schema
-:capture-api     [JVM]  CaptureSource, AudioFrame, RingBuffer, SegmentSink, WAV file source
+:onnx            [JVM]  ONNX/sherpa-onnx runtime loading, session lifecycle, model residency
+:capture-api     [JVM]  CaptureSource, AudioFrame, RingBuffer, SegmentSink, WAV source, resampler
 :capture-android [AND]  AudioRecord source, route verification, focus/interruption, gaps
-:segment         [JVM]  VAD interface, Silero impl (ONNX), squelch fusion, pre-roll, splitting
+:segment         [JVM]  VAD interface, Silero impl, squelch fusion, pre-roll/post-roll, splitting
 :asr-api         [JVM]  AsrEngine, StreamingAsrEngine, Enhancer, ExecutionProvider, model registry
 :asr-sherpa      [JVM]  sherpa-onnx implementations (desktop + Android; same code path)
 :lexicon         [JVM]  lattice, grammar FSA, ITU trie, priors, scoring, calibration   ← PURE
@@ -72,16 +84,31 @@ build on violation):
 | Module | May depend on |
 |---|---|
 | `:core` | — |
-| `:capture-api`, `:segment`, `:asr-api`, `:lexicon`, `:identity`, `:rig` | `:core` (and `:asr-api` for `:asr-sherpa`) |
+| `:onnx` | `:core` |
+| `:capture-api`, `:lexicon`, `:rig` | `:core` |
+| `:segment`, `:asr-api`, `:identity` | `:core`, `:onnx` |
+| `:asr-sherpa` | `:core`, `:onnx`, `:asr-api` |
 | `:capture-android` | `:core`, `:capture-api` |
 | `:data` | `:core` |
-| `:pipeline` | everything except `:app`, `:net`, `:capture-android`'s internals |
+| `:net` | `:core` |
+| `:pipeline` | `:core`, `:onnx`, `:capture-*`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig*`, `:data` |
 | `:app` | `:pipeline`, `:data`, `:net`, UI-facing APIs |
-| `:eval` | `:core`, `:capture-api`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:testing` |
+| `:eval` | `:core`, `:onnx`, `:capture-api`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig`, `:testing` |
 
-The forbidden edges that matter: `:capture-*` → `:asr-*` (rule 2), anything → `:net` except
-`:app` and `:pipeline`'s asset installer (rule 5), and `:lexicon`/`:eval`/`:core` → anything
-Android (rule 3).
+`:onnx` exists because `:segment` cannot compile without it. Silero VAD arrives through
+sherpa-onnx, so the draft-1 table — which gave `:segment` only `:core` — described a module
+that could not have been built. Factoring the runtime out rather than letting `:segment`
+depend on `:asr-sherpa` also keeps rule 2 clean: VAD is not ASR, and capture-side segmentation
+must not drag a transcription engine into its dependency graph.
+
+The forbidden edges that matter: `:capture-*` → `:asr-*` (rule 2), **anything → `:net` except
+`:app`** (rule 5), and `:lexicon` / `:eval` / `:core` → anything Android (rule 3).
+
+Rule 5 admits no exception for `:pipeline`. Draft 1 carved one out for an "asset installer",
+which would have put a network-capable dependency inside the module that runs the capture
+pipeline — precisely the edge the rule exists to forbid. Asset **download** lives in `:net`,
+driven from `:app`; asset **install, verify and activate** (§13) are local file operations in
+`:pipeline` that never touch a socket. The split falls exactly on the network boundary.
 
 ---
 
@@ -229,6 +256,29 @@ only in the sense that the segmenter must keep up with a 16 kHz mono stream — 
 measured in microseconds per second of audio. If `segment` ever falls behind, that is a bug
 and is surfaced as a `CaptureGap` with cause `unknown`, not silently tolerated (NFR-4).
 
+### 4.3 Model residency
+
+Draft 1 did not say how models share memory, and the tier budgets do not survive naive
+loading. At T2 the candidate set is Silero VAD + a streaming Zipformer (Pass A) + distil-small
+(Pass B) + a speaker embedder (Pass E) + a KWS spotter (Pass C) — five graphs against a
+~1.4 GB budget that FR-TIER-8 now makes a **requirement rather than an estimate**.
+
+`:onnx` owns a `ModelResidency` manager with three classes:
+
+| Class | Models | Policy |
+|---|---|---|
+| **Pinned** | VAD | Loaded for the session's lifetime. It runs on every frame; evicting it is never right |
+| **Hot** | Pass B, Pass C | LRU with a floor of one; loaded on first use, evicted only under memory pressure or a tier change |
+| **Cold** | Pass E embedder, enhancer, LLM | Loaded per batch of work and released. Pass E runs on a fraction of transmissions (FR-SPK-2's duration floor) and batches naturally |
+
+Budget is checked at tier entry by summing declared model footprints from the registry
+(§8.4), and enforced at runtime against `Debug.getMemoryInfo()` sampling. Exceeding it degrades
+tier rather than risking the OOM killer, which on a capture app means losing the session
+(AC-103). `onTrimMemory(TRIM_MEMORY_RUNNING_CRITICAL)` evicts everything Cold immediately.
+
+The single `infer-heavy` slot is what makes this tractable: only one Hot model executes at a
+time, so peak activation memory is one model's, not the sum.
+
 ---
 
 ## 5. Capture subsystem (M2)
@@ -237,19 +287,37 @@ and is surfaced as a `CaptureGap` with cause `unknown`, not silently tolerated (
 
 ```kotlin
 interface CaptureSource {
-    val format: AudioFormat            // fixed: 16 kHz, mono, PCM16
+    val deviceFormat: AudioFormat      // what the hardware actually gives us
+    val outputFormat: AudioFormat      // always 16 kHz mono PCM16, post-resample
     fun start(): Flow<CaptureEvent>    // Frames, RouteChanged, Interrupted, Resumed, Failed
     fun stop()
     fun routedDevice(): AudioDeviceInfo?   // null on the file source
 }
 ```
 
+**Two formats, not one.** Draft 1 declared the format "fixed: 16 kHz" as though the device
+would simply comply. Most USB Audio Class adapters — the intended input path — expose 44.1 or
+48 kHz and nothing else, and `AudioRecord` construction at an unsupported rate fails outright
+rather than resampling politely. The source therefore opens at the device's native rate,
+negotiating in order of preference (16 000, 48 000, 44 100), and resamples to 16 kHz in the app
+(FR-CAP-2a).
+
+The resampler is a fixed-point windowed-sinc polyphase filter in `:capture-api` — deterministic
+by construction, no platform dependency, identical on desktop and device, which matters because
+**the resampler is in the signal chain of every accuracy number the project publishes**
+(FR-TST-4, AC-97). Its identity and the device rate are recorded on the session. 48 → 16 kHz is
+an exact 3:1 decimation, which is the common case and the cheap one; 44.1 → 16 kHz is a 160:441
+rational conversion and is the reason this is a real filter rather than a decimator.
+
 Two implementations, and the file-backed one ships in M2 (FR-TST-1 → AC-89):
 
-- `AudioRecordSource` (`:capture-android`) — `MediaRecorder.AudioSource.UNPROCESSED` where
-  available, falling back to `VOICE_RECOGNITION`; explicitly **not** `MIC` with effects, which
-  applies AGC and noise suppression that fight the ASR. `setPreferredDevice()` from the user's
-  selection, then `getRoutedDevice()` verification (§5.2).
+- `AudioRecordSource` (`:capture-android`) — `MediaRecorder.AudioSource.UNPROCESSED` when
+  `AudioManager.getProperty(PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)` reports it, falling
+  back to `VOICE_RECOGNITION`; explicitly **not** `MIC` with effects, which applies AGC and
+  noise suppression that fight the ASR. Which source was actually obtained is recorded on the
+  session — it changes the signal, so it changes the numbers.
+  `setPreferredDevice()` from the user's selection, then `getRoutedDevice()` verification
+  (§5.2).
 - `WavFileSource` (`:capture-api`) — replays a WAV at real time or as fast as the consumer
   drains, emitting the same event stream. The harness and every timing-independent test use it.
 
@@ -346,7 +414,22 @@ interface BoundarySource { val squelch: Flow<SquelchState>? }  // from the rig, 
 Silero VAD via sherpa-onnx `VoiceActivityDetector`, on 512-sample (32 ms) windows at 16 kHz.
 The segmenter is an explicit state machine — `IDLE → SPEECH → HANGOVER → CLOSED` — with
 configurable `minSpeechMs` (default 250), `minSilenceMs` (default 600), `maxSegmentMs`
-(default 60 000, splitting a stuck carrier → AC-70) and the pre-roll prepend (FR-SEG-4).
+(default 60 000, splitting a stuck carrier → AC-70), the pre-roll prepend (FR-SEG-4) and a
+`postRollMs` tail past the VAD close (default 400, FR-SEG-8).
+
+**Segment audio is written incrementally, not buffered.** On entering `SPEECH` the segmenter
+opens the staging file and appends every accepted window as it arrives; the pre-roll is
+written first, from the ring snapshot. A 60-second stuck carrier therefore costs one file
+handle, not 60 seconds of heap — and the 8-second ring buffer is sized for pre-roll only,
+which is the only thing it is for.
+
+**Segmentation parameters are tier-invariant** (FR-SEG-7). The segmenter takes no `Tier`
+argument and cannot be given one — the constructor does not accept it. This is a deliberate
+type-level lock, because CON-SEG-1 makes segmentation the one pass whose mistakes are
+permanent, and AC-39 (a T0 capture reprocessing to match a native T3 capture) is only true
+because boundaries are identical across tiers. Anything that would vary boundaries by device
+capability must be rejected in review even where it would help, because the record it produces
+can never be repaired.
 
 **Squelch fusion** (FR-SEG-5 → AC-68), where the rig provides it: squelch open/close define
 the boundaries, VAD decides whether the enclosed audio contains speech. A squelch-bounded
@@ -364,20 +447,39 @@ thresholds (AC-71).
 ### 6.1 Audio storage
 
 Capture writes **raw PCM16** to `pcm/<sessionId>/<transmissionId>.pcm` on the `segment`
-thread — a memcpy-rate operation that cannot stall capture. Encoding to Ogg Opus is a queued
-`STORE` step:
+thread — a memcpy-rate operation that cannot stall capture. Compression is a queued `STORE`
+step, and **the codec is FLAC, not Opus** (FR-STO-2a):
 
-- API 29+: `MediaCodec` `audio/opus` encoder, 16 kHz mono, ~24 kbps VBR, wrapped by an
-  in-house Ogg page writer (`MediaMuxer`'s OGG support is not dependable across the range).
-- API 26–28: Concentus (pure-Java Opus) at the same settings. Slower, and irrelevant at 15%
-  duty on the floor device.
+- FLAC via a small JNI `libFLAC` binding, 16 kHz mono, compression level 5. Roughly 4.5 MB per
+  wall-clock hour at 15% duty, ~13 GB per year of daily 8-hour shifts.
+- The encoder is exactly reversible, so its correctness is checkable rather than assessable:
+  decode the output and compare to the source PCM byte-for-byte before deleting the staging
+  file. A lossy encoder affords no such check.
 
-The PCM file is deleted only after the Opus file verifies (decode header + duration within
-tolerance). A crash between the two leaves a recoverable PCM file, which the reconciliation
-pass (§12.4) finds. Estimated cost ≈ 1.1 MB per wall-clock hour at 15% duty (Q5), which is why
-the default retention is **indefinite with storage-pressure pruning** rather than 30 days —
-adopt the Q5 recommendation and make FR-STO-3's time policy opt-in with the FR-REP-4 warning
-(AC-32, AC-77).
+The PCM file is deleted only after that comparison passes. A crash in between leaves a
+recoverable PCM file, which reconciliation (§12.4) finds.
+
+> **Draft 1 specified Opus here and adopted Q5's indefinite-retention recommendation on its
+> own authority. Both were wrong, and the second was a process error** — Q5 is an open question
+> owned by product, and this document's own rule is to raise a change rather than diverge.
+>
+> The technical error is the more interesting one. Opus is a perceptual codec; Pass C
+> (FR-LEX-4) is sub-phoneme acoustic discrimination on narrowband noisy speech, which is the
+> worst case for perceptual coding. The ordering makes it dangerous rather than merely
+> suboptimal: **the codec is committed in M2, and Pass C is not measured until M4**, so a lossy
+> default would surface at M4 as the core accuracy thesis failing, with no obvious reason to
+> suspect the storage layer. That is R10, and lossless retention retires it outright for about
+> 13 GB a year.
+>
+> Opus remains available and may well be adopted — but only behind FR-STO-2b's measured
+> comparison on the harness (AC-102), and the measurement that matters is its effect on
+> **Pass C**, not on Pass B. Retention *duration* stays FR-STO-3's 30-day default until
+> product answers Q13.
+
+Where continuous-archive capture is enabled (FR-SEG-9, Q14), the unsegmented stream is written
+to `archive/<sessionId>/<startSample>.flac` in bounded chunks, indexed by sample position so a
+re-segmentation pass can seek into it. This is the only mechanism by which segmentation itself
+becomes reprocessable (AC-96), and it is off by default.
 
 ---
 
@@ -392,24 +494,49 @@ CREATE TABLE work_queue_item (
   id INTEGER PRIMARY KEY,
   transmission_id TEXT NOT NULL,
   pass TEXT NOT NULL,
-  state TEXT NOT NULL,            -- READY | LEASED | DONE | FAILED | DEFERRED
+  state TEXT NOT NULL,            -- READY | LEASED | FAILED | DEFERRED   (no DONE; see below)
   priority INTEGER NOT NULL,      -- live traffic > reprocessing
   attempt_count INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
   shed_level INTEGER NOT NULL DEFAULT 0,
-  lease_run_id TEXT,              -- process run uuid; stale lease == crashed
-  lease_expires_at INTEGER,
+  lease_run_id TEXT,              -- process run uuid; a lease from another run == crashed
+  deadline_at INTEGER,            -- wall clock; a pass past this is cancelled (FR-RUN-10a)
   enqueued_at INTEGER NOT NULL,
-  started_at INTEGER,
-  UNIQUE(transmission_id, pass)
+  started_at INTEGER
 );
 CREATE INDEX idx_wq_ready ON work_queue_item(state, priority, enqueued_at);
+CREATE UNIQUE INDEX idx_wq_active ON work_queue_item(transmission_id, pass)
+  WHERE state IN ('READY','LEASED','DEFERRED');
 ```
+
+> **Draft 1 had `UNIQUE(transmission_id, pass)` unconditionally and kept `DONE` rows, which
+> made re-enqueueing a completed pass impossible.** Every reprocess in the product — FR-REP-1,
+> FR-REP-5, the lexicon-update re-run of Pass D (FR-REP-6, the cheapest and highest-value one),
+> and the entire cross-tier flow (FR-REP-8..11) — is exactly that operation. The constraint
+> would have thrown on the second attempt at any pass, and the failure mode is worse than an
+> error: nothing in the acceptance criteria distinguishes "reprocess ran and changed nothing"
+> from "reprocess was silently refused".
+>
+> The fix is a **partial** unique index over active states only, plus deleting rows on
+> completion. The queue is a queue, not a history — pass results and their fingerprints (§3.4)
+> are the durable record of what ran, and they already carry everything a reprocess needs to
+> decide whether to run again.
 
 The orchestrator leases a batch, executes on `infer-heavy`, and commits the pass result and
 the queue transition **in one transaction** with the transmission's state change. On launch,
 any lease whose `lease_run_id` is not the current run is cleared and its transmission returns
 `PROCESSING → CAPTURED` (FR-RUN-8 → AC-47). Passes are idempotent, so replay is always safe.
+
+**Pass timeout** (FR-RUN-10a → AC-99). Each lease carries `deadline_at =
+now + max(minTimeout, segmentDurationMs / expectedRtf × slack)`. A watchdog on the orchestrator
+cancels the coroutine and, where the runtime supports it, the underlying inference session;
+the item goes to `FAILED` with `error = timeout` and normal bounded-retry handling applies.
+
+Draft 1 had no timeout at all. With one inference slot (§4), a single hung native call would
+have stopped **all** processing permanently while capture kept filling the queue behind it —
+producing a live-looking app with a frozen transcript and a growing backlog, which is a far
+worse failure than crashing. F18 covers a pass that errors; nothing covered a pass that never
+returns.
 
 Queue capacity is bounded by **available storage**, not item count (FR-RUN-6): a monitor
 computes free bytes minus a reserve and warns at configurable fractions.
@@ -442,6 +569,17 @@ candidates (FR-RUN-4).
 
 Level 5 is the only path that stops capture. Everything else defers, which is the property
 that makes D16 true.
+
+**Battery is an input, so it must have an output.** Draft 1 listed battery level and charging
+state among the signals and then never used them, which is a signal that does nothing — worse
+than absent, because it reads as covered. The mapping: below a configurable critical threshold
+(default 15%) and not charging, the controller enters **level 4** — capture and enqueue only,
+all passes deferred. Inference is the largest discretionary draw in the app, deferring costs
+nothing permanent because the queue is durable and the audio is retained, and it directly
+extends the thing NFR-3 is about. Processing resumes on charge or on user override.
+
+This is also why level 4 is worth having distinct from level 5: the correct response to *"the
+battery is nearly gone"* is to keep recording and stop thinking, not to stop recording.
 
 ---
 
@@ -482,23 +620,53 @@ cheapest rejects first:
 | 6 | `compression_ratio` | gzip ratio > 2.4 | Post-decode |
 
 A rejected segment is a **result**: state `REJECTED`, rule recorded, audio retained, visible
-behind a UI filter (FR-ASR-6 → AC-8). AC-6 (zero accepted transcripts from a pure-noise tape)
-is the single most important test in the plan and runs on every harness invocation.
+behind a UI filter (FR-ASR-6 → AC-8).
+
+AC-6 — zero accepted transcripts from a pure-noise tape — is the single most important test in
+the plan, and it runs on every harness invocation **against the development noise tape**, with
+the sealed eval noise tape held for M11 (§14A.2, FR-TST-7 → AC-101). Draft 1 said "runs on
+every harness invocation" while the only noise tape the spec provided was eval-only and sealed
+until the last milestone; the two statements could not both be true, and the consequence would
+have been tuning the hallucination controls with no measurement at all.
+
+**Thresholds are fitted, not inherited.** The defaults above are Whisper's conventional values,
+and Whisper's were chosen against web audio, not squelch tails. Each is refitted against the
+development noise tape during M3 and the fitted values recorded as configuration; adopting
+upstream defaults for the project's #1 failure mode would be assuming the answer to the
+question M3 exists to ask (TD3).
 
 ### 8.3 Transcript versioning
 
-`transcript` rows are append-only with exactly one `is_current = 1` per transmission,
-enforced by a partial unique index. Superseding writes a new row and flips the flag in one
-transaction; nothing is deleted (FR-REP-3 → AC-31, P9). Pass A partials are written with
-`pass='A'` and `is_current = 0` from the start — they are never the record (FR-ASR-3).
+`transcript` rows are append-only with exactly one `is_current = 1` per transmission, enforced
+by a partial unique index (`CREATE UNIQUE INDEX ... WHERE is_current = 1`, written by hand in a
+migration — Room's `@Index` cannot express a partial index). Superseding writes a new row and
+flips the flag in one transaction; nothing is deleted (FR-REP-3 → AC-31, P9).
+
+**Pass A partials are not persisted; the Pass A *final* is.** Draft 1 said both — in-memory in
+§15 and written with `is_current = 0` in §8.3 — which is a contradiction with a real cost
+either way: persisting every revision of a live hypothesis writes hundreds of rows per
+transmission for data no one reads, and persisting none of it destroys the second
+architecturally-diverse hypothesis that ensemble fusion needs (FR-ASR-12..14). The split:
+revisions live in an in-memory `StateFlow` keyed by transmission id and are never written; the
+hypothesis current at segment close is written once, `pass='A'`, `is_current = 0`, retained as
+fusion input and as the per-token agreement signal Pass D consumes.
 
 ### 8.4 Model registry
 
 A model is `ModelDescriptor(assetId, version, family, size, quantization, providerBinaries,
 isFineTuned, fineTuneId, trainingDataDescription, licence)` (FR-ASR-10, FR-LEX-28, NFR-6b).
 Tier + provider resolve to a `ModelSet`; a missing or invalid model file falls back to the
-next-lower model and surfaces it (F13). Side-loading a user model is a first-class install
-path through §13 (FR-ASR-8).
+next-lower model and surfaces it (F13). Descriptors also declare a **memory footprint**, which
+§4.3 sums against the tier budget.
+
+**Side-loaded models are untrusted input** (FR-ASR-8). A user-supplied ONNX file is a
+graph a native runtime will execute, and the install path treats it accordingly: validate the
+file is well-formed and its input/output signature matches the expected shape *before*
+activation, load it first in a probe run over a bundled fixture clip, and refuse activation on
+crash or signature mismatch — the previous model stays active (FR-AST-2). The user is told the
+model is unverified and that its accuracy figures are their own. This does not make executing
+a third-party graph safe; it makes it deliberate, which is the most the design can offer for a
+feature D13 requires.
 
 ---
 
@@ -618,6 +786,13 @@ path given WWARA, SDS150 favorites, POTA parks and the Kenwood D-STAR TSV are al
 | POTA parks | `pota-parks/` | SQLite table | Yes |
 | FCC ULS | download on demand | SQLite table + index, ~1.1M rows | **No** (FR-LEX-3) |
 
+The ULS import is the one asset operation with a user-visible cost: ~1.1M records to parse,
+insert and index on a phone — minutes of work and several hundred megabytes. It runs as a
+WorkManager job with progress, is resumable, swaps transactionally against the live table
+(FR-LEX-30), and the app stays fully usable at reduced ranking confidence throughout
+(FR-LEX-3). Only the fields the prior needs are imported — callsign, name, state, licence
+status — not the full record set.
+
 Every asset carries source, licence, format, cadence and import timestamp, shown in settings
 (FR-LEX-28). Import is transactional with checksum and record-count validation and rollback on
 failure (FR-LEX-30 → AC-52, F12).
@@ -665,6 +840,12 @@ Threading on frequency/channel continuity plus gap (FR-SPK-5). Per Q4, the threa
 **channel identity where available, frequency otherwise**, so a scanning receiver does not
 shred threads on every channel hop; `channelName` is already in the entity for this reason.
 
+`Thread` carries an open `kind` field (`qso | net | scanner | unknown`) and participation is a
+join table rather than a two-station assumption, so Q9's net detection — one dominant
+voiceprint alternating with many others on a fixed frequency, and a check-in sequence that is
+an unusually rich source of confirmed callsigns — remains addable in v2 without a migration.
+v1 sets `kind = unknown` and does not detect anything.
+
 The API returns attribution with a **non-optional** state (FR-SPK-10) — `Attribution` has no
 constructor that omits it, which is how the data layer enforces G4 rather than trusting the UI.
 
@@ -686,6 +867,15 @@ transport, serial parameters, capability set, and a poll table of `{send, expect
 map, lookup, intervalMs}`. Validation on load with precise errors; a failing descriptor falls
 back to the null module and never blocks capture (FR-RIG-11 → AC-24).
 
+**Descriptors are untrusted data and they drive a regex engine.** A descriptor is a file the
+user can write or download, and `expect` patterns are applied to every polled response — a
+pattern with catastrophic backtracking would hang the rig thread indefinitely against
+adversarial or merely unlucky input. Patterns are compiled once at load, rejected if they
+exceed a complexity bound (nested unbounded quantifiers), and every match runs against a
+length-capped input under a watchdog. A descriptor that trips any of these falls back to the
+null module with a clear error (FR-RIG-11), which is the same path an invalid descriptor
+already takes.
+
 **Transport** is `usb-serial-for-android` CDC-ACM in `:rig-usb` behind a `SerialTransport`
 interface so the engine itself is testable on the JVM. USB permission is per-attachment;
 persistent access is requested where allowed, and a mid-session re-attach requiring re-grant
@@ -706,11 +896,21 @@ FR-RUN-17 rather than asserting a frequency it cannot time-align (AC-50).
 
 Room entities map 1:1 onto functional spec §8, with these implementation notes:
 
-- **Ids** are `TEXT` ULIDs — sortable by creation time, generated offline, safe to merge
-  across an export/import (FR-STO-6 → AC-80).
-- **FTS5** as an external-content table over `transcript(text)` where `is_current = 1`, kept
-  in sync by triggers; search filters (callsign, frequency, band, time, attribution state,
-  rejected) are ordinary indexed predicates joined against the FTS match (FR-UI-3).
+- **Ids** are `TEXT` ULIDs — sortable by creation time, generated offline, and collision-free
+  across devices, so an export and re-import cannot alias two different records onto one id
+  (FR-STO-6 → AC-80). *Draft 1 said "safe to merge", which overclaims: ULIDs prevent id
+  collisions, they do not resolve whether two databases' Stations or Voiceprints are the same
+  entity. AC-80 requires import onto another device — restore, not merge — and **merging two
+  populated databases is out of scope**, which the export/import UI must say plainly rather
+  than leaving the user to discover.*
+- **FTS5** as an external-content table over the whole `transcript` table, kept in sync by the
+  standard insert/update/delete triggers; `is_current` is filtered in the join, not in the
+  index. *Draft 1 specified the external-content table "where `is_current = 1`" — external
+  content tables take no `WHERE` clause, so that schema does not create. Indexing superseded
+  transcripts costs a little space and buys something useful anyway: search can optionally
+  reach text that was later revised, which P9 ("nothing is deleted quietly") argues for.*
+  Search filters (callsign, frequency, band, time, attribution state, rejected) are ordinary
+  indexed predicates joined against the FTS match (FR-UI-3).
 - **Indices:** `transmission(session_id, sample_position)`, `transmission(started_at_utc)`,
   `transmission(attribution_state)`, `transmission(is_reprocess_candidate)`,
   `callsign_candidate(transmission_id, rank)`, `voiceprint(bound_station_id)`,
@@ -722,7 +922,7 @@ Room entities map 1:1 onto functional spec §8, with these implementation notes:
 
 ### 12.2 Audio store
 
-`audio/<sessionId>/<transmissionId>.opus`, with `pcm/` as the pre-encode staging area
+`audio/<sessionId>/<transmissionId>.flac`, with `pcm/` as the pre-encode staging area
 (§6.1). Paths are **derived**, never stored, so a row and its file cannot disagree about where
 the file should be — only about whether it exists (FR-AST-8).
 
@@ -778,7 +978,12 @@ data class TierProbe(
 
 **Measured, never a device allowlist** (FR-TIER-1). The probe runs at first launch, on model
 configuration change, and when accelerator availability changes; the result is cached with a
-device+model fingerprint. Thresholds are functional spec §6.2 exactly. The user may override
+device+model fingerprint.
+
+Thresholds are functional spec §6.2, where **the RAM and throughput conditions are conjunctive
+at every tier** — a device must both finish the work and hold the models while doing it. The
+tier is additionally rejected if §4.3's summed model footprint exceeds the tier's resident
+budget (FR-TIER-8 → AC-103), which is the check that makes the budget column mean something. The user may override
 in both directions with the override visible (FR-TIER-3), automatic degradation under thermal
 or backlog pressure is reversible and announced (FR-TIER-4 → AC-28, P10), and the UI explains
 inactive capabilities in device terms rather than tier numbers (FR-TIER-6).
@@ -812,6 +1017,45 @@ is not optional.
 
 ---
 
+## 15a. Digest and export (M9) — interfaces only
+
+Included because draft 1 declared `PassId.F_DIGEST` and then never mentioned the digest again,
+which is a poor showing for goal G1 — the digest is the primary user-facing deliverable, not
+an afterthought at the end of the pipeline.
+
+```kotlin
+interface DigestGenerator {                       // deterministic, no LLM (FR-DIG-2)
+    fun generate(window: TimeRange, scope: DigestScope): Digest
+}
+data class Digest(
+    val sections: List<DigestSection>,            // typed, not prose strings
+    val generatedAt: Instant, val fold: SourceRef,
+)
+interface DigestNarrator {                        // optional, T3, additive only (FR-DIG-3)
+    fun narrate(thread: ThreadSummary, entities: ResolvedEntities): String
+}
+interface Exporter { fun export(query: RecordQuery, sink: Sink): ExportResult }  // ADIF, CSV, POTA
+```
+
+Three properties the interfaces enforce rather than merely encourage:
+
+- `Digest.sections` is **typed data, not text**. The deterministic digest renders in the UI,
+  and the same structure is what the optional narrator is handed — so an LLM digest can only
+  ever be *additive* (FR-DIG-3, FR-DIG-6 → AC-86), and the app with no LLM present renders a
+  complete digest from the same objects (AC-84).
+- `DigestNarrator` takes `ResolvedEntities`, never raw transcripts, and its output is rendered
+  through a filter that rejects any token matching the callsign grammar and not present in the
+  supplied entity set. D5 is enforced at the boundary, not trusted to the prompt (FR-DIG-4).
+- Station counts in every section carry attribution state, because a digest that flattens
+  confirmed and inferred fails G4 exactly as a log would (AC-85).
+
+`Exporter` takes the same `RecordQuery` the search UI builds, so a confirmed-only export
+(FR-EXP-5) is a filter rather than a second code path, and `INFERRED` records carry their state
+into every format (FR-EXP-4 → AC-33). ADIF is the one external interop surface in the product
+and is validated against a real logging program during M9 (AC-34).
+
+---
+
 ## 16. Privacy and network enforcement
 
 NFR-6 and FR-OBS-5 are enforced structurally, not by policy:
@@ -836,7 +1080,7 @@ from diagnostic bundles unless explicitly included (FR-LEX-24 → AC-57, AC-58).
 |---|---|
 | Unit, pure modules | JUnit5 on `:core`, `:lexicon`, `:segment`, `:rig`, `:eval` — fast, no device |
 | Golden pipeline | WAV in → full pipeline → asserted records, via `WavFileSource` (AC-89) |
-| Determinism | Fixed seeds, single-threaded reduction in ONNX sessions; two harness runs must be byte-identical (FR-TST-4 → AC-90) |
+| Determinism | Fixed seeds, pinned intra-op thread count, single-threaded reduction in ONNX sessions. Two harness runs are byte-identical **within a fixed (machine, execution provider, thread count)** — see below (FR-TST-4 → AC-90) |
 | Time | `TestClock` everywhere; no real waiting (AC-91) |
 | Rig | `ScriptedFakeRig` (AC-92) |
 | DB migration | Fixture DB per released version (AC-53) |
@@ -849,6 +1093,24 @@ per-lever metrics: WER, callsign precision/recall, boundary precision/recall, re
 by reason, attribution accuracy, reliability diagrams, and a run fingerprint. Every number in
 functional spec §10 is a target until this exists.
 
+**Determinism is bounded, and the bound must be stated with every number.** Bit-identical
+output holds for a fixed machine, execution provider and thread count. It does **not** hold
+across CPU and NPU, across chipsets, or across ONNX Runtime versions — floating-point
+reduction order differs, and the NPU path is quantized besides. AC-90 tests reproducibility
+within a configuration, which is what distinguishes a real improvement from noise; a
+cross-provider comparison is a different measurement and must be run as one. Every report
+therefore carries `(machine, provider, threads, runtime version, fold)`.
+
+**The harness needs an on-device runner, and draft 1 implied desktop only.** AC-36 requires
+each tier to meet its row of the NFR-1 table, and T3 is defined by an NPU that exists only on
+the phone — so a desktop-only harness structurally cannot measure the reference tier, which is
+the tier the entire flagship-first argument rests on. `:eval` therefore ships two entry points
+over one implementation: the JVM `main()` for T0–T2 work and fast iteration, and an
+instrumented-test runner that executes the same code against the same manifest on-device,
+emitting the same report format. The corpus is pushed to app-private storage; the report is
+pulled back. This is an M2 obligation, not an M11 one — otherwise the first attempt to measure
+T3 arrives at the last milestone.
+
 ---
 
 ## 18. Open technical decisions
@@ -858,7 +1120,9 @@ designed in:
 
 | # | Decision | Resolved by | Fallback if it goes badly |
 |---|---|---|---|
-| TD1 | Opus encoding path on API 26–28 (Concentus performance) | M2 | Store PCM and encode on charge |
+| TD1 | FLAC JNI binding versus a pure-JVM encoder; and whether Opus is ever adopted | M2 build, M4 measurement | Store PCM and compress on charge. Lossless stands until FR-STO-2b's comparison exists (R10) |
+| TD7 | Whether 44.1 kHz-only adapters appear in practice, and the resampler's cost on the floor device | M2, with the two dongles bought in M0.1 | Reject 44.1-only devices with a clear message rather than resampling badly |
+| TD8 | Continuous-archive storage cost in practice (Q14) | M2, measured over the M0 recording sessions | Off by default; gated segments only |
 | TD2 | Whether sherpa-onnx exposes Whisper encoder hidden states on Android | M4 | KWS-based `UnitSpotter` (§9.7 option 1) |
 | TD3 | Silero VAD threshold set for squelch-tail audio | M2/M3 against the M0 tape | Squelch fusion where a rig exists (FR-SEG-5) |
 | TD4 | Voiceprint embedding model choice, and whether it separates at all (R4) | M6 | Per-transmission attribution, no threading |
