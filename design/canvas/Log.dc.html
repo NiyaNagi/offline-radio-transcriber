@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+  </div>
+
+  <div style="display: flex; align-items: baseline; padding: 10px 20px 12px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; flex-grow: 1;">Log</div>
+    <div style="font-size: 13px; color: oklch(0.72 0.14 150);">Filter</div>
+  </div>
+
+  <!-- filter chips -->
+  <div style="display: flex; gap: 7px; padding: 0 20px 12px;">
+    <div style="font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 14px; background: oklch(0.30 0.012 250); color: oklch(0.94 0.006 250);">All</div>
+    <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">145.230</div>
+    <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">Named</div>
+    <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">Rejected</div>
+  </div>
+
+  <div style="display: flex; gap: 10px; padding: 0 20px 6px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.46 0.008 250);">
+    <div style="width: 52px;">time</div>
+    <div style="width: 56px;">freq</div>
+    <div style="flex-grow: 1;">station</div>
+    <div>sig</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div style="background: oklch(0.185 0.008 250); border-top: 1px solid oklch(0.26 0.010 250); padding: 6px 20px 5px; display: flex; align-items: center; gap: 6px;">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.56 0.008 250)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="M8 10h8M8 14h5"></path></svg>
+      <div style="font-size: 11px; font-weight: 500; color: oklch(0.60 0.008 250);">QSO · 4 overs · 2 stations</div>
+    </div>
+
+    <div style="display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px;">02:14:07</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px;">145.230</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600;">W7NPC</div>
+        </div>
+        <div style="font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; text-wrap: pretty;">this is whiskey seven november papa charlie, monitoring</div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.008 250); padding-top: 2px;">S7</div>
+    </div>
+
+    <div style="display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px;">02:14:22</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px;">145.230</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; color: oklch(0.86 0.006 250);">K7LWH</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.58 0.008 250); background: oklch(0.24 0.010 250); padding: 1px 5px; border-radius: 3px;">0.82</div>
+        </div>
+        <div style="font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; text-wrap: pretty;">roger that, good copy on the repeater this morning</div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.008 250); padding-top: 2px;">S5</div>
+    </div>
+
+    <div style="display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); background: oklch(0.175 0.010 75);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px;">02:14:41</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px;">145.230</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; color: oklch(0.88 0.006 250);">KE7QRS</div>
+          <div style="font-size: 11px; color: oklch(0.78 0.13 75);">or QRF</div>
+        </div>
+        <div style="font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; text-wrap: pretty;">kilo echo seven quebec romeo sierra, portable</div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.008 250); padding-top: 2px;">S3</div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 10px; padding: 7px 20px; border-top: 1px solid oklch(0.215 0.010 250); background: oklch(0.185 0.012 60);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.70 0.09 60); width: 52px;">02:15:0</div>
+      <div style="display: flex; align-items: center; gap: 6px; flex-grow: 1;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="oklch(0.70 0.09 60)" stroke-width="2" stroke-linecap="round"><path d="M12 8v5M12 16.5v.5"></path><circle cx="12" cy="12" r="9"></circle></svg>
+        <div style="font-size: 11.5px; color: oklch(0.74 0.07 60);">not listening · 38 s · incoming call</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px;">02:16:12</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px;">146.960</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 5px; height: 5px; border-radius: 50%; background: oklch(0.45 0.008 250); flex-shrink: 0; margin: 0 2px;"></div>
+          <div style="font-size: 13px; color: oklch(0.52 0.008 250); font-style: italic;">unknown station</div>
+        </div>
+        <div style="font-size: 13px; line-height: 1.35; color: oklch(0.66 0.006 250); margin-top: 3px;">…any station on frequency, this is</div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.008 250); padding-top: 2px;">S2</div>
+    </div>
+
+    <div style="display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); opacity: 0.45;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px;">02:16:40</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px;">146.960</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; letter-spacing: 0.04em; color: oklch(0.58 0.008 250); text-transform: uppercase;">rejected · squelch tail</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px;">02:17:55</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px;">146.960</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600;">WA7HJR</div>
+          <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.05em; color: oklch(0.16 0.01 150); background: oklch(0.72 0.14 150); padding: 1px 5px; border-radius: 3px; text-transform: uppercase;">new</div>
+        </div>
+        <div style="font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; text-wrap: pretty;">whiskey alpha seven hotel juliet romeo at park kilo dash four four one two</div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.008 250); padding-top: 2px;">S9</div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

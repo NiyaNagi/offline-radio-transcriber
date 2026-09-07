@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+  </style>
+</helmet>
+
+<div style="width: 900px; height: 470px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); padding: 30px 34px; box-sizing: border-box; display: flex; flex-direction: column;">
+
+  <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">The four attribution states</div>
+  <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px; max-width: 620px; line-height: 1.5;">A closed set. Shape carries the meaning so it survives greyscale, colour-vision deficiency and a 4&nbsp;mm marker; colour and the score are reinforcement, never the signal.</div>
+
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin-top: 26px;">
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+        <div style="font-size: 14.5px; font-weight: 600;">Confirmed</div>
+      </div>
+      <div style="font-size: 12.5px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 9px;">The callsign was heard and resolved in <em>this</em> over.</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; margin-top: 13px;">W7NPC</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; border: 2px solid oklch(0.72 0.14 150); box-sizing: border-box;"></div>
+        <div style="font-size: 14.5px; font-weight: 600;">Inferred</div>
+      </div>
+      <div style="font-size: 12.5px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 9px;">Not heard here. Matched by voice to an over where it was.</div>
+      <div style="display: flex; align-items: center; gap: 7px; margin-top: 13px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: oklch(0.86 0.006 250);">K7LWH</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.58 0.008 250); background: oklch(0.25 0.010 250); padding: 1px 5px; border-radius: 3px;">0.82</div>
+      </div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 2px solid oklch(0.78 0.13 75); box-sizing: border-box;"></div>
+        <div style="font-size: 14.5px; font-weight: 600;">Ambiguous</div>
+      </div>
+      <div style="font-size: 12.5px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 9px;">More than one candidate survived. Tap to choose.</div>
+      <div style="display: flex; align-items: center; gap: 7px; margin-top: 13px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: oklch(0.86 0.006 250);">KE7QRS</div>
+        <div style="font-size: 11px; color: oklch(0.78 0.13 75);">or QRF</div>
+      </div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 6px; height: 6px; border-radius: 50%; background: oklch(0.50 0.008 250); margin: 0 3px;"></div>
+        <div style="font-size: 14.5px; font-weight: 600;">Unknown</div>
+      </div>
+      <div style="font-size: 12.5px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 9px;">No callsign heard, no voice match. Nothing is claimed.</div>
+      <div style="font-size: 13px; font-style: italic; color: oklch(0.52 0.008 250); margin-top: 13px;">unknown station</div>
+    </div>
+
+  </div>
+
+  <!-- greyscale proof -->
+  <div style="margin-top: 26px; padding-top: 20px; border-top: 1px solid oklch(0.24 0.010 250);">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250);">Greyscale — the same four, colour removed</div>
+    <div style="display: flex; gap: 42px; margin-top: 15px; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; background: oklch(0.80 0 0);"></div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: oklch(0.92 0 0);">W7NPC</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; border: 2px solid oklch(0.80 0 0); box-sizing: border-box;"></div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: oklch(0.82 0 0);">K7LWH</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.60 0 0); background: oklch(0.25 0 0); padding: 1px 5px; border-radius: 3px;">0.82</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.80 0 0) 50%, transparent 50%); border: 2px solid oklch(0.80 0 0); box-sizing: border-box;"></div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: oklch(0.82 0 0);">KE7QRS</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <div style="width: 6px; height: 6px; border-radius: 50%; background: oklch(0.52 0 0); margin: 0 3px;"></div>
+        <div style="font-size: 13px; font-style: italic; color: oklch(0.55 0 0);">unknown station</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

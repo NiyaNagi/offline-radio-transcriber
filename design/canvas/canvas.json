@@ -1,0 +1,34 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "App" },
+    { "id": "page-2", "name": "Explorations" }
+  ],
+  "artboards": [
+    { "file": "Menu.dc.html", "x": 0, "y": 0, "w": 390, "h": 844, "title": "Drawer", "page": "page-1" },
+    { "file": "Main.dc.html", "x": 490, "y": 0, "w": 390, "h": 844, "title": "Now — home", "page": "page-1" },
+    { "file": "Log.dc.html", "x": 980, "y": 0, "w": 390, "h": 844, "title": "Log", "page": "page-1" },
+    { "file": "Detail.dc.html", "x": 1470, "y": 0, "w": 390, "h": 844, "title": "Drill-in — why this callsign", "page": "page-1" },
+    { "file": "States.dc.html", "x": 490, "y": 984, "w": 900, "h": 470, "title": "Attribution states + greyscale proof", "page": "page-1" },
+    { "file": "Editorial.dc.html", "x": 0, "y": 0, "w": 390, "h": 844, "title": "B · Editorial (original sketch)", "page": "page-2" },
+    { "file": "Timeline.dc.html", "x": 490, "y": 0, "w": 390, "h": 844, "title": "C · Timeline (original sketch)", "page": "page-2" }
+  ],
+  "annotations": [
+    {
+      "id": "integrated",
+      "x": 0,
+      "y": 984,
+      "w": 400,
+      "text": "Integrated: Editorial's typography and rhythm as the base, Timeline's activity chart on the home, Instrument's density in the Log, and the drill-in kept as it was.\n\nThe drawer replaces the tab bar — Log, Threads, Stations, Frequencies and Earlier nights do not fit in tabs, and Capture, Improve records and Settings belong in the same place.\n\nOne addition worth noticing: the drawer footer carries the storage budget (D26), because on this product that is a thing you actually watch.",
+      "page": "page-1"
+    },
+    {
+      "id": "explorations",
+      "x": 980,
+      "y": 0,
+      "w": 360,
+      "text": "The two original direction sketches, kept for reference. The Instrument direction is not here separately — it became the Log view on the App page.",
+      "page": "page-2"
+    }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

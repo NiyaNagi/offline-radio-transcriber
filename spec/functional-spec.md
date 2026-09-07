@@ -102,6 +102,7 @@ determines whether the product is useful.
 | Cloud anything | Hard product constraint | Never |
 | Uniden SDS150 rig module | Deferred by product owner; audio-only covers it | v2 |
 | Digital voice decode (DMR, P25, D-STAR, Fusion) | Requires demodulation, not transcription | v3+ |
+| **Morse / CW decoding** | A different signal-processing problem from speech — tone detection, adaptive speed tracking and timing analysis, not ASR. It shares the app's capture, storage, threading and reader surfaces but none of its transcription stack | **v2.** A natural fit for this product: CW is the other half of amateur voice traffic, callsigns are its dominant payload, and the same callsign grammar and priors (FR-LEX-7..9) apply to a decoded CW string unchanged. Nothing in v1 forecloses it — a decoded CW transmission is a Transmission with a different pass that produced its transcript |
 | Transmit / logging back to the radio | Different product | Never |
 | Multi-device sync | On-device only by decision | v3 |
 | **Live alerts** — notify on a watched callsign, a frequency waking up, or a keyword | Deferred by product owner. The product is retrospective in v1: it records, you read later | **v2.** Nothing in v1 may foreclose it — Pass D already produces the callsign a watchlist would match on, so this is a matching rule and a notification, not an architecture change |
@@ -154,6 +155,7 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D17 | **Location: rig-reported, then device GPS, then manual grid.** Permission optional. | Product owner chose GPS-with-fallback. Rig-reported is placed first because the TH-D75A has GPS for APRS, giving portable accuracy with **no Android location permission at all** |
 | D18 | **Solo build, heavily AI-assisted.** | Product owner. Shapes §15: front-load interfaces and testability, treat implementation throughput as high, put the risk on review gates rather than on sequencing |
 | D19 | **Reference device: OPPO Find X9 Ultra.** Snapdragon 8 Elite Gen 5, 12–16 GB, 7050 mAh, Android 16 / ColorOS 16. | Product owner. It is the *exact* chipset Qualcomm published `large-v3-turbo` NPU benchmarks for, so T3's headline number is measured rather than extrapolated — **and it runs ColorOS, one of the worst offenders for background-killing.** Best case for accuracy, worst case for R5. See §10.7 |
+| D28 | **A persistent voice library**: enrolled voiceprints bound to Stations, surviving sessions, so a regular is named by voice before they identify. Cross-session matches are `INFERRED`, never `CONFIRMED`. | Product owner. FR-SPK-1..10 already bind callsigns to voices *within* a session; this makes it durable, and it compounds — the longer the app runs, the more traffic it can name. See FR-SPK-11..22 |
 | D26 | **Retention is a storage budget, not a time limit** — independent budgets for gated audio and continuous archive, "unlimited" allowed, and bulk export-and-prune by date range when a budget is reached. | Product owner. Disk is what the user actually cares about; a time limit is a proxy for it that is simultaneously too aggressive on a large phone and too lax on a small one. Closes Q5 and Q13 |
 | D27 | **The project lives in its own public repository**, `offline-radio-transcriber`, with the channel-plan tooling repo supplying a versioned lexicon asset bundle. | Product owner. Different toolchain, cadence and audience; one-way coupling through a file. Closes Q15 |
 | D21 | **Public corpora first, synthesis second, hand-labelling last.** The training corpus is assembled from free public data; synthetic callsign audio fills the callsign gap; hand-labelled real amateur audio is reduced to a small **validation** set. | Product owner: "use every data source possible." A search established that 176 h of real off-air ham HF audio, 19,000 h of degraded analog comms with diarization labels, and free ATC corpora all exist — while **no public amateur callsign corpus exists at all**. That inverts M0: the tape is no longer the training set, it is the reality check. See §14A.3 |
@@ -814,6 +816,73 @@ observation. Cross-day cluster identity SHALL require re-confirmation.
 **FR-SPK-10 (M)** — Attribution SHALL NEVER be presented without its confidence state
 (FR-UI-4). This requirement exists at the data layer as well as the UI layer: the API that
 returns an attribution SHALL make the state non-optional.
+
+#### Persistent voice identity (D28)
+
+FR-SPK-1..10 associate a callsign with a voice **within a session**. FR-SPK-9 then deliberately
+forgets it: confidence decays and cross-day identity requires re-confirmation. The consequence
+is that a station heard every night is re-learned from scratch every night, and a regular who
+does not identify in the first ten minutes is `UNKNOWN` until they do.
+
+A **voice library** — durable, enrolled voiceprints bound to Stations — removes that, and it
+compounds: the longer the app runs, the more of the traffic it can name. It is also the
+requirement with the sharpest failure mode in the specification, so the guards are part of it
+rather than a later refinement.
+
+**FR-SPK-11 (M)** — A Station MAY carry a **persistent voiceprint** that survives sessions,
+stored as a durable embedding model with a version and the observations that produced it.
+
+**FR-SPK-12 (M)** — Enrolment SHALL require **multiple `CONFIRMED` observations across at
+least two distinct sessions**, with a configurable minimum. A single confirmation is never
+enough: enrolling from one mis-resolved callsign would bind the wrong identity to a voice and
+then propagate that error forward indefinitely.
+
+**FR-SPK-13 (M)** — A cross-session voice match SHALL yield **`INFERRED`, never `CONFIRMED`**.
+`CONFIRMED` means a callsign was heard and resolved in *this* transmission (§4.1) and a voice
+match is not that, however strong. This is the requirement that keeps NFR-1a's precision
+priority intact as the library grows.
+
+**FR-SPK-14 (M)** — The cross-session match threshold SHALL be **stricter than the
+within-session clustering threshold**, and SHALL be derived from a measured false-match rate
+rather than set by feel. Within a session, a wrong merge affects one conversation; across the
+library, it mislabels a station indefinitely.
+
+**FR-SPK-15 (M)** — Voice matches SHALL be **rankable and rejectable**: where several enrolled
+voiceprints are close, the result is `AMBIGUOUS` (FR-LEX-11's rule applied to identity), not a
+coin flip.
+
+**FR-SPK-16 (M)** — The user SHALL be able to inspect the voice library — which stations are
+enrolled, from how many observations, when last matched — and to **rename, merge, split and
+delete** entries. Deleting SHALL destroy the stored embedding, not merely unlink it.
+
+**FR-SPK-17 (M)** — A user correction of a cross-session match SHALL **de-enrol or re-enrol as
+appropriate** and SHALL be recorded, so the library learns from corrections rather than
+repeating the error (P3).
+
+**FR-SPK-18 (S)** — Handle **voice drift**: a voice changes with illness, fatigue, a different
+microphone or a different radio. Enrolled voiceprints SHALL be updatable from later confirmed
+observations, and a persistently failing match SHALL degrade the enrolment rather than silently
+mis-matching.
+
+**FR-SPK-19 (M)** — The evaluation harness SHALL report **cross-session identification
+precision and recall separately** from within-session clustering (FR-TST-8). They are different
+claims with different failure costs, and one number hides the one that matters.
+
+> **A voiceprint is biometric data about a person who did not consent to being enrolled.**
+> That is a materially different thing from a transcript of a public transmission, and it
+> changes three requirements:
+>
+> - **FR-SPK-20 (M)** — Voiceprints and embeddings SHALL NEVER leave the device. They are
+>   excluded from the corpus contribution channel (amending FR-CON-3), from diagnostic bundles
+>   (FR-OBS-3), and from cloud backup (FR-PLT-5). Export (FR-STO-6) MAY include them only for
+>   the user's own device-to-device transfer, and SHALL say so.
+> - **FR-SPK-21 (M)** — Deleting a Station SHALL delete its voiceprint, and a single "forget
+>   this voice" action SHALL exist.
+> - **FR-SPK-22 (S)** — The voice library SHALL be disableable entirely, with the product fully
+>   functional without it at the cost of cross-session recall.
+>
+> The product already records third parties by design; a persistent biometric identifier of
+> them is a step beyond that, and it should be a deliberate, visible, reversible one.
 
 ### 7.6 FR-RIG · Radio interface
 
@@ -1928,7 +1997,25 @@ Input to the test plan. Grouped by what a test would have to establish.
   rather than being attributed (FR-SPK-2).
 - **AC-20** A thread ends when the frequency changes beyond the configured gap (FR-SPK-5).
 - **AC-67** A Voiceprint that has gone a configured period without a confirmed observation
-  loses confidence, and cross-day identity requires re-confirmation (FR-SPK-9).
+  loses confidence, and cross-day identity requires re-confirmation **unless the station is
+  enrolled in the voice library** (FR-SPK-9, FR-SPK-11).
+- **AC-104** A station enrolled from confirmed observations across two sessions is recognised
+  by voice in a **third** session before identifying, and is marked `INFERRED` — never
+  `CONFIRMED` (FR-SPK-11, FR-SPK-13).
+- **AC-105** A single confirmed observation does **not** enrol a voice (FR-SPK-12). Verified by
+  confirming once and showing no enrolment.
+- **AC-106** **Cross-session identification precision is measured separately** from
+  within-session clustering, on the eval fold, and meets a stated false-match target
+  (FR-SPK-14, FR-SPK-19). *A library that names the wrong regular every night is worse than one
+  that names nobody — NFR-1b applies to identity as well as to callsigns.*
+- **AC-107** Two enrolled voices that both match closely produce `AMBIGUOUS`, not an arbitrary
+  pick (FR-SPK-15).
+- **AC-108** Deleting a station destroys its stored embedding, verified at the database level
+  (FR-SPK-16, FR-SPK-21).
+- **AC-109** No voiceprint or embedding appears in a contribution payload, a diagnostic bundle
+  or a cloud backup (FR-SPK-20).
+- **AC-110** With the voice library disabled, the product functions fully and cross-session
+  recall drops without any loss of precision (FR-SPK-22, NFR-1b).
 
 ### 14.5 Rig interface
 
@@ -2165,6 +2252,7 @@ Distinct from §12, which enumerates *runtime* failures. These are risks to the 
 | R9 | Model or lexicon licensing blocks the Play Store path | Low | Medium — forecloses D11 | Record licence per asset from day one (FR-AST-1, FR-LEX-28) | M0a |
 | R10 | **Lossy audio retention silently caps Pass C, and the damage is invisible until M4** | Medium | **High — reads at M4 as the core thesis failing when it is the codec failing** | Lossless retention until measured (CON-STO-1, FR-STO-2a..c). The codec decision is made in M2; the pass that cares is measured in M4 | **M2 decision, M4 measurement** |
 | R11 | **Segmentation errors are permanent** — no tier, model or later rig connection can recover a clipped or merged transmission | Medium | Medium–High — a silent, uncorrectable accuracy floor under every other number | Tier-invariant segmentation (FR-SEG-7), generous pre/post-roll (FR-SEG-8), optional continuous archive (FR-SEG-9), boundary metrics from M2 (AC-69) | M2 |
+| R15 | **The voice library mislabels a regular, persistently** — a false cross-session match binds the wrong callsign to a voice and repeats it every night, and the user may not notice because it looks like the system working | Medium — it rests on R4, which is itself unproven on narrowband off-air audio | **High** — a confident, durable, wrong attribution is the exact failure G4 exists to prevent, and it is worse than the per-session version because it accumulates | Enrolment needs multiple confirmations across sessions (FR-SPK-12); cross-session matches are `INFERRED` only (FR-SPK-13); a stricter, *measured* threshold (FR-SPK-14); ambiguity rather than a pick (FR-SPK-15); separate precision reporting (FR-SPK-19); one-tap correction that de-enrols (FR-SPK-17) | M6 |
 | R13 | **Synthetic-to-real gap** — a system tuned on TTS-derived callsign audio scores well on synthetic and poorly on real traffic | **High** — this is the expected failure mode of D21/D22, not a tail risk | Medium–High: accuracy claims collapse if not caught | Per-source metrics (FR-TST-8), synthetic barred from eval (FR-TST-9), real-speech splicing rather than pure TTS (D22), and the ~1 h real validation set exists precisely to catch this | M0 / M3 |
 | R14 | **Contributed audio carries third-party voices and callsigns** whose owners never consented, in a product that may be open-sourced | Medium | Medium–High — reputational and possibly legal, and irreversible once published | Access-controlled by default, no republication without a separate decision, corrections-without-audio preferred (FR-CON-6, FR-CON-7), jurisdiction notice (NFR-6c). Q17 must close before contribution is switched on | Before contribution ships |
 | R12 | An English-only base model (`distil-small.en`, per D20) meets worldwide DX traffic (D12) — accented English and non-English speech | Medium | Medium — recall drops on exactly the HF/DX material the eval fold is loaded with | Measure DX separately from local traffic; the grammar path (FR-LEX-8) does not depend on the prose being right; a multilingual base remains selectable per profile (FR-ASR-11) | M0a / M4 |
