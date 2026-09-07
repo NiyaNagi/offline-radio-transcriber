@@ -39,7 +39,7 @@ class SherpaAsrEngineTest {
     }
 
     @Test
-    @Requirement("technical-design-8.1", "FR-ASR-1")
+    @Requirement("FR-ASR-1")
     fun `transcribe stamps the decoded hypothesis with the active session's model ref`() = runTest {
         val session = StubSession(descriptor())
         val engine = SherpaAsrEngine(

@@ -1,4 +1,4 @@
-package org.ort.onnx
+﻿package org.ort.onnx
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -27,7 +27,7 @@ class ModelResidencyManagerTest {
     )
 
     @Test
-    @Requirement("technical-design-4.3")
+    @Requirement("FR-TIER-8")
     fun `PINNED model is never evicted under pressure`() {
         val factory = FakeOnnxSessionFactory()
         val mgr = ModelResidencyManager(factory, budgetBytes = 1_000)
@@ -41,7 +41,7 @@ class ModelResidencyManagerTest {
     }
 
     @Test
-    @Requirement("technical-design-4.3")
+    @Requirement("FR-TIER-8")
     fun `HOT models evict oldest-first but a floor of one stays resident`() {
         val factory = FakeOnnxSessionFactory()
         val mgr = ModelResidencyManager(factory, budgetBytes = 10_000)
@@ -58,7 +58,7 @@ class ModelResidencyManagerTest {
     }
 
     @Test
-    @Requirement("technical-design-4.3")
+    @Requirement("FR-TIER-8")
     fun `loading a HOT model beyond the tier budget evicts an existing HOT model to make room`() {
         val factory = FakeOnnxSessionFactory()
         val mgr = ModelResidencyManager(factory, budgetBytes = 150)
@@ -74,7 +74,7 @@ class ModelResidencyManagerTest {
     }
 
     @Test
-    @Requirement("technical-design-4.3")
+    @Requirement("FR-TIER-8")
     fun `a load that would exceed budget with no evictable HOT model is refused, not silently oversized`() {
         val factory = FakeOnnxSessionFactory()
         val mgr = ModelResidencyManager(factory, budgetBytes = 50)
@@ -87,7 +87,7 @@ class ModelResidencyManagerTest {
     }
 
     @Test
-    @Requirement("technical-design-4.3")
+    @Requirement("FR-TIER-8")
     fun `COLD model is released immediately after use regardless of block outcome`() {
         val factory = FakeOnnxSessionFactory()
         val mgr = ModelResidencyManager(factory, budgetBytes = 1_000)
@@ -107,7 +107,7 @@ class ModelResidencyManagerTest {
     }
 
     @Test
-    @Requirement("technical-design-4.3")
+    @Requirement("FR-TIER-8")
     fun `a COLD model is released even when the block throws`() {
         val factory = FakeOnnxSessionFactory()
         val mgr = ModelResidencyManager(factory, budgetBytes = 1_000)

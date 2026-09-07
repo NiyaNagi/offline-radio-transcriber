@@ -32,6 +32,41 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (evening, cont. — coverage-matrix hygiene)
+
+### (pending) — Fix three misused `@Requirement` tags; note a real gap in the coverage tool
+
+**Scope:** `onnx/src/test/kotlin/org/ort/onnx/ModelResidencyManagerTest.kt`,
+`asr-sherpa/src/test/kotlin/org/ort/asrsherpa/SherpaAsrEngineTest.kt`,
+`asr-api/src/test/kotlin/org/ort/asrapi/TranscriptSeriesTest.kt`, `results/coverage-matrix.md`.
+**Requirements/ACs:** FR-TIER-8 (resident budget is a requirement on the tier), AC-31 (superseded
+transcript retained, exactly one current) — both now correctly traced from P10's tests instead of
+a bogus id.
+**What changed:** `coverageMatrix` flagged 4 orphan test-requirement-id pairs after P10 landed.
+Three were genuinely wrong: `ModelResidencyManagerTest`, `SherpaAsrEngineTest` and
+`TranscriptSeriesTest` cited section references (`"technical-design-4.3"`, `"technical-design-8.1"`,
+`"technical-design-8.3"`) as if they were requirement ids in `@Requirement(...)` — that annotation
+exists for spec ids the coverage matrix indexes (`AC-*`/`FR-*`/`NFR-*`/`CON-*`), not section
+numbers, which aren't ids at all. Replaced with the real ids that actually apply: `FR-TIER-8` (the
+tier resident-budget requirement `ModelResidencyManagerTest` establishes) and `AC-31` (the
+transcript-versioning criterion `TranscriptSeriesTest` establishes); `SherpaAsrEngineTest`'s tag
+already carried `FR-ASR-1` alongside the bogus one, so that one was simply dropped.
+**The fourth orphan, `"F13"` in `RejectionPipelineTest`/`ModelRegistryTest`, is NOT a test bug —
+it's a real gap in `buildSrc`'s `CoverageMatrix.kt`.** `F13` ("model file missing or incompatible")
+is a genuine id from functional-spec.md's failure-mode table (§12), correctly cited by both test
+files. `CoverageMatrix.REQUIREMENT`'s regex only recognises `FR|AC|NFR|CON` prefixes, missing the
+bare `F\d+` failure-mode ids, and (per a quick check against `AGENTS.md`'s own "cited by id"
+example list — `D28`, `R15`) likely also misses `D\d+` (decisions), `R\d+` (risks) and `Q\d+`
+(open questions) entirely, none of which would be flagged as covered or orphaned — they'd just
+silently not count. **Left open, not fixed here**: widening `CoverageMatrix`'s regex to recognise
+`F`/`D`/`R`/`Q` ids is a `:buildSrc` change outside this session's scope (no session currently owns
+`:buildSrc`/`tools/spec-check`), but it's a real, demonstrated gap in a tool the whole project
+relies on for traceability — worth a dedicated small session before the coverage numbers are
+quoted anywhere important.
+**Verified:** `./gradlew :onnx:test :asr-sherpa:test :asr-api:test coverageMatrix` — all green;
+orphan count dropped from 4 to 1 (the remaining `F13` is the tool gap above, not a code defect).
+**Left open / not done:** the `CoverageMatrix.kt` regex gap itself (see above).
+
 ## 2026-09-07 (evening — P10 lands)
 
 ### P10 · ASR and hallucination control (`:onnx`, `:asr-api`, `:asr-sherpa`)

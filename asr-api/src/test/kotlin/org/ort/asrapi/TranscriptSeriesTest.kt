@@ -10,7 +10,7 @@ import org.ort.testing.Requirement
 class TranscriptSeriesTest {
 
     @Test
-    @Requirement("FR-REP-3", "technical-design-8.3")
+    @Requirement("FR-REP-3", "AC-31")
     fun `superseding writes a new current version and retains the old one, not deleting it`() {
         val series = TranscriptSeries(TransmissionId.new())
 
@@ -23,7 +23,7 @@ class TranscriptSeriesTest {
     }
 
     @Test
-    @Requirement("technical-design-8.3")
+    @Requirement("AC-31")
     fun `exactly one version is current after any number of supersessions`() {
         val series = TranscriptSeries(TransmissionId.new())
         repeat(5) { i -> series.supersede(TranscriptPass.REPROCESS, "version $i", AssetRef("m", "1")) }
