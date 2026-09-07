@@ -48,7 +48,11 @@ underlying breakdown each prompt draws on.
 **Wave D — the M2 gate, then transcription.**
 
 - [ ] **P9 · GATE: 8-hour run on the reference device** *(device, mostly manual)*
-- [ ] **P10 · ASR and hallucination control** *(`:onnx`, `:asr-api`, `:asr-sherpa`)*
+- [x] **P10 · ASR and hallucination control** *(`:onnx`, `:asr-api`, `:asr-sherpa`)* — done 2026-09-07;
+  AC-7 and AC-8 pass for real against a `FakeAsrEngine`; AC-6 does NOT pass for real — no
+  development noise tape exists yet (Q2/Q16) and no real ONNX ASR model was available in this
+  sandbox, so only the six-control *mechanism* was proven against synthetic noise-shaped decodes
+  (`SyntheticNoiseGateMechanismTest`, explicitly not claimed as AC-6) — see CHANGELOG.md
 - [ ] **P11 · End-to-end, then the M4 fork** *(`:pipeline`, decision gate)*
 
 **Yours, not a session:** record the validation hour and write the labelling protocol (Q16).
