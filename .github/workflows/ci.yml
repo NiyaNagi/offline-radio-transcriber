@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Mirrors test-plan §8. Device and endurance tests are deliberately absent — a hosted runner
+# cannot prove them and pretending otherwise is false confidence (see emulator.yml for the
+# one exception, AC-93, which is opt-in).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  spec:
+    name: spec-integrity (§8.1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: seven spec-integrity checks
+        run: python tools/spec-check/spec_check.py
+      - name: meta-guard — the checker catches an injected defect
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest tools/spec-check -q
+
+  lint:
+    name: lint + dependency rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: dependencyRules (technical design §2)
+        run: ./gradlew dependencyRules
+      - name: ktlint + detekt
+        run: ./gradlew ktlintCheck detekt
+      - name: meta-guard unit tests (ModuleGraph, CoverageMatrix)
+        run: ./gradlew -p buildSrc test
+
+  unit:
+    name: unit — JVM modules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: >-
+          ./gradlew
+          :core:test :testing:test
+          :onnx:test :capture-api:test :segment:test :asr-api:test :asr-sherpa:test
+          :lexicon:test :identity:test :rig:test :eval:test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jvm-test-reports
+          path: "**/build/reports/tests/**"
+
+  android:
+    name: android — Robolectric + assemble
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: android unit tests
+        run: >-
+          ./gradlew
+          :data:testDebugUnitTest :net:testDebugUnitTest :rig-usb:testDebugUnitTest
+          :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
+      - name: assemble debug APK
+        run: ./gradlew :app:assembleDebug
+      - name: AC-93 / NFR-5 — the APK targets the minimum supported API level
+        run: |
+          set -euo pipefail
+          AAPT="$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt | sort | tail -1)"
+          BADGING="$("$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk)"
+          echo "$BADGING" | grep -E "sdkVersion:'26'" \
+            || { echo "::error::minSdkVersion is not 26"; echo "$BADGING" | grep sdkVersion; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+  report:
+    name: coverage matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew coverageMatrix
+      - name: publish to the run summary
+        run: cat results/coverage-matrix.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-matrix
+          path: results/coverage-matrix.md

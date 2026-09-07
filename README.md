@@ -4,13 +4,13 @@ An Android application that listens to amateur and scanner radio traffic, transc
 entirely offline, resolves callsigns by matching a lexicon **against the audio itself**,
 groups transmissions into conversations, and presents a searchable log plus a digest.
 
-**Status: specification complete, implementation not started.** This repository currently holds
-the research record, the specifications and the plan. No code yet — the next commits are the
-corpus pipeline.
+**Status: build wave A started.** The specification set is complete and adversarially audited.
+The Gradle multi-module skeleton (technical design §2) is now in place — every module wired
+with its permitted dependencies, `:core` and `:testing` implemented in full under strict TDD,
+CI green. Everything else is an empty-but-wired stub awaiting its build-plan wave.
 
-> **Licence: not yet chosen.** The project intends to be open source (D11), but until a LICENCE
-> file lands here, default copyright applies and nobody should assume rights to reuse this.
-> That is a to-do, not a position.
+**Licence: Apache-2.0** ([`LICENSE`](LICENSE)). Permissive, with an explicit patent grant and
+a clear Play Store path — recorded against D11 and the constitution's governance section.
 
 ## Status
 
@@ -41,6 +41,26 @@ the technical design.
 audio-level resolution does not beat text-level resolution on the M0 tape (risk R3), Pass C
 is deleted and the lexicon layer collapses to the text path. Detailed plans for what follows
 that decision would be detailed plans for the wrong thing.
+
+## Building
+
+Requires JDK 17 and (for the Android modules) the Android SDK with `platforms;android-34` and
+`build-tools;34.0.0`. `ANDROID_HOME` must point at the SDK.
+
+```bash
+./gradlew build                 # everything: compile, ktlint, detekt, tests
+./gradlew dependencyRules       # module-boundary enforcement (technical design §2) — must pass
+./gradlew :core:test            # one module
+./gradlew coverageMatrix        # regenerates results/coverage-matrix.md (test-plan §9)
+./gradlew -p buildSrc test      # the dependencyRules / coverageMatrix meta-guards
+python tools/spec-check/spec_check.py   # the seven spec-integrity checks (test-plan §8.1)
+cd tools/spec-check && python -m pytest # its meta-guard
+```
+
+Module layout is technical design §2: `:core` and the `-api` / `:lexicon` / `:eval` modules
+are pure JVM with no Android dependency; `:capture-android`, `:rig-usb`, `:data`, `:pipeline`,
+`:net` and `:app` are Android. The `dependencyRules` task fails the build on any forbidden
+edge — it is not a convention, it is enforced (constitution VII).
 
 ## Reading order
 

@@ -1,0 +1,37 @@
+name: Emulator (AC-93)
+
+# The automated half of AC-93 / NFR-5: the app installs and runs at the minimum supported
+# API level. An emulator cannot go on the push CI (test-plan §8), so this is opt-in and
+# weekly. The other half — the merged-manifest minSdkVersion assertion — is in ci.yml and
+# does run on every push.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+jobs:
+  min-sdk-install:
+    name: install and run on API 26
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: AVD boot + connected test at minSdk
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 26
+          arch: x86
+          target: default
+          disable-animations: true
+          script: ./gradlew :app:connectedDebugAndroidTest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: connected-test-report
+          path: app/build/reports/androidTests/**

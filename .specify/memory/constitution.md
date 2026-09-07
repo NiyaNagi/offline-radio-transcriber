@@ -1,6 +1,14 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.0.0 → 1.0.1
+
+Bump rationale (1.0.1, PATCH): the single Governance "Outstanding" item — the missing LICENSE —
+  is resolved. The repository now carries an Apache-2.0 LICENSE (build-plan P1). No principle
+  text changed; this is a clarification of status only. README's licence note updated in the
+  same change.
+
+-- prior --
 Version change: (none) → 1.0.0
 
 Bump rationale: Initial ratification. Derived from the project's existing decision record
@@ -225,7 +233,7 @@ is the only kind that survives a long project built by one person and an agent.
   PATCH = clarification.
 - **Compliance.** Any deviation MUST be justified in the change that introduces it. An
   unjustified violation is a defect regardless of whether tests pass.
-- **Outstanding.** The repository is public and carries **no LICENSE file**, which contradicts
-  D11's open-source intent and leaves every reader without rights. This must be resolved.
+- **Outstanding.** None. *(Resolved 2026-09-07: the repository now carries an `Apache-2.0`
+  `LICENSE`, chosen for the explicit patent grant and the Play Store path — D11, build-plan P1.)*
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-07
+**Version**: 1.0.1 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-07

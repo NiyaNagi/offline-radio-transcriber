@@ -1,0 +1,11 @@
+# Keep line endings LF everywhere — ktlint's `end_of_line = lf` (see .editorconfig) and CI
+# run on Linux; a CRLF working copy on Windows would otherwise fail the style check locally.
+* text=auto eol=lf
+
+*.bat        text eol=crlf
+*.jar        binary
+*.flac       binary
+*.png        binary
+*.pdf        binary
+gradlew      text eol=lf
+gradle/wrapper/gradle-wrapper.jar binary

@@ -1,0 +1,43 @@
+# detekt configuration — layered on top of the bundled defaults (buildUponDefaultConfig = true).
+# Kept deliberately light: the project's real guardrails are the dependency-rules task, the
+# spec-integrity checks and strict TDD, not style nagging.
+
+build:
+  maxIssues: 0
+
+complexity:
+  LongMethod:
+    threshold: 80
+  LongParameterList:
+    functionThreshold: 9
+    constructorThreshold: 10        # PassFingerprint and friends are wide by design
+  TooManyFunctions:
+    active: false
+  CyclomaticComplexMethod:
+    threshold: 20
+
+style:
+  MaxLineLength:
+    maxLineLength: 120
+  ReturnCount:
+    max: 5
+  ForbiddenComment:
+    active: false
+  MagicNumber:
+    active: false
+  UnusedPrivateMember:
+    active: true
+  WildcardImport:
+    active: true
+
+naming:
+  FunctionNaming:
+    # test names carry requirement ids: `AC_91_...`
+    ignoreAnnotated: ['Test']
+    functionPattern: '[a-zA-Z][a-zA-Z0-9_]*'
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: false

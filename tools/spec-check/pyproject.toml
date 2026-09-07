@@ -1,0 +1,15 @@
+[project]
+name = "ort-spec-check"
+version = "0.1.0"
+description = "Spec-integrity checks for the offline-radio-transcriber specification set (test-plan §8.1)."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+spec-check = "spec_check:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

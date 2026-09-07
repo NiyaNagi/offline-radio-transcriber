@@ -1,0 +1,54 @@
+import org.ort.gradle.CoverageMatrixTask
+import org.ort.gradle.DependencyRulesTask
+import org.gradle.api.artifacts.ProjectDependency
+
+// Plugin versions come from buildSrc/build.gradle.kts, which puts AGP and the Kotlin plugin
+// on every project's classpath. Modules apply them by id (no version) via the `ort.*`
+// convention plugins, so there is deliberately no `plugins {}` block here.
+
+/**
+ * `dependencyRules` — the structural enforcement of technical design §2. Wired from the
+ * evaluated project graph so the task input is a plain map (config-cache friendly).
+ */
+val dependencyRules = tasks.register<DependencyRulesTask>("dependencyRules") {
+    group = "verification"
+    description = "Fails the build on any forbidden module dependency edge (technical design §2)."
+}
+
+val checkedConfigurations = setOf("api", "implementation", "compileOnly")
+
+gradle.projectsEvaluated {
+    val actual: Map<String, List<String>> = subprojects.associate { sp ->
+        val deps: List<String> = sp.configurations
+            .filter { it.name in checkedConfigurations }
+            .flatMap { cfg -> cfg.dependencies.filterIsInstance<ProjectDependency>() }
+            .map { dep -> dep.dependencyProject.path }
+            .toSortedSet()
+            .toList()
+        sp.path to deps
+    }
+    dependencyRules.configure { actualGraph.set(actual) }
+}
+
+/** `coverageMatrix` — regenerates results/coverage-matrix.md (test-plan §9). */
+tasks.register<CoverageMatrixTask>("coverageMatrix") {
+    group = "documentation"
+    description = "Regenerates results/coverage-matrix.md from spec ids and test sources."
+    specDir.set(layout.projectDirectory.dir("spec"))
+    testRoots.setFrom(
+        subprojects.flatMap {
+            listOf(
+                it.layout.projectDirectory.dir("src/test/kotlin"),
+                it.layout.projectDirectory.dir("src/androidTest/kotlin"),
+            )
+        },
+    )
+    output.set(layout.projectDirectory.file("results/coverage-matrix.md"))
+}
+
+/** A root `check` that also runs the meta-guards, so CI's lint job is one invocation. */
+tasks.register("check") {
+    group = "verification"
+    dependsOn(dependencyRules)
+    dependsOn(subprojects.map { "${it.path}:check" })
+}

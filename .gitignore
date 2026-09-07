@@ -1,0 +1,31 @@
+# Gradle / Android
+.gradle/
+build/
+*/build/
+buildSrc/build/
+local.properties
+*.iml
+.kotlin/
+
+# IDE
+.idea/
+.vscode/
+*.hprof
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (corpus/, tools/)
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Test / corpus artifacts that are large or fold-sensitive
+/corpus/data/
+/corpus/downloads/
+*.flac
+!**/src/test/resources/**/*.flac
