@@ -55,8 +55,11 @@ underlying breakdown each prompt draws on.
   (`SyntheticNoiseGateMechanismTest`, explicitly not claimed as AC-6) — see CHANGELOG.md
 - [ ] **P11 · End-to-end, then the M4 fork** *(`:pipeline`, decision gate)*
 
-**Yours, not a session:** record the validation hour and write the labelling protocol (Q16).
-Do it any time after P2; P6's probes and P7's harness both get better once it exists.
+**Yours, not a session:** record the validation hour (Q2) and pilot the labelling protocol (Q16).
+Do it any time after P2; P6's probes and P7's harness both get better once it exists. **The
+protocol itself is now drafted** — [`docs/reference/labelling-protocol.md`](../docs/reference/labelling-protocol.md) —
+so this is down to recording, then labelling session one under it and amending it per its own
+"open items for the pilot round" section.
 
 **Yours, not a session — R4's corpus.** Fearless Steps needs a human registration step no
 session can do unattended (challenge sign-up + data-portal request, or a full-corpus request

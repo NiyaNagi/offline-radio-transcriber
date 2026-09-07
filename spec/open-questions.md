@@ -422,9 +422,16 @@ build and its history.
 
 ---
 
-### Q16 — Corpus and labelling protocol · **NEW, and it gates M0** · owner: product + engineering
+### Q16 — Corpus and labelling protocol · **DRAFTED, not yet piloted** · owner: product + engineering
 
 **Question.** What exactly gets labelled, by what rules?
+
+**2026-09-07: a draft protocol answering every question below is written** —
+[`docs/reference/labelling-protocol.md`](../docs/reference/labelling-protocol.md). This does
+**not** close Q16: per this question's own recommendation, closing it requires labelling session
+one under the draft, finding what's still ambiguous, and amending it — the pilot round — which
+needs the Q2 recording to exist first. Treat the draft as ready to use the moment that recording
+happens, not as a settled answer yet.
 
 **Why it matters.** M0 is the blocking milestone, its dominant cost is hand-labelling, and the
 plan currently specifies that cost in one line. Labelling without a written protocol produces a

@@ -30,6 +30,7 @@ commits are the corpus pipeline and the Gradle skeleton.
 | `spec/audit-2026-09-06.md` | Adversarial audit record |
 | `research/01`–`04` | Background. `01` is historical and superseded |
 | `docs/reference/th-d75a-cat.md` | Verified radio CAT command set |
+| `docs/reference/labelling-protocol.md` | Q16's draft labelling protocol — ready to use, not yet piloted |
 | `design/canvas/` | UI direction — dark-first, drawer nav, four-state markers |
 
 **Requirements are cited by id** — `FR-LEX-8`, `AC-47`, `NFR-1a`, `D28`, `R15`. When you touch

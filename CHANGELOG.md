@@ -32,6 +32,39 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (evening, cont. — drafting Q16 while P11 and a P10 follow-up run)
+
+### (pending) — Draft the Q16 labelling protocol
+
+**Scope:** `docs/reference/labelling-protocol.md` (new), `spec/open-questions.md`,
+`spec/build-plan.md`, `AGENTS.md` — documentation only, no code.
+**Requirements/ACs:** Q16 (does not close it — see below), Q2 (records what audio to capture and
+why the noise tape specifically cannot be substituted).
+**What changed:** while P11 and a P10 follow-up ran in the background, drafted a concrete
+labelling protocol answering every open question Q16 lists: transmission boundaries are defined
+as keying edges (PTT down/up), matching what `:segment`'s `AC-69` actually measures rather than a
+speech-content boundary; doubling gets two rows when separable, one `doubled_unresolvable` row
+when not; partial audibility is **never omitted** (three certainty levels — `certain`/
+`uncertain`/`partial` — with an explicit rule against looking a doubtful callsign up against a
+database while labelling, which would leak the very prior AC-10/AC-11 test into the ground
+truth); threads default to a 20-minute same-frequency/shared-participant continuation rule,
+explicitly flagged as an unvalidated default for the pilot to test; phonetic/tactical/club-station
+handling; non-speech content (DTMF, courtesy tones, data bursts, CW IDs) is out of ASR scope and
+never scored as a missed callsign; and a concrete TSV output schema at transmission grain. Also
+investigated whether a downloaded CC0 "radio static" clip could stand in for the real development
+noise tape — **concluded no and did not pursue it**: Q2 is explicit that AC-6 needs real squelch
+tails from the two specific radios (TH-D75A, SDS150), not generic noise, so a substitute would be
+actively misleading rather than useful groundwork. Updated `open-questions.md`'s Q16 entry to
+"DRAFTED, not yet piloted" (not closed — closing it needs the pilot round this document itself
+prescribes, which needs the Q2 recording first), added the doc to `AGENTS.md`'s reference table,
+and updated `build-plan.md`'s "yours, not a session" line to point at it.
+**Verified:** `python tools/spec-check/spec_check.py` (7/7 OK — Q16's status-line edit didn't
+break the closed/open-question-to-decision mapping check).
+**Left open / not done:** the actual recording (Q2) and the pilot labelling round (Q16's real
+closing condition) — both explicitly require the user, not a session. The document's own "open
+items for the pilot round" section lists three specific defaults (the 20-minute thread gap
+foremost) that should be revisited once real audio exists.
+
 ## 2026-09-07 (evening, cont. — coverage-matrix hygiene)
 
 ### (pending) — Fix three misused `@Requirement` tags; note a real gap in the coverage tool
