@@ -32,6 +32,121 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (afternoon, cont. — P8 and the real R1 run both land)
+
+### 36c19ad — Merge branch 'worktree-agent-aa4aa2aeea1f1ebaa' (P8 into main)
+
+**Scope:** brings P8's `:capture-android`, `:pipeline`, `:app` additions onto `main`.
+**Requirements/ACs:** see the P8 entry below.
+**What changed:** merge-only; one conflict in `spec/build-plan.md`'s progress checklist (this
+branch and the P7 merge had both ticked adjacent lines independently), resolved by keeping both
+ticks.
+**Verified:** `./gradlew build dependencyRules` green post-merge (818 tasks); `./gradlew
+coverageMatrix` regenerated (63 → 90 requirements covered).
+**Left open / not done:** n/a (merge).
+
+### 158a61c — P8 · Android capture spine: AudioRecordSource, shed controller, capture status surface
+
+**Scope:** `:capture-android`, `:pipeline`, `:app` (status surface and permissions only, per the
+prompt's ownership boundary — `:data`, `:capture-api`, `:segment`, `:core`, `:testing`, `corpus/`
+confirmed untouched).
+**Requirements/ACs:** AC-2/AC-98 (route verified after first read and on route change; a
+deliberately-selected built-in mic is legal but persistently labelled), AC-5 (unclean end
+reported next launch with its last heartbeat), AC-46 (shed order followed, no audio lost at any
+level), AC-48/AC-49 (interruption produces a correctly-bounded `CaptureGap`, resumes, and a gap
+is distinguishable from silence), AC-61 (notification never contains transcript text), AC-65
+(liveness comes from the heartbeat — verified by forcing `isIgnoringBatteryOptimizations()` to
+return `true` and confirming the session is still treated as dead), AC-96 (a continuously-archived
+session is re-segmentable with different VAD parameters), AC-97 (resampler identity recorded),
+AC-99 (`PassDrainRunner` cancels a hanging pass at its deadline and keeps draining), AC-103 (model
+residency stays inside the tier budget). AC-64 (the 8-hour endurance claim itself) is explicitly
+**partial** — the mechanism (`ProveItAnalyzer`) is built and tested, but the actual prediction
+needs the reference device and is P9's job, not something Robolectric can settle.
+**What changed:** `AudioRecordSource` (implements `:capture-api`'s `CaptureSource`; route
+verification after the first read and on every route change, halt rather than silently
+fall back, interruption → `BackoffLadder` (1/2/5/10/30s) → auto-resume); `RouteVerifier`,
+`GapTracker`; the FLAC store (`FlacStore`: stage → encode → decode-and-compare → delete only on
+byte match) backed by `DeflatePredictiveCodec` — a pure-Kotlin order-1-delta-prediction +
+DEFLATE codec substituted for JNI libFLAC, which can't be built in this sandbox; genuinely
+lossless and never trusted blindly (`FlacStore` verifies every encode itself); the
+continuous-archive writer (`ContinuousArchiveWriter`/`ArchiveReader`, default off, sample-indexed
+chunks; re-segmentation lives in `:pipeline`'s `ReSegmenter` since `:capture-android` may not
+depend on `:segment`); `CaptureService` (foreground, wake lock, heartbeat) with a file-backed
+`HeartbeatStore`, `UncleanEndDetector`, `LivenessChecker`; the OEM guidance table
+(`OemGuidanceTable`/`OemGuidanceResolver`, four ColorOS steps + generic fallback);
+`ProveItAnalyzer` (the 30-minute test's reporting mechanism); in `:pipeline`: `ShedController`
+(levels 0–5, hysteresis, battery-critical override), `ModelResidency`/`ResidencyBudgetChecker`,
+`Pass`/`PassDrainRunner` (orchestrator watchdog over `:data`'s `WorkQueue.runLeased`),
+`GapPersister` (maps capture-android's `GapRecord` → `:data`'s `CaptureGapEntity`),
+`CaptureStatus`/`CaptureStatusRepository`; in `:app`: `StatusActivity` + `StatusViewStateMapper`
+(plain Android views, not Compose — `ort.android-app.gradle.kts` has no Compose wiring yet; the
+state-holder logic is Compose-agnostic so this doesn't block adding it later) and
+`PermissionsFlow` (RECORD_AUDIO → notifications → battery-exemption, the last kept
+diagnostic-only per AC-65's point that liveness must never depend on that API).
+**Verified:** `./gradlew dependencyRules` (every edge permitted), `./gradlew
+:capture-android:check :pipeline:check :app:check` (tests + ktlint + detekt + lint, green),
+`./gradlew build` (whole repo, green).
+**Left open / not done:** three documented, scope-bounded deviations: (1) FLAC is substituted by
+the pure-Kotlin codec above, not JNI libFLAC — flagged as a follow-up, not silently swapped; (2)
+`:app` has no Compose UI yet, plain views only; (3) shed events live in `ShedController`'s memory
+only, not persisted to a `:data` table (no `shed_event` table exists and this prompt couldn't
+touch `:data` to add one). Also: `:pipeline` depends on `:capture-android` via `api` rather than
+`implementation` specifically so `:app` can read capture-status types without a new declared
+module edge — `dependencyRules` checks each module's own declared edges, so this is compliant
+with the graph as coded, but worth a second look at the next `:pipeline`/`:app` session. AC-64,
+AC-66's actual-ColorOS-hardware behaviour, and the 8-hour endurance claim all remain P9's job on
+the physical reference device.
+
+### 144e21b — Merge branch 'worktree-agent-a7b31df9844daf804' (the real R1 run into main)
+
+**Scope:** brings the real (non-fixture) R1 run onto `main`: `corpus/pyproject.toml`,
+`corpus/src/corpus/probes/lora_export.py`, `corpus/src/corpus/probes/_sherpa_whisper_export.py`
+(new), `corpus/tests/test_probe_lora_export.py`, `results/r1-lora-export.md`.
+**Requirements/ACs:** R1 (probe gate) — see the entry below.
+**What changed:** merge-only, no conflicts (disjoint from every other concurrently-landed branch).
+**Verified:** `cd corpus && python -m pytest -q` post-merge — 70 passed, 1 skipped (the real-R1
+test skips without `ORT_RUN_REAL_R1=1` set, by design, so CI never pays its ~111s cost or needs
+the real toolchain installed).
+**Left open / not done:** n/a (merge).
+
+### 269b578 — P6 follow-up · R1 real run
+
+**Scope:** `corpus/pyproject.toml` (new `[r1-real]` optional-dependency extra),
+`corpus/src/corpus/probes/lora_export.py`, `corpus/src/corpus/probes/_sherpa_whisper_export.py`
+(new — a vendored, adapted copy of sherpa-onnx's own `scripts/whisper/export-onnx.py`),
+`corpus/tests/test_probe_lora_export.py`, `results/r1-lora-export.md`.
+**Requirements/ACs:** R1 (probe gate, build-plan S1.7 / D13). **R1 now has a real verdict:
+D13 is not reopened** — the gated mechanism (LoRA fine-tune → `merge_and_unload()` → sherpa-onnx
+export → load → transcribe) genuinely composes on CPU.
+**What changed:** installed and pinned the real toolchain (torch 2.11.0 CPU, transformers
+5.16.1, peft 0.20.0, accelerate 1.14.0, sherpa-onnx 1.13.7, plus onnx/onnxruntime/onnxscript,
+datasets, soundfile, huggingface_hub) in a new `[r1-real]` `pyproject.toml` extra so CI's default
+install stays untouched. `probe_r1(dry_run=False)` now performs a genuine run: peft LoRA
+(rank 4, query/value projections) fine-tuned on `distil-whisper/distil-small.en` against
+~3.1 minutes of `hf-internal-testing/librispeech_asr_dummy` (LibriSpeech dev-clean audio,
+CC BY 4.0, with real ground-truth transcripts) for 60 steps, loss 0.69 → 0.004;
+`merge_and_unload()`'d; exported via `_sherpa_whisper_export.py` to ONNX; loaded with
+`sherpa_onnx.OfflineRecognizer`; transcribed a held-out clip (reference *"then the powerful
+twist that thrust it aside in and under the guard"* → hypothesis *"then the powerful twist that
+thrusts rest to the side in and under the guard"* — recognizable, non-degenerate real ASR
+output, not a fabricated string). Two genuine toolchain findings recorded for M0a: (1) sherpa-onnx's
+export script expects an `openai-whisper`-format checkpoint, not a HuggingFace `transformers`
+one — this run sidesteps the undocumented conversion by running peft directly against
+`openai-whisper`'s own model object; (2) torch ≥2.9's default "dynamo" ONNX exporter fails on
+this decoder's data-dependent KV-cache slicing, so `dynamo=False` (the legacy TorchScript
+exporter) is required.
+**Verified:** `cd corpus && ORT_RUN_REAL_R1=1 python -m pytest -q
+tests/test_probe_lora_export.py` — 5/5 passed in ~111s (real toolchain exercised); the 4
+pre-existing fixture-based tests are untouched and still pass with zero real dependencies and no
+env var.
+**Left open / not done:** scaled down from the prompt's "ten minutes of anything" to ~3.1 minutes
+(loss had already converged well before that point) and from a full LibriSpeech download to the
+small `librispeech_asr_dummy` fixture — both documented with reasoning in
+`results/r1-lora-export.md` rather than silently substituted. The real-toolchain test is gated
+behind an opt-in env var so it never runs in ordinary CI (mirrors the eval-fold opt-in pattern
+elsewhere in this project) — someone still needs to decide whether/how a CI lane should exercise
+it periodically.
+
 ## 2026-09-07 (afternoon, cont. — more adversarial review while P8/R1 ran)
 
 ### (pending) — Fix segment endSample under-reporting on mid-hangover stream end; detekt line-length cleanup
@@ -387,15 +502,6 @@ internally consistent."
 
 ## In flight, not yet in this changelog
 
-As of this file's creation (`2026-09-07`, same day as the entries above), two background
-sessions are still running and will get their own entries on completion, not a retroactive edit
-of this one:
-
-- **P8 · Android capture spine** (`:capture-android`, `:pipeline`, `:app`) — dispatched after
-  P5 landed; substantial progress confirmed (route verification, gap tracking, heartbeat, OEM
-  guidance, prove-it test, shed controller, FLAC archive/codec, capture status surface all have
-  files in progress) but not yet committed or merged.
-- **R1 real run** (LoRA fine-tune → `merge_and_unload()` → sherpa-onnx export → load →
-  transcribe, for real rather than the fixture dry run recorded in `8010be4`) — dispatched
-  because `sherpa-onnx` and a CPU-only fine-tune were confirmed feasible in this environment;
-  still installing/running as of this writing.
+Both sessions noted here as "in flight" when this file was first written have since landed —
+see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
+the latest entry; this section is kept as the standing place to note it when something is.
