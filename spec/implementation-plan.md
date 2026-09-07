@@ -64,13 +64,17 @@ needs no audio corpus to do it.
 
 ---
 
-## M0 — Evaluation and training set · **XL, and almost none of it is code**
+## M0 — Corpus assembly · **L, and now mostly code (D21)**
 
-The blocking milestone. Every accuracy figure in the entire document set is transferred from
-ATC literature or clean-speech benchmarks; nothing has been measured on off-air amateur audio.
-This tape converts targets into measurements — **and it is also the fine-tuning set** (M0a), so
-one labelling effort yields the project's largest accuracy lever as well as its ability to
-measure anything at all.
+**Rewritten after the data search.** Drafts 1–1.1 made this an XL hand-labelling milestone
+gating everything. It isn't any more: 176 h of real off-air amateur HF audio, 19,000 h of
+degraded comms with diarization labels, free ATC corpora and finished ATC fine-tunes all exist
+under permissive licences (§14A.3). What does *not* exist anywhere public is amateur
+conversational callsign traffic — so that is the only thing left to record, and roughly an hour
+of it, as **validation rather than training**.
+
+The milestone is now a **pipeline**, which is work I can do here in this repo, and it no longer
+blocks in the way it did — public data is downloadable today.
 
 ### Tasks
 
@@ -78,12 +82,16 @@ measure anything at all.
 |---|---|---|---|
 | M0.1 | Build the capture rig: TH-D75A and SDS150 audio out → USB-C adapter → phone or laptop, gain set against open squelch | S | Buy **two dongles from different makers** (`research/02` §5.03). Verifies T7 early |
 | M0.2 | Define the corpus manifest and label formats (below) **before recording** | S | This is the harness's input contract; getting it wrong costs a relabel |
-| M0.3 | Record **8–12 discrete sessions**, 3–5 h total, across different days, times, bands and both radios | L | Per Q2's content table. Calendar time, not work time |
+| **M0.A** | **Acquisition scripts**: fetch and verify Paderborn (Zenodo), Fearless Steps, the ATC merge, ISOLET; normalise all to 16 kHz mono FLAC with a common manifest entry, licence recorded per source | M | Pure code, doable now. Retires the "no data" blocker outright |
+| **M0.B** | **Channel model** learned from Paderborn's parallel clean/degraded pairs (D22) | M | The degradation becomes measured rather than guessed. This is what that dataset's parallel structure is for |
+| **M0.C** | **Synthetic callsign generator**: ULS callsigns → phonetic expansion → local neural TTS **plus spliced real ISOLET/ATC letter and digit audio** → M0.B's channel → labelled audio, ground truth free by construction | L | D22. Unlimited volume, zero labelling. **Feeds Pass C training and the M1 resolver** |
+| **M0.D** | **Baseline run**: existing ATC fine-tunes measured on Paderborn and on the first real recordings | S | Answers R2 for an afternoon's work and no training. May also just be good enough to ship as a starting model |
+| M0.3 | Record **~1 h** of real amateur traffic — FM repeater conversation, one HF/DX session, some scanner — as the **validation** set | M | Was 3–5 h of training data; now roughly an hour of reality check. Calendar time, not work time |
 | M0.4 | Record **two noise tapes** — 20 min each of squelch, no speech, both radios, on different days | S | One for `eval`, one for `dev`. AC-6 depends on it, and with only the eval tape it is unrunnable until M11 (§14A.2, AC-101) |
 | M0.4a | Record **losslessly** (FLAC or PCM), and enable continuous-archive capture for these sessions if it exists yet | S | FR-STO-2a. The corpus is the one artifact that cannot be re-derived, and M0's own boundaries are the ones you will most want to redo (Q14) |
 | M0.5 | Assign whole sessions to **train / dev / eval**, ~70/30 by duration with dev held out of train, per §14A.2 | S | Manifest committed. **Tiebreak: if unsure, put it in eval** |
-| M0.5a | **Write the labelling protocol** (Q16), piloted on session one and applied to the rest | M | The gap that most threatens M0. Ambiguity resolved once in writing, not eight times by memory |
-| M0.6 | Hand-label: callsigns, speaker turns, thread bounds, frequency, keying boundaries | XL | The dominant cost. Audacity label tracks → converter, or Label Studio |
+| M0.5a | **Write the labelling protocol** (Q16), piloted on the first recording | S | Much smaller now: it only has to cover callsigns and turns on ~1 h |
+| M0.6 | Hand-label the validation hour: **callsigns and speaker turns only** | M | Was XL across 4.5 h. Boundary and thread labels are no longer needed here — Paderborn and Fearless Steps carry that load |
 | M0.7 | Label-quality pass: relabel a 10% sample blind, report disagreement | M | If self-disagreement is high, every downstream number inherits it. This *measures* consistency; M0.5a is what *creates* it |
 | M0.8 | `:eval` harness v0 — manifest loader, metric implementations, report writer | M | Runs on hand transcripts before any model exists |
 

@@ -152,6 +152,11 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D17 | **Location: rig-reported, then device GPS, then manual grid.** Permission optional. | Product owner chose GPS-with-fallback. Rig-reported is placed first because the TH-D75A has GPS for APRS, giving portable accuracy with **no Android location permission at all** |
 | D18 | **Solo build, heavily AI-assisted.** | Product owner. Shapes §15: front-load interfaces and testability, treat implementation throughput as high, put the risk on review gates rather than on sequencing |
 | D19 | **Reference device: OPPO Find X9 Ultra.** Snapdragon 8 Elite Gen 5, 12–16 GB, 7050 mAh, Android 16 / ColorOS 16. | Product owner. It is the *exact* chipset Qualcomm published `large-v3-turbo` NPU benchmarks for, so T3's headline number is measured rather than extrapolated — **and it runs ColorOS, one of the worst offenders for background-killing.** Best case for accuracy, worst case for R5. See §10.7 |
+| D21 | **Public corpora first, synthesis second, hand-labelling last.** The training corpus is assembled from free public data; synthetic callsign audio fills the callsign gap; hand-labelled real amateur audio is reduced to a small **validation** set. | Product owner: "use every data source possible." A search established that 176 h of real off-air ham HF audio, 19,000 h of degraded analog comms with diarization labels, and free ATC corpora all exist — while **no public amateur callsign corpus exists at all**. That inverts M0: the tape is no longer the training set, it is the reality check. See §14A.3 |
+| D22 | **Synthetic callsign audio = local neural TTS + real-speech splicing, degraded through a channel learned from Paderborn's parallel data.** | Product owner. Splicing real ISOLET/ATC letter and digit audio into callsign sequences gives real human phonetic units; learning the channel from 176 h of the same speech clean *and* received means the degradation is measured rather than guessed |
+| D23 | **The TH-D75A is polled on both bands, and transmissions are attributed by squelch.** | Product owner monitors both bands. The CAT interface is band-scoped (`FQ A`, `BY A`) and the audio is mixed, so squelch state is what disambiguates which band a transmission came from. See §9.4 |
+| D24 | **Continuous-archive capture is a first-class, always-available option.** | Product owner. Segmentation is otherwise permanent (CON-SEG-1); this is the only mechanism that makes it reprocessable |
+| D25 | **Corpus contribution is opt-in at onboarding, then automatic.** This **amends FR-OBS-5 and NFR-6**, which forbade automatic transmission in any build. | Product owner direction, taken with the conflict stated. The contribution channel is strictly separate from the capture and processing paths, which remain fully offline, and the app is fully functional with contribution declined. See FR-CON-1..8 and R13 |
 | D20 | **Fine-tune a base model that is already in sherpa-onnx's export list.** | Removes R1 almost entirely. `export-onnx.py --model` accepts a fixed enum, but that enum already includes every `distil-*` variant, and a LoRA merged with `merge_and_unload()` is structurally identical to its base — so the existing export graph applies unchanged |
 
 ---
@@ -1078,9 +1083,64 @@ ground-truth annotations, for building the evaluation set.
 > interesting — but it is a **v1 feature, not an M0 prerequisite**. It lands in M5 with the
 > reader, where correction UI already exists and is most of the same surface.
 
-**FR-OBS-5 (M)** — There SHALL be **no analytics, telemetry, crash reporting or any other
-automatic transmission of data off the device**, in any build. Diagnostics leave only when
-the user exports a bundle (FR-OBS-3).
+**FR-OBS-5 (M)** — There SHALL be **no analytics, telemetry or crash reporting**, in any build.
+Diagnostics leave only when the user exports a bundle (FR-OBS-3).
+
+**FR-OBS-5a (M)** — The single exception is the **corpus contribution channel** (FR-CON-1..8,
+D25), which is off unless the user turns it on, carries only what §7.13a defines, and is
+independent of every other function. *Draft 3.2 removed the words "or any other automatic
+transmission of data off the device, in any build" from FR-OBS-5 to make this exception
+possible. That was a deliberate product decision, not an oversight, and it narrows a promise
+the product previously made without qualification.*
+
+### 7.13a FR-CON · Corpus contribution (D25)
+
+The product improves with data it does not have, and the operators using it are generating
+exactly that data. This is the mechanism, and it is the only part of the system that sends
+anything anywhere.
+
+**FR-CON-1 (M)** — Contribution SHALL be **off until the user turns it on**, presented at
+onboarding as a clear choice with a plain description of what is sent. Declining SHALL be a
+single tap, SHALL never be re-prompted more than once, and SHALL leave every other function
+fully working.
+
+**FR-CON-2 (M)** — Once enabled, upload MAY proceed automatically, subject to: unmetered
+network only by default, device charging or above a battery threshold, and **never during
+active capture** (the capture path stays offline, NFR-6).
+
+**FR-CON-3 (M)** — What is contributed SHALL be a **closed, documented set**: transmission
+audio, transcripts, callsign candidates and the chosen result, corrections, frequency, and the
+model/lexicon/calibration versions in force. It SHALL NOT include operator location finer than
+grid square, diagnostic logs, profile names, or any device identifier beyond an opaque
+per-install token the user can reset.
+
+**FR-CON-4 (M)** — The user SHALL be able to review **exactly what has been and will be sent**,
+browse it, exclude any session or transmission, and turn contribution off at any time. Turning
+it off SHALL stop future uploads immediately.
+
+**FR-CON-5 (M)** — Contribution SHALL be **revocable**: the user can request deletion of
+everything previously contributed under their install token, and the receiving side SHALL
+honour it.
+
+**FR-CON-6 (M)** — Contributed data SHALL be treated as recordings of **identifiable third
+parties who did not consent**. The people heard are not the user. Consequently: contributed
+audio SHALL NOT be republished as an open dataset without a separate, deliberate decision;
+the receiving side SHALL keep it access-controlled by default; and the onboarding copy SHALL
+state plainly that recordings of other operators are included.
+
+**FR-CON-7 (S)** — Prefer contributing **corrections and resolved metadata without audio**
+where that is sufficient. A user correction is the highest-value signal for improving ranking
+and carries the least third-party exposure; audio should be contributed when it adds something
+a correction cannot.
+
+**FR-CON-8 (M)** — The contribution client SHALL live entirely in the network module and SHALL
+be absent from the capture and processing paths, so NFR-6's guarantee — no network in the
+capture path — remains verifiable by packet capture (AC-59).
+
+> **Two things the product owner should decide before this ships, not after.** Whether
+> contributed audio can ever be published (FR-CON-6), and what jurisdictional constraints apply
+> to retransmitting third-party radio traffic — which vary by locality and are already flagged
+> in NFR-6c. Neither blocks building the client; both block turning it on. Recorded as Q17.
 
 ### 7.14 FR-RUN · Runtime architecture
 
@@ -2047,6 +2107,8 @@ Distinct from §12, which enumerates *runtime* failures. These are risks to the 
 | R9 | Model or lexicon licensing blocks the Play Store path | Low | Medium — forecloses D11 | Record licence per asset from day one (FR-AST-1, FR-LEX-28) | M0a |
 | R10 | **Lossy audio retention silently caps Pass C, and the damage is invisible until M4** | Medium | **High — reads at M4 as the core thesis failing when it is the codec failing** | Lossless retention until measured (CON-STO-1, FR-STO-2a..c). The codec decision is made in M2; the pass that cares is measured in M4 | **M2 decision, M4 measurement** |
 | R11 | **Segmentation errors are permanent** — no tier, model or later rig connection can recover a clipped or merged transmission | Medium | Medium–High — a silent, uncorrectable accuracy floor under every other number | Tier-invariant segmentation (FR-SEG-7), generous pre/post-roll (FR-SEG-8), optional continuous archive (FR-SEG-9), boundary metrics from M2 (AC-69) | M2 |
+| R13 | **Synthetic-to-real gap** — a system tuned on TTS-derived callsign audio scores well on synthetic and poorly on real traffic | **High** — this is the expected failure mode of D21/D22, not a tail risk | Medium–High: accuracy claims collapse if not caught | Per-source metrics (FR-TST-8), synthetic barred from eval (FR-TST-9), real-speech splicing rather than pure TTS (D22), and the ~1 h real validation set exists precisely to catch this | M0 / M3 |
+| R14 | **Contributed audio carries third-party voices and callsigns** whose owners never consented, in a product that may be open-sourced | Medium | Medium–High — reputational and possibly legal, and irreversible once published | Access-controlled by default, no republication without a separate decision, corrections-without-audio preferred (FR-CON-6, FR-CON-7), jurisdiction notice (NFR-6c). Q17 must close before contribution is switched on | Before contribution ships |
 | R12 | An English-only base model (`distil-small.en`, per D20) meets worldwide DX traffic (D12) — accented English and non-English speech | Medium | Medium — recall drops on exactly the HF/DX material the eval fold is loaded with | Measure DX separately from local traffic; the grammar path (FR-LEX-8) does not depend on the prose being right; a multilingual base remains selectable per profile (FR-ASR-11) | M0a / M4 |
 
 **R5 is now the top risk**, because the reference device was chosen for its accuracy ceiling
@@ -2161,6 +2223,35 @@ folds split by session.
 > clean, generous eval fold is the better trade.
 
 ---
+
+### 14A.3 The corpus, rebuilt around public data (D21)
+
+Drafts 1–3.2 assumed the corpus had to be recorded and hand-labelled, and priced M0 at 15–45
+hours of labelling on that basis. A search for existing sources changed the picture: **most of
+what the corpus was needed for already exists, free — and the one thing it was most needed for
+does not exist anywhere.**
+
+| Source | Size | Licence | What it covers |
+|---|---|---|---|
+| **Paderborn HF Ham Radio DB** | 176 h (121/18/37), 13.9% speech | CC BY 4.0 | **Real off-air amateur HF**, parallel clean+degraded. Channel character, VAD/SAD, enhancement, real off-air noise |
+| **Fearless Steps (Apollo-11)** | 19,000 h, 600+ speakers | NASA guidelines, free | Degraded analog comms loops **with diarization labels** — speaker separation on bad narrowband audio |
+| **ATC (ATCO2 + UWB-ATCC merge)** | Tens of hours | Free | ICAO phonetic alphabet, callsign grammar, procedural phraseology |
+| **Existing ATC Whisper fine-tunes** | — | Free | A measured answer to R2 without training anything |
+| **ISOLET** | 7,800 letters, 150 speakers | CC BY 4.0 | Spoken **letter-name** forms (AC-12's second pronunciation path) |
+| **Synthetic (D22)** | Unbounded | Generated | Callsigns in phonetic form, at volume, ground truth free by construction |
+| **Recorded amateur traffic** | ~1 h | Yours | **The only source of real conversational callsign exchanges.** Validation, not training |
+
+**The inversion:** the tape stops being the training set and becomes the reality check. Its job
+is no longer to teach the model anything — public data does that — but to answer one question
+the public data cannot: *does this work on real amateur traffic?*
+
+**FR-TST-8 (M)** — Every corpus source SHALL be a fold-tagged, versioned, licence-recorded
+entry in the manifest, and the harness SHALL report metrics **per source as well as in
+aggregate**. A model that scores well on synthetic audio and badly on real traffic is the
+expected failure mode of this strategy, and only per-source reporting makes it visible.
+
+**FR-TST-9 (M)** — Synthetic data SHALL NEVER appear in the eval fold. Accuracy claims are
+about reality; a number measured on generated audio measures the generator.
 
 ## 15. Release plan
 
