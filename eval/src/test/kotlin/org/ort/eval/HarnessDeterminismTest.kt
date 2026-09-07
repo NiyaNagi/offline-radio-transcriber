@@ -18,8 +18,8 @@ class HarnessDeterminismTest {
         val harness = Harness(bundledGrammar(), bundledCombiner())
         val occurrences = sample()
         val cfg = config()
-        val first = harness.run(occurrences, cfg).canonicalText()
-        val second = harness.run(occurrences, cfg).canonicalText()
+        val first = harness.run(occurrences, occurrences, cfg).canonicalText()
+        val second = harness.run(occurrences, occurrences, cfg).canonicalText()
         assertEquals(first, second)
     }
 
@@ -27,8 +27,8 @@ class HarnessDeterminismTest {
     fun `AC_90 a fresh harness instance over the same corpus and config reproduces the same report`() {
         val occurrences = sample()
         val cfg = config()
-        val a = Harness(bundledGrammar(), bundledCombiner()).run(occurrences, cfg).canonicalText()
-        val b = Harness(bundledGrammar(), bundledCombiner()).run(occurrences, cfg).canonicalText()
+        val a = Harness(bundledGrammar(), bundledCombiner()).run(occurrences, occurrences, cfg).canonicalText()
+        val b = Harness(bundledGrammar(), bundledCombiner()).run(occurrences, occurrences, cfg).canonicalText()
         assertEquals(a, b)
     }
 }

@@ -16,7 +16,8 @@ class PriorAblationTest {
     fun `ablating a prior is reported for every prior the combiner carries`() {
         val combiner = PriorCombiner(defaultPriors())
         val harness = Harness(bundledGrammar(), combiner)
-        val report = harness.run(listOf(positive("p1", "VK3MMM")), testConfig())
+        val occurrences = listOf(positive("p1", "VK3MMM"))
+        val report = harness.run(occurrences, occurrences, testConfig())
         assertTrue(report.ablation.map { it.priorRemoved }.toSet() == combiner.priorNames.toSet())
     }
 

@@ -47,6 +47,10 @@ public fun main(args: Array<String>) {
     val grammar = CallsignGrammar(ItuPrefixTable.bundled(), ConfusionCostMatrix.bundled())
     val combiner = PriorCombiner(defaultPriors(PropagationModel()))
     val harness = Harness(grammar, combiner)
-    val report = harness.run(emptyList(), HarnessConfig(fold.name.lowercase(), "unspecified", "cpu", 1, "unspecified"))
+    val report = harness.run(
+        fitOn = emptyList(),
+        evaluate = emptyList(),
+        config = HarnessConfig(fold.name.lowercase(), "unspecified", "cpu", 1, "unspecified"),
+    )
     print(report.canonicalText())
 }

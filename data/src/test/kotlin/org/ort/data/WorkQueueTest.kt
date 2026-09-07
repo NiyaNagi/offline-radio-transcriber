@@ -151,6 +151,54 @@ public class WorkQueueTest {
     }
 
     @Test
+    public fun a_second_pass_completing_after_the_transmission_is_already_final_does_not_throw(): Unit = runTest {
+        // technical design §7.1: idx_wq_active is keyed on (transmission_id, pass) because more
+        // than one pass can be leased for the same transmission at once (residency table:
+        // "Pass B, C, E, FUSE" concurrently). Whichever pass reports last must not crash trying
+        // to re-transition an already-final transmission.
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+        val queue = WorkQueue(db, clock)
+        queue.enqueue("TX1", PassId.B_OFFLINE)
+        queue.enqueue("TX1", PassId.D_RESOLVE)
+
+        val leased = queue.leaseBatch("run-1", limit = 10) { 60_000L }
+        val passB = leased.single { it.pass == PassId.B_OFFLINE }
+        val passD = leased.single { it.pass == PassId.D_RESOLVE }
+
+        // Pass B finishes first and commits the transmission to COMPLETE.
+        queue.completePass(passB, TransmissionState.COMPLETE)
+        assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX1")!!.processingState)
+
+        // Pass D finishes after — this must not throw, and must not clobber Pass B's COMPLETE.
+        queue.completePass(passD, TransmissionState.COMPLETE)
+        assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX1")!!.processingState)
+        assertNull(db.workQueueDao().getById(passB.id))
+        assertNull(db.workQueueDao().getById(passD.id))
+    }
+
+    @Test
+    public fun a_second_pass_failing_after_the_transmission_is_already_complete_does_not_throw(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        queue.enqueue("TX1", PassId.B_OFFLINE)
+        queue.enqueue("TX1", PassId.D_RESOLVE)
+
+        val leased = queue.leaseBatch("run-1", limit = 10) { 60_000L }
+        val passB = leased.single { it.pass == PassId.B_OFFLINE }
+        val passD = leased.single { it.pass == PassId.D_RESOLVE }
+
+        queue.completePass(passB, TransmissionState.COMPLETE)
+        // Pass D fails after the transmission is already COMPLETE — must not throw, and COMPLETE
+        // (a real, useful result) must not be overwritten by a sibling pass's failure.
+        queue.failPass(passD, "boom")
+
+        assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX1")!!.processingState)
+        assertEquals(WorkQueueState.FAILED, db.workQueueDao().getById(passD.id)!!.state)
+    }
+
+    @Test
     public fun the_active_state_index_does_not_restrict_a_terminal_failed_duplicate(): Unit = runTest {
         db.sessionDao().insert(TestFixtures.session())
         db.transmissionDao().insert(TestFixtures.transmission("TX1"))

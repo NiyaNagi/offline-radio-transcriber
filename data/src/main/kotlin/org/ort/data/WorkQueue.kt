@@ -84,7 +84,12 @@ public class WorkQueue(
 
     /**
      * The pass succeeded: the row is deleted (the queue is not a history — §7.1) and the
-     * transmission commits [finalState].
+     * transmission commits [finalState] — unless another pass already moved this transmission
+     * on (technical design §7.1's `idx_wq_active` is keyed on `(transmission_id, pass)`
+     * precisely because more than one pass can be leased for the same transmission at once, per
+     * the residency table's `Pass B, C, E, FUSE` running concurrently). Whichever pass reports
+     * last must not clobber or crash on the transmission's already-final state, so this checks
+     * [TransmissionDao.canTransition] first, the same guard [leaseBatch] uses.
      */
     public suspend fun completePass(item: WorkQueueItemEntity, finalState: TransmissionState): Unit =
         db.withTransaction {
@@ -92,7 +97,9 @@ public class WorkQueue(
                 "completePass(...) commits COMPLETE or REJECTED, got $finalState"
             }
             queueDao.deleteById(item.id)
-            transmissionDao.requireLegalTransition(item.transmissionId, finalState)
+            if (transmissionDao.canTransition(item.transmissionId, finalState)) {
+                transmissionDao.requireLegalTransition(item.transmissionId, finalState)
+            }
         }
 
     /**
@@ -100,13 +107,17 @@ public class WorkQueue(
      * for a later lease — the transmission is left `PROCESSING` (retry is invisible outside the
      * queue). At the bound, the item becomes terminally `FAILED` (outside the partial unique
      * index's active-state set, so it can still be re-enqueued later — AC-51) and the
-     * transmission follows it to `FAILED`.
+     * transmission follows it to `FAILED`, unless a sibling pass for the same transmission
+     * already committed a different final state first (see [completePass]'s note on concurrent
+     * passes) — in which case that state stands.
      */
     public suspend fun failPass(item: WorkQueueItemEntity, error: String): Unit = db.withTransaction {
         val attempts = item.attemptCount + 1
         if (attempts >= maxAttempts) {
             queueDao.markFailed(item.id, attempts, error)
-            transmissionDao.requireLegalTransition(item.transmissionId, TransmissionState.FAILED)
+            if (transmissionDao.canTransition(item.transmissionId, TransmissionState.FAILED)) {
+                transmissionDao.requireLegalTransition(item.transmissionId, TransmissionState.FAILED)
+            }
         } else {
             queueDao.retryReady(item.id, attempts, error)
         }

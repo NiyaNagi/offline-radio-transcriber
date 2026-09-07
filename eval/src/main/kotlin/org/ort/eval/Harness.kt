@@ -16,27 +16,40 @@ import org.ort.lexicon.ThresholdDerivation
  */
 public class Harness(private val grammar: CallsignGrammar, private val combiner: PriorCombiner) {
 
-    public fun run(occurrences: List<LabeledOccurrence>, config: HarnessConfig): HarnessReport {
-        val resolved = occurrences.map { it to resolveWith(combiner, it) }
+    /**
+     * [fitOn] and [evaluate] are separate parameters, not one list reused twice, so that the one
+     * caller who ever wires the real `eval` fold in (build-plan P7: "Platt calibration fitted on
+     * train+dev and verified on eval") cannot accidentally fit the calibrator on the same data it
+     * is scored against — the constitution's "never read the eval fold" rule extended to
+     * calibration leakage, not just raw access. Diagnostic self-consistency checks (e.g. AC-55 on
+     * the dev fold) may legitimately pass the same list for both; what this signature forbids is
+     * doing that *by default* when the two folds are meant to differ.
+     */
+    public fun run(fitOn: List<LabeledOccurrence>, evaluate: List<LabeledOccurrence>, config: HarnessConfig): HarnessReport {
+        val fitResolved = fitOn.map { it to resolveWith(combiner, it) }
+        val resolved = evaluate.map { it to resolveWith(combiner, it) }
 
-        val (fitScores, fitLabels) = trainingPairs(resolved)
+        val (fitScores, fitLabels) = trainingPairs(fitResolved)
         val calibrator = if (fitScores.isNotEmpty()) {
             PlattCalibrator.fit(fitScores, fitLabels, AssetRef("eval-harness-calibration", config.fold))
         } else {
             null
         }
+        val fitCalibrated = fitResolved.map { (_, top) -> calibrator?.calibrate(top?.totalScore ?: NO_CANDIDATE_SCORE) ?: 0f }
         val calibrated = resolved.map { (_, top) -> calibrator?.calibrate(top?.totalScore ?: NO_CANDIDATE_SCORE) ?: 0f }
 
-        val truthLabels = resolved.map { (occ, top) -> top != null && top.candidate.text == occ.truthCallsign }
+        // The threshold is derived from the fit set alone (technical design §9.5) — deriving it
+        // from `evaluate` would be the same leakage this split exists to prevent.
+        val fitTruthLabels = fitResolved.map { (occ, top) -> top != null && top.candidate.text == occ.truthCallsign }
         val threshold = calibrator?.let {
-            ThresholdDerivation.forPrecisionTarget(calibrated, truthLabels, config.precisionTarget)
+            ThresholdDerivation.forPrecisionTarget(fitCalibrated, fitTruthLabels, config.precisionTarget)
         }
 
         val metrics = confirmedMetrics(resolved, calibrated, threshold?.threshold)
         val diagram = reliabilityDiagram(resolved, calibrated)
         val ablation = combiner.priorNames.sorted().map { name ->
             val ablated = combiner.withoutPrior(name)
-            val ablatedResolved = occurrences.map { it to resolveWith(ablated, it) }
+            val ablatedResolved = evaluate.map { it to resolveWith(ablated, it) }
             PriorAblationResult(name, topPickMetrics(ablatedResolved))
         }
 

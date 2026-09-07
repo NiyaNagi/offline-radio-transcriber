@@ -38,7 +38,7 @@ class ReliabilityDiagramTest {
             repeat(10) { add(negative("f$it")) }
         }
         val harness = Harness(bundledGrammar(), bundledCombiner())
-        val report = harness.run(occurrences, HarnessConfig("dev", "m", "cpu", 1, "test"))
+        val report = harness.run(occurrences, occurrences, HarnessConfig("dev", "m", "cpu", 1, "test"))
         val highBin = report.reliabilityDiagram.bins.lastOrNull { it.count > 0 }
         if (highBin != null) {
             assertTrue(abs(highBin.observedAccuracy - highBin.meanPredicted) < 0.5f)

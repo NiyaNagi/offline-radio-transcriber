@@ -19,7 +19,7 @@ class HarnessCallsignPrecisionRecallTest {
     fun `the harness reports nonzero precision and recall on a mostly-resolvable synthetic set`() {
         val occurrences = (1..20).map { positive("p$it", "VK3MMM") } + (1..5).map { negative("n$it") }
         val harness = Harness(bundledGrammar(), bundledCombiner())
-        val report = harness.run(occurrences, testConfig())
+        val report = harness.run(occurrences, occurrences, testConfig())
         assertTrue(report.callsignMetrics.precision > 0f, "expected some correct CONFIRMED calls")
         assertTrue(report.callsignMetrics.recall > 0f, "expected some recall on an easy synthetic set")
     }
@@ -28,14 +28,15 @@ class HarnessCallsignPrecisionRecallTest {
     fun `negative examples that never resolve a candidate contribute no false positives`() {
         val occurrences = (1..10).map { negative("n$it") }
         val harness = Harness(bundledGrammar(), bundledCombiner())
-        val report = harness.run(occurrences, testConfig())
+        val report = harness.run(occurrences, occurrences, testConfig())
         assertTrue(report.callsignMetrics.falsePositives == 0)
     }
 
     @Test
     fun `the report carries a run fingerprint with fold, machine, provider and thread count`() {
         val harness = Harness(bundledGrammar(), bundledCombiner())
-        val report = harness.run(listOf(positive("p1", "VK3MMM")), testConfig())
+        val occurrences = listOf(positive("p1", "VK3MMM"))
+        val report = harness.run(occurrences, occurrences, testConfig())
         val fp = report.fingerprint
         assertTrue(fp.fold == "dev" && fp.machine == "test-machine" && fp.provider == "cpu" && fp.threadCount == 1)
     }
