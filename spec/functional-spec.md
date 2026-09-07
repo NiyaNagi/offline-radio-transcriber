@@ -1,12 +1,19 @@
 # Offline Radio Transcriber — Functional Specification
 
-**Draft 2 · September 2026 · Ready for review**
+**Draft 3 · September 2026 · Ready for technical design**
 
-*Draft 2 rewrites the design around a flagship-first ceiling. Tiers are now defined downward
-from a reference experience rather than upward from a lowest common denominator (§6);
-accuracy targets are per-tier (§10.1); domain fine-tuning and optional NPU acceleration are
-first-class (D13, D14); and cross-tier reprocessing (§11.1) is what makes a weak device
-produce a provisional record rather than a permanently degraded one.*
+*Draft 2 rewrote the design around a flagship-first ceiling: tiers defined downward from a
+reference experience (§6), per-tier accuracy targets (§10.1), fine-tuning and optional NPU
+acceleration as first-class (D13, D14), and cross-tier reprocessing (§11.1) making a weak
+device produce a provisional record rather than a degraded one.*
+
+*Draft 3 closes the gaps that would have blocked a technical design. Added: the runtime
+architecture — concurrency, durable queue, backpressure, transmission lifecycle, audio
+interruption, clock model (§7.14); asset and schema management (§7.15); platform integration
+and permissions (§7.16); testability hooks (§7.17); accessibility and language (§7.18);
+**confidence calibration** (FR-LEX-17..21), without which every threshold in the trust model
+was undefined; operator location sourcing (FR-LEX-22..24); a project risk register (§14A);
+and an architecture baseline (§17).*
 
 Downstream documents this feeds:
 
@@ -116,6 +123,10 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D10 | **A local LLM is optional and post-hoc.** Digest only. | Product owner: "does not need to be a local LLM, as long as we have fully offline speech transcription with high accuracy" |
 | D11 | **Open source self-build now; Play Store later.** | No decision may foreclose the store path |
 | D12 | **Worldwide callsign support via grammar plus priors**, never a bounded list. | Product owner: "we could hear calls all over the world… think about the most robust and flexible solution" |
+| D15 | **Stack: Kotlin, Compose, Room/SQLite+FTS5, Coroutines/Flow, Hilt, WorkManager.** ASR and rig layers sit behind plain interfaces. | Product owner delegated the choice. Idiomatic, well-documented, and the interfaces are what keep sherpa-onnx and each radio replaceable |
+| D16 | **Audio is never dropped due to processing pressure.** Overload sheds passes and defers to a durable queue. | Product owner direction. Combined with cross-tier reprocessing this makes overload produce a *provisional* record, never a lost one — the same safety property as tier degradation |
+| D17 | **Location: rig-reported, then device GPS, then manual grid.** Permission optional. | Product owner chose GPS-with-fallback. Rig-reported is placed first because the TH-D75A has GPS for APRS, giving portable accuracy with **no Android location permission at all** |
+| D18 | **Solo build, heavily AI-assisted.** | Product owner. Shapes §15: front-load interfaces and testability, treat implementation throughput as high, put the risk on review gates rather than on sequencing |
 
 ---
 
@@ -586,6 +597,88 @@ a configurable maximum (default 500 entries), assembled in priority order:
 **FR-LEX-16 (M)** — The active slice SHALL be a *bias*, never a restriction. A station not in
 the slice SHALL be resolvable at full accuracy through Passes C and D.
 
+#### Confidence calibration
+
+Everything in §4.1 and NFR-1a depends on a threshold, and raw model scores are not
+probabilities. Without this, "above threshold" is undefined and the entire trust model rests
+on an arbitrary number.
+
+**FR-LEX-17 (M)** — Resolution scores SHALL be **calibrated** to an estimated probability of
+correctness, fitted against the M0 evaluation set, so that a score of 0.9 means approximately
+nine correct in ten.
+
+**FR-LEX-18 (M)** — Calibration parameters SHALL be a versioned, shippable asset, refittable
+without an app release, and recorded on every record that used them.
+
+**FR-LEX-19 (M)** — The `CONFIRMED` threshold SHALL be **derived from the precision target**
+for the active tier (§10.1), not configured as a raw score. Changing the precision target
+SHALL move the threshold; the user never sets a score directly.
+
+**FR-LEX-20 (M)** — The evaluation harness SHALL report a **reliability diagram** (predicted
+confidence versus observed accuracy) per tier. A poorly calibrated model that hits its
+precision target by luck is not acceptable evidence.
+
+**FR-LEX-21 (S)** — Calibration SHALL be fitted separately per tier and per model, since
+different models produce differently-shaped score distributions.
+
+#### Operator location
+
+Needed by the geographic prior (FR-LEX-9) and by POTA proximity.
+
+**FR-LEX-22 (M)** — Determine operator location in priority order: (1) **rig-reported
+position** where the Rig Module exposes `POSITION`, (2) **device GPS** where permission is
+granted, (3) **manually entered Maidenhead grid**, per capture profile.
+
+**FR-LEX-23 (M)** — Location permission SHALL be **optional**. Denying it SHALL fall back to
+manual grid entry with no loss of any function except the geographic prior's precision.
+
+**FR-LEX-24 (M)** — Location SHALL never leave the device, SHALL be stored at no finer than
+grid-square precision in transmission records, and SHALL be excluded from diagnostic bundles
+(FR-OBS-3) unless explicitly included.
+
+> The TH-D75A carries GPS for APRS. Sourcing position from the rig gives mobile and portable
+> accuracy **with no Android location permission at all**, which is why it is first in the
+> priority order rather than a curiosity. `POSITION` is therefore added to `RigCapability`
+> (§9.1).
+
+#### Propagation and time-of-day plausibility
+
+**FR-LEX-25 (M)** — The band-plausibility prior SHALL be computed from a **static, offline
+model**: band, time of day, season, and distance between operator grid and the candidate
+prefix's allocation centroid. No network, no live solar data.
+
+**FR-LEX-26 (M)** — The prior SHALL be **asymmetric and weak in the negative direction**. A
+physically implausible path SHALL demote a candidate, never eliminate it — sporadic-E, grey
+line, satellites, repeater linking and internet-linked systems all defeat naive propagation
+reasoning routinely.
+
+**FR-LEX-27 (S)** — Where the frequency is a known internet-linked or repeater frequency from
+the WWARA data, the propagation prior SHALL be suppressed entirely. A DX callsign on a local
+2 m repeater is normal, not implausible.
+
+#### Lexicon asset provenance
+
+**FR-LEX-28 (M)** — Each lexicon asset SHALL declare its source, licence, format, update
+cadence and last-import timestamp, visible in settings.
+
+**FR-LEX-29 (M)** — The **ITU prefix allocation table** SHALL be bundled with the app as a
+static asset, since it is small, changes rarely, and is required for FR-LEX-8 to function at
+all. It SHALL NOT be an optional download.
+
+**FR-LEX-30 (M)** — Every asset import SHALL be transactional and validated (record count and
+checksum) before replacing the previous version, with rollback on failure (F12).
+
+#### Cold start
+
+**FR-LEX-31 (M)** — With no history, the system SHALL function using only structural priors
+(grammar, ITU, band, database presence, frequency). Recency and conversation priors SHALL
+contribute zero rather than a default, and their absence SHALL widen confidence intervals
+rather than distort ranking.
+
+**FR-LEX-32 (S)** — Seed the recency prior from the user's own "my stations" list
+(FR-LEX-14) and from callsigns present in the imported WWARA repeater data, so day one is
+better than empty.
+
 ### 7.5 FR-SPK · Speaker identity and threading
 
 **FR-SPK-1 (M / T2+)** — Extract a speaker embedding per transmission using a WeSpeaker or
@@ -646,10 +739,11 @@ RigModule
 
 RigCapability = FREQUENCY | MODE | SQUELCH_STATE | SIGNAL_STRENGTH
               | MEMORY_CHANNEL | CHANNEL_NAME | SUB_BAND | TIME
+              | POSITION            // TH-D75A has GPS for APRS — see FR-LEX-22
 
 RigState
   timestamp, frequencyHz?, mode?, squelchOpen?, signalStrength?,
-  memoryChannel?, channelName?, sourceConfidence
+  memoryChannel?, channelName?, position?, sourceConfidence
 ```
 
 **FR-RIG-2 (M)** — Ship a **null module** implementing the contract with
@@ -838,8 +932,235 @@ distribution.
 **FR-OBS-3 (M)** — Support exporting a diagnostic bundle (log plus configuration, excluding
 audio unless explicitly included) for bug reports.
 
-**FR-OBS-4 (S)** — Offer a "record a labelled sample" mode that captures audio plus
-ground-truth annotations, for building an evaluation set.
+**FR-OBS-4 (M)** — Offer a "record a labelled sample" mode that captures audio plus
+ground-truth annotations, for building the evaluation set. **Promoted to Must**: M0 is the
+blocking milestone for the entire project and this is the tool that produces it.
+
+**FR-OBS-5 (M)** — There SHALL be **no analytics, telemetry, crash reporting or any other
+automatic transmission of data off the device**, in any build. Diagnostics leave only when
+the user exports a bundle (FR-OBS-3).
+
+### 7.14 FR-RUN · Runtime architecture
+
+The single most important structural constraint, and it was implicit in draft 2:
+
+**FR-RUN-1 (M)** — **Capture SHALL NEVER block on inference.** The capture path — read,
+ring-buffer, VAD, write segment — SHALL run independently of every processing pass and SHALL
+be able to proceed indefinitely with all passes stalled.
+
+#### Backpressure and overload (D16)
+
+**FR-RUN-2 (M)** — Segments SHALL be enqueued to a **durable on-disk work queue**, not an
+in-memory one. A queued segment survives process death.
+
+**FR-RUN-3 (M)** — **Audio SHALL NEVER be dropped due to processing pressure.** Under
+sustained overload the system SHALL shed work in this order, surfacing each step:
+
+| Order | Shed | Consequence |
+|---:|---|---|
+| 1 | Pass A live partials | Loses immediacy only |
+| 2 | Pass E speaker identity and threading | Attribution degrades to per-transmission |
+| 3 | Pass B model downgraded within the tier | Lower accuracy, recoverable |
+| 4 | All passes deferred; segments queued and marked for reprocessing | Log lags; nothing lost |
+| 5 | Storage exhaustion only: stop capture with a loud, unmissable alert | The single case where capture stops |
+
+**FR-RUN-4 (M)** — Every record affected by shedding SHALL be marked a reprocessing candidate
+(FR-REP-8). **Overload therefore produces a provisional record, never a lost one** — the same
+mechanism as tier degradation, which is why both are safe.
+
+**FR-RUN-5 (M)** — Queue depth, oldest-unprocessed age, and current shed level SHALL be
+observable (FR-OBS-2) and visible in the capture status surface (FR-UI-7).
+
+**FR-RUN-6 (M)** — The queue SHALL be bounded by **available storage**, not by a fixed item
+count, and SHALL warn at configurable thresholds well before exhaustion.
+
+#### Transmission lifecycle
+
+**FR-RUN-7 (M)** — Every Transmission SHALL occupy exactly one state, with defined transitions:
+
+```
+              ┌──────────┐
+   VAD close ─▶ CAPTURED │ audio on disk, queued, no passes run
+              └────┬─────┘
+                   ▼
+              ┌──────────┐
+              │PROCESSING│ ── crash / kill ──┐
+              └────┬─────┘                   │
+        ┌──────────┼──────────┐              │
+        ▼          ▼          ▼              │
+   ┌─────────┐ ┌────────┐ ┌────────┐         │
+   │COMPLETE │ │REJECTED│ │ FAILED │         │
+   └────┬────┘ └───┬────┘ └───┬────┘         │
+        │          │          │              │
+        └──────────┴──────────┴──────────────┘
+                   │
+                   ▼  reprocess requested / higher tier available
+              ┌──────────┐
+              │  STALE   │  current result exists, better is possible
+              └──────────┘
+```
+
+**FR-RUN-8 (M)** — `PROCESSING` SHALL be crash-recoverable: on launch, any transmission left
+in `PROCESSING` SHALL be returned to `CAPTURED` and re-queued. **Passes are idempotent**
+(§5.2, Principle 2), so re-running one is always safe.
+
+**FR-RUN-9 (M)** — `FAILED` (a pass errored) is distinct from `REJECTED` (a pass ran and
+correctly declined the segment). `FAILED` is retryable with backoff and a bounded attempt
+count; `REJECTED` is a result.
+
+**FR-RUN-10 (M)** — Retries SHALL be bounded, and a transmission exceeding the limit SHALL
+remain in `FAILED` with its error recorded, visible in the UI, and eligible for manual retry.
+
+#### Audio interruption
+
+Guaranteed to occur during an 8-hour run, and absent from draft 2 entirely.
+
+**FR-RUN-11 (M)** — Handle `AudioRecord` interruption from an incoming phone call, another
+app acquiring the microphone, or an audio-focus change: detect it, record a **gap marker**
+with start and end times in the session, and resume automatically when the input becomes
+available.
+
+**FR-RUN-12 (M)** — A capture gap SHALL be **first-class data**, visible in the timeline and
+counted in health statistics. Silence that was never listened to must be distinguishable from
+silence that was.
+
+**FR-RUN-13 (M)** — Route changes mid-session (device unplugged, headset attached) SHALL be
+detected and SHALL re-verify the route per FR-CAP-3 before resuming. A route change that
+lands on the built-in mic SHALL halt, never continue.
+
+**FR-RUN-14 (S)** — Where the platform permits concurrent capture, request it, so a phone
+call degrades to a gap rather than terminating the session.
+
+#### Time and clocks
+
+**FR-RUN-15 (M)** — Durations and inter-event intervals SHALL use a **monotonic** clock;
+wall-clock time SHALL be stored separately for display. Both SHALL be persisted (F14).
+
+**FR-RUN-16 (M)** — Audio sample position SHALL be the authoritative timeline within a
+session. Timestamps SHALL be derived from sample count, not from wall-clock reads at
+processing time.
+
+**FR-RUN-17 (M)** — Rig state SHALL be timestamped on receipt and correlated to audio by
+sample position within a bounded skew of **≤250 ms**. Where skew cannot be bounded — for
+example a slow poll cycle — frequency provenance SHALL be downgraded to `inherited`.
+
+**FR-RUN-18 (M)** — All stored wall-clock times SHALL be UTC with the originating offset
+retained, so DST transitions and travel do not corrupt ordering or retention.
+
+### 7.15 FR-AST · Assets, schema and migration
+
+**FR-AST-1 (M)** — Models, lexicon data and calibration parameters are **versioned assets**
+with a common lifecycle: install, verify, activate, roll back, remove.
+
+**FR-AST-2 (M)** — Every asset SHALL be integrity-verified (checksum, and size and format
+validation) before activation. A failed verification SHALL leave the previous version active.
+
+**FR-AST-3 (M)** — Large assets SHALL be downloadable on demand, with progress, resumability,
+and a **default to unmetered networks only**. The app SHALL be usable while a download is
+pending, at whatever tier the currently-installed assets support.
+
+**FR-AST-4 (M)** — An asset in use by a running session SHALL NOT be deleted or replaced
+mid-session. Activation of a new version SHALL take effect at the next session or the next
+reprocess.
+
+**FR-AST-5 (M)** — The database SHALL carry a **schema version**, with forward migrations
+tested against fixtures from every previously released version.
+
+**FR-AST-6 (M)** — Migrations SHALL never destroy captured audio or superseded transcripts.
+Where a migration cannot preserve a derived field, it SHALL mark affected records as
+reprocessing candidates rather than discarding them.
+
+**FR-AST-7 (M)** — Capture profiles (FR-CFG-1) and rig descriptors (FR-RIG-4) SHALL be
+versioned, and importing a newer version than the app understands SHALL fail cleanly with a
+clear message rather than partially applying.
+
+**FR-AST-8 (M)** — Audio files SHALL have a defined on-disk layout and naming scheme derived
+from session and transmission identity, with a **reconciliation pass** that detects and
+reports orphaned files and dangling references in both directions.
+
+**FR-AST-9 (S)** — Where NPU execution requires per-chipset compiled binaries (FR-ACC), those
+are assets under this section, selected at runtime by detected chipset, with the CPU model as
+the always-present fallback.
+
+### 7.16 FR-PLT · Platform integration
+
+**FR-PLT-1 (M)** — Required permissions, each requested in context with an explanation of
+what breaks without it:
+
+| Permission | Why | Optional? |
+|---|---|---|
+| `RECORD_AUDIO` | Capture | **No** — the app cannot function |
+| `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_MICROPHONE` | 8-hour background capture (D1) | **No** |
+| `POST_NOTIFICATIONS` (API 33+) | The capture notification and alerts | Degrades safety; capture still runs |
+| USB device permission | Rig control and USB audio | Yes — falls back to null module and other inputs |
+| `ACCESS_FINE_LOCATION` | Geographic prior, POTA proximity (FR-LEX-22) | **Yes** — manual grid fallback |
+| `WAKE_LOCK` | Sustained capture | **No** |
+
+**FR-PLT-2 (M)** — **USB device permission is granted per attachment and is not persistent by
+default.** The app SHALL request persistent access where the platform allows, and SHALL
+detect and clearly surface the case where a mid-session re-attach requires re-granting —
+this is a realistic way to silently lose an overnight run.
+
+**FR-PLT-3 (M)** — The capture notification SHALL NOT display transcript text. It shows state,
+elapsed time, transmission count and a stop action only. Radio traffic on a lock screen is an
+unnecessary disclosure.
+
+**FR-PLT-4 (M)** — The app SHALL function fully with notifications denied, surfacing state
+in-app instead, but SHALL warn that silent failures become harder to notice.
+
+**FR-PLT-5 (M)** — All app-private storage SHALL be excluded from cloud backup by default.
+Captured audio must not sync to a cloud account (NFR-6, D2).
+
+**FR-PLT-6 (S)** — Support Android's per-app language preference and respect system settings
+for font scale, contrast and reduced motion.
+
+### 7.17 FR-TST · Testability
+
+Not a nicety — §14 cannot be executed without these, and they must exist in the shipping
+architecture rather than a test fork.
+
+**FR-TST-1 (M)** — The capture source SHALL be an **interface with a file-backed
+implementation**, so a WAV file can be replayed through the full pipeline as though live, at
+real time or faster. AC-6, AC-9, AC-36 and AC-41 all depend on this.
+
+**FR-TST-2 (M)** — The clock SHALL be injectable, so thread gaps, the 10-minute ID window,
+retention and decay can be tested without waiting.
+
+**FR-TST-3 (M)** — The Rig Module interface SHALL have a **scriptable fake** that replays a
+timed sequence of rig states, so frequency correlation and disconnection are testable without
+hardware.
+
+**FR-TST-4 (M)** — Inference SHALL be **deterministic** for a fixed model, input and
+configuration — fixed seeds, no nondeterministic reduction order — so the evaluation harness
+produces reproducible numbers (AC-35).
+
+**FR-TST-5 (M)** — The evaluation harness SHALL run the complete pipeline offline over a
+labelled corpus and emit machine-readable per-tier, per-lever metrics.
+
+**FR-TST-6 (S)** — Provide a synthetic traffic generator (configurable activity fraction,
+transmission length distribution, SNR) for load and endurance testing without an 8-hour tape.
+
+### 7.18 FR-A11Y · Accessibility and language
+
+**FR-A11Y-1 (M)** — The four attribution states (§4.1) SHALL be distinguishable **without
+relying on colour** — shape, fill, label or icon. This is the requirement most likely to be
+violated by a good-looking design, and P1 depends on it entirely.
+
+**FR-A11Y-2 (M)** — All interactive elements SHALL carry content descriptions, and the reader
+views SHALL be navigable and comprehensible with a screen reader. A log is text; there is no
+excuse for it being inaccessible.
+
+**FR-A11Y-3 (M)** — Text SHALL respect system font scaling without clipping or overlap, up to
+the largest supported scale. The dense tabular log (P7) is the hard case.
+
+**FR-A11Y-4 (M)** — Contrast SHALL meet WCAG 2.2 AA for text and for the state markers.
+
+**FR-A11Y-5 (M)** — v1 ships **English (US) only**, but no user-visible string SHALL be
+hardcoded, and date, time, number and frequency formatting SHALL be locale-aware.
+
+**FR-A11Y-6 (M)** — The **phonetic alphabet variant set is content, not localization**, and
+SHALL be extensible independently of app language. Regional and legacy variants must be
+addable without a translation pass.
 
 ---
 
@@ -880,6 +1201,30 @@ participantStationIds[], digestText?
 
 **Correction** — id, transmissionId, field, previousValue, newValue, correctedAt,
 propagatedToCount
+
+**CaptureGap** — id, sessionId, startedAt, endedAt, cause (`interruption` | `route_change` |
+`device_lost` | `storage` | `unknown`), recoveredAutomatically (bool). *Silence that was never
+listened to must be distinguishable from silence that was.*
+
+**WorkQueueItem** — id, transmissionId, pass, state, attemptCount, lastError?,
+enqueuedAt, startedAt?, shedLevel. Durable; survives process death (FR-RUN-2).
+
+**Calibration** — id, modelId, tier, parameters, fittedAgainstCorpusVersion, fittedAt.
+Referenced by every score-bearing record (FR-LEX-18).
+
+**Asset** — id, kind (`model` | `lexicon` | `calibration` | `rig_descriptor` |
+`npu_binary`), version, source, licence, checksum, sizeBytes, installedAt, activatedAt?,
+verifiedAt, chipset? *(npu_binary only)*
+
+**OperatorLocation** — profileId, gridSquare, source (`rig` | `gps` | `manual`), updatedAt.
+Stored at grid-square precision only (FR-LEX-24).
+
+**Session** additionally carries — `sourceId` (reserved for future multi-radio capture, Q6),
+`schemaVersion`, `gapCount`, `shedEvents`.
+
+**Transmission** additionally carries — `samplePosition` (authoritative timeline position,
+FR-RUN-16), `monotonicStartNanos`, `utcOffsetMinutes`, `calibrationId?`,
+`enhancementApplied` (set of passes), `executionProvider`, `isReprocessCandidate`.
 
 ---
 
@@ -1108,7 +1453,15 @@ Enumerated because most are silent, and each needs a test.
 | F11 | Callsign resolved confidently but wrong | Only a human catches this | Always show lattice and candidates (FR-UI-8); make correction one tap |
 | F12 | Lexicon import corrupt or partial | Checksum + record count | Reject import, keep previous version, report |
 | F13 | Model file missing or incompatible | Load-time validation | Fall back to a lower tier model, surface it |
-| F14 | Clock change / DST during a session | Monotonic clock for durations | Store both wall and monotonic time |
+| F14 | Clock change / DST during a session | Monotonic clock for durations | Store both wall and monotonic time (FR-RUN-15, FR-RUN-18) |
+| F15 | Incoming phone call or another app takes the mic | `AudioRecord` error / audio focus change | Record a CaptureGap, resume automatically (FR-RUN-11) |
+| F16 | USB permission not persistent; re-attach mid-session needs re-granting | Device attach without permission | Surface loudly. **Realistic way to lose an overnight run** (FR-PLT-2) |
+| F17 | Process killed while a transmission is mid-pass | `PROCESSING` state found at launch | Return to `CAPTURED`, re-queue. Passes are idempotent (FR-RUN-8) |
+| F18 | A pass errors repeatedly on one segment | Bounded retry counter | `FAILED` with recorded error, visible, manually retryable. Never blocks the queue (FR-RUN-9, FR-RUN-10) |
+| F19 | Audio file missing but DB row present, or vice versa | Reconciliation pass | Report both directions; never silently delete the surviving side (FR-AST-8) |
+| F20 | Schema migration fails or loses a derived field | Migration tested against released-version fixtures | Never destroy audio or superseded transcripts; mark affected records for reprocessing (FR-AST-6) |
+| F21 | Model or lexicon replaced mid-session | Asset activation guard | Defer activation to next session or reprocess (FR-AST-4) |
+| F22 | Confidence scores drift from calibration after a model change | Reliability diagram in the harness | Refit calibration; it is a versioned asset, no app release needed (FR-LEX-18, FR-LEX-20) |
 
 ---
 
@@ -1270,6 +1623,52 @@ Input to the test plan. Grouped by what a test would have to establish.
 - **AC-44** Speech enhancement can be enabled per pass, and the harness reports its effect on
   each pass separately, including where that effect is negative (FR-ENH-2, FR-ENH-3).
 
+### 14.8a Runtime and resilience
+
+- **AC-45** With all passes artificially stalled, capture continues indefinitely and every
+  segment reaches the durable queue (FR-RUN-1, FR-RUN-2).
+- **AC-46** Under induced overload, the system sheds in the documented order and **no audio is
+  lost at any level**. Verified by comparing captured segment count against a known input
+  (FR-RUN-3, NFR-4).
+- **AC-47** Killing the process mid-pass and relaunching returns `PROCESSING` records to
+  `CAPTURED` and completes them, with identical results to an uninterrupted run (FR-RUN-8).
+- **AC-48** A simulated incoming call during capture produces a `CaptureGap` with correct
+  bounds, and capture resumes automatically (FR-RUN-11, F15).
+- **AC-49** A gap is visually distinguishable from genuine silence in the timeline
+  (FR-RUN-12).
+- **AC-50** Rig state is correlated to audio within 250 ms; exceeding that downgrades
+  frequency provenance to `inherited` (FR-RUN-17).
+- **AC-51** A repeatedly failing pass lands in `FAILED` with a recorded error and does not
+  block the queue (FR-RUN-10, F18).
+
+### 14.8b Assets, calibration and migration
+
+- **AC-52** A corrupt asset import leaves the previous version active and reports clearly
+  (FR-AST-2, F12).
+- **AC-53** Migration from every previously released schema version succeeds against fixtures,
+  preserving audio and superseded transcripts (FR-AST-5, FR-AST-6).
+- **AC-54** Reconciliation detects both an orphaned audio file and a dangling reference, and
+  deletes neither (FR-AST-8).
+- **AC-55** **A confidence of 0.9 corresponds to approximately 90% observed accuracy** on the
+  eval fold, demonstrated by a reliability diagram per tier (FR-LEX-17, FR-LEX-20).
+- **AC-56** Raising the tier's precision target moves the `CONFIRMED` threshold; the user is
+  never asked to set a raw score (FR-LEX-19).
+
+### 14.8c Platform, accessibility and privacy
+
+- **AC-57** With location permission denied, everything functions on a manually entered grid
+  square, losing only geographic-prior precision (FR-LEX-23).
+- **AC-58** Where the rig reports position, no Android location permission is requested at all
+  (FR-LEX-22).
+- **AC-59** No network traffic originates from the app during a complete capture-and-process
+  cycle, verified by packet capture (NFR-6, FR-OBS-5).
+- **AC-60** Captured audio does not appear in cloud backup (FR-PLT-5).
+- **AC-61** The notification never contains transcript text (FR-PLT-3).
+- **AC-62** **The four attribution states are distinguishable in greyscale** and under
+  simulated colour-vision deficiency (FR-A11Y-1).
+- **AC-63** The log view is navigable and comprehensible via screen reader, and renders without
+  clipping at maximum system font scale (FR-A11Y-2, FR-A11Y-3).
+
 ### 14.9 Export
 
 - **AC-33** An `INFERRED` attribution exports with its state; a confirmed-only export omits
@@ -1287,10 +1686,37 @@ Input to the test plan. Grouped by what a test would have to establish.
 
 ---
 
+## 14A. Project risk register
+
+Distinct from §12, which enumerates *runtime* failures. These are risks to the project.
+
+| # | Risk | Likelihood | Impact | Mitigation | Gate |
+|---|---|---|---|---|---|
+| R1 | **Fine-tuned model cannot be exported to the runtime's ONNX form** | Medium | **Severe** — removes the largest lever and reopens the runtime choice | Test the export path before writing any app code. Half a day | M0a, first task |
+| R2 | ATC fine-tuning gains do not transfer to amateur radio audio | Medium | High — T3 accuracy targets become unreachable | Measure on the eval fold before committing to the numbers in §10.1 | M0a |
+| R3 | **Audio-level resolution does not beat text-level** | Medium | High — invalidates D4 and the core architecture | M4 is explicitly designed so the comparison is the deliverable. Fall back to the text path and bank the saved complexity | M4 |
+| R4 | Speaker embeddings do not separate on narrowband off-air audio | Medium | Medium — threading degrades, per-transmission attribution survives | Test on the M0 tape before building M6. Attribution remains correct, just less complete | M6 |
+| R5 | OEM background-killing defeats 8-hour capture on the user's device | Low on Pixel, **high on Samsung** | High — the product does not work | M2 proves this in isolation, before any ASR exists. FR-SVC-4/5/6 make failures visible and recoverable | M2 |
+| R6 | Scope growth from the reference-tier levers | **High** | Medium — indefinite schedule | M11 is last, each lever independently measured, with a stated kill rule (Q12) | M11 |
+| R7 | Solo build stalls on an unfamiliar subsystem — NPU toolchain, DSP, migration | Medium | Medium | Every hard subsystem has a working fallback by design: CPU path, null rig module, text-derived lattice | Continuous |
+| R8 | Evaluation set is too small or contaminated | Medium | **Severe** — every number becomes unfalsifiable | Split train/eval folds by session **before** labelling (Q10). Hold the eval fold until M11 | M0 |
+| R9 | Model or lexicon licensing blocks the Play Store path | Low | Medium — forecloses D11 | Record licence per asset from day one (FR-AST-1, FR-LEX-28) | M0a |
+
+**R1, R3 and R8 are the ones to act on first**, and all three are cheap. R1 and R8 cost under
+a day each; R3 is a milestone that was already planned.
+
+---
+
 ## 15. Release plan
 
 Ordered by dependency and by information value. Each milestone answers a question that
 changes what comes after.
+
+**Shaped by D18 (solo, heavily AI-assisted).** Implementation throughput is high, so the
+plan front-loads **interfaces, testability and decision gates** — the things that are
+expensive to retrofit and that AI assistance does not make safer. Every milestone ends with a
+working app, and every milestone that produces a number ends with that number measured rather
+than asserted.
 
 ### M0 — Evaluation and training set (blocking everything)
 
@@ -1323,11 +1749,24 @@ component tested against M0 transcripts. This is platform-independent, is the la
 accuracy gain available, and can be developed on a desktop in this repo alongside the
 existing WWARA and POTA data.
 
-### M2 — Capture spine
+### M2 — Capture spine and runtime skeleton
 
 Foreground service, audio route binding and verification, VAD segmentation, Opus storage,
-SQLite schema, capture status UI. **No ASR.** Proves the 8-hour requirement and the
-background-execution risk in isolation, which is the biggest platform risk.
+SQLite schema with migrations, the **durable work queue and transmission lifecycle**
+(FR-RUN-1..10), **interruption and gap handling** (FR-RUN-11..14), the clock model
+(FR-RUN-15..18), permissions flow, and the capture status UI. **No ASR at all.**
+
+Two reasons this is bigger than it looks and worth doing first:
+
+1. It proves the 8-hour requirement and the OEM background-kill risk (R5) in isolation,
+   before any model exists to confuse the diagnosis.
+2. **It establishes the interfaces every later milestone plugs into** — the capture source
+   (FR-TST-1), the clock (FR-TST-2), the pass contract, the queue. Under D18 these are
+   exactly the decisions that are cheap now and expensive later, and they are the ones AI
+   assistance does not make safer.
+
+Ship FR-TST-1's file-backed capture source **in this milestone**, not later. Every subsequent
+milestone is tested through it.
 
 ### M3 — Pass B and hallucination control
 
@@ -1405,7 +1844,11 @@ product; all of them are what make the reference experience world-class.
 | D7 Visible confidence | FR-SPK-10, FR-UI-4, FR-EXP-4, P1 |
 | D8 Lower tiers stay functional | FR-TIER-2, FR-TIER-6, FR-TIER-7, FR-REP-8..11, NFR-1b, NFR-5a, AC-39 |
 | D13 Fine-tuning first-class | FR-ASR-8..11, M0a, AC-41 |
-| D14 NPU as optional accelerator | FR-ACC-1..6, AC-38 |
+| D14 NPU as optional accelerator | FR-ACC-1..6, FR-AST-9, AC-38 |
+| D15 Stack chosen | §17, FR-RUN-*, FR-AST-5..7 |
+| D16 Never drop audio | FR-RUN-1..6, NFR-4, AC-45, AC-46 |
+| D17 Location sourcing | FR-LEX-22..24, FR-PLT-1, AC-57, AC-58 |
+| D18 Solo, AI-assisted | §15 preamble, M2 scope, FR-TST-1..6 |
 | D9 Modular rig | FR-RIG-1..12 |
 | D10 LLM optional | FR-DIG-2..6 |
 | D11 Open then store | NFR-6b |
@@ -1413,8 +1856,59 @@ product; all of them are what make the reference experience world-class.
 
 ---
 
-## 17. Open questions
+## 17. Architecture baseline (D15)
 
-Tracked in [`open-questions.md`](open-questions.md). Nine are open at draft 1; **Q1
-(rig protocol verification), Q2 (evaluation set scope) and Q3 (reference device)** should be
-closed before technical design begins.
+Named here so the technical design has a starting point rather than a blank page. The
+technical design owns the detail; this fixes only what the functional spec depends on.
+
+| Concern | Choice | Why this one |
+|---|---|---|
+| Language | Kotlin | First-class Android, and sherpa-onnx ships a Kotlin/Java API |
+| UI | Compose | Live-updating lists with revising partials (P5) suit a declarative model |
+| Persistence | Room over SQLite, **FTS5 for transcripts** | FR-STO-1. Room gives tested, versioned migrations (FR-AST-5) |
+| Concurrency | Coroutines + Flow | `Flow<RigState>` is already in the rig contract (§9.1) |
+| DI | Hilt | Makes FR-TST-1..3 substitution trivial, which is the actual justification |
+| Deferred work | WorkManager | Reprocessing (§11) survives process death and respects charge and thermal constraints |
+| ASR / VAD / speaker | sherpa-onnx behind an interface | `research/02` §3. **The interface matters more than the choice** |
+| Serial | `usb-serial-for-android` | CDC-ACM covers the TH-D75A (§9.3) |
+| Audio | `AudioRecord` behind `CaptureSource` | FR-TST-1 requires a file-backed implementation |
+
+### Module boundaries
+
+Boundaries are drawn where **substitution must be possible**, not by layer convention:
+
+```
+:app          Compose UI, navigation, settings
+:capture      CaptureSource, ring buffer, VAD, segmentation, queue, gaps
+:asr          Pass A/B, fusion, hallucination controls   -> interface, sherpa-onnx impl
+:lexicon      phonetic lattice, callsign grammar, ITU, priors, calibration   [PURE KOTLIN]
+:identity     embeddings, clustering, threading
+:rig          RigModule contract, descriptor engine, TH-D75A, null module
+:data         Room entities, DAOs, migrations, asset management
+:eval         evaluation harness                          [PURE KOTLIN / JVM]
+```
+
+**`:lexicon` and `:eval` have no Android dependency.** That is deliberate and load-bearing:
+the highest-value, highest-uncertainty work (M1, and every accuracy number in §10) can be
+built and measured on a desktop JVM with fast test cycles, long before it runs on a phone.
+
+### Three rules the technical design must not relax
+
+1. **No pass may depend on another pass's output where the audio is available** (§5.2). This
+   is what makes reprocessing and D4 work.
+2. **Capture never blocks on inference** (FR-RUN-1). Enforced by module boundary — `:capture`
+   does not depend on `:asr`.
+3. **Every model-bearing interface has a fake.** `:lexicon` and `:eval` staying
+   Android-free is how this stays true.
+
+---
+
+## 18. Open questions
+
+Tracked in [`open-questions.md`](open-questions.md). **Q2 (evaluation set scope), Q3
+(reference device) and Q10 (train/eval split) are blocking.** Q1 is largely closed by
+documentation already in this repo; Q4–Q9 and Q11–Q12 carry recommendations and do not block.
+
+Four questions were closed during the draft-3 gap review — architecture baseline, build
+capacity, location sourcing and overload policy — recorded as D15–D18 and as C11–C14 in the
+register.

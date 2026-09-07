@@ -14,9 +14,9 @@ This directory holds the complete research record and the functional specificati
 | Phone platform feasibility research | Complete | [`research/02-phone-platform-study.md`](research/02-phone-platform-study.md) |
 | Accuracy, lexicon and identity research | Complete | [`research/03-accuracy-lexicon-identity.md`](research/03-accuracy-lexicon-identity.md) |
 | Flagship capability research | Complete | [`research/04-flagship-capability.md`](research/04-flagship-capability.md) |
-| **Functional specification** | **Draft 2 — ready for review** | [`spec/functional-spec.md`](spec/functional-spec.md) |
+| **Functional specification** | **Draft 3 — ready for technical design** | [`spec/functional-spec.md`](spec/functional-spec.md) |
 | Open decisions register | Active — 3 blocking | [`spec/open-questions.md`](spec/open-questions.md) |
-| Technical design specification | Not started | — |
+| Technical design specification | Not started — baseline in spec §17 | — |
 | Test plan | Not started | — |
 | Visual / UX design guide | Not started | — |
 
