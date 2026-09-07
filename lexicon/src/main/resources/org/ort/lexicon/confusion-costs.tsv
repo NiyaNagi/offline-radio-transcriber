@@ -1,0 +1,42 @@
+# Confusion-weighted substitution costs (FR-LEX-10, technical design §9.2).
+# Edit distance in the grammar beam search is weighted by known ASR acoustic confusion sets
+# rather than uniform Levenshtein: substituting one member of a confusable set for another
+# costs less than an arbitrary substitution. Symmetric. Identity substitution costs 0; any
+# pair not listed here costs the default 1.0.
+# version 2026.09.0
+# Format: <PhoneticUnit> <TAB> <PhoneticUnit> <TAB> <cost>
+# Initialised from the literature (the "E-set": B D E P V T; the nasal pair M N; the
+# fricative pair S F). Refitted from M0 confusion counts later — that is a P7/asset concern.
+
+# E-set: B D E P V T
+B	D	0.30
+B	E	0.30
+B	P	0.30
+B	V	0.30
+B	T	0.35
+D	E	0.30
+D	P	0.35
+D	V	0.35
+D	T	0.30
+E	P	0.30
+E	V	0.30
+E	T	0.35
+P	V	0.30
+P	T	0.30
+V	T	0.35
+# extra letter confusions from the same literature
+C	Z	0.35
+C	E	0.40
+G	J	0.40
+A	J	0.45
+A	K	0.45
+J	K	0.40
+S	X	0.45
+# nasal pair
+M	N	0.30
+# fricative pair
+S	F	0.35
+# digit confusions
+N5	N9	0.40
+N1	N9	0.45
+N2	N3	0.45

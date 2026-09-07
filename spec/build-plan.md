@@ -35,7 +35,7 @@ underlying breakdown each prompt draws on.
 
 **Wave B — four independent modules. Each needs only Wave A.**
 
-- [ ] **P3 · Lexicon: grammar** — units, ITU trie, FSA, confusion scoring *(`:lexicon`)*
+- [x] **P3 · Lexicon: grammar** — units, ITU trie, FSA, confusion scoring *(`:lexicon`)* — done 2026-09-07
 - [ ] **P4 · Capture and segmentation** — source, resampler, ring, VAD *(`:capture-api`, `:segment`)*
 - [ ] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)*
 - [ ] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)*

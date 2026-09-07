@@ -1,0 +1,194 @@
+# ITU international call-sign prefix allocation (FR-LEX-1, FR-LEX-8, FR-LEX-29).
+# Bundled, static, always present — structural validity against this table is the ONLY hard
+# filter in resolution. A callsign whose leading prefix is not a live path here is not a
+# candidate; a callsign whose prefix IS allocated is a candidate even with zero database hits.
+# version 2026.09.0
+# Format: <prefix> <TAB> <entity> <TAB> <ISO-3166 alpha-2>
+# This is a deliberately partial slice sufficient for the structural half and its tests; the
+# full table is a lexicon asset update (FR-LEX-2), not an app release.
+
+K	United States	US
+W	United States	US
+N	United States	US
+AA	United States	US
+AB	United States	US
+AC	United States	US
+AD	United States	US
+AE	United States	US
+AF	United States	US
+AG	United States	US
+AI	United States	US
+AJ	United States	US
+AK	United States	US
+AL	United States	US
+KH6	United States	US
+KL7	United States	US
+VE	Canada	CA
+VA	Canada	CA
+VO	Canada	CA
+VY	Canada	CA
+CF	Canada	CA
+CG	Canada	CA
+CH	Canada	CA
+CI	Canada	CA
+CJ	Canada	CA
+CK	Canada	CA
+XJ	Canada	CA
+XK	Canada	CA
+XL	Canada	CA
+XM	Canada	CA
+XN	Canada	CA
+XO	Canada	CA
+G	United Kingdom	GB
+M	United Kingdom	GB
+2E	United Kingdom	GB
+2I	United Kingdom	GB
+2M	United Kingdom	GB
+2W	United Kingdom	GB
+GM	United Kingdom	GB
+GW	United Kingdom	GB
+D	Germany	DE
+DA	Germany	DE
+DB	Germany	DE
+DC	Germany	DE
+DD	Germany	DE
+DF	Germany	DE
+DG	Germany	DE
+DH	Germany	DE
+DJ	Germany	DE
+DK	Germany	DE
+DL	Germany	DE
+DM	Germany	DE
+DO	Germany	DE
+DP	Germany	DE
+DQ	Germany	DE
+DR	Germany	DE
+F	France	FR
+TM	France	FR
+VK	Australia	AU
+VH	Australia	AU
+VI	Australia	AU
+VL	Australia	AU
+VM	Australia	AU
+VN	Australia	AU
+AX	Australia	AU
+ZL	New Zealand	NZ
+ZK	New Zealand	NZ
+ZM	New Zealand	NZ
+JA	Japan	JP
+JE	Japan	JP
+JF	Japan	JP
+JG	Japan	JP
+JH	Japan	JP
+JI	Japan	JP
+JJ	Japan	JP
+JK	Japan	JP
+JR	Japan	JP
+JS	Japan	JP
+7J	Japan	JP
+7K	Japan	JP
+7L	Japan	JP
+7N	Japan	JP
+8J	Japan	JP
+8N	Japan	JP
+PA	Netherlands	NL
+PB	Netherlands	NL
+PC	Netherlands	NL
+PD	Netherlands	NL
+PE	Netherlands	NL
+PF	Netherlands	NL
+PG	Netherlands	NL
+PH	Netherlands	NL
+PI	Netherlands	NL
+B	China	CN
+BA	China	CN
+BD	China	CN
+BG	China	CN
+BH	China	CN
+BY	China	CN
+EA	Spain	ES
+EB	Spain	ES
+EC	Spain	ES
+ED	Spain	ES
+EE	Spain	ES
+EF	Spain	ES
+I	Italy	IT
+IK	Italy	IT
+IW	Italy	IT
+IZ	Italy	IT
+LU	Argentina	AR
+LW	Argentina	AR
+PY	Brazil	BR
+PP	Brazil	BR
+PT	Brazil	BR
+PU	Brazil	BR
+ZS	South Africa	ZA
+ZR	South Africa	ZA
+VU	India	IN
+R	Russia	RU
+RA	Russia	RU
+RN	Russia	RU
+RV	Russia	RU
+RZ	Russia	RU
+UA	Russia	RU
+UB	Russia	RU
+UC	Russia	RU
+OH	Finland	FI
+OF	Finland	FI
+OZ	Denmark	DK
+OU	Denmark	DK
+LA	Norway	NO
+LB	Norway	NO
+SM	Sweden	SE
+SA	Sweden	SE
+SK	Sweden	SE
+HB	Switzerland	CH
+OE	Austria	AT
+ON	Belgium	BE
+OO	Belgium	BE
+EI	Ireland	IE
+EJ	Ireland	IE
+SP	Poland	PL
+SQ	Poland	PL
+SR	Poland	PL
+OK	Czech Republic	CZ
+OL	Czech Republic	CZ
+OM	Slovakia	SK
+YO	Romania	RO
+YP	Romania	RO
+YR	Romania	RO
+LZ	Bulgaria	BG
+SV	Greece	GR
+SW	Greece	GR
+SX	Greece	GR
+SY	Greece	GR
+SZ	Greece	GR
+CT	Portugal	PT
+CR	Portugal	PT
+CS	Portugal	PT
+9A	Croatia	HR
+S5	Slovenia	SI
+4X	Israel	IL
+4Z	Israel	IL
+JY	Jordan	JO
+A6	United Arab Emirates	AE
+HL	South Korea	KR
+DS	South Korea	KR
+6K	South Korea	KR
+BV	Taiwan	TW
+9V	Singapore	SG
+YB	Indonesia	ID
+YC	Indonesia	ID
+YD	Indonesia	ID
+DU	Philippines	PH
+DV	Philippines	PH
+DW	Philippines	PH
+E7	Bosnia and Herzegovina	BA
+5B	Cyprus	CY
+C3	Andorra	AD
+3D2	Fiji	FJ
+CE	Chile	CL
+CX	Uruguay	UY
+HK	Colombia	CO
+XE	Mexico	MX
+XA	Mexico	MX
