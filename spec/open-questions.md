@@ -6,8 +6,9 @@ Questions that remain open after the initial requirements interview. Each carrie
 recommendation, so none of them blocks progress by default — but the ones marked
 **blocking** should be closed before technical design begins.
 
-**Status at draft 1:** Q1 largely closed by documentation already in this repo. **Q2
-(evaluation set) and Q3 (reference device) remain blocking.**
+**Status at draft 2:** Q1 largely closed by documentation already in this repo. **Q2
+(evaluation set), Q3 (reference device) and Q10 (fine-tuning data split) are blocking.**
+Q10–Q12 are new, arising from the flagship-first reframing.
 
 Answered questions move to §3 for the record.
 
@@ -190,6 +191,66 @@ worth not designing the Thread entity in a way that precludes it.
 
 ---
 
+### Q10 — Fine-tuning data volume and licensing · **BLOCKING M0a** · owner: product
+
+**Question.** How much labelled amateur-radio audio for the training fold, and can any of it
+be shared if the project is open-sourced?
+
+**Why it matters.** D13 makes fine-tuning first-class. The ATC precedent says 55 clips
+produced a 54.8% relative WER reduction, so the volume needed is small — but the M0 tape
+must now be **split into train and eval folds before any measurement happens**, or the
+evaluation is contaminated. That is a decision to make before labelling, not after.
+
+Licensing matters separately: a fine-tuned model derived from your own recordings is yours
+to publish, but the recordings themselves capture identifiable third parties, and
+redistribution norms for off-air amateur audio are not obvious.
+
+**Recommendation.** Target **2 h train / 1 h eval** minimum, folded by session so no
+conversation spans both. Publish the *model weights* if the licence of the base model allows;
+publish the *audio* only with a considered decision. Keep the eval fold untouched until M11.
+
+---
+
+### Q11 — NPU vendor scope · owner: engineering
+
+**Question.** Which accelerators does T3 support at v1 — Qualcomm only, or Qualcomm plus
+Google Tensor plus MediaTek?
+
+**Why it matters.** Qualcomm has published, per-device, per-chipset `large-v3-turbo`
+benchmarks across 40+ combinations. Tensor and MediaTek are supported by LiteRT but with far
+less published evidence for this specific model. Supporting three means three toolchains or
+accepting LiteRT's abstraction and some performance loss (FR-ACC-6).
+
+**Recommendation.** **Qualcomm first, via whichever path the reference device uses**, and
+treat T3 as unavailable elsewhere until measured. FR-ACC-4 already requires graceful absence,
+so this costs nothing but a smaller T3 population. Revisit once the harness can measure a
+second vendor cheaply.
+
+**Note this interacts with Q3.** If the reference device is a Pixel, the accelerator is
+Tensor, not Snapdragon — and the published evidence base is thinner. That may be a reason to
+choose a Snapdragon reference device despite Pixel's better background-execution behaviour,
+or a reason to keep T3 CPU-only at v1.
+
+---
+
+### Q12 — Which reference-tier levers are worth their complexity · owner: engineering
+
+**Question.** Ensemble fusion, n-best rescoring and speech enhancement are all specified.
+Which survive contact with real data?
+
+**Why it matters.** Each adds permanent complexity. The evidence differs sharply in quality:
+ensemble is classical and reliable in direction but unquantified here; rescoring is published
+at 5–25% relative but not on radio audio; enhancement is **genuinely contested** — CHiME-4
+says >30% relative improvement, "When Denoising Hinders" says it can degrade zero-shot
+Whisper.
+
+**Recommendation.** M11 is sequenced last for exactly this reason, and AC-35 requires
+per-lever reporting. **Adopt a stated kill rule now:** a lever that does not produce a
+measurable improvement on the eval fold gets deleted, not disabled. A disabled lever costs
+complexity forever; a deleted one costs nothing.
+
+---
+
 ## 2. Technical unknowns
 
 Tracked in `research/03-accuracy-lexicon-identity.md` §8. Restated here because they gate
@@ -201,7 +262,10 @@ milestones rather than decisions:
 | T2 | Phonetic-unit KWS accuracy on radio audio | M4 — **the core thesis** |
 | T3 | Whether CB-Whisper's encoder-hidden-state approach ports to sherpa-onnx on Android | M4 |
 | T4 | Hotword automaton cost at ~100 units on target hardware | M8 |
-| T5 | ONNX export of a fine-tuned Whisper for sherpa-onnx | Any future fine-tuning |
+| T5 | **ONNX export of a fine-tuned Whisper for sherpa-onnx** | **M0a — gates D13, the biggest lever. Check this first; it is a half-day of work** |
+| T8 | Whether ATC fine-tuning gains transfer to amateur radio audio | M0a. Strong structural analogy, zero direct evidence |
+| T9 | End-to-end RTF for `large-v3-turbo` on a real Android app (vendor figures are component latencies) | M11, T3 tier boundary |
+| T10 | Whether enhancement helps or hurts *per pass* on this audio | M11, FR-ENH-3 |
 | T6 | Real per-transmission latency on a mid-tier phone | Tier boundaries, M10 |
 | T7 | Whether a specific PD + USB-Audio-Class hub works with the reference device | M2 |
 
@@ -223,3 +287,4 @@ lost.
 | C7 | How to present inferred attribution? | Show with confidence | D7, FR-UI-4, four-state model |
 | C8 | v1 scope? | Audio-only first; flexible interface pulling frequency and other data from a connected radio; start with the Kenwood; extensible to any radio via modules | D9, §9 three-level extension design |
 | C9 | Is a local LLM required? | No — "as long as we have fully offline speech transcription with high accuracy that is fine" | D10. FR-DIG-2 deterministic digest is the requirement; FR-DIG-3 LLM is tier-gated and optional |
+| C10 | If the run-on-anything requirement is dropped, does it get materially better? | Yes. "A modern device must have a highly accurate and world class experience with things still working on lower tier devices" | D3, D8 rewritten; D13 and D14 added. §6 tier model inverted — tiers now defined *downward* from a reference experience. NFR-1 becomes a per-tier table. Cross-tier reprocessing (FR-REP-8..11) is what reconciles the two halves: a low tier yields a provisional record, not a permanently degraded one |

@@ -114,6 +114,15 @@ architecture rather than something bolted on.
 
 ## 4. The NPU is reachable and irrelevant
 
+> **Superseded in part — see [`04-flagship-capability.md`](04-flagship-capability.md) §3.**
+> This section's reasoning holds under the assumption that the design ceiling is capped by
+> the weakest supported device. Once that constraint is dropped, the conclusion reverses:
+> the surplus argument shows you do not need more *speed*, but it does not show you cannot
+> **spend** speed on a bigger model — and Qualcomm publishes `large-v3-turbo` on the NPU at
+> roughly 22x real time, five callsign-accuracy points above what the CPU path runs. The
+> section is left intact below because the reasoning is sound within its stated premise and
+> the premise change is worth seeing explicitly.
+
 Third parties can reach mobile NPUs. [LiteRT NPU
 delegation](https://developers.google.com/edge/litert/next/npu) covers 30+ Qualcomm devices
 and MediaTek NeuroPilot without vendor-specific compilers; Qualcomm's AI Engine Direct

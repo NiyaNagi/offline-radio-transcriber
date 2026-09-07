@@ -1,6 +1,12 @@
 # Offline Radio Transcriber — Functional Specification
 
-**Draft 1 · September 2026 · Ready for review**
+**Draft 2 · September 2026 · Ready for review**
+
+*Draft 2 rewrites the design around a flagship-first ceiling. Tiers are now defined downward
+from a reference experience rather than upward from a lowest common denominator (§6);
+accuracy targets are per-tier (§10.1); domain fine-tuning and optional NPU acceleration are
+first-class (D13, D14); and cross-tier reprocessing (§11.1) is what makes a weak device
+produce a provisional record rather than a permanently degraded one.*
 
 Downstream documents this feeds:
 
@@ -46,12 +52,16 @@ determines whether the product is useful.
 ### 1.4 In scope for v1
 
 - Audio capture from a wired input, running unattended for 8+ hours
-- Offline transcription with hallucination suppression
+- Offline transcription with hallucination suppression, using a **domain fine-tuned** model
 - Callsign resolution using audio-level lexicon matching
 - Speaker clustering and conversation threading with graded attribution confidence
 - A modular radio interface, with the Kenwood TH-D75A as the first module
 - Searchable local log and digest
 - Export to QRZ and POTA workflows
+- **Cross-tier reprocessing** — a record captured on a weak device improves when reprocessed
+  on a strong one
+- **Reference-tier acceleration** — NPU execution, ensemble fusion and n-best rescoring on
+  capable hardware, each kept only if it measures
 
 ### 1.5 Out of scope for v1
 
@@ -94,12 +104,14 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 |---|---|---|
 | D1 | **Android only.** Minimum API 26, target current. | The `microphone` foreground service type has no time limit; only `dataSync` and `mediaProcessing` are capped at 6 h/24 h. iOS is a tolerated edge case |
 | D2 | **On-device only.** No network required for any core function. | Product constraint. Reprocessing is an extensibility point, not a dependency |
-| D3 | **Highest achievable accuracy, subject to running on any device.** | Explicit product-owner direction |
+| D3 | **Design for the best available hardware first.** The reference experience is defined on a modern flagship and is not capped by what a weak device can do. | Explicit product-owner direction. Treating the floor as a design constraint was silently acting as a ceiling — see `research/04` |
 | D4 | **The lexicon runs against the audio**, not only the transcribed text. | CB-Whisper measures entity recall 79.9% → 96.9%; up to +80pp on hot-word subsets |
 | D5 | **Callsign extraction is deterministic and auditable.** No LLM in that path, ever. | An LLM that invents a plausible callsign is the worst possible failure |
 | D6 | **Live streaming display plus complete-transmission accuracy.** | Product owner wants the live feel and the accurate record. They are complementary passes |
 | D7 | **Attribution confidence is always visible**: confirmed / inferred / unknown. | Goal G4 |
-| D8 | **Must degrade to run on any device.** Four capability tiers, one data shape. | Explicit product-owner direction |
+| D8 | **Lower-tier devices remain fully functional, never a design constraint on the ceiling.** Four tiers, one data shape, and **any record is reprocessable at a higher tier later**. | Explicit product-owner direction. Because every pass is a pure function of retained audio, tier is a property of *processing*, not of the record |
+| D13 | **Domain fine-tuning is a first-class part of the product**, not a research aside. | ATC literature: 55.2% → 6.8% WER, and 13.7% from **55 hand-transcribed clips**. It is the largest single lever available and it lifts *every* tier |
+| D14 | **NPU acceleration is an optional accelerator behind a stable interface**, used to run a *better model*, never to run the same model faster. | Qualcomm publishes `large-v3-turbo` at ~22x RTF on Snapdragon 8 Elite Gen 5. A CPU fallback is required regardless |
 | D9 | **Audio-only first; modular rig interface extensible to any radio.** TH-D75A first. | Explicit product-owner direction |
 | D10 | **A local LLM is optional and post-hoc.** Digest only. | Product owner: "does not need to be a local LLM, as long as we have fully offline speech transcription with high accuracy" |
 | D11 | **Open source self-build now; Play Store later.** | No decision may foreclose the store path |
@@ -170,9 +182,22 @@ overrode the machine.
 │  null/manual│           └────────────────────┘        │
 └─────────────┘                                         │
                           ┌─────────────────────────────▼────────────┐
+                          │ FR-ENH  optional enhancement, PER PASS   │
+                          │  GTCRN. default off, evidence-gated      │
+                          └─────────────────┬────────────────────────┘
+                                            │
+                          ┌─────────────────▼────────────────────────┐
                           │ PASS B  Offline ASR on complete segment  │
-                          │  Whisper small.en / distil / Moonshine   │
-                          │  -> verbatim text  + no_speech_prob      │
+                          │  fine-tuned model, best the tier allows  │
+                          │  T3: large-v3-turbo on NPU (FR-ACC)      │
+                          │  -> n-best + no_speech_prob              │
+                          └─────────────────┬────────────────────────┘
+                                            │
+                          ┌─────────────────▼────────────────────────┐
+                          │ FUSE  (T3)  ensemble + n-best rescoring  │
+                          │  Pass A transducer x Pass B enc-dec      │
+                          │  ROVER-style vote; LLM reranks CLOSED    │
+                          │  candidate set only, acoustic in scoring │
                           └─────────────────┬────────────────────────┘
                                             │
                           ┌─────────────────▼────────────────────────┐
@@ -221,32 +246,70 @@ without re-running the others.
 
 ## 6. Capability tiers
 
-D8 requires running on any device. Tiers are detected at runtime from available RAM, CPU
-core count, and a startup calibration benchmark — never from a device allowlist.
+### 6.1 The inversion
 
-| Tier | Trigger | Passes enabled | Resident budget |
+Tiers are defined **downward from the reference experience**, not upward from a lowest
+common denominator. T3 is the product; T0–T2 are documented reductions of it.
+
+This is not a wording change. Under the previous framing, a capability was included only if
+it could be made to work everywhere, which meant the best hardware ran a design shaped by
+the worst. Under this framing, the reference experience is designed without that constraint
+and each lower tier removes the most expensive thing it cannot afford.
+
+**The property that makes this safe** — and it is the reason the requirement is coherent
+rather than a compromise:
+
+> Every pass is a pure function of retained audio (§5.2, Principle 1). Therefore **tier is a
+> property of processing, not of the record.** A transmission captured at T0 on a cheap
+> phone can be reprocessed at T3 on a flagship later, in the same app, producing exactly the
+> record it would have produced if captured there.
+
+A low tier is not a permanently degraded record. It is a **provisional** one.
+
+### 6.2 The tiers
+
+Detected at runtime from measured throughput, available RAM and accelerator availability —
+**never from a device allowlist.**
+
+| Tier | Trigger | What it adds over the tier below | Resident budget |
 |---|---|---|---|
-| **T0 — Minimal** | Any device that runs the app | SEG, B (Moonshine tiny), D (text-derived lattice only), STO, UI | ~300 MB |
-| **T1 — Standard** | ≥1.5 GB app-available RAM, measured Pass B RTF ≥ 1.0x | + Pass C (acoustic phonetic spotting), better Pass B model | ~800 MB |
-| **T2 — Full** | ≥2.5 GB app-available RAM, measured Pass B RTF ≥ 2.0x | + Pass A (live streaming), Pass E (speaker identity, threading) | ~1.4 GB |
-| **T3 — Enhanced** | ≥4 GB app-available RAM | + Pass F (on-device LLM digest) | ~2.5 GB |
+| **T3 — Reference** | ≥6 GB app-available RAM **and** a supported NPU (FR-ACC), or measured Pass B RTF ≥ 8x | `large-v3-turbo` on the accelerator · ensemble fusion of Pass A and Pass B · LLM n-best rescoring · LLM prose digest · full-size active lexicon slice | ~2.5 GB |
+| **T2 — Full** | ≥2.5 GB app-available RAM, measured Pass B RTF ≥ 2.0x | Pass A live streaming · Pass E speaker identity and threading · decode-time hotword biasing | ~1.4 GB |
+| **T1 — Standard** | ≥1.5 GB app-available RAM, measured Pass B RTF ≥ 1.0x | Pass C acoustic phonetic spotting · a larger Pass B model | ~800 MB |
+| **T0 — Minimal** | Any device that runs the app | SEG · Pass B (Moonshine tiny) · Pass D from a text-derived lattice · storage · reader | ~300 MB |
 
-**FR-TIER-1 (M)** — The system SHALL detect capability tier at first run and on every
-model-configuration change, using measured throughput rather than device identification.
+**The fine-tuned model (D13) is available at every tier**, including T0. It is a model file,
+not a capability. This is why T0 under this spec is meaningfully better than T0 under the
+previous one.
 
-**FR-TIER-2 (M)** — All tiers SHALL produce records with an identical schema. A tier
+### 6.3 Requirements
+
+**FR-TIER-1 (M)** — Detect capability tier at first run, on every model-configuration change,
+and when accelerator availability changes, using **measured throughput** rather than device
+identification.
+
+**FR-TIER-2 (M)** — All tiers SHALL produce records with an **identical schema**. A tier
 difference SHALL manifest as absent optional fields and lower confidence, never as a
 different record shape.
 
 **FR-TIER-3 (M)** — The user SHALL be able to override the detected tier downward (to save
-battery) and upward (accepting the risk), with the override visible in settings.
+battery or heat) and upward (accepting the risk), with the override visible in settings.
 
-**FR-TIER-4 (S)** — The system SHALL degrade tier automatically and reversibly under
-sustained thermal pressure or when the processing backlog exceeds a configured depth, and
-SHALL surface that it has done so.
+**FR-TIER-4 (M)** — The system SHALL degrade tier automatically and reversibly under
+sustained thermal pressure or when the processing backlog exceeds a configured depth, SHALL
+surface that it has done so, and SHALL **mark affected records as candidates for reprocessing**
+(FR-REP-8).
 
-**FR-TIER-5 (M)** — Every record SHALL store the tier and pass set that produced it, so a
-later reprocess knows what is worth redoing.
+**FR-TIER-5 (M)** — Every record SHALL store the tier, model set, accelerator and pass set
+that produced it, so a later reprocess knows what is worth redoing.
+
+**FR-TIER-6 (M)** — Where the reference tier is unavailable, the UI SHALL state which
+capabilities are inactive and why, in terms of the device rather than in terms of internal
+tier numbers. A user on a mid-tier phone should understand what they are not getting.
+
+**FR-TIER-7 (S)** — Capture SHALL be permitted to run at a lower tier than processing. On a
+device that can capture but not keep up, the system MAY capture at full fidelity and defer
+higher passes to a later reprocess rather than degrading the transcription permanently.
 
 ---
 
@@ -304,6 +367,60 @@ command (FR-RIG-3). Priority is **M** where the capability exists, **N/A** where
 **FR-SEG-6 (M)** — Discard segments below the minimum-duration floor without invoking any
 ASR model, recording them as `rejected:too_short` rather than deleting them.
 
+### 7.2a FR-ENH · Speech enhancement
+
+**FR-ENH-1 (S)** — Support an optional speech-enhancement front end (GTCRN or DPDFNet via
+sherpa-onnx). GTCRN is 48.2 K parameters at 33.0 MMACs/s, so cost is negligible at any tier.
+
+**FR-ENH-2 (M)** — Enhancement SHALL be applicable **per pass**, not globally. The enhanced
+and unenhanced signals SHALL both remain available to downstream passes.
+
+**FR-ENH-3 (M)** — Enhancement SHALL default to **off** and SHALL be enabled only on
+measured evidence from the evaluation harness (AC-35), per capture profile.
+
+**FR-ENH-4 (M)** — Records SHALL state whether enhancement was applied and to which passes.
+
+> **This is deliberately not a free win.** Enhancement produced >30% relative WER reduction
+> on CHiME-4, but ["When Denoising Hinders"](https://arxiv.org/pdf/2603.04710) finds
+> separation preprocessing can *degrade* zero-shot Whisper — plausibly because Whisper was
+> trained on noisy real-world audio and enhancement introduces out-of-distribution artifacts.
+>
+> FR-ENH-2 exists because the answer may differ **by pass**: speaker embedding and phonetic
+> spotting models were not trained on noisy web audio and may benefit where Whisper suffers.
+> Per-pass application costs nothing to build now and is expensive to retrofit.
+
+### 7.2b FR-ACC · Hardware acceleration
+
+**FR-ACC-1 (S / T3)** — Support executing Pass B on an NPU where one is available and a
+compiled model exists for it.
+
+**FR-ACC-2 (M)** — Acceleration SHALL sit behind a stable execution-provider interface. No
+pass SHALL depend on a specific vendor SDK. **A CPU path SHALL exist for every model the
+product ships**, and SHALL be the fallback on any device without a supported accelerator.
+
+**FR-ACC-3 (M)** — Acceleration SHALL be used to run a **better model**, not the same model
+faster. Where an accelerator is present, the tier detector SHALL prefer a larger model over
+a lower latency target, because the duty cycle already provides latency headroom.
+
+**FR-ACC-4 (M)** — Accelerator availability SHALL be detected at runtime, and its absence
+SHALL degrade tier rather than fail.
+
+**FR-ACC-5 (M)** — Records SHALL state which execution provider produced them, so a record
+transcribed on CPU can be identified for reprocessing on a device with an accelerator.
+
+**FR-ACC-6 (C)** — Where vendor toolchains diverge, prefer a single abstraction (LiteRT NPU
+delegation) over per-vendor integration, accepting some performance loss for one code path.
+
+> Qualcomm publishes `Whisper-Large-V3-Turbo` on the NPU across 40+ chipsets: encoder
+> 267–278 ms per 30 s window, decoder ~6.3 ms/token on Snapdragon 8 Elite Gen 5, tens of MB
+> of activation memory. For a 10-second over that computes to **~22x real time** — nine times
+> faster than Whisper small on a 2019 phone CPU, at roughly five percentage points higher
+> callsign accuracy. This is what FR-ACC-3 exists to spend. See `research/04` §3.
+>
+> Note this **reverses** the conclusion in `research/02` §4. That analysis was correct that
+> throughput has 16x surplus, and wrong to infer the NPU was therefore useless — surplus
+> speed can be traded for a bigger model, which is exactly the trade available.
+
 ### 7.3 FR-ASR · Transcription
 
 **FR-ASR-1 (M)** — **Pass B**: transcribe each complete segment with the best offline model
@@ -333,8 +450,53 @@ visible in the UI behind a filter, not hidden.
 **FR-ASR-7 (M)** — Store per-segment model identity, version, quantization and decode
 parameters alongside the transcript.
 
-**FR-ASR-8 (S)** — Support user-supplied model files, so a fine-tuned model can be dropped
-in without an app update.
+**FR-ASR-8 (M)** — Support user-supplied and side-loaded model files, so a fine-tuned model
+can be installed without an app update. Promoted from Should to Must by D13.
+
+#### Fine-tuned models (D13)
+
+**FR-ASR-9 (M)** — Ship a **domain fine-tuned** Pass B model as the default where one is
+available, at every tier. Fine-tuning is a model file, not a capability, and applies to T0
+identically.
+
+**FR-ASR-10 (M)** — Model metadata SHALL record whether a model is stock or fine-tuned, the
+fine-tune identifier and its training-data description, and this SHALL be visible in
+settings and stored on every transcript.
+
+**FR-ASR-11 (S)** — Support multiple installed fine-tunes selectable per capture profile
+(FR-CFG-1), so an HF-DX profile and a local-repeater profile can use different models.
+
+> The evidence for this being a Must rather than a nice-to-have: ATC fine-tuning takes
+> Whisper from 55.2% to 6.8% WER, and one study reached 13.7% — a 54.8% relative reduction —
+> from **55 hand-transcribed clips**. See `research/04` §2. The M0 evaluation set is also the
+> fine-tuning set, so this costs one labelling effort, not two.
+
+#### Ensemble fusion (T3)
+
+**FR-ASR-12 (M / T3)** — Where Pass A and Pass B have both produced hypotheses for a segment,
+**fuse them** by confidence-weighted alignment rather than discarding Pass A.
+
+**FR-ASR-13 (M)** — Fusion SHALL combine **architecturally diverse** systems — an
+encoder-decoder and a transducer — because the published gain scales with model diversity,
+not model count. Two sizes of the same architecture SHALL NOT be treated as an ensemble.
+
+**FR-ASR-14 (M)** — Fused output SHALL record its constituent hypotheses and per-token
+agreement, so disagreement is available as a confidence signal to Pass D.
+
+#### N-best rescoring (T3)
+
+**FR-ASR-15 (S / T3)** — Where an LLM is resident, rescore the ASR n-best list using combined
+linguistic and acoustic scores.
+
+**FR-ASR-16 (M)** — Rescoring SHALL be **strictly selective**: the LLM reranks a fixed
+candidate set and SHALL NOT be permitted to emit tokens outside it. Acoustic score SHALL
+remain in the objective.
+
+> This does not violate D5. Reranking a closed hypothesis set cannot introduce a callsign
+> that was never heard, which is categorically different from asking a model to read a
+> transcript and report who was talking. The spec permits the first and forbids the second.
+> Published effect: 5–25% relative WER reduction, largest where hypotheses are only slightly
+> wrong — the regime this product operates in. See `research/04` §4.
 
 ### 7.4 FR-LEX · Lexicon and callsign resolution
 
@@ -783,20 +945,39 @@ See `open-questions.md` Q1.
 
 ### 10.1 Accuracy
 
-**NFR-1 (M)** — Callsign resolution SHALL achieve **≥90% precision** on confirmed
-attributions, measured against a hand-labelled evaluation set of real off-air traffic.
+Targets are **per tier**. A single target across all hardware was the old framing's mistake:
+it necessarily described the weakest device, which is not the product.
 
-**NFR-1a (M)** — **Precision is prioritised over recall for `CONFIRMED`.** Reporting no
-callsign is acceptable; reporting the wrong one is not. Target recall ≥75% at that
-precision.
+| Tier | Callsign precision (`CONFIRMED`) | Callsign recall | Overall WER |
+|---|---:|---:|---:|
+| **T3 — Reference** | **≥95%** | ≥85% | ≤20% |
+| T2 — Full | ≥92% | ≥80% | ≤25% |
+| T1 — Standard | ≥90% | ≥75% | ≤30% |
+| T0 — Minimal | ≥85% | ≥60% | ≤45% |
 
-**NFR-1b (S)** — Overall WER target ≤25% on real off-air audio at T1+. This is deliberately
-loose: the ATC literature reaches 13.5–16.7% only with fine-tuning, and no stock model has
-been measured on this audio.
+**NFR-1 (M)** — Meet the table above, measured against a hand-labelled evaluation set of real
+off-air traffic (M0).
 
-> **All accuracy targets are provisional until an evaluation set exists.** No published WER
-> figure for any of these models on off-air amateur radio audio was found. Building the
-> evaluation set is the first engineering task (section 15).
+**NFR-1a (M)** — **Precision is prioritised over recall at every tier.** Reporting no
+callsign is acceptable; reporting the wrong one is not. Where a tier cannot meet its
+precision target, it SHALL sacrifice recall — moving results to `AMBIGUOUS` or `UNKNOWN` —
+rather than assert.
+
+**NFR-1b (M)** — The precision floor SHALL NOT vary by tier by more than the table states.
+**A weak device may know less; it may not be more wrong.** This is the requirement that
+keeps T0 trustworthy rather than merely functional.
+
+**NFR-1c (M)** — Each tier's numbers SHALL be measured and reported separately by the
+evaluation harness, on the same evaluation set. A single aggregate number is not acceptable
+evidence.
+
+> **All accuracy targets are provisional until the evaluation set exists.** No published WER
+> figure for any of these models on off-air amateur radio audio was found. The T3 targets
+> additionally assume domain fine-tuning delivers on this audio something like what it
+> delivers on ATC (55.2% → 6.8%); that transfer is plausible from a strong structural
+> analogy and is **unproven**. Building the evaluation set is the first engineering task
+> (section 15), and it is what converts every number in this table from a target into a
+> measurement.
 
 ### 10.2 Latency
 
@@ -834,8 +1015,10 @@ SHALL be recorded and surfaced.
 
 **NFR-5a (M)** — Functional at T0 on a device with 2 GB total RAM.
 
-**NFR-5b (M)** — No dependency on any specific SoC, NPU or vendor SDK. NPU acceleration, if
-ever added, SHALL be an optional accelerator behind the same interface.
+**NFR-5b (M)** — No *required* dependency on any specific SoC, NPU or vendor SDK. NPU
+acceleration is an **optional** accelerator behind the execution-provider interface
+(FR-ACC-2); every model the product ships SHALL have a working CPU path, and the app SHALL
+be fully functional with no accelerator present.
 
 ### 10.6 Privacy and legal
 
@@ -880,6 +1063,29 @@ records without re-running ASR. This is cheap and is the highest-value reprocess
 **FR-REP-7 (C)** — Define an export format sufficient for an external system (a desktop
 running `large-v3`) to reprocess and re-import. **Designing the format is in scope for v1;
 building the desktop side is not.**
+
+### 11.1 Cross-tier reprocessing
+
+This is the mechanism that reconciles D3 (design for the best hardware) with D8 (weak devices
+stay functional), and it is a v1 requirement rather than a future nicety.
+
+**FR-REP-8 (M)** — Records produced below the device's current tier — because the tier was
+lower at capture time, because thermal degradation occurred (FR-TIER-4), or because capture
+outran processing (FR-TIER-7) — SHALL be identifiable as **reprocessing candidates**.
+
+**FR-REP-9 (M)** — The user SHALL be able to reprocess candidates at the current tier, in
+bulk, with progress and an estimate.
+
+**FR-REP-10 (S)** — Where a database is imported onto a more capable device (FR-STO-6), the
+system SHALL offer to reprocess everything eligible.
+
+**FR-REP-11 (M)** — Reprocessing SHALL be interruptible and resumable, and SHALL never leave
+a record in a worse state than before it started — a failed reprocess retains the previous
+current transcript.
+
+> **The user-facing consequence, which the UX guide should lead with:** capture on a cheap
+> phone in the field, reprocess at home on the good one. Same app, same database. A low tier
+> yields a *provisional* record, not a permanently degraded one.
 
 ---
 
@@ -944,6 +1150,16 @@ overwritten attributions remain reachable. Retention deletion is announced in ad
 
 **P10 — Degradation is announced.** Tier drops, thermal throttling and backlog pressure are
 visible when they happen, not discovered later in a log.
+
+**P11 — A weaker device knows less; it is never more wrong.** Lower tiers reduce recall, not
+precision (NFR-1b). The interface on a cheap phone shows fewer callsigns, not shakier ones,
+and says so.
+
+**P12 — Provisional results look provisional, and improving them is one action.** Records
+processed below the device's current capability are visibly marked and reprocessable in
+bulk. The framing throughout is "this can get better", never "this is broken". Capturing in
+the field on a spare phone and improving it at home is a **designed workflow**, and the UX
+guide should treat it as a headline capability rather than an edge case.
 
 ---
 
@@ -1015,11 +1231,19 @@ Input to the test plan. Grouped by what a test would have to establish.
 ### 14.6 Tiers and degradation
 
 - **AC-26** The app runs and captures on a 2 GB device at T0 (NFR-5a).
-- **AC-27** Records from T0 and T2 have identical schema; a T0 record differs only by absent
+- **AC-27** Records from T0 and T3 have identical schema; a T0 record differs only by absent
   optional fields (FR-TIER-2).
-- **AC-28** Under induced thermal load, the system degrades tier, surfaces it, and recovers.
+- **AC-28** Under induced thermal load, the system degrades tier, surfaces it, recovers, and
+  marks affected records as reprocessing candidates (FR-TIER-4).
 - **AC-29** At 40% simulated channel activity the system does not fail; it queues, then
   degrades, and reports backlog.
+- **AC-36** Each tier independently meets its own row of the NFR-1 table on the same
+  evaluation set, reported separately (NFR-1c).
+- **AC-37** **T0 precision does not fall below its floor even as recall drops.** Verified by
+  forcing T0 on hard audio and confirming results move to `AMBIGUOUS`/`UNKNOWN` rather than
+  becoming wrong (NFR-1a, NFR-1b).
+- **AC-38** With no accelerator present, T3 features degrade to T2 and capture continues
+  (FR-ACC-4).
 
 ### 14.7 Reprocessing
 
@@ -1028,19 +1252,38 @@ Input to the test plan. Grouped by what a test would have to establish.
 - **AC-31** A superseded transcript remains retrievable.
 - **AC-32** Shortening audio retention below the reprocessing horizon produces a warning that
   names the consequence (FR-REP-4).
+- **AC-39** **A session captured at T0 and reprocessed at T3 produces results matching a
+  session captured natively at T3**, within tolerance, on the same audio. This is the single
+  test that validates the whole tier inversion (FR-REP-8, §6.1).
+- **AC-40** A reprocess interrupted mid-run leaves every record either updated or unchanged,
+  never empty (FR-REP-11).
 
-### 14.8 Export
+### 14.8 Accuracy levers
+
+- **AC-41** A fine-tuned model measurably outperforms the stock model of the same size on the
+  evaluation set, at every tier including T0 (FR-ASR-9, D13).
+- **AC-42** Ensemble fusion of Pass A and Pass B outperforms the better of the two alone
+  (FR-ASR-12).
+- **AC-43** LLM rescoring cannot emit a token outside the supplied candidate set. Verified
+  adversarially with a candidate set deliberately excluding the correct answer — the system
+  must return a wrong candidate, never invent the right one (FR-ASR-16, D5).
+- **AC-44** Speech enhancement can be enabled per pass, and the harness reports its effect on
+  each pass separately, including where that effect is negative (FR-ENH-2, FR-ENH-3).
+
+### 14.9 Export
 
 - **AC-33** An `INFERRED` attribution exports with its state; a confirmed-only export omits
   it entirely (FR-EXP-4, FR-EXP-5).
 - **AC-34** ADIF export imports cleanly into standard logging software.
 
-### 14.9 Evaluation harness
+### 14.10 Evaluation harness
 
 - **AC-35** A reproducible harness exists that runs the full pipeline over the evaluation
-  tape and reports WER, callsign precision/recall, rejection rate by reason, and attribution
-  accuracy. **This harness is a v1 deliverable, not a test artifact** — the accuracy numbers
-  in section 10 cannot be validated or defended without it.
+  tape and reports, **per tier and per lever**: WER, callsign precision/recall, rejection rate
+  by reason, and attribution accuracy. **This harness is a v1 deliverable, not a test
+  artifact** — every number in section 10 is a target until this exists, and the per-lever
+  breakdown is what decides whether ensemble fusion, rescoring and enhancement earn their
+  complexity.
 
 ---
 
@@ -1049,12 +1292,29 @@ Input to the test plan. Grouped by what a test would have to establish.
 Ordered by dependency and by information value. Each milestone answers a question that
 changes what comes after.
 
-### M0 — Evaluation set (blocking everything)
+### M0 — Evaluation and training set (blocking everything)
 
 Record 3–5 hours of real traffic from the TH-D75A and the SDS150, hand-label callsigns,
 frequencies, speaker turns and thread boundaries. **Nothing in section 10 is verifiable
-without this, and every accuracy claim in all three research documents is transferred from
-another domain.** This is the highest-value work in the project and needs no code.
+without this, and every accuracy claim in all four research documents is transferred from
+another domain.** Highest-value work in the project, and it needs no code.
+
+> **This milestone got more valuable, not just more urgent.** The ATC literature reached
+> 13.7% WER — a 54.8% relative reduction — from **55 hand-transcribed clips**. The same
+> labelled tape is therefore both the evaluation set *and* the fine-tuning set for M0a. One
+> labelling effort, two deliverables, and the second is the largest accuracy lever in the
+> project. Split the tape into train/eval folds before doing anything else with it.
+
+### M0a — Domain fine-tune (D13)
+
+LoRA fine-tune the chosen Pass B model on the M0 training fold; measure against the eval fold.
+Offline work on a desktop or rented GPU, producing a model file that improves **every tier
+including T0**.
+
+**First check, before anything else:** confirm a fine-tuned checkpoint exports into the ONNX
+form sherpa-onnx consumes (`research/03` §8 T5). If it does not, L1 is unavailable on the
+chosen runtime and the runtime decision reopens. This is a half-day of work that gates the
+project's biggest lever.
 
 ### M1 — Lexicon resolver, off-device
 
@@ -1098,14 +1358,29 @@ Streaming Zipformer with hotword biasing, live partial display.
 
 Deterministic digest, ADIF/CSV/POTA export.
 
-### M10 — Tier system
+### M10 — Tier system and cross-tier reprocessing
 
-Detection, degradation, T0 validation on constrained hardware.
+Detection, degradation, T0 validation on constrained hardware, and the reprocessing candidate
+flow (FR-REP-8..11). AC-39 — a T0 capture reprocessed at T3 matching a native T3 capture — is
+the acceptance gate for the whole tier inversion.
 
-> **M4 is the decision point.** If audio-level resolution does not measurably beat text-level
-> resolution on the M0 tape, the architecture should collapse to the simpler text path and
-> the saved complexity spent elsewhere. Design the milestone so that comparison is the
-> deliverable.
+### M11 — Reference-tier levers (T3)
+
+NPU execution provider (FR-ACC), ensemble fusion (FR-ASR-12), n-best rescoring (FR-ASR-15),
+enhancement evaluation (FR-ENH). **Sequenced last deliberately**: each is measured against
+the harness and kept only if it earns its complexity. None of them is required for a good
+product; all of them are what make the reference experience world-class.
+
+> **Two decision points, and they are different in kind.**
+>
+> **M4 decides the architecture.** If audio-level resolution does not measurably beat
+> text-level resolution on the M0 tape, collapse to the simpler text path and spend the saved
+> complexity elsewhere. Design the milestone so that comparison is the deliverable.
+>
+> **M11 decides the ceiling.** Each lever is independently measurable and independently
+> droppable. Expect some to fail — enhancement is genuinely contested, and rescoring is
+> unproven on this audio. Keeping a lever that does not measure is worse than never building
+> it, because it costs complexity forever.
 
 ---
 
@@ -1123,12 +1398,14 @@ Detection, degradation, T0 validation on constrained hardware.
 |---|---|
 | D1 Android only | FR-SVC-1..8, NFR-5 |
 | D2 On-device only | NFR-6, FR-REP-1..7 |
-| D3 Highest accuracy | FR-ASR-1..8, FR-LEX-4..12 |
+| D3 Flagship-first design | §6.1, FR-TIER-1..7, FR-ASR-12..16, FR-ACC-1..6, NFR-1 table |
 | D4 Lexicon vs audio | FR-LEX-4, FR-LEX-5, FR-LEX-7, FR-ASR-4 |
 | D5 Deterministic callsigns | FR-DIG-4, FR-LEX-7..12 |
 | D6 Live + accurate | FR-ASR-2, FR-ASR-3, P5 |
 | D7 Visible confidence | FR-SPK-10, FR-UI-4, FR-EXP-4, P1 |
-| D8 Runs on anything | FR-TIER-1..5, NFR-5a |
+| D8 Lower tiers stay functional | FR-TIER-2, FR-TIER-6, FR-TIER-7, FR-REP-8..11, NFR-1b, NFR-5a, AC-39 |
+| D13 Fine-tuning first-class | FR-ASR-8..11, M0a, AC-41 |
+| D14 NPU as optional accelerator | FR-ACC-1..6, AC-38 |
 | D9 Modular rig | FR-RIG-1..12 |
 | D10 LLM optional | FR-DIG-2..6 |
 | D11 Open then store | NFR-6b |
