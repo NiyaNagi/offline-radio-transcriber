@@ -26,8 +26,10 @@ corpus pipeline.
 | **Technical design specification** | **Draft 1.1 — M0–M4 in detail, M5–M11 interfaces only** | [`spec/technical-design.md`](spec/technical-design.md) |
 | **Implementation plan** | **Draft 1.1 — M0–M4 detailed, M5–M11 outlined** | [`spec/implementation-plan.md`](spec/implementation-plan.md) |
 | Adversarial audit | Complete — 41 findings, all addressed | [`spec/audit-2026-09-06.md`](spec/audit-2026-09-06.md) |
-| Test plan | Not started — §14 and the harness spec cover most of it | — |
-| Visual / UX design guide | Not started | — |
+| **Test plan** | **Draft 1 — strict TDD, criteria tiered by release line** | [`spec/test-plan.md`](spec/test-plan.md) |
+| **Build plan** | **Draft 1 — the working session-by-session todo list** | [`spec/build-plan.md`](spec/build-plan.md) |
+| UI design | Direction set — drawer navigation, dark-first, four-state markers | [`design/canvas/`](design/canvas/) |
+| Visual / UX design guide | Not started — the canvas covers layout, not the component inventory | — |
 
 Section 14 (Acceptance Criteria) feeds the test plan; section 13 (Interaction Principles)
 feeds the UX guide, which is still the one document that does not exist; sections 6–11 fed
@@ -44,7 +46,14 @@ that decision would be detailed plans for the wrong thing.
 `spec/implementation-plan.md`, then `research/03` for the reasoning behind the accuracy
 architecture. The hardware study is historical context and is not required.
 
-**Start with M0.A–M0.D — the corpus pipeline.** The project's data strategy was rebuilt in
+**Start at [`spec/build-plan.md`](spec/build-plan.md) session S0.1** and work down the
+checklist. Sessions S1.6 and S1.7 are decision gates that are cheap and answerable early —
+whether speaker embeddings separate on degraded narrowband audio, and whether a fine-tuned
+checkpoint exports into the runtime. Both can invalidate later work, so both come before Phase 2.
+
+The reasoning behind the corpus strategy, which is what makes M0 small:
+
+**M0.A–M0.D — the corpus pipeline.** The project's data strategy was rebuilt in
 September 2026 around public corpora (§14A.3): 176 h of real off-air amateur HF audio, 19,000 h
 of degraded analog comms with speaker labels, and free ATC data all exist under permissive
 licences. What does not exist publicly is amateur conversational callsign traffic — so that is
