@@ -14,21 +14,29 @@ This directory holds the complete research record and the functional specificati
 | Phone platform feasibility research | Complete | [`research/02-phone-platform-study.md`](research/02-phone-platform-study.md) |
 | Accuracy, lexicon and identity research | Complete | [`research/03-accuracy-lexicon-identity.md`](research/03-accuracy-lexicon-identity.md) |
 | Flagship capability research | Complete | [`research/04-flagship-capability.md`](research/04-flagship-capability.md) |
-| **Functional specification** | **Draft 3 — ready for technical design** | [`spec/functional-spec.md`](spec/functional-spec.md) |
-| Open decisions register | Active — 3 blocking | [`spec/open-questions.md`](spec/open-questions.md) |
-| Technical design specification | Not started — baseline in spec §17 | — |
-| Test plan | Not started | — |
+| **Functional specification** | **Draft 3.1 — audited, ready for implementation** | [`spec/functional-spec.md`](spec/functional-spec.md) |
+| Open decisions register | Active — 1 blocking (Q2, record the tape) | [`spec/open-questions.md`](spec/open-questions.md) |
+| **Technical design specification** | **Draft 1 — M0–M4 in detail, M5–M11 interfaces only** | [`spec/technical-design.md`](spec/technical-design.md) |
+| **Implementation plan** | **Draft 1 — M0–M4 detailed, M5–M11 outlined** | [`spec/implementation-plan.md`](spec/implementation-plan.md) |
+| Test plan | Not started — §14 and the harness spec cover most of it | — |
 | Visual / UX design guide | Not started | — |
 
-The functional spec is written to be the direct input to the three documents that do not
-yet exist. Section 14 (Acceptance Criteria) feeds the test plan; section 13 (Interaction
-Principles) feeds the UX guide; sections 6–11 feed the technical design.
+Section 14 (Acceptance Criteria) feeds the test plan; section 13 (Interaction Principles)
+feeds the UX guide, which is still the one document that does not exist; sections 6–11 fed
+the technical design.
+
+**M5–M11 are outlined rather than designed on purpose.** M4 is an architectural fork — if
+audio-level resolution does not beat text-level resolution on the M0 tape (risk R3), Pass C
+is deleted and the lexicon layer collapses to the text path. Detailed plans for what follows
+that decision would be detailed plans for the wrong thing.
 
 ## Reading order
 
-**If you are implementing:** read the functional spec first, then
-`research/03` for the reasoning behind the accuracy architecture. The hardware study is
-historical context and is not required.
+**If you are implementing:** functional spec, then `spec/technical-design.md`, then
+`spec/implementation-plan.md`, then `research/03` for the reasoning behind the accuracy
+architecture. The hardware study is historical context and is not required. **Start with
+M0a.1 — the ONNX export round trip — and M0.3, recording the tape;** they are half a day and
+several weeks respectively, and everything else waits on the second one.
 
 **If you are reviewing the decision:** read `research/02` (why a phone at all), then the
 functional spec's sections 1–5.
