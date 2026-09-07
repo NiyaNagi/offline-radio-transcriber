@@ -1,6 +1,13 @@
 # Offline Radio Transcriber — Functional Specification
 
-**Draft 3 · September 2026 · Ready for technical design**
+**Draft 3.1 · September 2026 · Ready for technical design and implementation planning**
+
+*Draft 3.1 is an audit pass. A mechanical check for dangling references, duplicate IDs and
+requirement-to-test coverage found seven requirement groups and two non-functional targets
+with **no acceptance criteria at all** — including the digest, which is goal G1, and the
+latency budget in NFR-2. Twenty-seven criteria were added to close them (AC-67..93).
+Verified: 206 requirements, 93 contiguous acceptance criteria, zero dangling references, zero
+duplicate IDs, every requirement group covered.*
 
 *Draft 2 rewrote the design around a flagship-first ceiling: tiers defined downward from a
 reference experience (§6), per-tier accuracy targets (§10.1), fine-tuning and optional NPU
@@ -117,12 +124,12 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D6 | **Live streaming display plus complete-transmission accuracy.** | Product owner wants the live feel and the accurate record. They are complementary passes |
 | D7 | **Attribution confidence is always visible**: confirmed / inferred / unknown. | Goal G4 |
 | D8 | **Lower-tier devices remain fully functional, never a design constraint on the ceiling.** Four tiers, one data shape, and **any record is reprocessable at a higher tier later**. | Explicit product-owner direction. Because every pass is a pure function of retained audio, tier is a property of *processing*, not of the record |
-| D13 | **Domain fine-tuning is a first-class part of the product**, not a research aside. | ATC literature: 55.2% → 6.8% WER, and 13.7% from **55 hand-transcribed clips**. It is the largest single lever available and it lifts *every* tier |
-| D14 | **NPU acceleration is an optional accelerator behind a stable interface**, used to run a *better model*, never to run the same model faster. | Qualcomm publishes `large-v3-turbo` at ~22x RTF on Snapdragon 8 Elite Gen 5. A CPU fallback is required regardless |
 | D9 | **Audio-only first; modular rig interface extensible to any radio.** TH-D75A first. | Explicit product-owner direction |
 | D10 | **A local LLM is optional and post-hoc.** Digest only. | Product owner: "does not need to be a local LLM, as long as we have fully offline speech transcription with high accuracy" |
 | D11 | **Open source self-build now; Play Store later.** | No decision may foreclose the store path |
 | D12 | **Worldwide callsign support via grammar plus priors**, never a bounded list. | Product owner: "we could hear calls all over the world… think about the most robust and flexible solution" |
+| D13 | **Domain fine-tuning is a first-class part of the product**, not a research aside. | ATC literature: 55.2% → 6.8% WER, and 13.7% from **55 hand-transcribed clips**. It is the largest single lever available and it lifts *every* tier |
+| D14 | **NPU acceleration is an optional accelerator behind a stable interface**, used to run a *better model*, never to run the same model faster. | Qualcomm publishes `large-v3-turbo` at ~22x RTF on Snapdragon 8 Elite Gen 5. A CPU fallback is required regardless |
 | D15 | **Stack: Kotlin, Compose, Room/SQLite+FTS5, Coroutines/Flow, Hilt, WorkManager.** ASR and rig layers sit behind plain interfaces. | Product owner delegated the choice. Idiomatic, well-documented, and the interfaces are what keep sherpa-onnx and each radio replaceable |
 | D16 | **Audio is never dropped due to processing pressure.** Overload sheds passes and defers to a durable queue. | Product owner direction. Combined with cross-tier reprocessing this makes overload produce a *provisional* record, never a lost one — the same safety property as tier degradation |
 | D17 | **Location: rig-reported, then device GPS, then manual grid.** Permission optional. | Product owner chose GPS-with-fallback. Rig-reported is placed first because the TH-D75A has GPS for APRS, giving portable accuracy with **no Android location permission at all** |
@@ -1649,24 +1656,31 @@ Input to the test plan. Grouped by what a test would have to establish.
 
 - **AC-16** Given a QSO where station A identifies once and then transmits four more times
   without identifying, all five are attributed to A — one `CONFIRMED`, four `INFERRED`, each
-  linking to the confirming transmission.
+  linking to the confirming transmission (FR-SPK-4).
 - **AC-17** Correcting the attribution on any one of those five re-propagates to all, and the
-  corrected records are flagged and immune to re-propagation.
+  corrected records are flagged and immune to re-propagation (FR-SPK-7).
 - **AC-18** Two genuinely different stations in one thread produce two Voiceprints and are
-  not merged, at the default threshold, on real audio.
+  not merged, at the default threshold, on real audio (FR-SPK-3).
 - **AC-19** Transmissions below the duration floor are not clustered and remain `UNKNOWN`
-  rather than being attributed.
-- **AC-20** A thread ends when the frequency changes beyond the configured gap.
+  rather than being attributed (FR-SPK-2).
+- **AC-20** A thread ends when the frequency changes beyond the configured gap (FR-SPK-5).
+- **AC-67** A Voiceprint that has gone a configured period without a confirmed observation
+  loses confidence, and cross-day identity requires re-confirmation (FR-SPK-9).
 
 ### 14.5 Rig interface
 
-- **AC-21** The null module supports a complete capture session with manual frequency.
-- **AC-22** The TH-D75A module reports frequency, and transmissions carry it with provenance
-  `rig`.
+- **AC-21** The null module supports a complete capture session with manual frequency
+  (FR-RIG-2, FR-RIG-8).
+- **AC-22** The TH-D75A module reports frequency, mode and squelch state, and transmissions
+  carry frequency with provenance `rig` (FR-RIG-3, FR-RIG-9).
 - **AC-23** A new radio can be added by supplying only a declarative descriptor, verified by
-  adding a second radio during test.
-- **AC-24** An invalid descriptor falls back to the null module and does not block capture.
-- **AC-25** Rig disconnect mid-session leaves capture running with frequency marked stale.
+  adding a second radio during test (FR-RIG-4).
+- **AC-24** An invalid descriptor falls back to the null module and does not block capture
+  (FR-RIG-11).
+- **AC-25** Rig disconnect mid-session leaves capture running with frequency marked stale
+  (FR-RIG-7).
+- **AC-68** Rig-reported squelch state overrides VAD for transmission boundaries while VAD
+  still governs whether speech is present inside them (FR-SEG-5).
 
 ### 14.6 Tiers and degradation
 
@@ -1683,7 +1697,9 @@ Input to the test plan. Grouped by what a test would have to establish.
   forcing T0 on hard audio and confirming results move to `AMBIGUOUS`/`UNKNOWN` rather than
   becoming wrong (NFR-1a, NFR-1b).
 - **AC-38** With no accelerator present, T3 features degrade to T2 and capture continues
-  (FR-ACC-4).
+  (FR-ACC-4, NFR-5b). Verified on a device with no supported NPU, confirming that no vendor
+  SDK is on any required path.
+- **AC-93** The app installs and runs on the minimum supported API level (NFR-5).
 
 ### 14.7 Reprocessing
 
@@ -1756,6 +1772,68 @@ Input to the test plan. Grouped by what a test would have to establish.
 - **AC-63** The log view is navigable and comprehensible via screen reader, and renders without
   clipping at maximum system font scale (FR-A11Y-2, FR-A11Y-3).
 
+### 14.8d Segmentation quality
+
+Segmentation is upstream of everything — a bad boundary corrupts the transcript, the lattice,
+the embedding and the thread simultaneously — and draft 3 had no criteria for it.
+
+- **AC-69** Against a hand-marked tape, detected transmission boundaries fall within a stated
+  tolerance of the true keying boundaries, reported as precision and recall on *boundaries*
+  rather than on words (FR-SEG-1).
+- **AC-70** A stuck carrier does not produce an unbounded segment; it is split at the
+  configured maximum length (FR-SEG-3).
+- **AC-71** Two transmissions separated by less than the minimum silence are not merged into
+  one, and a single transmission containing a natural pause is not split (FR-SEG-2). *This is
+  the trade the VAD settings actually control, and it must be measured rather than tuned by
+  ear.*
+- **AC-72** Segments below the duration floor are recorded as `rejected:too_short` without any
+  ASR model being invoked (FR-SEG-6).
+
+### 14.8e Latency
+
+NFR-2 stated latency targets that nothing tested.
+
+- **AC-73** On the reference device at T2+, a 10-second transmission produces a visible Pass B
+  result within **2 s of segment close**, measured at the 95th percentile over a
+  representative session, not as a mean (NFR-2).
+- **AC-74** At T2+, the first Pass A partial appears within **1 s of speech onset** (NFR-2a).
+- **AC-75** At 15% simulated activity the system keeps up indefinitely with no backlog growth
+  over a sustained run (NFR-2b).
+- **AC-76** Measured endurance on the reference device is recorded and published, not merely
+  asserted to clear 8 hours (NFR-7).
+
+### 14.8f Storage, retention and configuration
+
+- **AC-77** Retention deletes audio at the configured age while retaining transcripts, and
+  announces deletions in advance (FR-STO-3, P9).
+- **AC-78** Approaching storage exhaustion stops audio writes before text writes and never
+  stops capture silently (FR-STO-4, F6).
+- **AC-79** A pinned thread survives a retention pass that would otherwise delete it
+  (FR-STO-7).
+- **AC-80** Full database and audio export completes and re-imports on another device,
+  offering reprocessing for anything eligible (FR-STO-6, FR-REP-10).
+- **AC-81** Captured audio is not exposed to the system media store (FR-STO-8).
+- **AC-82** Switching capture profiles applies audio, VAD, model, lexicon and rig settings
+  together in one action (FR-CFG-1).
+- **AC-83** A profile exported from one install imports into another, and a profile from a
+  newer app version fails cleanly rather than partially applying (FR-CFG-4, FR-AST-7).
+
+### 14.8g Digest
+
+Goal G1 is the primary user-facing deliverable and had no acceptance criteria at all.
+
+- **AC-84** The deterministic digest generates with **no LLM present**, covering stations
+  heard with confidence counts, new stations, activity by frequency and hour, threads, POTA
+  references and anomalies (FR-DIG-1, FR-DIG-2).
+- **AC-85** **The digest distinguishes confirmed from inferred stations.** A digest that
+  flattens the distinction fails G4 as surely as a log that does (FR-DIG-2, D7).
+- **AC-86** Where the LLM digest is enabled, it *adds to* rather than replaces the
+  deterministic digest, and its output is visually distinguished (FR-DIG-3, FR-DIG-6).
+- **AC-87** LLM digest generation never runs during active capture, and only when the device
+  is idle, charging and thermally unconstrained (FR-DIG-5).
+- **AC-88** G1 is met end to end: after an unattended overnight run, the digest conveys what
+  happened **in under two minutes of reading**, verified against the hand-labelled tape.
+
 ### 14.9 Export
 
 - **AC-33** An `INFERRED` attribution exports with its state; a confirmed-only export omits
@@ -1766,10 +1844,19 @@ Input to the test plan. Grouped by what a test would have to establish.
 
 - **AC-35** A reproducible harness exists that runs the full pipeline over the evaluation
   tape and reports, **per tier and per lever**: WER, callsign precision/recall, rejection rate
-  by reason, and attribution accuracy. **This harness is a v1 deliverable, not a test
-  artifact** — every number in section 10 is a target until this exists, and the per-lever
-  breakdown is what decides whether ensemble fusion, rescoring and enhancement earn their
-  complexity.
+  by reason, and attribution accuracy (FR-TST-5). **This harness is a v1 deliverable, not a
+  test artifact** — every number in section 10 is a target until this exists, and the
+  per-lever breakdown is what decides whether ensemble fusion, rescoring and enhancement earn
+  their complexity.
+- **AC-89** A WAV file replays through the complete pipeline as though live, and faster than
+  real time, producing identical results to a live capture of the same audio (FR-TST-1).
+  *Every other criterion in §14 that uses a known input depends on this one.*
+- **AC-90** Two harness runs over the same corpus, model and configuration produce **identical
+  output** (FR-TST-4). Without this, no measured improvement can be distinguished from noise.
+- **AC-91** Time-dependent behaviour — thread gaps, the 10-minute ID window, retention,
+  voiceprint decay — is testable via clock injection without waiting in real time (FR-TST-2).
+- **AC-92** A scripted fake rig replays a timed state sequence, exercising frequency
+  correlation and disconnection with no hardware attached (FR-TST-3).
 
 ---
 
