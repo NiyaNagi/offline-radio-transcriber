@@ -6,9 +6,18 @@ Questions that remain open after the initial requirements interview. Each carrie
 recommendation, so none of them blocks progress by default — but the ones marked
 **blocking** should be closed before technical design begins.
 
-**Status at draft 2:** Q1 largely closed by documentation already in this repo. **Q2
-(evaluation set), Q3 (reference device) and Q10 (fine-tuning data split) are blocking.**
-Q10–Q12 are new, arising from the flagship-first reframing.
+**Status at draft 3:** Q1 largely closed by documentation already in this repo. **Q3 closed
+(OPPO Find X9 Ultra) and Q10 answered (split by session, §14A.2).** Only **Q2 — actually
+going out and recording the tape — remains blocking**, and it is the one thing no amount of
+specification can substitute for.
+
+Two risks moved on the strength of these answers: **R1 (fine-tune export) dropped from Severe
+to Low** — see §14A.1, the export enum already carries `distil-*` variants and a merged LoRA
+is structurally identical to its base — while **R5 (background-killing) became the top risk**,
+because the reference device runs ColorOS.
+
+Q11 (NPU vendor scope) is also effectively settled: the reference device is Snapdragon, which
+is the one vendor with published per-device benchmarks for this exact model.
 
 Answered questions move to §3 for the record.
 
@@ -73,21 +82,35 @@ single most important test in the plan, and it needs real squelch tails from bot
 
 ---
 
-### Q3 — Reference device · **BLOCKING** · owner: product
+### Q3 — Reference device · **CLOSED** · owner: product
 
-**Question.** Which specific phone are NFR-2 and NFR-3 measured against?
+**Answer: OPPO Find X9 Ultra.** Snapdragon 8 Elite Gen 5 (SM8850-AC), 12–16 GB RAM,
+7050 mAh, Android 16 / ColorOS 16. Recorded as D19; details in spec §10.7–10.8.
 
-**Why it matters.** "Must run on anything" (D8) sets the floor via tiers, but latency and
-endurance targets need a named device or they are unfalsifiable. Also determines what
-hardware to buy for testing.
+**This is the best possible choice for the accuracy ceiling and the worst for the platform
+risk, and both facts are large.**
 
-**Recommendation.** Two devices:
-- **Reference (targets measured here):** a Pixel 7a or 8a. Clean background execution, mid-tier
-  silicon, ~$150–250 used, and representative of T2.
-- **Floor (AC-26 measured here):** any 2 GB Android 8+ device, ~$40 used.
+**What it buys.** It is the *exact* chipset Qualcomm published `large-v3-turbo` NPU
+benchmarks for — 267–278 ms encoder per 30 s window, ~6.3 ms/token decoder. The ~22x RTF
+figure underpinning T3 becomes a measurement on this silicon rather than an extrapolation,
+which is true of no other number in the project. The 7050 mAh battery (~27 Wh, versus the
+15–20 Wh previously assumed) makes NFR-3's 8-hour target trivially clearable — at 15%
+activity, T3 NPU inference is roughly 39 seconds of accelerator time across a whole shift.
+Endurance stops being a design constraint on this device.
 
-Deliberately *not* a flagship. Targets set on a Pixel 9 Pro would be unreachable on the
-hardware most people would actually dedicate to this.
+**What it costs.** ColorOS is among the most aggressive background-killers on the market, and
+the failure is subtle rather than loud: **`isIgnoringBatteryOptimizations()` can return `true`
+while ColorOS kills the app anyway.** The standard check lies. Oppo requires four separate
+interventions — recent-apps pinning, the security app's startup manager, battery-optimization
+exemption, and a foreground notification — of which only the third is visible to the API.
+
+**Consequence.** R5 was rated "low on Pixel, high on Samsung"; it is now **the project's top
+risk**, and the mitigations changed shape: empirical heartbeat liveness (NFR-8, FR-SVC-5b),
+manufacturer-specific onboarding (NFR-9, FR-SVC-5a), and a 30-minute "prove it" test run
+(FR-SVC-5c) so the setup ritual becomes a pass/fail rather than an act of faith. M2 exists to
+settle this before any model complicates the diagnosis.
+
+**Floor device still needed:** any 2 GB Android 8+ handset, ~$40 used, for AC-26 and AC-37.
 
 ---
 
@@ -191,23 +214,37 @@ worth not designing the Thread entity in a way that precludes it.
 
 ---
 
-### Q10 — Fine-tuning data volume and licensing · **BLOCKING M0a** · owner: product
+### Q10 — Fine-tuning data split and licensing · **ANSWERED** · owner: engineering
 
-**Question.** How much labelled amateur-radio audio for the training fold, and can any of it
-be shared if the project is open-sourced?
+**Question.** How much labelled amateur-radio audio for the training fold, how is it split,
+and can any of it be shared if the project is open-sourced?
 
-**Why it matters.** D13 makes fine-tuning first-class. The ATC precedent says 55 clips
-produced a 54.8% relative WER reduction, so the volume needed is small — but the M0 tape
-must now be **split into train and eval folds before any measurement happens**, or the
-evaluation is contaminated. That is a decision to make before labelling, not after.
+**This was mis-filed as a product decision. It is methodology, and it is specified in full in
+spec §14A.2.** The short version:
 
-Licensing matters separately: a fine-tuned model derived from your own recordings is yours
-to publish, but the recordings themselves capture identifiable third parties, and
-redistribution norms for off-air amateur audio are not obvious.
+**Split by recording session, never by transmission.** Splitting randomly across
+transmissions leaks three ways at once — the same voice, the same channel conditions, and the
+same conversation land in both folds — so the model is scored on speakers and audio it
+effectively trained on. A model that memorised three local repeater regulars would look
+excellent and generalise to nothing.
 
-**Recommendation.** Target **2 h train / 1 h eval** minimum, folded by session so no
-conversation spans both. Publish the *model weights* if the licence of the base model allows;
-publish the *audio* only with a considered decision. Keep the eval fold untouched until M11.
+Recipe: record **8–12 discrete sessions** across different days, bands and radios rather than
+one long tape; assign **whole sessions** to train or eval at roughly **70/30 by duration**;
+ensure at least one eval session contains **no station appearing in train**; put the **noise
+tape and the HF/DX traffic in eval**; commit a manifest recording the assignment; and **do not
+look at the eval fold until M11** — not for debugging, not for a quick check.
+
+**The tiebreak rule, for when you are unsure about a given session: put it in eval.**
+Under-training costs a few WER points that more data later recovers. Contaminating the eval
+fold destroys your ability to measure anything and is not recoverable — you cannot un-see it.
+The ATC precedent got a 54.8% relative reduction from 55 clips, so the training fold does not
+need to be large; spend surplus material on a generous eval fold.
+
+**Licensing remains genuinely open, and is not blocking.** A fine-tuned model derived from
+your own recordings is yours to publish if the base model's licence allows. The *recordings*
+capture identifiable third parties and redistribution norms for off-air amateur audio are not
+obvious — so publish weights freely, and treat publishing audio as a separate, deliberate
+decision. Record the base model's licence from day one (FR-AST-1) so this stays open.
 
 ---
 
@@ -221,15 +258,14 @@ benchmarks across 40+ combinations. Tensor and MediaTek are supported by LiteRT 
 less published evidence for this specific model. Supporting three means three toolchains or
 accepting LiteRT's abstraction and some performance loss (FR-ACC-6).
 
-**Recommendation.** **Qualcomm first, via whichever path the reference device uses**, and
-treat T3 as unavailable elsewhere until measured. FR-ACC-4 already requires graceful absence,
-so this costs nothing but a smaller T3 population. Revisit once the harness can measure a
-second vendor cheaply.
+**Recommendation — now effectively settled by Q3.** The reference device is Snapdragon
+8 Elite Gen 5, the exact silicon Qualcomm publishes `large-v3-turbo` benchmarks for.
+**Qualcomm only at v1**; treat T3 as unavailable on other accelerators until measured.
+FR-ACC-4 already requires graceful absence, so this costs nothing but a smaller T3 population.
 
-**Note this interacts with Q3.** If the reference device is a Pixel, the accelerator is
-Tensor, not Snapdragon — and the published evidence base is thinner. That may be a reason to
-choose a Snapdragon reference device despite Pixel's better background-execution behaviour,
-or a reason to keep T3 CPU-only at v1.
+The Q3 answer resolved the tension noted here — a Pixel reference would have meant Tensor,
+where the published evidence for this model is much thinner. The device chosen has the best
+evidence base available, at the cost of the worst background-execution behaviour (§10.8).
 
 ---
 
@@ -287,6 +323,8 @@ lost.
 | C7 | How to present inferred attribution? | Show with confidence | D7, FR-UI-4, four-state model |
 | C8 | v1 scope? | Audio-only first; flexible interface pulling frequency and other data from a connected radio; start with the Kenwood; extensible to any radio via modules | D9, §9 three-level extension design |
 | C9 | Is a local LLM required? | No — "as long as we have fully offline speech transcription with high accuracy that is fine" | D10. FR-DIG-2 deterministic digest is the requirement; FR-DIG-3 LLM is tier-gated and optional |
+| C15 | Which device is the reference? | OPPO Find X9 Ultra | D19, §10.7–10.8. Snapdragon 8 Elite Gen 5 — the exact chipset Qualcomm benchmarked `large-v3-turbo` on, so T3's headline number is measured not extrapolated. 27 Wh battery makes NFR-3 trivial. But ColorOS makes R5 the top risk |
+| C16 | Can a LoRA fine-tune be exported to sherpa-onnx? | Yes, with a constraint | D20, §14A.1. `export-onnx.py --model` takes a fixed enum — but that enum already includes `distil-*` variants, so it exports non-OpenAI weights routinely, and `merge_and_unload()` makes a LoRA structurally identical to its base. Fine-tune a base already in the enum |
 | C11 | Architecture constraints, or should I choose? | Choose | D15, §17. Kotlin/Compose/Room+FTS5/Coroutines/Hilt/WorkManager, with `:lexicon` and `:eval` deliberately Android-free so accuracy work runs on a desktop JVM |
 | C12 | Who is building this, at what pace? | Solo, heavily AI-assisted | D18. §15 front-loads interfaces, testability and decision gates — what is expensive to retrofit and what AI assistance does not make safer. M2 grew to include the runtime skeleton for this reason |
 | C13 | Where does operator location come from? | GPS when available, manual fallback | D17, FR-LEX-22..24. Rig-reported position placed **first** because the TH-D75A has GPS for APRS, giving portable accuracy with no Android location permission at all |

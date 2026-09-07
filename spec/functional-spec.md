@@ -127,6 +127,8 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D16 | **Audio is never dropped due to processing pressure.** Overload sheds passes and defers to a durable queue. | Product owner direction. Combined with cross-tier reprocessing this makes overload produce a *provisional* record, never a lost one — the same safety property as tier degradation |
 | D17 | **Location: rig-reported, then device GPS, then manual grid.** Permission optional. | Product owner chose GPS-with-fallback. Rig-reported is placed first because the TH-D75A has GPS for APRS, giving portable accuracy with **no Android location permission at all** |
 | D18 | **Solo build, heavily AI-assisted.** | Product owner. Shapes §15: front-load interfaces and testability, treat implementation throughput as high, put the risk on review gates rather than on sequencing |
+| D19 | **Reference device: OPPO Find X9 Ultra.** Snapdragon 8 Elite Gen 5, 12–16 GB, 7050 mAh, Android 16 / ColorOS 16. | Product owner. It is the *exact* chipset Qualcomm published `large-v3-turbo` NPU benchmarks for, so T3's headline number is measured rather than extrapolated — **and it runs ColorOS, one of the worst offenders for background-killing.** Best case for accuracy, worst case for R5. See §10.7 |
+| D20 | **Fine-tune a base model that is already in sherpa-onnx's export list.** | Removes R1 almost entirely. `export-onnx.py --model` accepts a fixed enum, but that enum already includes every `distil-*` variant, and a LoRA merged with `merge_and_unload()` is structurally identical to its base — so the existing export graph applies unchanged |
 
 ---
 
@@ -894,6 +896,21 @@ so an OEM kill is visible after the fact rather than mysterious.
 OEM app-restriction, and guide the user through exempting it. This is a **first-run
 onboarding step**, not a settings item.
 
+**FR-SVC-5a (M)** — Guidance SHALL be **manufacturer-specific**, keyed off
+`Build.MANUFACTURER`, deep-linking to vendor settings screens where an Intent exists. On the
+reference device this means all four ColorOS interventions in §10.8, not just the standard
+exemption.
+
+**FR-SVC-5b (M)** — The app SHALL **NOT** treat
+`PowerManager.isIgnoringBatteryOptimizations() == true` as proof that background execution
+will survive. It is a hint. **Liveness is established empirically** (NFR-8): write a heartbeat
+on an interval during capture; on next launch, compare the last heartbeat against the session
+end to determine whether the session was killed.
+
+**FR-SVC-5c (S)** — Offer a **"prove it" test**: a short unattended run — 30 minutes, screen
+off — that reports afterwards whether capture survived. This converts an unverifiable setup
+ritual into a pass/fail the user can trust before leaving the app running overnight.
+
 **FR-SVC-6 (M)** — On unexpected termination, recover on next launch: finalise the
 interrupted session, process any unprocessed backlog, and tell the user what happened.
 
@@ -1378,6 +1395,67 @@ compatible with both open-source distribution and eventual Play Store release (D
 **NFR-6c (S)** — Surface a jurisdiction notice on first run regarding the legality of
 recording radio transmissions, which varies by locality.
 
+### 10.7 Reference and floor devices (D19)
+
+| Role | Device | Why |
+|---|---|---|
+| **Reference** — NFR-1 T3, NFR-2, NFR-3 measured here | **OPPO Find X9 Ultra** · Snapdragon 8 Elite Gen 5 (SM8850-AC) · 12–16 GB · 7050 mAh · Android 16 / ColorOS 16 | Exact chipset of Qualcomm's published `large-v3-turbo` NPU benchmarks |
+| **Floor** — NFR-5a, AC-26, AC-37 measured here | Any 2 GB Android 8+ device, ~$40 used | Proves T0 is real rather than theoretical |
+
+**What the reference device gives the project.** Qualcomm publishes `large-v3-turbo` on
+this exact silicon at 267–278 ms encoder per 30 s window and ~6.3 ms/token decoder. The ~22x
+RTF figure in `research/04` §3 is therefore **a measurement on this device's chipset**, not an
+extrapolation — the only headline number in the project with that property.
+
+**Recalculated power budget.** NFR-3b assumed a 15–20 Wh phone; this one carries **7050 mAh,
+roughly 27 Wh**. Over 8 hours at 15% activity, T3 NPU inference is close to free — 4,320
+audio-seconds is about 144 encoder windows, roughly 39 s of accelerator time in total.
+**Inference stops being the dominant term; capture, VAD and storage become it.**
+
+> **Consequence: NFR-3's 8-hour target is no longer the binding constraint on this device.**
+> Thermal behaviour and storage are. NFR-3 remains as the *portable* requirement — it must
+> still hold on the floor device and on a mid-tier phone — but the reference device should be
+> characterised for its actual endurance rather than tested against a floor it clears easily.
+
+**NFR-7 (M)** — Measure and publish actual endurance on the reference device rather than
+merely asserting the 8-hour pass. If it reaches 20+ hours, that is a product capability worth
+knowing and worth stating.
+
+### 10.8 The reference device's one serious problem
+
+**ColorOS is among the most aggressive background-killers on the market**, and this is
+directly in tension with D1 — the whole reason the project is on Android.
+
+The specific hazard, and it invalidates an assumption in draft 3:
+
+> **`PowerManager.isIgnoringBatteryOptimizations()` can return `true` while ColorOS kills the
+> app anyway.** The standard API check *lies* on this platform. FR-SVC-5 as written — detect
+> battery optimization, guide the user to exempt — is necessary and **not sufficient**.
+
+Per DontKillMyApp, Oppo requires **four separate interventions**, only one of which is the
+standard exemption:
+
+1. Pin the app in the recent-apps screen
+2. Enable it in the security app's startup manager and floating-app list
+   (`com.coloros.safecenter`)
+3. Disable battery optimization *(the only one the standard API sees)*
+4. Run a foreground service with a persistent notification *(already required by FR-SVC-1/3)*
+
+Plus, on ColorOS 6+: "Allow Auto Start-up" in app info, and Power Saver configured to permit
+background operation.
+
+**NFR-8 (M)** — Background-execution liveness SHALL be verified **empirically, not by API**.
+A heartbeat written during capture and checked on next launch is the source of truth for
+whether the session survived; `isIgnoringBatteryOptimizations()` is a hint only.
+
+**NFR-9 (M)** — Onboarding SHALL provide **OEM-specific guidance**, detected from the device
+manufacturer, deep-linking to the vendor's own settings screens where possible. A generic
+"disable battery optimization" instruction is inadequate on the reference device.
+
+**NFR-10 (M)** — A session that ends without a clean stop SHALL be reported on next launch
+with its last heartbeat time, so a silent kill is visible as a specific loss rather than as a
+mysteriously short log (FR-SVC-4, FR-SVC-6).
+
 ---
 
 ## 11. Reprocessing as an extensibility point
@@ -1530,8 +1608,17 @@ Input to the test plan. Grouped by what a test would have to establish.
   demonstrating pre-roll (FR-CAP-4).
 - **AC-4** 8-hour unattended run on the reference device completes with capture still
   running, no gaps in the transmission record, and battery consistent with NFR-3.
-- **AC-5** The same run repeated on a Samsung device with battery optimization *not*
-  exempted is expected to fail, and the failure is detected and reported on next launch (F5).
+- **AC-5** The same run repeated with OEM restrictions *not* exempted is expected to fail, and
+  the failure is detected and reported on next launch with its last heartbeat time (F5,
+  NFR-10).
+- **AC-64** **On the reference device, an 8-hour capture survives with all four ColorOS
+  interventions applied, and the "prove it" 30-minute test correctly predicts that outcome**
+  (§10.8, FR-SVC-5c). This is the acceptance gate for R5, the project's top risk.
+- **AC-65** Liveness is determined by heartbeat, not by
+  `isIgnoringBatteryOptimizations()`. Verified by forcing a state where the API returns `true`
+  and the session is killed anyway (NFR-8, FR-SVC-5b).
+- **AC-66** Onboarding shows Oppo-specific steps on the reference device and generic steps on
+  a device with no known OEM quirks (NFR-9, FR-SVC-5a).
 
 ### 14.2 Segmentation and hallucination
 
@@ -1692,18 +1779,86 @@ Distinct from §12, which enumerates *runtime* failures. These are risks to the 
 
 | # | Risk | Likelihood | Impact | Mitigation | Gate |
 |---|---|---|---|---|---|
-| R1 | **Fine-tuned model cannot be exported to the runtime's ONNX form** | Medium | **Severe** — removes the largest lever and reopens the runtime choice | Test the export path before writing any app code. Half a day | M0a, first task |
+| R1 | ~~Fine-tuned model cannot be exported to the runtime's ONNX form~~ **Largely resolved — see §14A.1** | Low | Medium | Fine-tune a base already in the export enum (D20); merge the LoRA before exporting | M0a, still verify once |
 | R2 | ATC fine-tuning gains do not transfer to amateur radio audio | Medium | High — T3 accuracy targets become unreachable | Measure on the eval fold before committing to the numbers in §10.1 | M0a |
 | R3 | **Audio-level resolution does not beat text-level** | Medium | High — invalidates D4 and the core architecture | M4 is explicitly designed so the comparison is the deliverable. Fall back to the text path and bank the saved complexity | M4 |
 | R4 | Speaker embeddings do not separate on narrowband off-air audio | Medium | Medium — threading degrades, per-transmission attribution survives | Test on the M0 tape before building M6. Attribution remains correct, just less complete | M6 |
-| R5 | OEM background-killing defeats 8-hour capture on the user's device | Low on Pixel, **high on Samsung** | High — the product does not work | M2 proves this in isolation, before any ASR exists. FR-SVC-4/5/6 make failures visible and recoverable | M2 |
+| R5 | **OEM background-killing defeats 8-hour capture** | **High — the reference device runs ColorOS** (D19) | **Severe — the product does not work** | §10.8. Empirical heartbeat liveness rather than API check (NFR-8, FR-SVC-5b); manufacturer-specific onboarding (NFR-9); the "prove it" test run (FR-SVC-5c). M2 proves it before any ASR exists | **M2 — now the highest-priority risk** |
 | R6 | Scope growth from the reference-tier levers | **High** | Medium — indefinite schedule | M11 is last, each lever independently measured, with a stated kill rule (Q12) | M11 |
 | R7 | Solo build stalls on an unfamiliar subsystem — NPU toolchain, DSP, migration | Medium | Medium | Every hard subsystem has a working fallback by design: CPU path, null rig module, text-derived lattice | Continuous |
 | R8 | Evaluation set is too small or contaminated | Medium | **Severe** — every number becomes unfalsifiable | Split train/eval folds by session **before** labelling (Q10). Hold the eval fold until M11 | M0 |
 | R9 | Model or lexicon licensing blocks the Play Store path | Low | Medium — forecloses D11 | Record licence per asset from day one (FR-AST-1, FR-LEX-28) | M0a |
 
-**R1, R3 and R8 are the ones to act on first**, and all three are cheap. R1 and R8 cost under
-a day each; R3 is a milestone that was already planned.
+**R5 is now the top risk**, because the reference device was chosen for its accuracy ceiling
+and carries the worst background-execution behaviour on the market. It is also the earliest
+to test — M2 exists precisely to settle it before any model is in the picture.
+
+**R3 and R8 follow**, and both are cheap: R8 is a decision made before labelling (§14A.2),
+R3 is a milestone already planned.
+
+### 14A.1 R1 resolved: the fine-tune export path
+
+The concern was that a LoRA fine-tune might not export into the ONNX form sherpa-onnx
+consumes, which would remove the project's largest lever and reopen the runtime choice.
+**It does not, provided one constraint is respected (D20).**
+
+The reasoning, in three steps:
+
+1. **`export-onnx.py --model` accepts a fixed enum**, not an arbitrary path — this is the
+   real limitation and the source of the concern.
+2. **But that enum already includes every `distil-*` variant**, which are not OpenAI releases.
+   The script therefore already exports non-OpenAI weights through the same graph; it is the
+   *checkpoint selection* that is constrained, not the export machinery.
+3. **A LoRA merged with `merge_and_unload()` is structurally identical to its base model** —
+   merging collapses the adapter into the base weight matrices, and merging is the documented
+   recommendation precisely when exporting to a format that ignores adapters, such as ONNX or
+   GGUF.
+
+So a fine-tune of, say, `distil-small.en` produces a checkpoint the existing export path
+already handles. The remaining work is substituting your merged checkpoint where the script
+expects the named download — plumbing, not a blocker. At least one user has independently
+reported converting a fine-tuned Whisper to ONNX with their own script.
+
+**Therefore D20: choose a fine-tune base that is already in the export enum.** This costs
+nothing — `distil-small.en` was already the leading candidate for T1/T2 — and it converts the
+project's biggest risk into a naming detail.
+
+**Still verify once, early**, on a throwaway 10-minute fine-tune, before investing in
+labelling. Confirming the round trip end-to-end is an hour and retires the risk completely.
+
+### 14A.2 R8 resolved: how to split the evaluation set
+
+The concern was contamination — measuring accuracy on data the model was trained on, which
+makes every number in §10 meaningless. The rule that prevents it is not obvious, so it is
+specified here rather than left to judgement.
+
+**Split by recording session, never by transmission.**
+
+Splitting randomly across transmissions leaks in three ways at once: the same *voice*, the
+same *channel conditions*, and the same *conversation* appear in both folds, so the model is
+scored on speakers and audio it effectively trained on. A model that memorised three local
+repeater regulars would look excellent and generalise to nothing.
+
+The concrete recipe:
+
+| Step | Rule |
+|---|---|
+| 1 | Record in **discrete sessions** — different days, times, bands, and radios. Aim for 8–12 distinct sessions rather than one long tape |
+| 2 | Assign **whole sessions** to train or eval. Never split a session |
+| 3 | Target roughly **70/30 train/eval by duration** |
+| 4 | Ensure the eval fold contains **at least one session with no station appearing in train** — this is the only measurement of true generalisation |
+| 5 | The **noise tape** (squelch, no speech) goes in **eval only**. AC-6 must be measured on noise the model never saw |
+| 6 | Put **HF/DX traffic in eval**, since non-US callsigns test FR-LEX-8 — the grammar path that works without a database |
+| 7 | Record the assignment in a manifest committed alongside the audio, so it cannot drift |
+| 8 | **Do not look at the eval fold** until M11. Not for debugging, not for "a quick check" |
+
+**If in doubt, put a session in eval.** Under-training costs a few WER points that more data
+later recovers; contaminating the eval fold destroys the ability to measure anything, and it
+is not recoverable — you cannot un-see it.
+
+> The ATC precedent reached a 54.8% relative WER reduction from **55 clips**, so the training
+> fold does not need to be large. Given a 3–5 hour tape, spending the extra material on a
+> clean, generous eval fold is the better trade.
 
 ---
 
@@ -1905,10 +2060,18 @@ built and measured on a desktop JVM with fast test cycles, long before it runs o
 
 ## 18. Open questions
 
-Tracked in [`open-questions.md`](open-questions.md). **Q2 (evaluation set scope), Q3
-(reference device) and Q10 (train/eval split) are blocking.** Q1 is largely closed by
-documentation already in this repo; Q4–Q9 and Q11–Q12 carry recommendations and do not block.
+Tracked in [`open-questions.md`](open-questions.md).
 
-Four questions were closed during the draft-3 gap review — architecture baseline, build
-capacity, location sourcing and overload policy — recorded as D15–D18 and as C11–C14 in the
-register.
+**Only Q2 remains blocking — record the tape.** Everything else that gated technical design
+is now settled: Q1 (rig protocol) by documentation already in this repo, Q3 (reference device)
+as D19, Q10 (train/eval split) in §14A.2, and Q11 (NPU vendor scope) as a consequence of Q3.
+Q4–Q9 and Q12 carry recommendations and do not block.
+
+Six questions were closed during the draft-3 review — architecture baseline, build capacity,
+location sourcing, overload policy, reference device and fine-tune base — recorded as D15–D20
+and as C11–C16 in the register.
+
+**The two risks that moved:** R1 (fine-tune export) from Severe to Low, because the export
+enum already carries non-OpenAI `distil-*` weights and a merged LoRA is structurally identical
+to its base (§14A.1). R5 (background-killing) to **top risk**, because the reference device
+runs ColorOS (§10.8).
