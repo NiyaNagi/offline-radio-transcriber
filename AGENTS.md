@@ -24,6 +24,7 @@ commits are the corpus pipeline and the Gradle skeleton.
 | `spec/functional-spec.md` | 266 requirements, 126 acceptance criteria, 32 decisions, 16 risks |
 | `spec/technical-design.md` | Architecture, module boundaries, subsystem design |
 | `spec/build-plan.md` | **The working todo list** — 11 prompts in four waves |
+| `CHANGELOG.md` | **The build log** — one detailed entry per commit; append to it, don't just tick the plan |
 | `spec/test-plan.md` | Testing approach, fake inventory, device matrix, CI |
 | `spec/open-questions.md` | Decision register — 15 of 17 closed |
 | `spec/audit-2026-09-06.md` | Adversarial audit record |
@@ -43,6 +44,11 @@ something, cite the id. When you write a test, name it for the id it establishes
    Ship the behavioural fake in the same change.
 4. **Stop rather than half-finish.** If the exit criteria cannot be met, say so and explain why.
 5. **Update the plan's checklist** when a unit is done.
+6. **Append a [`CHANGELOG.md`](CHANGELOG.md) entry with every commit**, in the format documented
+   at that file's top — scope, requirements/ACs, what changed, how it was verified, and what was
+   left open. This is not optional and not a summary of the commit message: the changelog is
+   read on its own, without `git log`, so write it to stand alone. Do this before the commit that
+   completes a unit, not as a separate follow-up.
 
 ## Stack
 

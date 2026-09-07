@@ -85,7 +85,10 @@ being loaded automatically:**
 > principles that bear on this work and what they forbid here. Strict TDD — the test is written
 > and seen to fail for the right reason before the code. Ship each interface's behavioural fake
 > in the same change. Touch only the files this prompt says it owns. **If the exit criteria
-> cannot be met, stop and say why** rather than leaving a module half-done.
+> cannot be met, stop and say why** rather than leaving a module half-done. **Before you commit,
+> append an entry to [`../CHANGELOG.md`](../CHANGELOG.md)** in the format documented at that
+> file's top (scope, requirements/ACs, what changed, how it was verified, what was left open) —
+> this is part of the definition of done, not a follow-up.
 
 *The principles most often relevant, by prompt: P1 VII · P2 VI · P3 I, VII · P4 III, IV, VII ·
 P5 II, III, IV · P6 VI · P7 I, VI · P8 IV, V, VII · P9 II, IV · P10 I, II · P11 I, VI.*
