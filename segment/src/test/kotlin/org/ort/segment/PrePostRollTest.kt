@@ -30,6 +30,24 @@ class PrePostRollTest {
     }
 
     @Test
+    @Requirement("AC-95", "FR-SEG-8")
+    fun `AC_95 a stream ending mid-hangover reports endSample consistent with what was actually appended`() {
+        // Trailing silence (300ms) shorter than minSilenceMs (600ms default): finish() runs
+        // while still in HANGOVER, having buffered less than a full post-roll's worth of silence.
+        val config = SegmentConfig(preRollMs = 1200, postRollMs = 400)
+        val (vad, total) = regionScript(1300, 500..999)
+        val sink = RecordingSegmentSink()
+        runToCompletion(Segmenter(config, vad, sink), rampSignal(total))
+
+        val record = sink.records.single { it.outcome == SegmentOutcome.SPEECH }
+
+        // sampleCount is the sink's own count of what was actually appended (SegmentSink.kt:
+        // "the returned record's sampleCount is the total appended") — endSample - startSample
+        // must agree with it, not silently drop the flushed hangover tail.
+        assertEquals(record.endSample - record.startSample, record.sampleCount)
+    }
+
+    @Test
     @Requirement("AC-95")
     fun `AC_95 pre-roll below the FR-CAP-4 floor is rejected by SegmentConfig`() {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {

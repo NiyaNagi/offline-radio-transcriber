@@ -75,10 +75,17 @@ public class Segmenter(
             State.TENTATIVE -> emitRejected(endSample = originSample + consumed)
             State.SPEECH -> closeSpeech(vadEnd = originSample + consumed, end = originSample + consumed, forced = false)
             State.HANGOVER -> {
-                flushHangover(limitSamples = minOf(postRollSamples.toLong(), bufferedHangoverSamples()))
+                // Computed once, before flushHangover() clears hangoverBuf — calling
+                // bufferedHangoverSamples() a second time after the clear silently sees 0 and
+                // under-reports endSample versus what was actually appended to the sink (found
+                // by adversarial review: a stream ending mid-hangover, before minSilenceMs
+                // elapses, produced a SegmentRecord whose endSample - startSample didn't match
+                // its real sampleCount).
+                val flushed = minOf(postRollSamples.toLong(), bufferedHangoverSamples())
+                flushHangover(limitSamples = flushed)
                 closeSpeech(
                     vadEnd = hangoverStartSample,
-                    end = hangoverStartSample + minOf(postRollSamples.toLong(), bufferedHangoverSamples()),
+                    end = hangoverStartSample + flushed,
                     forced = false,
                 )
             }

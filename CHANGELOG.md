@@ -32,6 +32,37 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (afternoon, cont. — more adversarial review while P8/R1 ran)
+
+### (pending) — Fix segment endSample under-reporting on mid-hangover stream end; detekt line-length cleanup
+
+**Scope:** `segment/src/main/kotlin/org/ort/segment/Segmenter.kt`,
+`segment/src/test/kotlin/org/ort/segment/PrePostRollTest.kt` (P4, not touched by any
+concurrently-running session), plus an unrelated detekt fix in
+`eval/src/main/kotlin/org/ort/eval/Harness.kt` (two lines the earlier fold-isolation change left
+over `MaxLineLength`, caught by `./gradlew build` rather than by the narrower module-test runs
+used to verify that change), and a `results/coverage-matrix.md` regeneration.
+**Requirements/ACs:** AC-95 (pre/post-roll retain the transmission complete) — this fixes a case
+that criterion's existing test didn't reach.
+**What changed:** `Segmenter.finish()`'s `HANGOVER` branch called a private
+`bufferedHangoverSamples()` helper twice — once to size the `flushHangover()` call, and again
+(after `flushHangover` had already cleared the buffer it counts) to compute the closed segment's
+`endSample`. The second call always saw an empty buffer, so a stream that ended while still in
+`HANGOVER` (trailing silence shorter than `minSilenceMs`, e.g. capture stopping mid-trail-off)
+produced a `SegmentRecord` whose `endSample - startSample` under-counted the real audio already
+written to the sink — the declared boundary and the actual appended sample count disagreed.
+Fixed by computing the flushed sample count once, before the buffer is cleared, and reusing it
+for both the flush and the `endSample` calculation. Added a regression test (300 ms of trailing
+silence against a 600 ms `minSilenceMs`/400 ms `postRollMs` config, stream ending mid-hangover)
+that fails on the pre-fix code and passes after.
+**Verified:** `./gradlew :segment:test` (all 14 tests green, including the new one),
+`./gradlew build` (full multi-module build green after the detekt fix), `./gradlew
+coverageMatrix` regenerated.
+**Left open / not done:** no other modules were re-audited in this pass beyond `:segment`,
+`:lexicon`'s ranking/priors/calibration math (`PropagationModel`, `Priors.kt`,
+`ThresholdDerivation`, `PlattCalibrator` — all read closely, no defects found), and re-verifying
+the earlier `Harness`/`WorkQueue` fixes still hold.
+
 ## 2026-09-07 (afternoon, cont. — changelog established)
 
 ### (pending) — Establish CHANGELOG.md and make it part of the working agreement

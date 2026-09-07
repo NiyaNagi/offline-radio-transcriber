@@ -25,7 +25,11 @@ public class Harness(private val grammar: CallsignGrammar, private val combiner:
      * the dev fold) may legitimately pass the same list for both; what this signature forbids is
      * doing that *by default* when the two folds are meant to differ.
      */
-    public fun run(fitOn: List<LabeledOccurrence>, evaluate: List<LabeledOccurrence>, config: HarnessConfig): HarnessReport {
+    public fun run(
+        fitOn: List<LabeledOccurrence>,
+        evaluate: List<LabeledOccurrence>,
+        config: HarnessConfig,
+    ): HarnessReport {
         val fitResolved = fitOn.map { it to resolveWith(combiner, it) }
         val resolved = evaluate.map { it to resolveWith(combiner, it) }
 
@@ -35,8 +39,12 @@ public class Harness(private val grammar: CallsignGrammar, private val combiner:
         } else {
             null
         }
-        val fitCalibrated = fitResolved.map { (_, top) -> calibrator?.calibrate(top?.totalScore ?: NO_CANDIDATE_SCORE) ?: 0f }
-        val calibrated = resolved.map { (_, top) -> calibrator?.calibrate(top?.totalScore ?: NO_CANDIDATE_SCORE) ?: 0f }
+        val fitCalibrated = fitResolved.map { (_, top) ->
+            calibrator?.calibrate(top?.totalScore ?: NO_CANDIDATE_SCORE) ?: 0f
+        }
+        val calibrated = resolved.map { (_, top) ->
+            calibrator?.calibrate(top?.totalScore ?: NO_CANDIDATE_SCORE) ?: 0f
+        }
 
         // The threshold is derived from the fit set alone (technical design §9.5) — deriving it
         // from `evaluate` would be the same leakage this split exists to prevent.
