@@ -104,6 +104,8 @@ determines whether the product is useful.
 | Digital voice decode (DMR, P25, D-STAR, Fusion) | Requires demodulation, not transcription | v3+ |
 | Transmit / logging back to the radio | Different product | Never |
 | Multi-device sync | On-device only by decision | v3 |
+| **Live alerts** — notify on a watched callsign, a frequency waking up, or a keyword | Deferred by product owner. The product is retrospective in v1: it records, you read later | **v2.** Nothing in v1 may foreclose it — Pass D already produces the callsign a watchlist would match on, so this is a matching rule and a notification, not an architecture change |
+| **Scanner channel identity** — channel names in place of frequencies, threading on channel | Deferred by product owner with the SDS150 rig module. Audio-only scanner capture works in v1, logged by frequency | **v2** with the SDS150 module. `channelName` stays in the Transmission entity (Q4) so this is not a migration later |
 | On-device LLM digest **as a required feature** | Optional, not required for the product to work. FR-DIG-3 is Must **only where the tier and the user's setting both enable it**, and the product ships complete with it absent — see FR-DIG-3a | v2 for the default-on case |
 
 ---
@@ -975,9 +977,21 @@ backlog depth, current tier, storage used, battery.
 **FR-UI-8 (M)** — Show the candidate list and phonetic lattice for any resolved callsign on
 demand. This is how G4 is actually delivered.
 
-**FR-UI-9 (S)** — Station view: everything heard from one station, across sessions.
+**FR-UI-9 (M)** — Station view: everything heard from one station, across sessions. *Promoted
+from Should: a monitoring log that runs for months can answer "who is this, and when are they
+around" in a way nothing else the operator owns can, and the data is already being stored.*
 
-**FR-UI-10 (S)** — Frequency/channel view: everything heard on one frequency.
+**FR-UI-10 (M)** — Frequency/channel view: everything heard on one frequency, across sessions.
+*Promoted from Should, same reasoning.*
+
+**FR-UI-11 (M)** — Both views SHALL show **activity patterns**: when this station or frequency
+is typically active, by hour and by day of week, and how that has changed. Computed from stored
+records, no new capture required.
+
+**FR-UI-12 (M)** — Pattern displays SHALL distinguish **"not heard" from "not listening"**. A
+frequency shows no activity at 03:00 either because nothing was transmitted or because the app
+was not running, and conflating those turns the feature into a lie. `CaptureGap` (FR-RUN-12)
+and session bounds already carry what is needed; the pattern view must use them.
 
 ### 7.9 FR-DIG · Digest
 
@@ -989,6 +1003,27 @@ stations, longest threads), and volume statistics. No LLM required.
 
 **FR-DIG-3 (M / T3)** — Where an on-device LLM is available and enabled, generate prose
 summaries per thread as an *addition* to the deterministic digest, never a replacement.
+
+**FR-DIG-2a (M)** — The digest SHALL be ordered by **salience, not chronology**. G1 asks the
+operator to understand a night's traffic in under two minutes, and a flat time-ordered list of
+several hundred transmissions cannot deliver that at any level of transcription accuracy.
+Ranking signals, all computed deterministically from stored records:
+
+| Signal | Why it is interesting |
+|---|---|
+| A station never heard before | The single most reliable novelty signal |
+| A frequency departing from its usual pattern (FR-UI-11) | Quiet channel suddenly busy, or a regular net absent |
+| POTA / SOTA references, and portable or maritime modifiers | The traffic most likely to be acted on |
+| Unusually long threads, or unusually many participants | Nets, emergencies, events |
+| A high rejection or `AMBIGUOUS` rate in a window | Something went wrong — a health signal surfaced as content |
+
+**FR-DIG-2b (M)** — Salience SHALL be a **reordering, never a filter**. Everything remains
+reachable, and the digest SHALL state how much it is not showing, with one action to see all of
+it. A digest that silently hides a transmission fails the same way a log that silently guesses
+does (P9).
+
+**FR-DIG-2c (M)** — The reason an item was surfaced SHALL be visible — "first time heard",
+"unusually long thread" — because an unexplained ranking cannot be trusted or corrected (P2).
 
 **FR-DIG-3a (M)** — FR-DIG-3 is **conditionally Must**: the requirement binds the *behaviour*
 if the feature is built, and does not require the feature to be built. §1.5 places a
