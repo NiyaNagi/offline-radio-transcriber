@@ -32,6 +32,82 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (evening — P10 lands)
+
+### P10 · ASR and hallucination control (`:onnx`, `:asr-api`, `:asr-sherpa`)
+
+**Scope:** `:onnx`, `:asr-api`, `:asr-sherpa` only — no other module touched.
+**Requirements/ACs:** AC-7 (each of the six hallucination controls individually demonstrable),
+AC-8 (rejected segments retain audio, reachable behind a filter), F13 (invalid model falls back
+and surfaces it; side-loaded model signature-checked and probe-run before activation), FR-ASR-5/6,
+FR-ASR-8, FR-AST-2, FR-REP-3, technical design §4.3/§8.1/§8.3/§8.4. **AC-6 is NOT established** —
+see below.
+**What changed:**
+- `:onnx` — `ModelDescriptor` (technical design §8.4), `OnnxSession`/`OnnxSessionFactory` (a
+  narrow seam mirroring `:segment`'s `VadModel` pattern, so no native runtime is required to
+  build or test this layer), and `ModelResidencyManager` implementing the Pinned/Hot/Cold
+  residency classes of §4.3: `PINNED` never evicted, `HOT` is LRU with a floor of one, `COLD` is
+  loaded-per-use-and-released, budget enforced against declared footprints. `FakeOnnxSessionFactory`
+  is the behavioural fake, scriptable to fail loading or crash on first run (the probe-run failure
+  mode F13 requires a caller to handle).
+- `:asr-api` — `AsrEngine`/`StreamingAsrEngine`/`Enhancer`/`AsrResult` (§8.1, n-best and
+  `no_speech_prob` retained); the six `RejectionRule`s as named, cheapest-first, split into
+  `PreDecodeRejectionRule` (`too_short`, `vad_no_speech` — never invoke the engine) and
+  `PostDecodeRejectionRule` (`no_speech_prob`, `repetition`, `blocklist`, `compression_ratio`);
+  `RejectionPipeline` composing all six with a timeout-guarded engine call (`withTimeout` ->
+  `PassBOutcome.Failed` on hang or throw, never a hang — F13's engine-timeout requirement);
+  `PassBOutcome` (Accepted/Rejected/Failed); `TranscriptCandidate`/`TranscriptSeries` — a
+  domain-level append-only "exactly one current" invariant independent of Room (the DB-level
+  enforcement is `:data`'s partial-unique-index from P5; this is what a Pass B run produces
+  before that write); `ModelRegistry` resolving a tier to an activated model with fallback
+  surfaced as `ModelFallback` (F13); `RejectedSegmentLog`, an in-memory stand-in proving the
+  AC-8 shape (rejected is a retained, filterable result, not a deletion) at the layer this
+  prompt owns — the persisted equivalent is `:data`/`:pipeline` territory; `FakeAsrEngine`, the
+  behavioural fake (`Returns`/`HangsFor`/`Throws`).
+- `:asr-sherpa` — `SherpaAsrEngine` implementing `AsrEngine` over an injected `SherpaDecoder` seam
+  (the one method a real sherpa-onnx JNI binding would implement — see "Left open" below) plus
+  `OnnxSession` lifecycle checks; `ModelActivation` — the side-loaded model install path
+  (FR-ASR-8): signature check, then load, then probe-run over a fixture clip, refusing activation
+  and keeping the previous model active on any failure (FR-AST-2), marking every side-loaded
+  activation `sideloadedUnverified = true` regardless of passing checks, per §8.4 ("this does not
+  make executing a third-party graph safe; it makes it deliberate"); `FakeSherpaDecoder`.
+- Thresholds: `NoSpeechProbRule` (default 0.60) and `CompressionRatioRule` (default 2.4) use the
+  same defaults already recorded in `:core`'s `ResolvedConfig` (P1). Both are Whisper's
+  conventional values, **not refitted against a development noise tape** — see "Left open".
+**Verified:** `./gradlew :onnx:test :asr-api:test :asr-sherpa:test :onnx:ktlintCheck
+:asr-api:ktlintCheck :asr-sherpa:ktlintCheck :onnx:detekt :asr-api:detekt :asr-sherpa:detekt
+dependencyRules` — BUILD SUCCESSFUL; 8 `:onnx` + 28 `:asr-api` + 7 `:asr-sherpa` tests, all green,
+JDK 17, Windows, local machine, no fold applicable (JVM unit tests over synthetic/fake inputs,
+not a corpus measurement). `dependencyRules` confirms no new edge beyond `:asr-api -> :core,
+:onnx` and `:asr-sherpa -> :core, :onnx, :asr-api`, both already declared in `ModuleGraph`.
+**Left open / not done — read this before assuming AC-6 passed:**
+- **AC-6 is not established against real data or a real model, and this changelog entry does
+  not claim it is.** `spec/open-questions.md` still lists Q2 ("record the tape") and Q16 (its
+  labelling protocol) as the specification's two open questions; the development noise tape has
+  not been recorded. Separately, no real ONNX Whisper/distil-whisper export runnable from a JVM
+  sherpa-onnx binding was available/downloadable in this sandbox, so `:asr-sherpa`'s
+  `SherpaAsrEngine` has never run a real decode — `SherpaDecoder` is a documented seam, not a
+  verified binding. `SyntheticNoiseGateMechanismTest` in `:asr-api` proves the six-control
+  mechanism rejects a set of hand-crafted, noise-shaped decodes (empty text with high
+  `no_speech_prob`, degenerate repetition, documented Whisper hallucination phrases) with zero
+  accepted — a genuine, valuable result about the *mechanism*, explicitly not a substitute for
+  AC-6, and its test name and class doc say so. A real AC-6 run needs: the recorded tape (Q2),
+  a real ONNX ASR model reachable from `:asr-sherpa`, and the JVM/JNI sherpa-onnx artifact this
+  environment could not resolve/verify.
+- Threshold *fitting* against the development noise tape (technical design §8.2, "thresholds are
+  fitted, not inherited") could not be done for the same reason — `NoSpeechProbRule` and
+  `CompressionRatioRule` keep Whisper's unrefitted defaults, recorded as such in their doc
+  comments rather than presented as measured.
+- `:asr-sherpa`'s `sherpa-onnx` JVM/JNI dependency itself was not added to `gradle/libs.versions.toml`
+  — with no real model to exercise it and no confirmed resolvable artifact for this build's
+  target platform, adding an unused/unverified native dependency seemed worse than the documented
+  seam (`SherpaDecoder`). A follow-up session with a real model available should add it, implement
+  `SherpaDecoder` for real, and only then attempt AC-6 for real.
+- `StreamingAsrEngine`/`StreamSession` (Pass A, M8) and `Enhancer` (M11) are declared per §8.1 but
+  have no implementation yet — out of P10's scope (M3), matching the build plan's milestone order.
+
+---
+
 ## 2026-09-07 (afternoon, cont. — P8 and the real R1 run both land)
 
 ### 36c19ad — Merge branch 'worktree-agent-aa4aa2aeea1f1ebaa' (P8 into main)
