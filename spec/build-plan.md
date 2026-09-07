@@ -30,7 +30,7 @@ underlying breakdown each prompt draws on.
 
 **Wave A — foundations. No dependencies. Either order.**
 
-- [ ] **P1 · Foundation** — Gradle, CI, spec checks, `:core`, `:testing` *(Kotlin)*
+- [x] **P1 · Foundation** — Gradle, CI, spec checks, `:core`, `:testing` *(Kotlin)* — done 2026-09-07, commit `5fca369`
 - [ ] **P2 · Corpus pipeline** — manifest, folds, acquisition, metrics *(Python, `corpus/`)*
 
 **Wave B — four independent modules. Each needs only Wave A.**
