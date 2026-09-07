@@ -152,6 +152,8 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D17 | **Location: rig-reported, then device GPS, then manual grid.** Permission optional. | Product owner chose GPS-with-fallback. Rig-reported is placed first because the TH-D75A has GPS for APRS, giving portable accuracy with **no Android location permission at all** |
 | D18 | **Solo build, heavily AI-assisted.** | Product owner. Shapes §15: front-load interfaces and testability, treat implementation throughput as high, put the risk on review gates rather than on sequencing |
 | D19 | **Reference device: OPPO Find X9 Ultra.** Snapdragon 8 Elite Gen 5, 12–16 GB, 7050 mAh, Android 16 / ColorOS 16. | Product owner. It is the *exact* chipset Qualcomm published `large-v3-turbo` NPU benchmarks for, so T3's headline number is measured rather than extrapolated — **and it runs ColorOS, one of the worst offenders for background-killing.** Best case for accuracy, worst case for R5. See §10.7 |
+| D26 | **Retention is a storage budget, not a time limit** — independent budgets for gated audio and continuous archive, "unlimited" allowed, and bulk export-and-prune by date range when a budget is reached. | Product owner. Disk is what the user actually cares about; a time limit is a proxy for it that is simultaneously too aggressive on a large phone and too lax on a small one. Closes Q5 and Q13 |
+| D27 | **The project lives in its own public repository**, `offline-radio-transcriber`, with the channel-plan tooling repo supplying a versioned lexicon asset bundle. | Product owner. Different toolchain, cadence and audience; one-way coupling through a file. Closes Q15 |
 | D21 | **Public corpora first, synthesis second, hand-labelling last.** The training corpus is assembled from free public data; synthetic callsign audio fills the callsign gap; hand-labelled real amateur audio is reduced to a small **validation** set. | Product owner: "use every data source possible." A search established that 176 h of real off-air ham HF audio, 19,000 h of degraded analog comms with diarization labels, and free ATC corpora all exist — while **no public amateur callsign corpus exists at all**. That inverts M0: the tape is no longer the training set, it is the reality check. See §14A.3 |
 | D22 | **Synthetic callsign audio = local neural TTS + real-speech splicing, degraded through a channel learned from Paderborn's parallel data.** | Product owner. Splicing real ISOLET/ATC letter and digit audio into callsign sequences gives real human phonetic units; learning the channel from 176 h of the same speech clean *and* received means the degradation is measured rather than guessed |
 | D23 | **The TH-D75A is polled on both bands, and transmissions are attributed by squelch.** | Product owner monitors both bands. The CAT interface is band-scoped (`FQ A`, `BY A`) and the audio is mixed, so squelch state is what disambiguates which band a transmission came from. See §9.4 |
@@ -908,8 +910,29 @@ alone. Absent that measurement, lossless retention stands.
 the measurement that justified it, so a later reprocess knows whether its input was already
 degraded.
 
-**FR-STO-3 (M)** — Provide a configurable retention policy with independent controls for
-audio and text. Default: audio 30 days, text indefinite.
+**FR-STO-3 (M)** — Retention SHALL be governed by a **storage budget, not a time limit**
+(D26). Independent, user-set budgets for (a) gated transmission audio and (b) the continuous
+archive (FR-SEG-9), each allowing **unlimited** as an explicit choice. Text is retained
+indefinitely and is not budgeted.
+
+> *Time-based retention was the original design, and it is a proxy for the thing the user
+> actually cares about, which is disk. A 30-day rule deletes material that costs nothing to keep
+> on a 512 GB phone, and fails to protect a 64 GB one during a busy week. A budget is directly
+> meaningful, and it is what makes "unlimited" expressible at all. This also finally closes Q5
+> and Q13.*
+
+**FR-STO-3a (M)** — On reaching a budget the system SHALL NOT silently delete. It SHALL warn,
+and offer **bulk export-and-prune over a user-chosen date range** as the primary action: write
+the range out to user-chosen storage, verify it, then reclaim the space. Automatic oldest-first
+pruning SHALL be available but opt-in per budget.
+
+**FR-STO-3b (M)** — Export-and-prune SHALL be **transactional in the safe direction**: nothing
+is deleted until the export is written and verified, and an interrupted run SHALL leave every
+record in place. Losing a recording to a half-finished cleanup is not an acceptable failure
+(P9).
+
+**FR-STO-3c (M)** — Where the audio budget is set below what the reprocessing horizon needs,
+the UI SHALL name the consequence in FR-REP-4's terms rather than merely warning.
 
 **FR-STO-4 (M)** — Warn before storage exhaustion and degrade predictably: stop writing
 audio before stopping writing text, and never stop capture silently.
