@@ -14,6 +14,7 @@ ktlintPlugin = "12.1.1"
 detektPlugin = "1.23.7"
 room = "2.6.1"
 ksp = "2.0.21-1.0.28"
+sherpaOnnx = "1.13.7"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -32,6 +33,8 @@ room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
+sherpa-onnx-jvm = { module = "com.github.k2-fsa.sherpa-onnx:sherpa-onnx-jvm", version.ref = "sherpaOnnx" }
+sherpa-onnx-native-win-x64 = { module = "com.github.k2-fsa.sherpa-onnx:sherpa-onnx-native-lib-win-x64", version.ref = "sherpaOnnx" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

@@ -11,6 +11,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // sherpa-onnx's JVM/JNI bindings are published only as GitHub Release assets, mirrored
+        // to JitPack — not to Maven Central (see CHANGELOG.md, P10 follow-up). Scoped narrowly:
+        // only :asr-sherpa consumes anything from here.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

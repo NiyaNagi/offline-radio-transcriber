@@ -1,0 +1,3 @@
+# Real sherpa-onnx models, cached locally for RealSherpaDecoderRealModelTest (P10 follow-up).
+# Tens to hundreds of MB — never committed. See README.md for how to fetch them.
+.models-cache/
