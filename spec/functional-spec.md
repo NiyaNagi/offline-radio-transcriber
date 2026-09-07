@@ -687,8 +687,13 @@ probabilities. Without this, "above threshold" is undefined and the entire trust
 on an arbitrary number.
 
 **FR-LEX-17 (M)** — Resolution scores SHALL be **calibrated** to an estimated probability of
-correctness, fitted against the M0 evaluation set, so that a score of 0.9 means approximately
-nine correct in ten.
+correctness, **fitted on the train and dev folds and verified on the eval fold** (§14A.2), so
+that a score of 0.9 means approximately nine correct in ten.
+
+> *Draft 3.1 said "fitted against the M0 evaluation set", which is contamination stated as a
+> requirement: a calibrator fitted on the eval fold will report excellent calibration on the
+> eval fold by construction, and AC-55 would have been unfalsifiable. Fitting and verification
+> must use different folds — that is the entire point of having them.*
 
 **FR-LEX-18 (M)** — Calibration parameters SHALL be a versioned, shippable asset, refittable
 without an app release, and recorded on every record that used them.
@@ -2032,13 +2037,13 @@ Distinct from §12, which enumerates *runtime* failures. These are risks to the 
 | # | Risk | Likelihood | Impact | Mitigation | Gate |
 |---|---|---|---|---|---|
 | R1 | ~~Fine-tuned model cannot be exported to the runtime's ONNX form~~ **Largely resolved — see §14A.1** | Low | Medium | Fine-tune a base already in the export enum (D20); merge the LoRA before exporting | M0a, still verify once |
-| R2 | ATC fine-tuning gains do not transfer to amateur radio audio | Medium | High — T3 accuracy targets become unreachable | Measure on the eval fold before committing to the numbers in §10.1 | M0a |
+| R2 | ATC fine-tuning gains do not transfer to amateur radio audio | Medium | High — T3 accuracy targets become unreachable | Measure on the **dev** fold before committing to the numbers in §10.1; confirm on eval at M11 | M0a (dev) / M11 (eval) |
 | R3 | **Audio-level resolution does not beat text-level** | Medium | High — invalidates D4 and the core architecture | M4 is explicitly designed so the comparison is the deliverable. Fall back to the text path and bank the saved complexity | M4 |
 | R4 | Speaker embeddings do not separate on narrowband off-air audio | Medium | Medium — threading degrades, per-transmission attribution survives | Test on the M0 tape before building M6. Attribution remains correct, just less complete | M6 |
 | R5 | **OEM background-killing defeats 8-hour capture** | **High — the reference device runs ColorOS** (D19) | **Severe — the product does not work** | §10.8. Empirical heartbeat liveness rather than API check (NFR-8, FR-SVC-5b); manufacturer-specific onboarding (NFR-9); the "prove it" test run (FR-SVC-5c). M2 proves it before any ASR exists | **M2 — now the highest-priority risk** |
 | R6 | Scope growth from the reference-tier levers | **High** | Medium — indefinite schedule | M11 is last, each lever independently measured, with a stated kill rule (Q12) | M11 |
 | R7 | Solo build stalls on an unfamiliar subsystem — NPU toolchain, DSP, migration | Medium | Medium | Every hard subsystem has a working fallback by design: CPU path, null rig module, text-derived lattice | Continuous |
-| R8 | Evaluation set is too small or contaminated | Medium | **Severe** — every number becomes unfalsifiable | Split train/eval folds by session **before** labelling (Q10). Hold the eval fold until M11 | M0 |
+| R8 | Evaluation set is too small or contaminated | Medium | **Severe** — every number becomes unfalsifiable | Split **train / dev / eval** by session **before** labelling (Q10, §14A.2). Hold the eval fold until M11, enforced by the harness rather than by memory (FR-TST-7) | M0 |
 | R9 | Model or lexicon licensing blocks the Play Store path | Low | Medium — forecloses D11 | Record licence per asset from day one (FR-AST-1, FR-LEX-28) | M0a |
 | R10 | **Lossy audio retention silently caps Pass C, and the damage is invisible until M4** | Medium | **High — reads at M4 as the core thesis failing when it is the codec failing** | Lossless retention until measured (CON-STO-1, FR-STO-2a..c). The codec decision is made in M2; the pass that cares is measured in M4 | **M2 decision, M4 measurement** |
 | R11 | **Segmentation errors are permanent** — no tier, model or later rig connection can recover a clipped or merged transmission | Medium | Medium–High — a silent, uncorrectable accuracy floor under every other number | Tier-invariant segmentation (FR-SEG-7), generous pre/post-roll (FR-SEG-8), optional continuous archive (FR-SEG-9), boundary metrics from M2 (AC-69) | M2 |
@@ -2128,9 +2133,20 @@ cannot tell progress from regression.
 
 | Fold | Content | Sealed? | Used for |
 |---|---|---|---|
-| **train** | ~70% of labelled sessions | No | Fine-tuning (M0a) |
-| **dev** | A held-out slice of train, **plus a separately recorded 20-minute development noise tape** | No | Day-to-day measurement, threshold tuning, AC-6 during M2–M10, regression detection |
-| **eval** | ~30% of sessions, the HF/DX material, and the **eval noise tape** | **Yes, until M11** | Every number in §10, reported once |
+| **train** | ~50% of labelled sessions by duration | No | Fine-tuning (M0a) |
+| **dev** | ~20%, **as whole sessions**, plus a separately recorded 20-minute development noise tape | No | Day-to-day measurement, threshold and calibration fitting, AC-6 during M2–M10, regression detection |
+| **eval** | ~30%, the HF/DX material, and the **eval noise tape** | **Yes, until M11** | Every number in §10, reported once |
+
+**The dev fold is whole sessions, for exactly the reason the eval fold is** (step 2). An
+earlier formulation of this table said "a held-out slice of train", which — read as a
+transmission-level slice — reintroduces all three leaks step 2 exists to prevent, on the fold
+used to tune every threshold in the system. Thresholds fitted against a leaky measurement are
+fitted to the wrong thing, and the error is invisible until the eval fold is opened at M11.
+
+Concretely, with 10 recorded sessions: **5 train, 2 dev, 3 eval**, and the two noise tapes are
+additional to that count. If the tape runs short, take from train first — the ATC precedent
+reached a 54.8% relative reduction from 55 clips, so the training fold is the one that
+tolerates being small.
 
 **FR-TST-7 (M)** — The corpus manifest SHALL carry three folds, not two, and the harness SHALL
 refuse to run against `eval` unless explicitly and loudly opted in. Sealing by discipline alone
@@ -2180,9 +2196,17 @@ archived through a perceptual codec is the most expensive avoidable mistake avai
 
 ### M0a — Domain fine-tune (D13)
 
-LoRA fine-tune the chosen Pass B model on the M0 training fold; measure against the eval fold.
-Offline work on a desktop or rented GPU, producing a model file that improves **every tier
-including T0**.
+LoRA fine-tune the chosen Pass B model on the M0 training fold; measure against **the dev
+fold**. Offline work on a desktop or rented GPU, producing a model file that improves **every
+tier including T0**.
+
+> *Drafts 1–3.1 said "measure against the eval fold" here, and R2's gate column said the same
+> — both written before §14A.2 sealed the eval fold until M11. Taken together the spec
+> instructed the reader to open the sealed fold at the **second** milestone, which would have
+> destroyed the ability to measure anything for the remaining nine. This is the general defect
+> §14A.2 introduced: the sealing rule arrived in draft 3 and was never reconciled with the
+> requirements and milestones written before it. Every "measure against eval" earlier than M11
+> now reads "dev", and the eval fold is opened exactly once.*
 
 **First check, before anything else:** confirm a fine-tuned checkpoint exports into the ONNX
 form sherpa-onnx consumes (`research/03` §8 T5). If it does not, L1 is unavailable on the

@@ -334,6 +334,55 @@ the value for one shift's worth of disk.
 
 ---
 
+### Q15 — Where does the app's code live? · **NEW** · owner: product
+
+**Question.** Android project inside this repository, or its own?
+
+**Why it matters.** It touches D11 (open source now, Play Store later) more than it touches
+engineering. This repo is Python tooling for channel plans; the app is a Kotlin/Gradle project
+with no shared toolchain, CI, test runner or release cadence. They are coupled in exactly one
+direction and through exactly one thing: the lexicon asset bundle this repo's data produces
+(technical design §9.6).
+
+**Recommendation.** Separate repo for the app. This repo gains an asset-build target emitting a
+versioned, checksummed bundle as a release artifact, which the app consumes through the normal
+asset lifecycle it needs anyway (FR-LEX-2, FR-AST-1). One-way coupling through a file is the
+cheapest kind, and it keeps both repos explicable to a stranger — which matters on the D11
+path.
+
+**Cheap to defer, expensive to reverse late.** Deciding after M2 means moving a working Gradle
+build and its history.
+
+---
+
+### Q16 — Corpus and labelling protocol · **NEW, and it gates M0** · owner: product + engineering
+
+**Question.** What exactly gets labelled, by what rules?
+
+**Why it matters.** M0 is the blocking milestone, its dominant cost is hand-labelling, and the
+plan currently specifies that cost in one line. Labelling without a written protocol produces a
+corpus whose disagreements are invisible until they show up as unexplained accuracy variance —
+and the fix is relabelling, which is the single most expensive rework available in this project.
+M0.7 measures self-disagreement; nothing yet *reduces* it.
+
+The questions a protocol has to answer, none of which are obvious at 11pm with headphones on:
+
+- When does a transmission boundary fall — at carrier, at first phoneme, at squelch open?
+- A station doubles with another. One transmission or two? Labelled how?
+- A callsign is 80% audible. `uncertain`, or omitted? **This directly sets the recall ceiling
+  every measurement is against.**
+- Partial callsign heard ("...seven alpha bravo"). Labelled as what?
+- Where does a thread end — and does a 20-minute gap on the same repeater continue it?
+- Phonetic variants, spelled-out versus spoken callsigns, tactical callsigns, club stations
+- Non-speech: DTMF, courtesy tones, data bursts, CW IDs — labelled, or noise?
+
+**Recommendation.** Write it before recording session two. Session one doubles as the protocol's
+pilot: label it, notice what was ambiguous, write the rules those ambiguities imply, then
+relabel session one under the finished protocol. That costs one session's labelling and is the
+cheapest possible insurance on the project's most expensive irreversible artifact.
+
+---
+
 ### Q12 — Which reference-tier levers are worth their complexity · owner: engineering
 
 **Question.** Ensemble fusion, n-best rescoring and speech enhancement are all specified.

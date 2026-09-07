@@ -55,7 +55,8 @@ needs no audio corpus to do it.
 1. **Every milestone ends with a running app** (from M2 onward) and, where it produces a
    number, with that number **measured by the harness**, not asserted.
 2. **Nothing touches the eval fold until M11.** Not for debugging, not for a quick check
-   (§14A.2, R8). Development measurement uses a held-out slice of the *training* fold.
+   (§14A.2, R8). Development measurement uses the **dev fold** — whole held-out sessions, split
+   by the same rule as eval, never a transmission-level slice.
 3. **New thresholds are config fields with documented defaults**, never literals (FR-CFG-2).
 4. **No `System.currentTimeMillis()`, no direct `AudioRecord` outside `:capture-android`, no
    network outside `:net`.** These are build-checked, not remembered.
@@ -81,8 +82,9 @@ measure anything at all.
 | M0.4 | Record **two noise tapes** — 20 min each of squelch, no speech, both radios, on different days | S | One for `eval`, one for `dev`. AC-6 depends on it, and with only the eval tape it is unrunnable until M11 (§14A.2, AC-101) |
 | M0.4a | Record **losslessly** (FLAC or PCM), and enable continuous-archive capture for these sessions if it exists yet | S | FR-STO-2a. The corpus is the one artifact that cannot be re-derived, and M0's own boundaries are the ones you will most want to redo (Q14) |
 | M0.5 | Assign whole sessions to **train / dev / eval**, ~70/30 by duration with dev held out of train, per §14A.2 | S | Manifest committed. **Tiebreak: if unsure, put it in eval** |
+| M0.5a | **Write the labelling protocol** (Q16), piloted on session one and applied to the rest | M | The gap that most threatens M0. Ambiguity resolved once in writing, not eight times by memory |
 | M0.6 | Hand-label: callsigns, speaker turns, thread bounds, frequency, keying boundaries | XL | The dominant cost. Audacity label tracks → converter, or Label Studio |
-| M0.7 | Label-quality pass: relabel a 10% sample blind, report disagreement | M | If self-disagreement is high, every downstream number inherits it |
+| M0.7 | Label-quality pass: relabel a 10% sample blind, report disagreement | M | If self-disagreement is high, every downstream number inherits it. This *measures* consistency; M0.5a is what *creates* it |
 | M0.8 | `:eval` harness v0 — manifest loader, metric implementations, report writer | M | Runs on hand transcripts before any model exists |
 
 ### Formats to fix now (M0.2)
@@ -135,7 +137,7 @@ a capability.
 | M0a.1 | **G-M0a: the export round trip.** Fine-tune `distil-small.en` on ~10 minutes of anything, `merge_and_unload()`, run sherpa-onnx `export-onnx.py`, load the result, transcribe | S | **Do this first, before labelling finishes.** Half a day, retires R1 (§14A.1) |
 | M0a.2 | Training environment: desktop or rented GPU, pinned versions, a committed script | S | Reproducibility matters more than speed |
 | M0a.3 | LoRA fine-tune on the M0 **training fold** — start r=32, α=64 per the distil-Whisper aviation paper | M | Base must be in the export enum (D20) |
-| M0a.4 | Measure stock vs. fine-tuned on a **held-out slice of train**, not the eval fold | S | AC-41's real measurement waits for M11 |
+| M0a.4 | Measure stock vs. fine-tuned on the **dev fold**, not the eval fold | S | AC-41's confirming measurement waits for M11. R2 is judged on dev |
 | M0a.5 | Record base-model licence, fine-tune id, training-data description as model metadata | S | FR-ASR-10, R9, NFR-6b. Cheap now, blocking later |
 | M0a.6 | Refit the §9.3 confusion cost matrix from the fine-tuned model's error counts | S | Feeds `:lexicon` directly |
 
@@ -177,8 +179,10 @@ against M0's hand transcripts.
 
 ### Exit criteria
 
-- On M0 hand transcripts (the training fold), the resolver reports callsign precision/recall
-  with a **per-prior ablation** — which priors actually earn their place.
+- On M0 hand transcripts, the resolver reports callsign precision/recall on the **dev fold**
+  with a **per-prior ablation** — which priors actually earn their place. Dev rather than
+  train, because the confusion matrix and prior weights are themselves fitted from train, and a
+  resolver scored on the fold that shaped it reports its own memory.
 - A DX callsign with an allocated prefix and no ULS entry resolves as a candidate (AC-10); an
   unallocated prefix never reaches `CONFIRMED` (AC-11); phonetic variants of one callsign yield
   one result (AC-12).
@@ -287,7 +291,7 @@ First end-to-end useful output: audio in, transcript on screen, nothing invented
 - **AC-73**: p95 Pass B latency ≤ 2 s for a 10-second transmission on the reference device.
 - **AC-75**: no backlog growth at 15% simulated activity over a sustained run.
 - The full text path — capture → VAD → Pass B → text lattice → resolver → attribution — works
-  on the phone, and the harness reports its callsign precision/recall on the training fold.
+  on the phone, and the harness reports its callsign precision/recall on the dev fold.
 
 **That last line is the number M4 has to beat.** Record it deliberately; it is the baseline of
 the fork.
@@ -315,7 +319,7 @@ milestone is designed so that **the comparison is the deliverable**, not the fea
 
 ### Exit criteria — the fork
 
-Report, on the training fold, for each of {text-derived, KWS, encoder-similarity}: callsign
+Report, on the **dev fold**, for each of {text-derived, KWS, encoder-similarity}: callsign
 precision, callsign recall, per-unit precision/recall, latency cost, resident memory cost.
 
 Then take one of three branches, explicitly, and record the decision:
@@ -423,6 +427,31 @@ disabled** — a disabled lever costs complexity forever.
 
 *Expect some to fail.* Enhancement is genuinely contested; rescoring is unproven on this
 audio. That is the plan working, not the plan going wrong.
+
+---
+
+## What v1 actually is
+
+Neither the functional spec nor draft 1 of this plan said which milestones constitute a
+release. §1.4 lists v1 scope as features and §15 lists M0–M11 as a sequence, and the two were
+never joined — so "when is it done" had no answer, and a solo builder with eleven milestones
+and no release line is a solo builder who ships nothing.
+
+| Line | Milestones | What the user has |
+|---|---|---|
+| **Usable** | M0–M5 | Captures unattended, transcribes, resolves callsigns, and you can read and search it. No threading, no rig, no digest. **This is the first build worth running overnight for its own sake** |
+| **v1** | + M6, M7, M9 | Threading and attribution, the TH-D75A, digest and export. This is the product §1.4 describes |
+| **v1.1** | + M10 | Tier detection and cross-tier reprocessing. Needed to *ship to other people*, not to use yourself — until then the tier is whatever your device is |
+| **Later** | M11 | The reference-tier levers, each kept only if it measures |
+
+M8 (Pass A streaming) is deliberately absent from every line. It delivers D6's live feel and
+none of the record's accuracy — FR-ASR-3 makes Pass A explicitly never the record — so it is
+the most droppable milestone in the plan despite being one of the more expensive. Build it when
+the rest works and the live view feels dead without it, not before.
+
+**The scope cut, if one is needed:** M10 before M9 before M7. Reprocessing across tiers matters
+only with a second device; the digest can start as a list; the null rig module already makes
+the product complete without any radio connection at all.
 
 ---
 

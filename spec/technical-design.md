@@ -112,6 +112,30 @@ driven from `:app`; asset **install, verify and activate** (§13) are local file
 
 ---
 
+### 2.1 Where the code lives — proposed, needs a decision
+
+Nothing in the document set says where the Android project sits, and the answer is not obvious:
+this repository is Python tooling for SDS150 and WWARA channel plans, and §9.6 makes the app's
+lexicon assets a *product of that tooling*. So the two are genuinely coupled, and also
+genuinely different things.
+
+**Proposed:** a separate repository for the app; this repository stays the data source and
+gains an asset-build target that emits a **versioned, checksummed asset bundle** as a release
+artifact. The app consumes that bundle the same way it consumes any other asset (§13) — which
+it already must, since lexicon data updates independently of the app binary (FR-LEX-2).
+
+The reasoning: the coupling runs one way and through a file, which is the cheapest kind. A
+Gradle Android project inside a Python data repo shares no toolchain, no CI, no test runner and
+no release cadence with its host, and D11 puts this on a path to open-source publication where
+"an amateur radio channel-plan generator that also contains a transcription app" is a confusing
+thing to hand someone. The asset bundle is the interface, and it is one the design needs
+regardless.
+
+**This is recorded as Q15 rather than decided**, because it touches D11's distribution strategy
+and that is the product owner's call, not this document's.
+
+---
+
 ## 3. Cross-cutting contracts
 
 ### 3.1 The pass contract
@@ -759,7 +783,8 @@ Raw scores are not probabilities, and every threshold in the trust model depends
 being probabilities (FR-LEX-17):
 
 - **Model:** Platt scaling (a logistic on the combined score), fitted per tier and per model
-  (FR-LEX-21) on the M0 **training** fold, evaluated on the eval fold.
+  (FR-LEX-21) on the M0 **train and dev** folds, verified once on the eval fold at M11
+  (FR-LEX-17). Fitting and verification never share a fold.
 - **Asset:** `calibration.json` — `{modelId, tier, a, b, fittedAgainstCorpusVersion, fittedAt}`
   — versioned, shippable without an app release, referenced by `calibrationId` on every
   score-bearing record (FR-LEX-18 → F22).
@@ -816,7 +841,9 @@ Two candidate implementations to be raced in M4, both producing the same type:
    (unknown T3).
 
 M4's deliverable is the measured comparison of both against the `TEXT_DERIVED` baseline (§9.2)
-on the eval fold, per R3.
+on the **dev** fold, per R3. The fork is decided on dev and confirmed on eval at M11 — a
+decision this large is exactly when the temptation to open the sealed fold is strongest, and
+exactly when doing so would cost the most.
 
 ---
 
