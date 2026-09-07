@@ -155,6 +155,10 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D17 | **Location: rig-reported, then device GPS, then manual grid.** Permission optional. | Product owner chose GPS-with-fallback. Rig-reported is placed first because the TH-D75A has GPS for APRS, giving portable accuracy with **no Android location permission at all** |
 | D18 | **Solo build, heavily AI-assisted.** | Product owner. Shapes §15: front-load interfaces and testability, treat implementation throughput as high, put the risk on review gates rather than on sequencing |
 | D19 | **Reference device: OPPO Find X9 Ultra.** Snapdragon 8 Elite Gen 5, 12–16 GB, 7050 mAh, Android 16 / ColorOS 16. | Product owner. It is the *exact* chipset Qualcomm published `large-v3-turbo` NPU benchmarks for, so T3's headline number is measured rather than extrapolated — **and it runs ColorOS, one of the worst offenders for background-killing.** Best case for accuracy, worst case for R5. See §10.7 |
+| D29 | **Station knowledge accumulates across sessions**, split into deterministic *facts* and optional, clearly-marked LLM *topic summaries*, linked into a graph over sessions, stations and threads. No inference about persons. | Product owner: "allow cross digest to be connected together… so we can continue to get interesting things revealed the more we listen." The facts half is free and safe; the split (FR-DIG-7..14) is what keeps the other half from becoming a dossier. See R16 |
+| D30 | **Net detection ships in v1**, advisory rather than structural. | Product owner, reversing Q9's deferral. A check-in roll call is the richest source of clearly-spoken callsigns the product will encounter, and the voice library makes the control operator easy to spot. See FR-SPK-27..30 |
+| D31 | **Contributed audio is never published.** Derived artifacts — models, aggregate statistics, lexicon data — may be. | Product owner, closing Q17. Retires R14's irreversible half permanently: recordings of third parties stay access-controlled, and nothing published can be traced back to a voice |
+| D32 | **Correction is tiered**: pick from the ranked candidates, else search the lexicon, else free text marked unverified. Only the first two feed the priors. | Product owner, closing Q8. Also the natural home for manual voice binding (FR-SPK-23) |
 | D28 | **A persistent voice library**: enrolled voiceprints bound to Stations, surviving sessions, so a regular is named by voice before they identify. Cross-session matches are `INFERRED`, never `CONFIRMED`. | Product owner. FR-SPK-1..10 already bind callsigns to voices *within* a session; this makes it durable, and it compounds — the longer the app runs, the more traffic it can name. See FR-SPK-11..22 |
 | D26 | **Retention is a storage budget, not a time limit** — independent budgets for gated audio and continuous archive, "unlimited" allowed, and bulk export-and-prune by date range when a budget is reached. | Product owner. Disk is what the user actually cares about; a time limit is a proxy for it that is simultaneously too aggressive on a large phone and too lax on a small one. Closes Q5 and Q13 |
 | D27 | **The project lives in its own public repository**, `offline-radio-transcriber`, with the channel-plan tooling repo supplying a versioned lexicon asset bundle. | Product owner. Different toolchain, cadence and audience; one-way coupling through a file. Closes Q15 |
@@ -817,6 +821,34 @@ observation. Cross-day cluster identity SHALL require re-confirmation.
 (FR-UI-4). This requirement exists at the data layer as well as the UI layer: the API that
 returns an attribution SHALL make the state non-optional.
 
+#### Net detection (D30, Q9)
+
+Nets are the highest-yield traffic this product will ever hear: a check-in roll call is a
+*sequence of callsigns read aloud deliberately, clearly, one at a time*, often with the control
+operator repeating each one back. Generic threading models a 30-station net as one enormous
+thread with 30 voiceprints and no structure.
+
+**FR-SPK-27 (S)** — Detect net structure heuristically: **one dominant voiceprint alternating
+with many others** on a stable frequency over a sustained period. Set `Thread.kind = net`.
+
+**FR-SPK-28 (M)** — Detection SHALL be **advisory, never structural**. A thread marked `net`
+displays differently and is scored differently; it is never *threaded* differently, so a
+misdetection costs presentation and not the record. The user can set or clear the marking.
+
+**FR-SPK-29 (S)** — In a detected net, treat the **check-in sequence as a high-confidence
+callsign context**: consecutive short transmissions between returns to the control voice are
+strong evidence of a callsign being given, and the control operator's read-back is a second
+acoustic observation of the same callsign — which FR-LEX-9's conversation-context prior can use
+directly.
+
+**FR-SPK-30 (S)** — Where a net is detected, offer the thread as a **check-in list** — an
+ordered roster with attribution state per entry — because that is the artifact the operator
+actually wants from a net, and it exports cleanly (FR-EXP-2).
+
+> The voice library (D28) makes this materially better rather than harder: the control operator
+> of a weekly net is exactly the kind of station that enrols quickly, so the dominant voice is
+> often already named before the net starts.
+
 #### Persistent voice identity (D28)
 
 FR-SPK-1..10 associate a callsign with a voice **within a session**. FR-SPK-9 then deliberately
@@ -859,6 +891,29 @@ delete** entries. Deleting SHALL destroy the stored embedding, not merely unlink
 appropriate** and SHALL be recorded, so the library learns from corrections rather than
 repeating the error (P3).
 
+**FR-SPK-12a (M)** — Default enrolment is **two `CONFIRMED` observations across two distinct
+sessions** (D28). Configurable per FR-CFG-2, and to be re-derived from the measured false-match
+rate once FR-SPK-19 has numbers.
+
+**FR-SPK-23 (M)** — The user SHALL be able to **bind a voice by hand, in one tap**, to a
+callsign, a friendly name, or both. A manual binding is an assertion, not an inference: it
+enrols immediately regardless of FR-SPK-12a's thresholds, is flagged `CORRECTED`, and is immune
+to automatic re-propagation (FR-SPK-7).
+
+**FR-SPK-24 (M)** — A voiceprint MAY carry a **user-supplied name with no callsign at all** —
+"the Tuesday net control", "Dave" — because a voice you recognise but who never identifies is
+still the most useful thing the log can tell you about a transmission. Such a Station SHALL
+display its name with the same `INFERRED` marker and SHALL NOT be exported as a callsign
+(FR-EXP-4).
+
+**FR-SPK-25 (M)** — User-supplied names are **user content**: never inferred, never generated,
+never included in a contribution payload (FR-CON-3, FR-SPK-20). They are also the field most
+likely to contain a real person's name, which is the reason for that exclusion.
+
+**FR-SPK-26 (C)** — Where QRZ enrichment is added (FR-EXP-6, v2), the manual binding flow MAY
+offer a lookup to populate the name from the callsign. Explicitly online, explicitly optional,
+never in the capture path (NFR-6).
+
 **FR-SPK-18 (S)** — Handle **voice drift**: a voice changes with illness, fatigue, a different
 microphone or a different radio. Enrolled voiceprints SHALL be updatable from later confirmed
 observations, and a persistently failing match SHALL degrade the enrolment rather than silently
@@ -879,10 +934,18 @@ claims with different failure costs, and one number hides the one that matters.
 > - **FR-SPK-21 (M)** — Deleting a Station SHALL delete its voiceprint, and a single "forget
 >   this voice" action SHALL exist.
 > - **FR-SPK-22 (S)** — The voice library SHALL be disableable entirely, with the product fully
->   functional without it at the cost of cross-session recall.
+>   functional without it at the cost of cross-session recall. **Default on** (D28), disclosed
+>   in settings rather than by an onboarding prompt.
 >
 > The product already records third parties by design; a persistent biometric identifier of
 > them is a step beyond that, and it should be a deliberate, visible, reversible one.
+>
+> **The silent default is defensible only because FR-SPK-20 holds.** Enrolling biometric
+> identifiers without asking would be hard to justify if they were transmitted, pooled or
+> shared — but they never leave the device, are deletable outright, and the whole feature can be
+> switched off. That makes FR-SPK-20 **load-bearing rather than precautionary**: if any future
+> change proposes contributing, syncing or backing up voiceprints, the default must move to
+> explicit opt-in in the same change.
 
 ### 7.6 FR-RIG · Radio interface
 
@@ -1103,6 +1166,66 @@ with no LLM present is a conforming build, and AC-84 is the criterion that prove
 **FR-DIG-4 (M)** — The LLM SHALL be given already-resolved entities and SHALL NOT be
 permitted to emit a callsign. Enforce with grammar-constrained decoding where the runtime
 supports it.
+
+#### Station knowledge — the digest that accumulates (D29)
+
+A per-session digest answers "what happened last night". The far more valuable question, for a
+log that runs for months, is **"what do I know about this station?"** — and the answer should
+get richer every time they transmit. This is the counterpart to the voice library: one makes
+the app recognise a regular, the other makes it remember them.
+
+**The split that keeps this honest, and it is not negotiable:**
+
+| | **Station facts** | **Topic summaries** |
+|---|---|---|
+| Source | Derived deterministically from records | Generated by an LLM over transcripts |
+| Examples | Frequencies and times heard, activity pattern, POTA/SOTA references, grid squares spoken, ITU region from the prefix, first and last heard, over counts by attribution state | "Talked about antenna work and a trip to Oregon" |
+| Status | **Fact** — traceable to the transmissions that produced it | **Impression** — visibly marked, never asserted |
+| Requires an LLM | No | Yes (T3, optional) |
+
+**FR-DIG-7 (M)** — Maintain a **Station record** that accumulates across sessions: everything in
+the "facts" column above, each traceable to the transmissions that produced it (P2).
+
+**FR-DIG-8 (M)** — Station facts SHALL be **deterministic and re-derivable** from stored
+records. A fact that cannot be recomputed from the log is not a fact; it is a summary, and it
+belongs in the other column.
+
+**FR-DIG-9 (M)** — Digests SHALL be **linkable**: a session digest links to the stations in it,
+a station record links back to every session and thread it appeared in, and both link to the
+transmissions underneath. This is the "graph" — built from foreign keys over existing data, not
+a separate inference layer.
+
+**FR-DIG-10 (M)** — Location claims SHALL state their **source and precision**: a POTA reference
+is exact, a spoken grid square is as precise as it was spoken, an ITU prefix gives a country and
+nothing more, and a mentioned place name is a mention, not a location. The prefix of a callsign
+says where it was **issued**, never where the operator is (FR-LEX-26's asymmetry applied to
+geography).
+
+**FR-DIG-11 (M / T3)** — Where topic summaries are generated, they SHALL be attributed to the
+transmissions that produced them, visually distinguished (FR-DIG-6), and **phrased as reported
+speech** — "said they were working on an antenna" — never as asserted biography.
+
+**FR-DIG-12 (M)** — The system SHALL NOT generate or store **inferences about a person** beyond
+what was said: no mood, no health, no employment, no relationships, no "what their day was
+like" as a characterisation. It may record *that they mentioned* something, quoting or citing
+the transmission. **The line is between a log of what was transmitted and a profile of a
+person**, and the product stays firmly on the first side of it.
+
+**FR-DIG-13 (M)** — Station knowledge SHALL be **local-only**: excluded from the corpus
+contribution channel (FR-CON-3) and from diagnostic bundles, on the same reasoning as
+voiceprints (FR-SPK-20). An accumulating dossier on identifiable third parties is precisely the
+thing that must not leave the device.
+
+**FR-DIG-14 (S)** — The user SHALL be able to review and delete station knowledge, including
+"forget this station entirely" alongside FR-SPK-21's "forget this voice".
+
+> **Why FR-DIG-12 is drawn tightly.** The request behind this feature — knowing what a regular
+> is like, where they operate from, what they talk about — is a genuinely good product instinct,
+> and most of it is served by the facts column at zero risk. The part that is not is an LLM
+> writing character studies of real people from noisy transcripts of a lossy channel, stored
+> permanently and never seen by them. A hallucinated callsign is a bad log entry; a hallucinated
+> claim about someone's health or circumstances is a different category of wrong, and it is
+> unfalsifiable to the reader because they were not listening. That is R16.
 
 **FR-DIG-5 (M)** — LLM inference SHALL run only when the device is idle, charging or
 plugged, and thermally unconstrained. It SHALL NEVER run in the capture path.
@@ -2252,6 +2375,7 @@ Distinct from §12, which enumerates *runtime* failures. These are risks to the 
 | R9 | Model or lexicon licensing blocks the Play Store path | Low | Medium — forecloses D11 | Record licence per asset from day one (FR-AST-1, FR-LEX-28) | M0a |
 | R10 | **Lossy audio retention silently caps Pass C, and the damage is invisible until M4** | Medium | **High — reads at M4 as the core thesis failing when it is the codec failing** | Lossless retention until measured (CON-STO-1, FR-STO-2a..c). The codec decision is made in M2; the pass that cares is measured in M4 | **M2 decision, M4 measurement** |
 | R11 | **Segmentation errors are permanent** — no tier, model or later rig connection can recover a clipped or merged transmission | Medium | Medium–High — a silent, uncorrectable accuracy floor under every other number | Tier-invariant segmentation (FR-SEG-7), generous pre/post-roll (FR-SEG-8), optional continuous archive (FR-SEG-9), boundary metrics from M2 (AC-69) | M2 |
+| R16 | **Hallucinated biography** — the LLM writes a plausible, wrong claim about a real person into their permanent station record, and nobody who could contradict it ever sees it | Medium where topic summaries are enabled | **High** — categorically worse than a wrong callsign, because it is about a person, it persists, and the reader cannot check it | Facts and summaries kept structurally separate (FR-DIG-7/8); summaries as reported speech, attributed to transmissions, visibly marked (FR-DIG-11); no inference about persons at all (FR-DIG-12); local-only (FR-DIG-13); summaries are optional and tier-gated | M9 |
 | R15 | **The voice library mislabels a regular, persistently** — a false cross-session match binds the wrong callsign to a voice and repeats it every night, and the user may not notice because it looks like the system working | Medium — it rests on R4, which is itself unproven on narrowband off-air audio | **High** — a confident, durable, wrong attribution is the exact failure G4 exists to prevent, and it is worse than the per-session version because it accumulates | Enrolment needs multiple confirmations across sessions (FR-SPK-12); cross-session matches are `INFERRED` only (FR-SPK-13); a stricter, *measured* threshold (FR-SPK-14); ambiguity rather than a pick (FR-SPK-15); separate precision reporting (FR-SPK-19); one-tap correction that de-enrols (FR-SPK-17) | M6 |
 | R13 | **Synthetic-to-real gap** — a system tuned on TTS-derived callsign audio scores well on synthetic and poorly on real traffic | **High** — this is the expected failure mode of D21/D22, not a tail risk | Medium–High: accuracy claims collapse if not caught | Per-source metrics (FR-TST-8), synthetic barred from eval (FR-TST-9), real-speech splicing rather than pure TTS (D22), and the ~1 h real validation set exists precisely to catch this | M0 / M3 |
 | R14 | **Contributed audio carries third-party voices and callsigns** whose owners never consented, in a product that may be open-sourced | Medium | Medium–High — reputational and possibly legal, and irreversible once published | Access-controlled by default, no republication without a separate decision, corrections-without-audio preferred (FR-CON-6, FR-CON-7), jurisdiction notice (NFR-6c). Q17 must close before contribution is switched on | Before contribution ships |
