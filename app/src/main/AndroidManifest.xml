@@ -14,5 +14,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The capture status surface (build-plan P8, FR-UI-7). Not yet the app's launcher —
+             MainActivity remains the entry point until the reader UI/navigation host lands. -->
+        <activity android:name=".status.StatusActivity" android:exported="false" />
     </application>
 </manifest>

@@ -43,7 +43,7 @@ underlying breakdown each prompt draws on.
 **Wave C — composition.**
 
 - [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07
-- [ ] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)*
+- [x] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)* — done 2026-09-07
 
 **Wave D — the M2 gate, then transcription.**
 
