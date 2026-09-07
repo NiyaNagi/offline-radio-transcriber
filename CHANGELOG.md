@@ -108,6 +108,84 @@ not a corpus measurement). `dependencyRules` confirms no new edge beyond `:asr-a
 
 ---
 
+## 2026-09-07 (evening — P9 partial: the on-device harness runner)
+
+### 8fbad92 — P9 · On-device harness runner: reuse :eval's Harness/HarnessConfig/HarnessReport in an androidTest entry point
+
+**Scope:** `:app` only — a new `harnessShared` source directory, `app/src/test/.../harness/`,
+`app/src/androidTest/.../harness/`, and `app/build.gradle.kts` (new `testImplementation` /
+`androidTestImplementation` edges plus the `sourceSets` wiring that shares `harnessShared`
+between `test` and `androidTest`). This is deliberately the **first deliverable of P9 only** —
+the on-device harness runner described in build-plan P9's opening paragraph and
+implementation-plan M2.21a. The device matrix itself (D8, D4, D5, D1–D3, D9–D12; AC-64, AC-76,
+NFR-7) is **not attempted in this session** — it needs the physical reference device, which this
+sandbox does not have, and fabricating a result for it would be exactly the kind of silent
+failure the constitution exists to prevent.
+**Requirements/ACs:** AC-36 (a desktop-only harness structurally cannot measure T3 — this gives
+`:eval` a genuine on-device entry point), FR-TST-7/AC-100 (the eval-fold seal holds
+on-device, identically to the JVM harness — tested), AC-90's determinism/format guarantee
+extended off-desktop (the on-device runner is proven to emit byte-identical `canonicalText()`
+for identical inputs). AC-64/AC-76/NFR-7 (the actual endurance run and its published number)
+remain **open**, as does the rest of the device matrix (D1–D5, D8–D12).
+**What changed:** `OnDeviceHarnessRunner` (`app/src/harnessShared/kotlin/org/ort/app/harness/`)
+mirrors `eval/src/main/kotlin/org/ort/eval/Main.kt`'s construction exactly (same grammar, same
+`PriorCombiner`, same `Harness`, same eval-fold gate via `CorpusManifest.entries`) and adds
+`runAndWriteReport`, which writes `HarnessReport.canonicalText()` to a file verbatim. It has
+deliberately **no `android.*` import**, so the identical code path is exercised by a plain JVM
+unit test (no device) and by the real on-device instrumented test — "same manifest, same report
+format" is proven, not asserted, because both callers run the same function.
+`HarnessInstrumentedTest` (`app/src/androidTest/.../harness/`) is the actual on-device entry
+point: it resolves `InstrumentationRegistry`'s target-context `filesDir` (app-private storage),
+reads a manifest from `<filesDir>/harness-corpus/manifest.tsv`, runs the harness with
+`(machine = Build.MANUFACTURER/MODEL, provider = "cpu", threadCount = availableProcessors(),
+runtimeVersion = Build.VERSION.SDK_INT)`, and writes the report to
+`<filesDir>/harness-reports/report.txt`. Its kdoc documents the real push/pull commands
+(`adb push` into `/data/local/tmp`, `run-as` copy into app-private storage, `am instrument`,
+then `run-as cat`/`adb pull` to retrieve the report) for the future session that runs this on
+hardware.
+**Module-boundary finding (part of this prompt's explicit ask):** `:app`'s main source set has
+no permitted compile-time edge to `:eval` (`buildSrc/.../ModuleGraph.kt`: `:app`'s allowed set is
+exactly `{:pipeline, :data, :net, :core}`). `dependencyRules` only checks the `api`,
+`implementation` and `compileOnly` configurations (`build.gradle.kts`'s `checkedConfigurations`)
+— `testImplementation`/`androidTestImplementation` are outside that check by explicit design
+(`ModuleGraph.kt`'s own comment: "Test scope is deliberately excluded: `:testing` fakes are meant
+to be reachable from any module's tests"). Rather than widen `ModuleGraph.allowed[":app"]` to
+include `:eval` (which would let a future `:app` *main-source* change depend on the harness by
+accident, the exact failure mode structural enforcement exists to prevent), this change adds
+`:eval`/`:testing`/`:lexicon` only to `testImplementation`/`androidTestImplementation` — inside
+the graph's own documented exemption, not a workaround of it. Confirmed with
+`./gradlew dependencyRules`: the checked graph still shows `:app -> :core, :data, :net,
+:pipeline` only. `:eval`'s current dependencies (`:onnx`, `:asr-sherpa`, etc.) are all still
+empty stubs (no native/JNI code yet), so this edge is safe today; when P10 lands a real ONNX
+Runtime dependency inside `:onnx`/`:asr-sherpa`, a future session should check whether the JVM
+artifact `:eval` pulls in in has a real (non-Android) native library that would fail to load
+under `androidTest`'s on-device classpath — flagged here as a foreseeable follow-up, not
+something this session could observe today.
+**Verified:** `./gradlew :app:testDebugUnitTest` — 15 tests green, including
+`OnDeviceHarnessRunnerTest`'s three cases (byte-identical `canonicalText()` vs. a
+Main.kt-equivalent construction; `runAndWriteReport` writes the exact text to a file; the
+eval-fold gate throws `IllegalStateException` without `allowEval` and succeeds with it).
+`./gradlew :app:compileDebugAndroidTestKotlin` — `HarnessInstrumentedTest` compiles clean
+against the real Android/androidx.test classpath (this is as far as verification can go without
+a device or emulator in this sandbox — the instrumented test itself was not executed).
+`./gradlew dependencyRules` — 17 modules checked, `:app -> :core, :data, :net, :pipeline` only,
+no forbidden edges. `./gradlew :app:check` — ktlint, lint and both unit-test variants
+(debug/release) green. `./gradlew coverageMatrix` — 413 requirements, 92 covered (was 90 before
+this commit; +2 for the two `AC-36`-tagged JVM tests), no new orphan-id warnings.
+**Left open / not done:** the entire device matrix (implementation-plan M2 exit criteria): **D8**
+(30-minute "prove it" run), **D4** (the 8-hour unattended run, AC-64), **D5** (the same run
+without exemptions, AC-5), **D1, D2, D3, D9, D10, D11, D12**. None of these can be attempted
+without the physical reference device — this session had no device access, and the build-plan
+prompt explicitly scoped this session to the on-device runner only. Also genuinely unverified for
+the same reason: the actual `adb push` of a real corpus into app-private storage, the actual
+`am instrument` execution on hardware, and the actual `adb pull`/`run-as cat` of the resulting
+report — `HarnessInstrumentedTest` documents the exact commands but none of them have been run.
+The manifest fixture inside `HarnessInstrumentedTest` is a stand-in for a pushed corpus; a real
+device run replaces it with the genuine corpus manifest before executing. `AC-64`'s "Done when:
+AC-64 passes and D8 correctly predicted D4's outcome" is entirely open.
+
+---
+
 ## 2026-09-07 (afternoon, cont. — P8 and the real R1 run both land)
 
 ### 36c19ad — Merge branch 'worktree-agent-aa4aa2aeea1f1ebaa' (P8 into main)
