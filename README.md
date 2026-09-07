@@ -4,18 +4,25 @@ An Android application that listens to amateur and scanner radio traffic, transc
 entirely offline, resolves callsigns by matching a lexicon **against the audio itself**,
 groups transmissions into conversations, and presents a searchable log plus a digest.
 
-This directory holds the complete research record and the functional specification.
+**Status: specification complete, implementation not started.** This repository currently holds
+the research record, the specifications and the plan. No code yet — the next commits are the
+corpus pipeline.
+
+> **Licence: not yet chosen.** The project intends to be open source (D11), but until a LICENCE
+> file lands here, default copyright applies and nobody should assume rights to reuse this.
+> That is a to-do, not a position.
 
 ## Status
 
 | Item | State | Location |
 |---|---|---|
+| **TH-D75A CAT reference** | Verified from community documentation | [`docs/reference/th-d75a-cat.md`](docs/reference/th-d75a-cat.md) |
 | Hardware / SBC feasibility research | Complete | [`research/01-hardware-sbc-study.md`](research/01-hardware-sbc-study.md) |
 | Phone platform feasibility research | Complete | [`research/02-phone-platform-study.md`](research/02-phone-platform-study.md) |
 | Accuracy, lexicon and identity research | Complete | [`research/03-accuracy-lexicon-identity.md`](research/03-accuracy-lexicon-identity.md) |
 | Flagship capability research | Complete | [`research/04-flagship-capability.md`](research/04-flagship-capability.md) |
 | **Functional specification** | **Draft 3.2 — adversarially audited, ready for implementation** | [`spec/functional-spec.md`](spec/functional-spec.md) |
-| Open decisions register | Active — 1 blocking (Q2, record the tape); Q13–Q14 want answers before M2 | [`spec/open-questions.md`](spec/open-questions.md) |
+| Open decisions register | Active — Q16 (labelling protocol) and Q17 (may contributed audio be published?) are the live ones | [`spec/open-questions.md`](spec/open-questions.md) |
 | **Technical design specification** | **Draft 1.1 — M0–M4 in detail, M5–M11 interfaces only** | [`spec/technical-design.md`](spec/technical-design.md) |
 | **Implementation plan** | **Draft 1.1 — M0–M4 detailed, M5–M11 outlined** | [`spec/implementation-plan.md`](spec/implementation-plan.md) |
 | Adversarial audit | Complete — 41 findings, all addressed | [`spec/audit-2026-09-06.md`](spec/audit-2026-09-06.md) |
@@ -35,9 +42,15 @@ that decision would be detailed plans for the wrong thing.
 
 **If you are implementing:** functional spec, then `spec/technical-design.md`, then
 `spec/implementation-plan.md`, then `research/03` for the reasoning behind the accuracy
-architecture. The hardware study is historical context and is not required. **Start with
-M0a.1 — the ONNX export round trip — and M0.3, recording the tape;** they are half a day and
-several weeks respectively, and everything else waits on the second one.
+architecture. The hardware study is historical context and is not required.
+
+**Start with M0.A–M0.D — the corpus pipeline.** The project's data strategy was rebuilt in
+September 2026 around public corpora (§14A.3): 176 h of real off-air amateur HF audio, 19,000 h
+of degraded analog comms with speaker labels, and free ATC data all exist under permissive
+licences. What does not exist publicly is amateur conversational callsign traffic — so that is
+the only thing left to record, about an hour of it, as validation rather than training. Also
+worth doing on day one: M0a.1, the ONNX export round trip, which is half a day and retires the
+project's largest remaining technical risk.
 
 **If you are reviewing the decision:** read `research/02` (why a phone at all), then the
 functional spec's sections 1–5.
