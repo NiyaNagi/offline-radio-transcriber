@@ -20,7 +20,9 @@ fold discipline in [functional-spec §14A.2/§14A.3](../spec/functional-spec.md)
 | `src/corpus/metrics.py` | WER, callsign P/R, boundary P/R, rejection rate by reason, attribution accuracy |
 | `src/corpus/harness.py` | Harness v0 — metrics over hand transcripts, per source **and** aggregate (FR-TST-8), stamped with fold + run fingerprint |
 | `src/corpus/report.py` | Report writer. Refuses to exist without a fold; refuses to serialise without a fingerprint |
-| `manifest.json` | The committed, validated four-source manifest. Rendered by `corpus build`; CI asserts no drift |
+| `src/corpus/synth/` | The synthetic callsign generator (P6, D22): `phonetic.py` (callsign ↔ ITU/NATO tokens), `channel.py` (the learned degradation transform), `splice.py` (unit placement/offsets), `tts.py` (the TTS seam + `FakeTtsVoice`), `generator.py` (wires them together; refuses `eval` outright) |
+| `src/corpus/probes/` | The two P6 decision-gate probes: `speaker_separation.py` (R4) and `lora_export.py` (R1), each with an `Embedder`/`LoraTrainer`+`Exporter`+`AsrRuntime` seam and a behavioural fake — see `results/r4-speaker-separation.md` and `results/r1-lora-export.md` for their verdicts |
+| `manifest.json` | The committed, validated four-source manifest (plus synthetic train/dev sessions). Rendered by `corpus build`; CI asserts no drift |
 
 ## Commands
 

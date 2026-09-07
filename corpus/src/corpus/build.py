@@ -38,9 +38,11 @@ PLANNED_SESSIONS: list[dict] = [
     # -- ISOLET: train only (letter-name pronunciation inventory, not real traffic) --
     {"id": "isolet/train-01", "source": "isolet", "fold": "train",
      "kind": "speech", "duration_s": 1800.0, "stations": []},
-    # -- Synthetic: train only (FR-TST-9 bars it from eval) --
+    # -- Synthetic: train/dev only (P6, FR-TST-9 bars it from eval) --
     {"id": "synth-callsigns/train-01", "source": "synth-callsigns", "fold": "train",
      "kind": "speech", "duration_s": 3600.0, "stations": ["W1AW", "K2ABC"]},
+    {"id": "synth-callsigns/dev-01", "source": "synth-callsigns", "fold": "dev",
+     "kind": "speech", "duration_s": 600.0, "stations": ["N7XYZ", "VE7ABC"]},
     # -- Local recordings: validation hour (dev) + two separately-recorded noise tapes --
     {"id": "local/validation-fm-01", "source": "local", "fold": "dev",
      "kind": "speech", "duration_s": 1800.0, "stations": ["KC1ABC", "W2DEF"]},
