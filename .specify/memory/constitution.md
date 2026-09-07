@@ -1,0 +1,231 @@
+<!--
+SYNC IMPACT REPORT
+==================
+Version change: (none) → 1.0.0
+
+Bump rationale: Initial ratification. Derived from the project's existing decision record
+  (D1–D32), the three unrelaxable rules in technical design §17, the risk register (R1–R16)
+  and the testing approach agreed in test-plan.md. MAJOR baseline because it establishes
+  binding governance where none previously existed.
+
+Principles defined:
+  I.    Uncertainty Is Content (NON-NEGOTIABLE)
+  II.   Test-Backed Change (NON-NEGOTIABLE)
+  III.  Audio Is The Source Of Truth
+  IV.   Capture Never Blocks, Never Drops, Never Lies
+  V.    Nothing Leaves The Device Except By A Declared Channel
+  VI.   Measurement Discipline
+  VII.  Boundaries Are Structural, Not Conventional
+
+Added sections:
+  - Scope And Precedence
+  - Development Workflow & Quality Gates
+  - Governance
+
+Documents reviewed for alignment:
+  ✅ spec/functional-spec.md — principles are derived from it; it stays authoritative on
+       requirements. No change needed.
+  ✅ spec/technical-design.md — §17's three rules are absorbed into Principles III, IV
+       and VII. No change needed.
+  ✅ spec/test-plan.md — Principle II codifies its approach; §7's manual device gates
+       needed governance, added under Principle II.
+  ⚠️ spec/build-plan.md — every prompt updated to carry a Constitution Check; P1 gained
+       the LICENSE and minimum-API obligations; P6 gained third-party fold reporting;
+       P11 gained the attribution-display obligation.
+
+Follow-up TODOs:
+  - LICENSE file is still absent while the repository is public (Principle VII, Governance).
+-->
+
+# Offline Radio Transcriber Constitution
+
+This project builds an Android application that transcribes amateur and scanner radio traffic
+entirely offline and resolves callsigns by matching a lexicon against the audio itself. It is
+built by one person with heavy AI assistance (D18), against an unusually complete specification.
+
+These principles are derived from decisions already made and recorded. They are **binding on
+every change**, including changes made by an AI agent, and they exist because this product's
+characteristic failures are **silent**: a confident wrong callsign, a session that died at 2 a.m.,
+a number measured on the wrong fold. Nearly every rule below is a guard against something that
+would otherwise look like success.
+
+## Scope And Precedence
+
+- The **functional specification is authoritative on requirements**; this constitution is
+  authoritative on *how work is done*. Where an implementation conflicts with a principle, the
+  implementation changes — not the principle.
+- Where a principle appears to conflict with a requirement, that is a specification defect:
+  raise it, amend the spec, and record the decision. Do not resolve it silently in code.
+- **Principles apply to the shipped application.** Desktop tooling under `corpus/` is governed
+  by Principles II and VI only; it may use the network freely, and does.
+
+## Core Principles
+
+### I. Uncertainty Is Content (NON-NEGOTIABLE)
+
+A log that silently guesses is worse than one that admits it does not know, because it will be
+used to send QSL cards to people who were never there.
+
+- **The four attribution states are a closed set** — `CONFIRMED`, `INFERRED`, `AMBIGUOUS`,
+  `UNKNOWN` — and every attribution MUST carry one. The API that returns an attribution MUST
+  make the state non-optional (FR-SPK-10); this is a type-level obligation, not a UI convention.
+- **Precision outranks recall at every tier** (NFR-1a). Where a target cannot be met, the system
+  sacrifices recall — moving results to `AMBIGUOUS` or `UNKNOWN` — and never asserts.
+- **A weaker device may know less; it MUST NOT be more wrong** (NFR-1b).
+- **`CONFIRMED` means heard and resolved in *this* transmission.** No voice match, however
+  strong, and no cross-session inference may produce it (FR-SPK-13).
+- **Every machine conclusion MUST be inspectable** — the lattice, the candidates, each prior's
+  contribution (FR-UI-8, P2). A conclusion that cannot be explained cannot be corrected.
+- **The system MUST NOT generate claims about a person** beyond what was transmitted
+  (FR-DIG-12). It logs what was said; it does not profile who said it.
+
+**Rationale:** G4 — trust the record — is the requirement that makes the product worth having.
+Every other accuracy gain is worthless if the user cannot tell what was heard from what was
+guessed.
+
+### II. Test-Backed Change (NON-NEGOTIABLE)
+
+- **Strict TDD.** The test is written, run, and seen to fail *for the right reason* before the
+  code that satisfies it. A test that passes before its implementation exists is testing nothing.
+- **Tests are named for the requirement they establish** (`AC_47_...`, `FR_RUN_10a_...`) so the
+  coverage matrix is generated rather than maintained.
+- **Failure paths are tested, not just happy paths.** §12 of the functional spec enumerates
+  twenty-two failure modes precisely because most of them are silent.
+- **Every model-bearing interface ships with a behavioural fake**, in the same change. A fake
+  that cannot be told to fail, hang or return a hallucination is a stub, and stubs test nothing
+  that matters.
+- **A module is not done until its definition of done holds** (test-plan §5), including that it
+  builds and tests against `:core` and fakes alone.
+- **Manual gates carry equivalent discipline.** Device tests (test-plan §7) cannot be
+  test-first, so each MUST have a written protocol, a recorded prediction where one applies, and
+  a result committed under `results/` with the device, build and date. An unrecorded manual test
+  did not happen.
+- **A session that cannot meet its exit criteria stops and says so.** Under AI-assisted
+  throughput a skipped test is an unmet requirement wearing a disguise.
+
+**Rationale:** D18 makes implementation cheap and review expensive. Tests are the only artifact
+that makes "it works" checkable rather than asserted.
+
+### III. Audio Is The Source Of Truth
+
+- **Every pass is a pure function of `(audio, lexicon snapshot, model set, config)`** and
+  records the fingerprint of what produced it (technical design §3.4). No pass may consume
+  another pass's output where the audio is available.
+- **Retained audio MUST remain sufficient to re-run every pass** (FR-REP-4). The retention codec
+  is therefore an accuracy decision: lossy retention requires a measured justification against
+  Pass C, not against file size (FR-STO-2b, R10).
+- **Segmentation is the one exception, and it is permanent.** Boundaries cannot be redone from
+  gated audio, so segmentation parameters MUST NOT vary by tier (FR-SEG-7), pre- and post-roll
+  are generous by policy (FR-SEG-8), and the segmenter MUST NOT accept a tier argument at all.
+- **Nothing is deleted quietly.** Rejected segments, superseded transcripts and overwritten
+  attributions remain reachable (P9); retention deletion is announced in advance.
+
+**Rationale:** This is what makes reprocessing, cross-tier improvement and the entire tier
+inversion true rather than aspirational. AC-39 is only satisfiable because of it.
+
+### IV. Capture Never Blocks, Never Drops, Never Lies
+
+- **Capture MUST proceed with every processing pass stalled**, indefinitely (FR-RUN-1). Enforced
+  structurally: `:capture-*` has no compile-time dependency on `:asr-*`, `:lexicon` or
+  `:identity`.
+- **Audio is never dropped for processing pressure** (D16). Overload sheds passes in a documented
+  order and defers to a durable queue; only storage exhaustion stops capture, loudly.
+- **A route that is not the selected device halts capture** (FR-CAP-3, FR-CAP-3a). Recording the
+  room instead of the radio is the highest-consequence silent failure in the system.
+- **Silence that was never listened to MUST be distinguishable from silence that was**
+  (FR-RUN-12, FR-UI-12). A gap is data.
+- **Liveness is established empirically, never by API.** `isIgnoringBatteryOptimizations()` is a
+  hint that lies on the reference device (NFR-8).
+
+**Rationale:** R5 is the top risk and the product is worthless if a night's capture silently
+did not happen.
+
+### V. Nothing Leaves The Device Except By A Declared Channel
+
+- **The capture and processing paths make no network call, ever** (NFR-6). Enforced by module
+  boundary and by capability token, not by policy.
+- **There are exactly two outbound channels**: user-initiated actions (asset download, export,
+  QRZ) and the corpus contribution channel, which is off until enabled and never runs during
+  capture (FR-CON-1, FR-CON-2).
+- **No analytics, telemetry or crash reporting**, in any build (FR-OBS-5).
+- **Four categories never leave the device at all**: voiceprints and embeddings (FR-SPK-20),
+  user-supplied names (FR-SPK-25), station knowledge (FR-DIG-13), and location finer than a grid
+  square (FR-LEX-24). The contribution payload is **recomputed from a closed field list**, never
+  serialised from an entity graph, so a new column cannot leak by being added.
+- **Contributed audio is never published** (D31). Derived artifacts may be.
+
+**Rationale:** The product records identifiable third parties who did not consent. The
+device-local guarantee is what makes that defensible, and it is why FR-SPK-20 is load-bearing
+rather than precautionary.
+
+### VI. Measurement Discipline
+
+- **Three folds: `train`, `dev`, `eval`.** The eval fold is sealed until M11 and the harness
+  refuses it without an explicit flag (FR-TST-7). Sealing by discipline alone does not survive a
+  debugging session at 2 a.m.
+- **No number without its provenance.** Every reported figure carries fold, machine, execution
+  provider, thread count, model version and run fingerprint. A number whose fold is unstated is
+  not evidence.
+- **Determinism is bounded and the bound is stated.** Byte-identical output holds within a fixed
+  (machine, provider, thread count, runtime version) and not across them.
+- **Synthetic data never enters the eval fold** (FR-TST-9), and metrics are reported **per
+  source** as well as aggregate (FR-TST-8) — a system that scores well on generated audio and
+  badly on real traffic is the expected failure mode of the corpus strategy (R13).
+- **Third-party corpora carry their own splits.** Report them as such; do not silently merge
+  them into this project's fold structure.
+- **Targets are provisional until measured.** Every accuracy figure in §10 is transferred from
+  another domain until the harness produces it here.
+
+**Rationale:** R8 — a contaminated eval set — makes every number in the project unfalsifiable,
+and it is not recoverable. You cannot un-see the eval fold.
+
+### VII. Boundaries Are Structural, Not Conventional
+
+- **Module dependency rules are enforced by the build**, not by review. A forbidden edge fails
+  `./gradlew dependencyRules`.
+- **Guarantees are expressed as types where possible**: a non-optional attribution state, a
+  segmenter that cannot accept a tier, a network entry point that requires a capability token.
+  A rule a person must remember is a rule that will eventually be forgotten.
+- **`:core`, `:lexicon`, `:eval` and the `-api` modules have no Android dependency**, so the
+  highest-uncertainty work runs on a desktop JVM with fast tests.
+- **Assets — models, lexicon data, calibration, descriptors — share one lifecycle**: install,
+  verify, activate, roll back, remove, with integrity checked before activation.
+- **Every user-visible surface obeys the accessibility floor**: the four states distinguishable
+  without colour, WCAG 2.2 AA contrast, no clipping at maximum font scale.
+
+**Rationale:** Under D18, implementation is fast and vigilance is scarce. Structural enforcement
+is the only kind that survives a long project built by one person and an agent.
+
+## Development Workflow & Quality Gates
+
+- **Work proceeds by the build plan's waves.** Within a wave, units touch disjoint files; a unit
+  MUST NOT modify files another unit in the same wave owns.
+- **Every session begins with a Constitution Check** — state which principles bear on the work
+  — and ends by confirming the module's definition of done.
+- **CI gates every push**: lint, dependency rules, spec-integrity checks, unit tests, the golden
+  pipeline, and the coverage-matrix delta. Device and endurance tests are deliberately excluded;
+  pretending a hosted runner can prove them would be false confidence.
+- **Spec-integrity checks are part of CI**, covering ID contiguity, dangling references,
+  traceability sync and question/decision agreement.
+- **Decisions are recorded where they are made**: a decision of record in functional spec §3, a
+  technical decision in the technical design's open-decisions table, a measured result under
+  `results/`.
+- **Commit messages state what changed and why the alternative was rejected.**
+
+## Governance
+
+- **Authority.** These principles are binding gates. A conflict between an implementation and a
+  MUST is resolved by changing the implementation, the spec, or the plan — never by diluting a
+  principle.
+- **Amendments** require a recorded rationale, a version bump per the policy below, and
+  propagation to `AGENTS.md`, the build plan's prompts and any affected spec section **in the
+  same change**, noted in the Sync Impact Report at the top of this file.
+- **Versioning (SemVer for governance).** MAJOR = a principle removed or redefined
+  incompatibly; MINOR = a new principle or section, or materially expanded guidance;
+  PATCH = clarification.
+- **Compliance.** Any deviation MUST be justified in the change that introduces it. An
+  unjustified violation is a defect regardless of whether tests pass.
+- **Outstanding.** The repository is public and carries **no LICENSE file**, which contradicts
+  D11's open-source intent and leaves every reader without rights. This must be resolved.
+
+**Version**: 1.0.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-07

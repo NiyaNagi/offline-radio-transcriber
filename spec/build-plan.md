@@ -67,6 +67,19 @@ Paste one to open a session. Each names what to read, the files it **owns**, the
 **not touch** (this is what keeps a wave conflict-free), the tests to write first, and how to
 know it is done.
 
+**Every prompt is preceded by this standing preamble — paste it too, or rely on `AGENTS.md`
+being loaded automatically:**
+
+> Read [`.specify/memory/constitution.md`](../.specify/memory/constitution.md) and
+> [`AGENTS.md`](../AGENTS.md) before anything else. Open with a **Constitution Check**: name the
+> principles that bear on this work and what they forbid here. Strict TDD — the test is written
+> and seen to fail for the right reason before the code. Ship each interface's behavioural fake
+> in the same change. Touch only the files this prompt says it owns. **If the exit criteria
+> cannot be met, stop and say why** rather than leaving a module half-done.
+
+*The principles most often relevant, by prompt: P1 VII · P2 VI · P3 I, VII · P4 III, IV, VII ·
+P5 II, III, IV · P6 VI · P7 I, VI · P8 IV, V, VII · P9 II, IV · P10 I, II · P11 I, VI.*
+
 ### P1 · Foundation
 
 > Read `spec/technical-design.md` §2–3 and `spec/test-plan.md` §3, §5, §8.
@@ -88,8 +101,16 @@ know it is done.
 > with an asserted legal-transition table. Then `:testing`: `TestClock`, fixture loaders, and
 > the annotation that lets a test carry a requirement id into the coverage matrix.
 >
+> Also in this session, because the constitution check surfaces them and nothing else owns them:
+> **AC-93** — a CI job asserting the app installs and runs at the minimum supported API level
+> (NFR-5); the `coverageMatrix` Gradle task; and **the LICENSE file**, which the repository is
+> currently public without. D11 intends open source and the constitution's governance section
+> records its absence as outstanding — Apache-2.0 is the usual fit for a project that wants a
+> Play Store path and a patent grant, but **ask before choosing**; it is a product decision.
+>
 > **Done when:** CI is green, both meta-guards demonstrated failing then passing, AC-91 holds,
-> and `results/coverage-matrix.md` generates. `:core` has no Android dependency.
+> `results/coverage-matrix.md` generates, and the LICENSE question is answered rather than left.
+> `:core` has no Android dependency.
 
 ### P2 · Corpus pipeline
 
@@ -218,8 +239,14 @@ know it is done.
 > - **R1** — LoRA fine-tune `distil-small.en` on ten minutes of anything, `merge_and_unload()`,
 >   export with sherpa-onnx's script, load it, transcribe. A failure reopens the runtime choice.
 >
-> **Done when:** both probes have written verdicts in `results/`, and the generator's output is
-> in the manifest as `train`/`dev` only.
+> **Third-party corpora carry their own splits** (Principle VI). Fearless Steps and the ATC
+> merge have their own train/dev/eval divisions — report against those and say so; do not
+> silently fold them into this project's structure, and do not treat a good number on someone
+> else's eval set as a number on ours.
+>
+> **Done when:** both probes have written verdicts in `results/` — each stating the corpus, its
+> split, the model and the run fingerprint — and the generator's output is in the manifest as
+> `train`/`dev` only.
 
 ### P7 · Lexicon — ranking, calibration, harness
 
@@ -332,6 +359,12 @@ know it is done.
 > instrumentation and confirm **AC-73** (p95 ≤ 2 s at T1+) and **AC-75** (no backlog growth at
 > 15% activity). **Record M3's callsign precision and recall on the dev fold — this is the
 > number M4 must beat, and it must be written down before M4 starts.**
+>
+> **This is the first point in the project where an attribution reaches a screen, so Principle I
+> binds here rather than at M5.** The attribution type must make its state non-optional
+> (FR-SPK-10) — a compile error, not a lint warning — and the transmission list must show all
+> four states distinguishably **without relying on colour** (FR-A11Y-1). Write those tests
+> first; they are cheap now and expensive to retrofit once a reader UI exists.
 >
 > Then M4. Build the `UnitSpotter` interface and the sherpa-onnx open-vocabulary KWS
 > implementation over the ~36 phonetic units, reporting per-unit precision/recall. Run the TD2
@@ -579,6 +612,11 @@ Pass C to T2+. Implementation plan M4 has the consequences of each.
 
 ## Standing rules for every session
 
+**These are the operational form of [the constitution](../.specify/memory/constitution.md).
+Where the two differ, the constitution governs.**
+
+0. **Constitution Check first, definition of done last.** Name the principles that bear on the
+   work before starting; confirm test-plan §5's definition of done before calling it finished.
 1. **Red before green.** A test that passes before the code is testing nothing.
 2. **The fake ships with the module.** The next session is blocked without it.
 3. **Failure paths are tested, not just happy paths.** Most of this product's failures are

@@ -26,6 +26,8 @@ corpus pipeline.
 | **Technical design specification** | **Draft 1.1 — M0–M4 in detail, M5–M11 interfaces only** | [`spec/technical-design.md`](spec/technical-design.md) |
 | **Implementation plan** | **Draft 1.1 — M0–M4 detailed, M5–M11 outlined** | [`spec/implementation-plan.md`](spec/implementation-plan.md) |
 | Adversarial audit | Complete — 41 findings, all addressed | [`spec/audit-2026-09-06.md`](spec/audit-2026-09-06.md) |
+| **Constitution** | **v1.0.0 — binding principles, read first** | [`.specify/memory/constitution.md`](.specify/memory/constitution.md) |
+| **Agent guidance** | Cross-tool, [AGENTS.md](https://agents.md) standard | [`AGENTS.md`](AGENTS.md) |
 | **Test plan** | **Draft 1 — strict TDD, criteria tiered by release line** | [`spec/test-plan.md`](spec/test-plan.md) |
 | **Build plan** | **Draft 1 — the working session-by-session todo list** | [`spec/build-plan.md`](spec/build-plan.md) |
 | UI design | Direction set — drawer navigation, dark-first, four-state markers | [`design/canvas/`](design/canvas/) |
