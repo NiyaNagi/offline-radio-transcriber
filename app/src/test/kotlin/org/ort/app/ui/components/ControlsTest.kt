@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.test.assert
@@ -25,8 +27,10 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
@@ -132,6 +136,29 @@ class ControlsTest {
         composeTestRule.onNodeWithTag("unselected").assertIsNotSelected()
         // Guide §7: never a font glyph for the dismiss affordance — proven by its absence as text.
         composeTestRule.onNodeWithText("×").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_211_filter_chip_row scrolls so an overflowing last chip is reachable at font scale 2`() {
+        // Station-Pattern.dc.html: at font scale 2.0 a third mode chip ("Change over time") was
+        // clipped off-screen with no way to reach it — a narrow, fixed-width container here
+        // stands in for the same overflow, real content and real scale, not a synthetic prop.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    FilterChipRow(modifier = Modifier.width(200.dp).testTag("chips")) {
+                        FilterChip(label = "By night", selected = false, onClick = {})
+                        FilterChip(label = "By day of week", selected = false, onClick = {})
+                        FilterChip(label = "Change over time", selected = true, onClick = {})
+                    }
+                }
+            }
+        }
+
+        // Reachable only by scrolling the row — if the row clipped instead of scrolling,
+        // `performScrollTo` would find no scrollable ancestor able to bring it into view and this
+        // would fail, exactly the defect the register caught on a real device.
+        composeTestRule.onNodeWithText("Change over time").performScrollTo().assertIsDisplayed()
     }
 
     @Test

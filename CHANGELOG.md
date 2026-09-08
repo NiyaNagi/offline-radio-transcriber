@@ -32,6 +32,140 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation)
+
+### (pending) — ui-conformance WP2 · no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation
+
+**Scope:** `:app` `ui/components/Rows.kt`, `ui/components/Controls.kt`, `ui/components
+/ActivityPatternChart.kt` and their tests only. Register findings R-205, R-209, R-211
+(`results/ui-audit/register.md`, V5 validator). `main` fast-forward merged first (`git merge
+--ff-only main`; this branch already an ancestor; no rebase, no stash) — no other package's
+files touched.
+
+**Requirements/ACs:** R-205 (`LogRow`/`RejectedRow`/`GapRow`/`ColumnHeaderRow` time/frequency
+columns must not wrap mid-value, on an emulator, at the guide's own font scale), R-211
+(`FilterChipRow` must scroll horizontally rather than clip an overflowing chip), R-209
+(`DayOfWeekGrid` must lay out days as rows per `Station-Pattern.dc.html`, with the board's own
+legend wording).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-205 directly: "16:28:5" /
+  "6" split across two lines is not merely ugly, it reads as two different numbers to a glance —
+  the same family of harm as any other fabricated-looking display. Principle II (Test-Backed
+  Change) governs the whole entry: every fix here is backed by a test that fails without it,
+  including the two — R-211, R-209's legend — that turned out to already be correct and needed a
+  test written to prove it rather than code changed.
+- **R-205 — root cause.** R-152's `widthIn(min = …)` fix (an earlier entry in this file) assumed
+  content at the guide's own font scale (1.0) always already fit inside the 52dp/56dp floor,
+  leaving `widthIn` free to grow the column only when a *larger* scale needed more room. The V5
+  validator found that assumption false on a real emulator: "16:28:56"/"146.960" in
+  `OrtType.timeFreq` do not fit in 52dp/56dp even at 1.0. `widthIn`'s floor can only help a `Text`
+  that has already decided it needs more room — a `Text` given room to wrap onto a second line
+  instead of asking its parent for more width will do exactly that, so the wrap happened before
+  `widthIn` ever got a chance to matter.
+- **R-205 — the fix.** Every time/frequency `Text` in `LogRow`, `RejectedRow`, `GapRow` and
+  `ColumnHeaderRow` now carries `maxLines = 1, softWrap = false`, forbidding the wrap outright
+  regardless of available width. The column floor itself is no longer the bare `LOG_TIME_COLUMN`/
+  `LOG_FREQ_COLUMN` constants but two new `@Composable fun rememberTimeColumnWidth()`/
+  `rememberFreqColumnWidth()`, which measure a representative value ("16:28:56", "146.960") in
+  `OrtType.timeFreq` with `rememberTextMeasurer()` at the real, current density/font scale and
+  return `maxOf(the guide's constant, that measurement)` — correct against whatever a given host's
+  actual font metrics are, not a guessed dp number that can quietly drift out of date the way
+  52dp/56dp did. `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN` themselves are unchanged (still exported,
+  still 52dp/56dp) — two other files outside this package (`ui/screens/ThreadDetailScreen.kt`,
+  `ui/screens/StationScreen.kt`) reference them directly with their own hand-rolled `Text`s that
+  reproduce this same defect (visible in the register's own `ST02-detail.png` citation); switching
+  those to the new `remember*ColumnWidth()` functions is those packages' own follow-up, outside
+  this commit's boundary.
+- **R-211 — confirmed, not changed.** `FilterChipRow` already wraps its content in
+  `Modifier.horizontalScroll(rememberScrollState())` (its own KDoc already said "scroll
+  horizontally and never wrap"); no other caller in this package hand-rolls a chip row that could
+  clip. The register's finding was against `Station-Pattern.dc.html`'s own screen (WP8), not this
+  component — this package's obligation was to prove the component itself does not clip, which had
+  never actually been tested until now.
+- **R-209 — root cause.** `DayOfWeekGrid` drew hours as rows (24 of them) and days as columns,
+  with single-letter day initials ("M"/"T"/"W"/"T"/"F"/"S"/"S", six of seven indistinguishable)
+  below the grid and no hour axis at all — the transpose of `Station-Pattern.dc.html`'s actual
+  layout (days as rows, Mon..Sun down the left in full 3-letter form, an hour axis along the top).
+  The legend also read "heard"/"quiet", not the board's own "heard often"/"listened, not heard".
+- **R-209 — the fix.** New `DayOfWeekGridOrientation { DaysAsRows, HoursAsRows }`, defaulting to
+  `DaysAsRows` — one row per `DayOfWeek`, a `dayAbbreviation()` ("Mon".."Sun") on the left
+  (`widthIn(min = 28.dp)`, `maxLines = 1`, `softWrap = false` — the same R-205 lesson applied here
+  too, rather than a hard `width()` that could someday not fit), each hour's `GridCell` given
+  `Modifier.weight(1f)` to fill the row (a new `GridCell(modifier)` contract: it now only sets
+  `height(GRID_CELL)` internally and expects its caller to supply width, since the two
+  orientations need different width strategies — a fixed square for `HoursAsRows`, a flexible
+  share for `DaysAsRows`), and a sparse hour axis (`hourAxisLabel()`, one label every sixth column,
+  "00"/"06"/"12"/"18" for the default 24-hour range) above the grid, aligned past the day-label
+  column exactly as the board's own axis row is. `HoursAsRows` is the previous behaviour, byte-for
+  -byte unchanged, kept for any caller that still needs it (`StationPatternScreen`, this
+  repository's one real caller, takes the default and is corrected with no call-site change of its
+  own). The legend's two non-hatch swatches are renamed: the low/neutral one from "quiet" to
+  "listened, not heard", the green one from "heard" to "heard often" — the hatch's "not listening"
+  was already right and is unchanged.
+- **A measurement limitation, confirmed a third time.** A first version of an R-205 test tried to
+  prove the wrap-prevention mechanism directly: render the same string with and without
+  `maxLines = 1` in an intentionally narrow (down to 1dp) box and compare `TextLayoutResult
+  .lineCount`. Even at 1dp, the *uncapped* text reported exactly one line — Robolectric's `Paint`
+  in this environment does not merely under-measure glyph widths (the R-152/NavRow finding
+  already in this file), it appears not to force a wrap at all regardless of available width for
+  this codebase's custom `fontFamily`s. Dropped that test; R-205's tests instead check two
+  deterministic, host-independent properties — the column floor is never less than the guide's own
+  52dp/56dp (a `widthIn(min = …)` guarantee, not a measurement), and the full label renders
+  verbatim rather than a truncated/summarised substring.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **891 of 891 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`: `Total: 891, Failures: 0`; was 844 before this commit). New tests:
+  `RowsTest`'s `R_205_log_row and rejected_row time and freq columns meet the guide's floor and
+  render in full`, `R_205_gap_row and column_header_row time and freq columns meet the guide's
+  floor and render in full`; `ControlsTest`'s `R_211_filter_chip_row scrolls so an overflowing
+  last chip is reachable at font scale 2` (constrains the row to 200dp at font scale 2.0 with
+  three real chip labels including "Change over time" — the register's own example — and uses
+  `performScrollTo()` to prove the last chip is reachable, which fails if the row clips instead of
+  scrolling); `ActivityPatternChartTest`'s `R_209_the default orientation lays days out as rows,
+  Mon through Sun, per Station-Pattern_dc_html`, `R_209_the previous HoursAsRows orientation is
+  still available for a caller that needs it`, `R_209_the legend reads the board's own wording,
+  not the previous heard-slash-quiet copy`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**, clean on the first
+  full-gate run (no detekt/ktlint fixes needed). `dependencyRules: checked 17 modules ... OK —
+  every edge is permitted by the design graph.` `platformGuards: checked 17 modules' external
+  dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 183 covered`
+  (unchanged — R-205/R-209/R-211 are validator findings, not spec requirement ids, so no new
+  coverage row). `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (183
+  covered of 419)`. `.\gradlew.bat :app:assembleDebug` — included in and passed as part of the
+  `build` run above.
+
+**Left open / not done:**
+- **`ThreadDetailScreen.kt`/`StationScreen.kt`'s own hand-rolled time/freq `Text`s are not
+  migrated** to `rememberTimeColumnWidth()`/`rememberFreqColumnWidth()` — they are outside this
+  package (`ui/screens/**`) and still use `Modifier.width(LOG_TIME_COLUMN)`/`width
+  (LOG_FREQ_COLUMN)` directly, the exact defect class R-205 fixes here. Their own package's
+  follow-up.
+- **`StationPatternScreen.kt`'s chip row is not confirmed to actually call `FilterChipRow`** —
+  R-211's fix proves the *component* scrolls; whether the specific screen the register screenshot
+  came from is built on this component (rather than a hand-rolled `Row` of its own) is WP8's own
+  file, outside this package, to confirm or fix.
+- **The register is not updated by this commit** — closing out R-205/R-209/R-211 (marking them
+  fixed, citing this commit) is the validator/coordinator's own bookkeeping on that file, outside
+  this package.
+- **No screenshot/emulator re-capture** of `search-corpus/Q03-back-intact.png`/`stations-14-nights
+  /ST02-detail.png`/`ST03-hourxday2.png`/`ST03@2x.png` to visually confirm any of the three fixes
+  against the actual artboards — Robolectric assertions only, per the plan (Phase E/Validators own
+  screenshot verification), and R-205 in particular is a class of defect this package's Robolectric
+  setup has now repeatedly been shown unable to reproduce directly (see "A measurement limitation"
+  above) — the emulator is the only host that caught it in the first place.
+- **`DayOfWeekGrid`'s hour-axis label stride (every sixth column) is a fixed constant
+  (`HOUR_LABEL_STRIDE`), not derived from the board's specific 12/18/00 spacing** — reasonable for
+  the default 24-hour range this component ships with, but a caller supplying an unusual `hours`
+  list (very short, or not starting at 0) gets a stride-6 axis that may not land on the same clock
+  hours the board's own mockup happens to show.
+
+---
+
 ## 2026-09-08 (ui-conformance WP4, round five: validator fixes — live session keying, locale dates, first-session Now, level meter completion, overnight-live and no-restart scenarios)
 
 ### (pending) — ui-conformance WP4 · validator fixes: live session keying, locale dates, first-session Now, level meter completion, overnight-live and no-restart scenarios
@@ -179,7 +313,6 @@ sit inside, all previously established); constitution I (uncertainty is content)
 - **R-175's weakest-over row reads this *session's* transmissions only** (via `ReaderPolling
   .weakestOverLabel`), matching "tonight's overs" in the register's own wording — it does not (and
   should not) aggregate across prior nights.
-
 ## 2026-09-08 (ui-conformance WP2: NavRow and tier badge)
 
 ### (pending) — ui-conformance WP2 · NavRow and tier badge

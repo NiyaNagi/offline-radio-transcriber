@@ -124,6 +124,64 @@ class ActivityPatternChartTest {
     }
 
     @Test
+    fun `R_209_the default orientation lays days out as rows, Mon through Sun, per Station-Pattern_dc_html`() {
+        val cells = DayOfWeek.entries.flatMap { day ->
+            (0 until 24).map { hour -> DayHourCell(day, hour, HourActivityState.SILENT_WHILE_LISTENING) }
+        }
+
+        composeTestRule.setContent { OrtTheme { DayOfWeekGrid(cells = cells) } }
+
+        // The board's own 3-letter day labels down the left edge — not the transposed layout's
+        // single-letter initials, which give six of seven days no way to tell them apart at all
+        // ("M"/"T"/"W"/"T"/"F"/"S"/"S").
+        listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun").forEach {
+            composeTestRule.onNodeWithText(it).assertIsDisplayed()
+        }
+        // An hour axis along the top — entirely absent from the pre-R-209 layout.
+        composeTestRule.onNodeWithText("00").assertIsDisplayed()
+        composeTestRule.onNodeWithText("06").assertIsDisplayed()
+        composeTestRule.onNodeWithText("12").assertIsDisplayed()
+        composeTestRule.onNodeWithText("18").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_209_the previous HoursAsRows orientation is still available for a caller that needs it`() {
+        val cells = DayOfWeek.entries.flatMap { day ->
+            (0 until 24).map { hour -> DayHourCell(day, hour, HourActivityState.SILENT_WHILE_LISTENING) }
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                DayOfWeekGrid(cells = cells, orientation = DayOfWeekGridOrientation.HoursAsRows)
+            }
+        }
+
+        // The previous layout's exact single-letter day initials, unchanged — proving the old
+        // behaviour survives, opted into, rather than being deleted (constitution III).
+        composeTestRule.onNodeWithText("M").assertIsDisplayed()
+        composeTestRule.onNodeWithText("W").assertIsDisplayed()
+        composeTestRule.onNodeWithText("F").assertIsDisplayed()
+        // No 3-letter labels or hour axis in this orientation.
+        composeTestRule.onNodeWithText("Mon").assertDoesNotExist()
+        composeTestRule.onNodeWithText("00").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_209_the legend reads the board's own wording, not the previous heard-slash-quiet copy`() {
+        val cells = DayOfWeek.entries.flatMap { day ->
+            (0 until 24).map { hour -> DayHourCell(day, hour, HourActivityState.HEARD) }
+        }
+
+        composeTestRule.setContent { OrtTheme { DayOfWeekGrid(cells = cells) } }
+
+        composeTestRule.onNodeWithText("listened, not heard").assertIsDisplayed()
+        composeTestRule.onNodeWithText("heard often").assertIsDisplayed()
+        // The old, imprecise pair — gone, not merely joined by the new one.
+        composeTestRule.onNodeWithText("heard").assertDoesNotExist()
+        composeTestRule.onNodeWithText("quiet").assertDoesNotExist()
+    }
+
+    @Test
     fun `R_072_a null title draws no title row rather than requiring callers to pass an empty string`() {
         val pattern = (0..23).map { hour -> bucket(hour, HourActivityState.SILENT_WHILE_LISTENING) }
 
