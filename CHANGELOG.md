@@ -32,6 +32,82 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (evening — P18: `:net` built, so a model can actually reach the device)
+
+### (pending) — P18 · Model acquisition through `:net`: fetch, resume, checksum-verify, side-load
+
+**Scope:** `:net` — the whole module, previously an empty stub (`build.gradle.kts`,
+`package-info.kt`, new `README.md`, new `NetCapability.kt`, `HttpRangeClient.kt`, `Checksum.kt`,
+`ModelFetchSpec.kt`, `ModelAcquisition.kt`, `real/RealHttpRangeClient.kt`,
+`fake/FakeHttpRangeClient.kt`, and their tests). No other module touched, as this prompt requires
+— `:pipeline`, `:capture-*`, `:asr-*` and `:app`'s call site are deliberately left for a later,
+tiny follow-up commit.
+**Requirements/ACs:** FR-AST-2 (checksum verified before a file is usable; a failed verification
+leaves the previous version active — and, stricter than that, leaves *nothing* half-written that
+a later run could mistake for progress), FR-AST-3 (resumable, idempotent download), FR-ASR-8 (a
+side-loaded file goes through the same verification path as a fetched one), constitution
+Principle V (only `:net` may link an HTTP client; the capture/processing path makes no network
+call, ever — this prompt exists because P12 correctly refused to violate that rather than
+"temporarily" fetch a model from `:pipeline`).
+**What changed:** P12 wired `RealSherpaDecoder`/`RealSileroVad` into the running app, both inert
+because no model file exists on disk and nothing in this codebase could put one there without
+crossing a forbidden edge. This session builds that declared channel:
+- **`HttpRangeClient`** — the one interface through which `:net` makes an HTTP call, with
+  `real.RealHttpRangeClient` (plain `java.net.HttpURLConnection`, ranged `GET`, no new runtime
+  dependency — see `net/README.md` for why OkHttp was not added) as the only implementation that
+  opens a socket, and `fake.FakeHttpRangeClient` — scriptable to serve a full body, honour or
+  ignore a `Range` header, drop the connection after N bytes, or fail outright — as the
+  behavioural fake every test in this module drives instead (constitution II).
+- **`ModelAcquisition.fetch()`/`.sideload()`** — mirrors `corpus/src/corpus/acquire.py`'s
+  `_download`/`acquire_source` semantics deliberately, per the prompt's instruction to read it
+  and match: a `.part` file carries partial progress and resumes from its own size (`fetch`
+  re-requests `Range: bytes=<part.length()>-`), a completed download is SHA-256-checksummed
+  before being renamed into place, and a `.sha256` marker file next to a verified destination
+  makes a repeat `fetch()` call make *zero* HTTP requests (genuinely asserted via the fake's
+  request log, not just returning a cached value). One deliberate divergence from the Python
+  side, called out in the prompt as the most important behaviour here: on a checksum mismatch,
+  `ModelAcquisition` **deletes** the `.part` file rather than keeping it — a corrupt partial
+  cannot be fixed by appending more bytes to it, and FR-AST-2 requires nothing survive for a
+  later run to mistake for a good model. `.sideload()` reuses the identical checksum check for a
+  user-supplied file with no network call at all, and refuses without ever touching the
+  destination on a mismatch — verified by a test that seeds the destination with "the previously
+  active, good model"'s bytes first and asserts they are byte-for-byte untouched after a refused
+  side-load. `:net`'s job stops there — `:asr-sherpa`'s `ModelActivation` (signature check,
+  probe-run, keep-previous-on-failure) is not duplicated.
+- **`NetCapability`** — a sealed `UserInitiated`/`ContributionGrant` token every entry point
+  requires (technical design §16.3), the type-level half of "the capture and processing paths
+  make no network call": neither `:capture-*` nor `:pipeline`'s pass execution can construct one,
+  because neither module may depend on `:net` at all. Documented honestly as an architectural
+  intent a future `:app` wiring session must still honour at the call site — `:net` itself cannot
+  distinguish a real user gesture from a hand-constructed token, the same limit
+  `ModelActivation.sideloadedUnverified` already documents for its own guarantee.
+- Module plugin kept as `ort.android-library` (technical design §2 lists `:net` as Android-only,
+  intended to run downloads under WorkManager later) with JUnit5 (`libs.junit.jupiter` +
+  `junit-platform-launcher`) added directly, since none of this module's logic touches an Android
+  framework class and Robolectric is not needed.
+**Verified:** strict TDD — all eleven tests
+(`ChecksumVerificationTest`, `ModelAcquisitionFetchTest` ×4, `ModelAcquisitionSideloadTest` ×3,
+`FakeHttpRangeClientTest` ×3) written first and observed to fail with `Unresolved reference`
+compiler errors for every type before any production code existed, then made to pass. `./gradlew
+:net:test` — 11/11 passed (debug and release variants). `./gradlew build dependencyRules` — full
+repo green (836 actionable tasks); `dependencyRules` output confirms `:net -> :core` only, and
+critically that **neither `:capture-android` nor `:pipeline` has any edge to `:net`** — the
+capture/processing path still has no path to an HTTP client, which is the entire point of this
+prompt. **No real network call was made anywhere in this session or in any test** — the resume
+and idempotence tests are driven entirely by `FakeHttpRangeClient`'s request log.
+**Left open / not done:** `RealHttpRangeClient`'s actual `HttpURLConnection`/`Range`-header
+wiring is **not** exercised by an automated test — a loopback `com.sun.net.httpserver.HttpServer`
+test was written and then removed because `jdk.httpserver` is not visible on this Android-library
+module's unit-test compile classpath (JPMS module boundary), and adding a real external network
+call was never on the table; its correctness rests on the JDK's documented contract and manual
+review only, noted plainly in `net/README.md` rather than left silent. The `:app` call site (a UI
+action that mints `NetCapability.UserInitiated`, downloads the Whisper tiny.en and Silero VAD
+models P12 already knows the expected paths for, and reports progress) is explicitly out of this
+prompt's scope and remains the last piece connecting capture to a working transcript on a real
+device — P12's own "left open" already named this gap; this entry closes the `:net` half of it.
+
+---
+
 ## 2026-09-08 (afternoon — P12's third defect: the queue finally drains, and the Silero question is answered)
 
 ### (pending) — P12 · Wire PassDrainRunner/PassB/RealSherpaDecoder into the running app; resolve the VAD question

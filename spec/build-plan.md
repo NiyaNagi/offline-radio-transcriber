@@ -109,13 +109,16 @@ are individually green.*
   rehoused into M5.
 - [ ] **P17 · Station and frequency views with activity patterns** *(`:app`, `:data`)* —
   FR-UI-9..12, including FR-UI-12's "not heard" versus "not listening" distinction.
-- [ ] **P18 · Model acquisition through `:net`** *(`:net`)* — *added 2026-09-08, surfaced by P12.*
-  Without a model on disk the app can capture but never transcribe, and P12 correctly refused to
-  fetch one from `:pipeline`: **only `:net` may link an HTTP client, and never in the capture or
-  processing path** (constitution V). The fetch, checksum verification and side-load path
-  (FR-ASR-8, FR-AST-2) therefore belong in `:net`, invoked from `:app`, writing to app-private
-  storage that `:pipeline` only ever *reads*. This is the last thing standing between "captures
-  audio" and "produces transcripts".
+- [x] **P18 · Model acquisition through `:net`** *(`:net`)* — done 2026-09-08. Without a model on
+  disk the app can capture but never transcribe, and P12 correctly refused to fetch one from
+  `:pipeline`: **only `:net` may link an HTTP client, and never in the capture or processing
+  path** (constitution V). `ModelAcquisition.fetch()`/`.sideload()` behind `HttpRangeClient` (a
+  real `HttpURLConnection` implementation plus a behavioural fake) fetch, resume, checksum-verify
+  and side-load a model, mirroring `corpus/acquire.py`'s semantics; `dependencyRules` confirms
+  `:net -> :core` only and that neither `:capture-android` nor `:pipeline` has any edge to `:net`.
+  **Not done here, by design:** the `:app` call site that mints `NetCapability.UserInitiated` and
+  actually downloads the models P12 is waiting on — see CHANGELOG.md.
+>>>>>>> worktree-agent-a7eb9cc6470f58b9c
 
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not
