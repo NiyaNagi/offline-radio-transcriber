@@ -198,6 +198,21 @@ public object ReaderTransmissionViewStateMapper {
     /** Public (R-041, ui-conformance WP5): reused by [org.ort.app.ui.data.LogViewData]'s own read path. */
     public fun signalLabel(signalStrength: Double?): String? = signalStrength?.let { "S%.0f".format(Locale.ROOT, it) }
 
+    /**
+     * R-249 (ui-conformance WP5, V3 pass 2 @de56368): the one duration formatter every "how long"
+     * label in the reader shares — "38 s" under a minute, "1 m 55 s" at or beyond one (a space
+     * before every unit; the board's own `Rows.dc.html`/`Thread-Detail.dc.html` wording). Before
+     * this existed, [org.ort.app.ui.data.LogViewData]'s gap-row formatter wrote "38s" (no space)
+     * and [org.ort.app.ui.data.ThreadViewData]'s span formatter wrote the correct spaced form
+     * independently — two implementations of one fact were exactly how they could drift apart.
+     */
+    public fun durationLabel(millis: Long): String {
+        val totalSeconds = (millis / 1000).coerceAtLeast(0)
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        return if (minutes > 0) "$minutes m $seconds s" else "$seconds s"
+    }
+
     /** Public (R-040/R-041, ui-conformance WP5): reused by [org.ort.app.ui.data.LogViewData]'s own read path. */
     public fun timeLabel(startedAtUtcMillis: Long): String {
         val totalSeconds = startedAtUtcMillis / 1000
