@@ -120,7 +120,10 @@ public fun LevelScreen(state: LevelCheckState?, onContinue: () -> Unit) {
 private fun LevelFooterFacts(noiseText: String, modifier: Modifier = Modifier) {
     val fontScale = LocalDensity.current.fontScale
     if (fontScale >= LARGE_FONT_SCALE_THRESHOLD) {
-        Column(modifier = modifier.fillMaxWidth().padding(top = 7.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(
+            modifier = modifier.fillMaxWidth().padding(top = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
             Text(text = noiseText, style = OrtType.axis, color = OrtColors.accentGapDim)
             Text(text = "target −18 to −12", style = OrtType.axis, color = OrtColors.accentGreenDim)
             Text(text = "clip 0", style = OrtType.axis, color = OrtColors.haltText)

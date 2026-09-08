@@ -32,6 +32,81 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9 · lint)
+
+### (pending) — ui-conformance WP9 · lint
+
+**Scope:** module-wide `:app:ktlintFormat`/`:app:detekt` (the coordinator's own explicit ask this
+round, not narrowed to `ui/setup/**`), plus a manual fix in `app/src/test/kotlin/org/ort/app/ui/
+navigation/ReaderActivityDestinationSmokeTest.kt` for one violation `ktlintFormat` could not
+auto-correct. `main` fast-forward merged first (`git merge --ff-only main`, this branch already an
+ancestor, at `0e6fded` — "ui-conformance · register: R-220..R-227 fixed (WP9 pass-2 merged)"); no
+rebase, no stash, `gradlew --stop` never used.
+
+**Requirements/ACs:** none new — process/lint only.
+
+**What changed:**
+- **`MainActivity.kt` needed no fix at all.** Checked first, directly: `git diff --stat` against it
+  after this round's full `ktlintFormat` pass is empty, and `git log` shows its last real edit is
+  this row's own `ba68c8f` (round 3). The "15 hits" the coordinator named must have been measured
+  against a different vantage point (a stale ktlint cache, or a snapshot from before some other
+  merge already normalized it) — reported honestly rather than fabricating a fix to a file that had
+  nothing to fix, per the coordinator's own "confirm real file counts" instruction.
+- **The `LevelScreen.kt:123` detekt `MaxLineLength` hit (the coordinator's addendum) is fixed as a
+  direct result of `ktlintFormat`'s own reformatting** — the `LevelFooterFacts` `Column(...)` call
+  it flagged is now wrapped one argument per line, well under 120 columns; confirmed by re-running
+  `:app:detekt` afterward, which no longer names this file at all.
+  `:app:ktlintFormat` (run module-wide, per the coordinator's own instruction, not scoped to `ui/
+  setup/**`) auto-fixed real `standard:argument-list-wrapping`/`standard:max-line-length` violations
+  across nine files the merge brought in from other WPs (`FrequencyChangeFixtures.kt`,
+  `ModelsViewData.kt`, `StationPolling.kt`, `FrequencyScreen.kt`, `StationPatternScreen.kt`,
+  `ScenariosTest.kt`, `ModelsControllerLexiconTest.kt`, plus `LevelScreen.kt` above) — formatting
+  only, confirmed by reading each diff before trusting it (no behavioural line changed).
+- **One violation `ktlintFormat` could not auto-correct**, in a file outside this row's own work
+  (`ReaderActivityDestinationSmokeTest.kt:404`, a private helper's receiver-type declaration: a
+  120+-column function signature on `AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>,
+  ReaderActivity>`, no shorter still-explicit spelling of that exact generic exists). Fixed by hand
+  with a private `typealias ReaderComposeRule = AndroidComposeTestRule<...>` at file scope, used at
+  both this receiver and the one other place the same long generic appeared
+  (`runReaderActivity`'s own `body` parameter) — `ktlintFormat` re-run afterward completed clean.
+- **Left alone, reported rather than fixed:** `:app:detekt` (part of `check`/`build`, run separately
+  to confirm) still names three pre-existing issues in two files this row does not own —
+  `StationScreen.kt:60` (`LongParameterList`, 10 params on `StationsListScreen`, a public composable
+  other WP8 screens call — bundling its params is a real API change, not a mechanical fix, and this
+  round's own worktree merge shows other agents actively touching WP8's own files right now) and
+  `StationPatternScreen.kt:157`/`173` (`ForEachOnRange`, `(0 until 24).forEach { ... }` — a real,
+  if small, behavioural rewrite to a `for` loop). Neither is the `MainActivity.kt`/`LevelScreen.kt`
+  pair this round's brief and addendum named; both predate this merge and are unrelated to any WP9
+  work. Left for WP8 rather than fixed here without that row's own say.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintFormat` — **BUILD SUCCESSFUL** (two runs: the first failed on the one
+  non-auto-correctable violation above, fixed by hand, then a clean re-run completed and reformatted
+  every file named above).
+- `.\gradlew.bat :app:ktlintCheck` — **BUILD SUCCESSFUL**, zero violations anywhere in `:app`.
+- `.\gradlew.bat :app:detekt` — **FAILS**, 3 weighted issues, both named above, in
+  `StationScreen.kt`/`StationPatternScreen.kt` — pre-existing, outside this row's ownership, not the
+  two issues this round's brief/addendum asked for (both of which are otherwise confirmed clean).
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **988 PASSED, 0 failed**, BUILD
+  SUCCESSFUL (up from pass-2's 948 — `main`'s own incoming work from this merge, not this row's).
+- `.\gradlew.bat dependencyRules platformGuards` (run standalone, since `build`'s own `check` step
+  is what `:app:detekt`'s pre-existing failures above block) — **BUILD SUCCESSFUL**, both.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` now 185 of 419 covered (up from 183 —
+  `main`'s own incoming ids from this merge).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- **`./gradlew build` (and therefore a literal, single-command "full gate") does not pass** while
+  `StationScreen.kt`/`StationPatternScreen.kt`'s three pre-existing detekt issues stand — every
+  *other* named gate command above was run and confirmed green individually, but the aggregate
+  `build`/`check` path is genuinely blocked until WP8 (or an agent with that row's ownership) fixes
+  or waives them. Reported to the coordinator rather than fixed unilaterally in another package's
+  files without that row's own say, consistent with this whole program's file-ownership discipline.
+- The `MainActivity.kt` fix this round's brief asked for was not needed — see "What changed" above.
+
 ## 2026-09-08 (ui-conformance lexicon · lint)
 
 ### (pending) — ui-conformance lexicon · lint
@@ -212,7 +287,6 @@ over an ad hoc long parameter list.
   log -1 --` on each), not this package's to fix under file-ownership rules. Flagged for the lead
   to route to the owning packages, the same way this package's own earlier reports have flagged
   gaps found outside their row rather than silently absorbing them.
-
 ---
 
 ## 2026-09-08 (ui-conformance WP9 · pass-2 fixes: ghost action, route types, InputStatus-driven verify, font-scale footer and rows, setup-verified scenario)
