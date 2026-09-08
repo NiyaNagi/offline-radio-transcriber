@@ -445,6 +445,102 @@ legend wording).
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round six: recovery scenarios rig-reconnected and storage-fine; capture status respects banner height)
+
+### (pending) — ui-conformance WP4 · recovery scenarios rig-reconnected and storage-fine; capture status respects banner height
+
+**Scope:** `app/src/debug/**` (scenarios), `results/ui-audit/README.md`, and this package's own row
+(`:app`) — sixth addendum to the WP4 entries below, after merging `main` (`git merge --ff-only main`,
+fast-forwarded cleanly onto `e6b6bdd`, "ui-conformance · V2 Capture pass 2 at 877583c: R-170..R-176,
+R-179 closed on device; R-230..R-232 filed"; confirmed `HEAD` was an ancestor first via `git
+merge-base --is-ancestor`; no rebase, no stash). The Capture validator's second device pass confirmed
+every round-five fix (R-170..R-176, R-179) and filed three small follow-ups: R-230, R-231, R-232.
+
+**Requirements/ACs:** R-230, R-231, R-232 (register findings — `results/ui-audit/register.md`);
+R-103/`Flow-Degrade.dc.html` (the recovery-toast mechanism these two scenarios make reachable);
+R-178 (the banner-height plumbing R-232 re-checks); constitution I (uncertainty is content).
+
+**What changed:**
+
+- **Constitution Check.** Principle I: `rig-reconnected` publishes `RigStatus.connected(...)` for
+  the *same* descriptor/bands `rig-lost` itself uses (`TH-D75A`, 145.230/146.960) — "the same radio
+  came back", not a different device appearing, matching the honest story `RecoveryAnnouncer`'s own
+  "Radio reconnected" toast tells. `storage-fine` publishes real, plausible free-space/nights-left
+  figures (~40 GB free, 9 nights) well clear of every warning threshold, not a boundary value chosen
+  to just barely cross the `Fine` line. R-232's own investigation (below) is itself a constitution I
+  matter in miniature: rather than add a defensive, possibly-redundant second `contentTopPadding`
+  application inside `CaptureStatusContent`/`CaptureStatusScreen` on the coordinator's conditional
+  ("if it persists"), the actual plumbing was read end to end first — finding it already closes the
+  gap generically — and only *that* finding is what a new test proves, not an invented fix for a bug
+  already fixed elsewhere.
+- **R-230 — new `rig-reconnected` scenario** (`Scenarios.kt`). `RecoveryAnnouncer.diff`'s "Radio
+  reconnected" toast fires only on `RigStatus.State.Stale` → `RigStatus.State.Connected`; the
+  previously-documented `rig-lost` → `empty` recipe never reaches it because `empty` publishes no
+  `RigStatus` at all, so the holder just resets to `Absent` and stays there (not the transition the
+  toast watches for). `rig-reconnected` is the dedicated second half: a still-capturing session,
+  `RigStatus.connected` with `rig-lost`'s own descriptor and bands. Registered in `Scenarios.NAMES`
+  and `load()`'s dispatch.
+- **R-231 — new `storage-fine` scenario** (`Scenarios.kt`). No scenario published
+  `StorageForecast.State.Fine` at all before this one, so `RecoveryAnnouncer`'s "Storage back above
+  the floor" toast (which fires on `ThreeNightsLeft`/`OneNightLeft`/`AtFloor` → `Fine`) was
+  unreachable no matter what preceded it. `storage-fine` mirrors `storage-warn`'s session shape and
+  publishes `StorageForecast.State.Fine`. Registered the same way.
+- **`results/ui-audit/README.md`** gained both scenarios in the scenario table and a new "Recovery
+  toast recipes (register R-103, R-230, R-231)" section under the existing "Watching a live
+  transition" material: the exact `-NoRestart` two-broadcast recipe for each toast, plus a note that
+  both are also proved directly (no emulator) in `ScenariosTest.kt`.
+- **R-232 — investigated, closed with no source change in this package's own files.** Read
+  `OrtNavHost.kt` (WP3's file) end to end: `NavHostBody`'s inner `Box` already applies
+  `layout.contentTopPadding` — the real, measured banner height `FailureHost` (WP11b's file, mounted
+  above `OrtNavHost` in `ReaderActivity`) reports upward through `content(bannerHeight)` — once,
+  generically, to *every* destination's content, including `ReaderDestination.CAPTURE`
+  (`DestinationContent`'s own `when` branch calls `CaptureStatusContent(..., modifier = content)`
+  with that already-padded space, exactly like every other destination — no destination-specific
+  code exists or is needed there). This closes the loop `FailureHost.kt`'s `Box(bannerHeight) →
+  content(bannerHeight) → OrtNavHost(contentTopPadding) → NavHostBody's padded Box → DestinationContent
+  → CaptureStatusContent` end to end, confirmed by reading every link, not assumed. Adding a second,
+  redundant top-padding application inside `CaptureStatusContent`/`CaptureStatusScreen` would double
+  the inset instead of fixing anything — a new bug, not the one R-232 named. New regression test
+  proves the one contract this package's own files are actually responsible for: that
+  `CaptureStatusContent`/`CaptureStatusScreen` respect whatever top inset a caller's `modifier`
+  supplies, rather than an internal `fillMaxSize()` silently resetting it.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded cleanly onto `e6b6bdd`, confirmed `HEAD` was an
+  ancestor first; no rebase, no stash.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** ($env:JAVA_HOME set to
+  the JDK 17 install, $env:ANDROID_HOME to the SDK). `ktlint`/`detekt` both clean on the first real
+  pass this round (no `subst`-drive workaround was needed to reproduce the coordinator's noted
+  cross-worktree cache issue — `ort.common.gradle.kts`'s `doNotCacheIf` fix, already on `main` after
+  this round's merge, appears to already cover it); one real compile error caught and fixed before
+  the first green run — a missing `androidx.compose.foundation.layout.padding` import in the new
+  R-232 test.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 183 covered** (up from round five's 181 — the new `@Requirement`
+  register-id annotations this round add); `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **950 of 950 passing**, zero
+  failures (up from round five's 835 — mostly `main`'s other WPs' work landing via the `--ff-only`
+  merge). New tests, by name: `R_230_rig-reconnected sets RigStatus Connected on the same descriptor
+  and bands rig-lost uses`, `R_230 rig-lost then rig-reconnected is a real Stale to Connected
+  transition RecoveryAnnouncer fires on`, `R_231_storage-fine sets StorageForecast Fine with capture
+  still genuinely running`, `R_231 storage-warn then storage-fine is a real transition
+  RecoveryAnnouncer fires the storage toast on` (all `ScenariosTest`); `R_232 the title respects a
+  top-padded modifier the way the host's banner-height inset relies on` (`CaptureStatusContentTest`).
+
+**Left open / not done:**
+- **R-232's own end-to-end proof (a real banner actually overlapping nothing on a booted emulator at
+  font scale 1.0) is a validator action**, not re-run here — this round's own test proves the
+  narrower, in-package contract (`CaptureStatusContent` respects a caller-supplied top inset); the
+  full chain from `FailureHost`'s measured height through `OrtNavHost` is `WP3`'s/`WP11b`'s files,
+  read but not re-tested here (out of this package's row).
+- **Neither `rig-reconnected` nor `storage-fine` drives a real capture tick** — like `rig-lost`/
+  `storage-warn`/`thermal`/`backlog` before them, these set the process-wide holder directly on an
+  otherwise-idle-but-marked-capturing session, the same documented pattern every other WP11a-era
+  scenario in this file already uses.
+
 ## 2026-09-08 (ui-conformance WP4, round five: validator fixes — live session keying, locale dates, first-session Now, level meter completion, overnight-live and no-restart scenarios)
 
 ### (pending) — ui-conformance WP4 · validator fixes: live session keying, locale dates, first-session Now, level meter completion, overnight-live and no-restart scenarios
