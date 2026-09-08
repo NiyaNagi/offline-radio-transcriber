@@ -112,6 +112,51 @@ and show "No published checksum for this file — Download is disabled.").
   work, per the previous entry; not touched here.
 - No real download against any of these four URLs, and no on-device install, has been run in any
   session to date.
+## 2026-09-07 (audit — F-019)
+
+### (pending) — audit F-019 · FR-UI-11's day-of-week and week-over-week halves
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/data/ActivityPattern.kt` (new
+`ActivityBucket` interface, `DayOfWeekActivityBucket`, `WeekTrend`, `WeekOverWeekBucket`,
+`ActivityPatternMapper.buildDayOfWeekPattern`/`buildWeekOverWeekComparison`),
+`ui/components/ActivityPatternChart.kt` (generalised to `List<ActivityBucket>`, `title`/
+`summaryLabel`/`barLabels` params), `ui/data/StationsAndFrequencies.kt` (view states carry
+`dayOfWeekPattern`/`weekOverWeekSummary`; new `dayOfWeekShortLabel`/`weekOverWeekSummaryText`),
+`ui/data/ReaderPolling.kt` (wires the two new mappers through, in `ZoneId.systemDefault()`),
+`ui/screens/StationScreen.kt` and `ui/screens/FrequencyScreen.kt` (render the day-of-week chart
+and week-over-week text beneath the existing hour chart), plus their tests.
+
+**Requirements/ACs:** FR-UI-11 (both halves P17 left open: "by day of week" and "how that has
+changed"), FR-UI-12/AC-126 (the three-state not-heard/not-listening distinction now also holds in
+every day-of-week bucket, not only every hour-of-day one).
+
+**What changed:** `ActivityPatternMapper.buildDayOfWeekPattern` buckets the same real
+session/gap windows `buildPattern` already used, at calendar-day rather than hour granularity, in
+the device's own zone (`ZoneId`, not UTC or a sample position — F-001 made real wall-clock
+timestamps available) — same three-state priority (HEARD, then SILENT_WHILE_LISTENING, else
+NOT_LISTENING), folded onto the 7 ISO weekdays. `buildWeekOverWeekComparison` compares the most
+recent 7-day window against the 7 days before it, per weekday, and reports `WeekTrend.NO_DATA`
+(never a fabricated up/down) whenever either window had no listening time at all for that
+weekday. `ActivityPatternChart` is generalised behind a new `ActivityBucket` interface
+(`state`/`heardCount`) so one component renders either pattern; `HourActivityBucket` and
+`DayOfWeekActivityBucket` both implement it. The station and frequency detail screens now render
+the day-of-week chart (with "Mon".."Sun" bar labels) and a plain-text "this week vs last" line per
+weekday beneath the existing hour-of-day chart. `StationEntity.activityByHourDow` (unused,
+flagged in the finding) is left untouched — the pattern is still computed live from session/gap
+rows, exactly as the hour-of-day pattern already was, rather than wiring an unrelated cache column.
+
+**Verified:** `./gradlew :app:testDebugUnitTest` (green, includes new
+`ActivityPatternMapperTest` cases `FR_UI_11_day_of_week ...` ×3, `AC_126_FR_UI_11_day_of_week ...`,
+`FR_UI_11_week_over_week ...` ×2, and new `StationScreenTest`/`FrequencyScreenTest` cases
+asserting the day-of-week chart renders with seven labelled buckets); `./gradlew build
+dependencyRules` (green); `python tools/spec-check/spec_check.py` (OK). Robolectric/JVM only, no
+device run.
+
+**Left open / not done:** The week-over-week comparison is deliberately text-only, one weekday
+against its single predecessor a week prior — with only one real 7-day window on each side there
+is no honest multi-point trend to plot, so no chart was added for it (would need weeks of history
+to be more than one sample point wide). `StationEntity.activityByHourDow` remains unused; wiring
+it as a cache is out of this finding's scope.
 
 ## 2026-09-07 (audit — F-008)
 

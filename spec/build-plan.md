@@ -197,7 +197,9 @@ are individually green.*
   done 2026-09-08. FR-UI-9/FR-UI-10 (everything heard from one station/on one frequency, across
   every session), FR-UI-11 (hour-of-day activity patterns), and FR-UI-12 (the not-heard/not-
   listening distinction, structural as a closed three-state enum) — see CHANGELOG.md for exactly
-  how the distinction is computed and tested, and what FR-UI-11's day-of-week half leaves open.
+  how the distinction is computed and tested. FR-UI-11's day-of-week and week-over-week halves
+  (audit F-019, fixed 2026-09-07) are now built too — see the 2026-09-07 (audit — F-019) CHANGELOG
+  entry.
   Note (audit F-028, fixed 2026-09-07): P17's `:app`/`:data` half was correct, but nothing upstream
   in `:pipeline` had ever populated `captureGapDao` in production — `RealCaptureService` built no
   `GapTracker`/`GapPersister`, so FR-UI-12's distinction had no real gap to show. See CHANGELOG.md.

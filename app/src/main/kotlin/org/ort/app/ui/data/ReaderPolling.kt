@@ -19,6 +19,7 @@ import org.ort.pipeline.capture.VadAvailability
 import org.ort.pipeline.shed.FakeShedSignals
 import org.ort.pipeline.shed.ShedController
 import java.io.File
+import java.time.ZoneId
 
 /**
  * The read path build-plan P8/P11's original plain-view smoke-test Activities used to poll
@@ -222,9 +223,12 @@ public object ReaderPolling {
         val db = OrtDatabase.create(context.applicationContext)
         val entities = db.activityDao().transmissionsForStation(stationId)
         val details = entities.map { detailFrom(context, db, it) }
-        val pattern = activityPatternForEverySession(db, entities.map { it.startedAtUtc }, nowMillis)
+        val timestamps = entities.map { it.startedAtUtc }
+        val pattern = activityPatternForEverySession(db, timestamps, nowMillis)
+        val dayOfWeekPattern = dayOfWeekPatternForEverySession(db, timestamps, nowMillis)
+        val weekOverWeek = weekOverWeekComparisonForEverySession(db, timestamps, nowMillis)
         val label = db.catalogDao().getStation(stationId)?.callsign ?: stationId
-        return StationViewMapper.detail(stationId, label, details, pattern)
+        return StationViewMapper.detail(stationId, label, details, pattern, dayOfWeekPattern, weekOverWeek)
     }
 
     /** Everything heard on [frequencyHz], across every session (FR-UI-10), plus its activity pattern (FR-UI-11). */
@@ -232,8 +236,11 @@ public object ReaderPolling {
         val db = OrtDatabase.create(context.applicationContext)
         val entities = db.activityDao().transmissionsForFrequency(frequencyHz)
         val details = entities.map { detailFrom(context, db, it) }
-        val pattern = activityPatternForEverySession(db, entities.map { it.startedAtUtc }, nowMillis)
-        return FrequencyViewMapper.detail(frequencyHz, details, pattern)
+        val timestamps = entities.map { it.startedAtUtc }
+        val pattern = activityPatternForEverySession(db, timestamps, nowMillis)
+        val dayOfWeekPattern = dayOfWeekPatternForEverySession(db, timestamps, nowMillis)
+        val weekOverWeek = weekOverWeekComparisonForEverySession(db, timestamps, nowMillis)
+        return FrequencyViewMapper.detail(frequencyHz, details, pattern, dayOfWeekPattern, weekOverWeek)
     }
 
     /**
@@ -250,15 +257,44 @@ public object ReaderPolling {
         db: OrtDatabase,
         matchingTimestamps: List<Long>,
         nowMillis: Long,
-    ): List<HourActivityBucket> {
-        val sessions = db.sessionDao().listAll().map { session ->
+    ): List<HourActivityBucket> =
+        ActivityPatternMapper.buildPattern(everySessionWindow(db), matchingTimestamps, nowMillis)
+
+    /**
+     * The day-of-week half of FR-UI-11 (audit F-019) — same every-session windows as
+     * [activityPatternForEverySession], bucketed by calendar day in the device's own zone (F-001:
+     * real wall-clock timestamps, never a sample position).
+     */
+    private suspend fun dayOfWeekPatternForEverySession(
+        db: OrtDatabase,
+        matchingTimestamps: List<Long>,
+        nowMillis: Long,
+    ): List<DayOfWeekActivityBucket> = ActivityPatternMapper.buildDayOfWeekPattern(
+        everySessionWindow(db),
+        matchingTimestamps,
+        nowMillis,
+        ZoneId.systemDefault(),
+    )
+
+    /** FR-UI-11's "how that has changed" half (audit F-019). */
+    private suspend fun weekOverWeekComparisonForEverySession(
+        db: OrtDatabase,
+        matchingTimestamps: List<Long>,
+        nowMillis: Long,
+    ): List<WeekOverWeekBucket> = ActivityPatternMapper.buildWeekOverWeekComparison(
+        everySessionWindow(db),
+        matchingTimestamps,
+        nowMillis,
+        ZoneId.systemDefault(),
+    )
+
+    private suspend fun everySessionWindow(db: OrtDatabase): List<SessionWindow> =
+        db.sessionDao().listAll().map { session ->
             val gaps = db.captureGapDao().listBySession(session.id).map { gap ->
                 GapWindow(startedAt = gap.startedAt, endedAt = gap.endedAt)
             }
             SessionWindow(startedAtUtc = session.startedAt, endedAtUtc = session.endedAt, gaps = gaps)
         }
-        return ActivityPatternMapper.buildPattern(sessions, matchingTimestamps, nowMillis)
-    }
 
     private fun sourceId(entity: TransmissionEntity): TransmissionId? =
         entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }
