@@ -32,6 +32,109 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: DayOfWeekGrid's hour axis never wraps or collides at a large font scale)
+
+### (pending) — ui-conformance WP2 · R-271
+
+**Scope:** `:app` `ui/components/ActivityPatternChart.kt` and `ActivityPatternChartTest.kt` only.
+`git merge --ff-only main` run first (fast-forward `795c3df..9c3cd7d` — WP8/WP9's own pass-3 work
+and screenshots; none of this package's files touched by the merge). No rebase, no stash, no
+`gradlew --stop`.
+
+**Requirements/ACs:** R-271 (polish) — WP8's inspection finding on
+`stations-14-nights/ST03-hourxday-pass2.png`: `DayOfWeekGrid`'s hour-axis labels wrap inside its
+`DaysAsRows` layout at a large font scale.
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) is why the fix stays inside
+  `DayOfWeekGrid`'s own private layout functions rather than reaching for a caller-side workaround
+  — `DayOfWeekGrid` is shared (today by `StationPatternScreen`, outside this package) and the board
+  it must match (`design/canvas/Station-Pattern.dc.html`) is this component's own contract to keep,
+  not something a caller should have to compensate for.
+- **Root cause.** `DaysAsRowsGrid`'s top hour-axis row rendered each shown label (`"00"`, `"06"`,
+  `"12"`, `"18"` — every sixth hour, `HOUR_LABEL_STRIDE`) inside a `Box(Modifier.weight(1f))`, one
+  of 24 equal-width grid columns, with no `softWrap`/`maxLines` set at all (Compose's own default
+  is unrestricted soft-wrapping) — at a large font scale a 2-digit mono label needs roughly twice
+  the width a single 1/24-width column has room for, so it wrapped onto a second line rather than
+  overflowing, exactly the register's screenshot.
+- **The fix, two parts, both needed.** (1) New, deliberately pure `internal fun
+  hourLabelStride(fontScale: Float): Int` — returns double the normal stride
+  (`HOUR_LABEL_STRIDE_LARGE_FONT_SCALE`, 12) once `fontScale >= 2f`, the normal stride (6)
+  otherwise — so at a large scale only every twelfth hour (`"00"`, `"12"`) is shown, each with
+  twice the horizontal room around it that a shown label had at 1.0. Standalone and Compose-free
+  specifically so it is directly unit-testable without depending on Robolectric's font-metric
+  measurement, this package's established workaround (`scrubFraction`/`meterColorFor`/
+  `logRowTranscriptStyle` follow the same pattern). (2) The label `Text` itself now carries
+  `maxLines = 1, softWrap = false, modifier = Modifier.wrapContentWidth(unbounded = true)` — stride
+  alone reduces collision risk but does not, by itself, stop a still-too-wide single label from
+  wrapping; `wrapContentWidth(unbounded = true)` is what actually frees the label from its own
+  1/24-width column so it measures at its natural (never-wrapped) size and can spill past the
+  column's own bounds rather than break.
+- **"Both orientations."** `HoursAsRowsGrid` (the previous, still-supported transposed layout) has
+  no hour axis at all — hours are rows with no numeric label, only its own day-initial axis along
+  the bottom, a single mono letter per day. Wrapping was never observed there, but the same
+  explicit guarantee (`maxLines = 1, softWrap = false`) is now made there too, on the same
+  register-driven "both orientations" instruction, rather than left implicit.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.ActivityPatternChartTest"`
+  — **16 of 16 passing** (was 12). Four new: `R_271_hour label stride doubles once font scale
+  reaches 2_0, never before` (the pure function, both sides of the 2.0 threshold),
+  `R_271_the DaysAsRows hour axis never wraps and its labels never collide, at font scale 1_0` and
+  `..., at font scale 2_0` (a real 340dp content width — at 1.0 the four labels `"00"/"06"/"12"/
+  "18"`, at 2.0 only `"00"/"12"` — each label's own `boundsInRoot`, fetched via
+  `useUnmergedTree = true` since `DayOfWeekGrid`'s own outer `semantics(mergeDescendants = true)`
+  otherwise collapses them to the same merged node, this package's own repeatedly-confirmed nested-
+  merge-boundary finding again: never wrapped, checked as every shown label reporting the identical
+  rendered height — a wrapped label reports a taller box, a real, host-independent signal, not a
+  glyph-width guess; never colliding, checked as no two labels' own horizontal extents
+  intersecting), `R_271_the HoursAsRows day axis also never wraps at font scale 2_0` (`M`/`W`/`F` —
+  `T`/`S` each render twice, Tue/Thu and Sat/Sun, ambiguous for `onNodeWithText`, the same reason
+  the pre-existing `R_209` test for this orientation avoids them).
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **1053 of 1055 passing, 2 failed** — both
+  pre-existing, both in `ui/setup/ReadyScreenTest.kt` (outside this package), both introduced by
+  `56d92ed ui-conformance WP9 · ready rows are TalkBack stops; setup-level scenario` (brought in by
+  this round's own `git merge --ff-only main`, confirmed via `git log` on that file — nothing this
+  commit touches). `R_265 an amber row with a Fix action announces label, value and the action` and
+  `R_265 a verified row announces label, value and status as one merged node` both fail with
+  "found 2 nodes" for a content-description substring — the same nested-merge-boundary class this
+  package has now confirmed three times (`TextField`, `AttributionRow`-in-`LogRow`, and now
+  `KeyValueRow`-in-whatever composite `ReadyScreen` wraps it in): `KeyValueRow`'s own
+  `semantics(mergeDescendants = true)` boundary (added for R-265, this package's own prior commit)
+  does not bubble its merged description up into a *second*, ancestor `mergeDescendants = true`
+  boundary `ui/setup/**` apparently wraps around it — leaving both nodes independently queryable.
+  Reported here, honestly, precisely because it is real and the reader should not have to
+  rediscover it: **not this commit's regression** (confirmed: this commit touches only
+  `ActivityPatternChart.kt`/`ActivityPatternChartTest.kt`, files `ReadyScreenTest.kt` cannot reach),
+  and outside `ui/components/**` — the fix (however it lands — `useUnmergedTree` on the two
+  assertions, or composing the description explicitly the way `logRowDescription` now does)
+  belongs to whoever owns `ui/setup/**`.
+- `.\gradlew.bat dependencyRules platformGuards` (isolated) — both **OK** (17 modules).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**; both
+  `app/build/reports/ktlint/ktlintMainSourceSetCheck/ktlintMainSourceSetCheck.txt` and
+  `app/build/reports/detekt/detekt.txt` confirmed **0 bytes**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 185 covered` (unchanged — R-271 is a polish
+  finding, not yet a spec-registered id the matrix's generator counts against).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (185 covered of 419)`.
+
+**Left open / not done:**
+- **The two `ReadyScreenTest` failures described above are real, pre-existing, and not fixed here**
+  — confirmed unrelated to this commit's own diff, outside `ui/components/**`. Whoever owns
+  `ui/setup/**` needs either `useUnmergedTree = true` on the two failing assertions or to compose
+  the wrapping row's own merged description explicitly (the same fix this package already applied
+  to `LogRow` for the equivalent `AttributionRow` case, an earlier entry in this file, is the
+  precedent to follow).
+- **The register is not updated by this commit** — closing out R-271 is the validator/coordinator's
+  own bookkeeping.
+- **No screenshot/emulator re-capture** of `stations-14-nights/ST03-hourxday-pass2.png` to visually
+  confirm the fix against the actual artboard — Robolectric assertions only, per the plan (Phase
+  E/Validators own screenshot verification).
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: ktlint)
 
 ### (pending) — ui-conformance WP2 · ktlint
