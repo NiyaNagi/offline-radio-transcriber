@@ -227,6 +227,31 @@ class LogPollingTest {
     }
 
     @Test
+    fun `R_330 a gap is not an over — the Show N overs count excludes gaps even when checked`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(transmission("TX1", sessionId = "S1", samplePosition = 1L))
+        db.transmissionDao().insert(transmission("TX2", sessionId = "S1", samplePosition = 2L, startedAtUtc = 1_000L))
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "G1",
+                sessionId = "S1",
+                startedAt = 2_000L,
+                endedAt = 40_000L,
+                cause = CaptureGapCause.INTERRUPTION,
+                recoveredAutomatically = true,
+            ),
+        )
+
+        // "Not-listening gaps" checked (the default) — before this fix the CTA counted the gap
+        // into its own total (2 overs + 1 gap read "Show 3 overs"); a gap is not an over.
+        val gapsChecked = LogPolling.filterSheetState(context, "S1", LogFilterSelection(showGaps = true))
+        assertEquals(2, gapsChecked.matchingCount)
+
+        val gapsUnchecked = LogPolling.filterSheetState(context, "S1", LogFilterSelection(showGaps = false))
+        assertEquals(2, gapsUnchecked.matchingCount) // unchanged either way — a gap was never an over.
+    }
+
+    @Test
     fun `R_243 an explicit toMillis selection always wins over the data's extent`(): Unit = runTest {
         db.sessionDao().insert(session("S1", startedAt = 84_720_000L))
         db.transmissionDao().insert(

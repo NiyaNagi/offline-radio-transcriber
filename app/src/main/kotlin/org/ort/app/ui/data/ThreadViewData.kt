@@ -16,21 +16,47 @@ import org.ort.pipeline.capture.ShedStatus
  */
 public object ThreadGroupingMapper {
 
+    /**
+     * R-332 (V3 pass 3 @16172f0): used to read `"inherited from transmission $sourceId at
+     * $time"` — a raw ULID in operator copy. The board (`Thread-Detail.dc.html`) shows "inherited
+     * by voice from 02:16:02", the source id dropped entirely (it names nothing an operator reads;
+     * [reasoningLinkTimeFor] is how the id survives, as the string the time link taps through with,
+     * not as visible text) and the method named honestly from real, already-recorded fields:
+     * - a real `sourceTransmissionId` only ever comes from [Attribution.inferred]'s own voiceprint-
+     *   match construction (functional spec §4's own row: INFERRED is "attributed by voiceprint
+     *   cluster match" — the *only* mechanism it documents) — "by voice".
+     * - [Attribution.corrected] with no source is exactly [Attribution.withCorrection]'s own shape
+     *   (a human typed or picked a callsign; no source, no score) — "by callsign".
+     */
     public fun reasoningFor(detail: TransmissionDetail, timeLabelById: Map<String, String>): String =
         when (detail.attribution.state) {
             AttributionState.CONFIRMED -> "callsign confirmed in this transmission"
             AttributionState.INFERRED -> {
                 val sourceId = detail.attribution.sourceTransmissionId?.toString()
                 when {
-                    sourceId == null -> "inherited (source transmission not recorded)"
-                    timeLabelById.containsKey(sourceId) ->
-                        "inherited from transmission $sourceId at ${timeLabelById.getValue(sourceId)}"
-                    else -> "inherited from transmission $sourceId"
+                    sourceId != null && timeLabelById.containsKey(sourceId) ->
+                        "inherited by voice from ${timeLabelById.getValue(sourceId)}"
+                    sourceId != null -> "inherited by voice (source transmission not recorded)"
+                    detail.attribution.corrected -> "inherited by callsign"
+                    else -> "inherited (source transmission not recorded)"
                 }
             }
             AttributionState.AMBIGUOUS -> "more than one candidate; the system will not choose"
             AttributionState.UNKNOWN -> "no callsign resolved"
         }
+
+    /**
+     * R-332: the linkable time [reasoningFor] embeds at the end of an INFERRED-with-resolved-source
+     * line — `ThreadDetailScreen` (this package's own file) styles this exact trailing substring as
+     * the mono/green link guide §6.7 requires ("if it acts, it looks like it acts"). `null` for
+     * every other case, where [reasoningFor] already returns a complete sentence with nothing left
+     * to link (including "by callsign", which never had a source transmission to link to at all).
+     */
+    public fun reasoningLinkTimeFor(detail: TransmissionDetail, timeLabelById: Map<String, String>): String? {
+        if (detail.attribution.state != AttributionState.INFERRED) return null
+        val sourceId = detail.attribution.sourceTransmissionId?.toString() ?: return null
+        return timeLabelById[sourceId]
+    }
 }
 
 // -------------------------------------------------------------------------------------------
@@ -108,6 +134,14 @@ public data class ThreadDetailOverViewState(
     val transcript: String,
     val reasoning: String,
     val sourceTransmissionId: String?,
+    /**
+     * R-332: the trailing substring of [reasoning] that names the source over's own time — the one
+     * `ThreadDetailScreen` styles as the mono/green link (guide §6.7). Non-null exactly when
+     * [reasoning] ends with it (see [ThreadGroupingMapper.reasoningLinkTimeFor]); `null` for every
+     * complete, non-linkable reasoning sentence, including "inherited by callsign" (which never had
+     * a source transmission to link to).
+     */
+    val sourceTimeLabel: String? = null,
 )
 
 /** [modeLabel] (R-161) is `null` when no transmission in the thread ever had a recorded mode —
@@ -252,6 +286,7 @@ public object ThreadListMapper {
                 transcript = ReaderTransmissionViewStateMapper.transcriptLabel(detail),
                 reasoning = ThreadGroupingMapper.reasoningFor(detail, timeLabelById),
                 sourceTransmissionId = detail.attribution.sourceTransmissionId?.toString(),
+                sourceTimeLabel = ThreadGroupingMapper.reasoningLinkTimeFor(detail, timeLabelById),
             )
         }
         val first = sorted.first()

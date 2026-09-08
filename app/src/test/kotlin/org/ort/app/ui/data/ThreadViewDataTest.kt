@@ -257,4 +257,68 @@ class ThreadViewDataTest {
         assertEquals("more than one candidate; the system will not choose", overs.getValue("TX2").reasoning)
         assertEquals("no callsign resolved", overs.getValue("TX3").reasoning)
     }
+
+    @Test
+    fun `R_332_copy an INFERRED voice match names the method and the source's time, never the raw ULID`() {
+        val sourceId = TransmissionId(Ulid.generate())
+        val details = listOf(
+            detail(sourceId.toString(), 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail(
+                "TX2",
+                1_000L,
+                threadId = "T1",
+                attribution = Attribution.inferred("K7LWH", 0.82, sourceTransmissionId = sourceId),
+            ),
+        )
+
+        val over = ThreadListMapper.detailState("T1", details)!!.overs.single { it.transmissionId == "TX2" }
+
+        assertEquals("inherited by voice from ${over.sourceTimeLabel}", over.reasoning)
+        assertTrue("expected a real time link, not the raw ULID", over.sourceTimeLabel != null)
+        assertTrue(!over.reasoning.contains(sourceId.toString()))
+    }
+
+    @Test
+    fun `R_332_copy an unresolvable source id names the method honestly, with nothing to link`() {
+        val sourceId = TransmissionId(Ulid.generate())
+        val details = listOf(
+            detail(
+                "TX2",
+                1_000L,
+                threadId = "T1",
+                attribution = Attribution.inferred("K7LWH", 0.82, sourceTransmissionId = sourceId),
+            ),
+        )
+
+        val over = ThreadListMapper.detailState("T1", details)!!.overs.single()
+
+        assertEquals("inherited by voice (source transmission not recorded)", over.reasoning)
+        assertNull(over.sourceTimeLabel)
+        assertTrue(!over.reasoning.contains(sourceId.toString()))
+    }
+
+    @Test
+    fun `R_332_copy a human-typed correction reads inherited by callsign, with nothing to link`() {
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.unknown().withCorrection("K7LWH")),
+        )
+
+        val over = ThreadListMapper.detailState("T1", details)!!.overs.single()
+
+        assertEquals("inherited by callsign", over.reasoning)
+        assertNull(over.sourceTransmissionId)
+        assertNull(over.sourceTimeLabel)
+    }
+
+    @Test
+    fun `R_332_copy no source recorded at all and no correction stays the honest fallback`() {
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.inferred("K7LWH", 0.82)),
+        )
+
+        val over = ThreadListMapper.detailState("T1", details)!!.overs.single()
+
+        assertEquals("inherited (source transmission not recorded)", over.reasoning)
+        assertNull(over.sourceTimeLabel)
+    }
 }

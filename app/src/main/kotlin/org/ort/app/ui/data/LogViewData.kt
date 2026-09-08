@@ -310,6 +310,38 @@ public object LogItemsMapper {
         else -> null // an unrecognised token never gets a guessed category.
     }
 
+    /**
+     * R-331 (V3 pass 3 @16172f0): `Log-Rejected.dc.html`'s list REASON column — "rejected · squelch
+     * tail", not the raw `"VAD_NO_SPEECH: squelch tail, 0.4 s"` record `whyFor`'s own elaboration
+     * reads from. Deliberately a *different*, terser mapping than [rejectionCategoryProse] (which
+     * stays exactly as it was — the register: "the human why-line beneath is right"): the board's
+     * own six example rows name "squelch tail" / "hallucination" / "too short" / "repeated text" /
+     * "no-speech probability" for five of the six real rules — read verbatim from that mockup, not
+     * guessed. `COMPRESSION_RATIO` has no example row on that board; "compression ratio" continues
+     * its own short, jargon-free, lowercase style. `RejectedRow` (`ui/components/Rows.kt`, WP2's)
+     * already renders `"rejected · $reason".uppercase()` — this only changes what `reason` itself
+     * carries. Falls back to the raw record when the token is unrecognised, or the whole record
+     * when it never had a `"$rule: "` prefix at all (a bare short reason already, unchanged), or
+     * "no reason recorded" when there is no record at all — never a blank row.
+     */
+    public fun shortReasonFor(rejectionReason: String?): String {
+        val record = rejectionReason ?: return "no reason recorded"
+        val separator = record.indexOf(": ")
+        if (separator < 0) return record
+        val ruleToken = record.substring(0, separator)
+        return rejectionShortReasonProse(ruleToken) ?: record
+    }
+
+    private fun rejectionShortReasonProse(ruleToken: String): String? = when (ruleToken) {
+        "TOO_SHORT" -> "too short"
+        "VAD_NO_SPEECH" -> "squelch tail"
+        "NO_SPEECH_PROB" -> "no-speech probability"
+        "REPETITION" -> "repeated text"
+        "BLOCKLIST" -> "hallucination"
+        "COMPRESSION_RATIO" -> "compression ratio"
+        else -> null // an unrecognised token never gets a guessed short reason.
+    }
+
     /** [TOO_SHORT_PATTERN] etc. reformat the two rules that wrote a `key=value` detail rather than a sentence. */
     private fun rejectionDetailProse(ruleToken: String, detail: String): String = when (ruleToken) {
         "NO_SPEECH_PROB" -> NO_SPEECH_PROB_PATTERN.find(detail)?.let { match ->
@@ -346,7 +378,7 @@ public object LogItemsMapper {
                 id = detail.id,
                 timeLabel = ReaderTransmissionViewStateMapper.timeLabel(detail.startedAtUtcMillis),
                 frequencyLabel = ReaderTransmissionViewStateMapper.frequencyLabel(detail.frequencyHz),
-                reason = detail.rejectionReason ?: "no reason recorded",
+                reason = shortReasonFor(detail.rejectionReason),
                 why = whyFor(detail.rejectionReason),
                 durationLabel = ReaderTransmissionViewStateMapper.durationLabel(detail.durationMs),
             )
@@ -386,7 +418,7 @@ public object LogItemsMapper {
                         id = detail.id,
                         timeLabel = ReaderTransmissionViewStateMapper.timeLabel(detail.startedAtUtcMillis),
                         frequencyLabel = ReaderTransmissionViewStateMapper.frequencyLabel(detail.frequencyHz),
-                        reason = detail.rejectionReason ?: "no reason recorded",
+                        reason = shortReasonFor(detail.rejectionReason),
                         why = whyFor(detail.rejectionReason),
                         durationLabel = ReaderTransmissionViewStateMapper.durationLabel(detail.durationMs),
                     ),
@@ -566,13 +598,16 @@ public object LogItemsMapper {
         // attribution — "Show N overs" previously ignored `fromMillis`/`toMillis` entirely, so a
         // window-seeded filter (Frequency.dc.html's "The N overs" stat) would have shown a number
         // larger than what actually renders once `Show` is tapped.
+        //
+        // R-330: a gap is not an over (domain vocabulary — "Transmission (one keying, the atomic
+        // unit)... Over (its UI synonym)"; a not-listening gap is neither) — the CTA must never
+        // fold `gapsCount` into its own total even when "Not-listening gaps" is checked, though the
+        // gap rows themselves still interleave into the list exactly as before.
         val matchingCount = nonRejected.count {
             matchesAttribution(it, selection) &&
                 matchesFrequency(it, selection) &&
                 matchesTime(it.startedAtUtcMillis, selection)
-        } +
-            (if (selection.showRejected) rejectedCount else 0) +
-            (if (selection.showGaps) gapsCount else 0)
+        } + (if (selection.showRejected) rejectedCount else 0)
         return LogFilterSheetViewState(
             frequencyOptions = frequencyOptions,
             attributionOptions = attributionOptions,

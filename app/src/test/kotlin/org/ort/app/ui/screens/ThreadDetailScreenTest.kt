@@ -8,13 +8,16 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.data.ThreadAttributionExplanationLine
 import org.ort.app.ui.data.ThreadDetailOverViewState
 import org.ort.app.ui.data.ThreadDetailViewState
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.app.ui.theme.OrtType
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
 
@@ -61,6 +64,7 @@ class ThreadDetailScreenTest {
                 transcript = "roger that",
                 reasoning = over2Reasoning,
                 sourceTransmissionId = "TX4",
+                sourceTimeLabel = "02:16:02",
             ),
         ),
     )
@@ -178,5 +182,32 @@ class ThreadDetailScreenTest {
         composeTestRule.onNodeWithContentDescription("Back to Log").performClick()
 
         assert(backPressed)
+    }
+
+    @Test
+    fun `R_332_affordance the inherited line renders and links, and its time run is styled mono-green`() {
+        composeTestRule.setContent { OrtTheme { screen() } }
+
+        composeTestRule.onNodeWithTag("thread-detail-overs").performScrollToNode(hasText(over2Reasoning))
+        // The whole sentence is still one reachable, tappable text (unchanged behaviour) —
+        // R_044's own "tapping the source-over link opens the source" test already proves the tap
+        // itself; this proves the visual affordance guide §6.7 asks for.
+        composeTestRule.onNodeWithText(over2Reasoning).assertExists()
+
+        val styled = reasoningAnnotatedString(over2Reasoning, "02:16:02")
+        assertEquals("inherited by voice from 02:16:02", styled.text)
+        val timeSpan = styled.spanStyles.single()
+        assertEquals("inherited by voice from ".length, timeSpan.start)
+        assertEquals(styled.text.length, timeSpan.end)
+        assertEquals(OrtColors.accentGreen, timeSpan.item.color)
+        assertEquals(OrtType.mono, timeSpan.item.fontFamily)
+    }
+
+    @Test
+    fun `R_332_affordance a mismatched or missing link time never styles the wrong span`() {
+        assertEquals("inherited by callsign", reasoningAnnotatedString("inherited by callsign", null).text)
+        assertEquals(0, reasoningAnnotatedString("inherited by callsign", null).spanStyles.size)
+        // A link time that is not actually the sentence's own trailing substring is never applied.
+        assertEquals(0, reasoningAnnotatedString("inherited by voice from 02:16:02", "03:00:00").spanStyles.size)
     }
 }
