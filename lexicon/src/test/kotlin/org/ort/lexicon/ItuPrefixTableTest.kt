@@ -34,7 +34,7 @@ class ItuPrefixTableTest {
     }
 
     @Test
-    fun `the table is a versioned asset`() {
+    fun `FR_LEX_29 the table is a bundled, versioned asset rather than an optional download`() {
         assertEquals("lexicon-itu-prefixes", itu.version.assetId)
         assertTrue(itu.allocations.isNotEmpty())
     }

@@ -32,6 +32,88 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-027, `:lexicon`/`:eval`/`:testing` slice)
+
+### (pending) — audit F-027 · naming and adding tests so 21 built-but-untested ids leave the coverage matrix
+
+**Scope:** `lexicon/src/test/**`, `eval/src/test/**`, `testing/src/test/**` — no production code
+changed (every capability inspected in this slice was either already correct, or genuinely does
+not exist yet).
+
+**Requirements/ACs:** established by rename or new test — FR-LEX-6, FR-LEX-11 (partial, see below),
+FR-LEX-14, FR-LEX-18, FR-LEX-19, FR-LEX-20, FR-LEX-21, FR-LEX-23, FR-LEX-29, FR-TST-2, FR-TST-4,
+FR-TST-5, FR-A11Y-6, NFR-1a, NFR-1c, AC-57. Left uncovered, honestly (see below): AC-13, AC-35,
+FR-LEX-15, FR-LEX-16, FR-LEX-22, FR-LEX-32.
+
+**What changed:**
+- Renamed 11 existing tests to carry the requirement id they already established (no assertion
+  loosened), across `ThresholdDerivationTest`, `PlattCalibratorTest`, `ReliabilityDiagramTest`,
+  `TextDerivedLatticeBuilderTest`, `ItuPrefixTableTest`, `TestClockTest`, `HarnessDeterminismTest`,
+  `HarnessCallsignPrecisionRecallTest` (e.g. `FR_LEX_19 AC_56 raising the precision target moves
+  the CONFIRMED threshold upward`; `NFR_1a AC_56 the achieved recall falls as the precision target
+  rises` — NFR-1a's precision-over-recall tradeoff, per the finding's own suggestion, is provable
+  only as this threshold-derivation property, not a measured number).
+- Added five new test files/cases against existing production code, each written first and seen
+  to fail for the right reason before any rename/no-op confirmed it passed:
+  - `MyStationsPriorTest` (FR-LEX-14): the "my stations" prior's full positive clamp when a
+    station is on the list, zero (not a penalty) when absent, cold-zero when unconfigured, and
+    that its magnitude matches the other recency-class priors.
+  - `RankedCandidateListTest` (FR-LEX-11, partial — see left-open): `PriorCombiner.rank` emits
+    every surviving candidate with its own finite score, sorted best-first. This establishes only
+    FR-LEX-11's first sentence; the `AMBIGUOUS`-at-separation-threshold half is a different,
+    already-correct capability in `:pipeline`'s `CallsignResolver`/`CallsignResolverTest` —
+    outside this brief's ownership, and its test is not id-named.
+  - A case added to `ColdStartTest` (AC-57 / FR-LEX-23): with `geographicDistanceKm = null`
+    (location permission denied), the geographic prior alone goes cold while recency and
+    my-stations priors still contribute at full strength — "everything functions, losing only
+    geographic-prior precision".
+  - Two cases added to `VariantTableTest` (FR-A11Y-6): a novel legacy/regional spoken form is
+    addable as a plain TSV row with no code change, and the bundled table resolves identically
+    under a non-ROOT default JVM locale (the Turkish-I trap) — the variant set is content, not
+    localization.
+  - Two cases added to `PlattCalibratorTest` (FR-LEX-21): fitting two differently-shaped synthetic
+    generating processes (standing in for two tiers/models) separately yields visibly different
+    calibration curves, and applying the wrong tier's calibrator to the other's distribution
+    calibrates measurably worse toward 0.9 than the matched one — calibration does not transfer
+    across tiers/models.
+  - `PerTierReportingTest` in `:eval` (NFR-1c): two `Harness.run` calls with different
+    `precisionTarget`s (standing in for two tiers) over the *same* evaluate set return two
+    independent `HarnessReport`s with different derived thresholds, and re-running one tier
+    reproduces exactly its own canonical report — nothing is aggregated across tiers.
+
+**Verified:** `./gradlew :lexicon:test :eval:test :testing:test` — all green (checked each new
+JUnit XML report for `failures="0"`). `./gradlew coverageMatrix` regenerated
+`results/coverage-matrix.md`; all 15 renamed/established ids above (plus NFR-1A/NFR-1C, rendered
+uppercase by the tool) left the "Not yet covered" block. `./gradlew build dependencyRules` green.
+`python tools/spec-check/spec_check.py` — 8/8 PASS.
+
+**Left open / not done:**
+- **AC-13** needs a real rig-reported frequency joined against an actual known-repeater list; no
+  repeater-list asset or import exists in `:lexicon` (only the test double `RepeaterMatch`, which
+  a caller constructs by hand) — not established here, per the finding's own instruction not to
+  fabricate this.
+- **AC-35** — the harness (`:eval`) reports callsign precision/recall, a reliability diagram and
+  per-prior ablation, but not WER, rejection-rate-by-reason, or attribution accuracy: those need
+  the ASR pass and Pass B/attribution-state wiring the harness's own doc comment says are later
+  waves. Only the built subset is now named (FR-TST-5); the full AC-35 claim is not established.
+- **FR-LEX-15 / FR-LEX-16** — the "active slice" for Pass A hotword biasing does not exist
+  anywhere in the repository (confirmed by grep for `ActiveSlice`/`hotword` across all modules,
+  finding only spec prose and one `asr-api` doc comment naming the concept, no implementation).
+  Not established; this is genuinely unbuilt, not merely untested.
+- **FR-LEX-22** — rig-position/GPS/manual-grid location-sourcing priority is not implemented in
+  `:lexicon` (no `Location`/`Maidenhead` code found); `RankingContext.geographicDistanceKm` takes
+  a pre-computed distance and has no notion of *how* that distance was sourced. Not established.
+- **FR-LEX-32** — no WWARA-repeater-import or recency-seeding code exists to seed the recency
+  prior on day one; `MyStationsPrior`/`RecencyPrior` consume already-populated context but nothing
+  in `:lexicon` populates it from an import. Not established.
+- `coverageMatrixCheck`, which the standing brief's generic verification step names, is not an
+  actual Gradle task in this checkout (`./gradlew coverageMatrixCheck` fails with "task not
+  found"); `.github/workflows/ci.yml`'s `report` job still only runs `coverageMatrix` and uploads
+  the artefact without diffing it. This belongs to F-014's owner, not this finding; flagged here
+  rather than silently skipped.
+
+---
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture

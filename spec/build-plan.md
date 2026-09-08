@@ -42,7 +42,10 @@ underlying breakdown each prompt draws on.
 
 **Wave C — composition.**
 
-- [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07
+- [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07;
+  audit F-027 (2026-09-07) named/added tests for FR-LEX-6/11(partial)/14/18/19/20/21/23/29,
+  FR-TST-2/4/5, FR-A11Y-6, NFR-1a/1c, AC-57 — FR-LEX-15/16/22/32 and AC-13/35 remain genuinely
+  unbuilt or unmeasurable here, see CHANGELOG
 - [x] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)* — done 2026-09-07
 
 **Wave D — the M2 gate, then transcription.**

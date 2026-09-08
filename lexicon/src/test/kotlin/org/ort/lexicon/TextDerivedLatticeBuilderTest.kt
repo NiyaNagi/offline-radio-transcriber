@@ -19,7 +19,7 @@ class TextDerivedLatticeBuilderTest {
     }
 
     @Test
-    fun `AC_15 the record indicates the degraded text-derived source`() {
+    fun `FR_LEX_6 AC_15 the record indicates the degraded text-derived source`() {
         val lattice = builder.build(listOf("kilo", "seven", "alpha", "bravo", "charlie"))
         assertEquals(LatticeSource.TEXT_DERIVED, lattice.source)
     }
