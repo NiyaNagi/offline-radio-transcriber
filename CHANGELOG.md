@@ -32,6 +32,113 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (night — P14: the reader shows real transmissions, not the v0 smoke-test stub)
+
+### (pending) — P14 · Reader: live view and transmission detail
+
+**Scope:** `:app` reader screens and read paths only — `ui/screens/` (new `LogScreen.kt`,
+`NowScreen.kt`, `TransmissionDetailScreen.kt`), `ui/data/` (new `TransmissionDetail.kt`;
+`ReaderPolling.kt` extended, its old always-`Attribution.unknown()`/always-"not yet transcribed"
+`currentTransmissions` stub removed), `ui/audio/` (new — `TransmissionAudioPlayer`,
+`RealTransmissionAudioPlayer`, `FakeTransmissionAudioPlayer`), `ui/navigation/OrtNavHost.kt`
+(wired to the new screens and a detail drill-in), `app/build.gradle.kts` (one test-only
+dependency — see below). `:pipeline`, `:capture-*`, `:asr-*`, `:lexicon`, `:core`, `:net` and
+`:data`'s schema were not touched, as the prompt requires.
+**Requirements/ACs:** FR-UI-1 (a transmission appears newest first; a superseded partial is
+*visibly* superseded), FR-UI-4 (all four attribution states visually distinct, reusing P13's
+`AttributionMarker`), FR-UI-5 (audio playback alongside the transcript), FR-A11Y-1..4 (carried
+over from P13 — every new interactive element has a content description; existing max-font-scale
+coverage untouched).
+**What changed:** P13 landed the Compose foundation with `Now`/`Log` rendering the same
+always-`Attribution.unknown()`, always-"not yet transcribed" v0 smoke-test stub `StatusActivity`/
+`TransmissionListActivity` polled — real transcript and attribution data has existed in `:data`
+since P12's processing loop, and nothing read it. This session builds that read path and the
+three designed screens over it:
+- **`TransmissionDetail`** (`ui/data/TransmissionDetail.kt`) — the real, Compose-agnostic facts for
+  one transmission: `currentTranscriptText` is `null` exactly when no `TranscriptEntity` row exists
+  yet (never an empty string standing in for "nothing happened"), and `supersededTranscriptTexts`
+  carries every earlier version via `TranscriptDao.getAllVersions` — AC-31's append-only guarantee,
+  made *visible* here rather than only enforced at the data layer. `ReaderTransmissionViewStateMapper`
+  turns a missing transcript into the honest "(captured, not yet transcribed)" label the prompt's
+  empty-state paragraph asks for, and a non-empty `supersededTranscriptTexts` into a counted
+  `revisionNote` ("revised · N earlier version(s)") — never a boolean, never silent.
+- **`ReaderPolling.currentTransmissionDetails`/`.transmissionDetail`** — real reads over
+  `TransmissionDao.listBySession` (reversed for "newest first" rather than adding a second,
+  differently-ordered DAO query — `:data`'s query surface is deliberately untouched here, unlike
+  P15, which the build plan names as the prompt that owns adding new DAO queries) and
+  `TranscriptDao.getAllVersions`. `attributionFrom` reconstructs the type-safe `Attribution`
+  constitution I requires from the entity's raw columns, falling back to `Attribution.unknown()`
+  (never a crash, never a fabricated station) if a `CONFIRMED`/`INFERRED` row is ever missing the
+  fields its own factory requires.
+- **`NowScreen`** (`Main.dc.html`) — real `overCount`/`stationCount` (`NowSummaryMapper`, counting
+  only transmissions with an actual attributed station, never an `UNKNOWN`/`AMBIGUOUS` over) over
+  the existing, unchanged `StatusScreen` for capture state. **Deliberate divergence**: the artboard's
+  activity-bar chart and "Worth knowing" digest are not built — an hour-bucketed activity aggregate
+  is P17's job (FR-UI-9..12) and a digest is M9's, after the M4 fork the build plan leaves open;
+  "Worth knowing" renders an explicit, honest empty state instead of a look-alike fabrication.
+- **`LogScreen`** (`Log.dc.html`) — the dense per-transmission table: time, frequency, the shared
+  `AttributionMarker` (FR-UI-4) plus the station id or "Unidentified station", the transcript text
+  (or the honest not-yet-transcribed label), the revision note, and signal. **Deliberate
+  divergence**: `Log.dc.html`'s QSO-header thread grouping and inline "not listening" gap row are
+  FR-UI-2/FR-UI-12, explicitly P15's and P17's own prompts — rendered as a flat, newest-first list
+  here rather than faked grouping logic.
+- **`TransmissionDetailScreen`** (`Detail.dc.html`) — attribution marker, station/callsign or
+  "Unidentified station", time/frequency/duration/signal, a play control (FR-UI-5, gated on
+  `TransmissionDetailViewState.hasAudio` — "No retained audio for this transmission" otherwise,
+  never a dead button), the transcript, and every superseded version listed under "Earlier versions
+  (superseded)". **Deliberate divergence, called out by name in the prompt itself**: the artboard's
+  "why this callsign" phonetic-lattice and per-prior ("what ranked it first") panel is FR-UI-8,
+  which build-plan P16 owns ("the inspection surface... the per-prior breakdown `PriorCombiner`
+  already produces") — that data has no path to this screen yet, and a look-alike panel with no
+  real ranking behind it would be exactly the confident fabrication constitution I forbids.
+- **Audio playback (FR-UI-5), for real.** `:app` may not depend on `:capture-android` directly
+  (`ModuleGraph.allowed` only permits `:pipeline`, `:data`, `:net`, `:core`), so
+  `RealTransmissionAudioPlayer` reuses `:pipeline`'s already-public `FlacSegmentAudioProvider` —
+  the exact class P12's own Pass B wiring uses to decode retained audio for ASR — by constructing a
+  throwaway `WorkQueueItemEntity` purely to reach that public entry point, never a second decode
+  implementation that could silently drift from the codec ASR actually runs (constitution III). It
+  converts the decoded floats to PCM16 and plays them through a real `AudioTrack`. A missing
+  transmission row, a missing audio file, or a decode failure all return a named
+  `PlaybackOutcome.Unavailable` rather than silently doing nothing (constitution I's
+  "uncertainty is content" applied to playback). `FakeTransmissionAudioPlayer` ships in the same
+  change (constitution II) and is what every Compose test above drives.
+- **`OrtNavHost`** now polls `currentTransmissionDetails`/`currentStatus` for `Now` and `Log`, and
+  holds a `selectedTransmissionId` that replaces the whole scaffold with `TransmissionDetailScreen`
+  when a Log row is tapped — mirroring `Detail.dc.html`'s full-screen presentation, with its own
+  back control as the way out.
+**What was deliberately NOT deleted, and why:** the prompt permits deleting
+`StatusActivity`/`TransmissionListActivity` only if everything they did is genuinely replaced,
+including their tests' coverage. `StatusActivity` additionally surfaces `AsrAvailability`/
+`VadAvailability` status labels (P12's "never let this screen look like transcription is working
+when it isn't" safeguard) that `NowScreen` does not yet show — deleting the originals now would be
+a real regression, not a cleanup, so both plain-view Activities and their tests are left exactly as
+they are. `MainActivity` already launches `ReaderActivity` (the Compose nav host), not either
+plain-view Activity, so this is inert legacy code rather than a second, conflicting entry point.
+**Verified:** strict TDD throughout — every new test
+(`ReaderTransmissionViewStateMapperTest` ×6, `NowSummaryMapperTest` ×3, `ReaderPollingTest` ×6,
+`RealTransmissionAudioPlayerTest` ×3, `LogScreenTest` ×5, `NowScreenTest` ×4,
+`TransmissionDetailScreenTest` ×5) was written and observed to fail for the right reason
+(`Unresolved reference` compiler errors, then real assertion failures against a Robolectric-backed
+real in-memory-vs-file-database mismatch caught and fixed, and a genuine Robolectric
+`AudioTrack`-shadow limitation documented rather than hidden — see that test's own comment) before
+the production code existed. `./gradlew :app:testDebugUnitTest` — all 57 tests green, including
+every pre-existing P8/P11/P13 test unchanged. `./gradlew build dependencyRules` — full repo green
+(840 actionable tasks); `dependencyRules` output confirms `:app -> :core, :data, :net, :pipeline`,
+exactly its permitted edge set, no new module edge added anywhere in the graph.
+**Left open / not done:** no device is available to this session, so `RealTransmissionAudioPlayer`
+is proven only up to "decodes real retained audio through the real codec path and attempts
+playback" — whether audio genuinely reaches a speaker is unverified (Robolectric's `AudioTrack`
+shadow does not faithfully reproduce real hardware initialization; the test asserts the decode
+succeeded and, if `Unavailable`, that the reason is specifically about playback, never about a
+missing file or a broken decode). `Main.dc.html`'s activity chart and digest, `Log.dc.html`'s
+thread grouping and gap rows, and `Detail.dc.html`'s lattice/per-prior panel are all named
+divergences above, each pointing at the build-plan prompt (P15/P16/P17) that actually owns the
+data behind it. `StatusActivity`/`TransmissionListActivity` remain registered and unreached, not
+deleted, for the `AsrAvailability`/`VadAvailability` reason above — a future prompt that adds those
+labels to `NowScreen` can finish that cleanup.
+
+---
+
 ## 2026-09-08 (evening, cont. — the Compose reader becomes the app's actual UI)
 
 ### (pending) — Switch the app's entry point to P13's Compose navigation host

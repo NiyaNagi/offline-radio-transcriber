@@ -4,11 +4,13 @@ import android.content.Context
 import android.os.PowerManager
 import org.ort.app.status.StatusViewState
 import org.ort.app.status.StatusViewStateMapper
-import org.ort.app.transmissions.TransmissionRow
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.Attribution
+import org.ort.core.AttributionState
 import org.ort.core.SystemClock
+import org.ort.core.TransmissionId
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureStatusRepository
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.shed.ShedController
@@ -54,16 +56,80 @@ public object ReaderPolling {
         return if (failure != null) base.copy(stateLabel = "${base.stateLabel} — $failure") else base
     }
 
-    public suspend fun currentTransmissions(context: Context, sessionId: String): List<TransmissionRow> {
+    /**
+     * The real reader read path (build-plan P14, FR-UI-1): every transmission in [sessionId],
+     * **newest first**, each carrying its real current transcript (or an honest `null` when Pass
+     * B has not produced one yet — [org.ort.app.ui.data.ReaderTransmissionViewStateMapper] turns
+     * that into "captured, not yet transcribed"), its real attribution, and every superseded
+     * transcript version so a revision is visible rather than silently replaced (AC-31's
+     * append-only guarantee, made visible here rather than just enforced at the data layer).
+     */
+    public suspend fun currentTransmissionDetails(context: Context, sessionId: String): List<TransmissionDetail> {
         val db = OrtDatabase.create(context.applicationContext)
-        return db.transmissionDao().listBySession(sessionId).map { entity ->
-            TransmissionRow(
-                id = entity.id,
-                transcript = "(captured, not yet transcribed)",
-                attribution = Attribution.unknown(),
-            )
+        // listBySession orders ascending by samplePosition (capture order) — reversed here for
+        // "newest first" (FR-UI-1) rather than adding a second, differently-ordered DAO query.
+        return db.transmissionDao().listBySession(sessionId).asReversed().map { entity ->
+            detailFrom(context, db, entity)
         }
     }
+
+    /** One transmission's full detail, for the drill-in screen (FR-UI-5, FR-UI-8's non-lattice half). */
+    public suspend fun transmissionDetail(context: Context, transmissionId: String): TransmissionDetail? {
+        val db = OrtDatabase.create(context.applicationContext)
+        val entity = db.transmissionDao().getById(transmissionId) ?: return null
+        return detailFrom(context, db, entity)
+    }
+
+    private suspend fun detailFrom(context: Context, db: OrtDatabase, entity: TransmissionEntity): TransmissionDetail {
+        val versions = db.transcriptDao().getAllVersions(entity.id)
+        val current = versions.firstOrNull { it.isCurrent }
+        val superseded = versions.filter { !it.isCurrent }.sortedBy { it.createdAt }.map { it.text }
+        val audioFile = File(context.filesDir, entity.audioPath())
+        return TransmissionDetail(
+            id = entity.id,
+            startedAtUtcMillis = entity.startedAtUtc,
+            frequencyHz = entity.frequencyHz,
+            durationMs = entity.durationMs,
+            signalStrength = entity.signalStrength,
+            attribution = attributionFrom(entity),
+            currentTranscriptText = current?.text,
+            supersededTranscriptTexts = superseded,
+            hasAudio = audioFile.isFile,
+        )
+    }
+
+    /**
+     * Reconstructs the type-safe [Attribution] the constitution requires (Principle I) from the
+     * entity's raw columns. Falls back to [Attribution.unknown] rather than throwing if a
+     * `CONFIRMED`/`INFERRED` row is ever missing the station or confidence its own factory
+     * requires — a display concern must never crash the reader over a data inconsistency it did
+     * not cause, but it must also never *invent* a station that was not actually written.
+     */
+    private fun attributionFrom(entity: TransmissionEntity): Attribution {
+        val stationId = entity.stationId
+        val confidence = entity.attributionConfidence
+        return when (entity.attributionState) {
+            AttributionState.CONFIRMED ->
+                if (stationId != null && confidence != null) {
+                    Attribution.confirmed(stationId, confidence)
+                } else {
+                    Attribution.unknown()
+                }
+
+            AttributionState.INFERRED ->
+                if (stationId != null && confidence != null) {
+                    Attribution.inferred(stationId, confidence, sourceId(entity))
+                } else {
+                    Attribution.unknown()
+                }
+
+            AttributionState.AMBIGUOUS -> Attribution.ambiguous()
+            AttributionState.UNKNOWN -> Attribution.unknown()
+        }
+    }
+
+    private fun sourceId(entity: TransmissionEntity): TransmissionId? =
+        entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }
 
     private fun statusRepository(context: Context): CaptureStatusRepository {
         val heartbeatStore = FileHeartbeatStore(File(context.filesDir, "heartbeat.txt"))

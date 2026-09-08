@@ -41,6 +41,12 @@ dependencies {
     testImplementation(project(":testing"))
     testImplementation(project(":eval"))
     testImplementation(project(":lexicon"))
+    // Test-only (ModuleGraph/dependencyRules deliberately exempts test scope, buildSrc's
+    // build.gradle.kts comment): build-plan P14's playback tests need to write a real
+    // codec-encoded fixture file the same way `:capture-android`'s `RealSegmentSink` does, to
+    // prove `RealTransmissionAudioPlayer` decodes retained audio through the identical codec
+    // `:pipeline`'s own Pass B audio path uses — never a second, drifting implementation.
+    testImplementation(project(":capture-android"))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.ext.junit)

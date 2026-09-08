@@ -99,8 +99,12 @@ are individually green.*
   done 2026-09-08.
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
   Compose wiring at all.
-- [ ] **P14 · Reader: live view and transmission detail** *(`:app`)* — FR-UI-1, FR-UI-4, FR-UI-5,
-  FR-A11Y-1..4.
+- [x] **P14 · Reader: live view and transmission detail** *(`:app`)* — done 2026-09-08.
+  `NowScreen`/`LogScreen`/`TransmissionDetailScreen` render real `:data` state (transcripts,
+  attributions, superseded versions) via a new `ReaderPolling`/`TransmissionDetail` read path;
+  `RealTransmissionAudioPlayer` plays retained audio through `:pipeline`'s existing
+  `FlacSegmentAudioProvider`. FR-UI-1/4/5 and FR-A11Y-1..4 hold; the digest, thread grouping and
+  FR-UI-8 lattice/prior panel are named divergences left to P15-P17. See CHANGELOG.md.
 - [ ] **P15 · Search and threads** *(`:app`, `:data`)* — FR-UI-2, FR-UI-3 over the FTS5 index P5
   already built and nothing yet queries.
 - [ ] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,

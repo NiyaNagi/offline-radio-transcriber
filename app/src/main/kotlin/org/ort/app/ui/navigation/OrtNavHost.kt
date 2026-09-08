@@ -24,21 +24,27 @@ import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.status.StatusViewState
-import org.ort.app.transmissions.TransmissionRow
+import org.ort.app.ui.audio.RealTransmissionAudioPlayer
+import org.ort.app.ui.data.NowSummaryMapper
+import org.ort.app.ui.data.NowSummaryViewState
 import org.ort.app.ui.data.ReaderPolling
+import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
+import org.ort.app.ui.data.TransmissionDetail
+import org.ort.app.ui.screens.LogScreen
+import org.ort.app.ui.screens.NowScreen
 import org.ort.app.ui.screens.PlaceholderScreen
-import org.ort.app.ui.screens.StatusScreen
-import org.ort.app.ui.screens.TransmissionListScreen
+import org.ort.app.ui.screens.TransmissionDetailScreen
+import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
 
 /**
- * The navigation host (build-plan P13): the drawer `Menu.dc.html` specifies, wrapping whichever
- * destination is current. `Now` and `Log` are real screens over the same v0 smoke-test data path
- * [org.ort.app.status.StatusActivity]/[org.ort.app.transmissions.TransmissionListActivity]
- * already poll (see `ui/data/ReaderPolling.kt`); every other destination is a
- * [PlaceholderScreen] until its own prompt builds it.
+ * The navigation host (build-plan P13, extended by P14): the drawer `Menu.dc.html` specifies,
+ * wrapping whichever destination is current. `Now` (`Main.dc.html`) and `Log` (`Log.dc.html`) are
+ * real screens reading real `:data` state (see `ui/data/ReaderPolling.kt`); tapping a Log row
+ * opens `Detail.dc.html`'s drill-in over whichever destination was current. Every other
+ * destination is a [PlaceholderScreen] until its own prompt builds it.
  *
  * [sessionId] is null when the host is opened with no active or prior capture session (for
  * example, opened directly rather than from the status flow) - `Now`/`Log` then show their
@@ -51,7 +57,9 @@ public fun OrtNavHost(sessionId: String?) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var current by rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
+    var openTransmissionId by rememberSaveable { mutableStateOf<String?>(null) }
     val storage = remember { StorageFooterViewState.fromDeviceStorage(context) }
+    val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -61,11 +69,24 @@ public fun OrtNavHost(sessionId: String?) {
                 storage = storage,
                 onSelect = { destination ->
                     current = destination
+                    openTransmissionId = null
                     scope.launch { drawerState.close() }
                 },
             )
         },
     ) {
+        val transmissionId = openTransmissionId
+        if (transmissionId != null) {
+            // The detail drill-in replaces the whole scaffold (including the top bar) — its own
+            // back control is the way out, mirroring `Detail.dc.html`'s full-screen presentation.
+            TransmissionDetailContent(
+                context = context,
+                transmissionId = transmissionId,
+                player = audioPlayer,
+                onBack = { openTransmissionId = null },
+            )
+            return@ModalNavigationDrawer
+        }
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -89,7 +110,7 @@ public fun OrtNavHost(sessionId: String?) {
                     NowContent(sessionId = sessionId, modifier = content)
 
                 current == ReaderDestination.LOG ->
-                    LogContent(sessionId = sessionId, modifier = content)
+                    LogContent(sessionId = sessionId, onOpen = { openTransmissionId = it }, modifier = content)
 
                 else -> PlaceholderScreen(destinationLabel = current.label, modifier = content)
             }
@@ -100,32 +121,63 @@ public fun OrtNavHost(sessionId: String?) {
 @Composable
 private fun NowContent(sessionId: String?, modifier: Modifier) {
     val context = LocalContext.current
-    var state by remember { mutableStateOf(idleStatus()) }
+    var status by remember { mutableStateOf(idleStatus()) }
+    var summary by remember { mutableStateOf(NowSummaryViewState(overCount = 0, stationCount = 0)) }
     if (sessionId != null) {
         LaunchedEffect(sessionId) {
             val startedAt = SystemClock.wallMillis()
             while (true) {
-                state = ReaderPolling.currentStatus(context, sessionId, startedAt)
+                status = ReaderPolling.currentStatus(context, sessionId, startedAt)
+                summary = NowSummaryMapper.from(ReaderPolling.currentTransmissionDetails(context, sessionId))
                 delay(POLL_INTERVAL_MILLIS)
             }
         }
     }
-    StatusScreen(state = state, modifier = modifier)
+    NowScreen(status = status, summary = summary, modifier = modifier)
 }
 
 @Composable
-private fun LogContent(sessionId: String?, modifier: Modifier) {
+private fun LogContent(sessionId: String?, onOpen: (String) -> Unit, modifier: Modifier) {
     val context = LocalContext.current
-    var rows by remember { mutableStateOf(emptyList<TransmissionRow>()) }
+    var details by remember { mutableStateOf(emptyList<TransmissionDetail>()) }
     if (sessionId != null) {
         LaunchedEffect(sessionId) {
             while (true) {
-                rows = ReaderPolling.currentTransmissions(context, sessionId)
+                details = ReaderPolling.currentTransmissionDetails(context, sessionId)
                 delay(POLL_INTERVAL_MILLIS)
             }
         }
     }
-    TransmissionListScreen(rows = rows, modifier = modifier)
+    val entries = details.map { ReaderTransmissionViewStateMapper.listEntry(it) }
+    LogScreen(entries = entries, onOpen = onOpen, modifier = modifier)
+}
+
+@Composable
+private fun TransmissionDetailContent(
+    context: android.content.Context,
+    transmissionId: String,
+    player: org.ort.app.ui.audio.TransmissionAudioPlayer,
+    onBack: () -> Unit,
+) {
+    var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
+    LaunchedEffect(transmissionId) {
+        detail = ReaderPolling.transmissionDetail(context, transmissionId)
+    }
+    val current = detail
+    if (current != null) {
+        TransmissionDetailScreen(
+            state = ReaderTransmissionViewStateMapper.detailView(current),
+            player = player,
+            onBack = onBack,
+        )
+    } else {
+        Text(
+            text = "Loading…",
+            modifier = Modifier
+                .padding(OrtSpacing.lg)
+                .semantics { contentDescription = "Loading transmission detail" },
+        )
+    }
 }
 
 private fun idleStatus(): StatusViewState = StatusViewState(
