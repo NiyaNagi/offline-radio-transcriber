@@ -452,25 +452,28 @@ private fun NavHostBody(
         // ui-conformance WP3 round 4 (R-129 smoke coverage found this, real at the time): this host
         // used to skip its own header for `SETTINGS` because `SettingsRootScreen` drew a second,
         // duplicate one — the same double-header defect R-016 already fixed once for the four real
-        // drill-ins. **Superseded, not re-added**: register R-130 (System validator, landed in the
-        // same merge that brought this file's own `contentTopPadding` change) fixed the identical
-        // finding from the *other* side — `SettingsRootScreen.kt`'s own doc comment now states
-        // plainly that it draws no header at all, "`OrtNavHost`'s `NavHostBody` already renders one
-        // for the whole `SETTINGS` destination... before dispatching to `SettingsContent`". Keeping
-        // both fixes after that merge left `SETTINGS` with *zero* headers — `R_129_SETTINGS_composes
-        // _and_survives_recreation`'s own `recreate()` case is what caught it, timing out waiting for
-        // "Open navigation" to ever exist. `SETTINGS` is an ordinary destination again, exactly like
-        // every other non-drill-in one; the two fixes cannot both stand, and the later, more specific
-        // one (`ui/settings/**`'s own file, stating outright what it now expects the host to do) wins.
+        // drill-ins. Superseded once already (round 4→5: R-130 had `SettingsRootScreen` draw no
+        // header of its own, so this host went back to always rendering one for the whole `SETTINGS`
+        // destination) and **superseded again this round (round 7)**: once `initialScreen` (round 5)
+        // let a caller land directly on a sub-screen, the host's one destination-wide header and that
+        // sub-screen's own `DrillInHeader` rendered stacked — the double-header bug one level down,
+        // round 6's own smoke test coverage found it. `SettingsRootScreen.kt` now draws its own
+        // `ScreenHeader` again (`SettingsContent`'s own doc comment states this outright, including
+        // the instruction that this host's copy "must be removed to match"), so `SETTINGS` gets the
+        // same treatment as `SEARCH` below — this host renders neither a header nor a
+        // `DrillInHeader` for the whole destination, root or sub-screen alike; `onSearch` is wired
+        // through to `SettingsContent` the same way `ScreenHeader.onSearch` always was.
         //
         // Round 5 (register R-200): `SEARCH` gets the identical treatment, for a different reason
         // than `SETTINGS`'s own — `Search.dc.html`'s header is a back chevron plus the inline query
         // field, not the generic drawer/search bar every other destination gets, and `SearchContent`
         // (WP7's file, confirmed by reading its own doc comment before this) now draws exactly that
-        // itself. Unlike `SETTINGS`'s root, `SEARCH` has no state where nothing draws a header of its
-        // own — it always does — so there is no analogous "zero-header" failure mode to guard here.
+        // itself. Unlike `SETTINGS`'s pre-round-7 root, `SEARCH` never had a state where nothing drew
+        // a header of its own — it always does — so there was never an analogous "zero-header"
+        // failure mode to guard there.
         val isSearch = ids.current == ReaderDestination.SEARCH
-        if (!isDrillIn && !isSearch) {
+        val isSettings = ids.current == ReaderDestination.SETTINGS
+        if (!isDrillIn && !isSearch && !isSettings) {
             // R-003/R-004/R-015: drawer icon, live dot + elapsed while a session is capturing,
             // search icon — no title, the destination content below draws its own (`Main.dc.html`'s
             // 27sp title is `NowScreen`'s, not the header's).
@@ -715,6 +718,10 @@ private fun DestinationContent(
         // Round 5 (R-090/R-139/F6/F9): `initialScreen` is real now — `navigator.openSettings`
         // (`NavHostCallbacks.onOpenModels` above, and `ReaderActivity.kt`'s `FailureHostActions`)
         // writes `settingsInitialScreen`, read fresh here every time `SETTINGS` becomes `current`.
+        // Round 7: `onSearch` is real now — `SettingsContent`'s own doc comment states the root
+        // draws its own `ScreenHeader` again, with a real search icon this host must wire the same
+        // way `ScreenHeader.onSearch` always was elsewhere (see `NavHostBody`'s own header-skip
+        // comment for why this host no longer draws one of its own for `SETTINGS`).
         ReaderDestination.SETTINGS ->
             org.ort.app.ui.settings.SettingsContent(
                 context = context,
@@ -724,6 +731,7 @@ private fun DestinationContent(
                 // Round 6, register R-132: real now — see `NavHostCallbacks.onOpenLevelMeter`'s
                 // own comment above.
                 onOpenLevelMeter = callbacks.onOpenLevelMeter,
+                onSearch = callbacks.onSearchDestination,
             )
 
         // Round 5 (R-092/R-107): `onOpenTransmission` is real now — WP10 merged it (confirmed by

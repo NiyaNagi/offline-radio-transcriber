@@ -7466,6 +7466,90 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · round 7: settings header owned by content; frequency overs route
+
+**Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`), tests
+(`ui/navigation/ReaderActivityDestinationSmokeTest.kt`), `CHANGELOG.md`. Eighth reconciliation
+addendum. `git merge --ff-only main` succeeded cleanly to `a272464`, the commit titled
+"ui-conformance · register: R-264, R-265 fixed (WP9); WP2 slots merged for R-242/R-246/R-261" that
+sits directly on the required "ui-conformance WP9: R-264, R-265" merge (`b636ee6`), confirmed present
+via `git log main --oneline` before merging.
+
+**Item (2), R-276 (frequency overs route) — not done this round.** WP8's "pass-2 fixes" commit
+(`onOpenOvers` on `FrequencyDetailContent`/`FrequencyChangeScreen`) had not landed on `main` by the
+time item (1) finished — checked via `git log --oneline --all` for a "WP8"/"pass-2" title and a
+direct `onOpenOvers` grep across the checkout, both empty. Per the coordinator's own instruction,
+item (1) is committed alone.
+
+**Requirements/ACs:** R-090 (Settings header ownership, closed for the third and final time this
+round), R-200 (referenced — `SETTINGS` now gets exactly the treatment `SEARCH` already had).
+
+**Constitution check.** Principle II (uncertainty is content): the smoke test's SETTINGS cases now
+assert the header count directly (`assertExactlyOneContentDescription`) rather than the "at least
+one" existence check every other case uses, precisely because "at least one" is what let the
+double-header regression through undetected for two prior rounds — a stronger assertion where the
+history of this exact bug shows a weaker one already failed to catch it. Principle VII (structural
+boundaries): no edit to `ui/settings/**` — that package already made the fix and reported outright
+what this host owed it (`SettingsContent.kt`'s own round-6 doc comment); this round is exactly that
+debt, paid.
+
+**What changed:**
+
+- **R-090 — the host no longer draws any header for `SETTINGS`, root or sub-screen.** WP10's own
+  commit (merge `404b84f`) moved `ScreenHeader` into `SettingsRootScreen` and added a real `onSearch`
+  parameter on `SettingsContent`, exactly as its round-6 doc comment said it would, and named the
+  removal this file owed in response. `NavHostBody`'s header-skip condition gained `!isSettings`
+  alongside the existing `!isSearch`/`!isDrillIn` (same reasoning, same shape); `DestinationContent`'s
+  `SETTINGS` dispatch now passes `onSearch = callbacks.onSearchDestination` — the same shared callback
+  `ScreenHeader.onSearch` already used everywhere else, so `Settings`'s search icon opens `Search` and
+  returns via the existing `searchOpenedFrom` origin tracking (round 5) with no new state needed. This
+  is the third and, this time, structurally final fix for the same underlying defect (round 4: host
+  skip / sub-screen draws none, wrong way; round 5→6: host always draws one, broken once
+  `initialScreen` could land on a sub-screen; round 7: neither host state ever draws one, the content
+  package owns its own header entirely) — the prior two both assumed a fixed relationship between the
+  drawer *destination* and how many headers show, which `initialScreen` broke; this one does not
+  assume that relationship at all.
+- **Smoke test, `SETTINGS` root and `RIG` sub-screen cases**: both now assert directly, not just
+  survive `recreate()` without timing out. New `assertExactlyOneContentDescription` helper counts
+  matching nodes exactly. Root: exactly one "Open navigation", exactly one "Search", both before and
+  after `recreate()`. Sub-screen (`RIG`, standing for all eight non-`ASSETS` sub-screens): exactly one
+  "Back to Settings", and explicitly zero "Open navigation" (the host draws no drawer-icon header at
+  all for a sub-screen now, where before this round it always did).
+
+**Verified:**
+- `git merge --ff-only main` — clean fast-forward to `a272464`.
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:ktlintCheck` — `ktlintTestSourceSetCheck`/`ktlintDebugSourceSetCheck` both
+  clean; `ktlintMainSourceSetCheck` fails on nine pre-existing findings in `ui/components/Rows.kt`
+  (WP2's file, landed by this round's own merge, not touched, not this row) — zero findings in any
+  file this round touched.
+- `.\gradlew.bat :app:detekt` — clean (`UP-TO-DATE` on a prior successful run this session; confirmed
+  fresh with `--rerun-tasks` before relying on it).
+- `.\gradlew.bat :app:testDebugUnitTest` — 1045 tests, **2 failed, both in `ui/setup/ReadyScreenTest.kt`
+  (WP9's file)** — `R_265 an amber row with a Fix action announces label, value and the action` and
+  `R_265 a verified row announces label, value and status as one merged node`, both an ambiguous
+  "expected exactly/at most 1 node, found 2" against `"Overnight"`/`"Input"` content descriptions.
+  Confirmed **not flaky** (reran in isolation, failed identically both times) and confirmed
+  **pre-existing on `main`** — this file is untouched by any commit of mine, and this branch's working
+  tree before this round's own edits is exactly `main`'s `a272464` tree. Reported for the coordinator
+  to route to WP9/WP2, not fixed here.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` — `BUILD SUCCESSFUL`, 16 tests, 0 failed, including both
+  strengthened `SETTINGS` cases.
+- `.\gradlew.bat dependencyRules` — `OK`, 17 modules, no new edge.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat coverageMatrix --rerun-tasks` — 419 requirements, 185 covered, regenerated (gate
+  side-effect, included in this commit as generated output).
+
+**Left open / not done:**
+- **Item (2), R-276 (frequency overs → Log filtered by frequency/window) — not started.** WP8's
+  `onOpenOvers` commit has not landed; per the coordinator's own instruction, item (1) is committed
+  alone. Next round's own merge should carry it.
+- Two pre-existing `ui/setup/ReadyScreenTest.kt` failures (WP9's file) and nine pre-existing
+  `ui/components/Rows.kt` ktlint findings (WP2's file) block a fully clean `:app:testDebugUnitTest`/
+  `:app:ktlintCheck` — both reported above, neither touched, neither this row.
+- `SettingsContent`'s `onOpenLevelMeter`/round-6 gaps and round-5's `onRetryInput`/`onEndSession`/
+  `onRequestUsbPermission` no-ops are unchanged from prior rounds.
+
 ### (pending) — ui-conformance WP3 · round 6: level-meter entry point, live-bar content clearance
 
 **Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`), `ui/screens/CaptureStatusContent.kt`
