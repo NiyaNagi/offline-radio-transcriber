@@ -40,11 +40,17 @@ public enum class FailureId {
 // -------------------------------------------------------------------------------------------
 
 /** `Fail-Route.dc.html`. [expectedLabel]/[actualLabel] come straight off
- * [org.ort.pipeline.capture.InputStatus.State.Mismatch]. */
+ * [org.ort.pipeline.capture.InputStatus.State.Mismatch]. [elapsedLabel] and [oversKeptCount] are
+ * the session's own facts (register R-126) — "H:MM:SS" since the session started, and the
+ * transmission count for it — never invented when [sessionElapsedKnown] is false (no session to
+ * measure against, e.g. the mismatch fired before any session ever opened). */
 public data class RouteViewState(
     public val expectedLabel: String,
     public val actualLabel: String,
     public val sinceLabel: String,
+    public val elapsedLabel: String,
+    public val oversKeptCount: Int,
+    public val sessionElapsedKnown: Boolean = true,
 )
 
 // -------------------------------------------------------------------------------------------

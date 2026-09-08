@@ -46,6 +46,7 @@ public fun FailUsbScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.55f))
+            .failureScreenInset()
             .testTag("failure-usb-screen"),
         contentAlignment = Alignment.Center,
     ) {

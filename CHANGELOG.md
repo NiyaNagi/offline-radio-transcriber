@@ -657,7 +657,90 @@ action — not the row's own value text doing double duty as an affordance).
 
 ## 2026-09-08 (ui-conformance WP11b: failure screens, failure host, recovery announcements)
 
-### (pending) — ui-conformance WP11b · failure screens F1-F22 UI, failure host, recovery announcements, debug failure scenarios
+### (pending) — ui-conformance WP11b · system-bar insets on failure overlays, Fail-Route why-link and subtitle, live-bar tone from every failure
+
+**Scope:** `:app` — `ui/failures/**` (`FailureViewState.kt`, `FailureMapper.kt`,
+`FailureSignalsPolling.kt`, `FailRoute.kt`, `FailStorage.kt`, `FailUsb.kt`, `FailReconcile.kt`,
+`FailMigration.kt`, `FailAssetSwap.kt`, `FailCalibration.kt`, `FailureHost.kt`) and their tests;
+`ui/data/LiveBarPolling.kt` and its test (WP4 idle this round, per the coordinator). Follow-up to
+the two WP11b commits below, at the Setup validator's (V1, `5c8d144`) request — `git merge --ff-only
+main` first (this branch already an ancestor of main at `2ca13dc`, which carries `5c8d144`'s
+validation commit — no rebase, no stash, no other package's files touched).
+
+**Requirements/ACs:** R-126, R-127, R-128 (register); FR-CAP-2a, FR-CAP-3, FR-CAP-3a, FR-RUN-13
+(cited by the new "Why this halts" sheet); FR-A11Y-2 (44dp targets, unaffected); constitution I
+(never invent a number — F1's elapsed/overs clauses are omitted, not fabricated, when there is no
+session to measure) and IV ("capture never blocks, never drops, never lies" — the live bar must
+never read nominal while a real failure is showing, R-128's own finding).
+
+**What changed:**
+
+- **R-127/R-126 — every banner and takeover now carries the 44dp status-bar inset.** V1's
+  screenshots (`input-mismatch/F01-fail-route.png`, `level-low/F03-fail-level-banner.png`) showed
+  "Halted" and the level banner's icon/title colliding with the clock — every full-screen
+  `Fail*Screen` root and `FailureHost`'s `BannerOverlay` drew from y=0. Fixed with the exact
+  pattern `SetupScaffold.kt` already uses (the reference the coordinator named):
+  `.windowInsetsPadding(WindowInsets.statusBars)` on the outer container, right after
+  `.background(...)`. Centralised as `Modifier.failureScreenInset()` in `FailRoute.kt` (this
+  package's existing home for shared internal helpers) and applied to `FailRouteScreen`,
+  `FailStorageHaltScreen`, `FailUsbScreen`, `FailReconcileScreen`, `FailMigrationScreen`,
+  `FailAssetSwapScreen`, `FailCalibrationScreen` and `FailureHost`'s `BannerOverlay` — every
+  takeover and every banner this package owns, in one place each. Robolectric resolves
+  `WindowInsets.statusBars` to zero (no real system bar to measure in that harness), so the pixel
+  offset itself cannot be asserted by a unit test — `R_127_...` proves the modifier chain compiles
+  and every screen still renders its content with it applied, the same way `SetupScaffold`'s own
+  (already-correct, V1-passing) screens do; the actual visual fix is what the next validator run
+  confirms by screenshot, same as V1 caught the bug.
+- **R-126 — `Fail-Route`'s subtitle now follows the board's own "HH:MM:SS · after H:MM:SS · N
+  overs kept" pattern**, sourced from `CaptureState` by way of the session it names:
+  `FailureSignals` gained `sessionStartedAtMillis`/`sessionTransmissionCount`
+  (`FailureSignalsPolling` reads them via `SessionDao.getById`/`TransmissionDao.listBySession`,
+  the same pattern `improvableCount` already used), and `FailureMapper`'s Route mapping computes
+  `RouteViewState.elapsedLabel` (a new `hoursMinutesSecondsLabel` formatter, "H:MM:SS") and
+  `oversKeptCount` from them. When there is no session to measure against,
+  `sessionElapsedKnown = false` and the subtitle falls back to the plain sentence rather than
+  inventing a zero (constitution I).
+- **R-126 — `Fail-Route` gets the board's "Why this halts" link.** `Banner`'s `secondaryActionLabel`
+  now opens a scrim + WP2 `Sheet` (guide §6.9: dismissing is the host screen's job, not `Sheet`'s
+  own — built the same way `FailUsbScreen`'s own scrim already is) citing FR-CAP-3/FR-CAP-3a (the
+  actual halt rule — "a route that is not the selected device halts capture, never a silent
+  fallback") and FR-CAP-2a (why the exact device matters: every retained recording carries the
+  input rate and resampler identity that produced it). Dismissed by tapping the scrim or a "Close"
+  text action.
+- **R-128 — the live bar now follows every failure `FailureMapper` can raise, including the debug
+  override.** V1 found the live bar reading nominal "Live" in green while F16's takeover was up
+  (`usb-permission/F16-fail-usb.png`) — `LiveBarPolling` never consulted `DebugFailureOverride` at
+  all. Added `failureOverrideToneLabelAndPartial()`, exhaustive over every `FailurePresentation`
+  id, consulted ahead of the existing real-signal `toneAndLabel()`: F16 (`Fail-Usb.dc.html`) reads
+  `LiveBarTone.HALTED` ("Act" in `halt/text` red — the board's own live-bar background/border/label
+  are halt-red throughout, not amber; see "Left open" for the one thing this file cannot fix) with
+  partial text "audio fine · radio needs permission"; F6's `StorageAudioPaused` (`Fail-Storage.dc.html`'s
+  "text only" stage) reads `DEGRADED` "Text only". Every other id falls through to the real-signal
+  computation unchanged — most because their own board shows no live bar at all (F14/F19/F20/F21/F22
+  are not Now/session screens) or explicitly keeps it nominal (F5/F15 both read "Live" on their own
+  boards) — nothing here invents a label a board never specified. Tested per id (`R_128_...`),
+  including that the override wins outright over a real degradation, matching `FailureMapper`'s own
+  priority.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. Targeted tests (`org.ort.app.ui.failures.*`, `LiveBarPollingTest`, `ScenariosTest`) —
+110 tests, all green (`FailureMapperTest` 21, `RecoveryAnnouncerTest` 9, `FailureScreensTest` 19,
+`FailureHostTest` 3, `DebugFailureOverrideTest` 4, `LiveBarPollingTest` 17, `ScenariosTest` 37).
+Full gate reported in this package's report to the lead.
+
+**Left open:**
+
+- **F16's live-bar meter bars render `halt/fill` red, not the board's green** — `LiveBar`'s own
+  palette ties meter colour to `LiveBarTone` with no per-call override, and `ui/components/LiveBar.kt`
+  is WP2's file, outside this round's authorization (build files/`ui/failures/**`/
+  `ui/data/LiveBarPolling.kt` only). `Fail-Usb.dc.html`'s own live bar shows green meter bars
+  ("audio capture is fine") inside an otherwise halt-red bar — a genuine per-tone-component
+  override `LiveBar.kt` does not support today. Flagged, not silently accepted.
+- **The exact pixel status-bar offset is unverified by unit test** (Robolectric resolves
+  `WindowInsets.statusBars` to zero) — the next V1-style emulator screenshot is what actually
+  confirms the fix, the same way V1 found the bug in the first place.
+
+
 
 **Scope:** `:app` — new `ui/failures/**` (`FailureViewState.kt`, `FailureMapper.kt`,
 `FailureSignalsPolling.kt`, `DebugFailureOverride.kt`, `RecoveryAnnouncer.kt`, `FailureHost.kt`,

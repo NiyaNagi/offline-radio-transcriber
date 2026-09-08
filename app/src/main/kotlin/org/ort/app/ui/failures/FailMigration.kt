@@ -41,6 +41,7 @@ public fun FailMigrationScreen(
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
+            .failureScreenInset()
             .testTag("failure-migration-screen"),
     ) {
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {

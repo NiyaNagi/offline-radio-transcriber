@@ -39,6 +39,7 @@ public fun FailCalibrationScreen(state: CalibrationViewState, onInstall: () -> U
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
+            .failureScreenInset()
             .verticalScroll(rememberScrollState())
             .testTag("failure-calibration-screen"),
     ) {
