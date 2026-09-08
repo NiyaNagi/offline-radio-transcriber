@@ -25,6 +25,12 @@ public data class TransmissionDetail(
     val currentTranscriptText: String?,
     val supersededTranscriptTexts: List<String>,
     val hasAudio: Boolean,
+    /** Build-plan P16, FR-OBS-4: the labelled-sample defaults need the session a transmission came from. */
+    val sessionId: String = "",
+    /** The transmission's position in its session, in samples at the capture rate (technical design §8). */
+    val samplePosition: Long = 0L,
+    /** Build-plan P16, FR-UI-8: the resolver's lattice/candidates/per-prior breakdown, if recorded. */
+    val inspection: InspectionViewState = InspectionViewState.EMPTY,
 )
 
 /** One row of the live/log view — everything [org.ort.app.ui.screens.LogScreen] renders. */
@@ -50,6 +56,16 @@ public data class TransmissionDetailViewState(
     val transcriptText: String,
     val revisionHistory: List<String>,
     val hasAudio: Boolean,
+    /**
+     * FR-UI-8: the resolver's lattice/candidates/per-prior breakdown. Honestly empty until a
+     * future pass writes [org.ort.data.entity.PhoneticLatticeEntity] /
+     * [org.ort.data.entity.CallsignCandidateEntity] rows.
+     */
+    val inspection: InspectionViewState = InspectionViewState.EMPTY,
+    /** FR-OBS-4 labelled-sample defaults, derived from the real transmission this screen is showing. */
+    val sessionId: String = "",
+    val startSample: Long = 0L,
+    val endSample: Long = 0L,
 )
 
 public object ReaderTransmissionViewStateMapper {
@@ -66,6 +82,9 @@ public object ReaderTransmissionViewStateMapper {
         signalLabel = signalLabel(detail.signalStrength),
     )
 
+    /** Samples per millisecond at the capture rate every retained transmission is stored at (technical design §5). */
+    private const val SAMPLES_PER_MS = 16L
+
     public fun detailView(detail: TransmissionDetail): TransmissionDetailViewState = TransmissionDetailViewState(
         id = detail.id,
         timeLabel = timeLabel(detail.startedAtUtcMillis),
@@ -76,6 +95,10 @@ public object ReaderTransmissionViewStateMapper {
         transcriptText = detail.currentTranscriptText ?: NOT_YET_TRANSCRIBED,
         revisionHistory = detail.supersededTranscriptTexts,
         hasAudio = detail.hasAudio,
+        inspection = detail.inspection,
+        sessionId = detail.sessionId,
+        startSample = detail.samplePosition,
+        endSample = detail.samplePosition + detail.durationMs * SAMPLES_PER_MS,
     )
 
     private fun revisionNote(supersededCount: Int): String? = when {

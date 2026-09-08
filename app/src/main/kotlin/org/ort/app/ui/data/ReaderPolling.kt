@@ -85,6 +85,10 @@ public object ReaderPolling {
         val current = versions.firstOrNull { it.isCurrent }
         val superseded = versions.filter { !it.isCurrent }.sortedBy { it.createdAt }.map { it.text }
         val audioFile = File(context.filesDir, entity.audioPath())
+        val inspection = InspectionViewStateMapper.from(
+            db.catalogDao().latticesFor(entity.id),
+            db.catalogDao().candidatesFor(entity.id),
+        )
         return TransmissionDetail(
             id = entity.id,
             startedAtUtcMillis = entity.startedAtUtc,
@@ -95,7 +99,34 @@ public object ReaderPolling {
             currentTranscriptText = current?.text,
             supersededTranscriptTexts = superseded,
             hasAudio = audioFile.isFile,
+            sessionId = entity.sessionId,
+            samplePosition = entity.samplePosition,
+            inspection = inspection,
         )
+    }
+
+    /**
+     * FR-UI-6 + FR-SPK-7: applies a one-tap correction and its `CORRECTED` lock
+     * ([org.ort.data.dao.CorrectionDao.recordCorrection]) — the only write path this reader uses
+     * that can change an attribution the resolver already produced.
+     */
+    public suspend fun applyCorrection(context: Context, request: CorrectionRequest) {
+        val db = OrtDatabase.create(context.applicationContext)
+        db.correctionDao().recordCorrection(request.toEntity())
+    }
+
+    /**
+     * Q8's second correction tier (Tier B): known stations this device has already heard, as the
+     * reachable substitute for "search the lexicon" — see [CorrectionTier]'s own doc comment for
+     * why full lexicon search is out of this prompt's reach.
+     */
+    public suspend fun searchKnownStations(context: Context, query: String): List<String> {
+        val db = OrtDatabase.create(context.applicationContext)
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        return db.activityDao().listStations()
+            .map { it.id }
+            .filter { it.contains(q, ignoreCase = true) }
     }
 
     /**

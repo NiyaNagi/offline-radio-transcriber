@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import org.ort.data.dao.ActivityDao
 import org.ort.data.dao.CaptureGapDao
 import org.ort.data.dao.CatalogDao
+import org.ort.data.dao.CorrectionDao
 import org.ort.data.dao.SessionDao
 import org.ort.data.dao.TranscriptDao
 import org.ort.data.dao.TransmissionDao
@@ -71,6 +72,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun captureGapDao(): CaptureGapDao
     public abstract fun catalogDao(): CatalogDao
     public abstract fun activityDao(): ActivityDao
+    public abstract fun correctionDao(): CorrectionDao
 
     public companion object {
         public const val SCHEMA_VERSION: Int = 1

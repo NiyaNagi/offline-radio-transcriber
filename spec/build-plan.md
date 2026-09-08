@@ -107,9 +107,12 @@ are individually green.*
   FR-UI-8 lattice/prior panel are named divergences left to P15-P17. See CHANGELOG.md.
 - [ ] **P15 · Search and threads** *(`:app`, `:data`)* — FR-UI-2, FR-UI-3 over the FTS5 index P5
   already built and nothing yet queries.
-- [ ] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
-  `:data`)* — FR-UI-6, FR-UI-8, and FR-OBS-4, the Must the implementation plan explicitly
-  rehoused into M5.
+- [x] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
+  `:data`)* — done 2026-09-08. FR-UI-6 (one-tap correction, Q8's tiers), FR-UI-8 (the inspection
+  surface, honestly empty until a future `:pipeline` change writes lattice/candidate rows), and
+  FR-OBS-4 (labelled-sample capture per `docs/reference/labelling-protocol.md`) — see
+  CHANGELOG.md for the CORRECTED-lock enforcement and the module-boundary substitution for "search
+  the lexicon".
 - [x] **P17 · Station and frequency views with activity patterns** *(`:app`, `:data`)* —
   done 2026-09-08. FR-UI-9/FR-UI-10 (everything heard from one station/on one frequency, across
   every session), FR-UI-11 (hour-of-day activity patterns), and FR-UI-12 (the not-heard/not-
