@@ -11,18 +11,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
-import org.ort.core.PassId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
-import org.ort.data.entity.TranscriptEntity
-import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingSource
 import org.ort.data.entity.VoiceprintEntity
-import org.ort.data.entity.WorkQueueItemEntity
-import org.ort.data.entity.WorkQueueState
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -566,156 +561,8 @@ class CorrectionPollingTest {
         assertEquals(fallback, attribution)
     }
 
-    // ---- R-153, F18 Fail-Pass, FR-RUN-9: passFailure + retryFailedPass ----
-
-    private fun workQueueItem(
-        transmissionId: String,
-        pass: PassId = PassId.B_OFFLINE,
-        state: WorkQueueState = WorkQueueState.FAILED,
-        attemptCount: Int = 3,
-        lastError: String? = "out of memory in the decoder",
-    ) = WorkQueueItemEntity(
-        transmissionId = transmissionId,
-        pass = pass,
-        state = state,
-        priority = 0,
-        attemptCount = attemptCount,
-        lastError = lastError,
-        enqueuedAt = 0L,
-    )
-
-    @Test
-    fun R_153_passFailure_reads_the_real_failed_items_pass_attempts_and_error(): Unit = runTest {
-        db.sessionDao().insert(session())
-        db.transmissionDao().insert(transmission("TX1").copy(processingState = TransmissionState.FAILED))
-        db.workQueueDao().insert(workQueueItem("TX1"))
-
-        val failure = CorrectionPolling.passFailure(context, "TX1")
-
-        assertEquals(PassId.B_OFFLINE, failure?.passId)
-        assertEquals("Pass B", failure?.passLabel)
-        assertEquals(3, failure?.attempts)
-        assertEquals("out of memory in the decoder", failure?.lastError)
-    }
-
-    @Test
-    fun R_153_passFailure_is_null_when_no_work_queue_item_is_terminally_failed(): Unit = runTest {
-        db.sessionDao().insert(session())
-        db.transmissionDao().insert(transmission("TX1"))
-        db.workQueueDao().insert(workQueueItem("TX1", state = WorkQueueState.READY))
-
-        assertEquals(null, CorrectionPolling.passFailure(context, "TX1"))
-    }
-
-    @Test
-    fun FR_RUN_9_retryFailedPass_requeues_the_item_and_returns_the_transmission_to_processing(): Unit = runTest {
-        db.sessionDao().insert(session())
-        db.transmissionDao().insert(transmission("TX1").copy(processingState = TransmissionState.FAILED))
-        db.workQueueDao().insert(workQueueItem("TX1"))
-
-        val retried = CorrectionPolling.retryFailedPass(context, "TX1", PassId.B_OFFLINE)
-
-        assertTrue(retried)
-        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX1")!!.processingState)
-        val item = db.workQueueDao().findByTransmissionAndPass("TX1", PassId.B_OFFLINE.name).single()
-        assertEquals(WorkQueueState.READY, item.state)
-        assertEquals(0, item.attemptCount)
-        // FR-RUN-9: the prior error is left reachable, not erased — constitution III.
-        assertEquals("out of memory in the decoder", item.lastError)
-    }
-
-    @Test
-    fun FR_RUN_9_retryFailedPass_is_scoped_to_this_transmissions_item_only(): Unit = runTest {
-        db.sessionDao().insert(session())
-        db.transmissionDao().insert(transmission("TX1").copy(processingState = TransmissionState.FAILED))
-        db.transmissionDao().insert(transmission("TX2").copy(processingState = TransmissionState.FAILED))
-        db.workQueueDao().insert(workQueueItem("TX1"))
-        db.workQueueDao().insert(workQueueItem("TX2"))
-
-        CorrectionPolling.retryFailedPass(context, "TX1", PassId.B_OFFLINE)
-
-        assertEquals(
-            WorkQueueState.READY,
-            db.workQueueDao().findByTransmissionAndPass("TX1", PassId.B_OFFLINE.name).single().state,
-        )
-        assertEquals(
-            WorkQueueState.FAILED,
-            db.workQueueDao().findByTransmissionAndPass("TX2", PassId.B_OFFLINE.name).single().state,
-        )
-        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX1")!!.processingState)
-        assertEquals(TransmissionState.FAILED, db.transmissionDao().getById("TX2")!!.processingState)
-    }
-
-    @Test
-    fun FR_RUN_9_retryFailedPass_returns_false_and_never_throws_when_nothing_matches(): Unit = runTest {
-        db.sessionDao().insert(session())
-        db.transmissionDao().insert(transmission("TX1"))
-
-        val retried = CorrectionPolling.retryFailedPass(context, "TX1", PassId.B_OFFLINE)
-
-        assertFalse(retried)
-    }
-
-    // ---- R-055: revisions + Restore ----
-
-    private fun transcript(
-        id: String,
-        transmissionId: String,
-        pass: TranscriptPass,
-        text: String,
-        isCurrent: Boolean,
-        createdAt: Long,
-    ) = TranscriptEntity(
-        id = id,
-        transmissionId = transmissionId,
-        pass = pass,
-        text = text,
-        modelId = "whisper-small",
-        modelVersion = "1",
-        quantization = null,
-        decodeParams = null,
-        noSpeechProb = null,
-        confidence = 0.9,
-        isCurrent = isCurrent,
-        createdAt = createdAt,
-    )
-
-    @Test
-    fun `R_055 revisions lists every version, current first, nothing hidden`(): Unit = runTest {
-        db.sessionDao().insert(session())
-        db.transmissionDao().insert(transmission("TX1"))
-        db.transcriptDao().insert(
-            transcript("V1", "TX1", TranscriptPass.A, "live partial", isCurrent = false, createdAt = 10L),
-        )
-        db.transcriptDao().insert(
-            transcript("V2", "TX1", TranscriptPass.B, "final text", isCurrent = true, createdAt = 20L),
-        )
-
-        val versions = CorrectionPolling.revisions(context, "TX1")
-
-        assertEquals(2, versions.size)
-        assertEquals("V2", versions.first().id)
-        assertEquals(true, versions.first().isCurrent)
-        assertEquals(false, versions[1].isCurrent)
-    }
-
-    @Test
-    fun `R_055 restore installs a new current transcript row and keeps the old one as superseded`(): Unit = runTest {
-        db.sessionDao().insert(session())
-        db.transmissionDao().insert(transmission("TX1"))
-        db.transcriptDao().insert(
-            transcript("V1", "TX1", TranscriptPass.A, "earlier text", isCurrent = false, createdAt = 10L),
-        )
-        db.transcriptDao().insert(
-            transcript("V2", "TX1", TranscriptPass.B, "later text", isCurrent = true, createdAt = 20L),
-        )
-
-        CorrectionPolling.restore(context, "TX1", versionId = "V1", atMillis = 30L)
-
-        val current = db.transcriptDao().getCurrent("TX1")!!
-        assertEquals("earlier text", current.text)
-        val all = db.transcriptDao().getAllVersions("TX1")
-        assertEquals("restoring adds a row rather than deleting anything", 3, all.size)
-        assertEquals(1, all.count { it.isCurrent })
-    }
+    // R-153 (passFailure/retryFailedPass), R-055/R-194 (revisions/restore) and R-188
+    // (currentTranscriptConfidence) moved to `CorrectionPollingPassAndRevisionsTest.kt` — detekt's
+    // `LargeClass` finding, this file's own size after this round's R-188/R-194 tests; the same fix
+    // `RowsTest.kt`'s own `NavRowTest.kt` split used (see that file's doc comment).
 }

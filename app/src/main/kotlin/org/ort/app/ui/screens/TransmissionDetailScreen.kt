@@ -64,6 +64,7 @@ import org.ort.app.ui.data.LabelOutcome
 import org.ort.app.ui.data.LabelledSample
 import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.RankedCandidateViewState
+import org.ort.app.ui.data.RejectedViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.data.TriedStepViewState
 import org.ort.app.ui.theme.OrtColors
@@ -119,20 +120,33 @@ public fun TransmissionDetailScreen(
     Column(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             val passFailure = state.passFailure
-            if (passFailure != null) {
-                FailedPassHeaderSection(state.detail, passFailure)
-            } else {
-                HeaderSection(state, onOpenTransmission)
+            val rejected = state.rejected
+            when {
+                rejected != null -> RejectedHeaderSection(state.detail, rejected)
+                passFailure != null -> FailedPassHeaderSection(state.detail, passFailure)
+                else -> HeaderSection(state, onOpenTransmission)
             }
             PlaybackSection(state.detail, player)
-            TranscriptSection(state.detail)
+            when {
+                // R-242: a rejected segment's own text (if any survived rejection at all — most
+                // hallucination rejections have one, a squelch-tail-with-no-speech rejection may
+                // not) never gets [TranscriptSection]'s callsign highlight or confidence caption:
+                // REJECTED means never attributed (constitution: `CONFIRMED` means heard *this*
+                // transmission; a rejected one was never even a candidate for that).
+                rejected != null -> RejectedTranscriptSection(state.detail)
+                passFailure != null -> FailedPassPartialSection(state.detail)
+                else -> TranscriptSection(state.detail, state.transcriptConfidence)
+            }
             // R-196 (halt): a failed pass carries an UNKNOWN attribution (no pass ever finished to
             // resolve one), so `state.body` is genuinely `DetailBodyViewState.Unknown` — but the
             // over's problem is that a *pass* errored, not that the resolver came up empty. These
             // three sections all speak to the attribution-state branch (`AttributionState.UNKNOWN`'s
             // "what was tried"/"why this callsign") and must not render over
-            // [FailedPassHeaderSection]'s own "what went wrong" account of the same over.
-            if (passFailure == null) {
+            // [FailedPassHeaderSection]'s own "what went wrong" account of the same over, nor over
+            // [RejectedHeaderSection]'s (R-242): a rejected segment was never resolved either, and
+            // never will be — the resolver's own "not attempted on a rejected segment" is a
+            // different fact from "attempted and came up empty".
+            if (passFailure == null && rejected == null) {
                 AmbiguousChooserSection(state.body, onChooseCandidate, onNeither)
                 UnknownTriedSection(state.body)
                 WhySection(state, onOpenWhy)
@@ -274,6 +288,117 @@ private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFai
             color = OrtColors.textFaint,
             modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-last-error"),
         )
+        // R-195: `Fail-Pass.dc.html`'s own retry-guidance sentence — real (a manual retry is exactly
+        // what `Retry now`/`CorrectionPolling.retryFailedPass` does: requeues this one item alone),
+        // not the board's per-attempt list this schema cannot back (see this function's own note
+        // above the last-error line).
+        Text(
+            text = "Retrying by hand runs it alone. If it fails again the error is recorded again, " +
+                "and the over stays exactly as it is.",
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = OrtSpacing.xs),
+        )
+    }
+}
+
+/**
+ * R-195, `Fail-Pass.dc.html`: "Live partial, Pass A" — the failed-pass state's own transcript
+ * section, distinct from [TranscriptSection] (no confidence caption, no callsign highlight — this
+ * text was never attributed and never will be, unlike a normal transcript). [detail.transcriptText]
+ * already carries the real Pass A partial when one was recorded, or the honest
+ * `"(transcription failed)"` fallback when it was not — see
+ * [org.ort.app.ui.data.ReaderTransmissionViewStateMapper.transcriptLabel]; this section only adds
+ * the board's own label and caption around whichever real text that already is.
+ */
+@Composable
+private fun FailedPassPartialSection(detail: TransmissionDetailViewState) {
+    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        SectionHeader(label = "Live partial, Pass A")
+        Text(
+            text = detail.transcriptText,
+            style = OrtType.bodyProse.copy(fontStyle = FontStyle.Italic),
+            color = OrtColors.textDim,
+            modifier = Modifier.padding(top = OrtSpacing.xs),
+        )
+        Text(
+            text = "Shown in the log in place of a final transcript. Not attributed — partials never are.",
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = OrtSpacing.xs),
+        )
+    }
+}
+
+/**
+ * R-242, F04 `Fail-Hallucination.dc.html`, FR-ASR-5: the rejected-segment header — no callsign
+ * (a rejected segment was never resolved, never a candidate for one; see this file's own note at
+ * the call site above). The uppercase "rejected · reason" wording matches
+ * [org.ort.app.ui.components.RejectedRow]'s own row label exactly, so the log row and its detail
+ * screen read as one fact rather than two independent tellings of it. Deliberately **not** the
+ * board's own "4 of 6 controls fired" checklist: `:data` records only [rejected.reason] itself
+ * (plus, on some rows, [org.ort.data.entity.TranscriptEntity.noSpeechProb] — not surfaced here on
+ * its own, since one real figure out of six named controls would misrepresent a panel that mostly
+ * does not exist) — see [RejectedViewState]'s own doc comment for the full accounting. Also
+ * deliberately **not** a "restore — it was speech" action: that would need a `:pipeline` re-run of
+ * Pass B with its phrase filter disabled, a write path this package has no access to build.
+ */
+@Composable
+private fun RejectedHeaderSection(detail: TransmissionDetailViewState, rejected: RejectedViewState) {
+    val reason = rejected.reason
+    Column(
+        modifier = Modifier
+            .padding(horizontal = OrtSpacing.lg)
+            .testTag("rejected-section"),
+    ) {
+        Text(
+            text = if (reason != null) "rejected · $reason".uppercase() else "rejected".uppercase(),
+            style = OrtType.callsignTitle.copy(fontStyle = FontStyle.Italic),
+            color = OrtColors.textBody,
+        )
+        Text(
+            text = if (reason != null) {
+                "The segment was kept, marked, and never attributed. $reason"
+            } else {
+                "The segment was kept, marked, and never attributed. No reason was recorded."
+            },
+            style = OrtType.subtitle,
+            color = OrtColors.textMuted,
+            modifier = Modifier.padding(top = OrtSpacing.sm),
+        )
+        MetaRow(detail)
+    }
+}
+
+/**
+ * R-242: "What the model said" — the real transcript text a rejected segment still carries, if
+ * any (most hallucination rejections have one; a pure squelch-tail rejection may not). Never
+ * highlighted, never captioned with a confidence figure — a rejected transcript was never
+ * attributed and never scored for confidence the way a kept one is.
+ *
+ * [detail.transcriptText] is never `null` — for a rejected transmission with no real transcript
+ * row, [org.ort.app.ui.data.ReaderTransmissionViewStateMapper.transcriptLabel] already falls back
+ * to the generic `"(rejected: reason)"`/`"(rejected — no reason recorded)"` label (the same one
+ * [RejectedHeaderSection]'s own explanation line states in full sentence form). Showing that
+ * generic label a second time, framed as "what the model said", would misrepresent a placeholder
+ * as real model output — so this section renders an honest "no transcript" line instead whenever
+ * the text is that fallback, detected by its own literal `"(rejected"` prefix (the one string
+ * [transcriptLabel] is guaranteed to only ever use for exactly this case).
+ */
+@Composable
+private fun RejectedTranscriptSection(detail: TransmissionDetailViewState) {
+    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        SectionHeader(label = "What the model said")
+        Text(
+            text = if (detail.transcriptText.startsWith("(rejected")) {
+                "No transcript text was recorded for this rejected segment."
+            } else {
+                detail.transcriptText
+            },
+            style = OrtType.bodyProse.copy(fontStyle = FontStyle.Italic),
+            color = OrtColors.textDim,
+            modifier = Modifier.padding(top = OrtSpacing.xs),
+        )
     }
 }
 
@@ -324,22 +449,7 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
             onPlayPause = if (detail.hasAudio) {
                 {
                     scope.launch {
-                        if (playing) {
-                            player.pause()
-                            playing = false
-                        } else {
-                            when (val outcome = player.play(detail.id)) {
-                                PlaybackOutcome.Played -> {
-                                    unavailableReason = null
-                                    playing = true
-                                }
-
-                                is PlaybackOutcome.Unavailable -> {
-                                    unavailableReason = outcome.reason
-                                    playing = false
-                                }
-                            }
-                        }
+                        togglePlayback(detail, player, playing, { playing = it }, { unavailableReason = it })
                     }
                 }
             } else {
@@ -358,6 +468,9 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
             },
             modifier = Modifier.testTag("waveform-card"),
         )
+        if (!detail.hasAudio) {
+            NoAudioNotice(detail)
+        }
         if (playing) {
             Row(modifier = Modifier.padding(top = OrtSpacing.sm)) {
                 PlaybackRate.entries.forEach { candidate ->
@@ -375,13 +488,73 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
 }
 
 /**
+ * The waveform's own play/pause tap, pulled out of [PlaybackSection] to keep that composable under
+ * detekt's `LongMethod` threshold — a plain data move, not a behaviour change.
+ */
+private suspend fun togglePlayback(
+    detail: TransmissionDetailViewState,
+    player: TransmissionAudioPlayer,
+    playing: Boolean,
+    onPlaying: (Boolean) -> Unit,
+    onUnavailableReason: (String?) -> Unit,
+) {
+    if (playing) {
+        player.pause()
+        onPlaying(false)
+        return
+    }
+    when (val outcome = player.play(detail.id)) {
+        PlaybackOutcome.Played -> {
+            onUnavailableReason(null)
+            onPlaying(true)
+        }
+
+        is PlaybackOutcome.Unavailable -> {
+            onUnavailableReason(outcome.reason)
+            onPlaying(false)
+        }
+    }
+}
+
+/**
+ * R-193, `Detail-Playback.dc.html`'s "No audio retained" card: distinguishes a real record that
+ * was processed before its audio was removed ("deleted by retention... transcript, attribution
+ * and lattice were kept") from one that never had audio at all. `:data` keeps no stored flag for
+ * *which* — this reads the honest signal that does exist: `attribution.state != UNKNOWN` means a
+ * real attribution was resolved, which only happens after real audio was processed, so its later
+ * absence is retention's doing; `UNKNOWN` with nothing else recorded is consistent with audio
+ * never having existed to process. A real inference from real data, not a stored fact — disclosed
+ * as exactly that, never a fabricated date (the board's own "on 8 Aug" needs a retention-event
+ * timestamp this package cannot honestly cite).
+ */
+@Composable
+private fun NoAudioNotice(detail: TransmissionDetailViewState) {
+    val everProcessed = detail.attribution.state != AttributionState.UNKNOWN || !detail.inspection.isEmpty
+    Text(
+        text = if (everProcessed) {
+            "Audio deleted by retention. Transcript, attribution and lattice were kept."
+        } else {
+            "Audio was never retained for this over."
+        },
+        style = OrtType.cardBody,
+        color = OrtColors.textFaint,
+        modifier = Modifier.padding(top = OrtSpacing.xs),
+    )
+}
+
+/**
  * The transcript, with the callsign highlighted when it appears verbatim in the text (a literal,
  * honest substring check — never a phonetic-word guess: no data anywhere maps a transcript's
  * spoken words back to the callsign that produced them, so this never claims a highlight it cannot
  * back). CONFIRMED highlights `highlightGreen`; every other carrying state highlights `highlightAmber`.
+ *
+ * R-188: [transcriptConfidence], when the current transcript row recorded one, renders as a plain
+ * caption below the text ("Transcript confidence 0.61") — the real number alone, never the board's
+ * own "· weak signal, cut off" qualitative clause, which this package has no honest way to derive
+ * from a bare confidence value (constitution I).
  */
 @Composable
-private fun TranscriptSection(detail: TransmissionDetailViewState) {
+private fun TranscriptSection(detail: TransmissionDetailViewState, transcriptConfidence: Double? = null) {
     val stationId = detail.attribution.stationId
     val highlight = if (detail.attribution.state == AttributionState.CONFIRMED) {
         OrtColors.highlightGreen
@@ -406,6 +579,14 @@ private fun TranscriptSection(detail: TransmissionDetailViewState) {
     }
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
         Text(text = text, style = OrtType.bodyProse, color = OrtColors.textSecondary)
+        transcriptConfidence?.let {
+            Text(
+                text = "Transcript confidence %.2f".format(it),
+                style = OrtType.subLine,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = OrtSpacing.xs),
+            )
+        }
     }
 }
 
@@ -609,6 +790,13 @@ private fun BottomActionBar(
     onRetryPass: () -> Unit,
     onKeepPartial: () -> Unit,
 ) {
+    // R-242: no real action exists for a rejected segment — see [RejectedHeaderSection]'s own
+    // doc comment for why "restore — it was speech" is not wired here. An empty bottom bar is the
+    // honest state, not a disabled-looking button standing in for a write path this package
+    // cannot back.
+    if (state.rejected != null) {
+        return
+    }
     if (state.passFailure != null) {
         ActionBar(
             secondaryLabel = "Keep the partial",

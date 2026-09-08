@@ -6193,6 +6193,160 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 6 · no-audio copy variants, revisions closing note, Fail-Pass partial/retry copy, rejected detail state, transcript confidence
+
+**Scope:** `:app`, this package's own files — `ui/data/DetailViewState.kt`, `ui/data/CorrectionPolling.kt`,
+`ui/screens/TransmissionDetailScreen.kt`, `ui/screens/TransmissionDetailContent.kt`,
+`ui/screens/DetailRevisionsScreen.kt`, and their tests (`TransmissionDetailScreenTest.kt`,
+`TransmissionDetailContentTest.kt`, `CorrectionPollingTest.kt`, plus a new
+`CorrectionPollingPassAndRevisionsTest.kt` — see item 6). `git merge --ff-only main` first (clean
+fast-forward from `4c0ad41` to `a038128`, no stash, no rebase); recompiled and re-ran this package's
+full test suite after the merge with no changes needed.
+
+**Requirements/ACs:** R-193, R-194, R-195, R-242 (WP6's half), R-188 (register rows); F04
+`Fail-Hallucination.dc.html`, FR-ASR-5; F18 `Fail-Pass.dc.html`, FR-RUN-9; D06/D07/D01
+`Detail-Playback.dc.html`/`Detail-Revisions.dc.html`/`Detail.dc.html`; constitution I (never
+fabricate), III (nothing deleted quietly).
+
+**Constitution Check.** Principle I governs every row below: R-193's never-captured/deleted-by-
+retention split is a real inference from `attribution.state`/`inspection`, not a stored flag, and
+omits the board's own "on 8 Aug" date and "Announced 3 days before" clause since no retention-event
+timestamp exists to honestly cite; R-242's rejected state shows only the real `rejectionReason` and
+retained audio, deliberately omitting the board's "4 of 6 controls fired" breakdown (`:data` records
+at most one of the six named checks) and the "restore — it was speech" action (needs a `:pipeline`
+re-queue-with-phrase-filter-off write path this package cannot build); R-188's caption is the real
+`TranscriptEntity.confidence` number alone, never the board's "· weak signal, cut off" qualitative
+clause. Principle III is why R-242 gives a rejected over the same `PlaybackSection`/audio as every
+other state, and why R-194's closing note is worded exactly as the board's "nothing here can be
+deleted" promise.
+
+**What changed:**
+
+1. **R-193, `Detail-Playback.dc.html`'s "No audio retained" card.** `PlaybackSection` (now via the
+   extracted `NoAudioNotice` composable — see item 7) distinguishes a transmission that was really
+   processed before its audio was later removed by retention (`attribution.state != UNKNOWN` or a
+   non-empty `inspection` — either is only true after real audio was processed) from one that never
+   had audio to begin with. The former reads "Audio deleted by retention. Transcript, attribution
+   and lattice were kept."; the latter "Audio was never retained for this over." Tests:
+   `TransmissionDetailScreenTest`'s two `R_193_*` (never-processed, real-attribution).
+2. **R-194, `Detail-Revisions.dc.html`'s version-card marker/callsign/corrected badge and closing
+   note.** `TranscriptVersionViewState` gained `stationId`/`corrected`, populated by
+   `CorrectionPolling.revisions` from the transmission's real, *current* `stationId`/`corrected`
+   columns — shown identically on every version's card, since `:data` keeps no per-version
+   attribution history (disclosed in that data class's own doc comment, not a fabricated per-version
+   story). `DetailRevisionsScreen`'s `VersionCard` renders `AttributionRow(Attribution.unknown()
+   .withCorrection(stationId))` plus a `CORRECTED` badge when set (the same `withCorrection` shape
+   `PropagatedScreen.kt`'s `AffectedRow` already uses for an identical honest gap); the screen's own
+   closing note is now the board's own sentence, worded exactly: "Restoring an earlier version makes
+   it current and keeps this one as superseded. Nothing here can be deleted from this screen —
+   retention handles audio, and never transcripts." Tests:
+   `CorrectionPollingPassAndRevisionsTest`'s two `R_194_*` (real stationId/corrected propagate;
+   `null`/`false` for an unattributed transmission), and
+   `TransmissionDetailContentTest.R_194_the_revisions_screen_shows_every_version_cards_marker_callsign_and_the_boards_closing_note`
+   — a real tap through the composed detail screen into the revisions screen, seeded with the same
+   two-version shape `Scenarios.kt`'s own `revisions` scenario writes. **Test-infra fix alongside
+   it:** the wait for the board's static closing note raced `CorrectionPolling.revisions`'s own async
+   fetch (the note renders even with zero versions loaded) — fixed by waiting on the real version
+   count ("2 versions") first, the same "wait on the fact that can only be true once the poll landed"
+   discipline this package's class doc already documents for `R_183`'s own test.
+3. **R-195, `Fail-Pass.dc.html`'s "Live partial, Pass A" label/caption and retry-guidance
+   sentence.** `FailedPassPartialSection` (new, replacing a plain `TranscriptSection` call whenever
+   `passFailure != null`) renders a `SectionHeader("Live partial, Pass A")` above the real Pass A
+   text, with the board's own caption: "Shown in the log in place of a final transcript. Not
+   attributed — partials never are." `FailedPassHeaderSection` gained the board's retry-guidance
+   sentence after the last-error line: "Retrying by hand runs it alone. If it fails again the error
+   is recorded again, and the over stays exactly as it is." — deliberately omitting the board's "with
+   Pass C paused" clause, since this package has no real signal for whether Pass C actually pauses
+   during a manual retry. Tests: `TransmissionDetailScreenTest`'s two `R_195_*`.
+4. **R-242 (WP6's half), F04 — the rejected detail state.** The coordinator's own "Detail-Rejected"
+   name does not exist as a board; `design/design-intent.md`'s own F04 row names the real one,
+   `Fail-Hallucination.dc.html`. New `RejectedViewState(reason: String?)` on `DetailViewState`,
+   populated in `TransmissionDetailContent` straight from the already-polled
+   `current.processingState`/`.rejectionReason` (no new `:data` read needed, unlike `passFailure`/
+   `sourceOverTimeLabel`/`transcriptConfidence`). `TransmissionDetailScreen` gates a new
+   `RejectedHeaderSection` (uppercase "rejected · reason" title matching `RejectedRow`'s own log-row
+   wording, the real reason in prose, the meta row) and `RejectedTranscriptSection` ("What the model
+   said" — the real transcript text if one survived rejection, or an honest "No transcript text was
+   recorded for this rejected segment." when the only text available is `transcriptLabel`'s own
+   generic `"(rejected: ...)"` fallback, detected by that literal prefix, rather than showing that
+   placeholder framed as real model output) in place of the normal header/transcript sections, and
+   suppresses `AmbiguousChooserSection`/`UnknownTriedSection`/`WhySection` the same way `passFailure`
+   already does (a rejected segment was never resolved and never will be). `PlaybackSection` is
+   unchanged and still renders — the retained audio stays reachable (constitution III). The bottom
+   action bar renders nothing for a rejected over: no real write path backs "it was speech —
+   restore" (would need a `:pipeline` re-queue with the phrase filter disabled), so an empty bar is
+   the honest state rather than a disabled look-alike of a real action. Not built: the board's "4 of
+   6 controls fired" checklist — `:data` records at most `noSpeechProb` of the six named checks
+   (known-hallucination-phrase match, energy-profile read, words-per-second, repeated-text and
+   compression-ratio checks do not exist anywhere in `:data`), so one real figure standing in for six
+   named controls would misrepresent a panel that mostly does not exist (constitution I). Tests:
+   `TransmissionDetailScreenTest`'s five `R_242_*` (reason shown + audio retained, no-reason honesty,
+   no unknown-attribution blocks, no bottom bar, real "what the model said" text), plus
+   `TransmissionDetailContentTest.R_242_tapping_through_to_a_rejected_transmission_opens_the_rejected_detail_state_with_its_real_reason`
+   — a real tap through the composed screen against the exact real shape `OvernightScenario.kt`'s own
+   `tx8` rejected fixture writes (`processingState = REJECTED`, `rejectionReason =
+   "VAD_NO_SPEECH: squelch tail, 0.4 s"`, retained audio, no transcript).
+5. **R-188, `Detail.dc.html`'s transcript-confidence caption.** Neither `Detail.dc.html` nor
+   `Detail-Confirmed.dc.html` actually contains a "transcript confidence" caption on static reading
+   (only `Detail-Unknown.dc.html` does, established in this package's earlier V4 round) — implemented
+   per the round's explicit, unambiguous instruction anyway, using real data. New
+   `CorrectionPolling.currentTranscriptConfidence(context, transmissionId): Double?` reads
+   `TranscriptDao.getCurrent(...)?.confidence` directly; threaded through
+   `DetailViewStateMapper.from`'s new `transcriptConfidence` parameter to `TranscriptSection`, which
+   renders "Transcript confidence 0.61" (the real number alone, never the board's own "· weak
+   signal, cut off" qualitative clause — this package has no honest way to derive that from a bare
+   confidence value). `null` for no current transcript row, or one that recorded no confidence —
+   renders no caption at all, never a fabricated number. **Open gaps, named per the round's own
+   ask:** a voice-match distance for an UNKNOWN over would need a per-candidate acoustic-distance
+   field nowhere in `:data` today (`CallsignCandidateEntity`/`PhoneticLatticeEntity` carry a `score`,
+   not a raw distance); thread context would need `TransmissionEntity.threadId` actually populated
+   (that column exists but nothing writes it yet — threading is M6, per `TransmissionDetail`'s own
+   doc comment). Tests: `TransmissionDetailScreenTest`'s two `R_188_*` (real caption renders; no
+   caption for a null confidence), `CorrectionPollingPassAndRevisionsTest`'s two
+   `R_188_currentTranscriptConfidence_*`.
+6. **`CorrectionPollingTest.kt` split — detekt's `LargeClass` finding**, this file's own size after
+   this round's R-188/R-194 tests. New `CorrectionPollingPassAndRevisionsTest.kt` owns
+   `CorrectionPolling`'s pass-failure (R-153), revisions/restore (R-055/R-194) and
+   transcript-confidence (R-188) surfaces; `CorrectionPollingTest.kt` keeps propagation/correction/
+   search/attribution (R-052, R-058, R-183, R-185, R-189) — the same split `RowsTest.kt`'s own
+   `NavRowTest.kt` and `ScenariosTest.kt`'s own `FailureOverrideScenariosTest.kt` already used.
+7. **Two detekt `LongMethod` fixes, mechanical, no behaviour change.** `PlaybackSection`'s play/pause
+   handler moved to a new private `togglePlayback` suspend function, and its no-audio card moved to
+   a new private `NoAudioNotice` composable (item 1's own code). `TransmissionDetailContent`'s four
+   -field poll (`detail`/`passFailure`/`sourceOverTimeLabel`/`transcriptConfidence`) moved to a new
+   private `pollDetail`/`DetailPollResult` pair, and the `rejected` ternary to a new private
+   `rejectedViewStateFor` — both grew the composable past the 80-line threshold once this round's
+   R-188/R-242 reads landed.
+8. **Test-infra fix, alongside R-242's new test:** `TransmissionDetailContentTest.kt` had no `@After`
+   closing its own `OrtDatabase` — one of the still-never-closed instances
+   `CorrectionPollingTest.closeDatabase`'s own doc comment already names as a contention source
+   across this Gradle test-worker JVM (confirmed directly: running this round's three test classes
+   together intermittently hit `SQLiteDatabaseLockedException` before this fix). Closed the same way.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards` (clean), `.\gradlew.bat -p
+buildSrc test` (clean), `python tools\spec-check\spec_check.py` (`spec-check: OK`), `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations, both clean —
+`results/coverage-matrix.md` regenerated), `.\gradlew.bat :app:assembleDebug` (clean). This
+package's own three test classes plus the new split file run clean together, repeated twice to
+confirm no flake; the full `:app:testDebugUnitTest` suite (1089 tests) is clean on the merged tree
+(a pre-merge run's two `ReadyScreenTest` failures were resolved by the fast-forward merge itself —
+confirmed unrelated: `git status` shows this package never touched `ui/setup/`).
+
+**Left open, named exactly:**
+- **R-181** (waveform amplitude) stays parked — needs WP4's real FLAC files (R-290); not touched.
+- **R-182** (highlight spans for a phonetically-spelled callsign) needs schema data this package
+  cannot add: `TranscriptSection`'s highlight is a literal `indexOf(stationId)` substring check,
+  which can never match a callsign spoken phonetically ("kilo seven lima whiskey hotel" never
+  contains the literal text "K7LWH"). The resolver field this needs, for `:data` to add: a per-slot
+  or per-candidate **character span/offset into the transcript text** (start/end index, or a list of
+  them) recording *where in the transcript* each phonetic unit that produced the matched callsign
+  was found — absent from both `CallsignCandidateEntity` (carries `score`/`priorBreakdown`/
+  `databaseHit`, no span) and `PhoneticLatticeEntity` (`unitsBlob` is opaque, no defined per-unit
+  shape at all, the same gap R-180's own lattice section already names). Without it, highlighting a
+  phonetic spelling is not representable honestly; not attempted here.
+- R-188's voice-match-distance and thread-context gaps: named in item 5 above, each with the
+  specific missing field/column.
+
 ### (pending) — ui-conformance WP6 · detail validator fixes: state derivation, why section and lattice route, tier A candidates, tier B station search, waveform, highlights, ambiguous evidence, copy
 
 **Scope:** `:app`, this package's own files — `ui/data/DetailViewState.kt`, `ui/data/CorrectionPolling.kt`,

@@ -16,6 +16,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.DrillInHeader
@@ -24,6 +25,7 @@ import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
+import org.ort.core.Attribution
 
 /**
  * R-055, `Detail-Revisions.dc.html`: version cards (current / superseded; pass, model, time, who),
@@ -54,6 +56,15 @@ public fun DetailRevisionsScreen(
         }
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             versions.forEach { version -> VersionCard(version, current, onRestore) }
+            // R-194: `Detail-Revisions.dc.html`'s own closing note, worded exactly.
+            Text(
+                text = "Restoring an earlier version makes it current and keeps this one as " +
+                    "superseded. Nothing here can be deleted from this screen — retention handles " +
+                    "audio, and never transcripts.",
+                style = OrtType.cardBody,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+            )
         }
     }
 }
@@ -99,6 +110,21 @@ private fun VersionCard(
                 color = OrtColors.textBody,
                 modifier = Modifier.padding(top = OrtSpacing.sm),
             )
+        }
+        // R-194: `Detail-Revisions.dc.html`'s own marker + callsign row on every card — the real
+        // *current* attribution (see `TranscriptVersionViewState`'s own doc comment for why every
+        // card shows the same one, not a fabricated per-version history).
+        version.stationId?.let { stationId ->
+            Row(modifier = Modifier.padding(top = OrtSpacing.sm)) {
+                AttributionRow(attribution = Attribution.unknown().withCorrection(stationId))
+                if (version.corrected) {
+                    Badge(
+                        text = "corrected",
+                        kind = BadgeKind.CORRECTED,
+                        modifier = Modifier.padding(start = OrtSpacing.sm),
+                    )
+                }
+            }
         }
         if (!version.isCurrent) {
             TextAction(

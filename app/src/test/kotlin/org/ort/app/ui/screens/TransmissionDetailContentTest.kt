@@ -4,6 +4,8 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -12,6 +14,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -24,6 +27,8 @@ import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CallsignCandidateEntity
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.TranscriptEntity
+import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
@@ -53,6 +58,18 @@ class TransmissionDetailContentTest {
     @Before
     fun openDatabase() {
         db = OrtDatabase.create(context)
+    }
+
+    /**
+     * The same fix `CorrectionPollingTest.closeDatabase`'s own doc comment describes in full: every
+     * file-backed-[OrtDatabase] test class that never closes its own `RoomDatabase` leaves a leaked
+     * writer behind for the rest of this Gradle test-worker JVM to contend against (`ort.db` is the
+     * same on-disk file for every test class, not one sandboxed per method). This class was one of
+     * the never-closed instances; closed here the same way.
+     */
+    @After
+    fun closeDatabase() {
+        db.close()
     }
 
     private fun session() = SessionEntity(
@@ -547,5 +564,130 @@ class TransmissionDetailContentTest {
             assert(item.state == WorkQueueState.READY) { "expected READY, item was still ${item.state}" }
             assert(db.transmissionDao().getById("TX1")!!.processingState == TransmissionState.PROCESSING)
         }
+    }
+
+    // ---- R-242, F04 `Fail-Hallucination.dc.html`, FR-ASR-5: the rejected detail state, end to end ----
+
+    /**
+     * The exact real fixture `overnight`'s own rejected row (`OvernightScenario.kt`'s `tx8`) writes —
+     * `processingState = REJECTED`, a real `"$rule: $detail"` reason, retained audio, no transcript —
+     * reproduced directly here so this test proves [TransmissionDetailContent]'s own read/render path
+     * against a real polled `processingState`, not a hand-picked shortcut shape.
+     */
+    @Test
+    fun `R_242_tapping_through_to_a_rejected_transmission_opens_the_rejected_detail_state_with_its_real_reason`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(
+                transmission("TX1", stationId = null).copy(
+                    processingState = TransmissionState.REJECTED,
+                    rejectionReason = "VAD_NO_SPEECH: squelch tail, 0.4 s",
+                ),
+            )
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("VAD_NO_SPEECH")
+
+        composeTestRule.onNodeWithTag("rejected-section").assertExists()
+        composeTestRule.onNodeWithText("VAD_NO_SPEECH: squelch tail, 0.4 s", substring = true).assertExists()
+        // The retained audio's own waveform still renders — nothing is deleted quietly (constitution III).
+        composeTestRule.onNodeWithTag("waveform-card").assertExists()
+    }
+
+    // ---- R-194, `Detail-Revisions.dc.html`: version-card copy and the closing note, end to end ----
+
+    /**
+     * The exact real fixture `revisions` (`Scenarios.kt`'s own scenario) shape: one transmission,
+     * two transcript versions, the older superseded — reproduced directly so this proves
+     * [DetailRevisionsScreen]'s own render against a real poll, not a hand-built [DetailViewState].
+     */
+    @Test
+    fun `R_194_the_revisions_screen_shows_every_version_cards_marker_callsign_and_the_boards_closing_note`() {
+        // A transmission/transcript id no other test in this class touches — this class's `TX1` is
+        // reused across many tests with no per-test `@After` clear, so a fresh id sidesteps any
+        // cross-test leakage of `:data`'s file-backed db within one Gradle test-worker JVM (the same
+        // sharp edge `CorrectionPollingTest`'s own `closeDatabase` doc comment names).
+        val txId = "TXREV1"
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission(txId, stationId = "W7NPC").copy(corrected = true))
+            db.transcriptDao().insert(
+                TranscriptEntity(
+                    id = "$txId-t1",
+                    transmissionId = txId,
+                    pass = TranscriptPass.A,
+                    text = "and we're clear on the repeater, seven th",
+                    modelId = "whisper-small",
+                    modelVersion = "1",
+                    quantization = null,
+                    decodeParams = null,
+                    noSpeechProb = null,
+                    confidence = null,
+                    isCurrent = false,
+                    createdAt = 10L,
+                ),
+            )
+            db.transcriptDao().insert(
+                TranscriptEntity(
+                    id = "$txId-t2",
+                    transmissionId = txId,
+                    pass = TranscriptPass.B,
+                    text = "and we're clear on the repeater, seven three",
+                    modelId = "whisper-small",
+                    modelVersion = "1",
+                    quantization = null,
+                    decodeParams = null,
+                    noSpeechProb = null,
+                    confidence = 0.9,
+                    isCurrent = true,
+                    createdAt = 20L,
+                ),
+            )
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = txId,
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("1 earlier version")
+
+        composeTestRule.onNodeWithText("1 earlier version").performScrollTo().performClick()
+        // `Detail-Revisions.dc.html`'s own closing note is static — present even before
+        // [org.ort.app.ui.data.CorrectionPolling.revisions]'s own async fetch (a second, real
+        // `:data` read off the composition clock, the same reason this whole file's class doc
+        // names [waitUntilTextExists] necessary) lands — so waiting on it alone would race the real
+        // version list. "2 versions" only appears once that fetch has actually populated the screen.
+        composeTestRule.waitUntilTextExists("2 versions")
+        composeTestRule.waitUntilTextExists("Nothing here can be deleted from this screen")
+
+        // Every version card carries the transmission's own real, current marker + callsign +
+        // corrected badge (`TranscriptVersionViewState`'s own doc comment: not a fabricated
+        // per-version history) and the board's own closing note, worded exactly.
+        composeTestRule.onAllNodesWithText("W7NPC", substring = true).onFirst().assertExists()
+        composeTestRule.onAllNodesWithText("corrected", substring = true, ignoreCase = true).onFirst().assertExists()
+        composeTestRule
+            .onNodeWithText(
+                "Restoring an earlier version makes it current and keeps this one as superseded. " +
+                    "Nothing here can be deleted from this screen — retention handles audio, and never transcripts.",
+            )
+            .assertExists()
     }
 }
