@@ -32,6 +32,112 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance lexicon · lint)
+
+### (pending) — ui-conformance lexicon · lint
+
+**Scope:** `lexicon/src/main/kotlin/org/ort/lexicon/import/LexiconImportValidator.kt`,
+`lexicon/src/test/kotlin/org/ort/lexicon/import/LexiconImportFixtures.kt`,
+`lexicon/src/test/kotlin/org/ort/lexicon/import/LexiconImportValidatorTest.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerLexiconTest.kt` — this package's own
+follow-up to `3897fac`. Additionally, one line in `app/src/test/kotlin/org/ort/app/ui/navigation/
+ReaderActivityDestinationSmokeTest.kt` (a `:app -> :lexicon` merge's own pre-existing >120-char
+line, blocking `:app:ktlintFormat`'s task-level success even though ktlint itself could not
+auto-correct it), and mechanical `:app:ktlintFormat` reformatting of five files this package does
+not otherwise own (`FrequencyChangeFixtures.kt`, `StationPolling.kt`, `FrequencyScreen.kt`,
+`StationPatternScreen.kt`, `ScenariosTest.kt` — an unused import, a trailing blank line, and
+function-call line wraps; no semantic change to any of them) — both a direct, unavoidable
+consequence of running the coordinator-directed `:app:ktlintFormat` at module scope, not a
+deliberate scope expansion.
+
+**Requirements/ACs:** none new — this is the same FR-LEX-30/FR-AST-2/F12/R-154 surface `3897fac`
+established; this commit is lint/quality only. Constitution VII (structural enforcement): detekt's
+`:app`/`:lexicon` exclusion-rule bug (fixed on `main` — see `ort.common.gradle.kts`'s own doc
+comment) previously made every worktree's `:app:detekt`/`:app:*ktlint*` report clean vacuously
+(`NO-SOURCE`); this commit is the first real detekt/ktlint pass over these files.
+
+**What changed:**
+- **`LexiconImportValidator.validate` split from one 136-line function (detekt `LongMethod`,
+  threshold 80) into orchestration plus five private per-check functions** — `readManifest`
+  (returns a new sealed `ManifestResult`, `Failed` | `Parsed`, replacing three nullable locals
+  threaded through the old function body), `checkChecksum`, `checkRecordShape`,
+  `checkGrammarSample`, `checkDuplicateKeys` — each independently readable, each named for the
+  `CHECK_*` constant it produces. `validate` itself is now ~20 lines of pure orchestration: call
+  `readManifest`, return early via a `when` branch on `ManifestResult.Failed`, otherwise run the
+  two data-integrity checks, short-circuit to the two `NOT_REACHED` checks if either failed
+  (unchanged behaviour — same test suite, unmodified, still green), otherwise run the two
+  content checks and assemble the final `Accepted`/`Rejected` result. No check's logic or its
+  emitted `LexiconCheck` text changed — this is a structural refactor, not a behaviour change.
+- **Three `MaxLineLength` (120) violations wrapped**: `LexiconImportValidator.kt`'s
+  `GRAMMAR_SAMPLE_SIZE` doc comment and the duplicate-keys detail string (also simplified to
+  destructure `duplicates.entries.first()` once instead of calling `.keys.first()`/
+  `.values.first()` separately), and `LexiconImportFixtures.kt`'s `FakeActiveLexiconStore` doc
+  comment reflowed to three lines.
+- **`:lexicon:ktlintFormat`/`:app:ktlintFormat` run**, which mechanically re-wrapped several
+  `LexiconCheck(...)` call sites in `LexiconImportValidator.kt` and reformatted
+  `ModelsViewData.kt`/`ModelsControllerLexiconTest.kt`/`LexiconImportValidatorTest.kt` to this
+  project's ktlint style (trailing commas, argument wrapping) — no logic changes in any of these
+  three files either.
+- **`ReaderActivityDestinationSmokeTest.kt`**: added a private top-level `typealias
+  ReaderComposeTestRule = AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>,
+  ReaderActivity>` and used it at the one extension-function declaration whose original
+  127-character receiver-type signature ktlint could not auto-wrap (generic receiver types are not
+  something ktlint's formatter breaks across lines) — the file's only other use of the same
+  generic (line 335, a lambda parameter type) was left alone, since it was not the line ktlint
+  flagged and editing it was not needed to unblock the task.
+
+**Left open / not done — reported, not fixed (outside this package's file ownership):**
+- **`:app:detekt` fails independently of anything in this package**, on
+  `app/src/main/kotlin/org/ort/app/ui/screens/StationScreen.kt:60` (`LongParameterList` — 10
+  params, threshold 9) and `StationPatternScreen.kt:157`/`173` (`ForEachOnRange` ×2) — both from
+  the same `ui-conformance WP8: stations validator fixes` merge that brought in the detekt
+  exclusion-bug fix. `:app:detekt`'s own report (`app/build/reports/detekt/detekt.md`) confirms
+  real analysis (263 kt files, 2,047 functions) with these as the only 3 findings — none in any
+  file this package owns.
+- **`:pipeline:detekt` also fails independently**, on `pipeline/src/main/kotlin/org/ort/pipeline/
+  reprocess/ReprocessRunner.kt` (`LongParameterList`, one `MaxLineLength`) and
+  `ReprocessRunnerTest.kt`/`ReprocessStatusTest.kt` (six more `MaxLineLength` lines) — a
+  `reprocess` package `:pipeline` gained in the same merge, entirely outside `:lexicon`/`:app`.
+  This is what made `.\gradlew.bat build dependencyRules platformGuards` fail as a single
+  top-level command; the gate below is reported per-task instead, so this package's own scope is
+  verified clean without either unrelated package's debt masking or being conflated with it.
+- Both gaps are new, real detekt findings (not vacuous) surfaced by the same exclusion-bug fix
+  that surfaced this package's own four issues — pre-existing debt in code this package did not
+  write, reported here rather than fixed, per file-ownership discipline (another builder's
+  in-progress work).
+
+**Verified:**
+- `.\gradlew.bat :lexicon:ktlintFormat :app:ktlintFormat` — `BUILD SUCCESSFUL` (after the
+  `ReaderActivityDestinationSmokeTest.kt` fix above; the first attempt failed on that
+  pre-existing, unrelated line, confirming ktlintFormat could not silently skip it).
+- `.\gradlew.bat :lexicon:detekt` — `BUILD SUCCESSFUL`; `lexicon/build/reports/detekt/detekt.md`:
+  **42 kt files**, 175 functions, 117 classes analysed, **0 code smells** (was 4: 1 `LongMethod` +
+  3 `MaxLineLength`) — confirms real, non-vacuous analysis per the coordinator's ask.
+  `:app:detekt` — fails, but only on the two unrelated files above (`app/build/reports/detekt/
+  detekt.md`: **263 kt files**, 2,047 functions analysed, 3 findings, none in this package's
+  files) — real analysis, not vacuous, of files this package does not own.
+  `:app:ktlintCheck`/`:lexicon:ktlintCheck` (run via `:lexicon:build`, see below) — clean.
+- `.\gradlew.bat :lexicon:build :app:testDebugUnitTest --tests "org.ort.lexicon.import.*" --tests "org.ort.app.debug.*" --tests "org.ort.app.ui.data.ModelsController*"`
+  — `BUILD SUCCESSFUL in 1m 16s`; `:lexicon:build` (compile + detekt + ktlintCheck + test) green;
+  every targeted `:app` test still `PASSED` after the `validate()` refactor — 10/10 in
+  `LexiconImportValidatorTest`, 4/4 in `LexiconCorruptScenarioTest`, 4/4 in
+  `ModelsControllerLexiconTest`, all pre-existing `ScenariosTest`/`ModelsControllerTest` cases
+  unchanged and green (`ScenariosTest` also picked up new unrelated cases from the same merge,
+  e.g. `R_230`/`R_231` recovery-announcer tests — not this package's, left as found, all passing).
+- `.\gradlew.bat dependencyRules platformGuards` (standalone, not through `build`) —
+  `BUILD SUCCESSFUL`: `dependencyRules: OK` (17 modules checked, `:app -> :core, :data, :lexicon,
+  :net, :pipeline` confirmed), `platformGuards: OK`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` — `185 covered of 419` (up from 184).
+- `.\gradlew.bat coverageMatrixCheck` — up to date (185/419), `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat build dependencyRules platformGuards` (single top-level command, as originally
+  specified) — **FAILS**, at `:pipeline:detekt` (see "Left open" above) before even reaching
+  `:app:detekt`'s own unrelated failure; not a regression from any file in this commit, per the
+  per-task verification above.
+
+
 ## 2026-09-08 (ui-conformance WP11d)
 
 ### (pending) — ui-conformance WP11d · reprocessing engine: re-run passes at the current tier, pausable, capture-safe

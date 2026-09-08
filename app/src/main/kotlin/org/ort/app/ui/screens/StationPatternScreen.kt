@@ -123,8 +123,13 @@ private fun modeLabel(mode: PatternMode): String = when (mode) {
 }
 
 private val DAY_ORDER: List<DayOfWeek> = listOf(
-    DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY,
+    DayOfWeek.MONDAY,
+    DayOfWeek.TUESDAY,
+    DayOfWeek.WEDNESDAY,
+    DayOfWeek.THURSDAY,
+    DayOfWeek.FRIDAY,
+    DayOfWeek.SATURDAY,
+    DayOfWeek.SUNDAY,
 )
 private val HOUR_CELL = 11.dp
 private val HOUR_GAP = 2.dp
@@ -145,14 +150,20 @@ private fun StationHourByDayGrid(cells: List<HourByDayActivityCell>, modifier: M
         "$notListening not listening"
 
     Column(modifier = modifier.semantics(mergeDescendants = true) { contentDescription = summary }) {
-        Row(modifier = Modifier.padding(start = DAY_LABEL_WIDTH), horizontalArrangement = Arrangement.spacedBy(HOUR_GAP)) {
+        Row(
+            modifier = Modifier.padding(start = DAY_LABEL_WIDTH),
+            horizontalArrangement = Arrangement.spacedBy(HOUR_GAP),
+        ) {
             (0 until 24).forEach { hour ->
                 HourLabelCell(hour, modifier = Modifier.width(HOUR_CELL))
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(HOUR_GAP), modifier = Modifier.padding(top = 2.dp)) {
             DAY_ORDER.forEach { day ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(HOUR_GAP)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(HOUR_GAP),
+                ) {
                     Text(
                         text = dayAbbreviation(day),
                         style = OrtType.axis,
@@ -212,8 +223,13 @@ private fun StationHourByDayLegend(modifier: Modifier = Modifier) {
             Canvas(modifier = Modifier.size(10.dp)) {
                 drawRoundRect(color = OrtColors.chartNeutralRamp.last(), cornerRadius = CornerRadius(1.5.dp.toPx()))
                 drawHatchRegion(
-                    left = 0f, top = 0f, width = size.width, height = size.height,
-                    color = OrtColors.hatchBar, pitchPx = 3.dp.toPx(), strokeWidthPx = 1.dp.toPx(),
+                    left = 0f,
+                    top = 0f,
+                    width = size.width,
+                    height = size.height,
+                    color = OrtColors.hatchBar,
+                    pitchPx = 3.dp.toPx(),
+                    strokeWidthPx = 1.dp.toPx(),
                 )
             }
             Text(text = "not listening", style = OrtType.subLine, color = OrtColors.accentAmber)
@@ -223,7 +239,11 @@ private fun StationHourByDayLegend(modifier: Modifier = Modifier) {
 
 @Composable
 private fun LegendDot(color: Color, label: String, modifier: Modifier = Modifier) {
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
         Canvas(modifier = Modifier.size(10.dp)) {
             drawRoundRect(color = color, cornerRadius = CornerRadius(1.5.dp.toPx()))
         }

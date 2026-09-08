@@ -114,7 +114,12 @@ class LexiconImportValidatorTest {
 
         assertTrue(result is LexiconImportResult.Rejected)
         result as LexiconImportResult.Rejected
-        assertEquals(CheckStatus.FAILED, result.checks.first { it.name == LexiconImportValidator.CHECK_MANIFEST }.status)
+        assertEquals(
+            CheckStatus.FAILED,
+            result.checks.first {
+                it.name == LexiconImportValidator.CHECK_MANIFEST
+            }.status,
+        )
     }
 
     @Test
