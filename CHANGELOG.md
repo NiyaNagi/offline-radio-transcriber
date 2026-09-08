@@ -1463,6 +1463,96 @@ legend wording).
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round eight: accessibility pass — gap token wrapping, rig copy, tier label)
+
+### (pending) — ui-conformance WP4 · accessibility pass: gap token wrapping, rig copy, tier label
+
+**Scope:** this package's own row (`:app`) — eighth addendum to the WP4 entries below, after merging
+`main` (`git merge --ff-only main`, fast-forwarded cleanly onto `894ac29`, "ui-conformance · V7
+Accessibility at b94bb5e: R-226 closed; R-260..R-267 filed"; confirmed `HEAD` was an ancestor first;
+no rebase, no stash). One out-of-row emergency fix, documented separately below.
+
+**Requirements/ACs:** R-260, R-263, R-266 (register findings — `results/ui-audit/register.md`);
+guide §9 (no spec ids in operator copy), guide §11.3/R-244 (a token must wrap as a whole, never
+collapse into single characters); constitution I.
+
+**What changed:**
+
+- **Constitution Check.** Principle I: R-266's fix makes Now's digest item state the same real fact
+  Improve's own screen already states (the session's real, lowest qualifying tier ordinal) in the
+  same words — it does not invent a new fact, it stops two screens disagreeing about how to say the
+  one they both already have. R-263 replaces a spec id with the same real fact in plain language
+  (the rig module genuinely is unbuilt — register R-084 — this changes only how an operator reads
+  that, not what is claimed). R-260 is a pure layout fix — no fact changes, only how the same
+  `EarlierNightRow.gapsLabel` string is allowed to wrap.
+- **R-260 — `NowScreen.kt`'s `EarlierNightRowContent`.** The inner `Row` holding `subLine` and the
+  trailing gap-count text is now a `FlowRow` (`EarlierNightMetaLine`, new), the same fix
+  [org.ort.app.ui.components.LogRowMarkerLine] (R-244) already established for a badge that could
+  not fit next to a callsign at font scale 2.0: a plain `Row` cannot wrap at all, so the gap token
+  was squeezed into whatever sliver of width was left after `subLine`, collapsing into one character
+  per line (`overnight/N01-now@2x.png`). `FlowRow` lets the gap token drop to its own line as one
+  unit when it does not fit; `softWrap = false` on that token is belt-and-braces so it would clip as
+  a whole word rather than stack into characters even if a future layout change ever handed it a
+  narrower slot than intended.
+- **R-263 — `CaptureStatusViewState.kt`'s `radioFacts`.** `RigStatus.State.Absent`'s sub-line is now
+  "no radio support in this build yet", not "FR-RIG is not built yet" — guide §9: operator copy
+  never carries a spec id. Grepped every file this package owns (`ui/screens/{Now,CaptureStatus,
+  LevelMeter}*.kt`, `ui/data/{NowViewState,CaptureStatusViewState,ReaderPolling,LiveBarPolling}.kt`,
+  `status/StatusViewState.kt`, `debug/{Scenarios,OvernightScenario}.kt`) for any other `FR-`/`AC-`/
+  `R-\d\d\d` token inside a string literal — none found; this was the only leak in this package's row.
+- **R-266 — `ReaderPolling.kt`'s `canGetBetterRow`.** The "Can get better" sub-line now reads
+  "captured at tier 1 · open Improve to reprocess", not "captured at T1 tier" — the raw
+  `Tier.T1.name` enum token. Matches `ImprovePolling.root`'s own `"Captured at tier ${tier.ordinal}"`
+  exactly (that headline is built inline there, not behind a separate public formatter — nothing to
+  share, so this package's own fix reproduces the identical `"tier ${ordinal}"` shape rather than
+  reaching into WP10's file for one). Now's digest item and Improve's own screen can no longer
+  disagree about how a tier reads.
+- **Emergency, out-of-row fix: `ReaderActivityDestinationSmokeTest.kt` (WP3's file) did not compile
+  on `main` after this round's merge** — `runReaderActivity`'s `body` parameter was typed
+  `(rule: ReaderComposeRule) -> Unit`, but the file's own `private typealias` (added by an earlier
+  WP3 lint round) declares `ReaderComposeTestRule` (with "Test"), one word different. Every usage of
+  `rule` inside every `@Test` in the file failed to resolve as a result, so `:app:compileDebugUnitTestKotlin`
+  failed outright — not a lint issue, a genuine compile break blocking every test in `:app`, this
+  package's own new tests included. Fixed with the minimal, unambiguous one-line correction (the
+  parameter's declared type, to match the already-correct typealias name used everywhere else in the
+  file) rather than left broken — a rename to match an existing declared symbol is about as
+  low-risk as an out-of-row edit gets, and leaving it would have made "full gate" impossible to run
+  at all, not just impossible to green. Flagged here and in this report for WP3 to review; no other
+  line in that file was touched.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded cleanly onto `894ac29`, confirmed `HEAD` was an
+  ancestor first; no rebase, no stash.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.NowScreenTest" --tests
+  "org.ort.app.ui.data.CaptureStatusMapperTest" --tests "org.ort.app.ui.data.ReaderPollingTest"
+  --rerun` — confirmed the compile break above by running before the one-line fix (failed to
+  compile) and after (all green) — isolates the fix from everything else in the same run.
+- `.\gradlew.bat build dependencyRules platformGuards` — **compiles and every test passes**;
+  `:app:ktlintMainSourceSetCheck` still fails on one pre-existing finding, **not in a file this
+  package touched or owns**: `LogViewData.kt:690` (`standard:function-signature`, WP5's file, `git
+  log` confirms its last touch was WP5's own "pass-2 Log fixes" commit — no diff against it in this
+  worktree). `:app:ktlintTestSourceSetCheck` and `:app:detekt` both **BUILD SUCCESSFUL** (re-run
+  explicitly to confirm, not just inferred from `UP-TO-DATE`).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 185 covered** (unchanged — R-260/R-263/R-266 are register ids,
+  already counted from last round's own `@Requirement` annotations on the rows they close);
+  `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **1010 of 1010 passing**, zero
+  failures (up from round seven's 975 — `main`'s other WPs' work, not this round's own). New tests,
+  by name: `R_260 the earlier-nights gap token wraps as a whole word, never one character per line,
+  at fontscale-2_0` (`NowScreenTest`); `R_263 the no-rig sub-line reads in operator language, never
+  a bare spec id` (`CaptureStatusMapperTest`); `R_266 Can get better reads the shared tier label,
+  never the raw T1 enum token` (`ReaderPollingTest`).
+
+**Left open / not done:**
+- **`:app:ktlintMainSourceSetCheck`'s one remaining finding (`LogViewData.kt:690`) is real and
+  unfixed** — reported above and here so WP5 can take its own row; not this package's file.
+- **The `ReaderComposeRule`/`ReaderComposeTestRule` typo fix is a one-line unblock, not a review of
+  the rest of that file** — `ui/navigation/**` remains WP3's row; flagged for their own attention.
+
 ## 2026-09-08 (ui-conformance WP4, round seven: lint)
 
 ### (pending) — ui-conformance WP4 · lint

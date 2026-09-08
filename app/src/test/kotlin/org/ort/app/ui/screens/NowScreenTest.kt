@@ -1,10 +1,19 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,6 +24,7 @@ import org.ort.app.ui.data.NowStationRow
 import org.ort.app.ui.data.NowStationsSection
 import org.ort.app.ui.data.NowViewState
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.app.ui.theme.OrtType
 import org.ort.core.AttributionState
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -119,6 +129,53 @@ class NowScreenTest {
     }
 
     @Test
+    @Requirement("R-260")
+    fun `R_260 the earlier-nights gap token wraps as a whole word, never one character per line, at fontscale-2_0`() {
+        // R-260 (`overnight/N01-now@2x.png`): before the fix, a plain (non-wrapping) Row gave the
+        // trailing " · 1 gap" whatever sliver of width was left on the line after the subLine text,
+        // collapsing it into a ~16px column that wrapped one character per line. This test proves
+        // the fix at a real device's content width (~350dp, `Now`'s own `OrtSpacing.lg` padding on a
+        // 390dp screen) and a real font scale (2.0) — not the exact rendering (Robolectric can't
+        // measure real font metrics reliably), but the one host-independent, geometry-based signal
+        // that distinguishes "wrapped as a whole token" from "collapsed into single characters": a
+        // token stacked seven characters high measures dramatically taller than the same token
+        // rendered with room to spare on one line, not merely "a bit taller" from ordinary wrapping.
+        val idle = NowViewState.Idle(
+            lastSessionSummaryLabel = null,
+            inputLabel = null,
+            rigLabel = null,
+            tierLabel = null,
+            earlierNights = listOf(
+                EarlierNightRow("S1", "Overnight, Tue 8 Sep", "11:04 – 17:46 · 42 overs · 9 stations", "1 gap"),
+            ),
+            canGetBetter = null,
+        )
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(350.dp)) {
+                        NowScreen(state = idle)
+                    }
+                    // The same token, unconstrained, as a reference for "rendered on one line".
+                    Text(
+                        text = " · 1 gap",
+                        style = OrtType.subLine,
+                        softWrap = false,
+                        modifier = Modifier.testTag("gap-reference"),
+                    )
+                }
+            }
+        }
+
+        val realHeight = composeTestRule.onNodeWithTag("now-earlier-night-gap").fetchSemanticsNode().size.height
+        val referenceHeight = composeTestRule.onNodeWithTag("gap-reference").fetchSemanticsNode().size.height
+        assert(realHeight <= referenceHeight * 2) {
+            "expected the gap token to render at roughly one line's height (reference " +
+                "${referenceHeight}px); got ${realHeight}px, consistent with wrapping one character per line"
+        }
+    }
+
+    @Test
     @Requirement("R-036")
     fun `R_036 Can get better appears only when a session qualifies`() {
         val idle = NowViewState.Idle(
@@ -129,7 +186,7 @@ class NowScreenTest {
             earlierNights = emptyList(),
             canGetBetter = CanGetBetterRow(
                 headline = "64 overs were processed below this phone's capability",
-                subLine = "captured at T1 tier · open Improve to reprocess",
+                subLine = "captured at tier 1 · open Improve to reprocess",
             ),
         )
         composeTestRule.setContent { OrtTheme { NowScreen(state = idle) } }
