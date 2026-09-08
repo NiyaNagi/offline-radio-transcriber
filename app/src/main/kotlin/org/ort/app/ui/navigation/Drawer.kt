@@ -76,6 +76,7 @@ public fun ReaderDrawerContent(
             Column(
                 modifier = Modifier
                     .weight(1f)
+                    .testTag("drawer-rows")
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = OrtSpacing.md, vertical = OrtSpacing.md),
             ) {

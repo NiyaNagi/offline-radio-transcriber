@@ -9,6 +9,8 @@ import androidx.activity.enableEdgeToEdge
 import org.ort.app.ui.failures.FailureHost
 import org.ort.app.ui.failures.FailureHostActions
 import org.ort.app.ui.navigation.OrtNavHost
+import org.ort.app.ui.navigation.ReaderDestination
+import org.ort.app.ui.navigation.rememberReaderNavigator
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.CaptureState
@@ -23,6 +25,13 @@ import org.ort.pipeline.capture.CaptureState
  * [EXTRA_SESSION_ID] mirrors [org.ort.app.status.StatusActivity] and
  * [org.ort.app.transmissions.TransmissionListActivity]'s own extra, so this activity can be
  * launched the same way they are for the v0 smoke-test path (`ui/data/ReaderPolling.kt`).
+ *
+ * [EXTRA_DESTINATION] (ui-conformance-plan WP3, round 3): the name of a [ReaderDestination] to
+ * open on launch, read once in [onCreate] and handed to [org.ort.app.ui.navigation.ReaderNavigator]
+ * as its starting destination — Setup's S12 `Install` action and the persistent capture
+ * notification's `Open` action both pass it (WP9's and `:pipeline`'s own files respectively; this
+ * activity only consumes the extra, per this package's row). An unset or unrecognised extra value
+ * falls back to [ReaderDestination.NOW], exactly as no extra at all does.
  *
  * audit F-022: [CaptureState.sessionId] -- published by `RealCaptureService.startCapture()` the
  * moment capture actually starts -- is preferred over the intent extra whenever the two differ and
@@ -40,15 +49,27 @@ import org.ort.pipeline.capture.CaptureState
  * regardless of the OS's night-mode state — see that constant's own doc comment.
  *
  * ui-conformance-plan WP11b, register R-100/R-101: [org.ort.app.ui.failures.FailureHost] mounts
- * here, above [OrtNavHost] — the one edit this package makes to this file (its own row names
- * nothing else in this class). Two of its recovery actions reach a real platform surface directly
- * ([onOpenBatteryExemptionSettings]/[onOpenStorageSettings] launch OS Settings screens that need
- * no manifest permission); the rest — choosing another input, retrying, reconnecting the rig,
- * setting a frequency by hand, requesting USB permission — have no destination or entry point
- * this package can reach without editing a file another package owns (`OrtNavHost.kt` is WP3's;
- * `:capture-android` exposes no USB-permission call yet, FR-RIG unbuilt). Those stay documented
- * no-op stubs at [FailureHost]'s own default — see this package's report for exactly what each
- * needs and from whom.
+ * here, above [OrtNavHost] — the one edit WP11b made to this file. Round 3 (WP3, this package)
+ * wires the remaining recovery actions through a [org.ort.app.ui.navigation.ReaderNavigator],
+ * shared with [OrtNavHost] below so both act on the same drawer state:
+ * - `onOpenBatteryExemptionSettings` still launches the OS's own battery-exemption settings screen
+ *   directly (WP11b's own wiring, unchanged — it names a real platform surface this package has no
+ *   in-app equivalent for).
+ * - `onOpenStorageSettings`/`onOpenRetentionSettings` ("Free up space"/"Retention") now open this
+ *   app's own `Settings` destination via [org.ort.app.ui.navigation.ReaderNavigator.openSettingsStorage]
+ *   instead of the OS storage settings screen, now that WP10's real Storage sub-screen exists —
+ *   landing on `Settings`' *root*, not the `Storage` sub-screen directly, since `SettingsContent`
+ *   exposes no way to open at a specific sub-screen (see that function's own report/CHANGENOTE).
+ * - `onSetFrequencyByHand` opens `Settings` the same way, for the same reason (the Rig sub-screen
+ *   is where a hand-entered frequency would live, and is equally unreachable directly).
+ * - `onChooseAnotherInput` calls [org.ort.app.ui.navigation.ReaderNavigator.openSetupInput] —
+ *   see that function's own doc comment for why it cannot reliably reach Setup's `Input` step.
+ * - `onRetryInput`/`onReconnectRig` stay documented no-op stubs: "retry the current input" and
+ *   "reconnect the rig" are capture/rig actions, not navigation — this package's row is everything
+ *   under `ui/navigation`, and neither `:capture-android` nor `:pipeline` (F9's rig module,
+ *   unbuilt — register R-084) exposes a callable retry/reconnect entry point today.
+ *   `onEndSession`/`onRequestUsbPermission` are untouched this round (not named in this round's
+ *   brief).
  */
 public class ReaderActivity : ComponentActivity() {
 
@@ -60,23 +81,23 @@ public class ReaderActivity : ComponentActivity() {
             liveSessionId = CaptureState.sessionId,
             isCapturing = CaptureState.isCapturing,
         )
+        val initialDestination = resolveInitialDestination(intent?.getStringExtra(EXTRA_DESTINATION))
         setContent {
             OrtTheme {
+                val navigator = rememberReaderNavigator(initialDestination = initialDestination)
                 FailureHost(
                     sessionId = sessionId,
                     actions = FailureHostActions(
+                        onChooseAnotherInput = { navigator.openSetupInput() },
                         onOpenBatteryExemptionSettings = {
                             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                         },
-                        onOpenStorageSettings = {
-                            startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS))
-                        },
-                        onOpenRetentionSettings = {
-                            startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS))
-                        },
+                        onOpenStorageSettings = { navigator.openSettingsStorage() },
+                        onOpenRetentionSettings = { navigator.openSettingsStorage() },
+                        onSetFrequencyByHand = { navigator.open(ReaderDestination.SETTINGS) },
                     ),
                 ) {
-                    OrtNavHost(sessionId = sessionId)
+                    OrtNavHost(sessionId = sessionId, navigator = navigator)
                 }
             }
         }
@@ -84,8 +105,17 @@ public class ReaderActivity : ComponentActivity() {
 
     public companion object {
         public const val EXTRA_SESSION_ID: String = "session_id"
+        public const val EXTRA_DESTINATION: String = "destination"
     }
 }
+
+/**
+ * [ReaderActivity.EXTRA_DESTINATION]'s parse: an unset or unrecognised value falls back to
+ * [ReaderDestination.NOW] rather than crashing on a name a future enum entry, an old notification
+ * pending-intent, or a typo produced.
+ */
+internal fun resolveInitialDestination(extra: String?): ReaderDestination =
+    ReaderDestination.entries.firstOrNull { it.name == extra } ?: ReaderDestination.NOW
 
 /**
  * R-007's routing decision, pulled out as a pure function (no `Activity`, no `Context`) so it is

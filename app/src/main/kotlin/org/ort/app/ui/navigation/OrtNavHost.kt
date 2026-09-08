@@ -131,11 +131,13 @@ private val SearchFilterInputSaver: Saver<SearchFilterInput, String> = Saver(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-public fun OrtNavHost(sessionId: String?) {
+public fun OrtNavHost(sessionId: String?, navigator: ReaderNavigator = rememberReaderNavigator()) {
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var current by rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
+    // Hoisted into `navigator` (round 3) so `ReaderActivity`'s `FailureHostActions`, mounted above
+    // this composable, can also switch destinations — see `ReaderNavigator.kt`'s own doc comment.
+    var current by navigator.currentState
     // R-017: the destination a drill-in was opened from, so back returns there — set only when a
     // drill-in opens, read only while one is showing (`current` itself never changes meanwhile, see
     // `onOpenDrillIn` below, but this makes the origin an explicit, testable fact rather than an
@@ -182,6 +184,7 @@ public fun OrtNavHost(sessionId: String?) {
                 storage = drawerLive.storage,
                 badges = drawerLive.badges,
                 counts = drawerLive.counts,
+                improveRecordsCount = drawerLive.improveRecordsCount,
                 onSelect = { destination ->
                     current = destination
                     closeDrillIns()
@@ -206,6 +209,13 @@ public fun OrtNavHost(sessionId: String?) {
                     onOpenStation = { id -> onOpenDrillIn { openStationId = id } },
                     onOpenFrequency = { hz -> onOpenDrillIn { openFrequencyHz = hz } },
                     onOpenThread = { id -> onOpenDrillIn { openThreadId = id } },
+                    onOpenStations = { current = ReaderDestination.STATIONS },
+                    // R-090's `Assets` sub-screen has no external "land here" entry (WP10's
+                    // `SettingsContent` own its `screen` state entirely internally — confirmed by
+                    // reading that file before wiring this) — this opens the `Settings` root, same
+                    // limitation as `ReaderNavigator.openSettingsStorage`; reported, not silently
+                    // pretended to be the real Assets screen.
+                    onOpenModels = { current = ReaderDestination.SETTINGS },
                 ),
                 sessionId = sessionId,
                 context = context,
@@ -248,6 +258,8 @@ private data class NavHostCallbacks(
     val onOpenStation: (String) -> Unit,
     val onOpenFrequency: (Long) -> Unit,
     val onOpenThread: (String) -> Unit,
+    val onOpenStations: () -> Unit,
+    val onOpenModels: () -> Unit,
 )
 
 /**
@@ -298,11 +310,9 @@ private fun NavHostBody(
         // `FrequencyDetailScreen`, `ThreadDetailScreen`) already draws its own `DrillInHeader`
         // internally (confirmed by reading all four before writing this) — rendering a second one
         // here would stack two, the same double-render this package's WP4 live-bar reconciliation
-        // already found and fixed once. See this package's report/CHANGELOG for the R-017
-        // consequence: every one of those headers hardcodes its own parent label ("Log"/
-        // "Stations"/"Frequencies"/"Threads") rather than accepting this host's real
-        // `ids.openedFrom.label`, so the header text is not always the true origin even though
-        // `onBack` still returns there correctly.
+        // already found and fixed once. Round 3: all four now accept a real `backLabel` — this host
+        // passes `ids.openedFrom.label`, so the header names the true origin (R-017), e.g. "Back to
+        // Search" for a transmission opened from a search result.
 
         Box(modifier = Modifier.weight(1f)) {
             when {
@@ -312,6 +322,7 @@ private fun NavHostBody(
                     player = audioPlayer,
                     onBack = callbacks.onCloseDrillIns,
                     onOpenTransmission = callbacks.onOpenTransmission,
+                    backLabel = ids.openedFrom.label,
                 )
 
                 ids.stationId != null -> StationDetailContent(
@@ -319,6 +330,7 @@ private fun NavHostBody(
                     stationId = ids.stationId,
                     onBack = callbacks.onCloseDrillIns,
                     onOpenTransmission = callbacks.onOpenTransmission,
+                    backLabel = ids.openedFrom.label,
                 )
 
                 ids.frequencyHz != null -> FrequencyDetailContent(
@@ -326,6 +338,7 @@ private fun NavHostBody(
                     frequencyHz = ids.frequencyHz,
                     onBack = callbacks.onCloseDrillIns,
                     onOpenStation = callbacks.onOpenStation,
+                    backLabel = ids.openedFrom.label,
                 )
 
                 ids.threadId != null -> ThreadDetailContent(
@@ -334,6 +347,7 @@ private fun NavHostBody(
                     threadId = ids.threadId,
                     onBack = callbacks.onCloseDrillIns,
                     onOpenOver = callbacks.onOpenTransmission,
+                    backLabel = ids.openedFrom.label,
                 )
 
                 else -> DestinationContent(
@@ -369,6 +383,7 @@ private data class DrawerLiveState(
     val counts: DrawerCountsViewState,
     val sessionHeader: DrawerSessionHeaderViewState,
     val liveBar: LiveBarViewState?,
+    val improveRecordsCount: Int?,
 )
 
 /**
@@ -388,11 +403,14 @@ private fun rememberDrawerLiveState(sessionId: String?, context: android.content
         mutableStateOf(DrawerSessionHeaderViewState.from(sessionLabel = null, rigState = RigStatus.state))
     }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
+    var improveRecordsCount by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(sessionId) {
         while (true) {
             storage = StorageFooterViewState.fromAudioDirectory(context)
             badges = ReaderPolling.drawerBadges(context, sessionId)
             counts = DrawerCounts.current(context)
+            // R-091/guide §6.4's count-pill, now that WP10's real read path is on this branch.
+            improveRecordsCount = org.ort.app.ui.improve.ImproveCounts.canGetBetterCount(context)
             // No prompt has ever given `SessionEntity` a label field (see
             // `DrawerSessionHeaderViewState`'s own doc comment) — `sessionLabel` stays `null`
             // until one exists, rather than this fabricating one.
@@ -409,7 +427,7 @@ private fun rememberDrawerLiveState(sessionId: String?, context: android.content
             delay(POLL_INTERVAL_MILLIS)
         }
     }
-    return DrawerLiveState(storage, badges, counts, sessionHeader, liveBar)
+    return DrawerLiveState(storage, badges, counts, sessionHeader, liveBar, improveRecordsCount)
 }
 
 /**
@@ -433,21 +451,32 @@ private fun DestinationContent(
     val onOpenTransmission = callbacks.onOpenTransmission
     val onOpenStation = callbacks.onOpenStation
     val onOpenFrequency = callbacks.onOpenFrequency
+    val onOpenThread = callbacks.onOpenThread
     val onOpenDrawer = callbacks.onOpenDrawer
     when (current) {
         // Both dispatch to WP4/WP7's own real content composables now that they are on this
         // branch (confirmed by reading `ui/screens/NowContent.kt`/`ui/screens/SearchContent.kt`
-        // before writing this) — this package's own inline copies are gone.
+        // before writing this) — this package's own inline copies are gone. Round 3: `NowContent`
+        // gained `onOpenStations`/`onOpenModels` — see `NavHostCallbacks`'s own construction site.
         ReaderDestination.NOW -> NowContent(
             context = context,
             sessionId = sessionId,
             onOpenTransmission = onOpenTransmission,
             onOpenStation = onOpenStation,
             modifier = content,
+            onOpenStations = callbacks.onOpenStations,
+            onOpenModels = callbacks.onOpenModels,
         )
 
-        ReaderDestination.LOG ->
-            LogContent(context = context, sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
+        // Round 3: `LogContent` gained a real `onOpenThread` — a QSO group header now opens the
+        // real thread-detail drill-in (`Rows.dc.html`: "Tapping opens the thread").
+        ReaderDestination.LOG -> LogContent(
+            context = context,
+            sessionId = sessionId,
+            onOpen = onOpenTransmission,
+            modifier = content,
+            onOpenThread = onOpenThread,
+        )
 
         ReaderDestination.SEARCH -> SearchContent(
             input = search.input,
@@ -458,8 +487,15 @@ private fun DestinationContent(
             modifier = content,
         )
 
-        ReaderDestination.THREADS ->
-            ThreadContent(context = context, sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
+        // Round 3: `ThreadContent` gained a real `onOpenThread` too — a thread card now opens the
+        // same drill-in.
+        ReaderDestination.THREADS -> ThreadContent(
+            context = context,
+            sessionId = sessionId,
+            onOpen = onOpenTransmission,
+            modifier = content,
+            onOpenThread = onOpenThread,
+        )
 
         ReaderDestination.STATIONS ->
             StationsContent(context = context, onOpen = onOpenStation, modifier = content)
@@ -489,9 +525,9 @@ private fun DestinationContent(
  * R-017: a poll-and-render wrapper for WP5's [ThreadDetailScreen] — that screen is a pure function
  * of [ThreadDetailViewState] with no poller of its own (its own doc comment: "ready for whichever
  * package wires that route"), so this package supplies the same shape every other drill-in's
- * `*Content` composable has, feeding it from [ThreadPolling.threadDetail]. Currently unreachable
- * from any user action — see this package's report/CHANGELOG for why (neither `LogContent` nor
- * `ThreadContent` exposes a callback into it), kept here ready for the moment one does.
+ * `*Content` composable has, feeding it from [ThreadPolling.threadDetail]. Round 3: now reachable
+ * from `LogContent`'s group headers and `ThreadContent`'s own thread cards (both gained a real
+ * `onOpenThread` this round — see [DestinationContent]).
  */
 @Composable
 private fun ThreadDetailContent(
@@ -500,6 +536,7 @@ private fun ThreadDetailContent(
     threadId: String,
     onBack: () -> Unit,
     onOpenOver: (String) -> Unit,
+    backLabel: String,
     modifier: Modifier = Modifier,
 ) {
     var detail by remember(threadId, sessionId) { mutableStateOf<ThreadDetailViewState?>(null) }
@@ -517,6 +554,7 @@ private fun ThreadDetailContent(
             onOpenOver = onOpenOver,
             onOpenSourceOver = onOpenOver,
             modifier = modifier,
+            backLabel = backLabel,
         )
     } else {
         Text(
