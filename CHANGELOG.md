@@ -134,6 +134,212 @@ addition in both the code comment and this entry, not presented as board-verbati
 
 ---
 
+## 2026-09-08 (ui-conformance WP11e: diagnostics bundle producer)
+
+### (pending) — ui-conformance WP11e · real DiagnosticsBundleBuilder for Settings-Diagnostics (R-137, FR-OBS-1/3)
+
+**Scope:** new package `app/src/main/kotlin/org/ort/app/diagnostics/**` and its tests under
+`app/src/test/kotlin/org/ort/app/diagnostics/**`; `CHANGELOG.md`; `results/coverage-matrix.md`
+(regenerated). No other file touched — `ui/settings/**` (WP10's `SettingsDiagnosticsScreen`/
+`SettingsPolling.kt`, still built against a fake) is left for WP10 to wire to this producer.
+
+**Requirements/ACs:** FR-OBS-1 (diagnostics log coverage), FR-OBS-3 (bundle export, audio excluded
+unless explicit), AC-109 (no voiceprint/embedding in a diagnostic bundle), AC-120 (no station
+knowledge in a diagnostic bundle), register R-137 (`Settings-Diagnostics.dc.html` conformance —
+WP10 dec5c01 had landed every static-copy fix that round could reach and named "no
+diagnostics-bundle producer exists" as the remaining blocker; this change is that producer).
+
+**What changed:**
+
+*Constitution Check.* Principle V governs the whole package — nothing here is a stored convention,
+it is a structural absence: no producer queries `VoiceprintEntity.embedding`,
+`StationEntity.userName`/`notes`, `OperatorLocationEntity` or `ContributionItemEntity` at all, so
+AC-109/AC-120 hold because the code path to leak them does not exist, not because it was told not
+to (proven with seeded rows in `DiagnosticsBundleBuilderTest`, not just asserted by omission).
+Principle I governs every field: `device.json`'s RAM/thermal fields report `"unknown"` rather than
+a fabricated zero when no real reading is available; `assets.json`'s "install date" is a model's
+real on-disk file mtime, never invented; every log with no real writer yet states that honestly
+("no entries recorded by this build") rather than fabricating content. Principle VII: the seven
+allowed files are a closed Kotlin `enum class` plus a `List` built once from it, not a runtime
+list something could quietly append to.
+
+- **`DiagnosticsFileId` / `DiagnosticsFileSpec` / `DiagnosticsBundleSpec`**
+  (`DiagnosticsBundleSpec.kt`): the closed, board-verbatim list of seven files
+  (`lifecycle.log`, `capture.log`, `pipeline.log`, `rig.log`, `assets.json`, `device.json`,
+  `counts.json`), each with its id, file name, the board's own trailing clause, and a
+  `DiagnosticsFileProducer` (`suspend fun produce(Context): ByteArray`).
+- **`CallsignScrubber`** (`CallsignScrubber.kt`): a pure, conservative regex scrubber —
+  `:lexicon`'s `CallsignGrammar` parses a phonetic lattice, not plain text, so it has no
+  string-scrubbing entry point to reuse (checked before writing this). Matches the board's own
+  example verbatim (`resolved K7ABC at 0.94` → `resolved [callsign] at 0.94`), handles portable
+  modifiers (`K7ABC/P`) and reciprocal secondary prefixes (`VE7/K7ABC`) as one token, and never
+  mistakes a rule code with no digit (`VAD_NO_SPEECH`) for a callsign.
+- **`DiagnosticsLogPaths` / `LogFileProducer`**: the documented convention
+  (`filesDir/diagnostics-logs/<name>`) a future log writer should follow. Grepped before writing
+  this (`lifecycle\.log|capture\.log|pipeline\.log|rig\.log`, whole tree) — no writer exists yet
+  for any of the four board-listed logs, so every one ships today as the honest placeholder, run
+  through `CallsignScrubber` regardless (defence in depth for whenever a real writer lands).
+- **`DeviceJsonProducer`**: model, manufacturer, Android version/SDK int, ABI, real app
+  version, `BuildConfig.GIT_SHORT_COMMIT`, a coarse `ramClass` (nearest-GB bucket, "unknown" at
+  0/negative — never a raw byte count), and `thermalHeadroomClass` from `:pipeline`'s
+  `ThermalStatus.state` (nominal/warm/hot). The closed nine-key field set is asserted directly —
+  never a serial, IMEI, advertising id or account, because none of those Android APIs is ever
+  called.
+- **`CountsJsonProducer`**: sessions/overs totals, an `attributionStateCounts` map (all four
+  `AttributionState` values, always present, zero when absent), `rejectionReasonCounts` grouped by
+  a rejection's leading rule code only (never the free-text detail half), and
+  `correctedOversCount`. The board's own clause says "corrections by tier" — no per-transmission
+  tier field exists on `TransmissionEntity` or `CorrectionEntity` (checked both before writing
+  this), so `correctedOversCount` (a real total, not by tier) is reported instead; a tier-grouped
+  count is left open for whichever change adds that field.
+- **`AssetsJsonProducer`**: every `ModelCatalog` model through `ModelsController.currentState`
+  (audit F-008's real install-state read — never a second definition of "installed"), plus the
+  active lexicon through `CatalogDao.versionsFor` (the same source `RoomActiveLexiconStore`
+  reads). A model's "install date" is its destination file's real OS mtime (no install-timestamp
+  column exists for a model in this schema); "version" is the shared `SHERPA_ONNX_VERSION` (this
+  catalog pins models by checksum, not a per-model version number).
+- **`DiagnosticsBundleBuilder`**: `preview(context, includeAudio = false): BundlePreview` (a
+  `DiagnosticsBundleEntry` per file — id, name, clause, real size — plus a real total) and
+  `write(context, target: OutputStream, includeAudio = false)` (a real zip). Both call the exact
+  same `producer.produce()` per file — a deliberate departure from the brief's "stat real files"
+  suggestion for the four logs specifically, because `CallsignScrubber` changes byte length, so a
+  raw-file stat would not equal the written, scrubbed entry's size (this is what makes R-137's
+  "preview sizes match written entry sizes" hold exactly, not approximately). `includeAudio`
+  (FR-OBS-3) defaults `false`; the retained-audio code path
+  (`File(context.filesDir, entity.audioPath())`, the same layout every other real reader of
+  retained audio in this module uses) is only ever reached when a caller passes `true` explicitly,
+  and only attaches files that actually exist on disk.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.diagnostics.*"` — 34 tests, all
+  passing (`CallsignScrubberTest` x9, `DiagnosticsBundleSpecTest` x4, `DeviceJsonProducerTest` x5,
+  `CountsJsonProducerTest` x3, `AssetsJsonProducerTest` x3, `LogFileProducerTest` x2,
+  `DiagnosticsBundleBuilderTest` x8), Robolectric, JVM (this worktree's own machine, JDK 17.0.20).
+  Each test was first run against no production code and failed at compile time on the missing
+  symbols (`Unresolved reference`), confirmed before any producer/builder file was written.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (846 tasks; includes the
+  full `:app` unit test suite, ktlint, detekt/lint, `dependencyRules`, `platformGuards`, and
+  `assembleRelease`). One ktlint round-trip: two `standard:class-signature`/
+  `standard:function-signature` violations in this package's own new files, fixed, re-verified
+  green with `:app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck` before the full gate.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 189 covered ->
+  results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (189 covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- No board-listed log writer exists in this build (`lifecycle.log`/`capture.log`/`pipeline.log`/
+  `rig.log`) — every one of the four ships as the honest "no entries recorded by this build"
+  placeholder until a real writer lands and writes to `DiagnosticsLogPaths.logFile`; not this
+  package's scope to add (no writer exists to wire — see this entry's own "What changed").
+- `counts.json`'s "corrections by tier" (board clause) is not produced — no tier field on
+  `TransmissionEntity`/`CorrectionEntity` to group by; `correctedOversCount` substitutes.
+- WP10's `ui/settings/SettingsDiagnosticsScreen.kt`/`SettingsPolling.kt` still render the fake
+  file list with no real sizes and disabled `Preview`/`Save bundle` buttons — out of this
+  package's file ownership by brief. Public API for WP10 to wire: `DiagnosticsBundleBuilder.
+  preview(context, includeAudio = false): BundlePreview` and `DiagnosticsBundleBuilder.write
+  (context, target: OutputStream, includeAudio = false)`, `DiagnosticsBundleSpec.files` for the
+  file list (id/fileName/clause), `DiagnosticsBundleEntry`/`BundlePreview` for the sizes/total.
+- Device-only facts (a real `PowerManager.getThermalStatus()` reading, a real `ActivityManager`
+  total-RAM value) are untested beyond Robolectric's defaults (which report 0/none) — the
+  `ramClassLabel`/`thermalHeadroomClass` pure functions are tested directly against real inputs
+  instead; a device run is not part of this gate.
+
+---
+
+## 2026-09-08 (ui-conformance WP2: DayOfWeekGrid's legend wraps whole swatches instead of squeezing the last one to a sliver)
+
+### (pending) — ui-conformance WP2 · R-310
+
+**Scope:** `:app` `ui/components/ActivityPatternChart.kt` and `ActivityPatternChartTest.kt` only.
+`git merge --ff-only main` run first (fast-forward `ba12e71..a038128` — WP5/WP8/WP9/pipeline pass-3
+work and screenshots; none of this package's files touched by the merge). No rebase, no stash, no
+`gradlew --stop`.
+
+**Requirements/ACs:** R-310 (spec/polish) — V5 pass-3's inspection finding on
+`stations-14-nights/ST03-hourxday-pass3@2x.png`: `DayOfWeekGrid`'s own three-item legend collapses
+its last ("not listening") item into a one-letter-per-line column at font scale 2.0; the same
+screen's `By hour` mode legend (`ST03-byhour-pass3@2x.png`) is unaffected.
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) again: the fix stays inside
+  `DayOfWeekGridLegend`'s own private layout, the one place this defect actually lives —
+  `ActivityPatternChart`'s own axis-row legend (`By hour` mode) was never broken because it only
+  ever lays out a single item, centred in its own `Box(weight(1f))`; `DayOfWeekGrid`'s is the one
+  legend with three items genuinely competing for room on the same row.
+- **Root cause.** `DayOfWeekGridLegend` was a plain `Row` of three unweighted `LegendSwatch`/
+  `NotListeningLegend` items, none of whose labels had `softWrap`/`maxLines` set. At font scale
+  2.0 the row runs out of horizontal room; a plain `Row` does not reflow a child it cannot fit —
+  the last item is instead handed whatever width remains, and with no `softWrap = false` its own
+  `Text` wraps within that remainder rather than moving to a new line, producing the register's
+  screenshot (a "not listening" swatch reading down the right edge, one letter per line).
+- **The fix.** `DayOfWeekGridLegend`'s `Row` is now a `FlowRow` (`@OptIn(ExperimentalLayoutApi::
+  class)`, the same fix `LogRowMarkerLine` already applies elsewhere in this package —
+  `Rows.kt`, an earlier entry in this file — for an equivalent "the last item has nowhere to go"
+  defect): an item with no room left on the current line now moves to its own new line as a whole
+  unit (dot + label together), never split mid-label. Both `LegendSwatch`'s label `Text` and
+  `NotListeningLegend`'s label `Text` (shared by both the grid legend and the unaffected `By hour`
+  legend — the fix is additive and safe for both) now carry `maxLines = 1, softWrap = false`, so
+  even a swatch on its own new line can never itself wrap onto a second.
+- **A real environmental limit, hit and worked around while writing the test.** This host's
+  Robolectric cannot force or verify a rendered *wrap* from real glyph metrics — a limitation
+  recorded repeatedly elsewhere in this package's own history, now confirmed to extend beyond
+  custom `fontFamily`s: `rememberTextMeasurer()` against `OrtType.subLine` (`FontFamily.
+  SansSerif`, a platform default, not a custom face) measured `"listened, not heard"` — 19
+  characters — at a width of exactly **19.0px**, one pixel per character, for every string tried;
+  this host's font fallback returns a fixed, degenerate per-glyph advance regardless of the real
+  font's actual metrics. A companion, deliberate attempt to force the historical bug by
+  constraining `DayOfWeekGrid` to `Modifier.width(15.dp)` (well under any real label's own natural
+  extent) inside `OrtTheme` also failed to reproduce it — investigated directly: `OrtTheme`'s own
+  `Surface` (`Theme.kt`) is `Modifier.fillMaxSize()`, and Material3's `Surface` propagates its own
+  resolved *minimum* constraints into its content, so `DayOfWeekGrid`'s own smaller `width()`
+  request is clamped back up to the full test-root size (confirmed via a semantics-node bounds
+  probe: `DayOfWeekGrid`'s own node measured at the root's full 320×470px regardless of a 15dp,
+  60dp or 340dp request). Neither limitation is specific to this fix; both are logged here because
+  the test below had to be designed around them rather than the pixel-collision test R-271's own
+  entry (an earlier entry in this file) used for a *different*, host-measurable class of defect.
+  What the test below checks instead — the one thing genuinely host-independent here — is that
+  every legend label's own rendered width is never narrower than what the identical style/text
+  independently measures to (`rememberTextMeasurer`), and that every label renders at one uniform,
+  single-line height. `FlowRow` itself (moving a whole overflowing item to a new line, as opposed
+  to only keeping each label's own text unsquashed) is reasoned about directly against
+  `LogRowMarkerLine`'s own already-established, identical precedent rather than independently
+  pixel-proven here, for the same reason.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.ActivityPatternChartTest"`
+  — **17 of 17 passing** (was 16). New: `R_310_legend labels are one line and never narrower than
+  their own intrinsic width, at font scale 2_0`.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **1103 of 1103 passing, 0 failed** (the
+  two `ReadyScreenTest` failures disclosed in this file's own previous entry are gone — resolved
+  upstream by `ui/setup/**`'s own owner, confirmed by summing every
+  `app/build/test-results/testDebugUnitTest/*.xml` report's `tests`/`failures` attributes).
+- `.\gradlew.bat dependencyRules platformGuards` (isolated) — both **OK** (17 modules).
+- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck :app:detekt --rerun-tasks` — **BUILD
+  SUCCESSFUL**; `app/build/reports/ktlint/ktlintMainSourceSetCheck/ktlintMainSourceSetCheck.txt`,
+  `.../ktlintTestSourceSetCheck.txt` and `app/build/reports/detekt/detekt.txt` all confirmed **0
+  bytes** (a first `detekt` run flagged this commit's own new test name for `MaxLineLength` —
+  shortened it, then reran clean).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 185 covered` (unchanged — R-310 is a
+  polish/spec finding, not yet a spec-registered id the matrix's generator counts against).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (185 covered of 419)`.
+
+**Left open / not done:**
+- **The register is not updated by this commit** — closing out R-310 is the validator/coordinator's
+  own bookkeeping.
+- **No screenshot/emulator re-capture** of `stations-14-nights/ST03-hourxday-pass3@2x.png` to
+  visually confirm the fix against the actual artboard — Robolectric assertions only, per the plan
+  (Phase E/Validators own screenshot verification), and per this entry's own "What changed" note,
+  the specific pixel-collision claim is not independently verifiable on this host at all — a real
+  device/emulator capture is the only way to see the swatches actually wrap.
+
+---
+
 ## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
 
 ### (pending) — ui-conformance WP11c · storage accounting and the next automatic-prune candidate, exposed for Settings-Storage
@@ -361,9 +567,7 @@ respectively — see Verified).
   round, not fixed, flagged for WP9/the coordinator.
 - `WP11c`'s next queued item (R-133 storage accounting/next-deletion exposure) is a separate round,
   not started in this commit.
-
 ---
-
 
 ## 2026-09-08 (ui-conformance WP10 round 7: R-291 ANR-adjacent chip clipping, R-133/137/138/140 board conformance)
 
@@ -2850,6 +3054,192 @@ legend wording).
   hours the board's own mockup happens to show.
 
 ---
+
+## 2026-09-08 (ui-conformance WP4, round nine addendum: two real voiceprint clusters for WA7HJR (R-272))
+
+### (pending) — ui-conformance WP4 · two real voiceprint clusters for WA7HJR (R-272); R-300 dropped
+
+**R-300 dropped from this round, on the coordinator's own instruction.** The previous WP4 entry
+below (round nine, second addendum) added a `CaptureStatusScreenTest.kt` case
+(`R_300 Stop stays reachable by scrolling…`) proving `CaptureStatusScreen` itself needed no change
+— WP11b's host-side fix (2111abc, merged at 898c207) caps the banner block and its own test already
+covers the real composed screen at font scale 2.0 with Stop reachable, making this package's own
+narrower test redundant. That test is removed in this commit (`CaptureStatusScreenTest.kt` only);
+`CaptureStatusViewState.kt`'s R-301 fix from the same entry is unchanged and still in effect. Not
+amended into the earlier commit — a new commit, per this repository's own convention of never
+rewriting history that may already be built on.
+
+**Scope:** `app/src/debug/**`, plus the one-file R-300 test removal above — final addendum to this
+round's other three WP4 entries below
+(R-290/R-184, then R-300/R-301), after two more merges (branch had diverged from `main` again both
+times; `git merge main`, never `--ff-only`, never rebase, never stash — both resolved with only a
+`results/coverage-matrix.md` conflict, a generated file, taken from `main`'s side and regenerated as
+part of this round's own gate). Closes the fixture half of register R-272 (halt) — WP8's own
+`voiceSplitCandidates`/empty-state/leak fixes landed rounds ago (d39c056); this is the "no scenario
+seeds a real `VoiceprintEntity`" half V5 pass 3 asked WP4 for.
+
+**Requirements/ACs:** R-272 (halt — register); FR-SPK (voiceprints); constitution I (never a
+fabricated `memberCount` or an over bound to a cluster it was not actually assigned to).
+
+**What changed:**
+
+- **Constitution Check.** Principle I governs this fixture directly: both `VoiceprintEntity.memberCount`
+  values are read back from real counters (`splitVoiceprintACount`/`splitVoiceprintBCount`) tallied
+  as `WA7HJR`'s own overs are actually assigned a `voiceprintId` in the same loop, never a number
+  chosen to look plausible — a new test (`R_272 each voiceprint's memberCount matches the real overs
+  bound to it`) proves the two never drift apart. A `check()` at scenario-build time fails loudly if
+  `WA7HJR`'s real round-robin distribution ever produced zero overs in either cluster (has not
+  happened in any run so far — comfortably ≥6 overs split roughly 2:1), rather than silently seeding
+  an empty cluster the split screen could not honestly show as "two clusters."
+- **`ScenarioFixtures.transmission` gained a `voiceprintId: String? = null` parameter** — the entity
+  field already existed (`TransmissionEntity.voiceprintId`); nothing before this round's fixtures
+  ever set it to anything but the old hardcoded `null`.
+- **`StationsFixtures.stations14Nights`**: every third `WA7HJR` over (by real appearance order, not a
+  guessed index into the round-robin station spread) is assigned `voiceprint-wa7hjr-b`; the rest get
+  `voiceprint-wa7hjr-a` — a real ~2:1 split, `voiceSplitCandidates`'s own `maxByOrNull { memberCount }`
+  picking the "a" cluster as the one Split shows overs from, "b" as the real second cluster
+  `Station-Identity.dc.html`'s own multi-cluster summary needs. Both `VoiceprintEntity` rows are
+  bound to `WA7HJR`, distinct ids, real (non-fabricated) `memberCount`s.
+- **New test file `VoiceSplitFixtureTest.kt`** (three cases), the same split-file pattern this
+  round's other two fixture fixes already established (`FieldTier1AudioTest.kt`,
+  `AmbiguousCandidatesFixtureTest.kt`) — added directly as its own file rather than growing
+  `ScenariosTest.kt` first, since that class has already needed splitting twice this round.
+- **`results/ui-audit/README.md`**'s `stations-14-nights` row now names the two-voiceprint fixture
+  (register R-272).
+
+**Verified:**
+- `git merge main` ×2 (branch diverged from `main` both times after this round's own intermediate
+  commits) — both resolved with only `results/coverage-matrix.md` conflicting (taken from `main`,
+  regenerated below); no rebase, no stash.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 185 covered** (unchanged — register ids, not spec FR/AC ids);
+  `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **1112 of 1112 passing**, zero
+  failures (up from this round's earlier 1097 — mostly `main`'s other WPs' work from the two merges).
+  New tests, by name: `R_272 stations-14-nights gives WA7HJR two real voiceprint clusters with
+  distinct ids`, `R_272 each voiceprint's memberCount matches the real overs bound to it, not a
+  fabricated count`, `R_272 voiceSplitCandidates reaches the larger cluster's own overs, not an empty
+  state` (all `VoiceSplitFixtureTest`).
+
+**Left open / not done:** none for this addendum — R-272's fixture half is closed; the derivation/
+empty-state/leak half was already WP8's own closed work before this round started.
+
+## 2026-09-08 (ui-conformance WP4, round nine: retained-audio fixture for field-tier1 (R-290) and multi-candidate Tier A fixtures (R-184))
+
+### (pending) — ui-conformance WP4 · retained-audio and multi-candidate fixtures for R-290 and R-184
+
+**Scope:** `app/src/debug/**` only — ninth addendum to the WP4 entries below, after two fast-forward
+merges (`git merge --ff-only main`, no rebase, no stash): first onto `2be24a9`, then, mid-round, onto
+`4c0ad41` (the coordinator's own second, same-round ask — R-184 — arrived after the first merge and
+before this commit; confirmed `HEAD` was an ancestor of `main` before each). Two halts closed:
+register R-290 (this package's half — WP11d's half, the reprocess engine failing an item gracefully
+instead of throwing uncaught, is a separate `:pipeline/reprocess` row) and R-184 (this package's half
+— WP6's derivation fix already landed at a9c24c6; this is the fixture half WP6's own report asked
+for).
+
+**Requirements/ACs:** R-290 (halt — register), R-184 (halt — register), FR-REP (Improve/reprocess),
+FR-UI-6 (Tier A candidates), R-143/R-240/R-241 (the existing `field-tier1`/AMBIGUOUS fixtures this
+round extends rather than replaces); constitution I, III (retained audio must remain sufficient to
+re-run every pass).
+
+**What changed:**
+
+- **Constitution Check.** Principle III governs R-290 directly: `field-tier1`'s twelve overs are, by
+  definition, "improvable" (`SessionEntity.deviceTier` below current — `ImprovePolling.root`'s own
+  contract), so a fixture that seeds their database rows but not retained audio was already in
+  violation of what constitution III promises reprocessing — this fixes that, not just a crash.
+  Principle I: every new audio file is a real, decodable synthetic tone at the transmission's own
+  recorded `durationMs` (`ScenarioFixtures.writeAudioFixture`, already the codebase's own established
+  fixture, not a new mechanism), never a placeholder that would only satisfy `File.isFile`; the third
+  Tier A candidate (`KE7QRZ`, score 7.90) sits in the same real-looking range as the two it joins
+  (8.20/8.05), not an arbitrary value chosen to just be "distinct".
+- **R-290 — `Scenarios.kt`'s `fieldTier1`** now takes `context` and calls
+  `ScenarioFixtures.writeAudioFixture(context, tx)` for every one of its twelve overs — real files at
+  the exact path `FlacSegmentAudioProvider.forItem` `check`s for. Investigated and confirmed from
+  source before writing this (not assumed from the `.flac` extension): `FlacSegmentAudioProvider`'s
+  own default codec is `DeflatePredictiveCodec` — the *same* codec `writeAudioFixture` already
+  encodes with — so this fixture already produces exactly the container production reads; nothing new
+  to build. `clearPriorScenarioData` needed no change — it already deletes every `audio/<sessionId>/`
+  directory whose name carries `ScenarioFixtures.SESSION_PREFIX`, `field-tier1`'s own session id
+  included, confirmed by a new test (below) rather than assumed. Checked the coordinator's other
+  three named scenarios and found none needed the same fix: `overnight` already writes audio for
+  every over that needs it (`OvernightScenario`'s own `writeAudio = true` calls) and does not set
+  `deviceTier` (so it is not "improvable" in `ImprovePolling`'s sense in the first place);
+  `pass-failed` already calls `writeAudioFixture`; `interrupted-pass` seeds no `TransmissionEntity`
+  rows at all (a `DebugFailureOverride`-only fixture), so there is nothing for
+  `FlacSegmentAudioProvider` to ever be asked for.
+- **R-184 — a third, distinctly-scored Tier A candidate on the existing AMBIGUOUS over.**
+  `OvernightScenario`'s tx3 (the AMBIGUOUS over R-240 already relies on, `KE7QRS`/`KE7QRF`) gains
+  `KE7QRZ` at rank 2, score 7.90. `StationsFixtures.stations14Nights` gains an entirely new AMBIGUOUS
+  over on its primary session (15 minutes after that session's own start, `samplePosition` 100 so it
+  never collides with a night's own 4-6 overs) with the same three-candidate shape. Read
+  `CorrectionSheet.kt`'s `MainTier` before writing either: Tier A's "other candidates" list is every
+  ranked candidate whose callsign is not the over's own `currentCallsign` — for CONFIRMED/INFERRED
+  overs with exactly one candidate (their own selected pick), that filter removes the only row,
+  leaving zero; for an AMBIGUOUS over `currentCallsign` is `null`, so nothing is filtered and the
+  whole ranked list shows — this is the actual root cause the register's "zero rows on device"
+  symptom names, and why the fix is a fixture with *more than one* candidate on an over with *no*
+  current callsign, not a `CorrectionSheet` change (WP6 had already verified the derivation itself by
+  test at a9c24c6).
+- **New test files, both splits of existing ones (detekt's `LargeClass`, the same pattern
+  `NavRowTest.kt` already established for `RowsTest.kt`):** `FieldTier1AudioTest.kt` (R-290, three
+  cases) and `AmbiguousCandidatesFixtureTest.kt` (R-184, two cases) — `ScenariosTest.kt` itself grew
+  by these tests first and had to shed them to stay under the threshold; both new files share that
+  file's own `@Before`/`@After` boilerplate verbatim.
+- **`results/ui-audit/README.md`**: the `field-tier1` row now describes the real retained-audio files
+  (register R-290); the stale "Known gaps" bullet claiming "no screen renders `deviceTier` yet" is
+  corrected — WP10 wired `Settings-Tier`/`Improve*` to it rounds ago, and R-290's own fix is what
+  makes `Improve-Running`/`Improve-Done` (R03/R04) specifically reachable now, not just
+  `Improve`/`Improve-Select` (R01/R02). The `overnight` and `stations-14-nights` rows now name their
+  own three-candidate AMBIGUOUS over (register R-184).
+
+**Verified:**
+- `git merge --ff-only main` ×2 — fast-forwarded cleanly onto `2be24a9` then `4c0ad41`, `HEAD`
+  confirmed an ancestor of `main` before each; no rebase, no stash.
+- `.\gradlew.bat build dependencyRules platformGuards` — compiles; `ktlint`/`detekt` both clean after
+  two rounds of fixing this package's own new findings: `standard:function-signature`/
+  `standard:max-line-length` (a too-long test name, shortened), `LargeClass` on `ScenariosTest.kt`
+  (both new test files split out, as above), and `standard:argument-list-wrapping`/
+  `standard:max-line-length` in `StationsFixtures.kt`'s own new fixture code (fixed with
+  `:app:ktlintDebugSourceSetFormat`, confirmed by reading its diff before trusting it — formatting
+  only, no behavioural line changed). One pre-existing, unrelated failure found and **not fixed**:
+  `org.ort.app.ui.setup.ReadyScreenTest` (`ui/setup/**`, WP9's row, last touched by WP9's own commit
+  56d92ed — confirmed via `git log`/`git diff`, zero relation to `app/src/debug/**`) fails two cases
+  reproducibly even run in isolation (`R_265 an amber row with a Fix action…`, `R_265 a verified row
+  announces label, value and status…` — both "found 2 nodes, expected 1", the same shape of bug, in
+  a screen this package does not own). Reported here and in this round's report; not this package's
+  file to fix.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 185 covered** (unchanged — register R-ids are not spec FR/AC
+  ids, so this round's new `@Requirement` tags do not move this number); `coverageMatrixCheck: up to
+  date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **1077 tests, 1075 passing, 2
+  failing** — the two pre-existing `ReadyScreenTest` cases above, confirmed unrelated by running the
+  class in isolation (same two failures, same reason) and by `git log`/`git diff` showing this
+  package touched neither file this round. Every other task the full `build` runs (compile, `:app:
+  lint`, `ktlint`, `detekt`) reached **BUILD SUCCESSFUL**, confirmed by re-running the aggregate
+  `build dependencyRules platformGuards` with `-x testDebugUnitTest -x testReleaseUnitTest` once the
+  two pre-existing failures were isolated, rather than letting one unrelated task's exit code hide
+  everything else's real status. New tests, by name: `R_290 field-tier1 seeds a real retained-audio
+  file for every improvable over`, `R_290 field-tier1's real audio decodes to the recorded duration
+  with the real audio-provider codec`, `R_290 field-tier1's retained-audio files are cleared like
+  every other scenario's own` (`FieldTier1AudioTest`); `R_184 overnight's AMBIGUOUS over carries
+  three ranked, distinctly-scored Tier A candidates`, `R_184 stations-14-nights also carries an
+  AMBIGUOUS over with three ranked candidates` (`AmbiguousCandidatesFixtureTest`).
+
+**Left open / not done:**
+- **`org.ort.app.ui.setup.ReadyScreenTest`'s two failures are real, reproducible, and unfixed** —
+  reported above and in this round's report; `ui/setup/**` is WP9's row, not this package's.
+- **R-290's other half (the reprocess engine failing an item gracefully instead of throwing
+  uncaught) is WP11d's row** (`:pipeline/reprocess`, `FlacSegmentAudioProvider`) — not touched here;
+  this entry closes only the fixture half named in the register row's own "+ WP4" attribution.
 
 ## 2026-09-08 (ui-conformance WP4, round eight: accessibility pass — gap token wrapping, rig copy, tier label)
 
@@ -6680,6 +7070,160 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 6 · no-audio copy variants, revisions closing note, Fail-Pass partial/retry copy, rejected detail state, transcript confidence
+
+**Scope:** `:app`, this package's own files — `ui/data/DetailViewState.kt`, `ui/data/CorrectionPolling.kt`,
+`ui/screens/TransmissionDetailScreen.kt`, `ui/screens/TransmissionDetailContent.kt`,
+`ui/screens/DetailRevisionsScreen.kt`, and their tests (`TransmissionDetailScreenTest.kt`,
+`TransmissionDetailContentTest.kt`, `CorrectionPollingTest.kt`, plus a new
+`CorrectionPollingPassAndRevisionsTest.kt` — see item 6). `git merge --ff-only main` first (clean
+fast-forward from `4c0ad41` to `a038128`, no stash, no rebase); recompiled and re-ran this package's
+full test suite after the merge with no changes needed.
+
+**Requirements/ACs:** R-193, R-194, R-195, R-242 (WP6's half), R-188 (register rows); F04
+`Fail-Hallucination.dc.html`, FR-ASR-5; F18 `Fail-Pass.dc.html`, FR-RUN-9; D06/D07/D01
+`Detail-Playback.dc.html`/`Detail-Revisions.dc.html`/`Detail.dc.html`; constitution I (never
+fabricate), III (nothing deleted quietly).
+
+**Constitution Check.** Principle I governs every row below: R-193's never-captured/deleted-by-
+retention split is a real inference from `attribution.state`/`inspection`, not a stored flag, and
+omits the board's own "on 8 Aug" date and "Announced 3 days before" clause since no retention-event
+timestamp exists to honestly cite; R-242's rejected state shows only the real `rejectionReason` and
+retained audio, deliberately omitting the board's "4 of 6 controls fired" breakdown (`:data` records
+at most one of the six named checks) and the "restore — it was speech" action (needs a `:pipeline`
+re-queue-with-phrase-filter-off write path this package cannot build); R-188's caption is the real
+`TranscriptEntity.confidence` number alone, never the board's "· weak signal, cut off" qualitative
+clause. Principle III is why R-242 gives a rejected over the same `PlaybackSection`/audio as every
+other state, and why R-194's closing note is worded exactly as the board's "nothing here can be
+deleted" promise.
+
+**What changed:**
+
+1. **R-193, `Detail-Playback.dc.html`'s "No audio retained" card.** `PlaybackSection` (now via the
+   extracted `NoAudioNotice` composable — see item 7) distinguishes a transmission that was really
+   processed before its audio was later removed by retention (`attribution.state != UNKNOWN` or a
+   non-empty `inspection` — either is only true after real audio was processed) from one that never
+   had audio to begin with. The former reads "Audio deleted by retention. Transcript, attribution
+   and lattice were kept."; the latter "Audio was never retained for this over." Tests:
+   `TransmissionDetailScreenTest`'s two `R_193_*` (never-processed, real-attribution).
+2. **R-194, `Detail-Revisions.dc.html`'s version-card marker/callsign/corrected badge and closing
+   note.** `TranscriptVersionViewState` gained `stationId`/`corrected`, populated by
+   `CorrectionPolling.revisions` from the transmission's real, *current* `stationId`/`corrected`
+   columns — shown identically on every version's card, since `:data` keeps no per-version
+   attribution history (disclosed in that data class's own doc comment, not a fabricated per-version
+   story). `DetailRevisionsScreen`'s `VersionCard` renders `AttributionRow(Attribution.unknown()
+   .withCorrection(stationId))` plus a `CORRECTED` badge when set (the same `withCorrection` shape
+   `PropagatedScreen.kt`'s `AffectedRow` already uses for an identical honest gap); the screen's own
+   closing note is now the board's own sentence, worded exactly: "Restoring an earlier version makes
+   it current and keeps this one as superseded. Nothing here can be deleted from this screen —
+   retention handles audio, and never transcripts." Tests:
+   `CorrectionPollingPassAndRevisionsTest`'s two `R_194_*` (real stationId/corrected propagate;
+   `null`/`false` for an unattributed transmission), and
+   `TransmissionDetailContentTest.R_194_the_revisions_screen_shows_every_version_cards_marker_callsign_and_the_boards_closing_note`
+   — a real tap through the composed detail screen into the revisions screen, seeded with the same
+   two-version shape `Scenarios.kt`'s own `revisions` scenario writes. **Test-infra fix alongside
+   it:** the wait for the board's static closing note raced `CorrectionPolling.revisions`'s own async
+   fetch (the note renders even with zero versions loaded) — fixed by waiting on the real version
+   count ("2 versions") first, the same "wait on the fact that can only be true once the poll landed"
+   discipline this package's class doc already documents for `R_183`'s own test.
+3. **R-195, `Fail-Pass.dc.html`'s "Live partial, Pass A" label/caption and retry-guidance
+   sentence.** `FailedPassPartialSection` (new, replacing a plain `TranscriptSection` call whenever
+   `passFailure != null`) renders a `SectionHeader("Live partial, Pass A")` above the real Pass A
+   text, with the board's own caption: "Shown in the log in place of a final transcript. Not
+   attributed — partials never are." `FailedPassHeaderSection` gained the board's retry-guidance
+   sentence after the last-error line: "Retrying by hand runs it alone. If it fails again the error
+   is recorded again, and the over stays exactly as it is." — deliberately omitting the board's "with
+   Pass C paused" clause, since this package has no real signal for whether Pass C actually pauses
+   during a manual retry. Tests: `TransmissionDetailScreenTest`'s two `R_195_*`.
+4. **R-242 (WP6's half), F04 — the rejected detail state.** The coordinator's own "Detail-Rejected"
+   name does not exist as a board; `design/design-intent.md`'s own F04 row names the real one,
+   `Fail-Hallucination.dc.html`. New `RejectedViewState(reason: String?)` on `DetailViewState`,
+   populated in `TransmissionDetailContent` straight from the already-polled
+   `current.processingState`/`.rejectionReason` (no new `:data` read needed, unlike `passFailure`/
+   `sourceOverTimeLabel`/`transcriptConfidence`). `TransmissionDetailScreen` gates a new
+   `RejectedHeaderSection` (uppercase "rejected · reason" title matching `RejectedRow`'s own log-row
+   wording, the real reason in prose, the meta row) and `RejectedTranscriptSection` ("What the model
+   said" — the real transcript text if one survived rejection, or an honest "No transcript text was
+   recorded for this rejected segment." when the only text available is `transcriptLabel`'s own
+   generic `"(rejected: ...)"` fallback, detected by that literal prefix, rather than showing that
+   placeholder framed as real model output) in place of the normal header/transcript sections, and
+   suppresses `AmbiguousChooserSection`/`UnknownTriedSection`/`WhySection` the same way `passFailure`
+   already does (a rejected segment was never resolved and never will be). `PlaybackSection` is
+   unchanged and still renders — the retained audio stays reachable (constitution III). The bottom
+   action bar renders nothing for a rejected over: no real write path backs "it was speech —
+   restore" (would need a `:pipeline` re-queue with the phrase filter disabled), so an empty bar is
+   the honest state rather than a disabled look-alike of a real action. Not built: the board's "4 of
+   6 controls fired" checklist — `:data` records at most `noSpeechProb` of the six named checks
+   (known-hallucination-phrase match, energy-profile read, words-per-second, repeated-text and
+   compression-ratio checks do not exist anywhere in `:data`), so one real figure standing in for six
+   named controls would misrepresent a panel that mostly does not exist (constitution I). Tests:
+   `TransmissionDetailScreenTest`'s five `R_242_*` (reason shown + audio retained, no-reason honesty,
+   no unknown-attribution blocks, no bottom bar, real "what the model said" text), plus
+   `TransmissionDetailContentTest.R_242_tapping_through_to_a_rejected_transmission_opens_the_rejected_detail_state_with_its_real_reason`
+   — a real tap through the composed screen against the exact real shape `OvernightScenario.kt`'s own
+   `tx8` rejected fixture writes (`processingState = REJECTED`, `rejectionReason =
+   "VAD_NO_SPEECH: squelch tail, 0.4 s"`, retained audio, no transcript).
+5. **R-188, `Detail.dc.html`'s transcript-confidence caption.** Neither `Detail.dc.html` nor
+   `Detail-Confirmed.dc.html` actually contains a "transcript confidence" caption on static reading
+   (only `Detail-Unknown.dc.html` does, established in this package's earlier V4 round) — implemented
+   per the round's explicit, unambiguous instruction anyway, using real data. New
+   `CorrectionPolling.currentTranscriptConfidence(context, transmissionId): Double?` reads
+   `TranscriptDao.getCurrent(...)?.confidence` directly; threaded through
+   `DetailViewStateMapper.from`'s new `transcriptConfidence` parameter to `TranscriptSection`, which
+   renders "Transcript confidence 0.61" (the real number alone, never the board's own "· weak
+   signal, cut off" qualitative clause — this package has no honest way to derive that from a bare
+   confidence value). `null` for no current transcript row, or one that recorded no confidence —
+   renders no caption at all, never a fabricated number. **Open gaps, named per the round's own
+   ask:** a voice-match distance for an UNKNOWN over would need a per-candidate acoustic-distance
+   field nowhere in `:data` today (`CallsignCandidateEntity`/`PhoneticLatticeEntity` carry a `score`,
+   not a raw distance); thread context would need `TransmissionEntity.threadId` actually populated
+   (that column exists but nothing writes it yet — threading is M6, per `TransmissionDetail`'s own
+   doc comment). Tests: `TransmissionDetailScreenTest`'s two `R_188_*` (real caption renders; no
+   caption for a null confidence), `CorrectionPollingPassAndRevisionsTest`'s two
+   `R_188_currentTranscriptConfidence_*`.
+6. **`CorrectionPollingTest.kt` split — detekt's `LargeClass` finding**, this file's own size after
+   this round's R-188/R-194 tests. New `CorrectionPollingPassAndRevisionsTest.kt` owns
+   `CorrectionPolling`'s pass-failure (R-153), revisions/restore (R-055/R-194) and
+   transcript-confidence (R-188) surfaces; `CorrectionPollingTest.kt` keeps propagation/correction/
+   search/attribution (R-052, R-058, R-183, R-185, R-189) — the same split `RowsTest.kt`'s own
+   `NavRowTest.kt` and `ScenariosTest.kt`'s own `FailureOverrideScenariosTest.kt` already used.
+7. **Two detekt `LongMethod` fixes, mechanical, no behaviour change.** `PlaybackSection`'s play/pause
+   handler moved to a new private `togglePlayback` suspend function, and its no-audio card moved to
+   a new private `NoAudioNotice` composable (item 1's own code). `TransmissionDetailContent`'s four
+   -field poll (`detail`/`passFailure`/`sourceOverTimeLabel`/`transcriptConfidence`) moved to a new
+   private `pollDetail`/`DetailPollResult` pair, and the `rejected` ternary to a new private
+   `rejectedViewStateFor` — both grew the composable past the 80-line threshold once this round's
+   R-188/R-242 reads landed.
+8. **Test-infra fix, alongside R-242's new test:** `TransmissionDetailContentTest.kt` had no `@After`
+   closing its own `OrtDatabase` — one of the still-never-closed instances
+   `CorrectionPollingTest.closeDatabase`'s own doc comment already names as a contention source
+   across this Gradle test-worker JVM (confirmed directly: running this round's three test classes
+   together intermittently hit `SQLiteDatabaseLockedException` before this fix). Closed the same way.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards` (clean), `.\gradlew.bat -p
+buildSrc test` (clean), `python tools\spec-check\spec_check.py` (`spec-check: OK`), `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations, both clean —
+`results/coverage-matrix.md` regenerated), `.\gradlew.bat :app:assembleDebug` (clean). This
+package's own three test classes plus the new split file run clean together, repeated twice to
+confirm no flake; the full `:app:testDebugUnitTest` suite (1089 tests) is clean on the merged tree
+(a pre-merge run's two `ReadyScreenTest` failures were resolved by the fast-forward merge itself —
+confirmed unrelated: `git status` shows this package never touched `ui/setup/`).
+
+**Left open, named exactly:**
+- **R-181** (waveform amplitude) stays parked — needs WP4's real FLAC files (R-290); not touched.
+- **R-182** (highlight spans for a phonetically-spelled callsign) needs schema data this package
+  cannot add: `TranscriptSection`'s highlight is a literal `indexOf(stationId)` substring check,
+  which can never match a callsign spoken phonetically ("kilo seven lima whiskey hotel" never
+  contains the literal text "K7LWH"). The resolver field this needs, for `:data` to add: a per-slot
+  or per-candidate **character span/offset into the transcript text** (start/end index, or a list of
+  them) recording *where in the transcript* each phonetic unit that produced the matched callsign
+  was found — absent from both `CallsignCandidateEntity` (carries `score`/`priorBreakdown`/
+  `databaseHit`, no span) and `PhoneticLatticeEntity` (`unitsBlob` is opaque, no defined per-unit
+  shape at all, the same gap R-180's own lattice section already names). Without it, highlighting a
+  phonetic spelling is not representable honestly; not attempted here.
+- R-188's voice-match-distance and thread-context gaps: named in item 5 above, each with the
+  specific missing field/column.
+
 ### (pending) — ui-conformance WP6 · detail validator fixes: state derivation, why section and lattice route, tier A candidates, tier B station search, waveform, highlights, ambiguous evidence, copy
 
 **Scope:** `:app`, this package's own files — `ui/data/DetailViewState.kt`, `ui/data/CorrectionPolling.kt`,
@@ -9197,6 +9741,107 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
+
+### (pending) — ui-conformance WP3 · round 9: R-276 fully routed, frequency overs open a real filtered Log
+
+**Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`), tests
+(`ui/navigation/ReaderActivityDestinationSmokeTest.kt`), `CHANGELOG.md`. Tenth reconciliation
+addendum. `git merge main` (not `--ff-only`; this branch was still an ancestor so it fast-forwarded
+cleanly anyway — `git status` confirmed a clean working tree immediately after) to `4f23303`, WP5's
+own merge shipping exactly the `LogContent.initialFilter` signature round 8's own report specified,
+confirmed by reading `ui/screens/LogContent.kt` in full before wiring anything against it (not built
+against this row's own guess).
+
+**Requirements/ACs:** R-276 (fully routed this round — register flips from `partial`), R-090
+(re-confirmed, unchanged).
+
+**Constitution check.** Principle I (uncertainty is content): the smoke test's own "count line"
+assertion (`"Show 5 overs"`) is deliberately chosen to distinguish a *correct* filter from a
+*half-applied* one — three "usual" nights are seeded alongside tonight's five specifically so a
+regression that filtered by frequency but dropped the window would read `8`, not `5`, and this test
+would catch it; a chip-selected check alone could not. Principle VII (file-ownership discipline,
+this engagement's own standing rule): `FrequencyDetailContent.kt`/`FrequencyChangeScreen.kt` (WP8's
+files) are read, not edited — the "back restores the drill-in root, not the `Frequency-Change`
+sub-screen it was opened from" limitation this round's own `openLogFilteredByFrequency` doc comment
+states is exactly the boundary that file ownership draws, named rather than worked around by editing
+a file outside this row's grant.
+
+**What changed:**
+
+- **R-276 — `Frequency-Change`'s "The N overs" now opens a real, filtered `Log`.**
+  `NavHostCallbacks.onOpenOvers: (Long, TimeWindow) -> Unit` (new) wires into
+  `FrequencyDetailContent`'s own `onOpenOvers` (WP8's real parameter, merged two rounds ago) and
+  calls a new `NavHostNavState.openLogFilteredByFrequency(currentFrequencyHz, frequencyHz, window)`:
+  clears the live frequency drill-in first (its id has absolute priority over `current` in
+  `NavHostBody`'s own dispatch `when` — leaving it set would keep showing the frequency screen
+  regardless of what `current` became, found by reading that dispatch before wiring this), saves the
+  frequency being left into a new `logFrequencyOrigin` field, and stores a new
+  `pendingLogFilter = LogFilterSelection(frequencyHz, fromMillis = window.startMillis, toMillis =
+  window.endMillis)`. `DestinationContent`'s `LOG` dispatch passes it through as `LogContent`'s new
+  `initialFilter` (WP5's own merge). `pendingLogFilter` is a plain `remember`, not
+  `rememberSaveable` — it only has to survive until `LogContent`'s own `rememberSaveable` `selection`
+  captures it at first composition, the same reasoning `searchResult` (WP7's own doc comment)
+  already rests on; `logFrequencyOrigin` is `rememberSaveable` since a later user action (the back
+  gesture) can genuinely happen after a `recreate()`. Both are reset inside `closeDrillIns()` too,
+  so any ordinary way of reaching `Log` (the drawer row) can never inherit a stale filter or a false
+  "back to the frequency" promise a normal navigation never made.
+- **Back returns to the frequency, partially — named precisely, not silently short of the ask.**
+  This app's first `BackHandler` (`androidx.activity.compose.BackHandler`, confirmed no other exists
+  by grepping `ui/**` first): while `current == LOG` and `logFrequencyOrigin` holds a value, system
+  back reopens the frequency drill-in at that frequency — landing on `FrequencyDetailContent`'s own
+  root/`NONE` sub-screen. It does **not** restore `Frequency-Change` (the sub-screen `onOpenOvers`
+  was actually reached from) — that sub-screen is `FrequencyDetailContent`'s own internal,
+  unexported `FrequencySubScreen` state; restoring it exactly would need a parameter on that file
+  (WP8's), not lead-approved this round. `openLogFilteredByFrequency`'s own doc comment states this
+  precisely, and no code pretends otherwise.
+- **`DestinationInitialState`** (new, bundles `settingsInitialScreen`/`openCaptureLevelMeter`/the
+  new `logInitialFilter`): `NavHostIds`/`DestinationContent` had grown to nine parameters the moment
+  `logInitialFilter` was added as a fourth scalar — over detekt's `LongParameterList` threshold
+  (found by running detekt, not anticipated) — bundled the same way `NavHostIds`/`NavHostCallbacks`
+  themselves already are, rather than raising the threshold.
+- **`ReaderActivityDestinationSmokeTest` gains
+  `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`** — a real tap
+  sequence (`Frequencies` list → a row → "Busier than usual — see what changed" → "The 5 overs" →
+  `Log`), not a shortcut around the UI. Reaching it for real needs
+  [`NightlyDeparture.isBusierThanUsual`](app/src/main/kotlin/org/ort/app/ui/data/ActivityPattern.kt)
+  to genuinely hold (tonight's heard-count more than double the average of every other *listened*
+  night) — the one case in this class with its own seeding (`seedFrequencyOversPattern`, three real
+  "usual" nights plus tonight, all anchored to the real wall clock at test run time via
+  `ZonedDateTime.now`, not the fixed epoch the shared `@Before` uses for every other case, which
+  never needs a real night pattern), returning "tonight"'s own session id for `runReaderActivity` to
+  launch with (`LogPolling`'s quick-filter chips are scoped to the *launched* session, confirmed by
+  reading `LogViewData.kt`, not the corpus as a whole). Asserts the frequency's own quick-filter
+  chip renders selected (`isSelected()`, Compose's standard semantics property) and the filter
+  sheet's own count line reads `"Show 5 overs"` — not `8`, which is what a frequency-only filter
+  that dropped the window would read (see Constitution check) — both before and after `recreate()`.
+  **Found and fixed while writing it**: the naive `waitUntilContentDescriptionExists("Open
+  navigation")` (present unconditionally, before `LogContent`'s own first poll has necessarily run)
+  followed immediately by an assertion raced that poll and failed on a real run; a new
+  `waitUntilChipSelected` polls for the real, selected chip node directly instead.
+
+**Verified:**
+- `git merge main` — clean, fast-forward (this branch was still an ancestor of `main`) to `4f23303`.
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:ktlintCheck` — `BUILD SUCCESSFUL`, fully clean.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, fully clean (the `LongParameterList` finding
+  this round's own work introduced was fixed in the same round, before this run).
+- `.\gradlew.bat dependencyRules` — `OK`, 17 modules, no new edge.
+- `.\gradlew.bat :app:testDebugUnitTest` — 1102 tests, **0 failed** (the `ReadyScreenTest.kt`
+  failures the last two rounds both reported did not reproduce this run — not this row's file
+  regardless of outcome, not chased further).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --rerun-tasks`, run twice — `BUILD SUCCESSFUL` both
+  times, 17 tests, 0 failed each time, including the new `R_276` case (confirmed not flaky).
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat coverageMatrix --rerun-tasks` — 419 requirements, 185 covered, unchanged, no delta
+  to `results/coverage-matrix.md` this round.
+- `python tools/spec-check/spec_check.py` — 8/8 `PASS`.
+
+**Left open / not done:**
+- **Back from the filtered `Log` restores the frequency drill-in's root, not the `Frequency-Change`
+  sub-screen it was opened from** — see What changed's own account; a full fix needs a parameter on
+  `FrequencyDetailContent.kt` (WP8's file), not lead-approved this round.
+- Round 5–7's own open items (`onOpenLevelMeter`'s further gaps, `onRetryInput`/`onEndSession`/
+  `onRequestUsbPermission` no-ops) are unchanged.
 
 ### (pending) — ui-conformance WP3 · round 8: settings header count confirmed; R-276 blocked on LogContent.initialFilter
 

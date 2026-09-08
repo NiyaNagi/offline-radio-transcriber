@@ -23,6 +23,7 @@ import org.ort.app.ui.data.InspectionViewState
 import org.ort.app.ui.data.LatticeInspectionViewState
 import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.PriorContributionViewState
+import org.ort.app.ui.data.RejectedViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
@@ -483,5 +484,179 @@ class TransmissionDetailScreenTest {
     private val looksLikeAConfidenceNumber = SemanticsMatcher("has text matching a confidence number (0.NN)") { node ->
         val texts = node.config.getOrNull(SemanticsProperties.Text).orEmpty()
         texts.any { Regex("""^\d\.\d\d$""").matches(it.text) }
+    }
+
+    // ---- R-193, `Detail-Playback.dc.html`'s no-audio card: never-captured vs deleted-by-retention ----
+
+    @Test
+    fun `R_193_a_transmission_that_was_never_processed_reads_as_never_retained`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.unknown(), hasAudio = false)),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Audio was never retained for this over.").assertExists()
+        composeTestRule.onNodeWithText("Audio deleted by retention", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_193_a_transmission_with_a_real_attribution_reads_as_deleted_by_retention_with_the_lattice_kept_clause`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.confirmed("W7NPC", 0.95), hasAudio = false)),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText("Audio deleted by retention. Transcript, attribution and lattice were kept.")
+            .assertExists()
+        composeTestRule.onNodeWithText("Audio was never retained", substring = true).assertDoesNotExist()
+    }
+
+    // ---- R-195, `Fail-Pass.dc.html`: the "Live partial, Pass A" label/caption and retry guidance ----
+
+    @Test
+    fun `R_195_the_failed_pass_partial_carries_its_own_label_and_not_attributed_caption`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = failedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule.onNodeWithText("Live partial, Pass A", ignoreCase = true, substring = true).assertExists()
+        composeTestRule
+            .onNodeWithText("Shown in the log in place of a final transcript. Not attributed — partials never are.")
+            .assertExists()
+    }
+
+    @Test
+    fun `R_195_the_header_carries_the_boards_retry_guidance_sentence`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = failedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule
+            .onNodeWithText(
+                "Retrying by hand runs it alone. If it fails again the error is recorded again, " +
+                    "and the over stays exactly as it is.",
+            )
+            .assertExists()
+    }
+
+    // ---- R-188, `Detail.dc.html`: the transcript-confidence caption ----
+
+    @Test
+    fun `R_188_a_real_recorded_confidence_renders_as_a_plain_caption_below_the_transcript`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = DetailViewStateMapper.from(detail(), transcriptConfidence = 0.61),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Transcript confidence 0.61").assertExists()
+    }
+
+    @Test
+    fun `R_188_no_recorded_confidence_renders_no_caption_rather_than_a_fabricated_number`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = DetailViewStateMapper.from(detail(), transcriptConfidence = null),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Transcript confidence", substring = true).assertDoesNotExist()
+    }
+
+    // ---- R-242, F04 `Fail-Hallucination.dc.html`: the rejected detail state ----
+
+    private fun rejectedState(reason: String? = "VAD_NO_SPEECH: squelch tail, 0.4 s") = DetailViewStateMapper.from(
+        detail(attribution = Attribution.unknown(), transcriptText = "-", hasAudio = true),
+        rejected = RejectedViewState(reason),
+    )
+
+    @Test
+    fun `R_242_a_rejected_transmission_shows_the_real_reason_and_retained_audio`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = rejectedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule.onNodeWithTag("rejected-section").assertExists()
+        composeTestRule
+            .onNodeWithText("rejected · VAD_NO_SPEECH: squelch tail, 0.4 s", ignoreCase = true, substring = true)
+            .assertExists()
+        composeTestRule.onNodeWithText("VAD_NO_SPEECH: squelch tail, 0.4 s", substring = true).assertExists()
+        // The audio is retained (constitution III) — the waveform card still renders.
+        composeTestRule.onNodeWithTag("waveform-card").assertExists()
+    }
+
+    @Test
+    fun `R_242_a_rejected_transmission_with_no_recorded_reason_reads_honestly_rather_than_fabricating_one`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(state = rejectedState(reason = null), player = FakeTransmissionAudioPlayer())
+            }
+        }
+
+        composeTestRule.onNodeWithText("No reason was recorded.", substring = true).assertExists()
+    }
+
+    @Test
+    fun `R_242_the_rejected_state_never_also_renders_the_unknown_attributions_what_was_tried_or_why_blocks`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = rejectedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule.onNodeWithText("What was tried", substring = true, ignoreCase = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Why this callsign", substring = true, ignoreCase = true).assertDoesNotExist()
+    }
+
+    /**
+     * R-242: no real action exists for a rejected segment (see `RejectedHeaderSection`'s own doc
+     * comment) — the bottom bar renders none of the other states' actions rather than a disabled
+     * look-alike of one.
+     */
+    @Test
+    fun `R_242_the_rejected_state_offers_no_bottom_action_bar`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = rejectedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule.onNodeWithText("Confirm").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Not right?").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Retry now").assertDoesNotExist()
+        composeTestRule.onNodeWithText("I know who this is").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Leave ambiguous").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_242_what_the_model_said_shows_the_real_surviving_transcript_text`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = DetailViewStateMapper.from(
+                        detail(
+                            attribution = Attribution.unknown(),
+                            transcriptText = "help help mayday mayday",
+                        ),
+                        rejected = RejectedViewState("hallucination phrase match"),
+                    ),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("What the model said", ignoreCase = true, substring = true).assertExists()
+        composeTestRule.onNodeWithText("help help mayday mayday").assertExists()
     }
 }

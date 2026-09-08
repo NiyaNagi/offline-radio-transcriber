@@ -1,5 +1,6 @@
 package org.ort.app.ui.navigation
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,6 +41,7 @@ import org.ort.app.ui.components.ScreenHeader
 import org.ort.app.ui.data.DrawerCounts
 import org.ort.app.ui.data.DrawerCountsViewState
 import org.ort.app.ui.data.LiveBarPolling
+import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.data.ReaderPolling
 import org.ort.app.ui.data.SearchFacetFilter
 import org.ort.app.ui.data.SearchFilterInput
@@ -49,6 +51,7 @@ import org.ort.app.ui.data.SearchResult
 import org.ort.app.ui.data.SearchTimeFilter
 import org.ort.app.ui.data.ThreadDetailViewState
 import org.ort.app.ui.data.ThreadPolling
+import org.ort.app.ui.data.TimeWindow
 import org.ort.app.ui.screens.CaptureStatusContent
 import org.ort.app.ui.screens.FrequenciesContent
 import org.ort.app.ui.screens.FrequencyDetailContent
@@ -163,6 +166,22 @@ public fun OrtNavHost(
     val drawerLive = rememberDrawerLiveState(sessionId, context)
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
 
+    // Round 9, register R-276: system back, while viewing `Log` reached via `Frequency-Change`'s
+    // "The N overs", reopens the frequency drill-in it came from instead of the platform default
+    // (finishing the activity — this app installs no other `BackHandler`, confirmed by grepping
+    // `ui/**` before adding this, its first use) — `NavHostNavState.openLogFilteredByFrequency`'s
+    // own doc comment names exactly what this does and does not restore. `enabled` only while both
+    // conditions hold, so this never intercepts back anywhere else in the app.
+    BackHandler(enabled = current == ReaderDestination.LOG && navState.logFrequencyOrigin.value != null) {
+        val frequencyHz = navState.logFrequencyOrigin.value
+        navState.logFrequencyOrigin.value = null
+        navState.pendingLogFilter.value = null
+        if (frequencyHz != null) {
+            navState.openedFrom.value = ReaderDestination.LOG
+            navState.openFrequencyHz.value = frequencyHz
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -194,8 +213,11 @@ public fun OrtNavHost(
                     navState.openStationId.value,
                     navState.openFrequencyHz.value,
                     navState.openThreadId.value,
-                    navigator.settingsScreenState.value,
-                    navState.openCaptureLevelMeter.value,
+                    DestinationInitialState(
+                        navigator.settingsScreenState.value,
+                        navState.openCaptureLevelMeter.value,
+                        navState.pendingLogFilter.value,
+                    ),
                 ),
                 callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
                 sessionId = sessionId,
@@ -231,6 +253,19 @@ private data class NavHostNavState(
     // next time it is freshly composed — see `CaptureStatusContent.openLevelMeter`'s own doc
     // comment for the "opens there on launch" contract this mirrors.
     val openCaptureLevelMeter: MutableState<Boolean>,
+    // Round 9, register R-276: the filter `LogContent` should seed on its own next fresh
+    // composition — see [openLogFilteredByFrequency]. A plain `remember`, not `rememberSaveable`:
+    // it only has to survive until `LogContent`'s own `initialFilter` read, which happens
+    // synchronously within the same process this tap fired in — by the time a `recreate()` could
+    // ever observe this, `LogContent`'s *own* `rememberSaveable` `selection` has already captured
+    // the value into the `SaveableStateRegistry` (the same reasoning `searchResult` below rests
+    // on: WP7's own doc comment on why `SearchResult` needs no Saver of its own).
+    val pendingLogFilter: MutableState<LogFilterSelection?>,
+    // Round 9, register R-276: the frequency drill-in to reopen when the operator backs out of a
+    // `Log` reached via `openLogFilteredByFrequency` — `rememberSaveable` (a plain `Long?`, no
+    // custom Saver needed) since, unlike [pendingLogFilter], this is read only by a later user
+    // action (the back gesture), which can genuinely happen after a `recreate()`.
+    val logFrequencyOrigin: MutableState<Long?>,
 ) {
     fun closeDrillIns() {
         openTransmissionId.value = null
@@ -241,6 +276,11 @@ private data class NavHostNavState(
         // reaching `Capture` (the drawer row, the live bar's own tap target) and must not leave a
         // stale `true` from an earlier `Settings-Capture` "Meter" tap open the meter again.
         openCaptureLevelMeter.value = false
+        // Same reasoning, round 9: any ordinary way of reaching `Log` (the drawer row) must not
+        // silently reapply a stale filter or resurrect a "back to the frequency" promise a normal
+        // navigation never made.
+        pendingLogFilter.value = null
+        logFrequencyOrigin.value = null
     }
 
     /** R-017: records which destination a drill-in opened from before running [setter], so a
@@ -248,6 +288,31 @@ private data class NavHostNavState(
     fun onOpenDrillIn(current: ReaderDestination, setter: () -> Unit) {
         openedFrom.value = current
         setter()
+    }
+
+    /**
+     * R-276 (`Frequency-Change.dc.html`'s "The N overs"): routes to `Log`, filtered to
+     * [frequencyHz] and [window], from the frequency drill-in currently showing at
+     * [currentFrequencyHz] (always non-null in practice — this only ever fires from inside
+     * `FrequencyDetailContent`, which only composes while `openFrequencyHz` already holds one).
+     * [closeDrillIns] first clears the live frequency drill-in (its id has absolute priority over
+     * `current` in `NavHostBody`'s own dispatch — leaving it set would keep showing the frequency
+     * screen no matter what `current` became) and any stale pending filter from a previous trip;
+     * [currentFrequencyHz] is saved into [logFrequencyOrigin] *after* that clear so back can reopen
+     * the same frequency's drill-in — landing on `FrequencyDetailContent`'s own root/`NONE`
+     * sub-screen, not the `Frequency-Change` sub-screen this was opened from (that sub-screen is
+     * `FrequencyDetailContent`'s own internal, unexported state — restoring it exactly would need a
+     * change to that file, WP8's, not lead-approved this round; reported in this round's own
+     * report/CHANGELOG, not silently pretended).
+     */
+    fun openLogFilteredByFrequency(currentFrequencyHz: Long?, frequencyHz: Long, window: TimeWindow) {
+        closeDrillIns()
+        logFrequencyOrigin.value = currentFrequencyHz
+        pendingLogFilter.value = LogFilterSelection(
+            frequencyHz = frequencyHz,
+            fromMillis = window.startMillis,
+            toMillis = window.endMillis,
+        )
     }
 }
 
@@ -282,6 +347,10 @@ private fun rememberNavHostNavState(): NavHostNavState {
     val searchInput = rememberSaveable(stateSaver = SearchFilterInputSaver) { mutableStateOf(SearchFilterInput()) }
     val searchResult = remember { mutableStateOf<SearchResult?>(null) }
     val openCaptureLevelMeter = rememberSaveable { mutableStateOf(false) }
+    // Round 9, register R-276 — see `NavHostNavState.pendingLogFilter`/`logFrequencyOrigin`'s own
+    // doc comments for why one is a plain `remember` and the other `rememberSaveable`.
+    val pendingLogFilter = remember { mutableStateOf<LogFilterSelection?>(null) }
+    val logFrequencyOrigin = rememberSaveable { mutableStateOf<Long?>(null) }
     return NavHostNavState(
         openedFrom,
         searchOpenedFrom,
@@ -292,6 +361,8 @@ private fun rememberNavHostNavState(): NavHostNavState {
         searchInput,
         searchResult,
         openCaptureLevelMeter,
+        pendingLogFilter,
+        logFrequencyOrigin,
     )
 }
 
@@ -342,6 +413,14 @@ private fun navHostCallbacks(
             currentState.value = ReaderDestination.CAPTURE
             navState.openCaptureLevelMeter.value = true
         },
+        // Round 9, register R-276: `Frequency-Change`'s "The N overs" — real now that WP5 merged
+        // `LogContent.initialFilter` (confirmed by reading `ui/screens/LogContent.kt` before wiring
+        // this). See `NavHostNavState.openLogFilteredByFrequency`'s own doc comment for exactly
+        // what this does and does not restore on back.
+        onOpenOvers = { hz, window ->
+            navState.openLogFilteredByFrequency(navState.openFrequencyHz.value, hz, window)
+            currentState.value = ReaderDestination.LOG
+        },
     )
 }
 
@@ -373,6 +452,20 @@ private fun searchHostState(
  * `LongParameterList` rather than growing a parameter for the R-178 addition. */
 private data class NavHostLayout(val modifier: Modifier, val contentTopPadding: Dp = 0.dp)
 
+/** The "land here fresh, not at the root" seeds three different destinations each take, bundled
+ * purely to keep [NavHostIds] and [DestinationContent] under detekt's `LongParameterList` — the
+ * same reason [NavHostIds]/[NavHostCallbacks] themselves exist. Round 5:
+ * [settingsInitialScreen] (`SettingsContent`'s own doc comment on the same "opens there on
+ * launch" contract). Round 6, register R-132: [openCaptureLevelMeter]
+ * (`NavHostNavState.openCaptureLevelMeter`'s own doc comment). Round 9, register R-276:
+ * [logInitialFilter] (`NavHostNavState.pendingLogFilter`'s own doc comment) — the field whose
+ * addition is what pushed the previous three-scalar-parameter shape over the limit. */
+private data class DestinationInitialState(
+    val settingsInitialScreen: SettingsScreenId?,
+    val openCaptureLevelMeter: Boolean,
+    val logInitialFilter: LogFilterSelection?,
+)
+
 /** [NavHostBody]'s destination/drill-in identity, bundled to keep that composable's own parameter count down. */
 private data class NavHostIds(
     val current: ReaderDestination,
@@ -381,12 +474,7 @@ private data class NavHostIds(
     val stationId: String?,
     val frequencyHz: Long?,
     val threadId: String?,
-    // Round 5: the sub-screen `SettingsContent` should land on the next time it is freshly
-    // composed — see `settingsInitialScreen`'s own doc comment in `OrtNavHost`.
-    val settingsInitialScreen: SettingsScreenId?,
-    // Round 6, register R-132: whether `Capture` should land on `LevelMeterScreen` the next time
-    // it is freshly composed — see `NavHostNavState.openCaptureLevelMeter`'s own doc comment.
-    val openCaptureLevelMeter: Boolean,
+    val contentInitialState: DestinationInitialState,
 )
 
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
@@ -402,6 +490,7 @@ private data class NavHostCallbacks(
     val onOpenStations: () -> Unit,
     val onOpenModels: () -> Unit,
     val onOpenLevelMeter: () -> Unit,
+    val onOpenOvers: (Long, TimeWindow) -> Unit,
 )
 
 /**
@@ -517,6 +606,7 @@ private fun NavHostBody(
                     frequencyHz = ids.frequencyHz,
                     onBack = callbacks.onCloseDrillIns,
                     onOpenStation = callbacks.onOpenStation,
+                    onOpenOvers = callbacks.onOpenOvers, // R-276, real now — see NavHostCallbacks.onOpenOvers
                     backLabel = ids.openedFrom.label,
                 )
 
@@ -531,8 +621,7 @@ private fun NavHostBody(
 
                 else -> DestinationContent(
                     current = ids.current,
-                    settingsInitialScreen = ids.settingsInitialScreen,
-                    openCaptureLevelMeter = ids.openCaptureLevelMeter,
+                    initialState = ids.contentInitialState,
                     sessionId = sessionId,
                     context = context,
                     search = search,
@@ -637,14 +726,16 @@ private fun rememberDrawerLiveState(sessionId: String?, context: android.content
 @Composable
 private fun DestinationContent(
     current: ReaderDestination,
-    settingsInitialScreen: SettingsScreenId?,
-    openCaptureLevelMeter: Boolean,
+    initialState: DestinationInitialState,
     sessionId: String?,
     context: android.content.Context,
     search: SearchHostState,
     callbacks: NavHostCallbacks,
     modifier: Modifier,
 ) {
+    val settingsInitialScreen = initialState.settingsInitialScreen
+    val openCaptureLevelMeter = initialState.openCaptureLevelMeter
+    val logInitialFilter = initialState.logInitialFilter
     val content = modifier
     val onOpenTransmission = callbacks.onOpenTransmission
     val onOpenStation = callbacks.onOpenStation
@@ -668,12 +759,16 @@ private fun DestinationContent(
 
         // Round 3: `LogContent` gained a real `onOpenThread` — a QSO group header now opens the
         // real thread-detail drill-in (`Rows.dc.html`: "Tapping opens the thread").
+        // Round 9, register R-276: `initialFilter` is real now — WP5 merged it (confirmed by
+        // reading `ui/screens/LogContent.kt` before wiring this) — see `NavHostCallbacks
+        // .onOpenOvers`'s own comment.
         ReaderDestination.LOG -> LogContent(
             context = context,
             sessionId = sessionId,
             onOpen = onOpenTransmission,
             modifier = content,
             onOpenThread = onOpenThread,
+            initialFilter = logInitialFilter,
         )
 
         ReaderDestination.SEARCH -> SearchContent(

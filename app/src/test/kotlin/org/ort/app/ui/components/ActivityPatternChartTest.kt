@@ -9,6 +9,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
@@ -19,6 +20,7 @@ import org.junit.runner.RunWith
 import org.ort.app.ui.data.HourActivityBucket
 import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.app.ui.theme.OrtType
 import org.robolectric.RobolectricTestRunner
 import java.time.DayOfWeek
 
@@ -316,5 +318,59 @@ class ActivityPatternChartTest {
         }
         val heights = rects.map { it.height }.distinct()
         assertEquals("day initials at font scale 2.0 rendered at different heights: $heights", 1, heights.size)
+    }
+
+    @Test
+    fun `R_310_legend labels are one line and never narrower than their own intrinsic width, at font scale 2_0`() {
+        // The register's own repro (`stations-14-nights/ST03-hourxday-pass3@2x.png`): the legend's
+        // third item, with no room left on a plain Row, was measured into a sliver of remaining
+        // width and its label wrapped one letter per line down the right edge — `maxLines = 1,
+        // softWrap = false` (this file's own change) is what forbids that specific defect: a label
+        // can no longer be squeezed narrower than its own real, single-line extent. (This host's
+        // Robolectric cannot reliably force or measure a rendered *wrap* onto a second line from
+        // real glyph metrics — a limitation recorded repeatedly elsewhere in this package's own
+        // `CHANGELOG.md` — so this checks the one thing that *is* host-independently meaningful:
+        // every label's own rendered width is never less than what the same style/text measures to
+        // via `rememberTextMeasurer`, and every label renders at the same single-line height as the
+        // others. `FlowRow` itself — moving a whole swatch that has no room left onto its own new
+        // line, rather than only keeping each label's own text unsquashed — is the structural half
+        // of this fix; it is not independently pixel-verifiable on this host either, for the same
+        // reason, and is instead reasoned about directly against [LogRowMarkerLine]'s own identical,
+        // already-established precedent in `Rows.kt`.)
+        val labels = listOf("listened, not heard", "heard often", "not listening")
+        val intrinsicWidths = mutableMapOf<String, Float>()
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    val measurer = rememberTextMeasurer()
+                    val density = LocalDensity.current
+                    labels.forEach { label ->
+                        intrinsicWidths[label] = with(density) {
+                            measurer.measure(text = label, style = OrtType.subLine).size.width.toFloat()
+                        }
+                    }
+                    DayOfWeekGrid(cells = daysAsRowsCells())
+                }
+            }
+        }
+
+        val rects = labels.map { label ->
+            composeTestRule.onNodeWithText(label, useUnmergedTree = true)
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        }
+        labels.forEachIndexed { index, label ->
+            val intrinsic = intrinsicWidths.getValue(label)
+            assertTrue(
+                "label '$label' rendered at width ${rects[index].width}, narrower than its own " +
+                    "intrinsic (never-wrapped) width $intrinsic — squeezed to a sliver",
+                rects[index].width >= intrinsic - 1f,
+            )
+        }
+        // Never wrapped onto a second line: every label's own rendered height matches the others'
+        // (a wrapped label reports a taller box — the same host-independent signal R-271 used).
+        val heights = rects.map { it.height }.distinct()
+        assertEquals("legend labels at font scale 2.0 rendered at different heights: $heights", 1, heights.size)
     }
 }

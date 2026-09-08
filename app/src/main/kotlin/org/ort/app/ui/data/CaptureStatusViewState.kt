@@ -1,5 +1,6 @@
 package org.ort.app.ui.data
 
+import org.ort.app.ui.improve.Plurals
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -350,10 +351,12 @@ public object CaptureStatusMapper {
         )
     }
 
+    // R-301: the shared plural helper (register R-141/R-190/R-212's own class of finding) — never
+    // a bare "$gapCount gaps" that reads "1 gaps" for the single-gap case.
     private fun overFacts(transmissionCount: Int, rejectedCount: Int, failedCount: Int, gapCount: Int): KeyValueFacts =
         KeyValueFacts(
             value = "$transmissionCount captured",
-            subLine = "$rejectedCount rejected · $failedCount failed · $gapCount gaps",
+            subLine = "$rejectedCount rejected · $failedCount failed · ${Plurals.count(gapCount, "gap")}",
         )
 
     private fun backlogFacts(backlog: Int?): KeyValueFacts = if (backlog == null) {
