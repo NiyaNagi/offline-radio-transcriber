@@ -32,6 +32,113 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
+
+### (pending) — ui-conformance WP11c · storage accounting and the next automatic-prune candidate, exposed for Settings-Storage
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/StorageAccounting.kt` (new),
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/StorageAccountingTest.kt` (new). No other file
+touched — `StorageForecast.kt`/`ShedController.kt` are unchanged, per the coordinator's own framing
+("next to" them, not inside them). No `:data`/`:app` change. `results/coverage-matrix.md`
+regenerated (186 of 419 covered, up from 185 — FR-STO-5 now has a test).
+
+**Requirements/ACs:** register R-133; FR-STO-5, FR-STO-3a; D26; cf. FR-STO-7 (not yet
+implementable — see below).
+
+**Constitution check.** Principle I (uncertainty is content) bears directly on `lexiconBytes`: it
+honestly reads `0` today because nothing on this branch persists a lexicon file anywhere durable
+(see "What changed" and "Left open") — reporting a non-zero placeholder to make the four-segment
+bar look complete would have been exactly the fabrication the constitution forbids. Principle III
+(audio/real measurement is the source of truth): every byte figure is a real `File.length()`/
+`walkTopDown()` sum or a real `TransmissionDao.listBySession(...).size`, never estimated. Principle
+VII (module boundaries are structural): `:pipeline` cannot depend on `:app`, so the current audio
+budget is accepted as a parameter (`budgetBytes: Long?`) rather than this file reaching for
+`SettingsStore` itself.
+
+**What changed:**
+- **`StorageAccounting`** (data class: `audioBytes`, `modelBytes`, `recordBytes`, `lexiconBytes`,
+  `measuredAtMillis`, plus a computed `totalBytes`) and **`measureStorageAccounting(filesDir,
+  databaseFiles, clock)`** (new suspend function, `Dispatchers.IO`): sums `filesDir/audio`,
+  `filesDir/models` and `filesDir/lexicon` via the same `walkTopDown().filter{isFile}.sumOf{length()}`
+  pattern `RealCaptureService.audioDirectoryBytes()` already uses (extracted here as the reusable,
+  public `measureDirectoryBytes(dir: File)`), and sums whichever of the caller-supplied
+  `databaseFiles` currently exist — a list, not one path, because Room's WAL journal mode (the real
+  mode `OrtDatabase.create` uses outside tests) splits one logical database across
+  `ort.db`/`ort.db-wal`/`ort.db-shm`.
+- **`lexiconBytes` is honestly `0` on this branch, not a bug.** Read `LexiconImportInstaller`/
+  `RoomActiveLexiconStore` (`:lexicon`, `:app`) end to end: a validated lexicon import persists only
+  `ActiveLexiconRecord` (assetId, version, record count, checksum) into Room — the validated TSV
+  file itself is read once from `:app`'s cache and never copied anywhere durable. There is today no
+  on-disk "lexicon asset" directory to honestly report a non-zero figure for.
+  `measureDirectoryBytes(File(filesDir, "lexicon"))` will start reporting real bytes automatically,
+  no code change needed here, the day something actually writes a lexicon file under that path —
+  flagging this for whoever owns that decision (persist the validated file, not just its record) if
+  a real number is wanted before then.
+- **`SessionStorageSummary`** (`sessionId`, `startedAtMillis`, `overCount`, `bytes`) and
+  **`collectSessionStorageSummaries(db, filesDir)`** (new suspend function): every session,
+  oldest-first (`SessionDao.listAll()` returns newest-first for the Sessions list; this reverses
+  it), each with a real `TransmissionDao.listBySession(id).size` over-count and a real
+  `audio/<sessionId>/` byte sum. No new `:data` query needed.
+- **`NextDeletion`** (`sessionId`, `startedAtMillis`, `overCount`, `bytes`, `predictedAtMillis`) and
+  **`computeNextDeletion(sessionsOldestFirst, audioBytesUsed, budgetBytes, floorBytes, freeBytes,
+  nowMillis)`** (new pure function): the oldest session's summary, reported only when there is
+  actually a reason automatic oldest-first pruning (FR-STO-3a, D26) would touch it —
+  `audioBytesUsed` over an explicitly-set `budgetBytes` (`null` = "no budget set", never treated as
+  0 or unlimited, matching `SettingsStore.audioBudgetGb`'s own contract), **or** `freeBytes` already
+  at/below `floorBytes` (the same hard floor `storageFloorBreached` uses). Neither condition true,
+  or no sessions at all, returns `null` — "nothing would be deleted" stated honestly, not an empty
+  placeholder row.
+- **No `FR-STO-7` (pinning) exclusion.** "Support pinning a thread or transmission so retention
+  never deletes it" has no schema field on `SessionEntity`/`TransmissionEntity` yet — `NextDeletion`
+  cannot honestly skip a pinned session because nothing today marks one. Flagged, not silently
+  worked around.
+- **Not wired into any live tick.** These are pure, on-demand functions — no new process-wide
+  holder (unlike `StorageForecast`), no call added to `RealCaptureService.runShedMonitor`'s existing
+  10 s loop. "Cached with the same cadence as the forecast" is read here as guidance for whichever
+  caller (WP10's `Settings-Storage` polling) invokes `measureStorageAccounting`/
+  `collectSessionStorageSummaries`, not a mandate to build a second holder object no consumer was
+  named for yet.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.capture.StorageAccountingTest"` —
+  7 tests, all green: `R_133_accounting measures audio, models, records and lexicon bytes from real
+  files`, `R_133_accounting a directory that has never been written reads an honest zero, not a
+  placeholder`, `R_133_next_deletion the oldest session is the first prune candidate once over
+  budget`, `R_133_next_deletion the floor also forces a prune candidate even with no budget set`,
+  `R_133_next_deletion neither over budget nor at the floor reports null, not an invented session`,
+  `R_133_next_deletion an empty session list reports null even when over budget`,
+  `collectSessionStorageSummaries orders oldest first with real per-session over counts and bytes`
+  (this last one against Robolectric's real Room; the rest against a plain JVM temp directory and
+  hand-built fakes, no Robolectric needed).
+- `.\gradlew.bat :pipeline:testDebugUnitTest` (whole module) — green, no regression.
+- `.\gradlew.bat :pipeline:ktlintCheck :pipeline:detekt` — clean (one `ktlintFormat` pass wrapped
+  two over-length test lines before this was committed).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — 419 requirements, 186
+  covered; check reports up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `:app:testDebugUnitTest`'s pre-existing, unrelated `ReadyScreenTest` failure (WP9's file,
+  disclosed in this file's previous entry) is unchanged by this round — not re-verified a second
+  time since nothing in this round touches `:app` at all.
+
+**Left open / not done:**
+- `lexiconBytes` reads `0` until a real lexicon asset file is persisted somewhere durable — see
+  "What changed" above.
+- No pinning exclusion (FR-STO-7) — no schema field exists yet.
+- No live wiring/holder/caching — pure functions only, ready for WP10 to call. Public signatures
+  for WP10: `StorageAccounting(audioBytes: Long, modelBytes: Long, recordBytes: Long, lexiconBytes:
+  Long, measuredAtMillis: Long)`; `suspend fun measureStorageAccounting(filesDir: File,
+  databaseFiles: List<File>, clock: Clock = SystemClock): StorageAccounting`; `NextDeletion
+  (sessionId: String, startedAtMillis: Long, overCount: Int, bytes: Long, predictedAtMillis:
+  Long)`; `suspend fun collectSessionStorageSummaries(db: OrtDatabase, filesDir: File):
+  List<SessionStorageSummary>`; `fun computeNextDeletion(sessionsOldestFirst:
+  List<SessionStorageSummary>, audioBytesUsed: Long, budgetBytes: Long?, floorBytes: Long,
+  freeBytes: Long, nowMillis: Long): NextDeletion?`.
+
+---
+
 ## 2026-09-08 (ui-conformance WP11c follow-up: R-290-live, R-302)
 
 ### (pending) — ui-conformance WP11c · live capture never dies from a pass exception; a stopped session stops reading stale level/input
