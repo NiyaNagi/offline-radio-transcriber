@@ -21,6 +21,8 @@ import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.AsrAvailability
+import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -51,10 +53,13 @@ class ReaderPollingTest {
 
     @After
     fun resetProcessWideAvailability() {
-        // AsrAvailability/VadAvailability are process-wide holders (not persisted, by design —
-        // see their own doc comments); reset so this test's fixtures never leak into another test.
+        // AsrAvailability/VadAvailability/CaptureState/ShedStatus are all process-wide holders
+        // (not persisted, by design — see their own doc comments); reset so this test's fixtures
+        // never leak into another test.
         AsrAvailability.reset()
         VadAvailability.reset()
+        CaptureState.idle()
+        ShedStatus.reset()
     }
 
     @Test
@@ -84,6 +89,35 @@ class ReaderPollingTest {
         assertTrue(view.asrStatusLabel.contains("not started"))
         assertFalse(view.asrStatusLabel.contains("available ("))
     }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `FR_RUN_5 currentStatus reads the real shed level and backlog once capture has started`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        CaptureState.capturing("S1")
+        ShedStatus.update(level = 2, backlog = 7)
+
+        val view = ReaderPolling.currentStatus(context, "S1", startedAtWallMillis = 0L)
+
+        assertEquals(2, view.shedLevel)
+        assertEquals("Level 2 — speaker identity paused", view.shedLevelLabel)
+        assertEquals(7, view.backlog)
+        assertTrue(view.backlogLabel.contains("7"))
+    }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `FR_RUN_5 currentStatus reports not measured before capture has ever started, never a fabricated zero`(): Unit =
+        runTest {
+            db.sessionDao().insert(session())
+
+            val view = ReaderPolling.currentStatus(context, "S1", startedAtWallMillis = 0L)
+
+            assertNull(view.shedLevel)
+            assertEquals("Not measured", view.shedLevelLabel)
+            assertNull(view.backlog)
+            assertEquals("Not measured", view.backlogLabel)
+        }
 
     private fun session(id: String = "S1") = SessionEntity(
         id = id,

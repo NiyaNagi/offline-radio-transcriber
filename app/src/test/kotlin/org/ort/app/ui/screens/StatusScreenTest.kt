@@ -30,6 +30,8 @@ class StatusScreenTest {
         shedLevelLabel = "Nominal",
         livenessLabel = "Alive (heartbeat current)",
         uncleanEndBanner = null,
+        backlog = 7,
+        backlogLabel = "7 queued",
     )
 
     @Test
@@ -74,5 +76,37 @@ class StatusScreenTest {
             "VAD: VAD: energy fallback (Silero model not installed)",
             substring = true,
         ).assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `FR_RUN_5 queue backlog is shown as a number`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                StatusScreen(state = baseState)
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Queue backlog: 7 queued", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `FR_RUN_5 an unmeasured shed level and backlog render as not measured, never zero`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                StatusScreen(
+                    state = baseState.copy(
+                        shedLevel = null,
+                        shedLevelLabel = "Not measured",
+                        backlog = null,
+                        backlogLabel = "Not measured",
+                    ),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Shed level: Not measured", substring = true).assertExists()
+        composeTestRule.onNodeWithContentDescription("Queue backlog: Not measured", substring = true).assertExists()
     }
 }

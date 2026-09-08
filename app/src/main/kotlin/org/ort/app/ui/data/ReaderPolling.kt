@@ -14,22 +14,23 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureStatusRepository
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.VadAvailability
+import org.ort.pipeline.shed.FakeShedSignals
 import org.ort.pipeline.shed.ShedController
-import org.ort.pipeline.shed.ShedSignals
 import java.io.File
 
 /**
- * The same v0 smoke-test data path [org.ort.app.status.StatusActivity] and
- * [org.ort.app.transmissions.TransmissionListActivity] poll (build-plan P8/P11) — reused here,
- * not reinvented, so the new Compose screens (build-plan P13) show the identical facts the plain-
- * view surfaces already show ("no behaviour change"). Those two Activities are owned by a
- * concurrent session (P12) and are left untouched; this is a new, independent read path over the
- * same repository types.
+ * The read path build-plan P8/P11's original plain-view smoke-test Activities used to poll
+ * (`StatusActivity`, `TransmissionListActivity`) — both since deleted (audit F-002: they were the
+ * second copy of the fabricated-shed-signal bug fixed here, and nothing launched them once
+ * `ReaderActivity`/`OrtNavHost` became the app's real reader in build-plan P13/P14) — reused here
+ * rather than reinvented, so the Compose screens show the identical facts the plain-view surfaces
+ * used to show ("no behaviour change").
  *
  * A real reader (M5, P14 on) replaces polling with a `Flow` observed straight from `:data` and
- * `:pipeline`; this stays a poll for the same reason the Activities it mirrors do — it is not
- * this prompt's job to change that wiring, only to prove Compose can render what it produces.
+ * `:pipeline`; this stays a poll for now — it is not this prompt's job to change that wiring, only
+ * to prove Compose can render what it produces.
  */
 public object ReaderPolling {
 
@@ -56,7 +57,23 @@ public object ReaderPolling {
         // FR-UI-7 / audit F-004: read the real, process-wide ASR/VAD availability the capture
         // service set (or has not set yet — `AsrAvailability.state`/`VadAvailability.state`
         // default to their own honest "not started"/fallback states, never a healthy default).
-        val base = StatusViewStateMapper.from(status, AsrAvailability.state, VadAvailability.state)
+        //
+        // FR-RUN-5 / audit F-002: the shed level/backlog CaptureStatusRepository.current() just
+        // computed above are discarded — they came from the inert, never-ticked `ShedController`
+        // `statusRepository` constructs purely to satisfy its constructor (see that function's
+        // doc comment). The real reading lives in `ShedStatus`, published by `RealCaptureService`
+        // (audit F-007) every ~10 s once capture actually starts. `CaptureState` is still `Idle`
+        // before any session in this process has started capturing — the shed monitor coroutine
+        // cannot have sampled anything yet either, so that is exactly when "not measured" (not a
+        // fabricated `0`) is the honest thing to show.
+        val shedMeasured = CaptureState.state != CaptureState.State.Idle
+        val base = StatusViewStateMapper.from(
+            status,
+            AsrAvailability.state,
+            VadAvailability.state,
+            shedLevel = if (shedMeasured) ShedStatus.currentLevel else null,
+            backlog = if (shedMeasured) ShedStatus.backlog else null,
+        )
         val failure = CaptureState.failureReason
         return if (failure != null) base.copy(stateLabel = "${base.stateLabel} — $failure") else base
     }
@@ -248,17 +265,13 @@ public object ReaderPolling {
 
     private fun statusRepository(context: Context): CaptureStatusRepository {
         val heartbeatStore = FileHeartbeatStore(File(context.filesDir, "heartbeat.txt"))
-        // Same neutral, always-nominal shed signals as the v0 Activities — no real shed telemetry
-        // is wired for this smoke path (see StatusActivity's identical comment).
-        val shedController = ShedController(
-            object : ShedSignals {
-                override fun batteryPercent(): Int = 100
-                override fun isCharging(): Boolean = true
-                override fun queueBacklog(): Int = 0
-                override fun freeStorageBytes(): Long = Long.MAX_VALUE
-            },
-            SystemClock,
-        )
+        // audit F-002: `CaptureStatusRepository`'s constructor requires a `ShedController`, but
+        // its output (`CaptureStatus.shedLevel`) is never read any more — `currentStatus` above
+        // reads the real level/backlog from `ShedStatus` instead. Rather than a second bespoke
+        // always-nominal fake object (the bug this fix removes), this reuses `:pipeline`'s own
+        // `FakeShedSignals` purely to satisfy the constructor; nothing sampled from it is ever
+        // shown to a user.
+        val shedController = ShedController(FakeShedSignals(), SystemClock)
         return CaptureStatusRepository(heartbeatStore, shedController, SystemClock)
     }
 }
