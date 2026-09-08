@@ -5,7 +5,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.ort.testing.Requirement
 
-/** register R-091/R-143: the holder [ReprocessRunner] publishes progress on. Mirrors [org.ort.pipeline.capture.ShedStatus]'s own plain-holder style. */
+/**
+ * register R-091/R-143: the holder [ReprocessRunner] publishes progress on. Mirrors
+ * [org.ort.pipeline.capture.ShedStatus]'s own plain-holder style.
+ */
 class ReprocessStatusTest {
 
     @BeforeEach
