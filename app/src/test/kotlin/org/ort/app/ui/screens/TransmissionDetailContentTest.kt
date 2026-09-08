@@ -1,0 +1,194 @@
+package org.ort.app.ui.screens
+
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.runBlocking
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
+import org.ort.app.ui.theme.OrtTheme
+import org.ort.core.AttributionState
+import org.ort.core.TransmissionState
+import org.ort.data.OrtDatabase
+import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.TransmissionEntity
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * ui-conformance WP6: the content composable [org.ort.app.ui.navigation.OrtNavHost] dispatches to
+ * — proves the whole loop against a real (file-backed) [OrtDatabase], the same pattern
+ * `ReaderPollingTest`/`RealTransmissionAudioPlayerTest` already use, since [TransmissionDetailContent]
+ * itself reads real `:data` state rather than a fake.
+ *
+ * Room's coroutine DAOs dispatch off Compose's own test clock (they run on Room's real query
+ * executor, not the composition's dispatcher), so `waitForIdle()` alone is not enough after the
+ * initial `LaunchedEffect` poll — [waitUntilTextExists]/[waitUntilDescriptionExists] poll with a
+ * real timeout instead, the same shape `androidx.compose.ui.test`'s own `waitUntil` documents for
+ * exactly this "state arrives from off the composition clock" case.
+ */
+@RunWith(RobolectricTestRunner::class)
+class TransmissionDetailContentTest {
+
+    @get:Rule
+    val composeTestRule = createComposeRule()
+
+    private lateinit var db: OrtDatabase
+    private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    @Before
+    fun openDatabase() {
+        db = OrtDatabase.create(context)
+    }
+
+    private fun session() = SessionEntity(
+        id = "S1",
+        startedAt = 0L,
+        endedAt = null,
+        profileId = null,
+        deviceTier = null,
+        appVersion = "test",
+        terminationReason = null,
+        sourceId = null,
+        schemaVersion = OrtDatabase.SCHEMA_VERSION,
+    )
+
+    private fun transmission(id: String, stationId: String?, voiceprintId: String? = "V1") = TransmissionEntity(
+        id = id,
+        sessionId = "S1",
+        threadId = null,
+        startedAtUtc = 0L,
+        endedAtUtc = 1_000L,
+        durationMs = 1_000L,
+        audioFormat = "flac/16k/mono",
+        preRollMs = 200,
+        postRollMs = 200,
+        frequencyHz = 145_230_000L,
+        frequencyProvenance = "measured",
+        mode = null,
+        signalStrength = null,
+        channelName = null,
+        voiceprintId = voiceprintId,
+        attributionState = if (stationId != null) AttributionState.INFERRED else AttributionState.UNKNOWN,
+        stationId = stationId,
+        attributionConfidence = if (stationId != null) 0.7 else null,
+        attributionSourceTransmissionId = null,
+        processingState = TransmissionState.COMPLETE,
+        rejectionReason = null,
+        samplePosition = 0L,
+        monotonicStartNanos = 0L,
+        utcOffsetMinutes = 0,
+        calibrationId = null,
+        executionProvider = null,
+    )
+
+    private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 5_000) {
+        waitUntil(timeoutMillis) { onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    private fun ComposeContentTestRule.waitUntilDescriptionExists(description: String, timeoutMillis: Long = 5_000) {
+        waitUntil(timeoutMillis) {
+            onAllNodes(hasContentDescription(description, substring = true)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    fun `renders the real transmission once the poll resolves`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilDescriptionExists("K7LWH")
+
+        composeTestRule.onNodeWithContentDescription("K7LWH", substring = true).assertExists()
+    }
+
+    @Test
+    fun `R_052 correcting via Not right applies and reaches the propagated screen`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Not right?")
+
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        composeTestRule.waitUntilTextExists("Type a callsign")
+        composeTestRule.onNodeWithText("Type a callsign").performClick()
+        composeTestRule.onNodeWithContentDescription("Typed callsign").performTextInput("KA7LWH")
+        composeTestRule.onNodeWithText("Save unverified correction").performClick()
+        composeTestRule.waitUntilTextExists("Corrected to KA7LWH")
+
+        composeTestRule.onNodeWithText("Corrected to KA7LWH", substring = true).assertExists()
+        val corrected = runBlocking { db.transmissionDao().getById("TX1") }
+        assert(corrected!!.stationId == "KA7LWH")
+    }
+
+    @Test
+    fun `R_058 confirming an INFERRED transmission records an audit row and leaves it INFERRED`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Confirm")
+
+        composeTestRule.onNodeWithText("Confirm").performClick()
+        composeTestRule.waitForIdle()
+
+        runBlocking {
+            var entity = db.transmissionDao().getById("TX1")!!
+            var attempts = 0
+            while (db.correctionDao().correctionsFor("TX1").isEmpty() && attempts < 50) {
+                kotlinx.coroutines.delay(50)
+                entity = db.transmissionDao().getById("TX1")!!
+                attempts++
+            }
+            assert(entity.attributionState == AttributionState.INFERRED)
+            assert(!entity.corrected)
+            assert(db.correctionDao().correctionsFor("TX1").isNotEmpty())
+        }
+    }
+}

@@ -32,6 +32,172 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
+
+### (pending) — ui-conformance WP6 · detail states, inspection surface, correction sheet and propagation, playback, revisions
+
+**Scope:** `:app` `ui/screens/TransmissionDetailScreen.kt`, new `DetailWhyScreen.kt`,
+`DetailRevisionsScreen.kt`, `CorrectionSheet.kt`, `PropagatedScreen.kt`,
+`TransmissionDetailContent.kt`; `ui/data/CorrectionFlow.kt`, `InspectionSurface.kt` (unchanged —
+read only), `LabelledSample.kt` (unchanged — read only), new `DetailViewState.kt`,
+`CorrectionPolling.kt`; `ui/audio/**`; and every test beside each. Register rows R-050–R-058.
+
+**Constitution Check.** Principle I (Uncertainty Is Content) is the whole package: every state's
+explanation sentence states its confidence in prose rather than omitting it or fabricating one
+(the FR-UI-4 rewrite below), a cold-start prior never gets a fabricated bar, AMBIGUOUS/UNKNOWN
+copy is built only from real `InspectionViewState` data. Principle III (Audio Is The Source Of
+Truth / nothing deleted quietly) governs `CorrectionPolling`: propagation writes one
+`CorrectionEntity` per affected over, never a bulk mutation; `Undo all` is itself a further kept
+correction; `Restore` installs a new current transcript row, never deletes the superseded one.
+Principle II (Test-Backed Change): every file below has a failing-first test; the two behavioural
+fakes this package's interface change touches (`FakeTransmissionAudioPlayer`) shipped in the same
+commit. Principle VII (structural, not conventional): `Confirm` cannot silently become a
+re-attribution because it is routed through `CorrectionDao.insert` alone, never `recordCorrection`
+— a type-level choice in `CorrectionPolling.confirm`, not a caller discipline.
+
+**Requirements/ACs:** R-050, R-051, R-053, R-054, R-055, R-056, R-057, R-058 (closed — see "What
+changed" per row below); R-052 (partial — see "Left open"); FR-UI-4 (rewritten, see below),
+FR-UI-5, FR-UI-6, FR-UI-8, FR-SPK-7, FR-OBS-4.
+
+**What changed:**
+
+- **R-050/R-057, four states one layout.** `TransmissionDetailScreen` rebuilt against
+  `Detail.dc.html` (= INFERRED)/`Detail-Confirmed.dc.html`/`Detail-Ambiguous.dc.html`/
+  `Detail-Unknown.dc.html`: `AttributionRow` (WP2) at `MARKER_CARD_SIZE` for the header marker +
+  callsign, a one-sentence explanation, a mono meta row, `WaveformCard`, a transcript with the
+  callsign span highlighted when it appears verbatim, an inline "why this callsign" preview with a
+  `Full lattice` link, and a state-dependent bottom bar (`ActionBar` for CONFIRMED/INFERRED,
+  `SecondaryButton`/`PrimaryButton` for the single-action AMBIGUOUS/UNKNOWN bars). AMBIGUOUS renders
+  the real top-two candidates with evidence built from `databaseHit` (never a fabricated "heard N
+  times") plus `Neither`/`Leave ambiguous`; UNKNOWN renders "what was tried" from real inspection
+  data (grammar best-partial or "no sequence parsed", "kept as an unidentified voice") plus
+  `I know who this is`.
+- **R-053, the INFERRED source link.** `DetailBodyViewState.Inferred.sourceTransmissionId` carries
+  `Attribution.sourceTransmissionId` through; the header renders `Open the source over` calling
+  `onOpenTransmission` when non-null, absent (not a dead link) when the source was never recorded.
+- **FR-UI-4, rewritten.** The old assertion (`TransmissionDetailScreenTest`'s
+  `` `FR_UI_4 the confidence value is shown as visible text in the header...` ``) established a bare
+  confidence number on every state, including CONFIRMED — `States.dc.html`/guide §6.2 show the
+  `ScoreChip` only on INFERRED. Renamed to
+  `` `FR_UI_4_confidence_is_present_in_the_header_sentence_and_the_chip_only_on_INFERRED` ``: it now
+  proves the confidence is never omitted (it is in the explanation sentence — "Resolved from the
+  phonetics at 0.94" for CONFIRMED, "...Confidence 0.82." for INFERRED) and that the chip's own
+  content description (`confidence 0.NN`) exists only for INFERRED. `DetailViewStateMapper.bodyFor`
+  builds that sentence.
+- **R-051/FR-UI-8, the inspection surface.** `DetailWhyViewState` (new, `DetailViewState.kt`) builds
+  real ranked candidates, real `PriorBar`s (WP2) from the chosen candidate's `priorContributions` —
+  cold start gets `fillFraction = null` (renders "cold start", no fabricated zero-length bar), a
+  negative contribution fills leftward in amber — and a runner-up, from `InspectionViewState`
+  alone. `DetailWhyScreen` (new) is the exhaustive version `Detail-Why.dc.html` specifies, reached
+  via `Full lattice`.
+- **R-052/R-058, correction.** `CorrectionSheet` (new): tier A (the resolver's other candidates,
+  one clickable row each — not a display row plus a separate button, which an early draft had and
+  which broke click routing under test), tier B (`Search the lexicon`, calling the existing
+  `ReaderPolling.searchLexicon` — not edited — with prefix-match highlighting), tier C (typed
+  callsign, the *unverified* warning, and the `this over only` / `every over matched to this voice
+  (N)` scope choice `Detail-Correct-C.dc.html` is the only board that shows). Tier A/B propagate by
+  default (`Flow-Correct.dc.html`'s own example: picking a candidate reads "6 overs re-attributed");
+  tier C defaults to `this over only`. `CorrectionPolling.applyCorrection` (new,
+  `ui/data/CorrectionPolling.kt`) selects affected transmissions by shared `voiceprintId`, falling
+  back to `stationId` when there is none, and records one `CorrectionEntity` per affected over —
+  never a bulk write. `PropagatedScreen` (new) renders the real counts, `Undo all` (a further, kept
+  correction reverting each affected over — nothing deleted), and every affected row with its old
+  callsign struck through.
+- **R-058, `Confirm`.** `CorrectionTier.CONFIRM` and `FIELD_STATION_CONFIRMED` (new, in
+  `CorrectionFlow.kt`, not `:data`'s `CorrectionDao` — `:data` is out of this package's ownership):
+  a `CorrectionRequest` whose new value equals the previous one. `CorrectionPolling.confirm` inserts
+  that audit row via `CorrectionDao.insert` alone — never `recordCorrection`, which would force
+  `attributionState = INFERRED` and set the `corrected` lock, silently turning "I agree" into a
+  re-attribution. Proven directly: confirming a CONFIRMED transmission leaves its attribution state
+  and `corrected` flag untouched. Documented as not a fifth `AttributionState` — the closed set is
+  unchanged.
+- **R-054, playback.** `TransmissionAudioPlayer` extended with `pause`/`resume`/`seekToFraction`/
+  `setRate`/`positionFraction`/`isPlaying` (`PlaybackRate.NORMAL`/`THREE_QUARTER`/`HALF`, each
+  preserving pitch via `AudioTrack.setPlaybackParams`). `FakeTransmissionAudioPlayer` extended in
+  the same commit (constitution II). `WaveformCard` drives idle/playing (a 150ms poll loop while
+  playing)/no-audio/unavailable from real player state.
+- **R-055, revisions.** `CorrectionPolling.revisions`/`.restore` (new): every `TranscriptEntity`
+  version, current first then newest-superseded, labelled with real pass/model/time and "corrected"
+  only when a `CorrectionEntity` actually exists for the transmission. `DetailRevisionsScreen`
+  (new) renders version cards and a word-level LCS diff (`WordDiff`, new, pure/tested independent
+  of Compose) of each superseded version against current. `Restore` installs a **new** current
+  transcript row via `TranscriptDao.supersede` — proven: the version count grows by one, nothing is
+  removed.
+- **R-056, labelled sample.** Outcome/certainty are now `RadioRow` (WP2) visible lists, not
+  tap-to-cycle text; every free-text `TextField` carries a real Material `label`, not only a content
+  description.
+- **A compile-compat shim, not a redesign.** `OrtNavHost.kt` (WP3's file, not edited here) still
+  calls this screen's pre-WP6 signature from its own inline `TransmissionDetailContent`; deleting
+  that inline copy is explicitly WP3's job (`ui-conformance-plan.md` §D). Removing the old signature
+  outright would leave `main` red for every worktree until that merge lands, so a `@Deprecated`
+  overload matching the old signature adapts straight into the real screen. WP3's merge should
+  delete this overload along with its only caller.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.*" --tests
+  "org.ort.app.ui.screens.*" --tests "org.ort.app.ui.audio.*"` — **BUILD SUCCESSFUL**, all tests
+  green (`DetailViewStateMapperTest`, `CorrectionPollingTest`, `CorrectionFlowTest`,
+  `FakeTransmissionAudioPlayerTest`, `WordDiffTest`, `CorrectionSheetTest`,
+  `TransmissionDetailContentTest`, `TransmissionDetailScreenTest`,
+  `TransmissionDetailScreenCorrectionTest`, `RealTransmissionAudioPlayerTest`, plus every
+  pre-existing test in those packages, unmodified where not called out above).
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole module, no filter) — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** (`:app:ktlintFormat`
+  run once to fix continuation-indent violations `DetailViewState.kt`/
+  `DetailViewStateMapperTest.kt`/an import ordering violation left by hand-editing, then the full
+  gate re-run clean).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged; this package's tests
+  are named for `R-*`/`FR-UI-*` ids the coverage matrix's `@Requirement` annotation convention does
+  not track, matching this package's existing test style) and `.\gradlew.bat coverageMatrixCheck`
+  (separate invocation, up to date) — both **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- **R-052 is partial, not closed.** `PropagationOutcome.voiceprintReassigned` is always `false` and
+  `.priorsUpdatedCount` is always `0`: `:data`'s `CatalogDao` (the only entry point to
+  `VoiceprintEntity`) offers `insert` and a read by `boundStationId`, no update path for
+  `VoiceprintEntity.boundStationId`, and no `:app`-reachable write path updates a prior's stored
+  weight at all. Both are real zeros (nothing was done), not fabricated — but `Detail-Propagated.dc.html`
+  shows these lines with real counts, and this package cannot add the needed `:data` DAO methods
+  without touching a file outside its ownership. Flagging for the lead to re-partition: a small
+  `CatalogDao` addition (`updateVoiceprintBinding`) would close this.
+- **The phonetic-lattice per-slot render (part of R-051/`Detail-Why.dc.html`'s step 1) is not
+  built.** `PhoneticLatticeEntity.unitsBlob` is an opaque blob with no defined per-unit (score,
+  alternate, threshold) shape yet — nothing in the codebase parses it. `DetailWhyScreen` shows the
+  lattice's real source and model and says plainly that per-slot detail is not recorded, rather
+  than inventing a blob format no writer produces.
+- **UNKNOWN's "what was tried"** (R-057) omits the "nearest voice match" and "thread context" steps
+  `Detail-Unknown.dc.html` shows — no data source for either reaches `TransmissionDetailViewState`
+  today. Only the grammar step and the always-true "kept as an unidentified voice" step are real.
+- **The spoken-word outline during playback** (R-054) is never drawn — no word-timing data exists
+  anywhere in the schema, so this is always the honest "no outline" case, never faked. **Scrubbing
+  by dragging the waveform** is not wired — `seekToFraction` exists on the player and is exercised
+  by `FakeTransmissionAudioPlayerTest`/`RealTransmissionAudioPlayer`, but `WaveformCard` (WP2) has
+  no drag handler to call it from; a future WP2 change adding one would close this without touching
+  this package's files again.
+- **The transcript's callsign highlight** (part of R-050) is a literal, case-insensitive substring
+  match against the attributed callsign — real when it fires, but a real ASR transcript almost
+  never contains the bare callsign string (it says "kilo seven lima whiskey hotel", not "K7LWH"),
+  since no data anywhere maps spoken phonetic words back to the callsign they spell. Not fabricated,
+  but rarely visible on real data.
+- **Component gap for WP2:** guide §4 calls for the header callsign at 27sp mono ("title size"),
+  but `AttributionRow` (`ui/components/AttributionMarker.kt`) has no parameter for its callsign
+  text size — only `MARKER_CARD_SIZE` for the marker shape. Per this program's own instruction
+  ("never hand-roll a look-alike of a component that exists"), the header uses `AttributionRow`
+  as-is at its existing sizes rather than reimplementing its shape/colour/chip logic at a larger
+  text size; the callsign renders at `AttributionRow`'s built-in row-callsign size, not 27sp.
+- **The correction sheet renders as a full replacement screen, not a true bottom sheet over a
+  dimmed detail screen.** `Sheet` (WP2) is the sheet surface only — the drag/scrim/22%-dim
+  choreography around it is the caller's job, and `TransmissionDetailContent` shows it as its own
+  destination rather than an overlay for simplicity. Visually adequate (matches the artboard's
+  content) but not the exact interaction model `Detail-Correct-A/B/C.dc.html`'s dimmed-background
+  presentation shows.
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP5: Log rows and variants, partials, filter sheet, threads)
 
 ### (pending) — ui-conformance WP5 · Log rows and variants, partials, filter sheet, threads
@@ -648,8 +814,7 @@ does not exist).
 - `ReaderDestination.trailingGroup`'s divider placement, the drawer sheet's own width (M3's
   `ModalDrawerSheet` default, not `Menu.dc.html`'s 306dp), and the Improve-records count pill
   (`improveRecordsCount`, wired but always `null` — WP10 has not landed a real count) are all
-  unchanged/deferred, none named by this package's register rows.
-## 2026-09-08 (ui-conformance WP2: shared components)
+  unchanged/deferred, none named by this package's register rows.## 2026-09-08 (ui-conformance WP2: shared components)
 
 ### (pending) — ui-conformance WP2 · legacy marker keeps confidence until callers migrate
 
