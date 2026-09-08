@@ -22,7 +22,10 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -192,6 +195,7 @@ public fun OrtNavHost(
                     navState.openFrequencyHz.value,
                     navState.openThreadId.value,
                     navigator.settingsScreenState.value,
+                    navState.openCaptureLevelMeter.value,
                 ),
                 callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
                 sessionId = sessionId,
@@ -223,12 +227,20 @@ private data class NavHostNavState(
     val openThreadId: MutableState<String?>,
     val searchInput: MutableState<SearchFilterInput>,
     val searchResult: MutableState<SearchResult?>,
+    // Round 6, register R-132: whether `Capture` should land directly on `LevelMeterScreen` the
+    // next time it is freshly composed — see `CaptureStatusContent.openLevelMeter`'s own doc
+    // comment for the "opens there on launch" contract this mirrors.
+    val openCaptureLevelMeter: MutableState<Boolean>,
 ) {
     fun closeDrillIns() {
         openTransmissionId.value = null
         openStationId.value = null
         openFrequencyHz.value = null
         openThreadId.value = null
+        // Reset here too, not only where it is set true: this runs on every ordinary way of
+        // reaching `Capture` (the drawer row, the live bar's own tap target) and must not leave a
+        // stale `true` from an earlier `Settings-Capture` "Meter" tap open the meter again.
+        openCaptureLevelMeter.value = false
     }
 
     /** R-017: records which destination a drill-in opened from before running [setter], so a
@@ -269,6 +281,7 @@ private fun rememberNavHostNavState(): NavHostNavState {
     // comment for why `SearchResult` gets no equivalent Saver.
     val searchInput = rememberSaveable(stateSaver = SearchFilterInputSaver) { mutableStateOf(SearchFilterInput()) }
     val searchResult = remember { mutableStateOf<SearchResult?>(null) }
+    val openCaptureLevelMeter = rememberSaveable { mutableStateOf(false) }
     return NavHostNavState(
         openedFrom,
         searchOpenedFrom,
@@ -278,6 +291,7 @@ private fun rememberNavHostNavState(): NavHostNavState {
         openThreadId,
         searchInput,
         searchResult,
+        openCaptureLevelMeter,
     )
 }
 
@@ -320,6 +334,14 @@ private fun navHostCallbacks(
         // "Install a model" lands directly on `Assets` instead of the root the operator used to
         // have to tap through themselves.
         onOpenModels = { navigator.openSettings(SettingsScreenId.ASSETS) },
+        // Round 6, register R-132: `SettingsContent`'s own `onOpenLevelMeter` (its doc comment:
+        // "the host is expected to wire it the same way it wires every other cross-package
+        // drill-in") — `Settings-Capture`'s `Meter` action switches to `Capture` and asks
+        // `CaptureStatusContent` to land directly on `LevelMeterScreen`.
+        onOpenLevelMeter = {
+            currentState.value = ReaderDestination.CAPTURE
+            navState.openCaptureLevelMeter.value = true
+        },
     )
 }
 
@@ -362,6 +384,9 @@ private data class NavHostIds(
     // Round 5: the sub-screen `SettingsContent` should land on the next time it is freshly
     // composed — see `settingsInitialScreen`'s own doc comment in `OrtNavHost`.
     val settingsInitialScreen: SettingsScreenId?,
+    // Round 6, register R-132: whether `Capture` should land on `LevelMeterScreen` the next time
+    // it is freshly composed — see `NavHostNavState.openCaptureLevelMeter`'s own doc comment.
+    val openCaptureLevelMeter: Boolean,
 )
 
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
@@ -376,6 +401,7 @@ private data class NavHostCallbacks(
     val onOpenThread: (String) -> Unit,
     val onOpenStations: () -> Unit,
     val onOpenModels: () -> Unit,
+    val onOpenLevelMeter: () -> Unit,
 )
 
 /**
@@ -410,6 +436,16 @@ private fun NavHostBody(
     audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
     search: SearchHostState,
 ) {
+    // Register R-262 (accessibility validator): the same real-measured-height mechanism
+    // [org.ort.app.ui.failures.FailureHost] built for the banner's `contentTopPadding` (that
+    // file's own R-178 doc comment), mirrored for [LiveBar]'s own pinned bottom placement — without
+    // this, a destination's own scrollable content (`ModelsContent`/`Settings-Assets`, where this
+    // was found) sizes itself to the full content column height and the live bar then pins on top
+    // of its last row rather than the column making room for it. `0.dp` (density-converted from
+    // the measured px) whenever the live bar is not currently shown — mirrors `FailurePresentation
+    // .None -> onBannerHeightChanged(0.dp)` in that same file.
+    var liveBarHeight by remember { mutableStateOf(0.dp) }
+    val density = LocalDensity.current
     Column(modifier = layout.modifier) {
         val drillInIds = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId)
         val isDrillIn = drillInIds.any { it != null }
@@ -454,7 +490,7 @@ private fun NavHostBody(
         // passes `ids.openedFrom.label`, so the header names the true origin (R-017), e.g. "Back to
         // Search" for a transmission opened from a search result.
 
-        Box(modifier = Modifier.weight(1f).padding(top = layout.contentTopPadding)) {
+        Box(modifier = Modifier.weight(1f).padding(top = layout.contentTopPadding, bottom = liveBarHeight)) {
             when {
                 ids.transmissionId != null -> TransmissionDetailContent(
                     context = context,
@@ -493,6 +529,7 @@ private fun NavHostBody(
                 else -> DestinationContent(
                     current = ids.current,
                     settingsInitialScreen = ids.settingsInitialScreen,
+                    openCaptureLevelMeter = ids.openCaptureLevelMeter,
                     sessionId = sessionId,
                     context = context,
                     search = search,
@@ -509,10 +546,25 @@ private fun NavHostBody(
         // assuming otherwise); rendering the host's bar there too would stack two.
         val embedsOwnLiveBar = !isDrillIn &&
             (ids.current == ReaderDestination.NOW || ids.current == ReaderDestination.CAPTURE)
-        if (!embedsOwnLiveBar) {
-            drawerLive.liveBar?.let { liveBarState ->
-                LiveBar(state = liveBarState, onClick = callbacks.onOpenCapture)
+        val shownLiveBar = if (!embedsOwnLiveBar) drawerLive.liveBar else null
+        if (shownLiveBar != null) {
+            // Wrapped, not passed as `LiveBar`'s own `modifier` (that param reaches only its
+            // inner clickable `Row`, not the 1dp top-edge strip above it — `ui/components/
+            // LiveBar.kt` is outside this row to edit for a more precise seam) — measures this
+            // bar's whole real footprint as pinned in this `Column`. `testTag` (register R-262):
+            // a stable node for a test to read this wrapper's own `boundsInRoot`, independent of
+            // `LiveBar`'s own runtime-varying label text.
+            Box(
+                modifier = Modifier
+                    .testTag("live-bar-clearance")
+                    .onGloballyPositioned { coordinates ->
+                        liveBarHeight = with(density) { coordinates.size.height.toDp() }
+                    },
+            ) {
+                LiveBar(state = shownLiveBar, onClick = callbacks.onOpenCapture)
             }
+        } else {
+            liveBarHeight = 0.dp
         }
     }
 }
@@ -583,6 +635,7 @@ private fun rememberDrawerLiveState(sessionId: String?, context: android.content
 private fun DestinationContent(
     current: ReaderDestination,
     settingsInitialScreen: SettingsScreenId?,
+    openCaptureLevelMeter: Boolean,
     sessionId: String?,
     context: android.content.Context,
     search: SearchHostState,
@@ -646,8 +699,14 @@ private fun DestinationContent(
         ReaderDestination.FREQUENCIES ->
             FrequenciesContent(context = context, onOpen = onOpenFrequency, modifier = content)
 
-        ReaderDestination.CAPTURE ->
-            CaptureStatusContent(context = context, sessionId = sessionId, modifier = content)
+        // Round 6, register R-132: `openLevelMeter` is real now — `Settings-Capture`'s `Meter`
+        // action (via `NavHostCallbacks.onOpenLevelMeter`) lands here directly on the level meter.
+        ReaderDestination.CAPTURE -> CaptureStatusContent(
+            context = context,
+            sessionId = sessionId,
+            modifier = content,
+            openLevelMeter = openCaptureLevelMeter,
+        )
 
         // ui-conformance-plan WP10 (register R-090/R-091/R-092/R-107): all three dispatch to
         // WP10's own real content composables now that they are on this branch. `Earlier nights`
@@ -662,6 +721,9 @@ private fun DestinationContent(
                 onDrawer = onOpenDrawer,
                 modifier = content,
                 initialScreen = settingsInitialScreen,
+                // Round 6, register R-132: real now — see `NavHostCallbacks.onOpenLevelMeter`'s
+                // own comment above.
+                onOpenLevelMeter = callbacks.onOpenLevelMeter,
             )
 
         // Round 5 (R-092/R-107): `onOpenTransmission` is real now — WP10 merged it (confirmed by
