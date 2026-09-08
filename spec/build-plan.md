@@ -93,6 +93,10 @@ are individually green.*
   2026-09-08 afternoon: `PassDrainRunner`/`PassB`/`RealSherpaDecoder` are now constructed and wired
   into `RealCaptureService`, proven against `FakeAsrEngine` on Robolectric; a real Silero VAD
   binding was located and wrapped (`RealSileroVad`), gated on a model file P18 now fetches.
+  Audit F-013 fixed 2026-09-07: `PassBFactory`'s `PassFingerprint` had shipped with the
+  `configHash = "v0-smoke"` / `provider = "cpu"` placeholders from that morning's defect-3 work
+  left in permanently; both are now derived for real (`PassBFingerprintBuilder`, a real provider
+  threaded from `RealAsrEngineProvider`) — see CHANGELOG.md.
   **Still not checked off**: not verified on a real device (none available), and no ASR/VAD model
   was actually run for real in this session — see CHANGELOG for exactly what remains.
 - [x] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —

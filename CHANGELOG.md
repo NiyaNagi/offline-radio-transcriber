@@ -32,6 +32,70 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-013)
+
+### (pending) — audit F-013 · Pass B's fingerprint now carries a real `configHash` and a real `provider`, not `"v0-smoke"`/`"cpu"` literals
+
+**Scope:** `:pipeline` only — new `PassBFingerprintBuilder.kt` and `PassBFactoryTest.kt`
+(`org.ort.pipeline.passb`); `PassBFactory.kt` (new `provider` parameter, real `configHash`
+computation); `AsrEngineProvisioning.kt` (`AsrEngineAvailability.Available` gained a `provider`
+field, populated from the real `SherpaOnnxSession` descriptor it already builds);
+`RealCaptureService.kt` (`startProcessingLoop` now threads a real provider string through instead
+of a literal); `PassB.kt` (`fingerprint` made public for inspectability); two pre-existing call
+sites updated (`CaptureProcessingLoopTest.kt`).
+
+**Requirements/ACs:** FR-REP-1; constitution III ("every pass is a pure function of (audio,
+lexicon snapshot, model set, config) and records the fingerprint of what produced it") and VI
+("provider is part of provenance").
+
+**What changed:** `PassBFactory.create` stamped every `PassFingerprint` it built with the literal
+`configHash = "v0-smoke"` and `provider = "cpu"`, regardless of what actually ran — two different
+configurations produced identical fingerprints, and the honest-failure `UnavailableAsrEngine` path
+falsely reported `"cpu"` as if a real decode had happened. Fixed in two parts: (1)
+`PassBFingerprintBuilder.configHash` computes a deterministic SHA-256 hex hash (the same technique
+`:core`'s `ResolvedConfig.configHash` already uses, repeated here rather than exported since
+`ResolvedConfig.sha256Hex` is private) over a canonical string of every input fixed at
+`PassBFactory.create` time that can change Pass B's output: `confirmThreshold`,
+`separationThreshold`, the fixed `DecodeOptions()` passed to the engine on every run (now shared
+between the fingerprint and the `PassB` instance itself, rather than two separate defaults that
+could silently drift), and the three bundled lexicon tables' independent versions
+(`VariantTable`/`ItuPrefixTable`/`ConfusionCostMatrix` — material here, unlike Pass D's separate
+`lexiconVersion` field, because `PassBResolutionChain` resolves a callsign from the lexicon inside
+Pass B itself). Segmentation config is deliberately excluded, matching `:core`'s own
+`ConfigRelevance` table for `B_OFFLINE`. (2) `provider` is no longer guessed in `:pipeline`: the
+one place that already knows which execution provider ran — `RealAsrEngineProvider`, via the
+`SherpaOnnxSession` descriptor it constructs — now surfaces it on
+`AsrEngineAvailability.Available.provider`; `RealCaptureService` threads that value (or the literal
+`"none"` for the `Unavailable`/`UnavailableAsrEngine` path) into `PassBFactory.create`'s new
+required `provider` parameter, which has no default — a caller must supply a real value, never a
+constant. No `:asr-api`/`:asr-sherpa` change was needed or made: the descriptor was already built
+in `:pipeline`, just never read back out of `AsrEngineAvailability`.
+
+**Verified:** `PassBFactoryTest` (new), four `FR_REP_1_...`-named cases, written first and
+confirmed failing against the unfixed code for the right reason before implementing: two different
+`confirmThreshold`s produced identical hashes (`AssertionError: ... Actual: v0-smoke`), the
+provider case failed `expected:<[none]> but was:<[cpu]>`, and the "never v0-smoke" case failed with
+`Actual: v0-smoke`. (The determinism case passed both before and after, as expected — a constant
+is trivially deterministic — so it does not itself distinguish the fix, but it does pin the
+regression the other three exist to catch.) Re-verified all four green after restoring the fix.
+`./gradlew :pipeline:test` — all tests green (pre-existing `CaptureProcessingLoopTest` call sites
+updated for the new required `provider` parameter). Full gate: `./gradlew build dependencyRules`
+(exit 0) and `python tools/spec-check/spec_check.py` (all 8 checks PASS). All JVM/Robolectric only
+— nothing here is device-verified.
+
+**Left open / not done:** `PassBFactory.create` is not called from anywhere but
+`RealCaptureService` and its own tests yet (P12's real-model wiring is still gated behind a fetched
+model — see that prompt's CHANGELOG entry), so this fix has not been observed against a real
+on-device decode; `RealSherpaDecoder` does not configure any accelerator execution provider today,
+so `"cpu"` remains the only value the real path can ever report — this fix makes that fact honest
+and traceable rather than adding accelerator support. `Materiality`'s `B_OFFLINE` entry (`:core`,
+untouched here) already treats `CONFIG_HASH` as material, so a lexicon bump now correctly flags a
+stored Pass B row as a reprocessing candidate — this is a behavioural change downstream of the fix,
+not verified against `PassFingerprint.isReprocessCandidate` directly in this session (that
+mechanism's own tests are in `:core` and were not touched).
+
+---
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture

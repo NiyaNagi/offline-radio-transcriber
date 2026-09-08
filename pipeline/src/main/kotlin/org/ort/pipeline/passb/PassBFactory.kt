@@ -1,6 +1,7 @@
 package org.ort.pipeline.passb
 
 import org.ort.asrapi.AsrEngine
+import org.ort.asrapi.DecodeOptions
 import org.ort.asrapi.RejectionPipeline
 import org.ort.core.AssetRef
 import org.ort.core.PassFingerprint
@@ -25,6 +26,11 @@ import java.io.File
  * `PassBTest`'s real-grammar case uses — there is no dev-fold data yet to fit a real threshold
  * against (constitution VI; see [CallsignResolver]'s own doc comment on why confidence here is
  * clamped, not calibrated). A future session with real recordings replaces these.
+ *
+ * [provider] MUST be the execution provider [engine] actually runs on — supplied by the caller
+ * (audit F-013), never guessed here. `:pipeline`'s own [AsrEngineAvailability.Available.provider]
+ * is the one production source of this value; `"none"` is the honest answer when [engine] is an
+ * [UnavailableAsrEngine] (constitution VI: "provider is part of provenance").
  */
 public object PassBFactory {
 
@@ -33,13 +39,18 @@ public object PassBFactory {
         db: OrtDatabase,
         engine: AsrEngine,
         modelRef: AssetRef,
+        provider: String,
         tier: Tier = Tier.T0,
         confirmThreshold: Float = -1f,
         separationThreshold: Float = 0.01f,
     ): PassB {
+        val variants = VariantTable.bundled()
+        val ituTable = ItuPrefixTable.bundled()
+        val confusionMatrix = ConfusionCostMatrix.bundled()
+        val decodeOptions = DecodeOptions()
         val resolution = PassBResolutionChain(
-            variants = VariantTable.bundled(),
-            grammar = CallsignGrammar(ItuPrefixTable.bundled(), ConfusionCostMatrix.bundled()),
+            variants = variants,
+            grammar = CallsignGrammar(ituTable, confusionMatrix),
             combiner = PriorCombiner(emptyList()),
             resolver = CallsignResolver(separationThreshold = separationThreshold, confirmThreshold = confirmThreshold),
         )
@@ -49,8 +60,15 @@ public object PassBFactory {
             modelIds = listOf(modelRef),
             lexiconVersion = null,
             calibrationVersion = null,
-            configHash = "v0-smoke",
-            provider = "cpu",
+            configHash = PassBFingerprintBuilder.configHash(
+                confirmThreshold = confirmThreshold,
+                separationThreshold = separationThreshold,
+                decodeOptions = decodeOptions,
+                variantsVersion = variants.version,
+                ituVersion = ituTable.version,
+                confusionVersion = confusionMatrix.version,
+            ),
+            provider = provider,
             tier = tier,
         )
         return PassB(
@@ -59,6 +77,7 @@ public object PassBFactory {
             resolution = resolution,
             fingerprint = fingerprint,
             sink = DataPassBResultSink(db),
+            decodeOptions = decodeOptions,
         )
     }
 }
