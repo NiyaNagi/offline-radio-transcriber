@@ -2923,6 +2923,165 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · round 3: thread routes, Now hooks, true-origin back labels, failure actions, destination intent, improve badge
+
+**Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`, `Drawer.kt`, new `ReaderNavigator.kt`) and,
+this round only (WP11b is done with it after this), `ui/ReaderActivity.kt`; `CHANGELOG.md`. Third
+reconciliation addendum to the WP3 entry below, after `git merge --ff-only main` (`b823b77..35077f0`
+— WP2's editable-semantics fix, WP7 round 4, WP8 round 3 (`StationDetailContent`'s outer signature
+unchanged, confirmed by diff before merging), and a build/lint config change; none touch
+`ui/navigation/**` or `ui/ReaderActivity.kt`, so the merge was clean).
+
+**Requirements/ACs:** R-017 (closed — every drill-in header now names its true origin, not a
+hardcoded default), R-090 (Assets/Storage sub-screen reachability gap named, not fixed — see below),
+R-091 (Improve records drawer badge, closing the last piece of WP10's own "not yet switched over"
+note), R-100/R-101 (four of `FailureHostActions`' nine callbacks now reach real navigation; the rest
+documented), FR-UI-3, constitution I (Uncertainty Is Content), II (Test-Backed Change), VII
+(Boundaries Are Structural).
+
+**What changed:**
+- **Constitution Check.** Principle I: every gap this round found — `SessionsContent`'s missing
+  `onOpenTransmission`, `SettingsContent`'s internal-only sub-screen state, `SetupActivity`'s
+  missing step-entry point — is named in this entry and in the code that runs into it, not silently
+  routed around or left implicit. Principle VII: `ReaderNavigator` is the one new seam, a plain
+  class over a `MutableState<ReaderDestination>` plus a `Context`, hoisted so `ReaderActivity`
+  (mounted above `OrtNavHost` in composition) can drive the same navigation state without owning it.
+- **Thread drill-in reachable.** WP5 landed `onOpenThread` on both `LogContent`/`LogScreen` (a
+  `LogGroupHeader`'s `onClick`, firing `onOpenThread(item.threadId)` for a QSO group's header) and
+  `ThreadContent`/`ThreadScreen` (each `ThreadCard`'s `onClick`, via its own merged
+  `contentDescription`) since the prior round's report. Both are now wired straight to
+  `OrtNavHost`'s existing `onOpenThread` callback (already built, previously unreachable) — the
+  thread-detail route this package built two rounds ago is live.
+- **`NowContent`'s two new hooks wired.** `onOpenStations` → `ReaderDestination.STATIONS`, a plain
+  destination switch. `onOpenModels` → `ReaderDestination.SETTINGS` — **not** the `Assets`
+  sub-screen `Models` actually names: read `ui/settings/SettingsContent.kt` before wiring this (per
+  the round's own instruction) and confirmed its `var screen by remember { mutableStateOf<
+  SettingsScreenId?>(null) }` is entirely internal, with no parameter or entry point to land on a
+  specific sub-screen from outside. This opens `Settings` at its root; the operator taps `Assets`
+  themselves. Named at the call site, not silently pretended to be the real destination.
+- **R-017 closed: true-origin back labels.** All four drill-ins (`TransmissionDetailContent`,
+  `StationDetailContent`, `FrequencyDetailContent`, and this package's own `ThreadDetailContent`
+  wrapper around WP5's `ThreadDetailScreen`) now receive `backLabel = ids.openedFrom.label` instead
+  of each screen's own hardcoded default ("Log", "Stations", "Frequencies", "Threads") — a
+  transmission opened from a search result now shows "Back to Search" in its header, matching the
+  destination the operator actually came from, not the one the screen guessed.
+- **`ReaderNavigator.kt` (new).** Hoists the `rememberSaveable` `ReaderDestination` state
+  `OrtNavHost` used to own as a private local `var` into a small class (`open(destination)`,
+  `openSettingsStorage()`, `openSetupInput()`) created once by `rememberReaderNavigator` and passed
+  into `OrtNavHost` (default-constructed so every existing caller/test keeps compiling unchanged).
+  `openSettingsStorage()` carries the same "root only, not the `Storage` sub-screen" limitation as
+  `onOpenModels` above, for the identical reason. `openSetupInput()` launches WP9's `SetupActivity`
+  — read `ui/setup/SetupActivity.kt` before wiring this: its `internal companion object` exposes no
+  intent-extra or other entry point for landing on a specific step, and its own `onCreate`/
+  `onResume` derive the shown step entirely from `SetupStateMachine.stepFor` against already-stored
+  setup state. Both actions that would use this (`Choose another input`, `Set the frequency by hand`)
+  fire only *during* a running session, when setup is already marked complete, so
+  `SetupStateMachine` would hand straight back to `MainActivity` before the operator saw the `Input`
+  step — a documented no-op in exactly that case, not a working flow. `SetupActivity` would need a
+  new public entry (an intent extra naming a step, mirroring `ReaderActivity.EXTRA_DESTINATION`
+  below) to make this real; not this package's file to add.
+- **`ReaderActivity.kt`: `EXTRA_DESTINATION` and `FailureHostActions` wiring.** A new
+  `EXTRA_DESTINATION` intent extra (a `ReaderDestination` name, parsed by the new
+  `resolveInitialDestination`, falling back to `NOW` on anything unset or unrecognised) seeds
+  `rememberReaderNavigator`'s starting destination — consumed here only; Setup's S12 `Install` and
+  the capture notification's `Open` action are WP9's and `:pipeline`'s own files to wire, not this
+  round's. The same `navigator` now drives four of `FailureHostActions`' nine callbacks:
+  `onChooseAnotherInput` → `openSetupInput()`, `onOpenStorageSettings`/`onOpenRetentionSettings`
+  ("Free up space"/"Retention") → `openSettingsStorage()`, `onSetFrequencyByHand` →
+  `open(SETTINGS)`. `onOpenBatteryExemptionSettings` is untouched (it already reaches a real OS
+  settings screen WP11b wired directly). `onRetryInput`, `onReconnectRig`, `onEndSession`, and
+  `onRequestUsbPermission` stay default no-ops: each names a capture-pipeline or rig-CAT action, not
+  a navigation destination, and neither `:capture-android` nor a rig module (F9's contract,
+  register R-084, still unbuilt) exposes a callable entry point today — confirmed by grep before
+  leaving them, not assumed.
+- **Improve records drawer badge.** `DrawerLiveState`/`rememberDrawerLiveState` now poll
+  `org.ort.app.ui.improve.ImproveCounts.canGetBetterCount(context)` each cycle alongside every other
+  drawer figure, feeding `ReaderDrawerContent`'s `improveRecordsCount` parameter (already accepted,
+  previously always `null`) — the `IMPROVE_RECORDS` row now carries its real count pill instead of
+  none.
+- **`SessionsContent` (WP10): no `onOpenTransmission`, confirmed by reading the file** — it embeds
+  a `LogContent` with `onOpen = {}` hardcoded, no parameter exposed to override it. Item 7 of this
+  round's brief could not be wired for the same reason `LogContent`'s own group-header gap could not
+  be, two rounds ago, before WP5 closed it: reported here, not edited into WP10's file.
+- **Drawer click-through tests, retried once more (item 8).** Tagged the drawer's scrollable
+  `Column` itself (`testTag("drawer-rows")`, `Drawer.kt`) — `performScrollTo()` on a `Column` inside
+  `verticalScroll` (unlike a `LazyColumn`) needs a tagged scrollable ancestor to compute the right
+  offset reliably. That, combined with switching from
+  `onNodeWithContentDescription("Open <label>")` to `onNodeWithTag("drawer-row-<NAME>")`, fixed six
+  of the seven remaining rows: `THREADS`/`STATIONS`/`FREQUENCIES`/`SETTINGS`/`EARLIER_NIGHTS`/
+  `IMPROVE_RECORDS` now click through to their own real content in
+  `OrtNavHostDestinationDispatchTest.kt`, alongside the pre-existing `LOG` case. `CAPTURE` alone
+  still does not — chased down this time rather than re-documented as a generic timeout: isolated to
+  a minimal repro composing `ReaderDrawerContent` directly (no `OrtNavHost`, no
+  `ModalNavigationDrawer`/`DrawerState` animation), the `drawer-row-CAPTURE` node reports
+  `assertIsDisplayed()` and `assertHasClickAction()` passing, with ordinary non-overlapping bounds
+  identical in shape to every other row; both `performClick()` and a full synthetic
+  `performTouchInput { click() }` report success with no thrown exception, yet the row's `onSelect`
+  callback is never invoked — merged or unmerged tree, scrolled to the edge or well clear of it, with
+  or without the divider drawn above it (both tested and reverted, changing nothing). No other
+  drawer row — including the two immediately below `CAPTURE`, reached by scrolling past it — has ever
+  shown a click reporting success without firing. Read as a narrow Robolectric+Compose environment
+  defect specific to this one semantics node, not a `Drawer.kt`/`OrtNavHost.kt` wiring bug: the
+  `CAPTURE` dispatch itself (`ReaderDestination.CAPTURE -> CaptureStatusContent(...)`) is proven
+  correct by a test that composes `CaptureStatusContent` directly and finds its
+  `capture-status-title` tag immediately, kept in the suite in place of the click-through case.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin --console=plain` →
+  `BUILD SUCCESSFUL in 31s`.
+- `.\gradlew.bat :app:testDebugUnitTest --console=plain` → `BUILD SUCCESSFUL in 36s`, 787 tests, 0
+  failed (summed from `app/build/test-results/testDebugUnitTest/*.xml`) — the 8 WP2 text-field
+  failures the coordinator flagged as pre-existing are gone: main's own WP2 fix commit
+  (`4c280e4`, "text field keeps its editable semantics on the inner node") landed inside the merge
+  brought in by this round and resolved them; nothing in this round touched those files.
+  `OrtNavHostDestinationDispatchTest` specifically: 8 tests, 8 passed (`LOG`, `THREADS`, `STATIONS`,
+  `FREQUENCIES`, `SETTINGS`, `EARLIER_NIGHTS`, `IMPROVE_RECORDS` via drawer click-through; `CAPTURE`
+  via direct composition, per the finding above).
+- `.\gradlew.bat build dependencyRules platformGuards --console=plain` → `BUILD SUCCESSFUL in 47s`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test --console=plain` → `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` → all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix --console=plain` → `coverageMatrix: 419 requirements, 181 covered`.
+- `.\gradlew.bat coverageMatrixCheck --console=plain` → `coverageMatrixCheck: up to date (181
+  covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug --console=plain` → `BUILD SUCCESSFUL`.
+
+**Validator routes (content descriptions / test tags for each newly reachable path):**
+- Thread drill-in from Log: open the drawer (`contentDescription = "Open navigation"`), tap
+  `"Open Log"`, tap a `LogGroupHeader` (no stable content description of its own — matches on its
+  `label` text, e.g. a QSO group's station/over-count line, `hasClickAction()`).
+- Thread drill-in from Threads: `"Open Threads"`, then a `ThreadCard`'s own merged
+  `contentDescription` (`Row.kt`'s `description`, built from the thread's station/frequency/time
+  facts — read per-card, not a fixed string).
+- Now → Stations: `"Open Now"`, then `NowContent`'s own Stations-quick-action control (WP4's file;
+  this package only wired the callback, not the source control's own description).
+- Now → Models (lands on Settings root): same Now screen's Models quick action; the destination
+  reached is `"Settings"` root, not the `Assets` sub-screen.
+- True-origin back labels: any drill-in's `DrillInHeader` — its rendered label now equals whatever
+  destination it was opened from (`ReaderDestination.label`, e.g. `"Search"`, `"Log"`, `"Threads"`),
+  not a fixed per-screen default.
+- Improve records badge: open the drawer, the `"Open Improve records"` row's trailing content is
+  now a `Badge`/`BadgeKind.COUNT` pill when `ImproveCounts.canGetBetterCount` is non-null, absent
+  otherwise (unchanged absent-state behaviour).
+- Drawer rows generally: `testTag("drawer-rows")` on the scrollable container,
+  `testTag("drawer-row-<DESTINATION_NAME>")` on each row (e.g. `"drawer-row-CAPTURE"`).
+
+**Left open / not done:**
+- `SessionsContent` (WP10) exposes no `onOpenTransmission` — its embedded Log's row taps stay
+  unreachable until that package's own file adds the parameter.
+- `SettingsContent`'s Assets/Storage/Rig sub-screens remain reachable only by the operator's own tap
+  from the Settings root; `onOpenModels`, `ReaderNavigator.openSettingsStorage()`, and
+  `onSetFrequencyByHand` all land on that root, not the specific sub-screen each one names.
+- `SetupActivity` exposes no step-targeting entry point; `openSetupInput()` is a real launch that,
+  during a running session, immediately bounces back via `SetupStateMachine` rather than showing
+  `Input` — a documented no-op in that case, not a working "choose another input" flow.
+- `FailureHostActions.onRetryInput`/`onReconnectRig`/`onEndSession`/`onRequestUsbPermission` remain
+  default no-ops — no navigation-shaped target exists in `:capture-android` or a rig module today.
+- The `CAPTURE` drawer row's click-through cannot be driven in this Robolectric+Compose
+  environment; see "What changed" above for the full account of what was tried and ruled out.
+  `OrtNavHostDestinationDispatchTest`'s `CAPTURE` case proves the dispatch is correct via direct
+  composition instead.
+
 ### (pending) — ui-conformance WP3 · host dispatches to WP5, WP6 and WP8 content; thread, pattern, identity and frequency-change routes
 
 **Scope:** `:app` `ui/navigation/**` only (`OrtNavHost.kt` — `ReaderDestination.kt`/`Drawer.kt`
