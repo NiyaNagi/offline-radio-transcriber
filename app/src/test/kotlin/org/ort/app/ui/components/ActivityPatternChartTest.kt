@@ -1,10 +1,18 @@
 package org.ort.app.ui.components
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -212,5 +220,101 @@ class ActivityPatternChartTest {
         composeTestRule.setContent { OrtTheme { Sparkline(nights = nights) } }
 
         composeTestRule.onNodeWithContentDescription("3 nights: 1 heard, 1 not listening").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_271_hour label stride doubles once font scale reaches 2_0, never before`() {
+        assertEquals(6, hourLabelStride(1f))
+        assertEquals(6, hourLabelStride(1.5f))
+        assertEquals(12, hourLabelStride(2f))
+        assertEquals(12, hourLabelStride(3f))
+    }
+
+    private fun daysAsRowsCells() = DayOfWeek.entries.flatMap { day ->
+        (0 until 24).map { hour -> DayHourCell(day, hour, HourActivityState.SILENT_WHILE_LISTENING) }
+    }
+
+    private fun assertHourAxisNeverWrapsOrCollides(fontScale: Float, expectedLabels: List<String>) {
+        // The register's own repro (`stations-14-nights/ST03-hourxday-pass2.png`): at a large font
+        // scale a 2-digit mono hour label no longer fits its own 1/24-width grid column. This
+        // proves, at a real device content width, both halves of the fix: the stride drop (fewer
+        // labels shown at 2.0) and `softWrap = false` (the shown labels never break onto a second
+        // line) leave no two labels' own rendered bounds overlapping.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                OrtTheme {
+                    DayOfWeekGrid(cells = daysAsRowsCells(), modifier = Modifier.width(340.dp))
+                }
+            }
+        }
+
+        val rects = expectedLabels.map { label ->
+            composeTestRule.onNodeWithText(label, useUnmergedTree = true)
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        }
+        // Never wrapped: a label that broke onto a second line would report a taller-than-one-line
+        // box; every shown label here is the same fixed-height single glyph row.
+        val heights = rects.map { it.height }.distinct()
+        assertEquals(
+            "labels at font scale $fontScale rendered at different heights (a wrap changes height): " +
+                "$heights",
+            1,
+            heights.size,
+        )
+        // Never collide: no two labels' own horizontal extents overlap.
+        for (i in rects.indices) {
+            for (j in i + 1 until rects.size) {
+                val a = rects[i]
+                val b = rects[j]
+                val noOverlap = a.right <= b.left || b.right <= a.left
+                assertTrue(
+                    "labels '${expectedLabels[i]}' and '${expectedLabels[j]}' overlap at font scale " +
+                        "$fontScale: $a vs $b",
+                    noOverlap,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `R_271_the DaysAsRows hour axis never wraps and its labels never collide, at font scale 1_0`() {
+        assertHourAxisNeverWrapsOrCollides(fontScale = 1f, expectedLabels = listOf("00", "06", "12", "18"))
+    }
+
+    @Test
+    fun `R_271_the DaysAsRows hour axis never wraps and its labels never collide, at font scale 2_0`() {
+        assertHourAxisNeverWrapsOrCollides(fontScale = 2f, expectedLabels = listOf("00", "12"))
+    }
+
+    @Test
+    fun `R_271_the HoursAsRows day axis also never wraps at font scale 2_0`() {
+        // "Both orientations" — this layout's own axis row (day initials along the bottom) carries
+        // the same explicit `maxLines = 1, softWrap = false` guarantee, even though a single mono
+        // letter was never observed to wrap.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    DayOfWeekGrid(
+                        cells = daysAsRowsCells(),
+                        orientation = DayOfWeekGridOrientation.HoursAsRows,
+                        modifier = Modifier.width(340.dp),
+                    )
+                }
+            }
+        }
+
+        // M, W, F only — T (Tue/Thu) and S (Sat/Sun) each render twice, ambiguous for
+        // onNodeWithText; the existing R_209 test for this orientation avoids them for the same
+        // reason.
+        val rects = listOf("M", "W", "F").map { label ->
+            composeTestRule.onNodeWithText(label, useUnmergedTree = true)
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        }
+        val heights = rects.map { it.height }.distinct()
+        assertEquals("day initials at font scale 2.0 rendered at different heights: $heights", 1, heights.size)
     }
 }

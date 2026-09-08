@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -22,6 +23,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -48,6 +50,21 @@ private val DAY_LABEL_MIN_WIDTH = 28.dp
  * the default 24-hour range), not one label per column, which twenty-four 16dp-ish columns has no
  * room for. */
 private const val HOUR_LABEL_STRIDE = 6
+
+/** R-271: at font scale 2.0 a 2-digit mono label needs roughly twice the width, and a stride still
+ * spacing labels for the 1.0 case is not far enough apart to guarantee room — rather than let a
+ * label wrap (the register's own finding, `stations-14-nights/ST03-hourxday-pass2.png`) this drops
+ * to half as many labels again, doubling the stride, so each shown label always has the same
+ * relative headroom around it that it had at 1.0. */
+private const val HOUR_LABEL_STRIDE_LARGE_FONT_SCALE = HOUR_LABEL_STRIDE * 2
+private const val LARGE_FONT_SCALE_THRESHOLD = 2f
+
+/** R-271: the pure decision behind [DaysAsRowsGrid]'s hour axis — kept standalone and Compose-free
+ * so it is directly unit-testable, per this package's established workaround for Robolectric's
+ * unreliable glyph-width measurement (`scrubFraction`/`meterColorFor`/`logRowTranscriptStyle`
+ * elsewhere in this package follow the same pattern). */
+internal fun hourLabelStride(fontScale: Float): Int =
+    if (fontScale >= LARGE_FONT_SCALE_THRESHOLD) HOUR_LABEL_STRIDE_LARGE_FONT_SCALE else HOUR_LABEL_STRIDE
 private val SPARK_WIDTH = 56.dp
 private val SPARK_HEIGHT = 18.dp
 private val SPARK_GAP = 1.dp
@@ -269,6 +286,13 @@ public fun DayOfWeekGrid(
 
 @Composable
 private fun DaysAsRowsGrid(hours: List<Int>, byDayHour: Map<Pair<DayOfWeek, Int>, DayHourCell>) {
+    // R-271: at a large font scale, a 2-digit mono label no longer fits inside its own 1/24-width
+    // grid column — this doubles the stride (half as many labels, `hourLabelStride`) and frees
+    // each shown label from that column's own width via `wrapContentWidth(unbounded = true)`
+    // (`softWrap = false` + `maxLines = 1` alone would otherwise still get clipped to the column,
+    // not wrap — this is what actually gives the glyphs room, never letting them break onto a
+    // second line, which stride alone does not guarantee).
+    val stride = hourLabelStride(LocalDensity.current.fontScale)
     // Aligns the hour axis past the day-label column below (`Station-Pattern.dc.html`'s own
     // `padding-left` on its axis row, for the same reason).
     Row(
@@ -277,8 +301,15 @@ private fun DaysAsRowsGrid(hours: List<Int>, byDayHour: Map<Pair<DayOfWeek, Int>
     ) {
         hours.forEachIndexed { index, hour ->
             Box(modifier = Modifier.weight(1f)) {
-                if (index % HOUR_LABEL_STRIDE == 0) {
-                    Text(text = hourAxisLabel(hour), style = OrtType.axis, color = OrtColors.textLow)
+                if (index % stride == 0) {
+                    Text(
+                        text = hourAxisLabel(hour),
+                        style = OrtType.axis,
+                        color = OrtColors.textLow,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.wrapContentWidth(unbounded = true),
+                    )
                 }
             }
         }
@@ -321,10 +352,16 @@ private fun HoursAsRowsGrid(hours: List<Int>, byDayHour: Map<Pair<DayOfWeek, Int
     }
     Row(modifier = Modifier.padding(top = OrtSpacing.xs), horizontalArrangement = Arrangement.spacedBy(GRID_GAP)) {
         DayOfWeek.entries.forEach { day ->
+            // R-271: this orientation's own axis row — a single mono letter, so wrapping was never
+            // observed here, but the same guarantee ([HoursAsRowsGrid] is this grid's other
+            // orientation, per the register's "both orientations" ask) is made explicit rather than
+            // left to a fixed-width column and hope: never more than one line, at any font scale.
             Text(
                 text = dayInitial(day),
                 style = OrtType.axis,
                 color = OrtColors.textLow,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier.width(GRID_CELL),
             )
         }
