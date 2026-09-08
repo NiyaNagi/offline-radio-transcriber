@@ -25,6 +25,10 @@ internal object StationsFixtures {
     /** The whole-day skip — 7 nights back from "today" is never captured at all. */
     private const val SKIPPED_DAY_OFFSET = 7
 
+    /** Comfortably past the largest per-night `txPerNight` (4-6) any session's own overs use, so
+     * the R-184 fixture's `samplePosition` never collides with one of them. */
+    private const val AMBIGUOUS_SAMPLE_POSITION = 100L
+
     suspend fun stations14Nights(db: OrtDatabase): Scenarios.LoadResult {
         val zone = ZoneId.systemDefault()
         val today = LocalDate.now(zone)
@@ -36,6 +40,7 @@ internal object StationsFixtures {
         var sessionCount = 0
         var transmissionCount = 0
         var primarySessionId: String? = null
+        var primarySessionStart: Long? = null
 
         // 1..15 minus the one skipped day yields exactly the fourteen sessions this scenario
         // promises by name, spanning a fifteen-day window - "two weeks and the missed night".
@@ -51,7 +56,10 @@ internal object StationsFixtures {
             val sessionId = ScenarioFixtures.sessionId("stations14", "night$dayOffset")
             db.sessionDao().insert(ScenarioFixtures.session(sessionId, startedAt = startMillis, endedAt = endMillis))
             sessionCount++
-            if (primarySessionId == null) primarySessionId = sessionId
+            if (primarySessionId == null) {
+                primarySessionId = sessionId
+                primarySessionStart = startMillis
+            }
 
             // A within-night hatch: a real gap most nights, so a single evening is not read as
             // wall-to-wall listening either (FR-UI-12: "not heard" vs "not listening").
@@ -99,6 +107,77 @@ internal object StationsFixtures {
                 heardCount[station] = (heardCount[station] ?: 0) + 1
             }
         }
+
+        // R-184: at least one over whose resolver result carries three ranked, distinctly-scored
+        // Tier A candidates — `overnight/D08-correct-a.png`'s own repro (WP6's derivation was
+        // already verified by test; the zero-rows-on-device symptom was the fixture, per WP6's own
+        // finding a9c24c6) needs more than one real fixture to prove `CorrectionSheet`'s Tier A row
+        // is not a one-scenario fluke. Same trio, same shape as `OvernightScenario`'s own AMBIGUOUS
+        // over (KE7QRS/KE7QRF, which R-240 already relies on, plus KE7QRZ) — added onto the primary
+        // session rather than a fresh one, so it is reachable from this scenario's own default
+        // session without adding a fifteenth night.
+        val ambiguousSessionId = requireNotNull(primarySessionId)
+        val ambiguousStart = requireNotNull(primarySessionStart) + 15 * 60_000L
+        val ambiguousTxId = "$ambiguousSessionId-tx-ambiguous"
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = ambiguousTxId,
+                sessionId = ambiguousSessionId,
+                startedAtUtc = ambiguousStart,
+                samplePosition = AMBIGUOUS_SAMPLE_POSITION,
+                frequencyHz = FREQ_A,
+                signalStrength = 3.0,
+                attributionState = AttributionState.AMBIGUOUS,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                "$ambiguousTxId-t1",
+                ambiguousTxId,
+                "kilo echo seven quebec romeo sierra, portable",
+                isCurrent = true,
+                createdAt = ambiguousStart + 500L,
+            ),
+        )
+        db.catalogDao().insert(
+            ScenarioFixtures.lattice(
+                "$ambiguousTxId-lat",
+                ambiguousTxId,
+                createdAt =
+                ambiguousStart + 500L,
+            ),
+        )
+        db.catalogDao().insert(
+            ScenarioFixtures.candidate(
+                "$ambiguousTxId-c1",
+                ambiguousTxId,
+                "KE7QRS",
+                rank = 0,
+                score = 8.20,
+                selected = false,
+            ),
+        )
+        db.catalogDao().insert(
+            ScenarioFixtures.candidate(
+                "$ambiguousTxId-c2",
+                ambiguousTxId,
+                "KE7QRF",
+                rank = 1,
+                score = 8.05,
+                selected = false,
+            ),
+        )
+        db.catalogDao().insert(
+            ScenarioFixtures.candidate(
+                "$ambiguousTxId-c3",
+                ambiguousTxId,
+                "KE7QRZ",
+                rank = 2,
+                score = 7.90,
+                selected = false,
+            ),
+        )
+        transmissionCount++
 
         stations.forEach { station ->
             val first = firstHeard[station] ?: return@forEach

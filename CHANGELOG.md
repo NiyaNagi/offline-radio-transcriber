@@ -1997,6 +1997,119 @@ legend wording).
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round nine: retained-audio fixture for field-tier1 (R-290) and multi-candidate Tier A fixtures (R-184))
+
+### (pending) — ui-conformance WP4 · retained-audio and multi-candidate fixtures for R-290 and R-184
+
+**Scope:** `app/src/debug/**` only — ninth addendum to the WP4 entries below, after two fast-forward
+merges (`git merge --ff-only main`, no rebase, no stash): first onto `2be24a9`, then, mid-round, onto
+`4c0ad41` (the coordinator's own second, same-round ask — R-184 — arrived after the first merge and
+before this commit; confirmed `HEAD` was an ancestor of `main` before each). Two halts closed:
+register R-290 (this package's half — WP11d's half, the reprocess engine failing an item gracefully
+instead of throwing uncaught, is a separate `:pipeline/reprocess` row) and R-184 (this package's half
+— WP6's derivation fix already landed at a9c24c6; this is the fixture half WP6's own report asked
+for).
+
+**Requirements/ACs:** R-290 (halt — register), R-184 (halt — register), FR-REP (Improve/reprocess),
+FR-UI-6 (Tier A candidates), R-143/R-240/R-241 (the existing `field-tier1`/AMBIGUOUS fixtures this
+round extends rather than replaces); constitution I, III (retained audio must remain sufficient to
+re-run every pass).
+
+**What changed:**
+
+- **Constitution Check.** Principle III governs R-290 directly: `field-tier1`'s twelve overs are, by
+  definition, "improvable" (`SessionEntity.deviceTier` below current — `ImprovePolling.root`'s own
+  contract), so a fixture that seeds their database rows but not retained audio was already in
+  violation of what constitution III promises reprocessing — this fixes that, not just a crash.
+  Principle I: every new audio file is a real, decodable synthetic tone at the transmission's own
+  recorded `durationMs` (`ScenarioFixtures.writeAudioFixture`, already the codebase's own established
+  fixture, not a new mechanism), never a placeholder that would only satisfy `File.isFile`; the third
+  Tier A candidate (`KE7QRZ`, score 7.90) sits in the same real-looking range as the two it joins
+  (8.20/8.05), not an arbitrary value chosen to just be "distinct".
+- **R-290 — `Scenarios.kt`'s `fieldTier1`** now takes `context` and calls
+  `ScenarioFixtures.writeAudioFixture(context, tx)` for every one of its twelve overs — real files at
+  the exact path `FlacSegmentAudioProvider.forItem` `check`s for. Investigated and confirmed from
+  source before writing this (not assumed from the `.flac` extension): `FlacSegmentAudioProvider`'s
+  own default codec is `DeflatePredictiveCodec` — the *same* codec `writeAudioFixture` already
+  encodes with — so this fixture already produces exactly the container production reads; nothing new
+  to build. `clearPriorScenarioData` needed no change — it already deletes every `audio/<sessionId>/`
+  directory whose name carries `ScenarioFixtures.SESSION_PREFIX`, `field-tier1`'s own session id
+  included, confirmed by a new test (below) rather than assumed. Checked the coordinator's other
+  three named scenarios and found none needed the same fix: `overnight` already writes audio for
+  every over that needs it (`OvernightScenario`'s own `writeAudio = true` calls) and does not set
+  `deviceTier` (so it is not "improvable" in `ImprovePolling`'s sense in the first place);
+  `pass-failed` already calls `writeAudioFixture`; `interrupted-pass` seeds no `TransmissionEntity`
+  rows at all (a `DebugFailureOverride`-only fixture), so there is nothing for
+  `FlacSegmentAudioProvider` to ever be asked for.
+- **R-184 — a third, distinctly-scored Tier A candidate on the existing AMBIGUOUS over.**
+  `OvernightScenario`'s tx3 (the AMBIGUOUS over R-240 already relies on, `KE7QRS`/`KE7QRF`) gains
+  `KE7QRZ` at rank 2, score 7.90. `StationsFixtures.stations14Nights` gains an entirely new AMBIGUOUS
+  over on its primary session (15 minutes after that session's own start, `samplePosition` 100 so it
+  never collides with a night's own 4-6 overs) with the same three-candidate shape. Read
+  `CorrectionSheet.kt`'s `MainTier` before writing either: Tier A's "other candidates" list is every
+  ranked candidate whose callsign is not the over's own `currentCallsign` — for CONFIRMED/INFERRED
+  overs with exactly one candidate (their own selected pick), that filter removes the only row,
+  leaving zero; for an AMBIGUOUS over `currentCallsign` is `null`, so nothing is filtered and the
+  whole ranked list shows — this is the actual root cause the register's "zero rows on device"
+  symptom names, and why the fix is a fixture with *more than one* candidate on an over with *no*
+  current callsign, not a `CorrectionSheet` change (WP6 had already verified the derivation itself by
+  test at a9c24c6).
+- **New test files, both splits of existing ones (detekt's `LargeClass`, the same pattern
+  `NavRowTest.kt` already established for `RowsTest.kt`):** `FieldTier1AudioTest.kt` (R-290, three
+  cases) and `AmbiguousCandidatesFixtureTest.kt` (R-184, two cases) — `ScenariosTest.kt` itself grew
+  by these tests first and had to shed them to stay under the threshold; both new files share that
+  file's own `@Before`/`@After` boilerplate verbatim.
+- **`results/ui-audit/README.md`**: the `field-tier1` row now describes the real retained-audio files
+  (register R-290); the stale "Known gaps" bullet claiming "no screen renders `deviceTier` yet" is
+  corrected — WP10 wired `Settings-Tier`/`Improve*` to it rounds ago, and R-290's own fix is what
+  makes `Improve-Running`/`Improve-Done` (R03/R04) specifically reachable now, not just
+  `Improve`/`Improve-Select` (R01/R02). The `overnight` and `stations-14-nights` rows now name their
+  own three-candidate AMBIGUOUS over (register R-184).
+
+**Verified:**
+- `git merge --ff-only main` ×2 — fast-forwarded cleanly onto `2be24a9` then `4c0ad41`, `HEAD`
+  confirmed an ancestor of `main` before each; no rebase, no stash.
+- `.\gradlew.bat build dependencyRules platformGuards` — compiles; `ktlint`/`detekt` both clean after
+  two rounds of fixing this package's own new findings: `standard:function-signature`/
+  `standard:max-line-length` (a too-long test name, shortened), `LargeClass` on `ScenariosTest.kt`
+  (both new test files split out, as above), and `standard:argument-list-wrapping`/
+  `standard:max-line-length` in `StationsFixtures.kt`'s own new fixture code (fixed with
+  `:app:ktlintDebugSourceSetFormat`, confirmed by reading its diff before trusting it — formatting
+  only, no behavioural line changed). One pre-existing, unrelated failure found and **not fixed**:
+  `org.ort.app.ui.setup.ReadyScreenTest` (`ui/setup/**`, WP9's row, last touched by WP9's own commit
+  56d92ed — confirmed via `git log`/`git diff`, zero relation to `app/src/debug/**`) fails two cases
+  reproducibly even run in isolation (`R_265 an amber row with a Fix action…`, `R_265 a verified row
+  announces label, value and status…` — both "found 2 nodes, expected 1", the same shape of bug, in
+  a screen this package does not own). Reported here and in this round's report; not this package's
+  file to fix.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 185 covered** (unchanged — register R-ids are not spec FR/AC
+  ids, so this round's new `@Requirement` tags do not move this number); `coverageMatrixCheck: up to
+  date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **1077 tests, 1075 passing, 2
+  failing** — the two pre-existing `ReadyScreenTest` cases above, confirmed unrelated by running the
+  class in isolation (same two failures, same reason) and by `git log`/`git diff` showing this
+  package touched neither file this round. Every other task the full `build` runs (compile, `:app:
+  lint`, `ktlint`, `detekt`) reached **BUILD SUCCESSFUL**, confirmed by re-running the aggregate
+  `build dependencyRules platformGuards` with `-x testDebugUnitTest -x testReleaseUnitTest` once the
+  two pre-existing failures were isolated, rather than letting one unrelated task's exit code hide
+  everything else's real status. New tests, by name: `R_290 field-tier1 seeds a real retained-audio
+  file for every improvable over`, `R_290 field-tier1's real audio decodes to the recorded duration
+  with the real audio-provider codec`, `R_290 field-tier1's retained-audio files are cleared like
+  every other scenario's own` (`FieldTier1AudioTest`); `R_184 overnight's AMBIGUOUS over carries
+  three ranked, distinctly-scored Tier A candidates`, `R_184 stations-14-nights also carries an
+  AMBIGUOUS over with three ranked candidates` (`AmbiguousCandidatesFixtureTest`).
+
+**Left open / not done:**
+- **`org.ort.app.ui.setup.ReadyScreenTest`'s two failures are real, reproducible, and unfixed** —
+  reported above and in this round's report; `ui/setup/**` is WP9's row, not this package's.
+- **R-290's other half (the reprocess engine failing an item gracefully instead of throwing
+  uncaught) is WP11d's row** (`:pipeline/reprocess`, `FlacSegmentAudioProvider`) — not touched here;
+  this entry closes only the fixture half named in the register row's own "+ WP4" attribution.
+
 ## 2026-09-08 (ui-conformance WP4, round eight: accessibility pass — gap token wrapping, rig copy, tier label)
 
 ### (pending) — ui-conformance WP4 · accessibility pass: gap token wrapping, rig copy, tier label
