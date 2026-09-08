@@ -2,7 +2,6 @@ package org.ort.app.ui.navigation
 
 import android.content.Context
 import android.content.Intent
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
@@ -69,29 +68,35 @@ import org.robolectric.RobolectricTestRunner
  * "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"`) or as part of a fresh JVM, is
  * green.
  *
- * **This class run as part of the full, unforked `:app:testDebugUnitTest` alongside everything
- * else can leave the shared JVM's Compose test environment unable to reach idle for whatever
- * unrelated test happens to compose next** (`AppNotIdleException`, "Compose did not get idle...
- * infinite composition loop", surfacing in a completely different file — `ActivityPatternChartTest`
- * and `CaptureStatusScreenTest` both observed, on different runs, neither touched by this class at
- * all) — not this class's own cases failing, a *later* one's. [ReaderActivity]'s own
- * `resolveSessionId` doc comment already names the exact mechanism and origin of this: "building a
- * real `ReaderActivity` with a non-null session id starts `OrtNavHost`'s ... polling loops ...
- * which a Robolectric-driven test never gets a chance to cleanly cancel," and records that its own
- * author avoided it precisely by testing `resolveSessionId` as a pure function rather than building
- * a real activity — the same constraint R-129 asks this class to cross anyway, since only a real
- * `Activity`'s real `SaveableStateRegistry` can catch a `rememberSaveable` bug at all. Two mitigations
- * are landed here because they measurably reduce exposure (confirmed by re-running the same isolated
- * repro before and after each): [runReaderActivity] drives every `ActivityScenarioRule` through
- * `Lifecycle.State.DESTROYED` explicitly before its own `apply()`-driven teardown runs, and
- * [destinationIntent] hands `ReaderActivity` a non-null session id (the one thing that starts
+ * **This class run as part of the full, unforked `:app:testDebugUnitTest` alongside everything else
+ * could leave the shared JVM's Compose test environment unable to reach idle for whatever unrelated
+ * test happened to compose next** (`AppNotIdleException`, "Compose did not get idle... infinite
+ * composition loop", surfacing in a completely different file — `ActivityPatternChartTest` and
+ * `CaptureStatusScreenTest` both observed, on different runs, neither touched by this class at all)
+ * — not this class's own cases failing, a *later* one's. [ReaderActivity]'s own `resolveSessionId`
+ * doc comment already names the exact mechanism and origin of this: "building a real `ReaderActivity`
+ * with a non-null session id starts `OrtNavHost`'s ... polling loops ... which a Robolectric-driven
+ * test never gets a chance to cleanly cancel," and records that its own author avoided it precisely
+ * by testing `resolveSessionId` as a pure function rather than building a real activity — the same
+ * constraint R-129 asks this class to cross anyway, since only a real `Activity`'s real
+ * `SaveableStateRegistry` can catch a `rememberSaveable` bug at all.
+ *
+ * **Fixed at the root, not chased further in this file:** `app/build.gradle.kts` now runs this one
+ * class as its own Gradle `Test` task (`smokeTestDebugUnitTest`), excluded from `testDebugUnitTest`
+ * — see that file's own comment. A different `Test` task is always a fresh JVM worker process,
+ * never one shared with `testDebugUnitTest`'s own run, so whatever this class's own real `Activity`
+ * instances leave behind in the Compose test environment can no longer reach any test outside this
+ * class, regardless of what it is or whether it is ever fully cleaned up. `results/ui-audit/README.md`'s
+ * own gate list names both tasks now — `check`/`build` still run this class, just in its own process.
+ * Three code-level mitigations stay in this file too, on the theory that a smaller footprint here is
+ * still worth having even with the task split doing the real isolating: [runReaderActivity] drives
+ * every `ActivityScenarioRule` through `Lifecycle.State.DESTROYED` explicitly (rather than trusting
+ * disposal-order alone) and turns `mainClock.autoAdvance` off first, so no live poll loop's timer can
+ * fire and hand the disposing composition one more frame to recompose while that teardown runs; and
+ * [destinationIntent] hands `ReaderActivity` a non-null session id — the one thing that starts
  * `LogContent`/`ThreadContent`'s own *additional*, session-gated poll loops on top of the drawer's
- * and `NowContent`'s own unconditional ones) only for the one case that actually needs real seeded
- * row data to reach its drill-in. Neither eliminates the risk outright. Reported in full rather than
- * hidden: a full `:app:testDebugUnitTest` run that includes this class is not guaranteed to come back
- * clean end to end, even though every individual assertion here is correct and every other test file
- * is unaffected by anything this class's own code does to `:data`, `CaptureState`, or any other
- * process-wide holder (confirmed — this class touches none of them outside its own seeded rows).
+ * and `NowContent`'s own unconditional ones — only for the one case that actually needs real seeded
+ * row data to reach its drill-in.
  */
 @RunWith(RobolectricTestRunner::class)
 class ReaderActivityDestinationSmokeTest {
@@ -299,12 +304,17 @@ class ReaderActivityDestinationSmokeTest {
 
     private fun assertComposesAndSurvives(destination: ReaderDestination) {
         runReaderActivity(destination) { rule ->
-            rule.onNodeWithContentDescription("Open navigation").assertIsDisplayed()
+            // `waitUntil`, not an immediate `assertIsDisplayed()`: `SettingsContent`'s own root
+            // state (`SettingsRootScreen`) is not `rememberSaveable` — every fresh composition,
+            // `recreate()`'s included, shows `LoadingSettings()` first while its own `LaunchedEffect`
+            // reads `SettingsPolling.root` asynchronously (found by this exact assertion timing out
+            // right after `recreate()` before this was added).
+            rule.waitUntilContentDescriptionExists("Open navigation")
 
             rule.activityRule.scenario.recreate()
             rule.waitForIdle()
 
-            rule.onNodeWithContentDescription("Open navigation").assertIsDisplayed()
+            rule.waitUntilContentDescriptionExists("Open navigation")
         }
     }
 
@@ -334,14 +344,25 @@ class ReaderActivityDestinationSmokeTest {
             override fun evaluate() {
                 body(rule)
                 rule.waitForIdle()
-                // Force the Activity all the way through `onDestroy()` here, synchronously, before
-                // this rule's own teardown runs — every destination keeps a
+                // Freeze the clock before tearing anything down: every destination keeps a
                 // `LaunchedEffect { while (true) { poll(); delay(2000) } }` alive for as long as its
-                // composition exists, and this class is the only file in the suite that launches
-                // this many real, polling `Activity` instances. `waitForIdle()` alone does not prove
-                // that loop's coroutine has actually been cancelled (a suspended `delay()` reads as
-                // idle, correctly), only that disposal has *started* — moving through `DESTROYED`
-                // explicitly, then idling once more, is what confirms it has actually finished.
+                // composition exists, and each one still has a live timer armed to wake it and
+                // schedule another frame the instant this test's own assertions are done with it.
+                // With `autoAdvance` left on, `moveToState(DESTROYED)`'s own teardown races that
+                // timer — it can fire, post a new frame, and hand the disposing composition one more
+                // recomposition to perform. Turning it off first means no such timer fires again;
+                // whatever `delay()` this composition is suspended in just stays suspended until its
+                // coroutine scope is actually cancelled, rather than getting one more chance to run.
+                rule.mainClock.autoAdvance = false
+                // Force the Activity all the way through `onDestroy()` here, synchronously, before
+                // this rule's own teardown runs — `waitForIdle()` alone does not prove a poll loop's
+                // coroutine has actually been cancelled (a suspended `delay()` reads as idle,
+                // correctly), only that disposal has *started* — moving through `DESTROYED`
+                // explicitly, then idling once more, is what confirms it has actually finished. The
+                // rule's own `apply()`-driven teardown (`ActivityScenarioRule.after()` →
+                // `scenario.close()`, then `AndroidComposeUiTestEnvironment`'s own disposal) still
+                // runs after this `evaluate()` returns and is what actually unregisters this
+                // composition's idling resources — nothing here registers one of its own to leak.
                 rule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
                 rule.waitForIdle()
             }
