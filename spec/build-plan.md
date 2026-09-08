@@ -203,7 +203,14 @@ are individually green.*
   `android.permission.INTERNET` (it declared none before, so even the still-missing `:app` call
   site would have failed at runtime with a `SecurityException`); `platformGuards` gained a rule
   that fails the build if `:net` itself lacks the permission, not just if another module has it.
-  The `:app` call site remains the other half of F-008, unbuilt.
+  **Update 2026-09-08 (audit F-008, `:app` half):** the "Models" screen
+  (`ReaderDestination.SETTINGS`) is that call site — `ModelsController.download()`/`.sideload()`
+  mint `NetCapability.UserInitiated` and drive `ModelAcquisition` for all four required files
+  (three `AsrModelLocator` files, one `SileroVadLocator` file), writing to the exact paths P12's
+  providers read, and requeue F-016's `FAILED` items on a successful install. **Still not done:**
+  `ModelCatalog`'s checksums are placeholders, not the real published SHA-256 (no network egress
+  available to compute one) — a real fetch today verifies the *mechanism* correctly but will
+  correctly refuse to install real bytes until a real digest is pinned. See CHANGELOG.md.
 
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not
