@@ -1255,6 +1255,63 @@ tests, one commit later at the coordinator's request now that WP3's host and WP1
 - The other "Left open" items from the WP5 entry above (live bar, `Log-Rejected.dc.html`'s per-row "why"
   line, the real tier number, per-thread ambiguous candidate naming) are unchanged by this follow-up.
 
+### (pending) — ui-conformance WP5 · rejected rows carry their why-line
+
+**Scope:** `ui/data/LogViewData.kt`, `ui/screens/LogScreen.kt`, and their tests (`LogViewDataTest`,
+`LogScreenTest`) — one commit later, now that `main` carries WP2's `RejectedRow(..., why: String? =
+null)` follow-up (merged `main` fast-forward, `e935a83` confirmed an ancestor of the merged HEAD).
+
+**Requirements/ACs:** R-043 (register — closes the "why" line gap this package's own first WP5 entry
+left open), P9, guide §9.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content): the derived `why` never fabricates a
+  category for a rule token it does not recognise — it returns `null` rather than guess. Principle II
+  (Test-Backed Change): `LogItemsMapper.whyFor` has a failing-first test covering all six real
+  rejection rules, the "nothing beyond the short reason" null case, and the unrecognised-token null
+  case, plus two `LogScreen` tests proving the line is shown only where the design puts it.
+- **`LogItemsMapper.whyFor(rejectionReason: String?): String?`** (`ui/data/LogViewData.kt`) parses the
+  real write path's format — `org.ort.pipeline.passb.DataPassBResultSink` stores
+  `transmission.rejectionReason` as `"$rule: $detail"` for the six §8.2 rejection rules
+  (`org.ort.asrapi.rules.RejectionRuleId` — matched by the enum's own name string, not imported: `:app`'s
+  allowed edges do not include `:asr-api`, so this stays a plain string match, never a type dependency) —
+  into a category in prose (`TOO_SHORT` → "Too short", `VAD_NO_SPEECH` → "No speech detected",
+  `NO_SPEECH_PROB` → "Low speech confidence", `REPETITION` → "Repeated text", `BLOCKLIST` → "Known
+  hallucination phrase", `COMPRESSION_RATIO` → "Unusual compression ratio") plus the rule's own
+  elaboration, reformatted for the two rules that wrote a raw `key=value` detail rather than a sentence
+  (`NoSpeechProbRule`/`CompressionRatioRule`'s `"no_speech_prob=0.94 exceeds ceiling=0.6"` becomes
+  "no-speech score 0.94, above the 0.6 ceiling", read via a fixed regex since the format is stable and
+  owned by `:asr-api`, not re-derived heuristically). Returns `null` when [rejectionReason] has no `": "`
+  separator at all (the record carries nothing beyond the short `reason` already shown) or an
+  unrecognised rule token. `LogListItem.RejectedItem` gains `why: String? = null`, wired into both
+  `buildRejectedFocus` and the interleaved-list `rejectedAsTimed` path.
+- **`LogScreen.kt`** passes `item.why` to `RejectedRow` only when `state.rejectedFocus` is the active
+  view (the dedicated `Log-Rejected.dc.html` view) — a rejected row merely interleaved into the normal
+  chronological list via the filter sheet's "Also show" toggle stays the compact one-line row it always
+  was, matching the artboard (only the dedicated view has the `.why` second line).
+
+**Verified:**
+- Fast-forward merge: `git merge --ff-only main` — `Updating 1af8f2c..1822f8c, Fast-forward` (65 files
+  changed). `git merge-base --is-ancestor e935a83 HEAD` — exit 0 (ancestor confirmed).
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL in 2m 3s (841 actionable
+  tasks, 91 executed, 38 from cache, 712 up-to-date); `dependencyRules: checked 17 modules ... OK`;
+  `platformGuards: checked 17 modules' external dependencies and 17 manifests ... OK`; every `:app` test
+  `PASSED`, none failed.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 181 covered -> results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (181
+  covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Tests by name, all `PASSED`: `LogViewDataTest` — `R_043_rejected_rows_explain_why_when_the_record_says`
+  (new, the coordinator's named test — all six rule categories, the no-separator null case, the
+  unrecognised-token null case, and the end-to-end `buildRejectedFocus` wiring). `LogScreenTest` — `R_043
+  the why line shows in the dedicated Rejected view` and `R_043 the why line stays hidden in the
+  interleaved list` (both new).
+
+**Left open:**
+- The other "Left open" items from the two WP5 entries above are unchanged by this follow-up.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)

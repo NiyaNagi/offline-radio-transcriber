@@ -281,6 +281,42 @@ class LogScreenTest {
         assert(opened == "TX1") { "expected TX1 to be opened but was $opened" }
     }
 
+    private val whyText = "Too short, segment is 120 ms, below the 250 ms floor"
+
+    @Test
+    fun `R_043 the why line shows in the dedicated Rejected view`() {
+        val item = LogListItem.RejectedItem("TX1", "02:16:40", "146.960", "too short", why = whyText)
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(item), rejectedFocus = true),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(whyText).assertExists()
+    }
+
+    @Test
+    fun `R_043 the why line stays hidden in the interleaved list`() {
+        val item = LogListItem.RejectedItem("TX1", "02:16:40", "146.960", "too short", why = whyText)
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(item), rejectedFocus = false),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(whyText).assertDoesNotExist()
+    }
+
     @Test
     fun `R_041 a hearing partial has no state marker and shows the streaming text`() {
         composeTestRule.setContent {
