@@ -1,6 +1,7 @@
 package org.ort.app.ui.settings
 
 import android.content.Context
+import org.ort.app.BuildConfig
 import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.navigation.StorageFooterViewState
 import org.ort.app.ui.navigation.toGigabyteLabel
@@ -296,31 +297,42 @@ public object SettingsPolling {
             // No aggregate "failed passes across every pass id" query exists on `WorkQueueDao`
             // (its `selectFailed` takes a specific pass and error-prefix) — never fabricated here.
             failedPassCount = null,
+            // R-137 (register, round 7 System validator pass 3): every description below is now
+            // `Settings-Diagnostics.dc.html`'s own trailing clause verbatim — round 4 had dropped
+            // each file's second half (what the clause is *for*, or its own privacy note). The
+            // per-file byte size and the header's own running total stay absent: no diagnostics-
+            // bundle producer exists in `:app`/`:pipeline` (checked again before writing this) to
+            // report a real size for a file nothing here has ever written — `2.1 MB`/per-file KB
+            // figures on the board are illustrative, not a fact this build could compute
+            // (constitution I). See this file's own `SettingsDiagnosticsScreen` doc comment.
             files = listOf(
                 SettingsDiagnosticsFileViewState(
                     "lifecycle.log",
-                    "service start, stop, heartbeat gaps, OS kills",
+                    "service start, stop, heartbeat gaps, OS kills — the F5 evidence",
                 ),
                 SettingsDiagnosticsFileViewState(
                     "capture.log",
-                    "route verifications, input device changes, level warnings",
+                    "route verifications, input device changes, level warnings, overruns",
                 ),
                 SettingsDiagnosticsFileViewState(
                     "pipeline.log",
-                    "per-pass timings, tier changes with their cause, queue depth",
+                    "per-pass timings, tier changes with their cause, queue depth over time",
                 ),
-                SettingsDiagnosticsFileViewState("rig.log", "CAT traffic, band changes, disconnects"),
+                SettingsDiagnosticsFileViewState(
+                    "rig.log",
+                    "CAT traffic, band changes, disconnects · frequencies included, they are not private",
+                ),
                 SettingsDiagnosticsFileViewState(
                     "assets.json",
                     "every model and lexicon: name, version, checksum, install date",
                 ),
                 SettingsDiagnosticsFileViewState(
                     "device.json",
-                    "SoC, RAM, Android version, OEM, thermal history — no serial, no IMEI",
+                    "SoC, RAM, Android version, OEM, thermal history · no serial, no IMEI, no account",
                 ),
                 SettingsDiagnosticsFileViewState(
                     "counts.json",
-                    "overs by state, rejections by reason, corrections by tier",
+                    "overs by state, rejections by reason, corrections by tier · numbers only",
                 ),
             ),
         )
@@ -330,14 +342,16 @@ public object SettingsPolling {
         appVersionLabel = appVersionName(context),
         androidVersionLabel = android.os.Build.VERSION.RELEASE ?: "unknown",
         minSdkLabel = "8.0",
+        sherpaOnnxVersionLabel = BuildConfig.SHERPA_ONNX_VERSION,
     )
 
-    // R-138 (round 4, System validator): "1.0.0 · build 412 · 6aaa608" is the board's pattern —
-    // the real `versionName` and `versionCode`/`longVersionCode` are read from `PackageManager`
-    // below; the trailing commit hash is not, since no `BuildConfig` field carries the git commit
-    // this build was made at (grepped `app/build.gradle.kts` before writing this) — adding a
-    // fabricated one would be exactly the dishonesty constitution I forbids, so the label ends
-    // after the real build number rather than inventing a hash.
+    // R-138 (round 7, register): "1.0.0 · build 412 · 6aaa608" is the board's pattern — the real
+    // `versionName` and `versionCode`/`longVersionCode` are read from `PackageManager` below; the
+    // trailing commit hash is now real too, `BuildConfig.GIT_SHORT_COMMIT` (injected at build time
+    // by `app/build.gradle.kts` from a real `git rev-parse`, see that file's own comment) — appended
+    // only when it is a real hash, never the honest "unknown" fallback that field carries when this
+    // checkout has no git available, so an unbuildable-git environment still reads as an honest
+    // shorter label rather than a fabricated one.
     private fun appVersionName(context: Context): String = try {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
         val versionName = info.versionName ?: "dev build"
@@ -347,7 +361,12 @@ public object SettingsPolling {
             @Suppress("DEPRECATION")
             info.versionCode.toLong()
         }
-        "$versionName · build $buildNumber"
+        val commit = BuildConfig.GIT_SHORT_COMMIT
+        if (commit.isNotBlank() && commit != "unknown") {
+            "$versionName · build $buildNumber · $commit"
+        } else {
+            "$versionName · build $buildNumber"
+        }
     } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
         "dev build"
     }

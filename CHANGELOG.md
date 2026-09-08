@@ -32,6 +32,160 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 round 7: R-291 ANR-adjacent chip clipping, R-133/137/138/140 board conformance)
+
+### (pending) — ui-conformance WP10 · R-291 chip-row fillMaxWidth; R-133/137/138/140 board conformance
+
+**Scope:** `ui/screens/ModelsScreen.kt`, `ui/settings/{SettingsStorageScreen,SettingsPolling,
+SettingsAboutScreen,SettingsDiagnosticsScreen,SettingsViewData}.kt`, `app/build.gradle.kts`
+(narrow, deliberate exception — see R-138 below), and tests beside each. `git merge --ff-only
+main` (local `main`, at `9c3cd7d` — origin's own `origin/main` is stale at `979addc` in this
+worktree's remote config and was not the branch meant) — fast-forwarded cleanly, no conflict.
+
+**Requirements/ACs:** R-291 (spec, new — `Settings-Storage`'s GB-budget chip row), R-133
+(partial, `Settings-Storage` vs the board), R-137 (partial, `Settings-Diagnostics` vs the board),
+R-138 (partial, `Settings-About` vs the board), R-140 (partial, `Settings-Assets` grouped rows +
+failed-download body). FR-STO-3/3a/D26, FR-OBS-3/5, constitution I (never fabricate a number).
+
+**What changed:**
+
+*Constitution Check.* Principle I governs every row below: R-291 is a real layout bug (a
+scrollable row measuring its own unconstrained width instead of the viewport's), not a copy
+change; R-133/137/138/140 each hit at least one point where the board's own mockup shows a
+number, a version, or a preview this build has no real source for — every one of those is left
+absent (or the honest architecture fact, not a number) rather than invented, and is named below.
+
+- **R-291 (chip row not scrolling, effectively an ANR-adjacent dead-end at font scale 2.0).**
+  Root cause: `SettingsStorageScreen`'s round-6 fix moved the GB-budget row to WP2's
+  `FilterChipRow` but never called `fillMaxWidth()` on it — the exact bug `StationScreen.kt`'s own
+  R-277 fix already named and fixed once (`FilterChipRow`'s `horizontalScroll` needs the *real*
+  available width to know there is anything to scroll to; without it, the row's own unconstrained
+  content measurement never overflows anything, so nothing scrolls and "Unli…" stays clipped on a
+  real device — confirmed via the register's own `overnight/CF03-storage-pass3-2x.png`/
+  `-afterswipe.png`, identical before and after the recorded swipe). Fixed with the same one-line
+  `fillMaxWidth()` R-277 used; test asserts the row's real measured width equals the screen's
+  padded content width (Robolectric cannot reproduce the on-device clip/swipe directly, same
+  limitation R-251 already documented).
+- **R-133 (`Settings-Storage` vs the board).** The board's four-segment usage bar
+  (Audio/Models/Records/Lexicon) is only partly buildable: Audio/Models/Records already have real
+  byte counts; **Lexicon does not** — the imported lexicon's rows live in the same Room database
+  file the "Records" category already sizes wholesale (`OrtDatabase`'s own file size), and no
+  per-table byte accounting exists (`dbstat`, uninvestigated — a real, separately-scoped
+  instrumentation change, not a same-round fix) to split it out honestly. Left as the existing
+  three categories; not fabricated as a fourth guessed number. The board's nights-based "Keep
+  audio for N nights · Change" is **not** adopted — **FR-STO-3 (M)/D26 explicitly mandate a
+  storage *budget*, not a time limit**, so the existing GB-budget chips are the spec-compliant
+  behaviour and the board's own mockup is the one out of step here; likewise the "prune oldest
+  first" toggle the register called out as board-absent is FR-STO-3a's own opt-in control
+  (AC-124) and stays. The "Next deletion: <date>" preview row is **not** added: FR-STO-3b's real
+  export-and-prune candidate computation (which session, how many overs, how many bytes, on what
+  projected date) does not exist anywhere in `:pipeline` to compute honestly — inventing a session
+  name and a date would be exactly constitution I's forbidden move. What *did* change: the
+  "what will be deleted" banner (FR-STO-3a's real trigger is "on reaching a budget", not "every
+  visit to this screen regardless of state") now shows only once `usedBytes` real-reaches the real
+  `budgetGb`, and stays absent with auto-prune on or no budget set at all — closer to the board's
+  own clean default *and* a more faithful reading of FR-STO-3a than the previous always-on notice.
+- **R-137 (`Settings-Diagnostics` vs the board).** Every file's trailing clause
+  (`lifecycle.log`/`capture.log`/`pipeline.log`/`rig.log`/`device.json`/`counts.json`) is now
+  `Settings-Diagnostics.dc.html` verbatim — round 4 had dropped each one's second half. The
+  "Not in the bundle" prose now carries the board's own scrubbing example,
+  `resolved [callsign] at 0.94`, inside the same illustrative sentence the board uses it in. **Not
+  done, and not fabricable:** the header's "· 2.1 MB" running total and each file's own KB size —
+  no diagnostics-bundle producer exists in `:app` or `:pipeline` (checked again this round) to
+  write a real file whose size could be reported; the board's figures are illustrative, not a fact
+  this build could compute. Preview/Save-bundle stays the honest amber `FailedState` it already
+  was for the same reason. **Reported per the coordinator's own steer, for a decision:** building
+  a real diagnostics-bundle producer (`:net`/new `:diagnostics`-shaped module) is its own unit of
+  work, the same shape WP11d's `RealReprocessRunner` was for R-143 — not something this round's
+  file ownership can add.
+- **R-138 (`Settings-About` vs the board).** The version line is now
+  `<versionName> · build <versionCode> · <git short commit>` — the commit hash is real,
+  `BuildConfig.GIT_SHORT_COMMIT`, injected by `app/build.gradle.kts` from an actual
+  `git rev-parse --short=7 HEAD` at build time (a `providers.exec` Provider, not `Runtime.exec` at
+  configuration time; falls back to the honest literal `"unknown"` — never a fabricated hash — if
+  this checkout has no `git` on `PATH`), appended only when it resolves to a real hash. The
+  `Build` section's row order is now Models, Runtime, Radio, Android, Licences (the board's own
+  order; `Android` used to lead). The Models row now carries the real sherpa-onnx version,
+  `BuildConfig.SHERPA_ONNX_VERSION`, read from `gradle/libs.versions.toml`'s own `sherpaOnnx`
+  entry — both fields read in `app/build.gradle.kts` specifically because that file's own doc
+  comment (already there before this round) says `libs` and a real git process are visible only
+  to a normal project script, never to `ort.android-app.gradle.kts` (buildSrc's own precompiled
+  script plugin has a separate classpath). **Not done, and not fabricable:** ONNX Runtime and
+  usb-serial-for-android have **no version-catalog entry at all** — neither is an actual Gradle
+  dependency of this build yet (checked `gradle/libs.versions.toml` fresh this round, not assumed
+  from the prior round's note) — so their rows keep the honest, version-free architecture
+  statements a prior round already gave them rather than inventing a number for either.
+- **R-140 (`Settings-Assets` vs the board).** The Whisper tiny.en encoder/decoder/tokens split
+  now renders as **one** row (a new `GroupedAssetRow`, this file's own addition) — the board's own
+  `whisper-small-int8`/`whisper-tiny-en-int8` one-row-per-model shape — instead of three full
+  `AssetRow`s. The row's marker/`active` tag reflect every part together (never claiming
+  installed while a part is missing — constitution I); a still-missing part keeps its own real
+  `Download`/`Install from a file` action nested beneath the family row, so nothing reachable
+  before is now hidden. VAD (a single-file family) is unaffected. The failed-download body is now
+  operator language only — "The download did not complete. Check the connection and retry."
+  (deliberately not the coordinator's literal suggested "Could not reach the model server…": that
+  phrase asserts a *specific* cause — a network failure — that would be false for, say, a
+  checksum-mismatch failure carried by the same `ModelDownloadFailureViewState`, and constitution
+  I forbids a specific-sounding claim this state cannot actually guarantee) — with the real,
+  unedited raw cause (`:net`'s own exception text) behind a new "Details"/"Hide details" toggle,
+  never deleted, never the *only* thing shown, and never the *first* thing shown either.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.*" --tests
+  "org.ort.app.ui.screens.ModelsScreenTest" --tests "org.ort.app.ui.digest.*"` — `BUILD SUCCESSFUL
+  in 28s`, 60 tests, all `PASSED`, including the new `R_291`, `R_133` (×3, banner gating),
+  `R_137` (×2, one `SettingsPollingTest` + the new `SettingsDiagnosticsScreenTest`), `R_138` (×3,
+  one `SettingsPollingTest` + the new `SettingsAboutScreenTest` ×2), `R_140` (×2, grouped-row
+  not-installed and fully-installed shapes).
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, unfiltered) — `1061 tests completed, 2
+  failed` — **the 2 failures are pre-existing and out of this round's scope**:
+  `ReadyScreenTest > R_265 an amber row with a Fix action announces label, value and the action`
+  and `R_265 a verified row announces label, value and status as one merged node` (both
+  `ui/setup`, `git log` confirms last touched by WP9's own commits `56d92ed`/`02195bd`, already on
+  `main` before this round's first edit — a duplicate-semantics-node bug this package never
+  touches and cannot fix under its own file ownership). Every other test in the module passed.
+- `.\gradlew.bat :app:ktlintFormat` — reformatted one line-length violation this round introduced
+  (`ModelsScreen.kt`); `git status --porcelain` afterward showed only files this round
+  legitimately touched (`app/build.gradle.kts` included, deliberately, for R-138) — no foreign-file
+  pollution to revert.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, no findings.
+- `.\gradlew.bat build dependencyRules platformGuards` as one invocation failed only on the same 2
+  pre-existing `ReadyScreenTest` failures above; re-run as
+  `.\gradlew.bat dependencyRules platformGuards :app:assembleDebug :app:assembleRelease
+  :app:lint` (excluding the already-covered `testDebugUnitTest`) — `BUILD SUCCESSFUL in 19s`, 493
+  tasks.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`, 8/8 `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations —
+  combined, `coverageMatrixCheck` hits a pre-existing Gradle task-output-without-declared-
+  dependency validation gap against `coverageMatrix`, unrelated to this round, same as last round)
+  — `coverageMatrix: 419 requirements, 185 covered`; `coverageMatrixCheck: up to date (185 covered
+  of 419)`.
+- Confirmed the generated `BuildConfig` (R-138): `app/build/generated/source/buildConfig/debug/
+  org/ort/app/BuildConfig.java` carries `GIT_SHORT_COMMIT = "9c3cd7d"` (this round's real HEAD at
+  the time) and `SHERPA_ONNX_VERSION = "1.13.7"` (`gradle/libs.versions.toml`'s real value) —
+  neither hand-typed into that generated file or anywhere else.
+
+**Left open / not done:**
+- R-133: no Lexicon usage-bar category (no per-table byte accounting exists); no "Keep audio for N
+  nights" (FR-STO-3/D26 mandate a budget, not a time limit — the board itself is the outlier
+  here); no "Next deletion" preview row (FR-STO-3b's real prune-candidate computation does not
+  exist in `:pipeline`).
+- R-137: no bundle byte total or per-file size (no diagnostics-bundle producer exists anywhere in
+  this build) — reported for a decision on commissioning one, the same shape WP11d's
+  `RealReprocessRunner` was for R-143.
+- R-138: no ONNX Runtime or usb-serial-for-android version (neither is an actual Gradle dependency
+  of this build — no version-catalog entry to read for either).
+- R-291's real on-device clip/swipe is not reproducible on Robolectric — verified structurally
+  (the row's measured width, the direct cause of the bug) rather than by simulating the gesture.
+- The pre-existing `ReadyScreenTest` (`ui/setup`, WP9's own files) failures named above — not this
+  round's file ownership to fix.
+- The pre-existing `coverageMatrix`+`coverageMatrixCheck` combined-invocation Gradle task-graph
+  gap (worked around by running them separately, same as last round).
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: ktlint)
 
 ### (pending) — ui-conformance WP2 · ktlint
