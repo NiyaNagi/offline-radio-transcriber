@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.PowerManager
 import org.ort.app.status.StatusViewState
 import org.ort.app.status.StatusViewStateMapper
+import org.ort.app.ui.navigation.DrawerBadgeViewState
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
@@ -77,6 +78,34 @@ public object ReaderPolling {
         )
         val failure = CaptureState.failureReason
         return if (failure != null) base.copy(stateLabel = "${base.stateLabel} — $failure") else base
+    }
+
+    /**
+     * The drawer's live badges (FR-UI-7, audit F-020) — see [DrawerBadgeViewState]'s own doc
+     * comment for what "real" means for each field. `null` for [sessionId] (no active or prior
+     * session) means no badge can be real, so every field comes back `null`.
+     */
+    public suspend fun drawerBadges(context: Context, sessionId: String?): DrawerBadgeViewState {
+        if (sessionId == null) return DrawerBadgeViewState.NONE
+        val db = OrtDatabase.create(context.applicationContext)
+        val logCount = db.transmissionDao().listBySession(sessionId).size
+        val elapsedLabel = if (CaptureState.isCapturing && CaptureState.sessionId == sessionId) {
+            db.sessionDao().getById(sessionId)?.startedAt?.let { startedAt ->
+                formatElapsedShort(SystemClock.wallMillis() - startedAt)
+            }
+        } else {
+            null
+        }
+        return DrawerBadgeViewState(logCount = logCount, threadsCount = null, captureElapsedLabel = elapsedLabel)
+    }
+
+    /** `"6:42"` below an hour, `"1:06:42"` at or above one — matches `Menu.dc.html`'s precision. */
+    private fun formatElapsedShort(elapsedMillis: Long): String {
+        val totalSeconds = (elapsedMillis / 1000).coerceAtLeast(0)
+        val h = totalSeconds / 3600
+        val m = (totalSeconds % 3600) / 60
+        val s = totalSeconds % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
     }
 
     /**

@@ -32,6 +32,70 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (audit — F-020)
+
+### (pending) — audit F-020 · real drawer badges and a storage footer that admits it has no budget
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/navigation/Drawer.kt`,
+`DrawerBadgeViewState.kt` (new), `StorageFooterViewState.kt`, `OrtNavHost.kt` (badge/footer
+polling only); `app/src/main/kotlin/org/ort/app/ui/data/ReaderPolling.kt` (new `drawerBadges`
+function only — `currentStatus`/`detailFrom` untouched); tests
+`app/src/test/kotlin/org/ort/app/ui/navigation/DrawerContentTest.kt`,
+`StorageFooterViewStateTest.kt` (new), `app/src/test/kotlin/org/ort/app/ui/data/ReaderPollingTest.kt`.
+
+**Requirements/ACs:** FR-STO-5 (display current storage usage), FR-UI-7 (the capture status
+surface's elapsed time and transmissions-captured facts, here surfaced in the drawer too),
+constitution I (a fabricated number is a bug at the data layer, not a UI nit) and IV (capture
+facts must never lie).
+
+**What changed:** `design/canvas/Menu.dc.html` shows live drawer badges (a Log count, a Threads
+count, a running Capture timer) and a per-category storage footer ("Audio 38.2 GB of 60"). The
+drawer previously rendered destination labels only, and the footer
+(`StorageFooterViewState.fromDeviceStorage`) reported whole-device `StatFs` used/total space under
+an "Audio" header with a fixed `isPlaceholder = true` — a device-wide figure displayed as if it
+were the audio category's own budget, against a total (D26/FR-STO-3) this build has never set.
+
+Fixed, honestly scoped:
+- **Badges** — `ReaderPolling.drawerBadges(context, sessionId)` (new function; every other
+  `ReaderPolling` function is untouched) returns `DrawerBadgeViewState`: `logCount` is the real
+  transmission count for the active session (`transmissionDao().listBySession(...).size`, `null`
+  when idle); `captureElapsedLabel` is the running session's elapsed time computed from its real
+  `SessionEntity.startedAt` row, only when `CaptureState.isCapturing` and the capturing session id
+  matches the one being viewed (`null` otherwise, including when idle or when a *different*
+  session is capturing); `threadsCount` is always `null` — `TransmissionEntity.threadId` is never
+  populated by any prompt yet, so a numeric count would claim a grouping that does not exist. The
+  drawer renders Threads as `"—"`, never a `0`-as-if-grouped fake count. `OrtNavHost` polls both
+  this and the footer every `POLL_INTERVAL_MILLIS` (2s), the same cadence `NowContent`/`LogContent`
+  already use, via a small `rememberDrawerLiveState` helper (extracted only to keep `OrtNavHost`
+  under detekt's method-length limit).
+- **Storage footer** — `StorageFooterViewState.fromAudioDirectory` replaces `fromDeviceStorage`:
+  `audioUsedBytes` is the real sum of file sizes under `<filesDir>/audio/**` (the same
+  `audio/<sessionId>/<transmissionId>.flac` layout `FlacStore`/`TransmissionEntity.audioPath()`
+  use), `freeBytes` is unchanged real `StatFs` free space on the same volume, and `hasBudget`
+  stays `false` (FR-STO-3's per-category budget setting is still unbuilt) — the footer text reads
+  "Audio: X used" / "Y free · no budget set", never an "of N GB" total. `isPlaceholder` is gone
+  entirely: every field is now a real, non-fabricated measurement, so there is nothing left to
+  flag as a placeholder.
+
+**Verified:** `FR_STO_5_*` tests in `StorageFooterViewStateTest`/`DrawerContentTest` (byte total of
+real files written under a temp `filesDir/audio`, "no budget set" text present, no "of N GB"
+string ever rendered) and `FR_UI_7_*` tests in `ReaderPollingTest`/`DrawerContentTest` (Log shows
+the real transmission count, Capture shows the elapsed time only for the actually-capturing
+session and nothing otherwise, Threads never shows a numeric badge) — all seen failing first
+(unresolved-reference compile errors for the not-yet-written `drawerBadges`/`fromAudioDirectory`/
+`DrawerBadgeViewState`, then one genuine assertion failure against Robolectric's zero-valued
+`StatFs` shadow, fixed by asserting "read from StatFs" rather than a specific positive value).
+`./gradlew :app:testDebugUnitTest --tests ... ` green (29 tests), then `./gradlew :app:test`
+green, then the full gate: `./gradlew build dependencyRules` and
+`python tools/spec-check/spec_check.py` both green.
+
+**Left open / not done:** FR-STO-3 (the per-category budget setting itself) is still unbuilt —
+`hasBudget` stays `false` and the footer will keep saying "no budget set" until that prompt lands;
+this fix only stops the footer from fabricating a number against a budget that was never real.
+Threads' "—" is a fixed marker, not yet reachable through any other UI signal that threading is
+unbuilt — acceptable since P15's `ThreadScreen` already documents the same limitation.
+Robolectric-only verification throughout; no on-device check was performed.
+
 ## 2026-09-08 (audit — F-008 follow-up)
 
 ### (pending) — audit F-008 follow-up · real, cited sha256 checksums replace the placeholder in `ModelCatalog`

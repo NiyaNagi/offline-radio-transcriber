@@ -6,40 +6,38 @@ import java.io.File
 
 /**
  * The drawer footer's storage figures (D26, canvas.json's `integrated` annotation: "the drawer
- * footer carries the storage budget... a thing you actually watch"). D26 itself specifies
- * **independent, user-set budgets** for gated transmission audio and the continuous archive —
- * that setting does not exist yet (no prompt has built it: `:data` carries no budget table, and
- * nothing tracks bytes per retention category). Rather than fabricate a number against a budget
- * that isn't real, [fromDeviceStorage] reports the plain, real quantity available to this
- * prompt — used vs. total space on the volume the app's private storage lives on — clearly
- * labelled as a placeholder for D26's real, per-category figure once retention (a later prompt)
- * exists to produce it.
+ * footer carries the storage budget... a thing you actually watch").
+ *
+ * Audit F-020: the previous shape reported whole-device [StatFs] used/total figures under a
+ * header that read "Audio" — a device-wide number displayed as if it were per-category — against
+ * a fixed "of 60 GB" denominator this build has never actually set. D26 specifies **independent,
+ * user-set budgets** per retention category (FR-STO-3); no prompt has built that setting yet (no
+ * budget table in `:data`, nothing tracks bytes per category), so [fromAudioDirectory] reports
+ * only what is real today: [audioUsedBytes] is the measured sum of the retained transmission audio
+ * files this device has actually written, under the same `audio/<sessionId>/<transmissionId>.flac`
+ * layout `FlacStore`/`TransmissionEntity.audioPath()` use, and [freeBytes] is the real free space
+ * on the volume the app's private storage lives on ([StatFs], unchanged from before). [hasBudget]
+ * stays `false` — and the footer must show "no budget set" rather than any "of N GB" — until
+ * FR-STO-3's budget setting exists to make that denominator real.
  */
 public data class StorageFooterViewState(
-    public val usedBytes: Long,
-    public val totalBytes: Long,
-    /** `true` once this reflects D26's actual per-category budgets rather than raw device space. */
-    public val isPlaceholder: Boolean,
+    public val audioUsedBytes: Long,
+    public val freeBytes: Long,
+    /** `true` once FR-STO-3's per-category budget setting exists and a budget has actually been set. */
+    public val hasBudget: Boolean = false,
 ) {
-    public val usedFraction: Float
-        get() = if (totalBytes <= 0L) 0f else (usedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-
     public companion object {
-        public fun fromDeviceStorage(context: Context): StorageFooterViewState {
-            val dir: File = context.filesDir
-            val stat = StatFs(dir.path)
-            val totalBytes = stat.blockCountLong * stat.blockSizeLong
+        public fun fromAudioDirectory(context: Context): StorageFooterViewState {
+            val audioDir = File(context.filesDir, "audio")
+            val usedBytes = audioDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val stat = StatFs(context.filesDir.path)
             val freeBytes = stat.availableBlocksLong * stat.blockSizeLong
-            return StorageFooterViewState(
-                usedBytes = (totalBytes - freeBytes).coerceAtLeast(0L),
-                totalBytes = totalBytes,
-                isPlaceholder = true,
-            )
+            return StorageFooterViewState(audioUsedBytes = usedBytes, freeBytes = freeBytes, hasBudget = false)
         }
     }
 }
 
-/** Formats bytes as whole gigabytes, e.g. `38 GB` — matches the canvas's precision, not a decimal. */
+/** Formats bytes as decimal gigabytes, e.g. `38.2 GB` — matches the canvas's precision. */
 public fun Long.toGigabyteLabel(): String {
     val gb = this / 1_000_000_000.0
     return "%.1f GB".format(gb)

@@ -11,6 +11,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.AttributionState
+import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
@@ -118,6 +119,65 @@ class ReaderPollingTest {
             assertNull(view.backlog)
             assertEquals("Not measured", view.backlogLabel)
         }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 drawerBadges shows nothing at all while there is no active session`(): Unit = runTest {
+        val badges = ReaderPolling.drawerBadges(context, sessionId = null)
+
+        assertNull(badges.logCount)
+        assertNull(badges.threadsCount)
+        assertNull(badges.captureElapsedLabel)
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 drawerBadges Log count is real, Threads is never a fabricated grouping`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(transmission("TX1", samplePosition = 1L))
+        db.transmissionDao().insert(transmission("TX2", samplePosition = 2L))
+
+        val badges = ReaderPolling.drawerBadges(context, "S1")
+
+        assertEquals(2, badges.logCount)
+        // threadId is never populated by any prompt yet — a numeric count here would claim a
+        // grouping that does not exist (constitution I).
+        assertNull(badges.threadsCount)
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 drawerBadges reports the running session's elapsed time from its real start`(): Unit = runTest {
+        val realStart = SystemClock.wallMillis() - 402_000L // ~6m42s ago
+        db.sessionDao().insert(session("S1").copy(startedAt = realStart))
+        CaptureState.capturing("S1")
+
+        val badges = ReaderPolling.drawerBadges(context, "S1")
+
+        assertTrue(badges.captureElapsedLabel != null)
+        assertTrue(badges.captureElapsedLabel!!.matches(Regex("""\d+:\d{2}(:\d{2})?""")))
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 drawerBadges shows no elapsed time when nothing is capturing`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+
+        val badges = ReaderPolling.drawerBadges(context, "S1")
+
+        assertNull(badges.captureElapsedLabel)
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 drawerBadges shows no elapsed time when a different session is capturing`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        CaptureState.capturing("S2")
+
+        val badges = ReaderPolling.drawerBadges(context, "S1")
+
+        assertNull(badges.captureElapsedLabel)
+    }
 
     private fun session(id: String = "S1") = SessionEntity(
         id = id,

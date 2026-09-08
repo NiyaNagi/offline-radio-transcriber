@@ -162,6 +162,14 @@ are individually green.*
   done 2026-09-08.
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
   Compose wiring at all.
+  **Update (audit F-020, 2026-09-08):** the drawer's Log/Threads/Capture badges were static
+  labels and the storage footer reported whole-device `StatFs` under an "Audio ... of 60 GB"
+  header — a device-wide figure shown as per-category, against a budget (FR-STO-3) this build has
+  never set. Fixed: Log/Capture badges are now polled real counts (`ReaderPolling.drawerBadges`);
+  Threads shows "—" (never a numeric 0-as-if-grouped) because `threadId` is still always `null`;
+  the footer (`StorageFooterViewState.fromAudioDirectory`) reports the real byte sum of retained
+  transmission audio plus real `StatFs` free space, and states "no budget set" rather than
+  fabricating a total. See CHANGELOG.md's 2026-09-08 (audit — F-020) entry.
 - [x] **P14 · Reader: live view and transmission detail** *(`:app`)* — done 2026-09-08.
   `NowScreen`/`LogScreen`/`TransmissionDetailScreen` render real `:data` state (transcripts,
   attributions, superseded versions) via a new `ReaderPolling`/`TransmissionDetail` read path;
