@@ -6,7 +6,6 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import org.ort.app.ui.failures.FailureHost
 import org.ort.app.ui.failures.FailureHostActions
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.navigation.ReaderDestination
@@ -57,10 +56,17 @@ import org.ort.pipeline.capture.CaptureState
  * ui-conformance-plan R-008: [OrtSystemBarStyle] keeps the status/navigation bar icons light
  * regardless of the OS's night-mode state — see that constant's own doc comment.
  *
- * ui-conformance-plan WP11b, register R-100/R-101: [org.ort.app.ui.failures.FailureHost] mounts
- * here, above [OrtNavHost] — the one edit WP11b made to this file. Round 3 (WP3, this package)
- * wired the remaining recovery actions through a [org.ort.app.ui.navigation.ReaderNavigator],
- * shared with [OrtNavHost] below so both act on the same drawer state; round 5 upgrades three of
+ * ui-conformance-plan WP11b, register R-100/R-101: [org.ort.app.ui.failures.FailureHost] used to
+ * mount here, above [OrtNavHost] — the one edit WP11b made to this file. **Round 11, register
+ * R-334 (halt):** moved to mount *inside* [OrtNavHost] instead — with `FailureHost` wrapping the
+ * whole of this activity's content, its own banner overlay painted above `OrtNavHost`'s drawer
+ * panel too, opaque, hiding most of the drawer's rows once open
+ * (`storage-warn/N00-menu-with-banner-pass3.png`) — `OrtNavHost.kt`'s own doc comment on its new
+ * `failureActions` parameter records the matching half of this move; this activity now builds the
+ * same [org.ort.app.ui.failures.FailureHostActions] it always did and simply hands them straight
+ * to [OrtNavHost] instead of to its own `FailureHost` call. Round 3 (WP3, this package) wired the
+ * remaining recovery actions through a [org.ort.app.ui.navigation.ReaderNavigator], shared with
+ * [OrtNavHost] below so both act on the same drawer state; round 5 upgrades three of
  * them from "lands on the `Settings` root, the operator finds the row themselves" to "lands
  * directly on the real sub-screen", now that WP10 merged `SettingsContent.initialScreen`
  * (confirmed by reading that file before rewiring this):
@@ -92,10 +98,11 @@ import org.ort.pipeline.capture.CaptureState
  *   here either — it is already real, wired entirely inside `ui/settings/SettingsContent.kt`
  *   (`onOpenInputSetup`, confirmed by reading that file), not a `FailureHostActions` entry.
  *
- * Register R-178 (WP11b follow-up): [FailureHost]'s `content` slot now hands back the currently
- * showing banner's real, measured height — forwarded straight into [OrtNavHost]'s own
- * `contentTopPadding` so a banner that grows taller (font scale 2.0) pushes the destination
- * content down to clear itself instead of just covering more of it.
+ * Register R-178 (WP11b follow-up): [org.ort.app.ui.failures.FailureHost]'s `content` slot hands
+ * back the currently showing banner's real, measured height, so a banner that grows taller (font
+ * scale 2.0) pushes the destination content down to clear itself instead of just covering more of
+ * it — entirely internal to [OrtNavHost] since round 11's move above, nothing for this activity to
+ * forward any more.
  */
 public class ReaderActivity : ComponentActivity() {
 
@@ -115,9 +122,10 @@ public class ReaderActivity : ComponentActivity() {
                     initialDestination = initialDestination,
                     initialSettingsScreen = initialSettingsScreen,
                 )
-                FailureHost(
+                OrtNavHost(
                     sessionId = sessionId,
-                    actions = FailureHostActions(
+                    navigator = navigator,
+                    failureActions = FailureHostActions(
                         onChooseAnotherInput = { navigator.openSetupInput() },
                         onOpenBatteryExemptionSettings = {
                             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
@@ -127,9 +135,7 @@ public class ReaderActivity : ComponentActivity() {
                         onSetFrequencyByHand = { navigator.openSettings(SettingsScreenId.CAPTURE) },
                         onReconnectRig = { navigator.openSettings(SettingsScreenId.RIG) },
                     ),
-                ) { contentTopPadding ->
-                    OrtNavHost(sessionId = sessionId, navigator = navigator, contentTopPadding = contentTopPadding)
-                }
+                )
             }
         }
     }
