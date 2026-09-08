@@ -6535,6 +6535,91 @@ first test named for its row; `R_241`'s fixture fix is proven at the fixture-int
   blocks a plain `./gradlew build` for every worktree until whichever package owns each file clears it.
 - The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
 
+### (pending) — ui-conformance WP5 · ambiguous callsign, rejected duration and provisional italics wired
+
+**Scope:** `ui/data/LogViewData.kt`, `ui/screens/LogScreen.kt`, `ui/screens/LogScreenTest.kt` — wiring the
+three slots the previous entry left blocked on WP2, now that WP2 has merged the render-side halves.
+Incidental: `ui/components/Rows.kt` (WP2's file) carries two purely mechanical `ktlintFormat` reflow
+hunks (`let { a; b }` → multi-line) picked up by the coordinator-directed module-wide format run — no
+logic changed, confirmed by `git diff`.
+
+**Requirements/ACs:** R-240, R-242, R-246 (register.md — closing out the three items the prior entry left
+open).
+
+**Constitution Check.** Principle II (Test-Backed Change): each wiring below ships with a test proving the
+rendered row now carries the fact (`LogScreenTest`'s new R-240/R-242 tests) or is proven already-correct
+by the existing `LogItemsMapper`/`partialFor` tests (R-246 needed no new test — see below). Principle I
+(Uncertainty Is Content): no new fabrication risk — every value wired through was already derived
+honestly (`keptCandidateFor`, `RejectedItem.durationLabel`) in the prior commit; this only connects it.
+
+**What changed:**
+- **R-240.** `LogItemsMapper.toRowState` now sets `LogRowViewState.callsign = keptCandidateFor(detail)`
+  (only when not a partial row) — main carries WP2's `LogRowViewState.callsign` field and `LogRow`'s own
+  `AttributionRow(callsign = state.callsign ?: attribution.stationId, ...)` (merged `008d9a6`/`c3d0361`).
+  New `LogScreenTest`: `R_240 an AMBIGUOUS row's description carries the kept candidate and the alternate`
+  — asserts the kept candidate ("KE7QRS") renders as visible text and the marker's own merged description
+  reads "half-filled circle, Ambiguous, KE7QRS, or KE7QRF" (never just "or KE7QRF" alone, the bug the
+  register named). `rowState()`'s test-fixture helper gained a `callsign` param to make this constructible.
+- **R-242 (DUR column).** `LogScreen.kt`'s `RejectedRow(...)` call site now passes
+  `durationLabel = if (showWhy) item.durationLabel else null` — the same gating `why` already uses (only
+  the dedicated Rejected view has a DUR column at all; the interleaved list stays the compact row it
+  always was). Main carries WP2's `RejectedRow(durationLabel: String? = null)` param
+  (`d79fc28`/`a272464`). New `LogScreenTest` pair: `R_242 the DUR column shows in the dedicated Rejected
+  view` / `R_242 the DUR column stays hidden in the interleaved list`.
+- **R-246 (provisional italics) — needed no wiring.** WP2's landing derives the italic style directly
+  from `LogRowViewState.partial` inside `Rows.kt`'s own `logRowTranscriptStyle(partial)` (`if (partial !=
+  null) OrtType.transcript.copy(fontStyle = FontStyle.Italic) else OrtType.transcript`), rather than the
+  separate `LogRowViewState.provisional` flag the coordinator's message described as in flight — WP2's own
+  doc comment explains why: a second field could only ever agree or silently disagree with `partial`,
+  never add real information. Since `partial` was already set correctly by this package's own
+  `LogItemsMapper.partialFor`/`toRowState` (R-041, landed in the original WP5 entry), the whole row
+  already reads provisional the moment WP2's `Rows.kt` change merged in — confirmed by re-running the
+  existing `R_041` partial tests in `LogScreenTest`/`LogViewDataTest`, all still `PASSED` with no edits.
+- **R-240's/R-242's doc comments** in `LogViewData.kt` (`keptCandidateFor`, `RejectedItem.durationLabel`)
+  updated from "not yet wired"/"not yet rendered" to reflect the real, now-wired state.
+
+**Verified:**
+- Polled `git log main --oneline` for the "ui-conformance WP2 · nameable drill-in kebab; log row
+  description carries the attribution" commit (landed as `d79fc28`, confirmed merged onto main at
+  `a272464`, whose own message says "WP2 slots merged for R-242/R-246/R-261").
+- `git merge --ff-only main` from `870e4ce` failed (diverged — this worktree had made an uncommitted-then-
+  interim-committed R-240 change while polling); resolved with a real (non-fast-forward) merge commit —
+  `git merge main` — never a rebase, never a stash, per standing rule; merged cleanly, no conflicts.
+- `.\gradlew.bat :app:ktlintFormat :app:detekt` — BUILD SUCCESSFUL, ktlint clean, **detekt now green**
+  (the 12 weighted issues the prior entry reported in other-WP files are gone — those WPs' own follow-ups
+  cleared them in the interim); the `ScenariosTest.kt` fix from the prior commit remains clean too.
+- `.\gradlew.bat build dependencyRules platformGuards` — `:app:testDebugUnitTest` reported 1048 tests, 2
+  failed, both in `org.ort.app.ui.setup.ReadyScreenTest` (`R_265 an amber row with a Fix action announces
+  label, value and the action`, `R_265 a verified row announces label, value and status as one merged
+  node`) — `ui/setup/ReadyScreen.kt` is WP9's file, untouched by this commit's diff. Root cause read from
+  the failure output: `ReadyScreen.kt`'s own R-265 fix already wraps each row in its own explicit
+  `mergeDescendants` + `contentDescription` (working around `KeyValueRow` lacking one, per that file's own
+  doc comment, "reported to WP2 rather than fixed in `Rows.kt`") — now that WP2's own landing gives
+  `KeyValueRow` an explicit description of its own too, the two nodes both exist and both match, so
+  `assertIsDisplayed` finds 2 nodes instead of 1. A genuine regression from two independently-correct WP2/
+  WP9 changes combining, entirely outside `ui/screens/Log*`/`ui/data/Log*` — not fixed here; flagged for
+  WP9/the coordinator. Every other `:app` test `PASSED` (1046/1048). `dependencyRules`/`platformGuards` run
+  standalone (both blocked by the same unrelated `ReadyScreenTest` failure inside the combined `build`
+  invocation) — `dependencyRules: OK`, `platformGuards: OK`. `.\gradlew.bat :app:assembleDebug` run
+  separately — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 185 covered -> results\coverage-matrix.md`
+  (unchanged from the prior entry — no new requirement ids touched).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (185
+  covered of 419)`.
+- New/changed tests, all `PASSED`: `LogScreenTest` (+3 new: `R_240` kept-candidate + alternate
+  description, `R_242` DUR column shown/hidden x2) — targeted re-run of `LogScreenTest`, `LogViewDataTest`,
+  `LogPollingTest`, `RowsTest` (WP2's, unedited but re-run for confidence) all `PASSED` before the full
+  suite run above.
+
+**Left open:**
+- **R-242's tap-through to F04** (WP6): unchanged from the prior entry — still unconfirmed from static
+  reading whether `TransmissionDetailScreen` renders a rejected over distinctly.
+- **The `ReadyScreenTest` regression** (WP9/WP2 interaction, `ui/setup/ReadyScreen.kt`): flagged above, not
+  fixed — outside this package's row.
+- The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)

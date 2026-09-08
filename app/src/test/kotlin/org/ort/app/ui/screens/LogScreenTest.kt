@@ -47,6 +47,7 @@ class LogScreenTest {
         alternate: String? = null,
         badge: LogRowBadge? = null,
         partial: LogRowPartial? = null,
+        callsign: String? = null,
     ) = LogRowViewState(
         id = id,
         timeLabel = "02:14:07",
@@ -55,6 +56,7 @@ class LogScreenTest {
         partial = partial,
         attribution = if (partial == null) attribution else null,
         alternate = alternate,
+        callsign = callsign,
         signalLabel = if (partial == null) "S7" else null,
         badge = badge,
     )
@@ -143,6 +145,40 @@ class LogScreenTest {
         // The score chip is visible text beside INFERRED only — never a number on CONFIRMED.
         composeTestRule.onNodeWithText("0.82").assertExists()
         composeTestRule.onNodeWithText("0.95").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_240 an AMBIGUOUS row's description carries the kept candidate and the alternate`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(
+                        listOf(
+                            LogListItem.Row(
+                                rowState(
+                                    "TX-ambiguous",
+                                    "kilo echo seven quebec romeo sierra, portable",
+                                    Attribution.ambiguous(),
+                                    alternate = "KE7QRF",
+                                    callsign = "KE7QRS",
+                                ),
+                            ),
+                        ),
+                    ),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        // The kept candidate renders in the row's own visible text (guide: primary in text/high)...
+        composeTestRule.onNodeWithText("KE7QRS").assertExists()
+        // ...and the merged marker description names both — the kept candidate, then "or" the
+        // alternate — never just the alternate on its own (the bug R-240 named).
+        composeTestRule
+            .onNodeWithContentDescription("half-filled circle, Ambiguous, KE7QRS, or KE7QRF", substring = true)
+            .assertExists()
     }
 
     @Test
@@ -315,6 +351,52 @@ class LogScreenTest {
         }
 
         composeTestRule.onNodeWithText(whyText).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_242 the DUR column shows in the dedicated Rejected view`() {
+        val item = LogListItem.RejectedItem(
+            "TX1",
+            "02:16:40",
+            "146.960",
+            "no speech detected",
+            durationLabel = "0.4 s",
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(item), rejectedFocus = true),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.4 s").assertExists()
+    }
+
+    @Test
+    fun `R_242 the DUR column stays hidden in the interleaved list`() {
+        val item = LogListItem.RejectedItem(
+            "TX1",
+            "02:16:40",
+            "146.960",
+            "no speech detected",
+            durationLabel = "0.4 s",
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(item), rejectedFocus = false),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.4 s").assertDoesNotExist()
     }
 
     @Test

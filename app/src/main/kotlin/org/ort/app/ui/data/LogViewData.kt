@@ -62,11 +62,10 @@ public sealed interface LogListItem {
         val why: String? = null,
         /**
          * R-242 (V3 pass 2 @de56368): the segment's own duration, through the shared
-         * [ReaderTransmissionViewStateMapper.durationLabel]. **Not yet rendered** —
-         * `ui/components/Rows.kt`'s `RejectedRow` (WP2's package) has no duration slot at all
-         * (`Log-Rejected.dc.html`'s DUR column has never had a value to show), so this is carried
-         * on the model, ready for a WP2 change to consume, rather than dropped. See this package's
-         * CHANGELOG entry for this date.
+         * [ReaderTransmissionViewStateMapper.durationLabel]. Wired into `RejectedRow`'s own
+         * `durationLabel` param (`ui/components/Rows.kt`, `LogScreen.kt`) now that main carries
+         * WP2's DUR-column change — shown only in the dedicated Rejected view, the same gating
+         * [why] already uses (the interleaved list stays the compact row it always was).
          */
         val durationLabel: String? = null,
     ) : LogListItem {
@@ -198,13 +197,10 @@ public object LogItemsMapper {
      * so this reads the resolver's own `selected` candidate out of band, the same
      * [org.ort.app.ui.data.InspectionViewState] `alternateFor` already reads its runner-up from.
      *
-     * **Not yet wired to a row.** `ui/components/Rows.kt`'s `LogRowViewState` has no `callsign`
-     * field and `LogRow` never passes one to `AttributionRow` (its call site only ever forwards
-     * [alternateFor]'s value as `alternate`) — `ui/components` is WP2's package, outside this
-     * package's row, so plumbing this value onto the rendered row needs a WP2 change
-     * (`LogRowViewState.callsign: String?` + `LogRow` passing it to `AttributionRow`'s own
-     * `callsign` param). This function exists so that change is a one-line consumer once WP2 adds
-     * the field — see this package's CHANGELOG entry for this date.
+     * Wired into [toRowState]'s `callsign` param (V3 pass 2 follow-up) now that main carries WP2's
+     * own `LogRowViewState.callsign`/`LogRow`→`AttributionRow` plumbing (register R-240's
+     * `ui/components` half) — this function was written and tested one commit before that landed,
+     * against the day it would; see this package's CHANGELOG for that history.
      */
     public fun keptCandidateFor(detail: TransmissionDetail): String? {
         if (detail.attribution.state != AttributionState.AMBIGUOUS) return null
@@ -226,6 +222,11 @@ public object LogItemsMapper {
             partial = partial,
             attribution = if (partial == null) detail.attribution else null,
             alternate = if (partial == null) alternateFor(detail) else null,
+            // R-240 (wired now that main carries `LogRowViewState.callsign`, WP2): the AMBIGUOUS
+            // row's kept/leading candidate, shown beside `alternate`'s "or QRF" — see
+            // `keptCandidateFor`'s own doc comment for why `Attribution.ambiguous()` cannot carry
+            // this itself.
+            callsign = if (partial == null) keptCandidateFor(detail) else null,
             signalLabel = if (partial == null) {
                 ReaderTransmissionViewStateMapper.signalLabel(detail.signalStrength)
             } else {
