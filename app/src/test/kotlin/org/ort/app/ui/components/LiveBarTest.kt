@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
@@ -85,6 +86,74 @@ class LiveBarTest {
         node.assert(hasContentDescription("seven three", substring = true))
         node.performClick()
         assert(clicked)
+    }
+
+    @Test
+    fun `R_128_meterColorFor follows the given tone directly, independent of any bar-wide tone`() {
+        // A pure, directly-testable decision (the `scrubFraction` pattern) — Robolectric can't
+        // verify a rendered pixel colour reliably here, but the tone-to-colour decision itself is
+        // exactly, and cheaply, testable without Compose at all.
+        assert(meterColorFor(LiveBarTone.NOMINAL, listOf(0.5f)) == OrtColors.accentGreen)
+        assert(meterColorFor(LiveBarTone.NOMINAL, listOf(0f, 0f)) == OrtColors.meterIdle)
+        assert(meterColorFor(LiveBarTone.DEGRADED, listOf(0.5f)) == OrtColors.meterWarn)
+        assert(meterColorFor(LiveBarTone.HALTED, listOf(0.5f)) == OrtColors.haltFill)
+    }
+
+    @Test
+    fun `R_128_a meterTone override lets the meter read green while the bar around it is degraded or halted`() {
+        // Fail-Usb.dc.html: a USB-permission failure is a rig problem, not an audio one — the
+        // meter itself stays green ("audio fine") even while the label calls for action.
+        val degradedBarNominalMeter = LiveBarViewState(
+            level = listOf(0.5f, 0.5f),
+            partialText = null,
+            label = "Act",
+            tone = LiveBarTone.DEGRADED,
+            meterTone = LiveBarTone.NOMINAL,
+        )
+        val resolvedMeterTone = degradedBarNominalMeter.meterTone ?: degradedBarNominalMeter.tone
+        assert(resolvedMeterTone == LiveBarTone.NOMINAL)
+        assert(
+            meterColorFor(resolvedMeterTone, degradedBarNominalMeter.level) ==
+                OrtColors.accentGreen,
+        )
+
+        // The default (`meterTone = null`, every caller before this existed) still just follows
+        // `tone` — additive, no silent behaviour change for an existing caller.
+        val noOverride = LiveBarViewState(
+            level = listOf(0.5f),
+            partialText = null,
+            label = "Tier 2",
+            tone = LiveBarTone.DEGRADED,
+        )
+        assert((noOverride.meterTone ?: noOverride.tone) == LiveBarTone.DEGRADED)
+    }
+
+    @Test
+    fun `R_128_liveBarLabelColor reads Act in haltText regardless of the tone's own label colour`() {
+        val halt = OrtColors.haltText
+        assert(liveBarLabelColor("Act", fallback = OrtColors.accentAmberDim) == halt)
+        assert(liveBarLabelColor("Act", fallback = OrtColors.accentGreen) == halt)
+        // Any other label is untouched — this is "Act" naming itself, not a blanket halt-red rule.
+        val amber = OrtColors.accentAmberDim
+        assert(liveBarLabelColor("Tier 2", fallback = amber) == amber)
+    }
+
+    @Test
+    fun `R_128_a live bar with an Act label and a degraded tone still renders and describes both`() {
+        val state = LiveBarViewState(
+            level = listOf(0.5f, 0.6f, 0.4f, 0.5f),
+            partialText = null,
+            label = "Act",
+            tone = LiveBarTone.DEGRADED,
+            meterTone = LiveBarTone.NOMINAL,
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { LiveBar(state = state, onClick = {}, modifier = Modifier.testTag("act-bar")) }
+        }
+
+        composeTestRule.onNodeWithText("Act").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("act-bar").assert(hasContentDescription("Act", substring = true))
     }
 
     @Test

@@ -32,6 +32,119 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: marker descriptions in prose without confidence; live-bar meter tone override)
+
+### (pending) — ui-conformance WP2 · marker descriptions in prose without confidence; live-bar meter tone override
+
+**Scope:** `:app` `ui/components/AttributionMarker.kt`, `ui/components/LiveBar.kt` and both files'
+tests only. Validator findings R-162 and R-128 in `results/ui-audit/register.md`. `main`
+fast-forward merged first (`git merge --ff-only main`; this branch already an ancestor; no
+rebase, no stash) — no other package's files touched.
+
+**Requirements/ACs:** R-162 (the legacy `AttributionMarker` shim's content description must name
+the state in prose, no glyph, and mention a confidence only when the chip it describes is
+actually rendered — guide §6.1/§11.2), R-128 (`Fail-Usb.dc.html`'s live bar: green meter bars —
+"audio fine" — beside a halt-red `Act` label, which the live bar's single tone-to-colour mapping
+could not previously produce).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-162 directly: a
+  description claiming a confidence that isn't actually shown (or a state named by a sighted-only
+  glyph a screen reader can't read) is exactly the "silent but wrong" signal the constitution
+  warns against — a description is not decoration, it is the only account a screen-reader user
+  gets. Principle VII (Boundaries Are Structural) governs R-128: the meter and the label answer
+  two different questions ("is audio itself fine?" vs "what does the operator need to know?"),
+  and forcing them through one `tone` field conflated those questions structurally, not just
+  visually.
+- **R-162 — `legacyMarkerDescription` (`AttributionMarker.kt`).** Previously built its description
+  around `TransmissionListViewStateMapper`'s `attributionLabel` — a *display* string carrying a
+  `✓`/`~`/`?`/`—` glyph meant for eyes, and always appended `attribution.confidence` whenever the
+  data had one, regardless of the `showConfidence` parameter the shape actually renders under.
+  That is the exact bug the register caught: T02's "How these were attributed" line called
+  `AttributionMarker` with `showConfidence = false` (shape only, no chip), yet the description
+  read "confidence 0.85" anyway. Now `legacyMarkerDescription(attribution, showConfidence)` uses
+  `stateProse` — the same prose helper `AttributionRow`/`TitleAttributionRow` already use
+  ("Confirmed", "Inferred", "Ambiguous", "Unknown") — and appends a confidence only when
+  `showConfidence` is true *and* the attribution carries one, i.e. only when the chip this
+  description is meant to describe is actually on screen. `TransmissionListViewStateMapper`
+  is no longer imported by this file.
+- **R-162 — glyph audit.** Grepped every `contentDescription =`/`onClickLabel =` literal and
+  `buildString` block across `ui/components/**` for `✓`/`~`/`?`/`—`: none of the other components'
+  descriptions carry one (they were already clean prose — "Back to Log", "Open navigation",
+  "43 percent", etc.) — `legacyMarkerDescription` was the one holdover, now fixed. A new test,
+  `R_162 no legacy marker description carries a checkmark, tilde, question mark or dash glyph`,
+  checks all four states of the legacy marker directly so a future regression here is caught
+  without needing to re-grep the file by hand.
+- **R-128 — `LiveBarViewState.meterTone: LiveBarTone? = null` (`LiveBar.kt`).** `null` (every
+  caller before this existed) means "follow `tone`", so this is additive. `LiveBar` now resolves
+  the meter's colour from `state.meterTone ?: state.tone` and the rest of the bar (background, top
+  edge, label) from `state.tone` — the two can disagree, which is exactly what `Fail-Usb.dc.html`
+  needs: a USB-permission failure is a rig problem, not an audio one, so the meter stays green
+  ("audio fine") while the bar around it reads degraded/halted.
+- **R-128 — the "Act" label.** `Fail-Usb.dc.html`'s live bar pairs its amber/degraded palette with
+  a halt-red `Act` word specifically (the call to action), not the tone's own label colour. `Act`
+  now reads `OrtColors.haltText` regardless of `tone`; any other label keeps the tone's own colour
+  unchanged.
+- **Refactor for testability, not just correctness.** `liveBarPalette`/the new `meterColorFor`/the
+  new `liveBarLabelColor` were `@Composable` for no real reason — `OrtColors` is a plain object of
+  constant `Color` values, not `CompositionLocal`-backed — so they are now plain `private`/
+  `internal` functions. This follows the same pattern R-054's `scrubFraction` established
+  earlier in this package: a rendered pixel colour isn't something Robolectric can verify reliably
+  here (confirmed directly while writing R-152's tests, a prior entry in this file), but the pure
+  tone-to-colour decision that produces it is exactly, and cheaply, testable without Compose at
+  all. `meterColorFor`/`liveBarLabelColor` are `internal` (test-visible); `liveBarPalette` stays
+  `private` (its only remaining caller is `LiveBar` itself).
+- Changed signatures: `LiveBarViewState` gained `meterTone: LiveBarTone? = null` (additive, last
+  parameter, default preserves every existing caller's behaviour); `liveBarPalette` now takes
+  `tone: LiveBarTone` directly rather than the whole `LiveBarViewState` (an internal, non-public
+  function — no caller outside this file exists to break).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **828 of 828 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`: `Total: 828, Failures: 0`; was 792 before this commit). New/changed tests:
+  `AttributionMarkerTest`'s `R_162 the legacy marker names the state in prose with no glyph and no
+  confidence when no chip renders`, `R_162 the legacy marker mentions confidence only when
+  showConfidence actually renders the chip`, `R_162 no legacy marker description carries a
+  checkmark, tilde, question mark or dash glyph` (new), plus `AC_62 all four attribution states
+  carry distinct, non-colour content descriptions`'s `expectedStateName` map updated from
+  `"CONFIRMED"`/etc. to `"Confirmed"`/etc. (same test, now asserting the corrected prose).
+  `LiveBarTest`'s `R_128_meterColorFor follows the given tone directly, independent of any
+  bar-wide tone`, `R_128_a meterTone override lets the meter read green while the bar around it is
+  degraded or halted`, `R_128_liveBarLabelColor reads Act in haltText regardless of the tone's own
+  label colour`, `R_128_a live bar with an Act label and a degraded tone still renders and
+  describes both` (all new). No other package's test broke from the description-format change
+  (the full 828/828 run is itself the confirmation — no caller outside this package asserts the
+  legacy marker's old all-caps/glyph description text).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** (one intermediate
+  `ktlintMainSourceSetCheck` failure fixed along the way: removing `LiveBarPalette`'s fourth field
+  let its primary constructor fit on one line, and ktlint's `standard:class-signature` rule
+  requires collapsing to single-line once it fits — collapsed it, rebuilt clean). `dependencyRules:
+  checked 17 modules ... OK — every edge is permitted by the design graph.` `platformGuards:
+  checked 17 modules' external dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`
+  (unchanged — R-162/R-128 are validator findings, not spec requirement ids, so no new coverage
+  row). `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (181 covered of
+  419)`. `.\gradlew.bat :app:assembleDebug` — included in and passed as part of the `build` run
+  above.
+
+**Left open / not done:**
+- **The register is not updated by this commit** — closing out R-162/R-128 (marking them fixed,
+  citing this commit) is the validator/coordinator's own bookkeeping on that file, outside this
+  package.
+- **No screenshot/emulator re-capture** of `T02-thread.png`/`usb-permission/F16-fail-usb.png` to
+  visually confirm either fix against the actual artboard — Robolectric assertions only, per the
+  plan (Phase E/Validators own screenshot verification).
+- **The `"Act"` label match is an exact string equality**, not a semantic "is this a
+  call-to-action" property — if a future caller phrases the same call-to-action differently (e.g.
+  "Act now"), it will not pick up the halt-red override automatically. This mirrors how the rest
+  of this component already works (`label`/`partialText` are opaque strings this component does
+  not interpret beyond what the guide specifies), but is worth a caller knowing about rather than
+  discovering by a blank amber "Act now".
+
+---
+
 ## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)
 
 ### (pending) — ui-conformance WP9 · setup step entry and Install destination
