@@ -43,7 +43,10 @@ underlying breakdown each prompt draws on.
 **Wave C — composition.**
 
 - [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07
-- [x] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)* — done 2026-09-07
+- [x] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)* — done 2026-09-07;
+  audit F-021 (2026-09-07): shed events were memory-only in `ShedController` with no `shed_event`
+  table — the `:data` half is now fixed (`ShedEventEntity`/`ShedEventDao`, schema v2, migration),
+  but the `:pipeline` persist call from `ShedController` into the new DAO is still not wired
 
 **Wave D — the M2 gate, then transcription.**
 

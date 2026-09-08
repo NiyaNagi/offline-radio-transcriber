@@ -32,6 +32,59 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-021)
+
+### (pending) — audit F-021 · shed events get a `shed_event` table (`:data` half only)
+
+**Scope:** `:data` — new `entity/ShedEventEntity.kt` (+ `ShedTrigger` enum), new
+`dao/ShedEventDao.kt`; `OrtDatabase.kt` (entity registration, `shedEventDao()` accessor, schema
+version 1 → 2, `MIGRATION_1_2`); `data/schemas/org.ort.data.OrtDatabase/2.json` (generated);
+`data/src/test/kotlin/org/ort/data/dao/ShedEventDaoTest.kt` (new); `MigrationTest.kt` (new v1→v2
+case). No `:pipeline` file touched — the persist call from `ShedController` is a follow-up
+(F-021's `:pipeline` half, tracked separately).
+
+**Requirements/ACs:** FR-RUN-3, FR-RUN-4, FR-RUN-5, FR-AST-5, FR-AST-6, AC-53. Constitution IV
+(capture/shedding never lies silently) and III/AC-53 (migrations preserve existing rows).
+
+**What changed:** `results/audit-2026-09-07.md`'s F-021 recorded that
+`pipeline/.../shed/ShedController.kt`'s `ShedEvent` (`level`, `reason`, `atWallMillis`) lives only
+in that controller's in-memory `events` list, so shed steps are not durably surfaced (FR-RUN-3),
+affected records cannot be identified as reprocessing candidates after the fact (FR-RUN-4), and
+shed level is not observable beyond the current process (FR-RUN-5). Added `ShedEventEntity`
+(`id`, `sessionId`, `levelBefore`, `levelAfter`, `trigger: ShedTrigger` — `BATTERY`/`BACKLOG`/
+`STORAGE` — `reason`, `atWallMillis`, `atMonotonicNanos`, `samplePosition: Long?`) and
+`ShedEventDao` (`insert`, `listBySession` ordered by wall time, `latestForSession`). Fields mirror
+`ShedController.ShedEvent`'s shape (`level`→split into before/after, `reason`, `atWallMillis`)
+plus what the requirements need once persisted: which session, a closed trigger category
+alongside the free-text reason, monotonic time (the controller already tracks
+`enteredAtMonotonic`), and stream sample position (nullable — the controller does not track this
+today). Bumped `OrtDatabase.SCHEMA_VERSION` to 2, added `MIGRATION_1_2` (adds the `shed_event`
+table only — no existing table altered), and registered `ShedEventEntity`/`ShedEventDao`. No
+DAO fake was added to `:testing` — that module holds no DAO fakes for any entity today (checked
+directly), so there was no existing convention to extend.
+
+**Deliberately not done:** the `:pipeline` persist call wiring `ShedController.transitionTo` (or
+a caller) to `ShedEventDao.insert` — that requires touching `:pipeline`, which this fix does not
+own per the audit assignment, and `:pipeline` has no dependency on `:data` in the module graph
+today (a persist call would need to go through a repository/use-case seam that does not yet
+exist). This entity and DAO exist so that follow-up is a mechanical field mapping, not a schema
+design exercise.
+
+**Verified:** `./gradlew :data:test --console=plain -q` — 38 tests, all green (36 pre-existing +
+`ShedEventDaoTest`'s 2 new cases + `MigrationTest`'s 1 new case). Both new tests were confirmed to
+fail first: with `ShedEventEntity.kt`/`ShedEventDao.kt` moved aside and `OrtDatabase.kt`
+unmodified, `./gradlew :data:test` failed to compile with `Unresolved reference 'shedEventDao'` /
+`'ShedEventEntity'` / `'ShedTrigger'` in both `ShedEventDaoTest.kt` and `MigrationTest.kt`. After
+restoring the implementation, `./gradlew build dependencyRules --console=plain -q` and
+`python tools/spec-check/spec_check.py` both passed (spec-check: OK, all 8 checks PASS). Robolectric/JVM only — no on-device verification was performed or claimed.
+
+**Left open / not done:** the `:pipeline` persist call (see above) — F-021 stays partially open
+until that lands; this fix closes only the `:data` half the assignment specified. `samplePosition`
+is nullable and unpopulated by any writer yet since nothing calls `insert` in production code —
+its semantics (which stream position) are fixed by whatever the eventual `:pipeline` caller passes.
+
+---
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture
