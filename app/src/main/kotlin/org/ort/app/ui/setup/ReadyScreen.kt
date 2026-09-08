@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
@@ -43,6 +44,16 @@ public data class ReadyViewState(val rows: List<ReadyRow>)
  * wired by [SetupActivity]; the model row's `Install` has nowhere real to navigate to from setup
  * (the Models destination lives inside `OrtNavHost`, WP3's file, only reachable once
  * `ReaderActivity` exists after capture starts) — see this package's report for that gap.
+ *
+ * R-226 (validator pass 2): rows used to be a hand-rolled `Row` with a *fixed* 82dp label column
+ * (`Modifier.size(width = 82.dp, ...)`), which at font scale 2.0 truncated labels ("Input" ->
+ * "Inout", "Overnight" -> "Overni") and overlapped the leading marker dot entirely — confirmed on
+ * `setup/S12-ready-pass2@2x.png`. Now built on WP2's [KeyValueRow], whose own R-152 fix already
+ * sizes its label column to real content rather than a fixed ceiling (that row's own doc comment
+ * names the identical class of bug: "Stations5" colliding at large scale). The leading marker dot
+ * has no slot on [KeyValueRow] itself, so it is composed as a sibling in front of it here, the same
+ * pattern this package already used for R-122's device-type icons on [InputScreen] — never editing
+ * `Rows.kt` (WP2's file) and never hand-rolling a second full row component.
  */
 @Composable
 public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
@@ -61,10 +72,7 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
     ) {
         state.rows.forEach { row ->
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp)
-                    .testTag("setup-ready-row-${row.label.lowercase()}"),
+                modifier = Modifier.fillMaxWidth().testTag("setup-ready-row-${row.label.lowercase()}"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (row.ok) {
@@ -72,24 +80,19 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
                 } else {
                     AmberHalfMarker()
                 }
-                Text(
-                    text = row.label,
-                    style = OrtType.subtitle,
-                    color = OrtColors.textDim,
-                    modifier = Modifier.padding(start = 12.dp).size(width = 82.dp, height = 18.dp),
+                KeyValueRow(
+                    key = row.label,
+                    value = row.value,
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                    trailingMarker = {
+                        when {
+                            row.statusText != null ->
+                                Text(text = row.statusText, style = OrtType.signal, color = OrtColors.accentGreenDim)
+                            row.actionLabel != null ->
+                                TextAction(text = row.actionLabel, onClick = { row.onAction?.invoke() })
+                        }
+                    },
                 )
-                Text(
-                    text = row.value,
-                    style = OrtType.control,
-                    color = OrtColors.textHigh,
-                    modifier = Modifier.weight(1f),
-                )
-                when {
-                    row.statusText != null ->
-                        Text(text = row.statusText, style = OrtType.signal, color = OrtColors.accentGreenDim)
-                    row.actionLabel != null ->
-                        TextAction(text = row.actionLabel, onClick = { row.onAction?.invoke() })
-                }
             }
         }
         Text(

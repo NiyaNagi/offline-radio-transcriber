@@ -153,6 +153,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `level-clip` | `LevelStatus.Measured` peak 0 dBFS, clipped, 12 clips in the last second (F3, register R-112). |
 | `input-verified` | `InputStatus.Opened` with a USB descriptor, native 48 kHz, a recorded resampler identity, `routeVerified`/`routedDeviceMatches` both true (register R-113). |
 | `input-mismatch` | `InputStatus.Mismatch` — built-in mic routed instead of the chosen USB device (F1, register R-113). Capture is **not** marked running — see "Known gaps" below. |
+| `setup-verified` | Seeds `org.ort.app.setup`'s real `SharedPreferences` (through `SharedPreferencesSetupStore`, not a duplicated key set) so `SetupStateMachine.stepFor` lands at `SetupStep.READY` (S12) directly, its Level row already green (register R-227) — see "Reaching S07/S12" below. |
 | `clock-dst` | F14 (`Fail-Clock.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Clock`. No runtime signal exists; see "Known gaps" below. |
 | `usb-permission` | F16 (`Fail-Usb.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Usb`. No runtime signal exists. |
 | `interrupted-pass` | F17 (`Fail-Interrupted.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Interrupted`. No runtime signal exists. |
@@ -160,6 +161,39 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `migration-failed` | F20 (`Fail-Migration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Migration`, one failed step (activity patterns) among three passed ones. No runtime signal exists. |
 | `asset-swap` | F21 (`Fail-Asset-Swap.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.AssetSwap`, an active and a staged lexicon. No runtime signal exists. |
 | `calibration` | F22 (`Fail-Calibration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Calibration`, a five-point reliability scatter. No runtime signal exists. |
+
+### Reaching S07/S12 (register R-227)
+
+Before `setup-verified`, S07 (`Setup-Level.dc.html`) and S12 (`Setup-Done.dc.html`) were
+unreachable on this AVD at all: `SetupStateMachine.stepFor` resumes at `SetupStep.INPUT` until
+`SetupStore.inputVerified` is real, and the only way that becomes real is S05's own 30 s
+raw-signal listen (`RealRouteCheck`) actually hearing something — which the AVD's silent virtual
+mic never does. `setup-verified` seeds the real `SetupStore` preferences (not a fake) so setup's
+own state machine resumes at S12 on its own, no `run-as`/manual `SharedPreferences` edit needed:
+
+```powershell
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell pm grant org.ort.app android.permission.RECORD_AUDIO
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell pm grant org.ort.app android.permission.POST_NOTIFICATIONS
+.\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-verified
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/org.ort.app.ui.setup.SetupActivity
+# lands on S12 (Ready) directly.
+```
+
+S07 is then one real, sanctioned tap away — S12's own `Fix` action on the Level row — or reachable
+directly, since `setup-verified` leaves `setupComplete` false (the natural resume point stays
+`READY`, and `LEVEL`'s ordinal sits before it, so `SetupActivity.EXTRA_STEP`'s ordinal gate honors
+the request — see that constant's own doc comment):
+
+```powershell
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start `
+    -n org.ort.app/org.ort.app.ui.setup.SetupActivity --es step LEVEL
+```
+
+**The two OS permissions above are not part of what this scenario seeds** — `RECORD_AUDIO`/
+`POST_NOTIFICATIONS` are live `PackageManager` state, not a `SetupStore` preference
+(`SetupStateMachine.stepFor` reads both from a live `PermissionsState`, confirmed by reading it
+before writing this) — grant them the same way `install.ps1` already does for every other scenario
+that exercises a real screen.
 
 ### WP11b's failure screens (register R-100/R-101/R-103)
 

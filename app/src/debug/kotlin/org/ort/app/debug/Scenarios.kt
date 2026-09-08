@@ -17,6 +17,8 @@ import org.ort.app.ui.failures.ReconcileFile
 import org.ort.app.ui.failures.ReconcileRecord
 import org.ort.app.ui.failures.ReconcileViewState
 import org.ort.app.ui.failures.UsbViewState
+import org.ort.app.ui.setup.RadioChoice
+import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
@@ -86,7 +88,10 @@ public object Scenarios {
      * R-100) adds `clock-dst`/`usb-permission`/`interrupted-pass`/`reconcile`/`migration-failed`/
      * `asset-swap`/`calibration` — the seven ids with no runtime signal today, driven through
      * `org.ort.app.ui.failures.DebugFailureOverride` (that object's own kdoc says exactly why for
-     * each).
+     * each). `setup-verified` (register R-227, validator pass 2) adds the one scenario this
+     * registry seeds outside `:data` and the process-wide capture facets — see [setupVerified]'s
+     * own doc comment for why (S05's `SetupStore` gates, not a runtime signal, are what block S07/
+     * S12 from ever being reached on an emulator with no real signal to hear).
      */
     public val NAMES: List<String> = listOf(
         "empty",
@@ -113,6 +118,7 @@ public object Scenarios {
         "level-clip",
         "input-verified",
         "input-mismatch",
+        "setup-verified",
         "clock-dst",
         "usb-permission",
         "interrupted-pass",
@@ -152,6 +158,7 @@ public object Scenarios {
             "level-clip" -> levelClip(context, db)
             "input-verified" -> inputVerified(context, db)
             "input-mismatch" -> inputMismatch(db)
+            "setup-verified" -> setupVerified(context)
             "clock-dst" -> clockDst(context, db)
             "usb-permission" -> usbPermission(context, db)
             "interrupted-pass" -> interruptedPass(context, db)
@@ -864,6 +871,52 @@ public object Scenarios {
             actual = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone"),
         )
         return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `setup-verified` — R-227 (validator pass 2). Before this, S07 (`Setup-Level.dc.html`) and
+     * S12 (`Setup-Done.dc.html`) had no sanctioned path on an emulator: [SetupStateMachine.stepFor]
+     * resumes at [SetupStep.INPUT] until [SetupStore.inputVerified] is real, and that can only
+     * become real through S05's own 30 s raw-signal listen ([RealRouteCheck]) actually hearing
+     * something — which a silent emulator mic never does. The validator's own workaround (editing
+     * `SharedPreferences` via `run-as`) is exactly what a debug scenario exists to make unnecessary
+     * (register R-110's own brief) — this seeds the *same* `org.ort.app.setup` preferences file
+     * [SharedPreferencesSetupStore] itself reads and writes, through that real class (never
+     * duplicated key names), landing the natural resume point at [SetupStep.READY] (S12) with the
+     * Level row already green — S07 itself is then one real, sanctioned tap away, S12's own
+     * `Fix`/`Install` rows, or `SetupActivity.EXTRA_STEP=LEVEL` (WP9 round 3): with
+     * [SetupSnapshot.setupComplete] left `false`, the natural resume point stays `READY`, and
+     * `LEVEL`'s ordinal sits before it, so the extra is honored (see that constant's own doc
+     * comment for the ordinal-gate rule this relies on).
+     *
+     * **Not a substitute for granting the two OS permissions.** `RECORD_AUDIO`/`POST_NOTIFICATIONS`
+     * are live [android.content.pm.PackageManager] state, not a preference this scenario can seed —
+     * confirmed by reading [SetupStateMachine.stepFor] before writing this: both gates are read from
+     * a live `PermissionsState`, never from [SetupSnapshot]. The validator (or `results/ui-audit/README.md`,
+     * which documents this) must still grant both separately, e.g.
+     * `adb shell pm grant org.ort.app android.permission.RECORD_AUDIO` and the `POST_NOTIFICATIONS`
+     * equivalent, exactly as every other scenario that exercises a real screen already assumes.
+     */
+    private fun setupVerified(context: Context): LoadResult {
+        val prefs = context.applicationContext.getSharedPreferences(
+            SharedPreferencesSetupStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        val store = SharedPreferencesSetupStore(prefs)
+        store.welcomeSeen = true
+        store.notificationsSkipped = true
+        store.selectedInputId = "usb-1"
+        store.selectedInputLabel = "USB Audio Device"
+        store.inputVerified = true
+        store.verifiedNativeRateHz = 48_000
+        store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.manualFrequencyHz = 145_230_000L
+        store.setupComplete = false
+        return LoadResult(0, 0, null)
     }
 
     // ---------------------------------------------------------------------------------------

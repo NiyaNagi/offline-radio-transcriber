@@ -31,7 +31,14 @@ class RouteMismatchScreenTest {
     @Test
     fun `R_081 shows the halt banner naming both devices and never renders a Continue action`() {
         composeTestRule.setContent {
-            OrtTheme { RouteMismatchScreen(mismatch = mismatch, onChooseAnotherInput = {}, onTryAgain = {}) }
+            OrtTheme {
+                RouteMismatchScreen(
+                    mismatch = mismatch,
+                    selectedTypeLabel = "USB audio",
+                    onChooseAnotherInput = {},
+                    onTryAgain = {},
+                )
+            }
         }
 
         composeTestRule.onNodeWithText("That is not the radio").assertIsDisplayed()
@@ -52,13 +59,65 @@ class RouteMismatchScreenTest {
         )
         composeTestRule.setContent {
             OrtTheme {
-                RouteMismatchScreen(mismatch = sameLabelMismatch, onChooseAnotherInput = {}, onTryAgain = {})
+                RouteMismatchScreen(
+                    mismatch = sameLabelMismatch,
+                    selectedTypeLabel = "USB audio",
+                    onChooseAnotherInput = {},
+                    onTryAgain = {},
+                )
             }
         }
 
         composeTestRule.onNodeWithText(
             "chosen sdk_gphone64_x86_64 (USB audio) · routed sdk_gphone64_x86_64 (Built-in microphone)",
         ).performScrollTo().assertIsDisplayed()
+    }
+
+    /** R-222 (validator pass 2): the *caller*-supplied [selectedTypeLabel] is what renders for the
+     * chosen device -- not a re-derivation from [RouteCheckState.Mismatch.selected]'s own coarse
+     * `AudioDeviceKind` (`UNKNOWN` here, which would print "Unknown" if this screen ignored the
+     * parameter and fell back to its own [describeDevice]-style resolution). */
+    @Test
+    fun `R_222 the chosen device's richer type label from S04 is used, never re-derived and lost`() {
+        val telephonyMismatch = RouteCheckState.Mismatch(
+            selected = AudioDeviceDescriptor("tel-0", AudioDeviceKind.UNKNOWN, "sdk_gphone64_x86_64"),
+            routed = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "sdk_gphone64_x86_64"),
+            reason = "routed to the built-in mic",
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                RouteMismatchScreen(
+                    mismatch = telephonyMismatch,
+                    selectedTypeLabel = "Telephony",
+                    onChooseAnotherInput = {},
+                    onTryAgain = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "chosen sdk_gphone64_x86_64 (Telephony) · routed sdk_gphone64_x86_64 (Built-in microphone)",
+        ).performScrollTo().assertIsDisplayed()
+    }
+
+    /** R-223 (validator pass 2): `Setup-Route-Mismatch.dc.html` draws the header chevron like
+     * every other step; it was rendered nowhere at all before this. */
+    @Test
+    fun `R_223 the back chevron renders and invokes onBack`() {
+        var backed = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RouteMismatchScreen(
+                    mismatch = mismatch,
+                    selectedTypeLabel = "USB audio",
+                    onChooseAnotherInput = {},
+                    onTryAgain = {},
+                    onBack = { backed = true },
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("setup-back").performClick()
+        assert(backed)
     }
 
     @Test
@@ -69,6 +128,7 @@ class RouteMismatchScreenTest {
             OrtTheme {
                 RouteMismatchScreen(
                     mismatch = mismatch,
+                    selectedTypeLabel = "USB audio",
                     onChooseAnotherInput = { chooseAnother = true },
                     onTryAgain = { tryAgain = true },
                 )

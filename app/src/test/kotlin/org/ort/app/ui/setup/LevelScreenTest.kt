@@ -1,5 +1,7 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -9,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -117,5 +120,41 @@ class LevelScreenTest {
         }
 
         composeTestRule.onNodeWithTag("setup-level-meter").assertIsDisplayed()
+    }
+
+    // --- R-225 (validator pass 2): the footer facts row must not collapse at font scale 2.0 -----
+
+    @Test
+    fun `R_225 at normal font scale the three facts sit on one row`() {
+        composeTestRule.setContent {
+            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+        }
+
+        val noiseTop = composeTestRule.onNodeWithText("noise −58").fetchSemanticsNode().boundsInRoot.top
+        val clipTop = composeTestRule.onNodeWithText("clip 0").fetchSemanticsNode().boundsInRoot.top
+        assert(kotlin.math.abs(noiseTop - clipTop) < 1f) {
+            "expected the same row at normal font scale, got noise top=$noiseTop clip top=$clipTop"
+        }
+    }
+
+    @Test
+    fun `R_225 at font scale 2_0 the three facts stack instead of collapsing into one run`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+            }
+        }
+
+        // Each fact remains its own, independently-displayed node (never smooshed into a single
+        // concatenated run the validator's own @2x screenshot showed) -- and stacking means the
+        // "clip 0" row sits meaningfully below "noise -58", not on the same line.
+        composeTestRule.onNodeWithText("noise −58").assertIsDisplayed()
+        composeTestRule.onNodeWithText("target −18 to −12").assertIsDisplayed()
+        composeTestRule.onNodeWithText("clip 0").assertIsDisplayed()
+        val noiseTop = composeTestRule.onNodeWithText("noise −58").fetchSemanticsNode().boundsInRoot.top
+        val clipTop = composeTestRule.onNodeWithText("clip 0").fetchSemanticsNode().boundsInRoot.top
+        assert(clipTop - noiseTop > 10f) {
+            "expected clip 0 to sit well below noise -58 once stacked, got noise top=$noiseTop clip top=$clipTop"
+        }
     }
 }
