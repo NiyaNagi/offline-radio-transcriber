@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -11,9 +12,12 @@ import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintBindingSource
+import org.ort.data.entity.VoiceprintEntity
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -80,12 +84,57 @@ class CorrectionPollingTest {
         executionProvider = null,
     )
 
-    private fun request(transmissionId: String, previous: String?, new: String) = CorrectionRequest(
+    private fun request(
+        transmissionId: String,
+        previous: String?,
+        new: String,
+        tier: CorrectionTier = CorrectionTier.PICK_CANDIDATE,
+    ) = CorrectionRequest(
         transmissionId = transmissionId,
         previousStationId = previous,
         newStationId = new,
-        tier = CorrectionTier.PICK_CANDIDATE,
+        tier = tier,
         correctedAtMillis = 500L,
+    )
+
+    private fun station(id: String) = StationEntity(
+        id = id,
+        callsign = id,
+        firstHeardAt = null,
+        lastHeardAt = null,
+        transmissionCount = 0,
+        isUserPinned = false,
+        notes = null,
+        userName = null,
+        frequenciesHeard = null,
+        activityByHourDow = null,
+        potaRefs = null,
+        spokenGrids = null,
+        ituRegionFromPrefix = null,
+        overCountsByAttributionState = null,
+    )
+
+    private fun voiceprint(
+        id: String,
+        boundStationId: String? = null,
+        bindingConfidence: Double? = null,
+        bindingSource: VoiceprintBindingSource? = null,
+    ) = VoiceprintEntity(
+        id = id,
+        embedding = ByteArray(0),
+        memberCount = 1,
+        centroidUpdatedAt = null,
+        boundStationId = boundStationId,
+        bindingConfidence = bindingConfidence,
+        lastConfirmedAt = null,
+        isEnrolled = false,
+        enrolmentObservationCount = 0,
+        enrolmentSessionIds = null,
+        enrolledAt = null,
+        lastMatchedAt = null,
+        bindingSource = bindingSource,
+        embeddingModelId = null,
+        embeddingModelVersion = null,
     )
 
     @Test
@@ -153,6 +202,151 @@ class CorrectionPollingTest {
 
         assertEquals(0, outcome.deletedCount)
         assertEquals(1, db.correctionDao().correctionsFor("TX1").size)
+    }
+
+    // ---- R-052 complete: voiceprint rebinding and prior versioning through StationIdentityDao ----
+
+    @Test
+    fun R_052_propagation_rebinds_the_voiceprint_and_keeps_the_old_binding_reachable(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.catalogDao().insert(station("K7LWH"))
+        db.catalogDao().insert(station("KA7LWH"))
+        db.catalogDao().insert(
+            voiceprint(
+                "V1",
+                boundStationId = "K7LWH",
+                bindingConfidence = 0.6,
+                bindingSource = VoiceprintBindingSource.AUTO,
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH", voiceprintId = "V1"))
+        db.transmissionDao().insert(transmission("TX2", stationId = "K7LWH", voiceprintId = "V1"))
+
+        val outcome = CorrectionPolling.applyCorrection(
+            context,
+            request("TX1", "K7LWH", "KA7LWH", tier = CorrectionTier.PICK_CANDIDATE),
+            CorrectionScope.EVERY_OVER_SAME_VOICE,
+        )
+
+        // The voiceprint now belongs to the corrected station...
+        assertTrue(outcome.voiceprintReassigned)
+        val voiceprints = db.catalogDao().voiceprintsForStation("KA7LWH")
+        assertEquals(1, voiceprints.size)
+        assertEquals("V1", voiceprints.single().id)
+        assertTrue(db.catalogDao().voiceprintsForStation("K7LWH").isEmpty())
+
+        // ...but the earlier binding to K7LWH stays reachable, not overwritten out of existence.
+        val history = db.stationIdentityDao().voiceprintBindingHistoryFor("V1")
+        assertEquals(1, history.size)
+        assertEquals("K7LWH", history.single().previousStationId)
+        assertEquals("KA7LWH", history.single().newStationId)
+        assertEquals(0.6, history.single().previousBindingConfidence)
+
+        // A PICK_CANDIDATE correction is verified — it also reinforces the two named priors.
+        assertEquals(2, outcome.priorsUpdatedCount)
+        val onThisRepeater = db.stationIdentityDao().currentPriorWeight("KA7LWH", "on_this_repeater")!!
+        assertEquals(0.15, onThisRepeater.weight, 0.0001)
+        assertTrue(onThisRepeater.isCurrent)
+    }
+
+    @Test
+    fun R_052_a_free_text_correction_never_rebinds_the_voiceprint_or_feeds_the_priors(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.catalogDao().insert(voiceprint("V1", boundStationId = "K7LWH"))
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH", voiceprintId = "V1"))
+
+        val outcome = CorrectionPolling.applyCorrection(
+            context,
+            request("TX1", "K7LWH", "N0CALL", tier = CorrectionTier.FREE_TEXT),
+            CorrectionScope.EVERY_OVER_SAME_VOICE,
+        )
+
+        assertFalse(outcome.voiceprintReassigned)
+        assertEquals(0, outcome.priorsUpdatedCount)
+        assertTrue(db.stationIdentityDao().voiceprintBindingHistoryFor("V1").isEmpty())
+    }
+
+    @Test
+    fun R_052_this_over_only_never_rebinds_a_voiceprint_shared_with_overs_left_alone(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.catalogDao().insert(voiceprint("V1", boundStationId = "K7LWH"))
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH", voiceprintId = "V1"))
+        db.transmissionDao().insert(transmission("TX2", stationId = "K7LWH", voiceprintId = "V1"))
+
+        val outcome = CorrectionPolling.applyCorrection(
+            context,
+            request("TX1", "K7LWH", "KA7LWH"),
+            CorrectionScope.THIS_OVER_ONLY,
+        )
+
+        assertFalse(outcome.voiceprintReassigned)
+        assertEquals(0, outcome.priorsUpdatedCount)
+    }
+
+    @Test
+    fun R_052_undo_all_restores_the_previous_binding_without_deleting(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.catalogDao().insert(station("K7LWH"))
+        db.catalogDao().insert(station("KA7LWH"))
+        db.catalogDao().insert(
+            voiceprint(
+                "V1",
+                boundStationId = "K7LWH",
+                bindingConfidence = 0.6,
+                bindingSource = VoiceprintBindingSource.AUTO,
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH", voiceprintId = "V1"))
+        val outcome = CorrectionPolling.applyCorrection(
+            context,
+            request("TX1", "K7LWH", "KA7LWH"),
+            CorrectionScope.EVERY_OVER_SAME_VOICE,
+        )
+
+        CorrectionPolling.undoAll(context, outcome, atMillis = 700L)
+
+        // The binding is back on the original station...
+        assertEquals(1, db.catalogDao().voiceprintsForStation("K7LWH").size)
+        assertTrue(db.catalogDao().voiceprintsForStation("KA7LWH").isEmpty())
+        // ...but undo is itself a further, kept binding — both changes stay reachable.
+        val bindingHistory = db.stationIdentityDao().voiceprintBindingHistoryFor("V1")
+        assertEquals(2, bindingHistory.size)
+        assertEquals("KA7LWH", bindingHistory[1].previousStationId)
+        assertEquals("K7LWH", bindingHistory[1].newStationId)
+
+        // The prior weight is back at its pre-correction value, and both rows are kept.
+        val current = db.stationIdentityDao().currentPriorWeight("KA7LWH", "on_this_repeater")!!
+        assertEquals(0.0, current.weight, 0.0001)
+        val priorHistory = db.stationIdentityDao().priorWeightHistoryFor("KA7LWH", "on_this_repeater")
+        assertEquals(2, priorHistory.size)
+        assertEquals(listOf(false, true), priorHistory.map { it.isCurrent })
+    }
+
+    @Test
+    fun R_052_propagated_counts_are_the_real_row_counts(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.catalogDao().insert(voiceprint("V1", boundStationId = "K7LWH"))
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH", voiceprintId = "V1"))
+        db.transmissionDao().insert(transmission("TX2", stationId = "K7LWH", voiceprintId = "V1"))
+        db.transmissionDao().insert(transmission("TX3", stationId = "K7LWH", voiceprintId = "V1"))
+
+        val outcome = CorrectionPolling.applyCorrection(
+            context,
+            request("TX1", "K7LWH", "KA7LWH"),
+            CorrectionScope.EVERY_OVER_SAME_VOICE,
+        )
+
+        // Real, not placeholder: exactly the propagation's own blast radius, exactly two named
+        // priors, and zero deleted — literal and true (constitution III: nothing deleted quietly).
+        assertEquals(3, outcome.overCount)
+        assertTrue(outcome.voiceprintReassigned)
+        assertEquals(2, outcome.priorsUpdatedCount)
+        assertEquals(0, outcome.deletedCount)
+        assertEquals(
+            3,
+            db.correctionDao().correctionsFor("TX1").size + db.correctionDao().correctionsFor("TX2").size +
+                db.correctionDao().correctionsFor("TX3").size,
+        )
     }
 
     @Test
