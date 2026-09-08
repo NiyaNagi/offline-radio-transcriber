@@ -53,7 +53,13 @@ underlying breakdown each prompt draws on.
   development noise tape exists yet (Q2/Q16) and no real ONNX ASR model was available in this
   sandbox, so only the six-control *mechanism* was proven against synthetic noise-shaped decodes
   (`SyntheticNoiseGateMechanismTest`, explicitly not claimed as AC-6) — see CHANGELOG.md
-- [ ] **P11 · End-to-end, then the M4 fork** *(`:pipeline`, decision gate)*
+- [ ] **P11 · End-to-end, then the M4 fork** *(`:pipeline`, decision gate)* — M3 partial
+  2026-09-07: the real text-derived wiring (`PassB`, `CallsignResolver`, the `UnitSpotter`
+  interface) is built and tested end to end against fakes; AC-73/AC-75 have a genuine
+  *mechanism* (`LatencyRecorder`, `BacklogGrowthMonitor`) but no real device measurement; M3's
+  dev-fold callsign precision/recall is NOT MEASURED (no labelled dev-fold occurrences exist,
+  same gap P7 hit); the M4 fork decision is explicitly left OPEN — no real KWS/encoder-similarity
+  implementation or measured 3-way comparison was possible in this sandbox. See CHANGELOG.md.
 
 **Yours, not a session:** record the validation hour (Q2) and pilot the labelling protocol (Q16).
 Do it any time after P2; P6's probes and P7's harness both get better once it exists. **The

@@ -18,5 +18,10 @@
         <!-- The capture status surface (build-plan P8, FR-UI-7). Not yet the app's launcher —
              MainActivity remains the entry point until the reader UI/navigation host lands. -->
         <activity android:name=".status.StatusActivity" android:exported="false" />
+
+        <!-- The minimal transmission-list reader surface (build-plan P11, FR-A11Y-1) — the first
+             point an attribution reaches a screen. A full reader (live view, threads, playback,
+             correction) is M5; not yet the app's launcher for the same reason as StatusActivity. -->
+        <activity android:name=".transmissions.TransmissionListActivity" android:exported="false" />
     </application>
 </manifest>
