@@ -17,6 +17,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.ort.capture.android.AndroidAudioIo
+import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.AudioIo
 import org.ort.capture.android.AudioRecordSource
 import org.ort.capture.android.GapRecord
 import org.ort.capture.android.GapTracker
@@ -34,6 +36,7 @@ import org.ort.core.TransmissionState
 import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
+import org.ort.data.dao.WorkQueueDao
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureProcessingLoop
@@ -46,6 +49,7 @@ import org.ort.pipeline.passb.UnavailableAsrEngine
 import org.ort.pipeline.shed.AndroidShedSignals
 import org.ort.pipeline.shed.ShedController
 import org.ort.pipeline.shed.ShedEventPersister
+import org.ort.pipeline.shed.ShedSignals
 import org.ort.segment.FrameSpec
 import org.ort.segment.SegmentConfig
 import org.ort.segment.SegmentId
@@ -82,6 +86,30 @@ import java.io.RandomAccessFile
  * in this repo can verify.
  */
 public class RealCaptureService : Service() {
+
+    /**
+     * audit F-011: the seam that lets a test start this real [Service] under Robolectric's
+     * `ServiceController` and still substitute fakes for the four genuinely-Android/IO-bound
+     * collaborators [startCapture] used to construct directly — [OrtDatabase], the
+     * [org.ort.capture.android.AudioIo] + selected device pair, the [AsrEngineAvailability]
+     * lookup and [org.ort.pipeline.shed.ShedSignals]. Deliberately a plain settable field, not
+     * Hilt (see the finding): a test sets it after `onCreate()` (which never touches it) and
+     * before delivering the start intent that calls [startCapture]. Every default here is the
+     * exact real construction this class already did — production behaviour is unchanged.
+     */
+    internal var dependencies: Dependencies = Dependencies()
+
+    /** See [dependencies]'s kdoc. */
+    internal data class Dependencies(
+        val database: (android.content.Context) -> OrtDatabase = { OrtDatabase.create(it) },
+        val audioIo: (android.content.Context) -> Pair<AudioIo, AudioDeviceDescriptor>? = { ctx ->
+            val io = AndroidAudioIo(ctx)
+            io.defaultInputDevice()?.let { device -> io to device }
+        },
+        val asrEngine: (File) -> AsrEngineAvailability = { RealAsrEngineProvider(it).provide() },
+        val shedSignals: (android.content.Context, WorkQueueDao, File) -> ShedSignals =
+            { ctx, dao, dir -> AndroidShedSignals(ctx, dao, dir) },
+    )
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var source: AudioRecordSource? = null
@@ -140,13 +168,11 @@ public class RealCaptureService : Service() {
     }
 
     private fun startCapture() {
-        val db = OrtDatabase.create(applicationContext)
+        val db = dependencies.database(applicationContext)
         val queue = WorkQueue(db, SystemClock)
-        val io = AndroidAudioIo(applicationContext)
         // A real enumerated device — never a fabricated descriptor, which RouteVerifier would
         // (correctly) reject on the first read, halting capture. See defaultInputDevice()'s kdoc.
-        val device = io.defaultInputDevice()
-        if (device == null) {
+        val (io, device) = dependencies.audioIo(applicationContext) ?: run {
             CaptureState.failed("no audio input device is available")
             updateNotification("Failed: no audio input device")
             return
@@ -172,7 +198,7 @@ public class RealCaptureService : Service() {
         // transition (FR-RUN-5) and republishes level+backlog through ShedStatus for :app to
         // read; a free-storage floor breach stops capture loudly rather than letting a write fail
         // silently (FR-STO-4, FR-RUN-6; constitution IV).
-        val shedSignals = AndroidShedSignals(applicationContext, db.workQueueDao(), filesDir)
+        val shedSignals = dependencies.shedSignals(applicationContext, db.workQueueDao(), filesDir)
         val shedController = ShedController(shedSignals, SystemClock)
         val shedRelay = ShedEventRelay(
             controller = shedController,
@@ -286,7 +312,7 @@ public class RealCaptureService : Service() {
      * so a rejection/failure reason is recorded honestly rather than nothing happening at all.
      */
     private suspend fun startProcessingLoop(db: OrtDatabase, queue: WorkQueue) {
-        val availability = RealAsrEngineProvider(filesDir).provide()
+        val availability = dependencies.asrEngine(filesDir)
         val (engine, modelRef, provider) = when (availability) {
             is AsrEngineAvailability.Available -> {
                 AsrAvailability.available(availability.modelRef.canonical)
@@ -314,13 +340,13 @@ public class RealCaptureService : Service() {
      * republished, and only then is the storage floor checked — a floor breach's loud stop should
      * reflect the same tick's shed level, not a stale one from before this tick ran.
      */
-    private suspend fun runShedMonitor(
-        signals: AndroidShedSignals,
-        controller: ShedController,
-        relay: ShedEventRelay,
-    ) {
+    private suspend fun runShedMonitor(signals: ShedSignals, controller: ShedController, relay: ShedEventRelay) {
         while (source != null) {
-            signals.refreshBacklog()
+            // refreshBacklog() is AndroidShedSignals's own live-read step (queueBacklog() then
+            // returns a cache); a test's ShedSignals fake exposes queueBacklog() directly with no
+            // refresh needed, and the plain ShedSignals interface (this parameter's type, since
+            // audit F-011) does not declare a refresh step at all.
+            if (signals is AndroidShedSignals) signals.refreshBacklog()
             controller.sample()
             relay.drain()
             ShedStatus.update(controller.currentLevel, signals.queueBacklog())

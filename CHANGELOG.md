@@ -32,6 +32,59 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-011)
+
+### (pending) — audit F-011 · `RealCaptureService` is now started end to end under Robolectric, proving P12's composition rather than just its parts
+
+**Scope:** `:pipeline` only — `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`
+(the `Dependencies` injection seam only — no behavioural change to production defaults) and the
+`runShedMonitor` parameter type it forced (`AndroidShedSignals` → `ShedSignals`, so a fake shed
+signal source can be substituted too); new test
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/RealCaptureServiceTest.kt`.
+**Requirements/ACs:** build-plan P12's claim; AC-31, AC-5, AC-48, F-005, F-028; constitution II
+(test-backed change) and IV (capture never blocks/drops/lies).
+**What changed:** P12 claimed `PassDrainRunner`/`PassB`/`RealSherpaDecoder` were "constructed and
+wired into `RealCaptureService`, proven against `FakeAsrEngine` on Robolectric", but no test ever
+started the service — `CaptureProcessingLoopTest` proves `PassDrainRunner`+`PassBFactory` draining
+a hand-assembled `WorkQueue`, which is a different claim from `RealCaptureService.startCapture()`'s
+own composition (VAD/route selection, the capture flow, the F-028/F-007 gap/shed relays, the
+processing-loop launch) actually running end to end; F-001/F-005/F-006 had all lived in exactly
+that untested composition code. `RealCaptureService` gained a small settable `Dependencies` field
+(four factory functions: `database`, `audioIo`, `asrEngine`, `shedSignals`), each defaulting to the
+exact real construction the class already did — no Hilt, no behavioural change to production.
+`RealCaptureServiceTest` uses Robolectric's `ServiceController` to start the *real* service with
+`FakeAudioIo` (a synthetic loud-then-silent burst), `FakeAsrEngine`, `FakeShedSignals` and an
+in-memory `OrtDatabase` substituted through that seam, then asserts, through the running service's
+own code path: a `TransmissionEntity` + current transcript row appear (AC-31); the written
+heartbeat carries a real non-zero sample position, not the fabricated `0L` F-005 fixed (read via
+`FileHeartbeatStore` against the service's own `filesDir`); a deliberate `ACTION_STOP` (not
+`onDestroy()`, which is never a clean stop in this class) marks the session's heartbeat clean
+(AC-5); and a `FakeAudioIo.raiseInterruption`/auto-recovery pair produces a real `capture_gap` row
+with cause `INTERRUPTION` (AC-48, F-028). The VAD itself is not faked — the service's existing
+`EnergyVadModel` fallback (no Silero model file exists in this environment) genuinely trips on the
+loud synthetic tone, so the real fallback path is what's exercised. `runShedMonitor`'s parameter
+was narrowed from the concrete `AndroidShedSignals` to the `ShedSignals` interface (calling
+`refreshBacklog()` only when the runtime type is `AndroidShedSignals`) so `FakeShedSignals` — which
+has no refresh step, because it is already live — can be injected without changing
+`AndroidShedSignals`'s own contract.
+**Verified:** test written first against the pre-seam class and confirmed to fail to compile
+(`Unresolved reference 'dependencies'` / `'Dependencies'`) via
+`./gradlew :pipeline:compileDebugUnitTestKotlin`; after the seam,
+`./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.capture.RealCaptureServiceTest"`
+green (2 tests, 0 failures, ~5s); `./gradlew :pipeline:test` green (no regressions in the existing
+suite, including `CaptureProcessingLoopTest`); full gate `./gradlew build dependencyRules` green;
+`python tools/spec-check/spec_check.py` green. All Robolectric/JVM — no device has run this;
+real-thread/real-wall-clock timing (the service's own `Dispatchers.IO` scope and
+`CaptureProcessingLoop`'s 2s poll interval are unmodified — there is no test-dispatcher seam),
+so the test polls with a real timeout rather than advancing a virtual clock.
+**Left open / not done:** on-device verification remains entirely unestablished, as it always was
+for this class (its own doc comment says so). The processing loop's attribution resolution against
+the real lexicon grammar is not exercised here (the synthetic burst carries no callsign phonetics);
+that path is already covered by `CaptureProcessingLoopTest`'s "kilo seven alpha bravo charlie" case
+and was out of scope for this finding, which is about service *composition*, not decode accuracy.
+
+---
+
 ## 2026-09-07 (audit — F-009)
 
 ### (pending) — audit F-009 · Pass B now persists the phonetic lattice and every ranked candidate, so the inspection surface is no longer permanently empty
