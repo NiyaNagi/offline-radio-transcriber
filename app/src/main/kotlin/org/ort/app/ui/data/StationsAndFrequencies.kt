@@ -213,6 +213,40 @@ public data class StationIdentityViewState(
     val givenByYou: StationGivenByYouViewState,
 )
 
+// -------------------------------------------------------------------------------------------
+// Split (R-073) — Fail-Cluster.dc.html, reached from Station-Identity's "Split" action.
+// -------------------------------------------------------------------------------------------
+
+/**
+ * One over in `Fail-Cluster.dc.html`'s chooser (R-073). [isAnchor] is true exactly when
+ * [attribution] is `CONFIRMED` — the callsign was heard directly in this over, so per the
+ * artboard's own copy ("Overs where the callsign was heard cannot be moved — those are the
+ * anchor") its checkbox is never interactive.
+ */
+public data class VoiceprintSplitOverViewState(
+    val transmissionId: String,
+    val timeLabel: String,
+    val transcriptText: String,
+    val attribution: Attribution,
+    val isAnchor: Boolean,
+    /** The real `transmission.corrected` column — true if an earlier correction already touched this over. */
+    val corrected: Boolean,
+)
+
+/**
+ * `Fail-Cluster.dc.html`'s whole state (R-073) — the real overs in [fromVoiceprintId]'s cluster,
+ * oldest-write-first is not required here (unlike the artboard's own scoring-sorted list, this
+ * package has no real per-over voiceprint-distance score to sort by — never a fabricated "least
+ * like the rest" pre-tick; see this package's report). Ticking a checkbox and confirming calls
+ * [org.ort.app.ui.data.StationPolling.splitVoiceprint] with the chosen [VoiceprintSplitOverViewState.transmissionId]s.
+ */
+public data class StationVoiceSplitViewState(
+    val stationId: String,
+    val callsign: String,
+    val fromVoiceprintId: String,
+    val overs: List<VoiceprintSplitOverViewState>,
+)
+
 public object StationViewMapper {
 
     public fun listEntry(station: StationEntity): StationListEntryViewState = StationListEntryViewState(
