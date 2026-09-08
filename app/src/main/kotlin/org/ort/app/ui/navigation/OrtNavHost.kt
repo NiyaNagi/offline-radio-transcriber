@@ -82,7 +82,7 @@ public fun OrtNavHost(sessionId: String?) {
     var openTransmissionId by rememberSaveable { mutableStateOf<String?>(null) }
     var openStationId by rememberSaveable { mutableStateOf<String?>(null) }
     var openFrequencyHz by rememberSaveable { mutableStateOf<Long?>(null) }
-    val storage = remember { StorageFooterViewState.fromDeviceStorage(context) }
+    val drawerLive = rememberDrawerLiveState(sessionId, context)
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
 
     ModalNavigationDrawer(
@@ -90,7 +90,8 @@ public fun OrtNavHost(sessionId: String?) {
         drawerContent = {
             ReaderDrawerContent(
                 current = current,
-                storage = storage,
+                storage = drawerLive.storage,
+                badges = drawerLive.badges,
                 onSelect = { destination ->
                     current = destination
                     openTransmissionId = null
@@ -151,6 +152,30 @@ public fun OrtNavHost(sessionId: String?) {
             )
         }
     }
+}
+
+/** [StorageFooterViewState] and [DrawerBadgeViewState] bundled, so [rememberDrawerLiveState] returns one value. */
+private data class DrawerLiveState(val storage: StorageFooterViewState, val badges: DrawerBadgeViewState)
+
+/**
+ * FR-STO-5 / FR-UI-7 (audit F-020): the footer and the drawer's Log/Capture badges, polled the
+ * same way `NowContent`/`LogContent` already poll status — real figures recomputed on the same
+ * cadence, never a value fixed at the moment the drawer first composed. Extracted out of
+ * [OrtNavHost] purely to keep that function under detekt's length limit; there is no other reason
+ * this couldn't be inline.
+ */
+@Composable
+private fun rememberDrawerLiveState(sessionId: String?, context: android.content.Context): DrawerLiveState {
+    var storage by remember { mutableStateOf(StorageFooterViewState.fromAudioDirectory(context)) }
+    var badges by remember { mutableStateOf(DrawerBadgeViewState.NONE) }
+    LaunchedEffect(sessionId) {
+        while (true) {
+            storage = StorageFooterViewState.fromAudioDirectory(context)
+            badges = ReaderPolling.drawerBadges(context, sessionId)
+            delay(POLL_INTERVAL_MILLIS)
+        }
+    }
+    return DrawerLiveState(storage, badges)
 }
 
 /**

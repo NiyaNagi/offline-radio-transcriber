@@ -3,12 +3,10 @@ package org.ort.app.ui.navigation
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.Text
@@ -16,7 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import org.ort.app.ui.theme.OrtSpacing
 
 /**
@@ -30,6 +27,7 @@ import org.ort.app.ui.theme.OrtSpacing
 public fun ReaderDrawerContent(
     current: ReaderDestination,
     storage: StorageFooterViewState,
+    badges: DrawerBadgeViewState,
     onSelect: (ReaderDestination) -> Unit,
 ) {
     ModalDrawerSheet {
@@ -39,15 +37,33 @@ public fun ReaderDrawerContent(
         // ReaderAccessibilityTest, which asserts every destination row is actually displayed.
         Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             ReaderDestination.entries.forEach { destination ->
-                DrawerRow(destination = destination, selected = destination == current, onSelect = onSelect)
+                DrawerRow(
+                    destination = destination,
+                    selected = destination == current,
+                    badgeText = badgeTextFor(destination, badges),
+                    onSelect = onSelect,
+                )
             }
             StorageFooter(storage)
         }
     }
 }
 
+/** FR-UI-7: which destinations carry a live badge, and what it reads — see [DrawerBadgeViewState]. */
+private fun badgeTextFor(destination: ReaderDestination, badges: DrawerBadgeViewState): String? = when (destination) {
+    ReaderDestination.LOG -> badges.logCount?.toString()
+    ReaderDestination.THREADS -> "—"
+    ReaderDestination.CAPTURE -> badges.captureElapsedLabel
+    else -> null
+}
+
 @Composable
-private fun DrawerRow(destination: ReaderDestination, selected: Boolean, onSelect: (ReaderDestination) -> Unit) {
+private fun DrawerRow(
+    destination: ReaderDestination,
+    selected: Boolean,
+    badgeText: String?,
+    onSelect: (ReaderDestination) -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -58,33 +74,33 @@ private fun DrawerRow(destination: ReaderDestination, selected: Boolean, onSelec
         Text(
             text = destination.label,
             style = if (selected) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
         )
+        if (badgeText != null) {
+            Text(text = badgeText, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
 @Composable
 private fun StorageFooter(storage: StorageFooterViewState) {
+    val budgetText = if (storage.hasBudget) "" else "no budget set"
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
             .semantics(mergeDescendants = true) {
-                contentDescription = "Storage: ${storage.usedBytes.toGigabyteLabel()} of " +
-                    "${storage.totalBytes.toGigabyteLabel()} used" +
-                    if (storage.isPlaceholder) " (device total — per-category budgets not yet set)" else ""
+                contentDescription = "Audio: ${storage.audioUsedBytes.toGigabyteLabel()} used, " +
+                    "${storage.freeBytes.toGigabyteLabel()} free ($budgetText)"
             },
     ) {
         Text(
-            text = "Storage ${storage.usedBytes.toGigabyteLabel()}",
+            text = "Audio: ${storage.audioUsedBytes.toGigabyteLabel()} used",
             style = MaterialTheme.typography.bodyMedium,
         )
-        Text(text = "of ${storage.totalBytes.toGigabyteLabel()}", style = MaterialTheme.typography.bodyMedium)
-        LinearProgressIndicator(
-            progress = { storage.usedFraction },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = OrtSpacing.xs)
-                .height(4.dp),
+        Text(
+            text = "${storage.freeBytes.toGigabyteLabel()} free · $budgetText",
+            style = MaterialTheme.typography.bodyMedium,
         )
     }
 }
