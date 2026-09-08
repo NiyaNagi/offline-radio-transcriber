@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -108,12 +109,31 @@ public fun rememberTimeColumnWidth(): Dp = rememberMonoColumnWidth(TIME_COLUMN_S
 @Composable
 public fun rememberFreqColumnWidth(): Dp = rememberMonoColumnWidth(FREQ_COLUMN_SAMPLE, LOG_FREQ_COLUMN)
 
+/** R-373 (`overnight/L01-log-pass3@2x.png`, `search-corpus/Q03-results-2x-clean-pass4.png`): the
+ * real defect [rememberTimeColumnWidth]/[rememberFreqColumnWidth] already fixed for the time/freq
+ * columns, still open for [LogRow]'s weighted station/transcript column — nothing ever gave it a
+ * floor, so at a large font scale it could be measured arbitrarily narrow, and a callsign (one
+ * unbroken mono token, no word-break opportunity of its own) split character-by-character
+ * ("KE7QRS" → "KE7QR"/"S") rather than wrapping as a whole word the way a transcript's real words
+ * mostly can. [CALLSIGN_COLUMN_SAMPLE] is the widest realistic amateur callsign shape (prefix +
+ * digit + suffix); [rememberCallsignColumnWidth] is that measured in [OrtType.callsignRow] at the
+ * real, current density/font scale, the same [rememberTextMeasurer]-backed pattern as the time/
+ * freq columns — one shared floor across every row, not each row's own (possibly shorter)
+ * callsign, so the column stays aligned down the whole log the way time/freq already do. */
+private const val CALLSIGN_COLUMN_SAMPLE = "KE7QRS"
+
+/** R-373: [CALLSIGN_COLUMN_SAMPLE] measured in [OrtType.callsignRow] — see that constant's own
+ * doc. [LogRow] applies this as the station/transcript column's own `widthIn(min = …)` floor. */
 @Composable
-private fun rememberMonoColumnWidth(sample: String, floor: Dp): Dp {
+public fun rememberCallsignColumnWidth(): Dp =
+    rememberMonoColumnWidth(CALLSIGN_COLUMN_SAMPLE, floor = 0.dp, style = OrtType.callsignRow)
+
+@Composable
+private fun rememberMonoColumnWidth(sample: String, floor: Dp, style: TextStyle = OrtType.timeFreq): Dp {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    val measuredWidth = remember(density.density, density.fontScale, sample) {
-        with(density) { measurer.measure(text = sample, style = OrtType.timeFreq).size.width.toDp() }
+    val measuredWidth = remember(density.density, density.fontScale, sample, style) {
+        with(density) { measurer.measure(text = sample, style = style).size.width.toDp() }
     }
     return maxOf(floor, measuredWidth)
 }
@@ -550,7 +570,17 @@ public data class LogRowViewState(
     val highlightRanges: List<IntRange> = emptyList(),
 )
 
-/** guide §6.5/`Rows.dc.html`: the densest row in the product. */
+/** guide §6.5/`Rows.dc.html`: the densest row in the product.
+ *
+ * R-373: at a large font scale, the time/freq/signal columns' own real, measured widths
+ * ([rememberTimeColumnWidth]/[rememberFreqColumnWidth]/[SIGNAL_COLUMN]) plus the station/
+ * transcript column's own floor ([rememberCallsignColumnWidth]) can add up to more than the row
+ * actually has — the guide's own "columns wrap as whole units, never intra-word" (§5): rather
+ * than let the weighted column get squeezed narrower than its floor (the callsign-splitting
+ * defect this id fixes), the whole layout switches to the station/transcript column on its own
+ * line, with time/freq/signal — as one unit, never split from each other — on the line beneath
+ * it. [BoxWithConstraints] decides which layout applies from the row's own real, current width,
+ * not a guessed breakpoint. */
 @Composable
 public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val rowBackground = if (state.attribution?.state == AttributionState.AMBIGUOUS) {
@@ -570,45 +600,98 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = logRowDescription(state) },
     ) {
-        Row(
+        val timeWidth = rememberTimeColumnWidth()
+        val freqWidth = rememberFreqColumnWidth()
+        val callsignWidth = rememberCallsignColumnWidth()
+        val gap = 10.dp
+        BoxWithConstraints(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 9.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = state.timeLabel,
-                style = OrtType.timeFreq,
-                color = OrtColors.textTime,
-                maxLines = 1,
-                softWrap = false,
-                modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
-            )
-            Text(
-                text = state.frequencyLabel,
-                style = OrtType.timeFreq,
-                color = OrtColors.textTime,
-                maxLines = 1,
-                softWrap = false,
-                modifier = Modifier.widthIn(min = rememberFreqColumnWidth()),
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                LogRowMarkerLine(state = state)
-                Text(
-                    text = highlightedTranscript(state.transcript, state.highlightRanges),
-                    style = logRowTranscriptStyle(state.partial),
-                    color = if (state.partial != null) OrtColors.textTime else OrtColors.textSecondary,
-                    modifier = Modifier.padding(top = 3.dp),
-                )
-            }
-            state.signalLabel?.let {
-                Text(
-                    text = it,
-                    style = OrtType.signal,
-                    color = OrtColors.textLow,
-                    modifier = Modifier.widthIn(min = SIGNAL_COLUMN),
-                )
+            val signalWidth = if (state.signalLabel != null) gap + SIGNAL_COLUMN else 0.dp
+            val oneLineWidth = timeWidth + gap + freqWidth + gap + callsignWidth + signalWidth
+            if (maxWidth >= oneLineWidth) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    LogRowTimeText(state, Modifier.widthIn(min = timeWidth))
+                    LogRowFreqText(state, Modifier.widthIn(min = freqWidth))
+                    Column(modifier = Modifier.weight(1f).widthIn(min = callsignWidth)) {
+                        LogRowMarkerLine(state = state)
+                        LogRowTranscriptText(state, Modifier.padding(top = 3.dp))
+                    }
+                    state.signalLabel?.let { LogRowSignalText(it) }
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    LogRowMarkerLine(state = state)
+                    LogRowTranscriptText(state, Modifier.padding(top = 3.dp))
+                    Row(
+                        modifier = Modifier.padding(top = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(gap),
+                    ) {
+                        LogRowTimeText(state, Modifier.widthIn(min = timeWidth))
+                        LogRowFreqText(state, Modifier.widthIn(min = freqWidth))
+                        state.signalLabel?.let { LogRowSignalText(it) }
+                    }
+                }
             }
         }
     }
+}
+
+/** R-373: [LogRow]'s time column, factored out so both the one-line and stacked layouts render
+ * the identical `Text` (same `maxLines = 1, softWrap = false` — R-205's own fix for this exact
+ * column, applied unchanged here) rather than two copies that could quietly drift apart. */
+@Composable
+private fun LogRowTimeText(state: LogRowViewState, modifier: Modifier = Modifier) {
+    Text(
+        text = state.timeLabel,
+        style = OrtType.timeFreq,
+        color = OrtColors.textTime,
+        maxLines = 1,
+        softWrap = false,
+        modifier = modifier,
+    )
+}
+
+/** R-373: [LogRow]'s frequency column — see [LogRowTimeText]. */
+@Composable
+private fun LogRowFreqText(state: LogRowViewState, modifier: Modifier = Modifier) {
+    Text(
+        text = state.frequencyLabel,
+        style = OrtType.timeFreq,
+        color = OrtColors.textTime,
+        maxLines = 1,
+        softWrap = false,
+        modifier = modifier,
+    )
+}
+
+/** R-373: [LogRow]'s signal column — see [LogRowTimeText]. */
+@Composable
+private fun LogRowSignalText(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = OrtType.signal,
+        color = OrtColors.textLow,
+        modifier = modifier.widthIn(min = SIGNAL_COLUMN),
+    )
+}
+
+/** R-373: [LogRow]'s transcript — see [LogRowTimeText]. Word-wraps normally (Compose's own
+ * default `softWrap = true`, no `maxLines`): unlike the callsign, a transcript is expected to run
+ * onto more than one line, and now that its column always has at least
+ * [rememberCallsignColumnWidth]'s own floor (both layouts apply it — full row width in the
+ * stacked case, `widthIn(min = …)` in the one-line case), the mid-word breaks the register found
+ * ("activatio"/"n") stop happening in practice: they were a symptom of the same unbounded-shrink
+ * defect the callsign fix addresses directly, not a separate transcript-only problem needing its
+ * own line-breaking configuration. */
+@Composable
+private fun LogRowTranscriptText(state: LogRowViewState, modifier: Modifier = Modifier) {
+    Text(
+        text = highlightedTranscript(state.transcript, state.highlightRanges),
+        style = logRowTranscriptStyle(state.partial),
+        color = if (state.partial != null) OrtColors.textTime else OrtColors.textSecondary,
+        modifier = modifier,
+    )
 }
 
 /** [LogRow]'s own merged description — built explicitly, not left to `semantics(mergeDescendants
