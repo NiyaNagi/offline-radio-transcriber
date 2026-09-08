@@ -2,6 +2,7 @@ package org.ort.app.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -31,11 +32,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -142,13 +145,23 @@ public fun SectionHeader(
 }
 
 /** `Detail.dc.html`'s top row: a 20dp chevron + the parent destination's label in `accent/green`,
- * 44dp target, with an optional kebab slot. */
+ * 44dp target, with an optional kebab slot.
+ *
+ * R-192: [kebabDescription] names what the kebab actually opens ("More" by default, unchanged for
+ * every caller before this existed) — a screen whose kebab does something specific
+ * (`Station-Detail.dc.html`'s "Station identity", for one) can say so instead of cloning this
+ * whole header just to relabel one icon. [kebabTestTag] is `null` by default (no test tag at all,
+ * matching every caller before this existed); a caller that needs to drive the kebab by tag rather
+ * than by its content description can supply one. Both are ignored when [onKebab] is `null` — there
+ * is no kebab to name. */
 @Composable
 public fun DrillInHeader(
     parentLabel: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onKebab: (() -> Unit)? = null,
+    kebabDescription: String = "More",
+    kebabTestTag: String? = null,
 ) {
     Box(modifier = modifier.fillMaxWidth().heightIn(min = 44.dp)) {
         Row(
@@ -169,10 +182,11 @@ public fun DrillInHeader(
             if (onKebab != null) {
                 Icon(
                     imageVector = OrtIcons.more,
-                    contentDescription = "More",
+                    contentDescription = kebabDescription,
                     tint = OrtColors.textDim,
                     modifier = Modifier.size(19.dp)
-                        .clickable(role = Role.Button, onClickLabel = "More", onClick = onKebab),
+                        .then(if (kebabTestTag != null) Modifier.testTag(kebabTestTag) else Modifier)
+                        .clickable(role = Role.Button, onClickLabel = kebabDescription, onClick = onKebab),
                 )
             }
         }
@@ -289,22 +303,53 @@ public fun KeyValueRow(
     subLine: String? = null,
     trailingMarker: (@Composable () -> Unit)? = null,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth().heightIn(min = 44.dp).padding(vertical = OrtSpacing.xs),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    // R-265: a TalkBack traversal stop — without this, "Input"/"USB Audio Device"/"verified" are
+    // three separate stops a screen-reader user has to swipe through individually instead of
+    // hearing as the one fact row they visually are. `focusable()` (no `MutableInteractionSource`/
+    // visual indication needed — this row isn't clickable, so there is nothing to show pressed)
+    // marks the merged node as a real accessibility stop; `mergeDescendants = true` with an
+    // explicit `contentDescription` is the same explicit-composition pattern this package now uses
+    // in `LogRow`/`RejectedRow` rather than trusting merge behaviour alone.
+    //
+    // The outer `Box` (size/focus/semantics) wrapping an inner `Row` (padding/layout) is this
+    // package's own established fix for a real, repeated Compose/Robolectric measurement bug: a
+    // `heightIn(min = 44.dp)` followed later in the *same* modifier chain by more modifiers
+    // (`padding`, and now `focusable`/`semantics` too) sometimes measures shorter than the
+    // minimum — confirmed directly here (this row measured 36dp, exactly 44dp minus the 8dp
+    // `padding(vertical = OrtSpacing.xs)` this chain also carries, the instant `focusable()`/
+    // `semantics(...)` were appended after it) — the same defect `LogRow`/`GapRow`/`RejectedRow`/
+    // `LogGroupHeader`/`DrillInHeader`/`ScreenHeader` already carry this exact structural fix for.
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .focusable()
+            .semantics(mergeDescendants = true) {
+                contentDescription = buildString {
+                    append(key)
+                    append(", ")
+                    append(value)
+                    subLine?.let { append(", "); append(it) }
+                }
+            },
     ) {
-        Text(
-            text = key,
-            style = OrtType.control,
-            color = OrtColors.textDim,
-            modifier = Modifier.widthIn(min = 96.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = value, style = OrtType.control, color = OrtColors.textHigh)
-            subLine?.let { Text(text = it, style = OrtType.subLine, color = OrtColors.textDim) }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+        ) {
+            Text(
+                text = key,
+                style = OrtType.control,
+                color = OrtColors.textDim,
+                modifier = Modifier.widthIn(min = 96.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = value, style = OrtType.control, color = OrtColors.textHigh)
+                subLine?.let { Text(text = it, style = OrtType.subLine, color = OrtColors.textDim) }
+            }
+            trailingMarker?.invoke()
         }
-        trailingMarker?.invoke()
     }
 }
 
@@ -520,7 +565,7 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
             .background(rowBackground)
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) {},
+            .semantics(mergeDescendants = true) { contentDescription = logRowDescription(state) },
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 9.dp),
@@ -546,7 +591,7 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
                 LogRowMarkerLine(state = state)
                 Text(
                     text = highlightedTranscript(state.transcript, state.highlightRanges),
-                    style = OrtType.transcript,
+                    style = logRowTranscriptStyle(state.partial),
                     color = if (state.partial != null) OrtColors.textTime else OrtColors.textSecondary,
                     modifier = Modifier.padding(top = 3.dp),
                 )
@@ -562,6 +607,62 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
         }
     }
 }
+
+/** [LogRow]'s own merged description — built explicitly, not left to `semantics(mergeDescendants
+ * = true)` alone, because [AttributionRow] (rendered inside [LogRowMarkerLine]) is itself a
+ * `mergeDescendants` boundary, and this Compose version does not reliably carry a
+ * `contentDescription` up through a *second*, outer merge boundary around it (confirmed directly,
+ * the side finding an earlier entry in this file's `CHANGELOG.md` recorded — validators reading
+ * this exact merged description, "filled circle, Confirmed, W7NPC", found nothing at all before
+ * this fix). Composing it explicitly is also what keeps the transcript itself reachable: setting
+ * *any* explicit `contentDescription` on a node replaces what an accessibility service reads for
+ * it — a merged `Text` list is what it would otherwise fall back to — so this deliberately
+ * includes everything that list already carried (time, frequency, the transcript, the signal
+ * figure) alongside the attribution words and badge label the plain merge was missing, rather
+ * than trading one gap for a new one.
+ *
+ * Uses [attributionStateDescription] — state prose, callsign, alternate — not the full
+ * [attributionRowDescription] `AttributionRow` itself carries (which is prefixed with the shape
+ * word, "filled circle"/etc.): the shape is `AttributionRow`'s own node's business, and copying
+ * its *entire* description here would make `LogRow`'s new description an exact substring
+ * duplicate of that separate, still-independently-queryable node — collapsing a real caller's
+ * "find the row by its content description" query from one match to two
+ * (`ui/screens/LogScreenTest.kt`, outside this package, does exactly that; confirmed empirically
+ * while landing this fix). Dropping the shape word keeps both unambiguous. */
+private fun logRowDescription(state: LogRowViewState): String {
+    val parts = mutableListOf(state.timeLabel, state.frequencyLabel)
+    when (state.partial) {
+        LogRowPartial.HEARING -> parts += "hearing…"
+        LogRowPartial.RESOLVING -> parts += "resolving…"
+        null -> state.attribution?.let { attribution ->
+            parts += attributionStateDescription(attribution, state.callsign ?: attribution.stationId, state.alternate)
+        }
+    }
+    parts += state.transcript
+    state.signalLabel?.let { parts += it }
+    state.badge?.let {
+        parts += when (it) {
+            LogRowBadge.NEW -> "new"
+            LogRowBadge.CORRECTED -> "corrected"
+            LogRowBadge.REVISED -> "revised"
+        }
+    }
+    return parts.joinToString(", ")
+}
+
+/** R-246 (`pass-a-partial/L03.png`, `Log-Partial.dc.html`): "provisional must look provisional" —
+ * the whole row, not only its "hearing…"/"resolving…" label, so [LogRow]'s transcript itself goes
+ * italic too, for exactly the states that already mean "provisional" (derived from [partial]
+ * rather than a separate `provisional` flag on [LogRowViewState]: `LogRowPartial` already carries
+ * that fact, and a second field could only ever agree or silently disagree with the first — never
+ * add real information). A plain function, not inlined into the `Text` call, so this decision is
+ * directly unit-testable without rendering Compose at all — `TextStyle`/`FontStyle` are ordinary
+ * data classes, not something that needs a running composition to compare (the pattern R-054's
+ * `scrubFraction`/R-128's `meterColorFor` already established in this package, for the same
+ * reason: a rendered *pixel* isn't reliably verifiable via this host's Robolectric setup, but the
+ * pure decision that produces it is). */
+internal fun logRowTranscriptStyle(partial: LogRowPartial?): TextStyle =
+    if (partial != null) OrtType.transcript.copy(fontStyle = FontStyle.Italic) else OrtType.transcript
 
 /** R-065: [transcript] with [ranges] painted in `highlightGreen`/`textHigh`
  * (`Search-Results.dc.html`'s `.hit` span) — out-of-bounds and empty/reversed ranges are dropped
@@ -732,7 +833,11 @@ public fun GapRow(timeLabel: String, label: String, modifier: Modifier = Modifie
 }
 
 /** `Rows.dc.html`'s rejected row: dimmed but present, with its reason. Its audio is retained and
- * it remains openable — nothing is deleted quietly (constitution III). */
+ * it remains openable — nothing is deleted quietly (constitution III).
+ *
+ * R-242 (`Log-Rejected.dc.html`'s `DUR` column, `overnight/L05-rejected.png`): [durationLabel] is
+ * the segment's own length ("0.4s") — `null` (every caller before this existed) renders exactly
+ * as before, no `DUR` column at all, rather than an empty one. */
 @Composable
 public fun RejectedRow(
     timeLabel: String,
@@ -744,6 +849,7 @@ public fun RejectedRow(
     // e.g. "0.4 s of noise after the carrier dropped." Optional and additive — a row with no
     // `why` renders exactly as before.
     why: String? = null,
+    durationLabel: String? = null,
 ) {
     Box(
         modifier = modifier
@@ -754,10 +860,14 @@ public fun RejectedRow(
             )
             .alpha(0.45f)
             .semantics(mergeDescendants = true) {
-                contentDescription = if (why != null) {
-                    "$timeLabel, $frequencyLabel, rejected, $reason, $why"
-                } else {
-                    "$timeLabel, $frequencyLabel, rejected, $reason"
+                contentDescription = buildString {
+                    append(timeLabel)
+                    append(", ")
+                    append(frequencyLabel)
+                    append(", rejected, ")
+                    append(reason)
+                    why?.let { append(", "); append(it) }
+                    durationLabel?.let { append(", "); append(it) }
                 }
             },
     ) {
@@ -797,6 +907,17 @@ public fun RejectedRow(
                         modifier = Modifier.padding(top = 3.dp),
                     )
                 }
+            }
+            // guide (`.s`): 11px mono, text/low — the same DUR-column treatment `LogRow`'s own
+            // trailing signal figure uses (`OrtType.signal`/`OrtColors.textLow`).
+            durationLabel?.let {
+                Text(
+                    text = it,
+                    style = OrtType.signal,
+                    color = OrtColors.textLow,
+                    maxLines = 1,
+                    softWrap = false,
+                )
             }
         }
     }
