@@ -294,7 +294,16 @@ private fun NavHostBody(
     Column(modifier = modifier) {
         val drillInIds = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId)
         val isDrillIn = drillInIds.any { it != null }
-        if (!isDrillIn) {
+        // ui-conformance WP3 round 4 (R-129 smoke coverage found this): `SettingsContent`'s own
+        // `SettingsRootScreen` draws its own `ScreenHeader(onDrawer = ...)` internally (confirmed by
+        // reading `ui/settings/SettingsRootScreen.kt`) — every one of its nine sub-screens then also
+        // shows its own `DrillInHeader` back to `Settings`. Rendering the host's generic header here
+        // too stacked a second, duplicate "Open navigation" over the root exactly the way this
+        // file's own R-016 finding already fixed once for the four real drill-ins (see that comment
+        // below) — same defect, same fix: the destination that draws its own header does not also
+        // get this one. No edit to `ui/settings/**` needed or made; this is the host's own call.
+        val embedsOwnHeader = ids.current == ReaderDestination.SETTINGS
+        if (!isDrillIn && !embedsOwnHeader) {
             // R-003/R-004/R-015: drawer icon, live dot + elapsed while a session is capturing,
             // search icon — no title, the destination content below draws its own (`Main.dc.html`'s
             // 27sp title is `NowScreen`'s, not the header's).

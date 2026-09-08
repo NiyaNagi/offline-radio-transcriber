@@ -3026,6 +3026,134 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · real-activity destination smoke test; setup input entry
+
+**Scope:** `:app` `ui/navigation/**` (new `ReaderActivityDestinationSmokeTest.kt`, `OrtNavHost.kt`
+one-line header fix, `ReaderNavigator.kt`'s `openSetupInput()`), `CHANGELOG.md`. Fourth
+reconciliation addendum to the WP3 entry below, after `git merge --ff-only main` (`45ae4a0..e66728b`
+— the V3 Reader validator's own run, register rows R-129/R-160..R-164 filed, and WP9's round-3
+`SetupActivity.EXTRA_STEP`/`MainActivity` destination pass-through; neither touches
+`ui/navigation/**`/`ui/ReaderActivity.kt`, so the merge was clean).
+
+**Requirements/ACs:** R-129 (Log's `rememberSaveable` crash — the smoke test class this round adds
+proves it, live; still `open` in the register, WP5's own fix pending), R-081 (`SetupActivity.EXTRA_STEP`
+— this round wires `ReaderNavigator.openSetupInput()` to actually use it), R-017 (every drill-in's
+`backLabel` — exercised, not reopened, by the new class's `recreate()` assertions).
+
+**What changed:**
+
+- **Constitution Check.** Principle I (Uncertainty Is Content): this entry's own "Left open" section
+  below is not a formality — a genuine, reproduced-three-times environment limitation is named in
+  full rather than a green gate being asserted over it. Principle II (Test-Backed Change): R-129 was
+  found by the validator, not by this package's own tests; the new class is what makes it a real,
+  standing regression test rather than a register row nobody re-checks. Principle VII: no new
+  interface, no new fake — this round only wires an already-typed seam (`SetupActivity.EXTRA_STEP`)
+  and adds a test.
+
+- **`ReaderNavigator.openSetupInput()` now passes `SetupActivity.EXTRA_STEP = SetupStep.INPUT.name`.**
+  WP9's round-3 merge landed the entry point this function's own doc comment had been reporting
+  missing since WP3's first round — confirmed by reading `SetupActivity.kt`'s own doc comment before
+  wiring this, which names this exact call site as the reason `EXTRA_STEP` exists. The step is
+  honored only when every gate before it is already satisfied, so "Choose another input"/"Set the
+  frequency by hand" (both firing *during* a running session, when setup is already complete) now
+  reliably land on `Input` instead of bouncing straight back to `MainActivity`.
+
+- **`ReaderActivityDestinationSmokeTest.kt` (new)** — R-129's own register row: "Robolectric did not
+  catch it because no `SaveableStateRegistry` is installed under `createComposeRule` — add an
+  `ActivityScenario`-hosted smoke test for every destination." For every `ReaderDestination` with
+  `hasScreen` (all ten) and the four drill-ins reachable from a real seeded row (transmission,
+  station, frequency, thread — via `StationDetailContent`'s "recent over" row and
+  `StationScreen`/`ThreadScreen`'s own rows, never through `Log`, which is R-129's own crashing
+  destination), it launches a real `ReaderActivity` — via `ActivityScenarioRule` built with a custom
+  launch `Intent` (`ReaderActivity.EXTRA_DESTINATION`, the `ReaderNavigator` seam this package's
+  prior round built) rather than `ReaderActivityTest`'s own default one, applied manually
+  (`TestRule.apply(...).evaluate()`, documented in `runReaderActivity`'s own comment: a field's
+  intent must be fixed before JUnit knows which destination a given `@Test` method needs) — asserts
+  the destination's own root actually composed (a concrete node displayed, never just "no
+  exception"), then calls `scenario.recreate()` and asserts the same again. `recreate()` is what
+  actually exercises a `rememberSaveable` saver: a real save-then-restore round trip a bare
+  `createComposeRule()` never attempts. `R_129_LOG_composes_and_survives_recreation` is written
+  exactly like every other case — no `assertThrows`, no inversion — and **fails today**, reproducing
+  the validator's exact exception (`IllegalArgumentException: MutableState containing All cannot be
+  saved...`, `LogContent.kt:50`'s unsaved `rememberSaveable<LogQuickFilterId>`) live, in this suite,
+  for the first time; WP5 fixes it concurrently in its own file, and this case passes with no change
+  here once that lands. Every other case is correct and green.
+
+- **A genuine, real second finding, fixed in this round's own file:** the first full run of this new
+  class found `Settings` rendering **two** stacked "Open navigation" headers — `SettingsContent`'s own
+  `SettingsRootScreen` draws its own `ScreenHeader`, and `NavHostBody` was still drawing its generic
+  one on top, the same double-header defect this file's own R-016 finding already fixed once for the
+  four real drill-ins. Fixed the same way: `NavHostBody` now also treats `SETTINGS` as a destination
+  that embeds its own header, skipping the host's generic one — one boolean, no edit to
+  `ui/settings/**`. `R_129_SETTINGS_composes_and_survives_recreation` is what caught it and is what
+  proves it fixed.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin --console=plain` →
+  `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests
+  "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest" --console=plain` → `14 tests
+  completed, 1 failed` — every case passed except `R_129_LOG_composes_and_survives_recreation`
+  (the exact `IllegalArgumentException: MutableState containing All cannot be saved...` reproduced),
+  run this way repeatedly (isolated, and combined with the class's own earlier iterations) with the
+  same clean 13/1 result every time.
+- `.\gradlew.bat :app:testDebugUnitTest --console=plain` (the full, unmodified suite, no test
+  filter): reached this class in its natural run position (after ~900 other tests, all passing:
+  `MainActivityTest`, `ScenariosTest` — one flaky, pre-existing, unrelated `SQLITE_BUSY` on a
+  concurrent-DB-access scenario test, not this package's row — `ReaderAccessibilityTest`,
+  `ReaderActivityTest`, `ActivityPatternChartTest` and every `ui/components`/`ui/data` file in
+  between), ran all fourteen of this class's own cases with the same 13/1 result as the isolated
+  run, then continued into `CaptureStatusScreenTest` (a plain `createComposeRule()` test, this
+  class's own code never touches) where `setContent` began failing with `AppNotIdleException` and
+  every test after it in the same JVM did the same — see "Left open" below for the full account.
+  This run was still in progress, cascading, when this entry was written; not stopped (per the
+  coordinator's standing rule against `gradlew --stop`, which would kill every worktree's shared
+  daemon), its result not otherwise usable as "the gate."
+- `.\gradlew.bat dependencyRules platformGuards --console=plain` → `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test --console=plain` → `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` → all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix --console=plain` → `coverageMatrix: 419 requirements, 181 covered`.
+- `.\gradlew.bat coverageMatrixCheck --console=plain` → `coverageMatrixCheck: up to date (181
+  covered of 419)`.
+
+**Left open / not done:**
+
+- **R-129 itself stays `open`** — `R_129_LOG_composes_and_survives_recreation` fails today, by
+  design, for the reason above; WP5 owns the fix.
+- **A genuine Robolectric+Compose cross-test environment limitation, found and only partially
+  mitigated, not solved:** run as part of the full, unforked `:app:testDebugUnitTest` alongside
+  every other file in the suite, this class can leave the shared JVM's Compose test environment
+  unable to reach idle for whatever *unrelated* test composes next — not one of this class's own
+  fourteen cases failing, a later, untouched one's (`AppNotIdleException`, "Compose did not get idle
+  ... infinite composition loop", observed hitting `ActivityPatternChartTest` on one full run and
+  `CaptureStatusScreenTest` on another, cascading forward from there since every subsequent
+  composition in the same JVM burns a fresh 60-second timeout the same way). This is not a new
+  category of problem: `ReaderActivity.kt`'s own `resolveSessionId` doc comment already names the
+  exact mechanism ("building a real `ReaderActivity` with a non-null session id starts `OrtNavHost`'s
+  ... polling loops ... which a Robolectric-driven test never gets a chance to cleanly cancel") and
+  records that its own author avoided the problem entirely by testing `resolveSessionId` as a pure
+  function rather than building a real activity — the exact constraint R-129 requires crossing anyway,
+  since only a real `Activity`'s real `SaveableStateRegistry` can catch a `rememberSaveable` bug at
+  all. Two real mitigations are landed in `runReaderActivity`/`destinationIntent` (driving every
+  `ActivityScenarioRule` through `Lifecycle.State.DESTROYED` explicitly before its own teardown;
+  handing `ReaderActivity` a non-null session id — the one thing that starts additional, session-gated
+  poll loops on top of the drawer's and `NowContent`'s own unconditional ones — only for the one case
+  that actually needs real seeded row data to reach its drill-in), each confirmed to measurably reduce
+  exposure (more of the suite ran clean before the eventual failure, across repeated isolated reruns),
+  neither confirmed to eliminate it. **This class run alone
+  (`--tests "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"`) is green except the
+  expected `LOG` case, every time it was run this way.** A full, unmodified `:app:testDebugUnitTest`
+  that includes this class alongside the rest of the suite is not guaranteed to come back clean
+  end to end — reported here in full rather than a green gate claimed over it. The gate section of
+  this round's own report gives the exact isolated-run tail and the full-suite run's own tail up to
+  the point this was found, rather than a number without how it was checked.
+- Per the coordinator's own standing note this round: `gradlew --stop` was never run by this package
+  — a shared daemon stopping mid-build (seen twice on unrelated runs while this class's cross-test
+  exposure was being narrowed down) was other activity on the shared daemon, not this worktree's own
+  doing, and is called out here only because it cost real wall-clock time diagnosing before the
+  coordinator's note ruled it out as this package's cause.
+
 ### (pending) — ui-conformance WP3 · round 3: thread routes, Now hooks, true-origin back labels, failure actions, destination intent, improve badge
 
 **Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`, `Drawer.kt`, new `ReaderNavigator.kt`) and,
