@@ -64,6 +64,13 @@ public fun SettingsContent(
     initialScreen: SettingsScreenId? = null,
     onOpenLevelMeter: () -> Unit = {},
     onSearch: () -> Unit = {},
+    // R-133 (round 8): `Settings-Storage`'s "Next deletion" row `Review` link needs the digest's
+    // `Session` (DG04) destination for a specific `sessionId`, which this package cannot reach on
+    // its own (no drill-in of that shape exists inside `ui/settings`, and `OrtNavHost.kt` is
+    // outside this round's file ownership) — the same reason [onOpenLevelMeter] (R-132) exists.
+    // Defaults to a no-op so every existing caller (`OrtNavHost.kt`) keeps compiling unchanged; the
+    // host is expected to wire it the same way it wires every other cross-package drill-in.
+    onReviewSession: (sessionId: String) -> Unit = {},
 ) {
     val store = remember {
         SharedPreferencesSettingsStore(
@@ -102,14 +109,19 @@ public fun SettingsContent(
             onStoreChanged = { storeVersion++ },
             onBack = { screen = null },
             modifier = modifier,
-            onOpenLevelMeter = onOpenLevelMeter,
+            crossPackage = SettingsCrossPackageActions(
+                onOpenLevelMeter = onOpenLevelMeter,
+                onReviewSession = onReviewSession,
+            ),
         )
     }
 }
 
 /** The nine sub-screens, split out of [SettingsContent] purely to keep that function under
  * detekt's length/complexity limits — the same reason `OrtNavHost`'s own `DestinationContent` was
- * extracted before this package existed. */
+ * extracted before this package existed. [crossPackage] bundles the two cross-package drill-in
+ * callbacks (see [SettingsCrossPackageActions]'s own doc comment) purely to keep this function's
+ * own parameter list under the same threshold. */
 @Composable
 private fun SettingsSubScreen(
     context: Context,
@@ -119,7 +131,7 @@ private fun SettingsSubScreen(
     onStoreChanged: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier,
-    onOpenLevelMeter: () -> Unit,
+    crossPackage: SettingsCrossPackageActions,
 ) {
     when (screen) {
         SettingsScreenId.CAPTURE -> SettingsCaptureSubScreen(
@@ -129,7 +141,7 @@ private fun SettingsSubScreen(
             onStoreChanged = onStoreChanged,
             onBack = onBack,
             modifier = modifier,
-            onOpenLevelMeter = onOpenLevelMeter,
+            onOpenLevelMeter = crossPackage.onOpenLevelMeter,
         )
 
         SettingsScreenId.RIG -> SettingsRigScreen(
@@ -148,18 +160,14 @@ private fun SettingsSubScreen(
             modifier = modifier,
         )
 
-        SettingsScreenId.STORAGE -> SettingsStorageScreen(
-            state = remember(storeVersion) { SettingsPolling.storage(context, store) },
+        SettingsScreenId.STORAGE -> SettingsStorageSubScreen(
+            context = context,
+            store = store,
+            storeVersion = storeVersion,
+            onStoreChanged = onStoreChanged,
             onBack = onBack,
-            onSetBudgetGb = {
-                store.audioBudgetGb = it
-                onStoreChanged()
-            },
-            onToggleAutoPrune = {
-                store.autoPruneEnabled = it
-                onStoreChanged()
-            },
             modifier = modifier,
+            onReviewSession = crossPackage.onReviewSession,
         )
 
         SettingsScreenId.ASSETS -> ModelsContent(context = context, modifier = modifier, onBack = onBack)
@@ -243,6 +251,49 @@ private fun SettingsCaptureSubScreen(
         },
         modifier = modifier,
     )
+}
+
+/** The `STORAGE` branch of [SettingsSubScreen], split out purely to keep that function's own
+ * length/parameter-count under detekt's limits — the same reason [SettingsCaptureSubScreen] was.
+ *
+ * R-133 (round 8): `SettingsPolling.storage` became `suspend` once it started calling
+ * `:pipeline`'s real `measureStorageAccounting`/`collectSessionStorageSummaries`/
+ * `computeNextDeletion` (real file/database I/O) — the same `LaunchedEffect`-backed async-load
+ * shape `EXPORT`'s own branch above uses, keyed on `storeVersion` (unlike `EXPORT`'s own `Unit`
+ * key) so a budget/auto-prune write re-measures, matching every other `remember(storeVersion)`
+ * sub-screen's own reload contract.
+ */
+@Composable
+private fun SettingsStorageSubScreen(
+    context: Context,
+    store: SettingsStore,
+    storeVersion: Int,
+    onStoreChanged: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier,
+    onReviewSession: (sessionId: String) -> Unit,
+) {
+    var storageState by remember { mutableStateOf<SettingsStorageViewState?>(null) }
+    LaunchedEffect(storeVersion) { storageState = SettingsPolling.storage(context, store) }
+    val state = storageState
+    if (state != null) {
+        SettingsStorageScreen(
+            state = state,
+            onBack = onBack,
+            onSetBudgetGb = {
+                store.audioBudgetGb = it
+                onStoreChanged()
+            },
+            onToggleAutoPrune = {
+                store.autoPruneEnabled = it
+                onStoreChanged()
+            },
+            onReviewSession = onReviewSession,
+            modifier = modifier,
+        )
+    } else {
+        LoadingSettings(modifier = modifier)
+    }
 }
 
 private fun applyContributeToggle(store: SettingsStore, index: Int, value: Boolean) {

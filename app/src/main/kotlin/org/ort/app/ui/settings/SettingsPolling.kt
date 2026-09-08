@@ -2,9 +2,9 @@ package org.ort.app.ui.settings
 
 import android.content.Context
 import org.ort.app.BuildConfig
-import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.navigation.StorageFooterViewState
 import org.ort.app.ui.navigation.toGigabyteLabel
+import org.ort.core.SystemClock
 import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -13,6 +13,13 @@ import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
+import org.ort.pipeline.capture.collectSessionStorageSummaries
+import org.ort.pipeline.capture.computeNextDeletion
+import org.ort.pipeline.capture.measureStorageAccounting
+import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -214,13 +221,32 @@ public object SettingsPolling {
         )
     }
 
-    public fun storage(context: Context, store: SettingsStore): SettingsStorageViewState {
+    // R-170 (ReaderPolling.kt's own established reasoning, mirrored here rather than imported —
+    // that file is WP4's alone): Locale.ROOT has no real month-name data ("Sep" degrades to
+    // "M09"); guide §9's dates are prose, read in the device's own locale.
+    private val nightDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
+        .withZone(ZoneId.systemDefault())
+
+    /** R-133 (round 8): mirrors `RealCaptureService.STORAGE_FLOOR_BYTES` — `internal` to
+     * `:pipeline`, not importable here, same limitation [SettingsStorageViewState.hardFloorLabel]'s
+     * own doc comment already names for the "100 MB" label this same real value backs. */
+    private const val HARD_FLOOR_BYTES: Long = 100L * 1024 * 1024
+
+    /**
+     * R-133 (round 8, register): now sourced from `:pipeline`'s real
+     * [org.ort.pipeline.capture.measureStorageAccounting]/[org.ort.pipeline.capture.collectSessionStorageSummaries]/
+     * [org.ort.pipeline.capture.computeNextDeletion] (WP11c) rather than this package's own ad-hoc
+     * directory sums — the four-segment usage bar (Audio/Models/Records/Lexicon, `Lexicon` honestly
+     * `0` today — see `StorageAccounting`'s own doc comment for why) and the "Next deletion" row
+     * are both real facts, never board literals. `suspend` (was not, before this round) because
+     * every one of those three calls is real file/database I/O.
+     */
+    public suspend fun storage(context: Context, store: SettingsStore): SettingsStorageViewState {
         val footer = StorageFooterViewState.fromAudioDirectory(context)
-        val modelsBytes = ModelCatalog.entries.sumOf { entry ->
-            val file = entry.destination(context.filesDir)
-            if (file.isFile) file.length() else 0L
-        }
-        val recordsBytes = context.getDatabasePath(OrtDatabase.DATABASE_NAME).let { if (it.isFile) it.length() else 0L }
+        val dbFile = context.getDatabasePath(OrtDatabase.DATABASE_NAME)
+        val databaseFiles = listOf(dbFile, File(dbFile.path + "-wal"), File(dbFile.path + "-shm"))
+        val accounting = measureStorageAccounting(context.filesDir, databaseFiles)
+
         val forecast = StorageForecast.state
         val nightsLeft = when (forecast) {
             is StorageForecast.State.Fine -> forecast.nightsLeft
@@ -228,18 +254,41 @@ public object SettingsPolling {
             is StorageForecast.State.OneNightLeft -> forecast.nightsLeft
             is StorageForecast.State.AtFloor, is StorageForecast.State.NotYetMeasured -> null
         }
+
+        val db = OrtDatabase.create(context.applicationContext)
+        val sessions = collectSessionStorageSummaries(db, context.filesDir)
+        val budgetBytes = store.audioBudgetGb?.let { it * 1_000_000_000L }
+        val nextDeletion = computeNextDeletion(
+            sessionsOldestFirst = sessions,
+            audioBytesUsed = accounting.audioBytes,
+            budgetBytes = budgetBytes,
+            floorBytes = HARD_FLOOR_BYTES,
+            freeBytes = footer.freeBytes,
+            nowMillis = SystemClock.wallMillis(),
+        )
+
         return SettingsStorageViewState(
-            usedBytes = footer.audioUsedBytes,
+            usedBytes = accounting.audioBytes,
             budgetGb = store.audioBudgetGb,
             deviceFreeBytes = footer.freeBytes,
             categories = listOf(
-                SettingsStorageCategoryViewState("Audio", footer.audioUsedBytes),
-                SettingsStorageCategoryViewState("Models", modelsBytes),
-                SettingsStorageCategoryViewState("Records", recordsBytes),
+                SettingsStorageCategoryViewState("Audio", accounting.audioBytes),
+                SettingsStorageCategoryViewState("Models", accounting.modelBytes),
+                SettingsStorageCategoryViewState("Records", accounting.recordBytes),
+                SettingsStorageCategoryViewState("Lexicon", accounting.lexiconBytes),
             ),
             nightsLeftLabel = nightsLeft?.let { "${it.toInt().coerceAtLeast(0)} nights left" },
             autoPruneEnabled = store.autoPruneEnabled,
             warnAtNightsLeft = StorageForecast.THREE_NIGHTS_THRESHOLD.toInt(),
+            nextDeletion = nextDeletion?.let {
+                SettingsNextDeletionViewState(
+                    sessionId = it.sessionId,
+                    predictedDateLabel = nightDateFormat.format(Instant.ofEpochMilli(it.predictedAtMillis)),
+                    sessionDateLabel = nightDateFormat.format(Instant.ofEpochMilli(it.startedAtMillis)),
+                    overCount = it.overCount,
+                    sizeLabel = it.bytes.toGigabyteLabel(),
+                )
+            },
         )
     }
 

@@ -32,6 +32,108 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 round 8: R-133 board rendering from WP11c's real StorageAccounting)
+
+### (pending) — ui-conformance WP10 · Settings-Storage's real usage bar and Next-deletion row (R-133)
+
+**Scope:** `ui/settings/{SettingsStorageScreen,SettingsPolling,SettingsContent,SettingsViewData}.kt`,
+and tests beside each. `git merge main` (local `main`) twice — once landed WP11b's R-300 fix, a
+second time (after a ~45s wait) landed WP11c's `10cb2d1` (`StorageAccounting.kt`) the coordinator's
+message named; both fast-forwards, no conflicts.
+
+**Requirements/ACs:** R-133 (spec → design, remaining halves), FR-STO-5, FR-STO-3/3a/D26 (unchanged
+stance from round 7 — still spec-mandated, not board-matched). Constitution I.
+
+**What changed:**
+
+*Constitution Check.* Principle I governs the whole round: every new number on this screen
+(Lexicon's real `0`, the Next-deletion session/over-count/size, the "Nothing scheduled" headroom)
+is either `:pipeline`'s real `StorageAccounting`/`NextDeletion` or arithmetic on fields already
+real — never invented to fill the board's shape. The one piece of *copy* this round adds that the
+board never drew (the "Nothing scheduled" fallback wording) is named as this package's own honest
+addition in both the code comment and this entry, not presented as board-verbatim.
+
+- **The four-segment usage bar now has a real fourth segment.** `SettingsPolling.storage` (now
+  `suspend` — every one of the three calls below is real file/database I/O) sources
+  Audio/Models/Records/Lexicon from `:pipeline`'s new `measureStorageAccounting(filesDir,
+  databaseFiles)` (WP11c) instead of this package's own ad-hoc directory sums; `databaseFiles`
+  passes the main db path plus `-wal`/`-shm` (Room's real WAL journal mode splits one logical
+  database across three files — `measureStorageAccounting` itself filters to whichever exist).
+  `Lexicon` reads `0` today, honestly — `StorageAccounting`'s own doc comment: the validated
+  lexicon TSV is never copied anywhere durable, only an `ActiveLexiconRecord` (version, count,
+  checksum) persists — the segment is drawn and labelled regardless, never omitted as if the
+  category did not exist. `StorageCategoryBreakdown`'s bar/legend already iterated `categories`
+  generically, so the fourth segment needed no new rendering code, only its own real swatch colour
+  (a neutral grey, distinct from `Records`' amber, matching the board's own four distinct swatches
+  — `Records` and `Lexicon` previously shared one `else` bucket).
+- **The round-7 amber "what will be deleted" `Banner` is gone, replaced by the board's own "Next
+  deletion: <date>" row.** `:pipeline`'s new `collectSessionStorageSummaries(db, filesDir)` (every
+  session oldest-first, real over counts and bytes) and `computeNextDeletion(sessions,
+  audioBytesUsed, budgetBytes, floorBytes, freeBytes, nowMillis)` (WP11c) together answer honestly
+  whether automatic oldest-first pruning would delete anything *right now* — real whether or not
+  the auto-prune toggle is on (that toggle only controls whether pruning runs *automatically*, not
+  whether the preview is honest). The row (a new `NextDeletionRow`/`NextDeletionMarker`, half-
+  filled amber circle matching the board) names the real session date, its real over count and
+  size, and a `Review` link. `state.nextDeletion == null` reads this package's own honest fallback
+  — **the board draws no such state at all** (checked `Settings-Storage.dc.html` again before
+  writing this; it shows only the populated row), so this is not board-verbatim copy: "Nothing
+  scheduled — N GB below the budget" (the real headroom) when a budget is set, "Nothing scheduled
+  — no budget set" when there is none to be below.
+- **`Review` needs a destination this package cannot resolve on its own.** `SettingsContent` gains
+  `onReviewSession: (sessionId: String) -> Unit = {}` (R-133, following R-132's `onOpenLevelMeter`
+  precedent exactly) — DG04 (`Session`) detail is outside `ui/settings`'s reach, and `OrtNavHost.kt`
+  is outside this round's file ownership. `SettingsContent`'s own *public* signature keeps
+  `onOpenLevelMeter`/`onReviewSession` as two separate defaulted params (so `OrtNavHost.kt`'s
+  existing named-argument call site keeps compiling unchanged); internally both are bundled into a
+  new `internal SettingsCrossPackageActions` purely to keep the private `SettingsSubScreen`
+  dispatcher under detekt's `LongParameterList` threshold (which fires at 9 params, confirmed
+  again this round) — the same reason `SettingsCaptureToggleActions` exists.
+- **`STORAGE`'s dispatch extracted to its own `SettingsStorageSubScreen`**, mirroring
+  `SettingsCaptureSubScreen`'s existing pattern — `SettingsSubScreen` grew past detekt's
+  `LongMethod` (80-line) threshold once the `LaunchedEffect`-backed async load (the same shape
+  `EXPORT`'s own branch already uses, keyed on `storeVersion` this time so a budget/auto-prune
+  write re-measures) landed inline.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.*"` — `BUILD SUCCESSFUL in
+  17s`, 47 tests, all `PASSED`, including the new `R_133_bar` (legend names all four categories,
+  real bytes each) and three `R_133_next_deletion_row` tests (real session/Review-opens-it; the two
+  "Nothing scheduled" fallbacks) named exactly as asked, plus `SettingsPollingTest`'s own
+  `R_133_bar`/`R_133_next_deletion_row` data-level pair against the real `SettingsPolling.storage`.
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, unfiltered) — `BUILD SUCCESSFUL in 1m 11s`,
+  every test `PASSED` (the two `ReadyScreenTest` failures noted in the previous round's entry are
+  gone — resolved upstream by commits this round's `git merge main` pulled in, not by this round's
+  own work).
+- `.\gradlew.bat :app:ktlintFormat` — clean both runs (no auto-correctable violations this round);
+  `git status --porcelain` showed only files this round legitimately touched, no foreign-file
+  pollution.
+- `.\gradlew.bat :app:detekt` — first run found `LongParameterList`/`LongMethod` on the inlined
+  `STORAGE` branch (see "What changed"); both fixed by the `SettingsStorageSubScreen` extraction +
+  `SettingsCrossPackageActions` bundle; second run `BUILD SUCCESSFUL`, no findings.
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 1m 35s`, 846 tasks,
+  includes `:app:assembleDebug`/`:app:assembleRelease`/`:app:lint`/`:app:check` and the
+  `smokeTestDebugUnitTest`/`ReaderActivityDestinationSmokeTest` suite, all green.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`, 8/8 `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations —
+  the pre-existing combined-invocation Gradle task-graph gap, unchanged, noted in prior rounds) —
+  `coverageMatrix: 419 requirements, 186 covered` (up from 185); `coverageMatrixCheck: up to date
+  (186 covered of 419)`.
+
+**Left open / not done:**
+- `OrtNavHost.kt` must wire the real `onReviewSession` (DG04's `Session` destination for a
+  specific `sessionId`) — outside this round's file ownership, same shape as R-132's still-open
+  `onOpenLevelMeter` hand-off before WP3 wired it.
+- FR-STO-7 (pinning a thread/transmission so retention never deletes it) has no schema field yet —
+  `computeNextDeletion` (WP11c, `:pipeline`) does not exclude pinned sessions because there is
+  nothing to exclude by; flagged, not worked around, per that function's own doc comment.
+- The "Nothing scheduled" fallback wording is this package's own addition, not board-verbatim (the
+  board draws no such state) — named explicitly here and in-code so a reviewer does not mistake it
+  for a board quote.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
 ## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
 
 ### (pending) — ui-conformance WP11c · storage accounting and the next automatic-prune candidate, exposed for Settings-Storage

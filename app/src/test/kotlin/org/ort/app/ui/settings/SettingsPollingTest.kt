@@ -219,6 +219,22 @@ class SettingsPollingTest {
     }
 
     @Test
+    fun `R_133_bar storage now carries a real, honestly-zero Lexicon category from StorageAccounting`(): Unit =
+        runTest {
+            val state = SettingsPolling.storage(context, InMemorySettingsStore())
+            val lexicon = state.categories.firstOrNull { it.label == "Lexicon" }
+            assert(lexicon != null) { "expected a Lexicon category, got ${state.categories.map { it.label }}" }
+            // Honest zero (no on-disk lexicon asset exists yet) — never omitted, never fabricated.
+            assert(lexicon!!.bytes == 0L)
+        }
+
+    @Test
+    fun `R_133_next_deletion_row nothing is scheduled with no budget set and no sessions retained`(): Unit = runTest {
+        val state = SettingsPolling.storage(context, InMemorySettingsStore())
+        assert(state.nextDeletion == null) { "expected no next deletion with no budget and no sessions" }
+    }
+
+    @Test
     fun `R_133 storage warnAtNightsLeft reads the real StorageForecast threshold, not a board literal`(): Unit =
         runTest {
             val state = SettingsPolling.storage(context, InMemorySettingsStore())
