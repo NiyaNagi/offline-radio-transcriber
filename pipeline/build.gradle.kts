@@ -21,6 +21,13 @@ dependencies {
     implementation(project(":rig-usb"))
     implementation(project(":data"))
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.androidx.core.ktx)
+    // :data's Room types (OrtDatabase, its DAOs) are used directly by this module's real capture
+    // wiring (RealCaptureService, a v0 smoke test — see its own doc comment) — :data itself only
+    // has `implementation` on Room, so it is not on this module's main classpath transitively,
+    // same reason the pre-existing testImplementation entries below exist.
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
 
     testImplementation(project(":testing"))
     testImplementation(libs.kotlinx.coroutines.test)

@@ -1,0 +1,78 @@
+name: Release
+
+# Two release shapes:
+#  - a rolling "latest-build" prerelease, republished on every push to main, so there is always
+#    exactly one stable link for "download the current build" without cutting a version.
+#  - a proper versioned release when a `vX.Y.Z` tag is pushed, for an actual numbered milestone.
+# Both attach the same debug APK CI already builds and verifies (ci.yml's `android` job) and pull
+# their notes from CHANGELOG.md via tools/release_notes.py, so the release notes are the same
+# detailed, per-commit changelog this project already maintains — not a separate summary to keep
+# in sync by hand.
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Same gate as CI's `android` job (ci.yml) — a release is only ever cut from a build that
+      # passed its own Android unit tests and the dependency-boundary check, not just "compiled".
+      - name: verify and assemble the debug APK
+        run: >-
+          ./gradlew
+          :data:testDebugUnitTest :net:testDebugUnitTest :rig-usb:testDebugUnitTest
+          :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
+          :app:assembleDebug dependencyRules
+
+      - name: extract this release's notes from CHANGELOG.md
+        run: python3 tools/release_notes.py > release-notes.md
+
+      - name: short commit sha
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: publish the rolling "latest build" prerelease
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release delete latest-build --yes --cleanup-tag || true
+          gh release create latest-build app/build/outputs/apk/debug/app-debug.apk \
+            --repo "${{ github.repository }}" \
+            --title "Latest build (${{ steps.sha.outputs.short }})" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --target "$GITHUB_SHA"
+
+      - name: publish the versioned release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" app/build/outputs/apk/debug/app-debug.apk \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file release-notes.md

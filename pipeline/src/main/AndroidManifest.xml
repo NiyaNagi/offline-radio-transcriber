@@ -1,1 +1,13 @@
-﻿<manifest />
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- v0 smoke-test capture wiring (not a build-plan prompt's output — see
+             RealCaptureService's own doc comment). Lives in :pipeline, not :capture-android,
+             because it needs :segment and :data, which :capture-android may not depend on. -->
+        <service
+            android:name=".capture.RealCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+    </application>
+</manifest>

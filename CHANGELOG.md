@@ -32,6 +32,100 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (later still — GitHub Releases, at the user's request)
+
+### (pending) — Wire GitHub Releases so a build is downloadable without going through the agent
+
+**Scope:** new `.github/workflows/release.yml`, new `tools/release_notes.py`, `README.md`.
+**Requirements/ACs:** none — release/distribution tooling, not spec-governed.
+**What changed:** the user asked to "wire up proper GitHub releases and build so I can download
+from the releases view there with a nice changelog." Two release shapes, both attaching the debug
+APK CI already builds and verifies:
+- A rolling **`latest-build` prerelease**, republished on every push to `main` — `gh release
+  delete latest-build --yes --cleanup-tag || true` then `gh release create`, so there is always
+  exactly one stable link for "the current build," not an accumulating pile of dated releases.
+- A proper **versioned release** on any `vX.Y.Z` tag push, for an actual numbered milestone
+  later.
+- `tools/release_notes.py` extracts release notes from `CHANGELOG.md` itself rather than a
+  separate summary someone has to remember to write: it groups by the calendar date in each
+  `## YYYY-MM-DD (...)` heading and returns every section under the newest date, so a rolling
+  release republished several times in one day always shows that whole day's entries, not just
+  the single most-recent (often tiny) sub-section. Verified locally against this repo's real
+  `CHANGELOG.md` before wiring it into CI.
+- Both release steps run only after the same Android-unit-test + `dependencyRules` gate CI's
+  `android` job already uses (`ci.yml`) — a release is cut from a build that passed, not just one
+  that compiled.
+- `README.md` gained a short "Downloads" section pointing at the Releases page, with an explicit
+  caveat that the APK is unsigned (debug key) and a v0 smoke test — pointing at the newest
+  changelog entries rather than letting a download imply more maturity than exists.
+**Verified:** `python -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
+(valid YAML); `python tools/release_notes.py` run locally against this repo's actual
+`CHANGELOG.md`, confirmed it returns the newest date's entries correctly. **The workflow itself
+has not yet run on GitHub** — that happens on the next push to `main`, which is this same commit;
+its actual behavior (release creation, asset upload, gh CLI auth via the default `GITHUB_TOKEN`)
+is unverified until then.
+**Left open / not done:** the APK is unsigned — a real release signing config (keystore +
+secrets) is a separate, deliberate decision, not done here. No automated versioning scheme for
+tagged releases yet (someone still has to decide and push a `vX.Y.Z` tag by hand).
+
+## 2026-09-07 (later that night — a real v0 smoke-test build, at the user's request)
+
+### (pending) — Wire real microphone capture end to end, so a debug APK does something on a real phone
+
+**Scope:** new `capture-android/src/main/kotlin/org/ort/capture/android/AndroidAudioIo.kt`, new
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`, new
+`pipeline/src/main/AndroidManifest.xml` service entry, `app/src/main/kotlin/org/ort/app/MainActivity.kt`,
+`app/src/main/kotlin/org/ort/app/status/StatusActivity.kt`,
+`app/src/main/kotlin/org/ort/app/transmissions/TransmissionListActivity.kt`,
+`app/build.gradle.kts` and `pipeline/build.gradle.kts` (both gained direct Room + androidx.core
+dependencies — see "What changed").
+**Requirements/ACs: none new, and this is explicitly not build-plan output.** Every piece
+composed here (`AudioRecordSource`, `Segmenter`, `WorkQueue`, `OrtDatabase`,
+`CaptureStatusRepository`) was already built test-first by P4/P5/P8/P11 against fakes/Robolectric;
+what didn't exist was the glue actually running them together against a real microphone on real
+hardware. The user asked directly "can we create a buildable APK to validate other aspects" and
+then, after being shown the app only reached a placeholder screen, "build as much of the app as
+is available... I am on my phone right now." This entry is that work, done outside the
+constitution's strict-TDD process (there is no test-first version of "does the real microphone
+produce real audio" — the same gap `RouteVerifier`'s real counterpart and every other Android SDK
+wrapper in this repo already accepts), and said so plainly rather than dressed up as a formal
+prompt's deliverable.
+**What changed:**
+- `AndroidAudioIo` — the real, previously-nonexistent `AudioIo` implementation (only
+  `FakeAudioIo` existed before this). Uses `android.media.AudioRecord`/`AudioManager` directly;
+  route-change/interruption detection is deliberately minimal (relies on read-error detection
+  rather than proactive `AudioDeviceCallback` wiring) — enough to prove real capture, not the
+  full FR-CAP-3/FR-RUN-11 device-side implementation.
+- `RealCaptureService` (`:pipeline`, not `:capture-android`, because it needs `:segment` and
+  `:data`, which `:capture-android` may not depend on — technical design §2's module graph):
+  constructs a real `OrtDatabase`, `WorkQueue`, `AndroidAudioIo`+`AudioRecordSource`, and a real
+  `Segmenter` behind a `SegmentSink` that stages PCM to disk incrementally, FLAC-encodes via the
+  existing `FlacStore`/`DeflatePredictiveCodec` (decode-and-compare, same discipline as P8's
+  `CaptureService`), inserts a real `TransmissionEntity`, and enqueues it on the real `WorkQueue`.
+  Also includes `EnergyVadModel` — a simple RMS-energy threshold, **explicitly not the real
+  Silero VAD**, because no real Silero ONNX model/runtime exists anywhere in this repo yet
+  (only `ScriptedVad` in `:segment`'s own tests); wrapped in the real `SileroVad` hysteresis class
+  so swapping in a real model later is a one-line change, not a rewrite.
+- `MainActivity` — replaced with a real driver of `PermissionsFlow`'s Android side (actual
+  `ActivityCompat.requestPermissions` calls, not just the state machine P8 already tested),
+  starting `RealCaptureService` and the real `StatusActivity` once permitted.
+- `StatusActivity`/`TransmissionListActivity` — both gained opt-in live-data polling
+  (only activated when a `session_id` intent extra is present, so `StatusActivityTest`/
+  `TransmissionListActivityTest` — which never set that extra — are untouched and still pass)
+  querying the real database every 2 seconds. Shed level is reported as a static, honest 0 — no
+  real battery/backlog telemetry is wired for this test, and fabricating one would be exactly the
+  kind of invented number the constitution forbids; the transmission list reads "(captured, not
+  yet transcribed)" for the same reason (no ASR pass is constructed in production yet).
+**Verified:** `./gradlew build dependencyRules coverageMatrix` — full green, all pre-existing
+tests (including `StatusActivityTest`/`TransmissionListActivityTest`) unaffected; manually
+inspected the built `app-debug.apk` with `aapt2 dump badging` (minSdk 26, correct permissions,
+`RealCaptureService` present via manifest merge). **Not verified: actual behaviour on a physical
+device** — that is what this build exists to let the user check next, outside this session.
+**Left open / not done:** real Silero VAD (no model exists yet), real route-change/focus
+handling in `AndroidAudioIo`, no ASR pass wired into production capture (transcripts stay
+"not yet transcribed" until `PassB`, from P11, is actually constructed somewhere real), shed
+telemetry, and a proper M5 navigation host (this MainActivity is still a shim, not Compose).
+
 ## 2026-09-07 (night, cont. — fix the coverage-tool regex gap flagged earlier)
 
 ### (pending) — CoverageMatrix: recognise requirement ids with alphanumeric segments

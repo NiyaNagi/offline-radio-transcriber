@@ -31,6 +31,12 @@ dependencies {
     implementation(project(":data"))
     implementation(project(":net"))
     implementation(libs.androidx.core.ktx)
+    // :data's Room types (OrtDatabase, its DAOs) are used directly by StatusActivity/
+    // TransmissionListActivity's real-data polling (v0 smoke test — see RealCaptureService's doc
+    // comment in :pipeline) — :data itself only has `implementation` on Room, so it is not on
+    // this module's classpath transitively.
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
 
     testImplementation(project(":testing"))
     testImplementation(project(":eval"))

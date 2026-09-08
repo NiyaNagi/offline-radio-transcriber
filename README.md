@@ -12,6 +12,15 @@ CI green. Everything else is an empty-but-wired stub awaiting its build-plan wav
 **Licence: Apache-2.0** ([`LICENSE`](LICENSE)). Permissive, with an explicit patent grant and
 a clear Play Store path — recorded against D11 and the constitution's governance section.
 
+## Downloads
+
+[**Releases**](https://github.com/NiyaNagi/offline-radio-transcriber/releases) — the
+**"Latest build"** prerelease is republished automatically on every push to `main`
+(`.github/workflows/release.yml`) and carries a debug APK built and unit-tested by CI, with
+release notes pulled straight from [`CHANGELOG.md`](CHANGELOG.md). It is unsigned (debug key) and
+functional as a v0 smoke test — see the newest changelog entries for exactly what is and isn't
+wired up yet before drawing conclusions from it.
+
 ## Status
 
 | Item | State | Location |

@@ -1,9 +1,22 @@
 package org.ort.app.status
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlinx.coroutines.runBlocking
+import org.ort.capture.android.heartbeat.FileHeartbeatStore
+import org.ort.core.SystemClock
+import org.ort.data.OrtDatabase
+import org.ort.pipeline.CaptureStatusRepository
+import org.ort.pipeline.shed.ShedController
+import org.ort.pipeline.shed.ShedSignals
+import java.io.File
 
 /**
  * The capture status surface (FR-UI-7, FR-PLT-1 — build-plan P8): capture state, elapsed time,
@@ -23,6 +36,10 @@ public class StatusActivity : Activity() {
     internal lateinit var gapView: TextView
     internal lateinit var shedView: TextView
     internal lateinit var livenessView: TextView
+
+    private val pollHandler = Handler(Looper.getMainLooper())
+    private var polling = false
+    private var startedAtWallMillis = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,6 +62,77 @@ public class StatusActivity : Activity() {
                 addView(livenessView)
             },
         )
+
+        // v0 smoke-test wiring only (see RealCaptureService's doc comment) — a real reader UI
+        // (M5) would observe this via Flow, not poll. Not exercised by StatusActivityTest, which
+        // never sets this extra, so existing Robolectric coverage of render()/onCreate is
+        // untouched (Robolectric.buildActivity(...).create() gets a plain, extra-less Intent).
+        val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
+        if (sessionId != null) {
+            startedAtWallMillis = SystemClock.wallMillis()
+            polling = true
+            startPolling(sessionId)
+            (bannerView.parent as LinearLayout).addView(
+                Button(this).apply {
+                    text = "View transmissions"
+                    setOnClickListener {
+                        startActivity(
+                            Intent(this@StatusActivity, org.ort.app.transmissions.TransmissionListActivity::class.java)
+                                .putExtra(
+                                    org.ort.app.transmissions.TransmissionListActivity.EXTRA_SESSION_ID,
+                                    sessionId,
+                                ),
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    override fun onDestroy() {
+        polling = false
+        super.onDestroy()
+    }
+
+    private fun startPolling(sessionId: String) {
+        val db = OrtDatabase.create(applicationContext)
+        val heartbeatStore = FileHeartbeatStore(File(filesDir, "heartbeat.txt"))
+        // Neutral, always-nominal signals: no real shed telemetry is wired for this smoke test,
+        // so the level always reads 0 rather than fabricating a number for one of ShedController's
+        // real inputs (battery/backlog).
+        val shedController = ShedController(
+            object : ShedSignals {
+                override fun batteryPercent(): Int = 100
+                override fun isCharging(): Boolean = true
+                override fun queueBacklog(): Int = 0
+                override fun freeStorageBytes(): Long = Long.MAX_VALUE
+            },
+            SystemClock,
+        )
+        val repository = CaptureStatusRepository(heartbeatStore, shedController, SystemClock)
+        val uncleanEnd = repository.uncleanEndFromPreviousLaunch()
+
+        val poll = object : Runnable {
+            override fun run() {
+                if (!polling) return
+                val (count, gaps) = runBlocking {
+                    db.transmissionDao().listBySession(sessionId).size to
+                        db.captureGapDao().listBySession(sessionId).size
+                }
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                val status = repository.current(
+                    sessionId = sessionId,
+                    isCapturing = true,
+                    elapsedMillis = SystemClock.wallMillis() - startedAtWallMillis,
+                    transmissionCount = count,
+                    gapCount = gaps,
+                    isIgnoringBatteryOptimizationsDiagnosticOnly = pm.isIgnoringBatteryOptimizations(packageName),
+                ).let { if (uncleanEnd != null) it.copy(uncleanEndFromPreviousLaunch = uncleanEnd) else it }
+                render(StatusViewStateMapper.from(status))
+                pollHandler.postDelayed(this, POLL_INTERVAL_MILLIS)
+            }
+        }
+        pollHandler.post(poll)
     }
 
     /** Renders [state] into the views. Pure with respect to [StatusViewStateMapper] — no logic here. */
@@ -58,5 +146,10 @@ public class StatusActivity : Activity() {
         gapView.text = "${state.gapCount} gaps"
         shedView.text = state.shedLevelLabel
         livenessView.text = state.livenessLabel
+    }
+
+    public companion object {
+        public const val EXTRA_SESSION_ID: String = "session_id"
+        private const val POLL_INTERVAL_MILLIS: Long = 2_000
     }
 }

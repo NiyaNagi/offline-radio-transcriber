@@ -4,6 +4,9 @@ import android.app.Activity
 import android.os.Bundle
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlinx.coroutines.runBlocking
+import org.ort.core.Attribution
+import org.ort.data.OrtDatabase
 
 /**
  * The minimal transmission-list reader surface (build-plan P11): this is the first point in the
@@ -20,6 +23,26 @@ public class TransmissionListActivity : Activity() {
         super.onCreate(savedInstanceState)
         listContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         setContentView(listContainer)
+
+        // v0 smoke-test wiring only — see RealCaptureService's doc comment. Rows show
+        // "not yet transcribed" for every captured transmission because no ASR pass is wired
+        // into production capture yet (P10/P11 built :asr-*/PassB, neither is constructed here);
+        // this at least proves real audio is really reaching :data as real rows. Not exercised
+        // by TransmissionListActivityTest, which never sets this extra.
+        val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
+        if (sessionId != null) {
+            val db = OrtDatabase.create(applicationContext)
+            val rows = runBlocking {
+                db.transmissionDao().listBySession(sessionId).map { entity ->
+                    TransmissionRow(
+                        id = entity.id,
+                        transcript = "(captured, not yet transcribed)",
+                        attribution = Attribution.unknown(),
+                    )
+                }
+            }
+            render(rows)
+        }
     }
 
     /** Renders [rows] through [TransmissionListViewStateMapper] — no attribution logic here. */
@@ -43,4 +66,8 @@ public class TransmissionListActivity : Activity() {
 
     public fun renderedRowText(): List<String> =
         (0 until listContainer.childCount).map { (listContainer.getChildAt(it) as TextView).text.toString() }
+
+    public companion object {
+        public const val EXTRA_SESSION_ID: String = "session_id"
+    }
 }
