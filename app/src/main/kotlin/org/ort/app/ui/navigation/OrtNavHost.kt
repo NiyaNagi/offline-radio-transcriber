@@ -53,6 +53,8 @@ import org.ort.app.ui.data.SearchTimeFilter
 import org.ort.app.ui.data.ThreadDetailViewState
 import org.ort.app.ui.data.ThreadPolling
 import org.ort.app.ui.data.TimeWindow
+import org.ort.app.ui.failures.FailureHost
+import org.ort.app.ui.failures.FailureHostActions
 import org.ort.app.ui.screens.CaptureStatusContent
 import org.ort.app.ui.screens.FrequenciesContent
 import org.ort.app.ui.screens.FrequencyDetailContent
@@ -142,20 +144,17 @@ private val SearchFilterInputSaver: Saver<SearchFilterInput, String> = Saver(
  * example, opened directly rather than from the status flow) - `Now`/`Log` then show their
  * empty/idle state rather than polling a session that does not exist.
  *
- * [contentTopPadding] (ui-conformance-plan register R-178, WP11b's follow-up — WP3 idle this
- * round, one line touched here): [org.ort.app.ui.failures.FailureHost] mounts above this host and
- * reports the currently-showing banner's own real, measured height through it (`0.dp` while none
- * shows), so a banner that grows taller — font scale 2.0 wraps its copy onto more lines — pushes
- * the destination content down to clear itself, rather than just covering more of it. Applied only
- * to the destination/drill-in content ([NavHostBody]'s inner `Box`), never to [ScreenHeader] or
- * [LiveBar] — both stay exactly where they already were.
+ * [failureActions] (round 11, register R-334: [org.ort.app.ui.failures.FailureHost] now mounts
+ * *inside* this composable — see the `Scaffold` block's own doc comment for why): the recovery
+ * callbacks `ReaderActivity.kt` used to build and hand straight to its own `FailureHost` call.
+ * `FailureHost`'s own signature is unchanged; only where it is called from moved.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 public fun OrtNavHost(
     sessionId: String?,
     navigator: ReaderNavigator = rememberReaderNavigator(),
-    contentTopPadding: Dp = 0.dp,
+    failureActions: FailureHostActions = FailureHostActions(),
 ) {
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -167,28 +166,7 @@ public fun OrtNavHost(
     val drawerLive = rememberDrawerLiveState(sessionId, context)
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
 
-    // Round 9, register R-276: system back, while viewing `Log` reached via `Frequency-Change`'s
-    // "The N overs", reopens the frequency drill-in it came from instead of the platform default
-    // (finishing the activity — this app installs no other `BackHandler`, confirmed by grepping
-    // `ui/**` before adding this, its first use) — `NavHostNavState.openLogFilteredByFrequency`'s
-    // own doc comment names exactly what this does and does not restore. `enabled` only while both
-    // conditions hold, so this never intercepts back anywhere else in the app.
-    //
-    // Round 10 (WP8 shipped `FrequencyDetailContent.initialView`): lands on `FrequencyDetailView
-    // .Change` — `Frequency-Change` itself, not the drill-in's plain detail root — closing the gap
-    // round 9's own report named explicitly. That screen's own `onBack` still returns to `Detail`
-    // (WP8's own file, unchanged), so nothing here needs to know or restore anything past this one
-    // level.
-    BackHandler(enabled = current == ReaderDestination.LOG && navState.logFrequencyOrigin.value != null) {
-        val frequencyHz = navState.logFrequencyOrigin.value
-        navState.logFrequencyOrigin.value = null
-        navState.pendingLogFilter.value = null
-        if (frequencyHz != null) {
-            navState.openedFrom.value = ReaderDestination.LOG
-            navState.frequencyInitialView.value = FrequencyDetailView.Change
-            navState.openFrequencyHz.value = frequencyHz
-        }
-    }
+    OrtNavHostBackHandler(current, navigator, navState, drawerState, scope)
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -209,32 +187,125 @@ public fun OrtNavHost(
         },
     ) {
         Scaffold { padding ->
-            NavHostBody(
-                layout = NavHostLayout(
-                    modifier = Modifier.padding(padding).fillMaxSize(),
-                    contentTopPadding = contentTopPadding,
-                ),
-                ids = NavHostIds(
-                    current,
-                    navState.openedFrom.value,
-                    navState.openTransmissionId.value,
-                    navState.openStationId.value,
-                    navState.openFrequencyHz.value,
-                    navState.openThreadId.value,
-                    DestinationInitialState(
-                        navigator.settingsScreenState.value,
-                        navState.openCaptureLevelMeter.value,
-                        navState.pendingLogFilter.value,
-                    ),
-                    navState.frequencyInitialView.value,
-                ),
-                callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
+            // Register R-334 (halt): `FailureHost` used to mount in `ReaderActivity.kt`, wrapping
+            // this entire composable — `ModalNavigationDrawer` included — so its own banner overlay
+            // painted *above* the drawer's own content slot: opaque, inside the drawer panel itself
+            // once open, hiding six of its nine rows (`storage-warn/N00-menu-with-banner-pass3.png`).
+            // Moved to wrap only this `Scaffold`'s own content slot instead — *inside*
+            // `ModalNavigationDrawer`'s main-content lambda, never its `drawerContent` — so
+            // Material3's own drawer scrim (no custom dim value needed; it already sits above every
+            // other destination's content the identical way) now sits above the banner too, and the
+            // drawer panel stays crisp on top of both. `org.ort.app.ui.failures.FailureHost`'s own
+            // signature did not need to change — only where this file calls it from did;
+            // `ReaderActivity.kt`'s own doc comment records the matching half of this move.
+            FailureHost(
                 sessionId = sessionId,
-                context = context,
-                drawerLive = drawerLive,
-                audioPlayer = audioPlayer,
-                search = searchHostState(navigator, context, scope, navState),
-            )
+                actions = failureActions,
+                modifier = Modifier.padding(padding).fillMaxSize(),
+            ) { contentTopPadding ->
+                NavHostBody(
+                    layout = NavHostLayout(modifier = Modifier.fillMaxSize(), contentTopPadding = contentTopPadding),
+                    ids = NavHostIds(
+                        current,
+                        navState.openedFrom.value,
+                        navState.openTransmissionId.value,
+                        navState.openStationId.value,
+                        navState.openFrequencyHz.value,
+                        navState.openThreadId.value,
+                        DestinationInitialState(
+                            navigator.settingsScreenState.value,
+                            navState.openCaptureLevelMeter.value,
+                            navState.pendingLogFilter.value,
+                            navState.pendingReviewSessionId.value,
+                        ),
+                        navState.frequencyInitialView.value,
+                    ),
+                    callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
+                    sessionId = sessionId,
+                    context = context,
+                    drawerLive = drawerLive,
+                    audioPlayer = audioPlayer,
+                    search = searchHostState(navigator, context, scope, navState),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Register R-333 (halt): the host had no generic `BackHandler` at all — system back exited the
+ * whole app instead of popping one level, reproduced from the open drawer, any drill-in (including
+ * the rejected-detail case, F04 — the same `openTransmissionId` drill-in every other `Log` row
+ * already uses, confirmed by reading `LogScreen.kt`'s own `RejectedRow(onClick = { onOpen(item.id)
+ * })` before relying on it), and round 9's own `Log`-via-`Frequency-Change` route. Priority matches
+ * the coordinator's own brief exactly: close the drawer, then pop the drill-in, only then let the
+ * platform's own back behavior (finishing the Activity) proceed — one `when`, not two competing
+ * `BackHandler`s, so there is no ambiguity about which wins when more than one condition holds at
+ * once (the drawer open *over* a `Log` reached this way, say). Split out of [OrtNavHost] purely to
+ * keep that function under detekt's `LongMethod` limit — the same reason [NavHostBody]/
+ * [DestinationContent] were themselves split out before this round.
+ *
+ * Round 11 addendum, register R-133: [navigator] is a new parameter, needed only for
+ * [canReturnToSettingsStorage] below — `Settings-Storage`'s "Next deletion … Review" link
+ * (`SettingsContent.onReviewSession`, WP10's `948fe55`) opens `Earlier nights` seeded on one
+ * session (WP10's `e390c60`, `SessionsContent.initialSessionId`); that composable's own doc comment
+ * states plainly it has no way to express "back goes to `Settings-Storage`, not my own list" —
+ * "a host that needs 'back to `Settings-Storage`' instead wraps this composable with its own
+ * header/back at the call site" — so this handler owns that restore the same way it already owns
+ * [canReturnToFrequency]'s.
+ *
+ * **Known gap, reported, not fixed here**: the `Log` filter sheet (`LogContent.kt`, L02) and
+ * `Search`'s own filter sheet (`SearchContent.kt`) are each a private, un-exported boolean
+ * (`sheetOpen`/`filtersSheetOpen`) this host cannot see or close, and neither is built on Compose's
+ * `ModalBottomSheet` — confirmed by grepping the whole `ui` tree for it, which found zero uses in this
+ * codebase, so neither already auto-handles system back either (the L02 halt reproduction itself is
+ * direct proof: `ModalBottomSheet` installs its own `BackHandler` when shown, and system back there
+ * still exited the app). System back while either is open still reaches this handler, finds nothing
+ * here it can see to pop, and still exits the app. Each needs its own small, local
+ * `BackHandler(enabled = sheetOpen) { sheetOpen = false }` inside its own file — WP5's and WP7's
+ * respectively, not this row's to add — see this round's own report.
+ */
+@Composable
+private fun OrtNavHostBackHandler(
+    current: ReaderDestination,
+    navigator: ReaderNavigator,
+    navState: NavHostNavState,
+    drawerState: DrawerState,
+    scope: CoroutineScope,
+) {
+    val isDrillInOpen = navState.openTransmissionId.value != null ||
+        navState.openStationId.value != null ||
+        navState.openFrequencyHz.value != null ||
+        navState.openThreadId.value != null
+    // Round 9/10, register R-276: `Log` reached via `Frequency-Change`'s "The N overs" — a
+    // drill-in-shaped pop in every way that matters here, kept as its own named condition only
+    // because it is not one of the four ids [isDrillInOpen] already checks.
+    val canReturnToFrequency = current == ReaderDestination.LOG && navState.logFrequencyOrigin.value != null
+    // Round 11, register R-133: `Earlier nights` reached via `Settings-Storage`'s `Review` link —
+    // see this function's own doc comment above.
+    val canReturnToSettingsStorage = current == ReaderDestination.EARLIER_NIGHTS &&
+        navState.pendingReviewSessionId.value != null
+
+    BackHandler(
+        enabled = drawerState.isOpen || isDrillInOpen || canReturnToFrequency || canReturnToSettingsStorage,
+    ) {
+        when {
+            drawerState.isOpen -> scope.launch { drawerState.close() }
+            isDrillInOpen -> navState.closeDrillIns()
+            canReturnToFrequency -> {
+                val frequencyHz = navState.logFrequencyOrigin.value
+                navState.logFrequencyOrigin.value = null
+                navState.pendingLogFilter.value = null
+                if (frequencyHz != null) {
+                    navState.openedFrom.value = ReaderDestination.LOG
+                    navState.frequencyInitialView.value = FrequencyDetailView.Change
+                    navState.openFrequencyHz.value = frequencyHz
+                }
+            }
+            canReturnToSettingsStorage -> {
+                navState.pendingReviewSessionId.value = null
+                navigator.openSettings(SettingsScreenId.STORAGE)
+            }
         }
     }
 }
@@ -281,6 +352,15 @@ private data class NavHostNavState(
     // `BackHandler` above is what reopened it, so system back from the filtered `Log` lands the
     // operator on `Frequency-Change` again, not the drill-in's plain root.
     val frequencyInitialView: MutableState<FrequencyDetailView>,
+    // Round 11, register R-133: the session `Earlier nights` should seed
+    // `SessionsContent.initialSessionId` with, set by [openReviewSession] and read back by
+    // [OrtNavHostBackHandler]'s own `canReturnToSettingsStorage` — non-null doubles as that flag
+    // the same way [logFrequencyOrigin] doubles as both `Frequency-Change`'s return target and its
+    // own "did we come this way" check. `rememberSaveable`, not a plain `remember`: unlike
+    // [pendingLogFilter] (read synchronously by `LogContent`'s own first composition),
+    // `SessionsContent.initialSessionId` is read on ITS first composition and this value is read
+    // again later by the back gesture — the same reasoning [logFrequencyOrigin] itself rests on.
+    val pendingReviewSessionId: MutableState<String?>,
 ) {
     fun closeDrillIns() {
         openTransmissionId.value = null
@@ -299,6 +379,10 @@ private data class NavHostNavState(
         // Round 10: same reasoning again — an ordinary drill-in close must not leave a stale
         // `Change` behind for whatever frequency is opened next.
         frequencyInitialView.value = FrequencyDetailView.Detail
+        // Round 11, register R-133: same reasoning again — an ordinary way of reaching `Earlier
+        // nights` (the drawer row) must not silently reseed a stale session or resurrect a "back
+        // goes to Settings-Storage" promise a normal navigation never made.
+        pendingReviewSessionId.value = null
     }
 
     /** R-017: records which destination a drill-in opened from before running [setter], so a
@@ -331,6 +415,18 @@ private data class NavHostNavState(
             fromMillis = window.startMillis,
             toMillis = window.endMillis,
         )
+    }
+
+    /**
+     * Round 11, register R-133 (`Settings-Storage`'s "Next deletion … Review" link,
+     * `SettingsContent.onReviewSession`): routes to `Earlier nights`, seeded on [sessionId]'s own
+     * detail (DG04) — the same shape as [openLogFilteredByFrequency]. [closeDrillIns] first clears
+     * any stale drill-in or filter state before [pendingReviewSessionId] is set, so the value it
+     * leaves behind is only ever this call's own.
+     */
+    fun openReviewSession(sessionId: String) {
+        closeDrillIns()
+        pendingReviewSessionId.value = sessionId
     }
 }
 
@@ -372,6 +468,9 @@ private fun rememberNavHostNavState(): NavHostNavState {
     // Round 10, register R-276 — a plain two-value enum, Bundle-saveable via the default Saver the
     // same way `ReaderDestination` (above) already is, no custom Saver needed.
     val frequencyInitialView = rememberSaveable { mutableStateOf(FrequencyDetailView.Detail) }
+    // Round 11, register R-133 — see `NavHostNavState.pendingReviewSessionId`'s own doc comment for
+    // why this is `rememberSaveable`.
+    val pendingReviewSessionId = rememberSaveable { mutableStateOf<String?>(null) }
     return NavHostNavState(
         openedFrom,
         searchOpenedFrom,
@@ -385,6 +484,7 @@ private fun rememberNavHostNavState(): NavHostNavState {
         pendingLogFilter,
         logFrequencyOrigin,
         frequencyInitialView,
+        pendingReviewSessionId,
     )
 }
 
@@ -443,6 +543,14 @@ private fun navHostCallbacks(
             navState.openLogFilteredByFrequency(navState.openFrequencyHz.value, hz, window)
             currentState.value = ReaderDestination.LOG
         },
+        // Round 11, register R-133: `Settings-Storage`'s "Next deletion … Review" link
+        // (`SettingsContent.onReviewSession`, WP10's `948fe55`) — see
+        // `NavHostNavState.openReviewSession`'s own doc comment for what this seeds and
+        // `OrtNavHostBackHandler`'s own doc comment for how back returns to `Settings-Storage`.
+        onReviewSession = { sessionId ->
+            navState.openReviewSession(sessionId)
+            currentState.value = ReaderDestination.EARLIER_NIGHTS
+        },
     )
 }
 
@@ -468,10 +576,12 @@ private fun searchHostState(
     onBack = { navigator.currentState.value = navState.searchOpenedFrom.value },
 )
 
-/** [NavHostBody]'s own `modifier` (from [OrtNavHost]'s `Scaffold` inner padding) and, register
- * R-178, the banner-height top padding [org.ort.app.ui.failures.FailureHost] reports — bundled,
- * same reason as [NavHostIds]/[NavHostCallbacks], so [NavHostBody] stays under detekt's
- * `LongParameterList` rather than growing a parameter for the R-178 addition. */
+/** [NavHostBody]'s own `modifier` (round 11: no longer `OrtNavHost`'s `Scaffold` inner padding
+ * directly — that now lands on the `FailureHost` wrapper one level up, register R-334 — just
+ * `fillMaxSize()`) and, register R-178, the banner-height top padding
+ * [org.ort.app.ui.failures.FailureHost] reports — bundled, same reason as
+ * [NavHostIds]/[NavHostCallbacks], so [NavHostBody] stays under detekt's `LongParameterList`
+ * rather than growing a parameter for the R-178 addition. */
 private data class NavHostLayout(val modifier: Modifier, val contentTopPadding: Dp = 0.dp)
 
 /** The "land here fresh, not at the root" seeds three different destinations each take, bundled
@@ -481,11 +591,14 @@ private data class NavHostLayout(val modifier: Modifier, val contentTopPadding: 
  * launch" contract). Round 6, register R-132: [openCaptureLevelMeter]
  * (`NavHostNavState.openCaptureLevelMeter`'s own doc comment). Round 9, register R-276:
  * [logInitialFilter] (`NavHostNavState.pendingLogFilter`'s own doc comment) — the field whose
- * addition is what pushed the previous three-scalar-parameter shape over the limit. */
+ * addition is what pushed the previous three-scalar-parameter shape over the limit. Round 11,
+ * register R-133: [reviewSessionId] (`NavHostNavState.pendingReviewSessionId`'s own doc comment) —
+ * `SessionsContent.initialSessionId`'s seed. */
 private data class DestinationInitialState(
     val settingsInitialScreen: SettingsScreenId?,
     val openCaptureLevelMeter: Boolean,
     val logInitialFilter: LogFilterSelection?,
+    val reviewSessionId: String?,
 )
 
 /** [NavHostBody]'s destination/drill-in identity, bundled to keep that composable's own parameter count down. */
@@ -516,6 +629,8 @@ private data class NavHostCallbacks(
     val onOpenModels: () -> Unit,
     val onOpenLevelMeter: () -> Unit,
     val onOpenOvers: (Long, TimeWindow) -> Unit,
+    // Round 11, register R-133: see `navHostCallbacks`'s own construction site.
+    val onReviewSession: (String) -> Unit,
 )
 
 /**
@@ -764,6 +879,7 @@ private fun DestinationContent(
     val settingsInitialScreen = initialState.settingsInitialScreen
     val openCaptureLevelMeter = initialState.openCaptureLevelMeter
     val logInitialFilter = initialState.logInitialFilter
+    val reviewSessionId = initialState.reviewSessionId
     val content = modifier
     val onOpenTransmission = callbacks.onOpenTransmission
     val onOpenStation = callbacks.onOpenStation
@@ -855,6 +971,11 @@ private fun DestinationContent(
                 // own comment above.
                 onOpenLevelMeter = callbacks.onOpenLevelMeter,
                 onSearch = callbacks.onSearchDestination,
+                // Round 11, register R-133: real now — WP10 merged
+                // `SettingsContent.onReviewSession` (confirmed by reading `ui/settings/
+                // SettingsContent.kt` before wiring this) — see `NavHostCallbacks.onReviewSession`'s
+                // own comment above.
+                onReviewSession = callbacks.onReviewSession,
             )
 
         // Round 5 (R-092/R-107): `onOpenTransmission` is real now — WP10 merged it (confirmed by
@@ -863,12 +984,17 @@ private fun DestinationContent(
         // at the moment the tap fires, which is `EARLIER_NIGHTS` for every tap this dispatch can
         // ever produce — so the transmission drill-in's `backLabel` reads `ReaderDestination
         // .EARLIER_NIGHTS.label`, "Earlier nights", with no extra state needed here.
+        // Round 11, register R-133: `initialSessionId` is real now — WP10 merged it (`e390c60`,
+        // confirmed by reading `ui/digest/SessionsContent.kt` before wiring this) — seeds the
+        // `Review` link's own session detail; `null` (every ordinary way of reaching this
+        // destination) is that composable's own existing default, its own list root.
         ReaderDestination.EARLIER_NIGHTS ->
             org.ort.app.ui.digest.SessionsContent(
                 context = context,
                 onDrawer = onOpenDrawer,
                 modifier = content,
                 onOpenTransmission = onOpenTransmission,
+                initialSessionId = reviewSessionId,
             )
 
         ReaderDestination.IMPROVE_RECORDS ->

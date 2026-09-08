@@ -32,6 +32,151 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP3 round 11: one back handler for the whole app (R-333), the drawer above the banner (R-334), Settings-Storage's Review link (R-133))
+
+### e7d5dca — ui-conformance WP3 round 11 · one BackHandler (R-333), FailureHost under the drawer (R-334), Settings-Storage Review → Earlier nights (R-133)
+
+**Scope:** `ui/navigation/**` (`OrtNavHost.kt`, `ReaderActivityDestinationSmokeTest.kt`) plus
+`ReaderActivity.kt` (lead-approved, this row's standing file). `main` merged three times as WP10's
+own commits landed (`5aa7d5f..7897cbd..31e4e13`, all clean fast-forwards/real merges — no rebase,
+no stash); no other package's files touched.
+
+**Requirements/ACs:** R-333 (halt, fixed), R-334 (halt, fixed — with a real, disclosed limit on
+what the new test proves), R-133 (the Settings-Storage half — `SettingsContent.onReviewSession` →
+`Earlier nights`, wired and tested).
+
+**What changed:**
+- **Constitution Check.** Principle IV (An Attribution Without Its Confidence State Is a Bug) has
+  no direct hold here, but its sibling spirit — *a state transition without its own reversal is a
+  bug* — governs all three items: a drill-in, a drawer, and a seeded detail that can be reached
+  forward but not backed out of are each an unfinished half of a feature, not a smaller one.
+  Principle II (Test-Backed Change) governs the whole entry, including the one place a test was
+  kept despite a real, disclosed limit on what it proves (R-334) rather than either deleting it or
+  overselling it.
+- **R-333 (halt) — one host-level `BackHandler`.** `OrtNavHost` had no generic back handling at
+  all; system back exited the whole app from the L02 filter sheet, a transmission/rejected detail,
+  and the open drawer alike, reproduced after a fresh `pm clear`
+  (`overnight/D01-before-back-pass3.png` → `overnight/after-back-exits-to-home-pass3.png`). Added
+  one new `OrtNavHostBackHandler` composable, extracted out of `OrtNavHost` to stay under detekt's
+  `LongMethod` limit, with a single `when` (not competing `BackHandler`s, which would leave the
+  win-order ambiguous when more than one condition holds at once — the drawer open *over* a `Log`
+  reached via `Frequency-Change`, say): close the drawer, then pop the drill-in
+  (`NavHostNavState.closeDrillIns`), then restore `Log`'s own R-276 `Frequency-Change` origin, then
+  (round 11 addendum, R-133) restore `Settings-Storage` from a Review-seeded `Earlier nights`
+  detail — only once none of those apply does the platform's own back (finishing the Activity) run.
+  **Known gap, reported, not fixed here** (out of this row's own file ownership): `LogContent.kt`'s
+  `sheetOpen` (L02) and `SearchContent.kt`'s `filtersSheetOpen` are each a private, un-exported
+  boolean this host cannot see or close, and neither is built on Compose's `ModalBottomSheet`
+  (confirmed by grepping the whole `ui` tree for it — zero uses anywhere in this codebase), so
+  system back while either is open still reaches this handler, finds nothing here it can pop, and
+  still exits the app. Each needs its own small, local `BackHandler(enabled = sheetOpen) {
+  sheetOpen = false }` inside its own file — WP5's and WP7's respectively.
+- **R-334 (halt) — the drawer now sits above the banner, not under it.**
+  `org.ort.app.ui.failures.FailureHost` used to mount in `ReaderActivity.kt`, wrapping the whole of
+  `OrtNavHost` — `ModalNavigationDrawer` included — so its own banner overlay painted *above* the
+  drawer's own content slot: opaque, inside the drawer panel itself once open, hiding six of its
+  nine rows (`storage-warn/N00-menu-with-banner-pass3.png`). Moved `FailureHost` to mount *inside*
+  `OrtNavHost`'s `Scaffold`, wrapping only that `Scaffold`'s content slot — inside
+  `ModalNavigationDrawer`'s main-content lambda, never its `drawerContent` — so Material3's own
+  drawer scrim (no custom dim value needed; it already sits above every other destination's content
+  the identical way) now sits above the banner too, and the drawer panel stays crisp on top of
+  both. `FailureHost`'s own signature did not need to change (confirmed by reading
+  `ui/failures/FailureHost.kt` in full before this) — only the call site moved:
+  `ReaderActivity.kt` now builds the same `FailureHostActions` it always did and hands them
+  straight to `OrtNavHost`'s new `failureActions` parameter instead of to its own `FailureHost`
+  call; `OrtNavHost`'s own `contentTopPadding` parameter is gone (computed internally now, off
+  `FailureHost`'s real, measured banner height, same as before).
+- **R-133 — Settings-Storage's "Next deletion … Review" link.** Wired `SettingsContent
+  .onReviewSession(sessionId)` (WP10's `948fe55`) to a new `NavHostCallbacks.onReviewSession`,
+  which routes to `Earlier nights` seeded on that exact session's own detail via `SessionsContent
+  .initialSessionId` (WP10's `e390c60`) — the same shape as R-132's `onOpenLevelMeter`. A new
+  `NavHostNavState.pendingReviewSessionId` (`rememberSaveable String?`) holds the seed and doubles
+  as "did we get here via Review" the same way `logFrequencyOrigin` already doubles as both a
+  return target and its own flag; `closeDrillIns()` resets it, so any ordinary way of reaching
+  `Earlier nights` (the drawer row) never resurrects a stale seed or a promise a normal navigation
+  never made. `SessionsContent`'s own doc comment states its internal back only ever returns to its
+  own list ("a host that needs 'back to Settings-Storage' instead wraps this composable with its
+  own header/back at the call site") — so `OrtNavHostBackHandler`'s new
+  `canReturnToSettingsStorage` branch owns the restore itself: `current == EARLIER_NIGHTS &&
+  pendingReviewSessionId != null` calls `navigator.openSettings(SettingsScreenId.STORAGE)` and
+  clears the seed. The in-app chevron on the seeded detail still returns to the Sessions list, not
+  Settings-Storage — `SessionsContent`'s own stated limit, not something this row's `BackHandler`
+  can reach (it only intercepts the system back gesture, not a tap inside another package's
+  composable).
+- **A genuine Kotlin nested-block-comment bug, found and fixed in this file's own prose**: Kotlin's
+  `/* */` block comments nest (unlike C/Java) — the doc comment prose "grepping `ui/**` for it"
+  contains the literal substring "/*" (from "ui/**"), which Kotlin read as opening a *second*,
+  nested comment, consuming this file's own intended closing `*/` as that nested comment's close
+  instead and cascading an "Unclosed comment" error to end of file. Fixed by rephrasing to "grepping
+  the whole `ui` tree for it" (no literal "/*" left in the prose).
+
+**Verified:**
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*" --tests "org.ort.app.ui.ReaderActivityTest"`
+  — 33 tests, all green (`DrawerContentTest`, `OrtNavHostDestinationDispatchTest`,
+  `StorageFooterViewStateTest`, `DrawerSessionHeaderViewStateTest`, `ReaderActivityTest`).
+- `:app:smokeTestDebugUnitTest` (its own Gradle `Test` task, a fresh JVM worker, per this class's
+  own standing doc comment) — 20 tests, all green, including the two new R-333/R-334 cases and the
+  new R-133 case (`R_133_settings_storage_review_link_opens_the_session_and_back_returns_to_settings_storage`).
+  Both new smoke cases were verified against a deliberately-sabotaged/reverted version of the fix
+  before being trusted, per this engagement's own standing discipline:
+  - R-333's case: temporarily changed `BackHandler(enabled = ...)` to `BackHandler(enabled = false
+    && (...))` — confirmed the test FAILED (`Activity` finished instead of staying `RESUMED`),
+    proving it catches the regression, then reverted.
+  - R-334's case: temporarily restructured `OrtNavHost.kt` to wrap `FailureHost` around the whole
+    `ModalNavigationDrawer` again (the old, broken structure) and ran only this test — **it still
+    passed**. `assertIsDisplayed()` checks attachment, non-zero size and ancestor-clipping only, not
+    whether a later sibling paints over a node, so it cannot see the actual R-334 defect (a
+    paint-order fact) either way. Kept as a real regression guard on the *wiring* (the drawer rows
+    and a real banner compose together without either breaking the other, and `FailureHost`'s own
+    signature genuinely didn't need to change) with an honest doc comment stating plainly what it
+    does and does not prove — not proof of the pixel-level fix, which rests on
+    `ModalNavigationDrawer`'s own documented contract rather than on anything this JVM harness can
+    observe directly.
+  - R-133's case needed a genuine below-the-fold scroll before its `Review` click — a bare
+    `performClick()` on that node was a real, silent no-op (verified directly: it timed out with no
+    exception and no state change at all, confirmed by instrumenting the call chain with temporary
+    `println`s down to `SettingsStorageScreen.kt`'s own `onClick` and back up to `OrtNavHost.kt`'s
+    `onReviewSession`, none of which ever fired) until `performScrollToNode(hasText("Review"))` was
+    added first, the same idiom `SettingsStorageScreenTest.kt`'s own `R_133_next_deletion_row ...`
+    case already established — this activity's own drawer keeps a second, off-screen vertical-scroll
+    node composed at all times, so the scroll target needed excluding `drawer-rows` too, on top of
+    that file's own horizontal-vs-vertical disambiguation.
+  - A real `NextDeletion` for R-133's own test needed `computeNextDeletion` to cross a real
+    threshold (`StorageAccounting.kt`): the free-disk floor is not reliably reachable on a real test
+    machine, so the test seeds a 0 GB budget directly into the real `SharedPreferences`
+    `SettingsContent.kt` itself reads (`SharedPreferencesSettingsStore`'s own real keys) plus a
+    real, non-zero file under `filesDir/audio` (`measureDirectoryBytes` sums real files, never a
+    board literal).
+- `:app:ktlintCheck :app:detekt` — green. `dependencyRules platformGuards` — green.
+  `:app:assembleDebug` — green. `python tools/spec-check/spec_check.py` — 8/8 checks pass.
+  `coverageMatrix` (419 requirements, 191 covered) then `coverageMatrixCheck`, run as two separate
+  invocations (their combined run hit an unrelated Gradle task-validation ordering problem —
+  `coverageMatrixCheck` reading `coverageMatrix`'s output without Gradle-visible `dependsOn`, a
+  pre-existing build-config gap, not a content failure) — both green; `results/coverage-matrix.md`
+  regenerated byte-identical, nothing to commit there.
+- Per this round's revised load policy (the shared box wedged under many concurrent worktrees'
+  whole-project builds): no `:app:testDebugUnitTest` run unscoped and no `build`/`check` run in
+  this commit — the coordinator runs the full gate on `main` after every merge.
+
+**Left open / not done:**
+- L02's (`LogContent.kt`) and Search's (`SearchContent.kt`) own filter sheets still exit the whole
+  app on system back — each needs its own local `BackHandler`, inside its own file, not this row's
+  to add (WP5's and WP7's respectively).
+- The coordinator's mid-round addendum asking to wire `ImproveContent.onOpenModels` (WP10's
+  `94c946c`, R-350) is **not done this commit**: `94c946c` is not yet an ancestor of `main`
+  (`git merge-base --is-ancestor 94c946c main` still fails as of this commit, checked repeatedly
+  over roughly 15 minutes of polling) — a *different*, already-merged commit's own message happens
+  to *mention* the hash `94c946c` in prose (`results/ui-audit/register.md`'s own "R-350, R-351
+  fixed (WP10 94c946c)" line), which is not the same thing as that commit itself having landed;
+  worth naming explicitly since a plain `git log main --oneline | Select-String 94c946c` — the
+  literal check the coordinator's own message suggested — gives a false positive here. Left for a
+  follow-up round once the real commit lands.
+- R-334's own test is a wiring/regression guard, not proof of the pixel-level fix — see "Verified"
+  above for exactly what it does and does not establish; the pixel-level claim rests on
+  `ModalNavigationDrawer`'s documented contract, unverifiable from this JVM harness.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: R-340 device diagnosis — not fixed, root cause redirected)
 
 ### (pending) — ui-conformance WP2 · R-340 diagnosis
