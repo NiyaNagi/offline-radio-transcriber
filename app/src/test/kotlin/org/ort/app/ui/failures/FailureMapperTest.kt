@@ -252,6 +252,22 @@ class FailureMapperTest {
     }
 
     @Test
+    @Requirement("R-177")
+    fun R_177_thermal_banner_time_is_the_transition_moment() {
+        val transitionedAt = 500_000L
+        val presentation = FailureMapper.map(
+            signals(
+                thermalStatus = ThermalStatus.State.Warm(2, 0.9, sinceMillis = transitionedAt),
+                shedLevel = 1,
+                nowMillis = 900_000L,
+            ),
+        )
+        assertTrue(presentation is FailurePresentation.Thermal)
+        presentation as FailurePresentation.Thermal
+        assertEquals(FailureMapper.clockLabel(transitionedAt), presentation.state.sinceLabel)
+    }
+
+    @Test
     @Requirement("R-104")
     fun `F7 a warm thermal state is the thermal banner, computed tier from shed level`() {
         val presentation = FailureMapper.map(

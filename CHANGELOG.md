@@ -2254,6 +2254,85 @@ board actually specifies, but a future round should watch for either growing pas
 top-of-screen space.
 ---
 
+### (pending) — ui-conformance WP11b · thermal transition time, banner height pushes content, usb live-bar meter tone
+
+**Scope:** `:app` — `ui/failures/FailureMapper.kt`, `ui/failures/FailureHost.kt`,
+`ui/data/LiveBarPolling.kt` (WP4 idle this round, as before), `ui/ReaderActivity.kt` (this
+package's own file, one edit), and `ui/navigation/OrtNavHost.kt` (WP3 idle this round — see below
+for exactly what was touched, per the coordinator's explicit narrow grant). Follow-up to the three
+WP11b commits above, at the coordinator's request, after `git merge --ff-only main` (batch two —
+R-147, R-148, R-149, R-151, R-164 — already merged and flipped to fixed at `11946ab`; no rebase, no
+stash, no other package's files touched beyond the narrow `OrtNavHost.kt` grant).
+
+**Requirements/ACs:** R-177, R-178; F16 (register R-128's own id, WP2's new `meterTone` field);
+constitution I (never render a time the mapper did not actually observe) and IV (a growing banner
+must not silently hide more of the running app — it must make room for itself).
+
+**What changed:**
+
+- **R-177: `Fail-Thermal`'s "dropped to tier N at HH:MM:SS" now reads the real transition moment,
+  never `now`.** WP11c merged `ThermalStatus.State.Warm/Hot.sinceMillis` — set once when `sample`/
+  `update` first observes that tier, carried forward unchanged across every later tick at the same
+  tier. `FailureMapper.mapThermalOrBacklogOrRigBanner` was still computing the banner's `sinceLabel`
+  from `signals.nowMillis` (the poll tick's own clock, not the state's own history) — a mapper
+  polled every 2s therefore rendered a label that crept forward every tick instead of staying fixed
+  at the real drop time. Fixed: the label is now `clockLabel(thermal.sinceMillis)`, read per-branch
+  (`sinceMillis` lives on `Warm`/`Hot`, not the shared `State` interface). Test:
+  `R_177_thermal_banner_time_is_the_transition_moment` (`FailureMapperTest`) — sets a `Warm` state
+  transitioned 400s before `nowMillis` and asserts the rendered label is `clockLabel` of the
+  transition, not of `now`.
+- **R-178: a banner that grows taller (font scale 2.0 wraps its copy onto more lines) now pushes
+  the destination content down instead of just covering more of it.** `FailureHost`'s `content`
+  slot signature changed from `@Composable () -> Unit` to `@Composable (contentTopPadding: Dp) ->
+  Unit` — it now hands the caller the currently-showing banner's real, `onGloballyPositioned`-
+  measured height (`0.dp` while no banner shows: a takeover already covers the whole screen, and
+  `None` has nothing to clear). The measurement point in `BannerOverlay`'s modifier chain is
+  deliberate: it sits between the two `padding` calls (`padding(top = HEADER_HEIGHT)` then
+  `onGloballyPositioned` then `padding(OrtSpacing.lg)`), so the reported value is `lg + banner
+  content + lg` — the *extra* room the destination content needs beyond its own natural position
+  right after the header, not the banner's absolute screen position (which would double-count the
+  header height once padding is applied to already-header-relative content).
+  `ReaderActivity.kt` (this package's own file) forwards the reported value straight into
+  `OrtNavHost`'s new `contentTopPadding: Dp = 0.dp` parameter. `OrtNavHost.kt` (WP3's file, touched
+  under the coordinator's explicit narrow grant): exactly one new parameter on `OrtNavHost` itself,
+  threaded through to `NavHostBody`'s own new parameter, applied as exactly one
+  `Modifier.padding(top = contentTopPadding)` on the destination/drill-in content `Box` — never on
+  `ScreenHeader` or `LiveBar`, both stay exactly where they already were. Test:
+  `R_178 at font scale 2_0 a taller banner still pushes content below its own bottom bound`
+  (`FailureHostTest`) — under `CompositionLocalProvider(LocalDensity provides Density(fontScale =
+  2f))`, asserts the (stand-in-headered) content's top bound is `>=` the banner's own bottom bound.
+- **F16 (register R-128's own id): the live bar's meter now stays green while its label reads red
+  "Act".** WP2 merged `LiveBarViewState.meterTone: LiveBarTone? = null`, rendered by
+  `meterColorFor` in `LiveBar.kt` (that override affects the meter bars' colour only — background,
+  top edge and label keep following the bar's own `tone`). `LiveBarPolling`'s override table
+  (renamed `failureOverrideToneLabelAndPartial` → `failureOverrideLiveBar`, returning a new private
+  `OverrideLiveBar` data class instead of a bare `Triple`, so a fourth field could be added legibly)
+  now sets `meterTone = LiveBarTone.NOMINAL` for the F16/`FailurePresentation.Usb` override —
+  `Fail-Usb.dc.html`'s own reading: the rig needing USB permission is a permission problem, not an
+  audio one, so the meter draws green ("audio fine") while the bar's tone/label still call for
+  action (`HALTED`/"Act", `halt/text` red). Every other override (`StorageAudioPaused`) leaves
+  `meterTone` `null` (follow `tone`) — no other board draws this split. Tests:
+  `F16 the meter itself stays green (NOMINAL) while the bar around it reads Act red`, and the
+  existing `R_128 F6 the StorageAudioPaused debug override reads Text only` extended with an
+  explicit `meterTone == null` assertion so F16 reads as the one deliberate exception, not a
+  default anyone could accidentally rely on (`LiveBarPollingTest`).
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.ReaderAccessibilityTest"` — BUILD SUCCESSFUL, all green (127 tests, 0 failed).
+`.\gradlew.bat :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL, zero issues. Full gate
+(`.\gradlew.bat build dependencyRules platformGuards`, `.\gradlew.bat -p buildSrc test`,
+`.\gradlew.bat coverageMatrix`, `.\gradlew.bat coverageMatrixCheck`,
+`.\gradlew.bat :app:assembleDebug`) reported in this package's report to the lead.
+
+**Left open:** `contentTopPadding` is only ever exactly right when the destination content sits
+directly beneath `ScreenHeader` at its own natural, unpadded position (true of every real
+destination `OrtNavHost` composes today, confirmed by reading `NavHostBody`) — a future destination
+that inserted its own extra top spacing before its content would need re-checking against this same
+arithmetic, not a new mechanism.
+---
+
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)
 
 ### (pending) — ui-conformance WP2 · highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card
