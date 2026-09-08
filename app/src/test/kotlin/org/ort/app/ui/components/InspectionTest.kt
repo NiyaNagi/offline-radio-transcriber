@@ -6,6 +6,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Rule
@@ -64,6 +65,42 @@ class InspectionTest {
 
         composeTestRule.onNode(hasContentDescription("Play retained audio")).performClick()
         assert(toggled)
+    }
+
+    @Test
+    fun `R_054_scrubFraction converts an x position into a 0 to 1 fraction so playback can seek`() {
+        assert(scrubFraction(0f, 200f) == 0f)
+        assert(scrubFraction(200f, 200f) == 1f)
+        assert(scrubFraction(100f, 200f) == 0.5f)
+        // Never out of bounds, and never a crash on a not-yet-laid-out (zero-width) waveform.
+        assert(scrubFraction(-50f, 200f) == 0f)
+        assert(scrubFraction(500f, 200f) == 1f)
+        assert(scrubFraction(100f, 0f) == 0f)
+    }
+
+    @Test
+    fun `a waveform with onScrub set renders without crashing, exactly like one with it unset`() {
+        val bars = listOf(WaveformBar(0.5f, true), WaveformBar(0.6f, true), WaveformBar(0.3f, false))
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    WaveformCard(
+                        state = WaveformViewState.Idle(bars, "4.2s"),
+                        onPlayPause = {},
+                        onScrub = {},
+                        modifier = Modifier.testTag("with-scrub"),
+                    )
+                    WaveformCard(
+                        state = WaveformViewState.Idle(bars, "4.2s"),
+                        onPlayPause = {},
+                        modifier = Modifier.testTag("without-scrub"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("with-scrub").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("without-scrub").assertIsDisplayed()
     }
 
     @Test

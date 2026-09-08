@@ -14,6 +14,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
@@ -158,5 +159,96 @@ class ControlsTest {
         }
 
         composeTestRule.onNodeWithTag("progress").assert(hasContentDescription("42 percent"))
+    }
+
+    @Test
+    fun `R_081_a warning-tone radio row shows an amber subtitle, per Setup-Input_dc_html's refused mic`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    RadioRow(
+                        label = "USB Audio Device",
+                        selected = true,
+                        onClick = {},
+                        subtitle = "USB · 48 kHz native · resampled to 16 kHz",
+                        modifier = Modifier.testTag("usb"),
+                    )
+                    RadioRow(
+                        label = "Built-in microphone",
+                        selected = false,
+                        onClick = {},
+                        subtitle = "Not a radio — capture will refuse this route",
+                        tone = RowTone.Warning,
+                        modifier = Modifier.testTag("built-in"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("USB · 48 kHz native · resampled to 16 kHz").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Not a radio — capture will refuse this route").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a radio row with no subtitle renders exactly as before`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioRow(label = "All bands", selected = true, onClick = {}, modifier = Modifier.testTag("plain"))
+            }
+        }
+
+        composeTestRule.onNodeWithText("All bands").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("plain").assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `R_061_a filter chip's leadingIcon renders beside the label, never replacing it`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FilterChip(
+                    label = "Filters",
+                    selected = false,
+                    onClick = {},
+                    leadingIcon = OrtIcons.filters,
+                    modifier = Modifier.testTag("filters-chip"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Filters").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("filters-chip").assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `a text field shows its label, placeholder, error text and reports edits`() {
+        var value = ""
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    TextField(
+                        value = value,
+                        onValueChange = { value = it },
+                        label = "Callsign",
+                        placeholder = "W7NPC",
+                        mono = true,
+                        modifier = Modifier.testTag("field"),
+                    )
+                    TextField(
+                        value = "bad",
+                        onValueChange = {},
+                        errorText = "Not a known callsign",
+                        modifier = Modifier.testTag("field-error"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("Callsign").assertIsDisplayed()
+        composeTestRule.onNodeWithText("W7NPC").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Not a known callsign").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("field").assertHeightIsAtLeast(44.dp)
+
+        composeTestRule.onNodeWithTag("field").performTextInput("K7LWH")
+        assert(value == "K7LWH") { "expected onValueChange to report the typed text, got '$value'" }
     }
 }

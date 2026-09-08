@@ -61,7 +61,9 @@ private val SPARK_GAP = 1.dp
 public fun ActivityPatternChart(
     pattern: List<ActivityBucket>,
     modifier: Modifier = Modifier,
-    title: String = "ACTIVITY BY HOUR (UTC)",
+    // R-072: null draws no title row at all (rather than every caller with nothing to say having
+    // to pass ""). The default keeps every existing caller's title unchanged.
+    title: String? = "ACTIVITY BY HOUR (UTC)",
     summaryLabel: String = "Activity by hour of day",
     barLabels: List<String>? = null,
     axisStart: String? = null,
@@ -76,7 +78,7 @@ public fun ActivityPatternChart(
         "while listening, $notListeningHours hours not listening"
 
     Column(modifier = modifier.semantics(mergeDescendants = true) { contentDescription = summary }) {
-        Text(text = title, style = OrtType.sectionLabel, color = OrtColors.textFaint)
+        title?.let { Text(text = it, style = OrtType.sectionLabel, color = OrtColors.textFaint) }
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm).height(CHART_HEIGHT),
             horizontalArrangement = Arrangement.spacedBy(BAR_GAP),

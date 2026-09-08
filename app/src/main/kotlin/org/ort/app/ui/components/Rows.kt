@@ -22,9 +22,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -317,6 +320,12 @@ public data class LogRowViewState(
     val alternate: String? = null,
     val signalLabel: String? = null,
     val badge: LogRowBadge? = null,
+    /** R-065: character ranges of [transcript] to render in `highlightGreen`, per
+     * `Search-Results.dc.html`'s matched-word treatment (`.hit`) — a search match, not a state,
+     * so it is additive and never the only way a row communicates anything. Empty by default so
+     * every existing caller is unaffected. Out-of-bounds/reversed ranges are dropped rather than
+     * crashing (constitution: never fabricate, never fail loudly on bad input from a caller). */
+    val highlightRanges: List<IntRange> = emptyList(),
 )
 
 /** guide §6.5/`Rows.dc.html`: the densest row in the product. */
@@ -358,7 +367,7 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
             Column(modifier = Modifier.weight(1f)) {
                 LogRowMarkerLine(state = state)
                 Text(
-                    text = state.transcript,
+                    text = highlightedTranscript(state.transcript, state.highlightRanges),
                     style = OrtType.transcript,
                     color = if (state.partial != null) OrtColors.textTime else OrtColors.textSecondary,
                     modifier = Modifier.padding(top = 3.dp),
@@ -374,6 +383,27 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
             }
         }
     }
+}
+
+/** R-065: [transcript] with [ranges] painted in `highlightGreen`/`textHigh`
+ * (`Search-Results.dc.html`'s `.hit` span) — out-of-bounds and empty/reversed ranges are dropped
+ * silently rather than crashing a row over a caller's off-by-one. */
+private fun highlightedTranscript(transcript: String, ranges: List<IntRange>): AnnotatedString {
+    if (ranges.isEmpty()) return AnnotatedString(transcript)
+    val spans = ranges.mapNotNull { range ->
+        val start = range.first.coerceIn(0, transcript.length)
+        val end = (range.last + 1).coerceIn(0, transcript.length)
+        if (end <= start) {
+            null
+        } else {
+            AnnotatedString.Range(
+                SpanStyle(background = OrtColors.highlightGreen, color = OrtColors.textHigh),
+                start,
+                end,
+            )
+        }
+    }
+    return AnnotatedString(text = transcript, spanStyles = spans)
 }
 
 @Composable
@@ -508,6 +538,10 @@ public fun RejectedRow(
     reason: String,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    // R-043 (`Log-Rejected.dc.html`'s `.why` line): the model/segmenter's own reason in prose,
+    // e.g. "0.4 s of noise after the carrier dropped." Optional and additive — a row with no
+    // `why` renders exactly as before.
+    why: String? = null,
 ) {
     Box(
         modifier = modifier
@@ -518,7 +552,11 @@ public fun RejectedRow(
             )
             .alpha(0.45f)
             .semantics(mergeDescendants = true) {
-                contentDescription = "$timeLabel, $frequencyLabel, rejected, $reason"
+                contentDescription = if (why != null) {
+                    "$timeLabel, $frequencyLabel, rejected, $reason, $why"
+                } else {
+                    "$timeLabel, $frequencyLabel, rejected, $reason"
+                }
             },
     ) {
         Row(
@@ -537,12 +575,132 @@ public fun RejectedRow(
                 color = OrtColors.textTime,
                 modifier = Modifier.width(LOG_FREQ_COLUMN),
             )
-            Text(
-                text = "rejected · $reason".uppercase(),
-                style = OrtType.columnHeader,
-                color = OrtColors.textFaint,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "rejected · $reason".uppercase(),
+                    style = OrtType.columnHeader,
+                    color = OrtColors.textFaint,
+                )
+                // guide (`.why`): 12px sans, text/dim — OrtType.chip is the guide's nearest named
+                // 12sp non-mono row.
+                why?.let {
+                    Text(
+                        text = it,
+                        style = OrtType.chip,
+                        color = OrtColors.textDim,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// NotificationCard — Capture-Notification.dc.html's collapsed/expanded persistent notification.
+// ---------------------------------------------------------------------------------------------
+
+/** One `NotificationCard` expanded key/value row (`Capture-Notification.dc.html`'s "Last over",
+ * "Input", "Storage" rows). */
+public data class NotificationCardRow(val key: String, val value: String)
+
+/**
+ * `Capture-Notification.dc.html`'s one persistent notification, drawn to guide §6.19: a 34dp
+ * icon disc, title + mono elapsed + count on one line, a second line (amber when [degraded]),
+ * and — only when supplied — the expanded key/value rows and up to two text actions. Collapsed
+ * (the default: no [expandedRows], no actions) is what WP9's setup preview and WP11b's failure
+ * screens need; the same composable also renders the expanded state so there is never a second
+ * notification, just this one with more on it (the guide's own rule).
+ */
+@Suppress("LongParameterList") // every parameter is an independent, optional notification field.
+@Composable
+public fun NotificationCard(
+    icon: ImageVector,
+    title: String,
+    elapsedLabel: String,
+    countLabel: String,
+    secondLine: String,
+    modifier: Modifier = Modifier,
+    degraded: Boolean = false,
+    expandedRows: List<NotificationCardRow> = emptyList(),
+    primaryActionLabel: String? = null,
+    onPrimaryAction: (() -> Unit)? = null,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null,
+) {
+    Column(
+        modifier = modifier
+            .background(OrtColors.bgNotification, RoundedCornerShape(18.dp))
+            .padding(horizontal = 16.dp, vertical = 13.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$title, $elapsedLabel, $countLabel, $secondLine"
+            },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(
+                modifier = Modifier.size(34.dp).background(OrtColors.bgPressed, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (degraded) OrtColors.accentAmber else OrtColors.accentGreen,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = title,
+                        style = OrtType.subtitle.copy(fontWeight = FontWeight.Medium),
+                        color = OrtColors.textHigh,
+                    )
+                    // guide: 12.5px mono elapsed — OrtType.timeFreq (12sp mono) is the nearest named row.
+                    Text(text = elapsedLabel, style = OrtType.timeFreq, color = OrtColors.accentGreenDim)
+                    Text(text = "· $countLabel", style = OrtType.cardBody, color = OrtColors.textDim)
+                }
+                Text(
+                    text = secondLine,
+                    style = OrtType.cardBody,
+                    color = if (degraded) OrtColors.accentAmberDim else OrtColors.textMuted,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+        if (expandedRows.isNotEmpty()) {
+            Column(
+                modifier = Modifier.padding(start = 46.dp, top = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                expandedRows.forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = row.key,
+                            style = OrtType.cardBody,
+                            color = OrtColors.textFaint,
+                            modifier = Modifier.width(62.dp),
+                        )
+                        Text(text = row.value, style = OrtType.cardBody, color = OrtColors.textPrior)
+                    }
+                }
+            }
+        }
+        if (primaryActionLabel != null || secondaryActionLabel != null) {
+            Row(
+                modifier = Modifier.padding(start = 46.dp, top = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+            ) {
+                if (primaryActionLabel != null) {
+                    TextAction(text = primaryActionLabel, onClick = onPrimaryAction ?: {})
+                }
+                if (secondaryActionLabel != null) {
+                    TextAction(text = secondaryActionLabel, onClick = onSecondaryAction ?: {})
+                }
+            }
         }
     }
 }

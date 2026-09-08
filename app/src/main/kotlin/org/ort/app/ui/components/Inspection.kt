@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -62,10 +65,24 @@ public sealed interface WaveformViewState {
     ) : WaveformViewState
 }
 
+/** R-054: a tap/drag x position within a [width]-wide waveform, as a `0f..1f` fraction —
+ * `internal` (not `private`) so it is directly unit-testable without needing synthetic touch
+ * injection to exercise it. A non-positive [width] (not yet laid out) reads as 0f rather than
+ * dividing by zero. */
+internal fun scrubFraction(x: Float, width: Float): Float = if (width <= 0f) 0f else (x / width).coerceIn(0f, 1f)
+
 /** guide §6.16: `bg/audio`, 10px radius, a 34px round play control, a gapped bar waveform, the
  * duration in mono. Playing turns played bars `accent/green` with a `text/high` cursor. */
 @Composable
-public fun WaveformCard(state: WaveformViewState, modifier: Modifier = Modifier, onPlayPause: (() -> Unit)? = null) {
+public fun WaveformCard(
+    state: WaveformViewState,
+    modifier: Modifier = Modifier,
+    onPlayPause: (() -> Unit)? = null,
+    // R-054: a fraction 0f..1f from a tap or horizontal drag on the waveform itself, so playback
+    // can seek (WP6's player has `seekToFraction`). Null (default) keeps the waveform static —
+    // additive, no existing caller is affected.
+    onScrub: ((Float) -> Unit)? = null,
+) {
     when (state) {
         is WaveformViewState.NoAudio -> WaveformMessageCard(
             message = "No retained audio for this transmission",
@@ -86,6 +103,7 @@ public fun WaveformCard(state: WaveformViewState, modifier: Modifier = Modifier,
             durationLabel = state.durationLabel,
             speedLabel = null,
             onPlayPause = onPlayPause,
+            onScrub = onScrub,
             modifier = modifier,
         )
 
@@ -96,6 +114,7 @@ public fun WaveformCard(state: WaveformViewState, modifier: Modifier = Modifier,
             durationLabel = state.durationLabel,
             speedLabel = state.speedLabel,
             onPlayPause = onPlayPause,
+            onScrub = onScrub,
             modifier = modifier,
         )
     }
@@ -118,6 +137,48 @@ private fun WaveformMessageCard(
 }
 
 @Composable
+private fun WaveformPlayControl(playing: Boolean, onPlayPause: (() -> Unit)?, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .background(OrtColors.accentGreen, CircleShape)
+            .then(
+                if (onPlayPause != null) {
+                    Modifier
+                        .clickable(role = Role.Button, onClick = onPlayPause)
+                        .semantics { contentDescription = if (playing) "Pause" else "Play retained audio" }
+                } else {
+                    Modifier
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = OrtIcons.play,
+            contentDescription = null,
+            tint = OrtColors.accentOnGreen,
+            modifier = Modifier.size(14.dp),
+        )
+    }
+}
+
+/** R-054: the waveform's own tap-to-seek and drag-to-scrub gesture handling, a no-op [Modifier]
+ * when [onScrub] is null. */
+private fun Modifier.waveformScrub(onScrub: ((Float) -> Unit)?): Modifier {
+    if (onScrub == null) return this
+    return this
+        .pointerInput(onScrub) {
+            detectTapGestures { offset -> onScrub(scrubFraction(offset.x, size.width.toFloat())) }
+        }
+        .pointerInput(onScrub) {
+            detectDragGestures { change, _ ->
+                change.consume()
+                onScrub(scrubFraction(change.position.x, size.width.toFloat()))
+            }
+        }
+}
+
+@Composable
 private fun WaveformCardContent(
     bars: List<WaveformBar>,
     cursorFraction: Float?,
@@ -125,6 +186,7 @@ private fun WaveformCardContent(
     durationLabel: String,
     speedLabel: String?,
     onPlayPause: (() -> Unit)?,
+    onScrub: ((Float) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val playing = cursorFraction != null
@@ -135,31 +197,8 @@ private fun WaveformCardContent(
             .padding(horizontal = 14.dp, vertical = 13.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .background(OrtColors.accentGreen, CircleShape)
-                    .then(
-                        if (onPlayPause != null) {
-                            Modifier
-                                .clickable(role = Role.Button, onClick = onPlayPause)
-                                .semantics {
-                                    contentDescription = if (playing) "Pause" else "Play retained audio"
-                                }
-                        } else {
-                            Modifier
-                        },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = OrtIcons.play,
-                    contentDescription = null,
-                    tint = OrtColors.accentOnGreen,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
-            Canvas(modifier = Modifier.weight(1f).height(26.dp)) {
+            WaveformPlayControl(playing = playing, onPlayPause = onPlayPause)
+            Canvas(modifier = Modifier.weight(1f).height(26.dp).waveformScrub(onScrub)) {
                 if (bars.isEmpty()) return@Canvas
                 val gap = 1.5.dp.toPx()
                 val barWidth = (size.width - gap * (bars.size - 1)) / bars.size
