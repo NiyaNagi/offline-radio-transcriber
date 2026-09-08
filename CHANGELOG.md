@@ -10280,6 +10280,68 @@ affordance — the whole sentence stays one reachable, readable, tappable text e
 - R-331's detail-title half (`F04-rejected-detail-pass3.png` — "REJECTED" alone, no elaboration) is
   WP6's file (`TransmissionDetailScreen.kt`/its mapper), not touched here.
 
+### (pending) — ui-conformance WP5 · Log filter sheet claims system back (R-333, Log half)
+
+**Scope:** `ui/screens/LogContent.kt` and a new test file, `LogContentBackHandlerTest.kt`.
+
+**Requirements/ACs:** R-333, Log half only (register.md — WP3 owns the host's own `BackHandler`;
+`design-intent.md` §0).
+
+**Constitution Check.** Principle II (Test-Backed Change): the new test is a genuine regression
+guard, not a green-by-construction one — verified by reverting the fix, confirming the test fails
+(`assertDoesNotExist` on the still-open sheet), then restoring it and confirming it passes again,
+the same discipline every `Saver`/regression-guard test in this package has shipped with.
+
+**What changed:**
+- `LogContent`'s own `BackHandler(enabled = sheetOpen) { sheetOpen = false }`, placed beside the
+  `sheetOpen`/`sheetState` declarations. Root cause: WP3's `OrtNavHost` host `BackHandler` closes the
+  drawer and pops drill-ins, but has no idea this composable's own L02 filter sheet exists —
+  `LogFilterSheet` is a plain composable, not a `ModalBottomSheet` that would intercept back on its
+  own — so a system back press while the sheet was open fell through to the host and popped Log
+  itself, one level too far. `enabled = sheetOpen` means this handler only claims back while the
+  sheet is actually showing; the host's own handler (and the Activity's default finish) still apply
+  the rest of the time.
+- New `LogContentBackHandlerTest.kt` (a dedicated file, not a case added to the existing
+  `LogAndThreadContentActivityTest`): that file's own doc comment records why a real, non-`null`
+  `sessionId` case must not share a class with one that keeps `sessionId = null` — an uncancelled
+  session-tied polling loop bleeding into a later test in the same Robolectric suite run. `R_333_log_sheet_back`
+  hosts `LogContent` inside a real `ComponentActivity`, opens the sheet (taps "Filter", waits for
+  the real poll to resolve), dispatches back through the real `composeTestRule.activity.onBackPressedDispatcher`
+  (not a fake), and asserts the sheet closed while Log itself is still showing.
+
+**Verified:**
+- `git merge main` (not `--ff-only` — `409d3a2` was not yet an ancestor of main at merge time, per
+  the coordinator's own "queued to merge" framing) — one real conflict, `results/coverage-matrix.md`
+  (a generated file); resolved by taking main's version and letting `coverageMatrix` regenerate it
+  fresh against the merged tree in the gate below. Every other file (including `CHANGELOG.md`)
+  auto-merged cleanly. `python tools\spec-check\spec_check.py` confirmed no unresolved conflict
+  markers remain anywhere.
+- **Reproduced first**: ran the new test against the code without the `BackHandler` — failed exactly
+  as expected (`assertDoesNotExist` found the sheet's own "Filter the log" title still present after
+  the back dispatch). Restored the fix; re-ran; passed.
+- Scoped gate (the coordinator's own standing load-policy change from the prior round — main's full
+  `build` stalled an hour under many worktrees running it at once):
+  - `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.LogContentBackHandlerTest"
+    --tests "org.ort.app.ui.screens.LogAndThreadContentActivityTest" --tests
+    "org.ort.app.ui.screens.LogScreenTest" --tests "org.ort.app.ui.data.LogViewDataTest" --tests
+    "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.data.ThreadViewDataTest" --tests
+    "org.ort.app.ui.screens.ThreadDetailScreenTest"` — BUILD SUCCESSFUL, every test `PASSED`.
+  - `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean.
+  - `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+  - `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+  - `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+  - `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 191 covered ->
+    results\coverage-matrix.md` (unchanged from the merge — confirms the conflict resolution above
+    left the matrix accurate).
+  - `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (191
+    covered of 419)`.
+- New test, `PASSED`: `LogContentBackHandlerTest.R_333_log_sheet_back`.
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- R-333's other three reproduction points (D01 opened from an L01 row, the rejected detail from L05,
+  the open drawer on Now) are WP3's own host-level `BackHandler` — not this package's file.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
