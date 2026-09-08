@@ -60,6 +60,12 @@ underlying breakdown each prompt draws on.
   transition via `ShedEventPersister` into F-021's table, republishes level+backlog through the new
   `ShedStatus` holder, and stops capture loudly at a documented free-storage floor (FR-STO-4). The
   `:app` display side (F-002: still reads its own fake-fed `ShedController`) is not done here.
+  audit F-002 (2026-09-07): `:app`'s status surface now reads the real level/backlog from
+  `ShedStatus` (published by F-007's `RealCaptureService`) instead of an inert, always-nominal
+  local `ShedController`, and shows an explicit "Not measured" label — never a fabricated `0` —
+  before capture has ever started this process. The dead v0 `StatusActivity`/
+  `TransmissionListActivity` (nothing launched either once `OrtNavHost` took over, P13/P14) are
+  deleted, removing the second copy of the same bug.
 - [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07;
   audit F-027 (2026-09-07) named/added tests for FR-LEX-6/11(partial)/14/18/19/20/21/23/29,
   FR-TST-2/4/5, FR-A11Y-6, NFR-1a/1c, AC-57 — FR-LEX-15/16/22/32 and AC-13/35 remain genuinely

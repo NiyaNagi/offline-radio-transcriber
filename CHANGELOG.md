@@ -32,6 +32,65 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-002)
+
+### (pending) — audit F-002 · the status surface now shows the real shed level and backlog, or says "Not measured" — never a fabricated "Nominal"
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/data/ReaderPolling.kt`
+(`statusRepository`/`currentStatus`), `app/src/main/kotlin/org/ort/app/status/StatusViewState.kt`
+(`StatusViewState`, `StatusViewStateMapper.from`), `app/src/main/kotlin/org/ort/app/ui/screens/StatusScreen.kt`
+(new "Queue backlog" row), `app/src/main/AndroidManifest.xml` (dead-activity entries removed);
+deleted `app/src/main/kotlin/org/ort/app/status/StatusActivity.kt` and
+`app/src/main/kotlin/org/ort/app/transmissions/TransmissionListActivity.kt` and their tests; test
+changes in `StatusViewStateMapperTest.kt`, `ReaderPollingTest.kt`, `StatusScreenTest.kt`.
+**Requirements/ACs:** FR-RUN-5 (queue depth and shed level visible in the status surface),
+FR-UI-7, constitution IV ("never lies").
+**What changed:** `ReaderPolling.currentStatus` and `StatusActivity` (now deleted) each built a
+`ShedController` on an anonymous `ShedSignals` returning `batteryPercent()=100`,
+`isCharging()=true`, `queueBacklog()=0`, `freeStorageBytes()=Long.MAX_VALUE` — and, worse, never
+called `.sample()`/`.tick()` on it, so `currentLevel` stayed `0` regardless of those fake signals;
+the surface could only ever render "Nominal". `StatusViewStateMapper.from` now takes explicit
+`shedLevel`/`backlog: Int?` parameters instead of reading `CaptureStatus.shedLevel` (which is still
+populated by a `ShedController` `CaptureStatusRepository`'s constructor requires but whose output
+is now discarded — see that function's doc comment); `null` renders as "Not measured" via the new
+`StatusViewState.NOT_MEASURED_LABEL`, and a real level/backlog render their existing/new labels.
+`ReaderPolling.currentStatus` supplies those real values from `org.ort.pipeline.capture.ShedStatus`
+(F-007's process-wide holder, published by `RealCaptureService`'s real `ShedController` every
+~10 s) whenever `CaptureState.state != CaptureState.State.Idle` — i.e. capture has started at least
+once this process, which is when the shed monitor coroutine can plausibly have sampled anything;
+before that, both render "Not measured", never a fabricated `0`. `StatusScreen` gained a "Queue
+backlog" row alongside the existing "Shed level" row. `ReaderPolling.statusRepository` still must
+construct *some* `ShedController` to satisfy `CaptureStatusRepository`'s constructor (in `:pipeline`,
+out of this change's scope) but now reuses `:pipeline`'s own `FakeShedSignals` rather than a second
+bespoke anonymous fake — its output is never read for anything user-visible any more. The dead v0
+`StatusActivity`/`TransmissionListActivity` (grepped: no production code launched either — only
+stale doc comments and their own manifest/tests — since `MainActivity` has launched `ReaderActivity`
+since build-plan P13) are deleted along with their manifest entries and tests, removing the second
+copy of the fabricated-signal bug outright rather than patching it twice.
+**Verified:** New/updated tests in `StatusViewStateMapperTest.kt` (`FR_RUN_5_an explicit shed level
+and backlog render as measured...`, `FR_RUN_5_no shed reading published renders not measured...`),
+`ReaderPollingTest.kt` (`FR_RUN_5_currentStatus reads the real shed level and backlog once capture
+has started`, `FR_RUN_5_currentStatus reports not measured before capture has ever started...`),
+and `StatusScreenTest.kt` (`FR_RUN_5_queue backlog is shown as a number`, `FR_RUN_5_an unmeasured
+shed level and backlog render as not measured, never zero`) — confirmed failing first with
+`e: ... No parameter with name 'shedLevel' found` / `Unresolved reference 'backlog'` compile errors
+against the pre-fix `StatusViewState`/`StatusViewStateMapper.from` signature (verified by
+temporarily reverting the three production files to their pre-fix content and re-running
+`./gradlew :app:testDebugUnitTest --tests ...`), then green once the fix was restored.
+`grep -r "object : ShedSignals" app/` returns no matches. `./gradlew :app:test` (green, all tests),
+`./gradlew build dependencyRules` (exit 0), `python tools/spec-check/spec_check.py` (all 8 checks
+PASS). All JVM/Robolectric only — nothing here is device-verified.
+**Left open / not done:** the "not measured" gate is `CaptureState.state != Idle`, a proxy for
+"the shed monitor coroutine has plausibly sampled something" rather than a direct flag on
+`ShedStatus` itself — `ShedStatus` (owned by F-007, out of this change's `:pipeline`-scope) has no
+`hasMeasurement`/"unset" signal of its own, so there is a narrow race between `CaptureState`
+flipping off `Idle` and the async shed-monitor coroutine's first tick where a stale `0`/`0` could
+theoretically show as "measured" for one poll interval; not exercised by a test here.
+`FR-RUN-5`'s "oldest-unprocessed age" is not shown — neither `ShedStatus` nor `WorkQueueDao`
+exposes it cheaply today (`WorkQueueDao` has no oldest-`enqueuedAt`-by-state query), and adding one
+would mean touching `:data`/`:pipeline`, both out of this change's `:app`-only scope; reported here
+rather than fabricated.
+
 ## 2026-09-07 (audit — F-007)
 
 ### (pending) — audit F-007 · RealCaptureService now ticks a real ShedController, persists shed events, and stops loudly at a storage floor

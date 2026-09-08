@@ -16,7 +16,6 @@ class StatusViewStateMapperTest {
         isCapturing: Boolean = true,
         uncleanEnd: UncleanEndReport? = null,
         isAlive: Boolean = true,
-        shedLevel: Int = 0,
         gapCount: Int = 0,
     ) = CaptureStatus(
         sessionId = "s1",
@@ -24,7 +23,10 @@ class StatusViewStateMapperTest {
         elapsedMillis = 3_661_000,
         transmissionCount = 5,
         gapCount = gapCount,
-        shedLevel = shedLevel,
+        // Never read by the mapper any more (audit F-002/FR-RUN-5) — the mapper takes an explicit
+        // `shedLevel` parameter instead. Fixed at a value that would fail the tests below if it
+        // ever leaked back in, so a regression here fails loudly rather than by coincidence.
+        shedLevel = -1,
         isAlive = isAlive,
         lastHeartbeatWallMillis = 0L,
         uncleanEndFromPreviousLaunch = uncleanEnd,
@@ -65,8 +67,28 @@ class StatusViewStateMapperTest {
     @Test
     @Requirement("AC-46", "FR-RUN-3")
     fun `every shed level has a distinct, non-colour label`() {
-        val labels = (0..5).map { StatusViewStateMapper.from(status(shedLevel = it)).shedLevelLabel }
+        val labels = (0..5).map { StatusViewStateMapper.from(status(), shedLevel = it).shedLevelLabel }
         assertEquals(labels.toSet().size, labels.size, "every level must render distinguishably")
+    }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `FR_RUN_5 an explicit shed level and backlog render as measured, not the fabricated status field`() {
+        val view = StatusViewStateMapper.from(status(), shedLevel = 2, backlog = 7)
+        assertEquals(2, view.shedLevel)
+        assertEquals("Level 2 — speaker identity paused", view.shedLevelLabel)
+        assertEquals(7, view.backlog)
+        assertTrue(view.backlogLabel.contains("7"))
+    }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `FR_RUN_5 no shed reading published renders not measured, never a healthy-looking zero`() {
+        val view = StatusViewStateMapper.from(status())
+        assertNull(view.shedLevel)
+        assertEquals("Not measured", view.shedLevelLabel)
+        assertNull(view.backlog)
+        assertEquals("Not measured", view.backlogLabel)
     }
 
     @Test
