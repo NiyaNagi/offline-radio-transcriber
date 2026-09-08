@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +26,7 @@ import org.ort.app.ui.components.RadioRow
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.Sheet
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.TextField
 import org.ort.app.ui.data.CorrectionScope
 import org.ort.app.ui.data.CorrectionTier
 import org.ort.app.ui.data.RankedCandidateViewState
@@ -148,7 +148,9 @@ private fun SearchTier(
             query = text
             scope.launch { results = onSearchLexicon(text) }
         },
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Search the lexicon" },
+        placeholder = "callsign or name",
+        mono = true,
+        contentDescriptionText = "Search the lexicon",
     )
     results.forEach { match ->
         Column(
@@ -193,7 +195,8 @@ private fun TypeTier(
     TextField(
         value = callsign,
         onValueChange = { callsign = it.uppercase() },
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Typed callsign" },
+        mono = true,
+        contentDescriptionText = "Typed callsign",
     )
     Text(
         text = "Recorded as unverified. This callsign was not parsed from the audio and has not " +

@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -18,7 +17,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -31,16 +32,16 @@ import org.ort.app.ui.audio.PlaybackOutcome
 import org.ort.app.ui.audio.PlaybackRate
 import org.ort.app.ui.audio.TransmissionAudioPlayer
 import org.ort.app.ui.components.ActionBar
-import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
-import org.ort.app.ui.components.MARKER_CARD_SIZE
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.PriorBar
 import org.ort.app.ui.components.RadioRow
 import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.TextField
+import org.ort.app.ui.components.TitleAttributionRow
 import org.ort.app.ui.components.WaveformCard
 import org.ort.app.ui.components.WaveformViewState
 import org.ort.app.ui.data.AmbiguousCandidateViewState
@@ -69,12 +70,14 @@ import org.ort.core.AttributionState
  * nav-host rule) renders [org.ort.app.ui.components.DrillInHeader] around whichever content
  * composable is current; [TransmissionDetailContent] renders it for this screen today.
  *
- * **Component gap (report this):** `design/design-guide.md` §4 calls for the header callsign at
- * 27sp mono ("title size"), but [AttributionRow] (`ui/components/AttributionMarker.kt`, WP2) has
- * no size parameter for its callsign text — only [org.ort.app.ui.components.MARKER_CARD_SIZE] for
- * the marker shape itself. Per this package's own instruction ("never hand-roll a look-alike of a
- * component that exists"), this screen uses [AttributionRow] as-is at [MARKER_CARD_SIZE] rather
- * than reimplementing its shape/colour/chip logic at a larger text size.
+ * **R-050, closed.** The header callsign now renders through WP2's
+ * [org.ort.app.ui.components.TitleAttributionRow] (27sp mono, the marker at
+ * [org.ort.app.ui.components.MARKER_TITLE_SIZE]) — the title-size gap this package's earlier
+ * revision reported against [org.ort.app.ui.components.AttributionRow] is closed.
+ * [TitleAttributionRow] carries no `alternate` parameter (unlike `AttributionRow`), so AMBIGUOUS's
+ * "or QRF" runner-up is rendered as one further `Text` right after it, in the exact style
+ * `AttributionRow` itself uses for the same fact — an addition, not a look-alike of
+ * [TitleAttributionRow] itself.
  */
 @Suppress("LongParameterList") // one callback per distinct, independently-testable interaction the
 // four states need (`Detail-Ambiguous.dc.html`'s chooser and `Detail-Unknown.dc.html`'s "I know
@@ -129,12 +132,15 @@ private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -
     val detail = state.detail
     val alternate = (state.body as? DetailBodyViewState.Ambiguous)?.alternateCallsign
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
-        AttributionRow(
-            attribution = detail.attribution,
-            callsign = detail.attribution.stationId,
-            alternate = alternate,
-            size = MARKER_CARD_SIZE,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TitleAttributionRow(attribution = detail.attribution, callsign = detail.attribution.stationId)
+            // TitleAttributionRow has no `alternate` param — the AMBIGUOUS "or QRF" runner-up is
+            // added here, in AttributionRow's own style for the same fact (guide §6.1).
+            if (alternate != null) {
+                Spacer(modifier = Modifier.width(OrtSpacing.xs))
+                Text(text = "or $alternate", style = OrtType.subLine, color = OrtColors.accentAmber)
+            }
+        }
         if (detail.attribution.corrected) {
             Badge(text = "corrected", kind = BadgeKind.CORRECTED, modifier = Modifier.padding(top = OrtSpacing.xs))
         }
@@ -170,9 +176,10 @@ private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -
  * unavailable, via [WaveformCard]. No amplitude data exists anywhere in the schema for a real
  * waveform shape (`TransmissionDetailViewState` carries none), so [WaveformBar] lists are always
  * empty here — an honest flat card with a working play control and duration, not a fabricated
- * shape (constitution I). The scrub gesture itself (`WaveformCard`'s Canvas has no drag handler
- * today) and the spoken-word outline (no word-timing data exists either) are both named as gaps in
- * this package's CHANGELOG rather than faked.
+ * shape (constitution I). Scrubbing (WP2's `onScrub`) seeks the real player directly —
+ * `positionFraction` is then read back from it on the next poll tick, the same as any other
+ * player-driven position change. The spoken-word outline (no word-timing data exists anywhere)
+ * stays a named gap in this package's CHANGELOG rather than faked.
  */
 @Composable
 private fun PlaybackSection(detail: TransmissionDetailViewState, player: TransmissionAudioPlayer) {
@@ -232,6 +239,18 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
             } else {
                 null
             },
+            // R-054: WP2's WaveformCard reports a scrub as a 0f..1f fraction; seeking the real
+            // player and updating positionFraction immediately (not waiting for the next poll
+            // tick) is what makes the cursor track the drag rather than lag a whole poll interval.
+            onScrub = if (detail.hasAudio) {
+                { fraction ->
+                    player.seekToFraction(fraction)
+                    positionFraction = fraction
+                }
+            } else {
+                null
+            },
+            modifier = Modifier.testTag("waveform-card"),
         )
         if (playing) {
             Row(modifier = Modifier.padding(top = OrtSpacing.sm)) {
@@ -499,8 +518,9 @@ private fun LabelSampleSection(
         TextField(
             value = form.callsign,
             onValueChange = { form.callsign = it },
-            label = { Text("Labelled callsign") },
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Labelled callsign" },
+            label = "Labelled callsign",
+            mono = true,
+            contentDescriptionText = "Labelled callsign",
         )
         if (form.callsign.isNotBlank()) {
             SectionHeader(label = "Certainty", modifier = Modifier.padding(top = OrtSpacing.sm))
@@ -515,20 +535,21 @@ private fun LabelSampleSection(
         TextField(
             value = form.tactical,
             onValueChange = { form.tactical = it },
-            label = { Text("Tactical callsign") },
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Tactical callsign" },
+            label = "Tactical callsign",
+            mono = true,
+            contentDescriptionText = "Tactical callsign",
         )
         TextField(
             value = form.threadId,
             onValueChange = { form.threadId = it },
-            label = { Text("Thread id") },
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Thread id" },
+            label = "Thread id",
+            contentDescriptionText = "Thread id",
         )
         TextField(
             value = form.note,
             onValueChange = { form.note = it },
-            label = { Text("Note") },
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Note" },
+            label = "Note",
+            contentDescriptionText = "Note",
         )
         TextAction(
             text = "Save",

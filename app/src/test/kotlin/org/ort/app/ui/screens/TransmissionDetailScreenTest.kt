@@ -1,12 +1,16 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -81,6 +85,31 @@ class TransmissionDetailScreenTest {
         composeTestRule.onNodeWithText("No retained audio for this transmission").assertExists()
     }
 
+    /**
+     * R-054: WP2's `WaveformCard.onScrub` reports a tap/drag on the waveform as a `0f..1f`
+     * fraction; this screen wires it straight to [org.ort.app.ui.audio.TransmissionAudioPlayer.seekToFraction]
+     * — proven by a real touch dispatched at the waveform's own bounds (`performTouchInput`, not a
+     * direct lambda call, so this proves the wiring reaches the actual composed gesture handler,
+     * not just that a Kotlin function reference is correct) reaching [FakeTransmissionAudioPlayer].
+     */
+    @Test
+    fun `R_054_scrubbing_the_waveform_seeks_the_player`() {
+        val player = FakeTransmissionAudioPlayer()
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = state(), player = player) }
+        }
+
+        val node = composeTestRule.onNodeWithTag("waveform-card")
+        val bounds = node.fetchSemanticsNode().size
+        node.performTouchInput {
+            click(Offset(bounds.width * 0.8f, bounds.height / 2f))
+        }
+        composeTestRule.waitForIdle()
+
+        assert(player.seekCalls.isNotEmpty()) { "expected at least one seekToFraction call, got none" }
+        assert(player.seekCalls.last() in 0f..1f) { "fraction out of range: ${player.seekCalls.last()}" }
+    }
+
     @Test
     fun `the transcript and attribution are both shown`() {
         composeTestRule.setContent {
@@ -147,6 +176,52 @@ class TransmissionDetailScreenTest {
         }
 
         composeTestRule.onNode(looksLikeAConfidenceNumber).assertDoesNotExist()
+    }
+
+    /**
+     * R-050: the header now renders through WP2's `TitleAttributionRow` (27sp mono, marker at
+     * `MARKER_TITLE_SIZE`) rather than `AttributionRow` at card size — proven by the visible
+     * callsign existing and the marker's content description still naming the state, for every
+     * state including AMBIGUOUS, whose "or QRF" alternate `TitleAttributionRow` has no parameter
+     * for and this screen renders as one further `Text` beside it.
+     */
+    @Test
+    fun `R_050_the_header_renders_the_title_attribution_row`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.confirmed("W7NPC", 0.94))),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("W7NPC").assertExists()
+        composeTestRule
+            .onNodeWithContentDescription("filled circle, Confirmed, W7NPC", substring = true)
+            .assertExists()
+    }
+
+    @Test
+    fun `R_050 AMBIGUOUS renders the alternate callsign beside the title attribution row`() {
+        val inspection = InspectionViewState(
+            lattice = null,
+            candidates = listOf(
+                CandidateInspectionViewState("KE7QRS", 0, 0.51, true, true, false, emptyList()),
+                CandidateInspectionViewState("KE7QRF", 1, 0.46, true, false, false, emptyList()),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.ambiguous(), inspection = inspection)),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("KE7QRS").assertExists()
+        composeTestRule.onNodeWithText("or KE7QRF").assertExists()
     }
 
     @Test
