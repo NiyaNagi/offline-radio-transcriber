@@ -112,7 +112,11 @@ on disk, a session can wire it into `corpus/src/corpus/probes/speaker_separation
 (the 28th, the FLAC codec's device cost, waits for P9). It corrected several notes above in place
 (look for "audit F-0NN"). Two new CI gates exist because of it: `coverageMatrixCheck` and
 `platformGuards`. Coverage went 101 → 179 of 419 ids. Nothing has run on a device; P9 is still the
-gate that matters.
+gate that matters. **audit F-029 (2026-09-08):** the regenerated matrix itself had a hygiene bug —
+5 false "orphan tests" (`F-005`/`F-011`/`F-022`/`F-028`, plus one fictitious-id test fixture) from
+a too-strict cross-reference regex and a `CoverageMatrixTest` fixture that read as a fake
+declaration once `buildSrc/src/test/kotlin` became a scanned root (F-027). Fixed in `buildSrc`;
+header now reads 0, no requirement counts changed.
 
 **Wave E — make it an app.** *Added 2026-09-08, after the first real on-device test of the v0
 smoke build. Waves A–D produced eleven green modules and a debug APK that starts a real

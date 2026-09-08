@@ -77,11 +77,47 @@ class CoverageMatrixTest {
         val spec = dir.resolve("spec").toFile().apply { mkdirs() }
         File(spec, "s.md").writeText("AC-1 exists.")
         val tests = dir.resolve("t").toFile().apply { mkdirs() }
-        File(tests, "T.kt").writeText("@Test fun `AC_999_not_a_real_requirement`() {}")
+        // audit F-029: the fake test-function name is built by concatenation, not written as one
+        // contiguous string literal (and this comment deliberately never spells it out whole
+        // either). Because F-027 added buildSrc/src/test/kotlin to the matrix's own scanned
+        // roots, a `fun \`<id>_not_a_real_requirement\`(`-shaped literal sitting in *this file's*
+        // own source text — including inside a comment — would be picked up by the real
+        // coverageMatrix task as a genuine (fake) test declaration and rendered as a false orphan
+        // in the committed matrix: the bug this fixture is supposed to exercise in isolation, not
+        // cause for real. Splitting the token defeats that static scan while the
+        // runtime-assembled file content, which is all CoverageMatrix.analyse ever sees, is
+        // unchanged.
+        val fakeId = "AC" + "_999"
+        File(tests, "T.kt").writeText("@Test fun `${fakeId}_not_a_real_requirement`() {}")
 
         val coverage = CoverageMatrix.analyse(spec, listOf(tests))
-        assertTrue(coverage.orphanTests.containsKey("AC-999"))
-        assertFalse(coverage.covered.contains("AC-999"))
+        val fakeIdHyphenated = fakeId.replace('_', '-')
+        assertTrue(coverage.orphanTests.containsKey(fakeIdHyphenated))
+        assertFalse(coverage.covered.contains(fakeIdHyphenated))
+    }
+
+    // F-029: the audit register writes its own ids hyphenated (`F-005`, not `F5`), and
+    // `@Requirement("FR-UI-7", "F-005")`-style annotations in RealCaptureServiceTest use that
+    // form. The old CROSS_REFERENCE regex only matched the bare `F13` shape, so a hyphenated
+    // audit id fell through to "orphan" — a false positive in the generated matrix.
+
+    @Test
+    fun `F-029 a hyphenated audit id like F-005 is a cross-reference, not an orphan`(@TempDir dir: Path) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("AC-1 exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("FR-UI-7", "F-005")
+                @Test fun something() {}
+            }
+            """.trimIndent(),
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        assertFalse(coverage.orphanTests.containsKey("F-005"), coverage.orphanTests.toString())
+        assertTrue(coverage.crossReferencedTests.containsKey("F-005"), coverage.crossReferencedTests.toString())
     }
 
     // F-023: bare `F13`/`Q8`-style ids are cross-references to §12 failure modes and the
