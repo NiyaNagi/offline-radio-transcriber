@@ -109,6 +109,15 @@ are individually green.*
   rehoused into M5.
 - [ ] **P17 · Station and frequency views with activity patterns** *(`:app`, `:data`)* —
   FR-UI-9..12, including FR-UI-12's "not heard" versus "not listening" distinction.
+- [x] **P18 · Model acquisition through `:net`** *(`:net`)* — done 2026-09-08. Without a model on
+  disk the app can capture but never transcribe, and P12 correctly refused to fetch one from
+  `:pipeline`: **only `:net` may link an HTTP client, and never in the capture or processing
+  path** (constitution V). `ModelAcquisition.fetch()`/`.sideload()` behind `HttpRangeClient` (a
+  real `HttpURLConnection` implementation plus a behavioural fake) fetch, resume, checksum-verify
+  and side-load a model, mirroring `corpus/acquire.py`'s semantics; `dependencyRules` confirms
+  `:net -> :core` only and that neither `:capture-android` nor `:pipeline` has any edge to `:net`.
+  **Not done here, by design:** the `:app` call site that mints `NetCapability.UserInitiated` and
+  actually downloads the models P12 is waiting on — see CHANGELOG.md.
 
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not
@@ -565,6 +574,38 @@ P5 II, III, IV · P6 VI · P7 I, VI · P8 IV, V, VII · P9 II, IV · P10 I, II �
 >
 > **Done when:** everything heard from one station and everything heard on one frequency each
 > have a view, with activity patterns that never present a capture gap as silence.
+
+### P18 · Model acquisition through `:net`
+
+> Read `.specify/memory/constitution.md` principle V, `spec/functional-spec.md` FR-ASR-8..11 and
+> FR-AST-1..8, `spec/technical-design.md` §8.4, and `asr-sherpa/README.md` (which documents the
+> sherpa-onnx model URLs and cache layout the gated real-decode tests already use).
+>
+> **Owns:** `:net` — the whole module, which is currently an empty stub. **Do not touch:**
+> `:pipeline`, `:capture-*`, `:asr-*`, `:app` (a later, tiny commit wires the call site; keeping
+> this prompt to one module keeps it conflict-free while the reader UI is being built in
+> parallel).
+>
+> P12 wired a real ASR engine and a real Silero VAD binding, and both are inert because **no
+> model file exists on the device**. P12 was right not to fetch one: `:pipeline` may not link an
+> HTTP client, and the capture/processing path may never touch the network at all — that is
+> principle V, and `dependencyRules` enforces the module half of it.
+>
+> Write first: a fetch that **verifies a checksum before the file is usable** and refuses on
+> mismatch, leaving nothing half-written that a later run could mistake for a good model
+> (FR-AST-2); resumability, so a dropped connection on a 100 MB download does not restart from
+> zero (the corpus pipeline's `acquire.py` already does exactly this — read it, the semantics
+> should match); a side-loaded file is signature-checked and probe-run **before** activation and
+> refused otherwise, keeping the previous model active (FR-ASR-8, FR-AST-2 — `:asr-sherpa`'s
+> `ModelActivation` already implements the activation half, so do not duplicate it: `:net`'s job
+> ends when verified bytes are on disk).
+>
+> Everything network-facing goes behind an interface with a behavioural fake, so `:app` and every
+> test can drive acquisition without a network.
+>
+> **Done when:** a model can be fetched, resumed, checksum-verified and landed in app-private
+> storage entirely within `:net`, with `dependencyRules` still green — and the capture path still
+> has no path to an HTTP client, which is the point.
 
 ---
 

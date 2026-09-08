@@ -1,6 +1,7 @@
 ﻿/*
- * Module :net is scaffolded per technical design section 2: wired into the build graph
- * with its permitted dependencies (see build.gradle.kts) but not yet implemented.
- * The build-plan wave that owns it is in spec/build-plan.md.
+ * :net — the only module in this codebase permitted an HTTP client (technical design §16.1,
+ * constitution V). Model acquisition (build-plan P18): fetch, resume, checksum-verify and
+ * side-load a model onto disk. See README.md for the client choice and net/ModelAcquisition.kt
+ * for the FR-AST-2/FR-AST-3/FR-ASR-8 semantics.
  */
 package org.ort.net
