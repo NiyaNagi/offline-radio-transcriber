@@ -106,24 +106,23 @@ public object LiveBarPolling {
      * carries that distinction through to [LiveBarViewState.meterTone]; every other override here
      * leaves it `null` (follow [tone]) because no other board draws that split.
      */
-    private fun failureOverrideLiveBar(): OverrideLiveBar? =
-        when (DebugFailureOverride.activeOverride) {
-            is FailurePresentation.Usb -> OverrideLiveBar(
-                tone = LiveBarTone.HALTED,
-                label = "Act",
-                partialText = "audio fine · radio needs permission",
-                meterTone = LiveBarTone.NOMINAL,
-            )
-            is FailurePresentation.StorageAudioPaused ->
-                OverrideLiveBar(tone = LiveBarTone.DEGRADED, label = "Text only", partialText = null)
-            is FailurePresentation.Route, is FailurePresentation.Disconnect, is FailurePresentation.Level,
-            is FailurePresentation.Killed, is FailurePresentation.StorageWarning, is FailurePresentation.StorageHalt,
-            is FailurePresentation.Thermal, is FailurePresentation.Backlog, is FailurePresentation.Rig,
-            is FailurePresentation.Call, is FailurePresentation.Clock, is FailurePresentation.Interrupted,
-            is FailurePresentation.Reconcile, is FailurePresentation.Migration, is FailurePresentation.AssetSwap,
-            is FailurePresentation.Calibration, FailurePresentation.None, null,
-            -> null
-        }
+    private fun failureOverrideLiveBar(): OverrideLiveBar? = when (DebugFailureOverride.activeOverride) {
+        is FailurePresentation.Usb -> OverrideLiveBar(
+            tone = LiveBarTone.HALTED,
+            label = "Act",
+            partialText = "audio fine · radio needs permission",
+            meterTone = LiveBarTone.NOMINAL,
+        )
+        is FailurePresentation.StorageAudioPaused ->
+            OverrideLiveBar(tone = LiveBarTone.DEGRADED, label = "Text only", partialText = null)
+        is FailurePresentation.Route, is FailurePresentation.Disconnect, is FailurePresentation.Level,
+        is FailurePresentation.Killed, is FailurePresentation.StorageWarning, is FailurePresentation.StorageHalt,
+        is FailurePresentation.Thermal, is FailurePresentation.Backlog, is FailurePresentation.Rig,
+        is FailurePresentation.Call, is FailurePresentation.Clock, is FailurePresentation.Interrupted,
+        is FailurePresentation.Reconcile, is FailurePresentation.Migration, is FailurePresentation.AssetSwap,
+        is FailurePresentation.Calibration, FailurePresentation.None, null,
+        -> null
+    }
 
     /**
      * `Flow-Degrade.dc.html`'s own priority order: capture actually stopped outranks every
