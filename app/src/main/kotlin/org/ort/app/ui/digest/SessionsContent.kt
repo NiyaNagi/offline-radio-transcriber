@@ -35,9 +35,22 @@ private sealed interface SessionsPage {
  * directly, filtered to the exact past session tapped (`LogContent`'s `sessionId` genuinely
  * filters, confirmed by reading `LogPolling.screenState` before relying on it) — composing another
  * package's public screen, not editing it.
+ *
+ * [onOpenTransmission] (round 3, WP3's host find): the embedded `Log`'s row taps and
+ * `Digest-Item`'s "The N over(s)" action both hand a real transmission id up through this callback
+ * so a host mounting this composable (`OrtNavHost`) can drill into `TransmissionDetailContent` —
+ * this package has no drill-in surface of its own to render that detail on. Defaults to a no-op so
+ * every existing caller (`OrtNavHost.kt`, not edited by this change) keeps compiling unchanged;
+ * `Digest-Item` hands up the first id in [DigestItemViewState.transmissionIds] (there is no
+ * filtered-to-a-set Log view to open for the general case of more than one).
  */
 @Composable
-public fun SessionsContent(context: Context, onDrawer: () -> Unit, modifier: Modifier = Modifier) {
+public fun SessionsContent(
+    context: Context,
+    onDrawer: () -> Unit,
+    modifier: Modifier = Modifier,
+    onOpenTransmission: (String) -> Unit = {},
+) {
     var page by remember { mutableStateOf<SessionsPage>(SessionsPage.List) }
     var list by remember { mutableStateOf<SessionsViewState?>(null) }
     LaunchedEffect(page) { if (page is SessionsPage.List) list = DigestPolling.sessions(context) }
@@ -86,13 +99,18 @@ public fun SessionsContent(context: Context, onDrawer: () -> Unit, modifier: Mod
         is SessionsPage.DigestItem -> DigestItemScreen(
             item = current.item,
             onBack = { page = SessionsPage.Digest(current.sessionId) },
-            onOpenTheOvers = { page = SessionsPage.Log(current.sessionId, current.item.headline) },
+            onOpenTheOvers = { current.item.transmissionIds.firstOrNull()?.let(onOpenTransmission) },
             modifier = modifier,
         )
 
         is SessionsPage.Log -> Column(modifier = modifier.fillMaxSize()) {
             DrillInHeader(parentLabel = current.label, onBack = { page = SessionsPage.Detail(current.sessionId) })
-            LogContent(context = context, sessionId = current.sessionId, onOpen = {}, modifier = Modifier.fillMaxSize())
+            LogContent(
+                context = context,
+                sessionId = current.sessionId,
+                onOpen = onOpenTransmission,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }

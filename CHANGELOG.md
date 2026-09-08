@@ -398,6 +398,109 @@ other component, without an unmerged-tree trick.
 ---
 
 
+## 2026-09-08 (ui-conformance WP10 round 3: session row taps and settings sub-screen entry exposed to the host)
+
+### (pending) — ui-conformance WP10 · session row taps and settings sub-screen entry exposed to the host
+
+**Scope:** `:app` — `ui/digest/SessionsContent.kt`, `ui/settings/SettingsContent.kt`,
+`ui/digest/DigestPolling.kt`, and their tests (new `ui/digest/SessionsContentTest.kt`, new
+`ui/settings/SettingsContentTest.kt`, extended `ui/digest/DigestPollingTest.kt`). No file outside
+`ui/settings/**`, `ui/digest/**`, `ui/improve/**` and tests was touched; `ui/navigation/
+OrtNavHost.kt`/`ReaderDestination.kt` were read (to confirm WP3's host-side use of the two entry
+points below) but not edited — both already compile unchanged against the new optional
+parameters, as required.
+
+**Requirements/ACs:** R-090 (settings sub-screen entry), R-092/FR-DIG-2a/FR-DIG-9/FR-UI-1
+(session row taps hand a real transmission id to the host; the two previously-uncomputed digest
+item kinds), constitution I (Uncertainty Is Content — an item is computed only where a real query
+answers it) and II (Test-Backed Change).
+
+**What changed:**
+
+*Constitution Check.* Principle I: both new digest item kinds are computed from real rows only —
+`longThreadItems` reads every historical thread's length from `TransmissionDao.listAll()` grouped
+by `threadId`, `regularAbsentItems` reads the last four same-UTC-weekday sessions' station sets —
+neither invents a number when the underlying history is too thin (see the two "insufficient
+history" tests). Principle II: each new/changed behaviour has a test named for its id, written
+against real `OrtDatabase` rows, before this changelog entry.
+
+- **`SessionsContent(..., onOpenTransmission: (String) -> Unit = {})`** (FR-UI-1, FR-DIG-9): the
+  embedded `Log`'s row taps (`LogContent(..., onOpen = onOpenTransmission, ...)`, a direct
+  pass-through) and `Digest-Item`'s "The N over(s)" action (`onOpenTheOvers = {
+  current.item.transmissionIds.firstOrNull()?.let(onOpenTransmission) }`) now hand a real
+  transmission id up to whatever hosts this composable, closing the gap the previous entry's
+  "Left open" section named (`SessionsContent`'s embedded `Log` passed `onOpen = {}`). The default
+  keeps every existing call site (including `OrtNavHost.kt`, unedited) compiling and behaving as
+  before. `FR_UI_1`'s test proves the real navigation hop (Tonight → session → embedded `Log`,
+  header and columns rendered for real) but does not drive an actual row tap through to the
+  callback: `LogContent`'s row detail (`TransmissionDetail.buildDetail`) calls
+  `transcriptDao().getAllVersions(...)`, and Robolectric's bundled SQLite has no fts5 module —
+  `transcript_fts` fails to attach at database-open time for every test database here (confirmed
+  by the `no such module: fts5` warning, and by a 15-second wait with the semantics tree printed
+  showing the row list permanently empty) — so `LogContent`'s own row-tap-to-callback behaviour
+  remains WP5's `LogScreenTest`'s to prove against a hand-built view-state. `FR_DIG_9`'s test does
+  drive the full real path end-to-end (insert a session and a first-heard transmission, tap
+  Tonight → Digest → the digest item → "The 1 over(s)", assert the callback received the real
+  `"TX1"`) and passes.
+- **`SettingsContent(..., initialScreen: SettingsScreenId? = null)`** (R-090): lets a caller land
+  directly on `ASSETS`, `STORAGE`, `RIG`, or `CAPTURE` instead of always opening the `Settings`
+  root first — the entry points WP3's host round named (Now's "Install a model" and Setup S12's
+  `Install` → Assets; F6's "Free space" → Storage; F9's "Reconnect" → Rig; N06's `Adjust` →
+  Capture). `null` (the default) is unchanged root-first behaviour, keeping `OrtNavHost.kt`
+  compiling and behaving as before. Five new `SettingsContentTest` cases, one per screen plus the
+  no-param default, each asserting a real screen-specific label renders and (for the non-root
+  cases) that the root's own section labels do not.
+- **Digest's two previously-uncomputed item kinds** (`DigestPolling.digest`, FR-DIG-2a): both are
+  now real queries, not literals.
+  - *Long thread*: `longThreadItems` groups tonight's transmissions by `threadId`, groups every
+    historical transmission the same way to compute a real average thread length
+    (`TransmissionDao.listAll()`), and flags a tonight thread whose length is at least double that
+    average (floored at 5 overs so a single average of near-zero doesn't flag trivial threads).
+    The sub-line states the real rounded average ("usual is N over(s)"), never an artboard number.
+  - *Regular absent*: `regularAbsentItems` takes the last four sessions on the exact same UTC
+    weekday as tonight (`SessionEntity.startedAt`'s weekday), and — once at least three exist —
+    intersects their per-session station sets (`TransmissionDao.listBySession`) to find stations
+    heard in every one of them; any such station not heard tonight is flagged, naming the real
+    weekday and week count. Both kinds report nothing when their history threshold is unmet
+    (proved by the existing `R_092 digest never invents a long-thread or absent-station item...`
+    test, still green) rather than a false positive from a single data point.
+  - Four new `DigestPollingTest` cases (`FR_DIG_2a ...`) cover: a thread well above the historical
+    average is flagged with the real average in its sub-line; a thread at/below average is never
+    flagged; a station heard every matching weekday but absent tonight is flagged, once enough
+    history exists; a station heard tonight is never flagged absent even with matching history.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.digest.SessionsContentTest"` —
+  `FR_DIG_9 ... PASSED`, `FR_UI_1 ... PASSED`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.SettingsContentTest"
+  --tests "org.ort.app.ui.digest.DigestPollingTest"` — all 5 `SettingsContentTest` and all 9
+  `DigestPollingTest` cases `PASSED`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, no filter) — `BUILD SUCCESSFUL`, no
+  regression in any pre-existing test.
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 1m 40s`, 845
+  actionable tasks (38 executed, 9 from cache, 798 up-to-date); `dependencyRules: OK`;
+  `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL in 3s`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 183 covered ->
+  results\coverage-matrix.md` (up from 181; `FR-DIG-2A`, `FR-DIG-9` and `R-090` newly covered,
+  `FR-UI-1` gained `SessionsContentTest`).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date
+  (183 covered of 419)`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+
+**Left open / not done:**
+- `LogContent`'s own row-tap-to-callback behaviour is still unproven from inside
+  `SessionsContentTest` (the fts5/Robolectric limitation above) — it remains covered by WP5's
+  `LogScreenTest` against a hand-built view-state; only the wiring above it (`onOpen =
+  onOpenTransmission`) is this package's to prove, and is proven.
+- No third or fourth digest item kind beyond the two computed this round and the three the
+  previous entry already computed (first-heard, frequency departure, AMBIGUOUS/UNKNOWN counts) —
+  none was asked for.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
 ## 2026-09-08 (ui-conformance WP10: settings root and sub-screens, assets presentation, improve, sessions, digest)
 
 ### (pending) — ui-conformance WP10 · settings root and sub-screens, assets presentation, improve, sessions, digest

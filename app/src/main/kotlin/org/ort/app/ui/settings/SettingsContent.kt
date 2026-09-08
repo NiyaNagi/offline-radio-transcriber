@@ -23,15 +23,30 @@ import org.ort.app.ui.theme.OrtSpacing
  * dispatches into [ModelsContent] — the one entry WP3 already moved into this package — passing its
  * own `onBack` so it renders WP2's [org.ort.app.ui.components.DrillInHeader] back to `Settings`
  * rather than the bare, header-less screen it had before this destination had a root to return to.
+ *
+ * [initialScreen] (round 3, WP3's host find): lets a caller land directly on one sub-screen —
+ * `Assets` (Now's "Install a model", Setup S12's `Install`), `Storage` (F6's "Free space"), `Rig`
+ * (F9's "Reconnect"), `Capture` (N06's `Adjust`) — instead of always opening the `Settings` root
+ * first. A fresh `remember` seeded once, matching [org.ort.app.ui.navigation.rememberReaderNavigator]'s
+ * own `initialDestination` contract ("opens there on launch", not "always jumps there" — a later
+ * change to this parameter after first composition has no effect); `null` (the default, so every
+ * existing caller keeps compiling unchanged) opens the root, exactly as before this parameter
+ * existed. `Back` from that sub-screen still returns to the root, not out of this composable —
+ * this only changes where the screen starts, not the navigation shape.
  */
 @Composable
-public fun SettingsContent(context: Context, onDrawer: () -> Unit, modifier: Modifier = Modifier) {
+public fun SettingsContent(
+    context: Context,
+    onDrawer: () -> Unit,
+    modifier: Modifier = Modifier,
+    initialScreen: SettingsScreenId? = null,
+) {
     val store = remember {
         SharedPreferencesSettingsStore(
             context.getSharedPreferences(SharedPreferencesSettingsStore.PREFS_NAME, Context.MODE_PRIVATE),
         )
     }
-    var screen by remember { mutableStateOf<SettingsScreenId?>(null) }
+    var screen by remember { mutableStateOf(initialScreen) }
     // Bumped after every write so a sub-screen's own `remember(storeVersion)` recomputes from the
     // store it just wrote to, and the root's sub-lines catch up the next time it is shown.
     var storeVersion by remember { mutableStateOf(0) }
