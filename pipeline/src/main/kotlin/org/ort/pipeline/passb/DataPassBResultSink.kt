@@ -6,11 +6,13 @@ import org.ort.core.SystemClock
 import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CallsignCandidateEntity
+import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.PhoneticLatticeEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.inWriteTransaction
 import org.ort.lexicon.PhoneticLattice
+import org.ort.lexicon.SlotDetail
 
 /**
  * The real [PassBResultSink] (build-plan P12, defect 3): `PassB`'s own doc comment names
@@ -36,6 +38,11 @@ import org.ort.lexicon.PhoneticLattice
  * rather than overwriting the previous one (constitution III: "nothing is deleted quietly") —
  * the superseded conclusion stays reachable, `createdAt`/insertion order distinguishing it from
  * the latest.
+ *
+ * **Register R-320, R-182:** each candidate's own [org.ort.lexicon.CallsignCandidate.slotDetails]
+ * — per-slot score/kept-alternate for D05, and the char span for D01/D03's transcript highlight —
+ * is persisted alongside it, into `:data`'s new `lattice_slot` table
+ * ([org.ort.data.entity.LatticeSlotEntity]), in the same transaction. See [persistSlotDetails].
  */
 public class DataPassBResultSink(private val db: OrtDatabase) : PassBResultSink {
 
@@ -99,9 +106,10 @@ public class DataPassBResultSink(private val db: OrtDatabase) : PassBResultSink 
      * re-ranking pass needs every candidate, not just the one that won. */
     private suspend fun persistCandidates(result: PassBResult) {
         result.ranked.forEachIndexed { index, ranked ->
+            val candidateId = Ulid.generate().value
             db.catalogDao().insert(
                 CallsignCandidateEntity(
-                    id = Ulid.generate().value,
+                    id = candidateId,
                     transmissionId = result.transmissionId,
                     callsign = ranked.candidate.text,
                     rank = index,
@@ -119,6 +127,32 @@ public class DataPassBResultSink(private val db: OrtDatabase) : PassBResultSink 
                     databaseHit = ranked.contribution("database")?.let { !it.coldStart && it.logOdds > 0f } ?: false,
                     selected = result.attribution.state == AttributionState.CONFIRMED &&
                         result.attribution.stationId == ranked.candidate.text,
+                ),
+            )
+            persistSlotDetails(result.transmissionId, candidateId, ranked.candidate.slotDetails)
+        }
+    }
+
+    /**
+     * Register R-320, R-182: one [LatticeSlotEntity] per [org.ort.lexicon.SlotDetail] the lexicon
+     * side already computed for this candidate — see that type's own doc comment for what each
+     * field means and when it is genuinely `null` versus fabricated. `slotDetails` is empty for
+     * every candidate CallsignGrammar produced before this existed (an older jar, or an outcome
+     * with no lattice at all), so this loop is a no-op then, not an error.
+     */
+    private suspend fun persistSlotDetails(transmissionId: String, candidateId: String, slotDetails: List<SlotDetail>) {
+        slotDetails.forEach { detail ->
+            db.catalogDao().insert(
+                LatticeSlotEntity(
+                    id = Ulid.generate().value,
+                    transmissionId = transmissionId,
+                    candidateId = candidateId,
+                    index = detail.index,
+                    unit = detail.unit,
+                    score = detail.score,
+                    keptAlternate = detail.keptAlternate,
+                    charStart = detail.charStart,
+                    charEnd = detail.charEnd,
                 ),
             )
         }

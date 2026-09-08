@@ -115,6 +115,137 @@ public class CorrectionDaoTest {
     }
 
     @Test
+    @Requirement("R-321")
+    public fun R_321_correction_then_restore_round_trips_a_confirmed_attribution_exactly(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S1"))
+        db.transmissionDao().insert(
+            TestFixtures.transmission("TX1", sessionId = "S1", stationId = "K7ABC").copy(
+                attributionConfidence = 0.95,
+            ),
+        )
+
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR1",
+                transmissionId = "TX1",
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = "K7ABC",
+                newValue = "W7NPC",
+                correctedAt = 100L,
+            ),
+        )
+        assertEquals(AttributionState.INFERRED, db.transmissionDao().getById("TX1")!!.attributionState)
+
+        val correction = db.correctionDao().correctionsFor("TX1").single()
+        assertEquals(AttributionState.CONFIRMED, correction.previousAttributionState)
+        assertEquals(0.95, correction.previousAttributionConfidence)
+        assertNull(correction.previousAttributionSourceTransmissionId)
+        assertEquals(false, correction.previousCorrected)
+
+        db.correctionDao().restoreAttribution(
+            transmissionId = "TX1",
+            state = correction.previousAttributionState!!,
+            stationId = correction.previousValue,
+            confidence = correction.previousAttributionConfidence,
+            sourceTransmissionId = correction.previousAttributionSourceTransmissionId,
+            corrected = correction.previousCorrected!!,
+        )
+
+        val restored = db.transmissionDao().getById("TX1")!!
+        assertEquals(AttributionState.CONFIRMED, restored.attributionState)
+        assertEquals("K7ABC", restored.stationId)
+        assertEquals(0.95, restored.attributionConfidence)
+        assertNull(restored.attributionSourceTransmissionId)
+        assertEquals(
+            "Undo all must also clear the CORRECTED lock a restore-to-uncorrected implies",
+            false,
+            restored.corrected,
+        )
+    }
+
+    @Test
+    @Requirement("R-321")
+    public fun R_321_correction_then_restore_round_trips_an_ambiguous_attribution_exactly(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S1"))
+        db.transmissionDao().insert(
+            TestFixtures.transmission("TX1", sessionId = "S1", stationId = null).copy(
+                attributionState = AttributionState.AMBIGUOUS,
+            ),
+        )
+
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR1",
+                transmissionId = "TX1",
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = null,
+                newValue = "W7NPC",
+                correctedAt = 100L,
+            ),
+        )
+
+        val correction = db.correctionDao().correctionsFor("TX1").single()
+        assertEquals(AttributionState.AMBIGUOUS, correction.previousAttributionState)
+        assertNull(correction.previousAttributionConfidence)
+        assertNull(correction.previousAttributionSourceTransmissionId)
+        assertEquals(false, correction.previousCorrected)
+
+        db.correctionDao().restoreAttribution(
+            transmissionId = "TX1",
+            state = correction.previousAttributionState!!,
+            stationId = correction.previousValue,
+            confidence = correction.previousAttributionConfidence,
+            sourceTransmissionId = correction.previousAttributionSourceTransmissionId,
+            corrected = correction.previousCorrected!!,
+        )
+
+        val restored = db.transmissionDao().getById("TX1")!!
+        assertEquals(AttributionState.AMBIGUOUS, restored.attributionState)
+        assertNull(restored.stationId)
+        assertNull(restored.attributionConfidence)
+        assertNull(restored.attributionSourceTransmissionId)
+        assertEquals(false, restored.corrected)
+    }
+
+    @Test
+    @Requirement("R-321")
+    public fun R_321_a_second_correction_captures_the_first_corrections_resulting_state(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S1"))
+        db.transmissionDao().insert(TestFixtures.transmission("TX1", sessionId = "S1", stationId = "K7ABC"))
+
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR1",
+                transmissionId = "TX1",
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = "K7ABC",
+                newValue = "W7NPC",
+                correctedAt = 100L,
+            ),
+        )
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR2",
+                transmissionId = "TX1",
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = "W7NPC",
+                newValue = "K9ZZZ",
+                correctedAt = 200L,
+            ),
+        )
+
+        // The second correction's "previous" is the FIRST correction's resulting state
+        // (INFERRED, locked) -- not the transmission's original CONFIRMED state, because that is
+        // what was really overwritten this time (a chain of corrections restores one hop at a
+        // time, the same way a chain of transcript versions does -- constitution III).
+        val second = db.correctionDao().correctionsFor("TX1").single { it.id == "CORR2" }
+        assertEquals(AttributionState.INFERRED, second.previousAttributionState)
+        assertNull(second.previousAttributionConfidence)
+        assertNull(second.previousAttributionSourceTransmissionId)
+        assertTrue(second.previousCorrected!!)
+    }
+
+    @Test
     public fun isCorrected_reflects_the_lock(): Unit = runTest {
         db.sessionDao().insert(TestFixtures.session("S1"))
         db.transmissionDao().insert(TestFixtures.transmission("TX1", sessionId = "S1"))

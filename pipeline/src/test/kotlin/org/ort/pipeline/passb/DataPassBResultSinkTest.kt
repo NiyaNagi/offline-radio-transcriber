@@ -23,6 +23,7 @@ import org.ort.lexicon.PhoneticLattice
 import org.ort.lexicon.PhoneticUnit
 import org.ort.lexicon.PriorContribution
 import org.ort.lexicon.RankedCandidate
+import org.ort.lexicon.SlotDetail
 import org.ort.pipeline.PipelineTestFixtures
 import org.robolectric.RobolectricTestRunner
 
@@ -58,6 +59,17 @@ class DataPassBResultSinkTest {
         acousticLogProb = 2.0f,
         editPenalty = 0f,
         slotSpan = 0..4,
+    )
+
+    private fun candidateWithSlots(callsign: String, prefix: String, country: String) = candidate(
+        callsign,
+        prefix,
+        country,
+    ).copy(
+        slotDetails = listOf(
+            SlotDetail(index = 0, unit = "K", score = 0.95, keptAlternate = null, charStart = 0, charEnd = 1),
+            SlotDetail(index = 1, unit = "7", score = 0.9, keptAlternate = "1", charStart = 1, charEnd = 2),
+        ),
     )
 
     private fun lattice() = PhoneticLattice.ofUnits(PhoneticUnit.spell("K7ABC"), LatticeSource.TEXT_DERIVED)
@@ -134,6 +146,38 @@ class DataPassBResultSinkTest {
 
         assertEquals(4, db.catalogDao().candidatesFor("TX1").size)
         assertEquals(2, db.catalogDao().latticesFor("TX1").size)
+    }
+
+    @Test
+    fun `R_320 R_182 each candidates slot details are persisted in the same transaction`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+        val withSlots = RankedCandidate(
+            candidateWithSlots("K7ABC", "K", "United States"),
+            contributions = listOf(PriorContribution("database", 1.0f)),
+        )
+        val result = PassBResult(
+            transmissionId = "TX1",
+            outcome = PassBOutcome.Accepted(FakeAsrEngine.defaultResult(text = "kilo seven alpha bravo charlie")),
+            lattice = lattice(),
+            ranked = listOf(withSlots),
+            attribution = Attribution.confirmed("K7ABC", 0.9),
+            fingerprint = fingerprint(),
+        )
+
+        sink.record(result)
+
+        val candidateId = db.catalogDao().candidatesFor("TX1").single().id
+        val slots = db.catalogDao().slotDetailsFor("TX1")
+        assertEquals(2, slots.size)
+        assertTrue(slots.all { it.candidateId == candidateId })
+        assertEquals(listOf(0, 1), slots.map { it.index })
+        assertEquals(listOf("K", "7"), slots.map { it.unit })
+        assertEquals("1", slots[1].keptAlternate)
+
+        val span = db.catalogDao().winningCandidateCharSpan("TX1")
+        assertEquals(0, span.spanStart)
+        assertEquals(2, span.spanEnd)
     }
 
     @Test
