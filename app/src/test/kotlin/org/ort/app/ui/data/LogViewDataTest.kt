@@ -147,60 +147,65 @@ class LogViewDataTest {
         assertNull(LogItemsMapper.badgeFor(d, isFirstHeard = false, isPartial = false))
     }
 
-    // -- R-040 the AMBIGUOUS "or QRF" alternate ------------------------------------------------
+    // -- R-322 (reopened R-240): the AMBIGUOUS row's kept (primary) candidate and its "or QRF" ---
+    // alternate — both rank-based now, matching `DetailViewStateMapper.ambiguousBody`'s own
+    // `candidates.sortedBy { it.rank }.take(2)`, never `selected` (real AMBIGUOUS candidates are
+    // never `selected`, confirmed by `AmbiguousCandidatesFixtureTest`'s own assertion against the
+    // real `overnight` fixture — the exact fixture shape these tests now use too).
 
     @Test
-    fun `R_040 an AMBIGUOUS row's alternate is the best-ranked non-selected candidate`() {
+    fun `R_322 the kept candidate is the best-ranked of an AMBIGUOUS over's real, unselected candidates`() {
         val inspection = InspectionViewState(
             lattice = null,
-            candidates = listOf(candidate("KE7QRS", rank = 1), candidate("QRF", rank = 2)),
-        )
-        val d = detail(attribution = Attribution.ambiguous(), inspection = inspection)
-
-        assertEquals("KE7QRS", LogItemsMapper.alternateFor(d))
-    }
-
-    @Test
-    fun `R_040 a non-AMBIGUOUS row never carries an alternate, even with candidates recorded`() {
-        val selectedCandidate = candidate("W7NPC", rank = 1, selected = true)
-        val inspection = InspectionViewState(lattice = null, candidates = listOf(selectedCandidate))
-        val d = detail(attribution = Attribution.confirmed("W7NPC", 0.95), inspection = inspection)
-
-        assertNull(LogItemsMapper.alternateFor(d))
-    }
-
-    // -- R-240 the AMBIGUOUS row's kept (primary) candidate ------------------------------------
-    // Not yet reachable on the rendered row — `ui/components/Rows.kt`'s `LogRowViewState` has no
-    // `callsign` field for `LogRow` to forward to `AttributionRow`'s own `callsign` param
-    // (`ui/components` is WP2's package); this proves the WP5-side derivation is correct and ready.
-
-    @Test
-    fun `R_240 an AMBIGUOUS row's kept candidate is the resolver's own selected one`() {
-        val inspection = InspectionViewState(
-            lattice = null,
-            candidates = listOf(candidate("KE7QRS", rank = 0, selected = true), candidate("KE7QRF", rank = 1)),
+            candidates = listOf(
+                candidate("KE7QRS", rank = 0),
+                candidate("KE7QRF", rank = 1),
+                candidate("KE7QRZ", rank = 2),
+            ),
         )
         val d = detail(attribution = Attribution.ambiguous(), inspection = inspection)
 
         assertEquals("KE7QRS", LogItemsMapper.keptCandidateFor(d))
-        assertEquals("KE7QRF", LogItemsMapper.alternateFor(d)) // the two never name the same candidate.
+        assertEquals("KE7QRF", LogItemsMapper.alternateFor(d)) // the runner-up, not the third candidate.
     }
 
     @Test
-    fun `R_240 no selected candidate at all never fabricates a kept candidate`() {
+    fun `R_322 candidate order in the list never matters, only rank`() {
+        val inspection = InspectionViewState(
+            lattice = null,
+            candidates = listOf(candidate("KE7QRF", rank = 1), candidate("KE7QRS", rank = 0)),
+        )
+        val d = detail(attribution = Attribution.ambiguous(), inspection = inspection)
+
+        assertEquals("KE7QRS", LogItemsMapper.keptCandidateFor(d))
+        assertEquals("KE7QRF", LogItemsMapper.alternateFor(d))
+    }
+
+    @Test
+    fun `R_322 a single recorded candidate is the kept one with no alternate`() {
         val inspection = InspectionViewState(lattice = null, candidates = listOf(candidate("KE7QRS", rank = 0)))
         val d = detail(attribution = Attribution.ambiguous(), inspection = inspection)
 
-        assertNull(LogItemsMapper.keptCandidateFor(d))
+        assertEquals("KE7QRS", LogItemsMapper.keptCandidateFor(d))
+        assertNull(LogItemsMapper.alternateFor(d))
     }
 
     @Test
-    fun `R_240 a non-AMBIGUOUS row never carries a kept candidate either`() {
+    fun `R_322 no candidates recorded at all never fabricates a kept candidate or an alternate`() {
+        val d = detail(attribution = Attribution.ambiguous(), inspection = InspectionViewState.EMPTY)
+
+        assertNull(LogItemsMapper.keptCandidateFor(d))
+        assertNull(LogItemsMapper.alternateFor(d))
+    }
+
+    @Test
+    fun `R_322 a non-AMBIGUOUS row never carries a kept candidate or an alternate, even with candidates recorded`() {
         val selectedCandidate = candidate("W7NPC", rank = 0, selected = true)
         val inspection = InspectionViewState(lattice = null, candidates = listOf(selectedCandidate))
         val d = detail(attribution = Attribution.confirmed("W7NPC", 0.95), inspection = inspection)
 
         assertNull(LogItemsMapper.keptCandidateFor(d))
+        assertNull(LogItemsMapper.alternateFor(d))
     }
 
     // -- R-040 gap labelling (FR-UI-12/FR-RUN-12) ----------------------------------------------

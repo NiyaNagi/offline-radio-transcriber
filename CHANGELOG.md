@@ -9366,6 +9366,81 @@ new `R_276` test is a real Room-backed regression guard for the count-honesty fi
 - WP3 wires `OrtNavHost.kt`'s host route to pass a real `initialFilter` the moment this lands on
   main — not this package's file, per the coordinator's own message.
 
+### (pending) — ui-conformance WP5 · AMBIGUOUS row's kept candidate, actually fixed (R-322)
+
+**Scope:** `ui/data/LogViewData.kt` and its tests (`LogViewDataTest`, `LogScreenTest`) — R-322, the
+V4 pass 2 device reopening of R-240 (which this package believed fixed and closed two rounds ago).
+
+**Requirements/ACs:** R-322 (register.md, reopened from R-240).
+
+**Constitution Check.** Principle I (Uncertainty Is Content) — the real failure this round: a test
+that passed against fabricated data while the device stayed wrong is exactly the shape of bug the
+constitution calls out. Principle II (Test-Backed Change): the new `R_322` test in `LogScreenTest`
+is not a fixture I invented — it seeds the real `overnight` scenario through `Scenarios.load` and
+drives the actual production call chain (`LogPolling.screenState` → `LogItemsMapper.toRowState` →
+`LogScreen` → `LogRow`), confirmed to fail against the pre-fix code (reverted, re-ran, restored —
+same verification discipline as every `Saver`/regression-guard test this package has shipped) and
+pass against the fix.
+
+**Root cause.** `keptCandidateFor`'s original design (two commits ago) read
+`candidates.firstOrNull { it.selected }` — on the assumption the resolver marks one candidate
+`selected` even on an AMBIGUOUS attribution. It never does, by design:
+`AttributionState.AMBIGUOUS`'s own doc comment is "the system will not choose", and WP6's
+`AmbiguousCandidatesFixtureTest` (`R_184`, landed on main between this package's original R-240 fix
+and this reopening) asserts exactly that against the real `overnight` fixture — "no candidate
+should be pre-selected on an AMBIGUOUS over". The unit test `keptCandidateFor` originally shipped
+with fabricated a `selected = true` candidate no real mapper output has ever produced (the real
+`overnight` fixture's AMBIGUOUS candidates were already all `selected = false`, even before R-184's
+change added a third one) — so CI stayed green while the device read only `alternateFor`'s output
+("or KE7QRS") forever, because `alternateFor` had the same latent flaw: with nothing ever
+`selected`, its `filterNot { it.selected }.minByOrNull { it.rank }` degenerated to "the best-ranked
+candidate overall" — the *primary*, not a runner-up — which is exactly the "or KE7QRS" the register
+screenshots show (KE7QRS is the real fixture's rank-0, best-scored candidate).
+
+**The fix.** Both functions now read rank instead of `selected`:
+`keptCandidateFor` = `candidates.sortedBy { it.rank }.getOrNull(0)`, `alternateFor` =
+`candidates.sortedBy { it.rank }.getOrNull(1)` — the exact `candidates.sortedBy { it.rank
+}.take(2)` pattern `DetailViewStateMapper.ambiguousBody` already uses for `Detail-Ambiguous.dc.html`
+(confirmed correct on device — register: "D03's own header is right"), so Log and Detail can never
+name a different pair for the same over again.
+
+**Verified:**
+- Read R-322 in `results/ui-audit/register.md` in full and its cited screenshots
+  (`overnight/L01-log-pass2.png`, `overnight/L01-log-real-pass2.png`) via the Read tool before
+  starting; also read WP6's `AmbiguousCandidatesFixtureTest.kt` and `DetailViewStateMapper`'s
+  `ambiguousBody` to find the real fixture shape and the pattern D03 already uses correctly.
+  `git merge --ff-only main` — `Updating <prior>..16172f0, Fast-forward`; `git merge-base
+  --is-ancestor HEAD main` exit 0 before merging.
+- **Reproduced first**: `LogScreenTest`'s new `R_322` test, run against the code as merged (before
+  any fix), failed exactly as the register describes — `Expected... 'KE7QRS'... could not find any
+  node`. Applied the rank-based fix; re-ran; passed. Reverted the fix a second time to confirm the
+  test still fails on the old code (not a false-positive from test ordering or caching), then
+  restored the fix.
+- `.\gradlew.bat :app:ktlintFormat :app:detekt` — BUILD SUCCESSFUL, ktlint clean, detekt clean.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (846 actionable tasks);
+  every test in the full `:app` suite `PASSED` — the `ReadyScreenTest` regression this package
+  flagged as open in the prior two entries is gone (fixed upstream by WP9/WP2 in the interim, not
+  by this commit).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 190 covered ->
+  results\coverage-matrix.md` (already at 190 on main before this commit's own regeneration — no
+  diff).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (190
+  covered of 419)`.
+- Full `:app` suite: 1168 tests, 0 failed. New/changed tests: `LogViewDataTest` (`R_040`'s two
+  AMBIGUOUS-alternate/kept-candidate tests replaced by five `R_322` tests — best-ranked-of-three
+  real-shape candidates, order-independence, single-candidate, zero-candidate, non-AMBIGUOUS) ·
+  `LogScreenTest` (+1 new: `R_322 the real overnight fixture's AMBIGUOUS row names its kept
+  candidate, not just the alternate` — the real-fixture reproduction described above).
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- If a future validator still finds this wrong on device, the next place to look is `LogRow`
+  (`ui/components/Rows.kt`, WP2's package) itself — this round's reproduction confirms the state
+  reaches `LogRowViewState.callsign` correctly, so a further regression would be render-side, not
+  this package's mapper.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
