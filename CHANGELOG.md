@@ -32,7 +32,6 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-<<<<<<< HEAD
 ## 2026-09-07 (audit — F-016)
 
 ### (pending) — audit F-016 · WorkQueue.requeueFailed gives exhausted FAILED items a fresh run
@@ -103,7 +102,6 @@ standing constraint; no device verification claimed.
 not into local pre-commit tooling — a contributor can still forget to run `coverageMatrix`
 locally and will only find out from CI. That matches how `dependencyRules` and the other gates in
 this repo already work, so left as is rather than inventing a new mechanism.
-=======
 ## 2026-09-07 (audit — F-003)
 
 ### (pending) — audit F-003 · the reader distinguishes FAILED and REJECTED from still-pending
@@ -151,7 +149,6 @@ Compose screen. `./gradlew :app:test --console=plain -q` — green, no failures.
 `./gradlew build dependencyRules --console=plain -q` — green; `python
 tools/spec-check/spec_check.py` — all 8 checks PASS. All on JVM/Robolectric; no on-device
 verification is claimed.
->>>>>>> worktree-agent-add297665d1e9be3e
 
 ---
 
