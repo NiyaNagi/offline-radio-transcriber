@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import org.ort.app.MainActivity
 import org.ort.app.permissions.PermissionsState
@@ -26,6 +27,7 @@ import org.ort.app.ui.theme.OrtTheme
 import org.ort.capture.android.AndroidAudioIo
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.pipeline.capture.AsrAvailability
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 
 /**
@@ -273,6 +275,16 @@ public class SetupActivity : ComponentActivity() {
         refreshStep(pushCurrent = true)
     }
 
+    /** S10's "Enter the frequency instead" (also reachable straight from a chosen CAT rig with no
+     * real support — see [RadioUsbScreen]'s own doc comment). [hz] is `null` for a blank or
+     * unparseable entry ([parseMegahertzToHz]) — never fabricated (constitution I); the operator
+     * can still proceed and set it later from Settings. */
+    internal fun onEnterFrequency(hz: Long?) {
+        store.radioChoice = RadioChoice.NONE
+        store.manualFrequencyHz = hz
+        refreshStep(pushCurrent = true)
+    }
+
     internal fun onRadioVerifiedContinue() {
         refreshStep(pushCurrent = true)
     }
@@ -340,7 +352,7 @@ public class SetupActivity : ComponentActivity() {
             SetupStep.RADIO_USB -> RadioUsbScreen(
                 rigStatus = rigStatusSnapshot,
                 onBack = ::onBack,
-                onEnterFrequencyInstead = ::onRadioNotNow,
+                onEnterFrequency = ::onEnterFrequency,
             )
             SetupStep.RADIO_VERIFIED -> RenderRadioVerified()
             SetupStep.READY -> RenderReady()
@@ -383,12 +395,34 @@ public class SetupActivity : ComponentActivity() {
         )
     }
 
+    /**
+     * S07 prefers a real, already-running [LevelStatus] over driving a second, competing
+     * `AudioRecord` open of its own: [LevelStatus] is published only by `RealCaptureService`
+     * itself, so a real [LevelStatus.State.Measured] here means a live capture session already has
+     * this device open (an operator revisiting setup while capture runs, or re-verifying after a
+     * mismatch). [LevelStatus.state] is a plain `@Volatile` field, not Compose-observable state, so
+     * the poll below (not a one-shot read) is what keeps the meter live — [RealLevelCheck] remains
+     * the path for the ordinary first-run case, where nothing has published anything yet.
+     */
     @Composable
     private fun RenderLevel() {
-        val selection = selectedDescriptor()
-        if (selection != null) {
+        if (LevelStatus.state is LevelStatus.State.Measured) {
             LaunchedEffect(levelRunToken) {
-                RealLevelCheck().run(audioIo, selection).collect { onLevelStateChanged(it) }
+                while (true) {
+                    val measured = LevelStatus.state
+                    if (measured is LevelStatus.State.Measured) {
+                        val reading = levelReadingFrom(measured, LevelStatus.peakHistoryDbfs)
+                        onLevelStateChanged(LevelCheckState.Reading(reading))
+                    }
+                    delay(LEVEL_STATUS_POLL_INTERVAL_MILLIS)
+                }
+            }
+        } else {
+            val selection = selectedDescriptor()
+            if (selection != null) {
+                LaunchedEffect(levelRunToken) {
+                    RealLevelCheck().run(audioIo, selection).collect { onLevelStateChanged(it) }
+                }
             }
         }
         LevelScreen(state = levelState, onContinue = ::onLevelContinue)
@@ -422,5 +456,10 @@ public class SetupActivity : ComponentActivity() {
     internal companion object {
         const val TAG = "SetupActivity"
         const val REQUEST_CODE = 1002
+
+        /** Matches `RealLevelCheck.DEFAULT_SAMPLE_INTERVAL_MILLIS` and `RealCaptureService`'s own
+         * roughly-10Hz frame-read cadence (`LevelStatus`'s own doc comment) — polling any faster
+         * would just re-read the same snapshot. */
+        const val LEVEL_STATUS_POLL_INTERVAL_MILLIS = 200L
     }
 }

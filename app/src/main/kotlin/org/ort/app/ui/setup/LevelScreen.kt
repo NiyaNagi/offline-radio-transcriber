@@ -68,7 +68,7 @@ public fun LevelScreen(state: LevelCheckState?, onContinue: () -> Unit) {
         )
         LevelRow(
             label = "Noise floor",
-            value = reading?.let { "%.0f dBFS".format(it.noiseFloorDbfs) } ?: "—",
+            value = reading?.noiseFloorDbfs?.let { "%.0f dBFS".format(it) } ?: "—",
             testTag = "setup-level-noise-floor",
         )
         LevelRow(
