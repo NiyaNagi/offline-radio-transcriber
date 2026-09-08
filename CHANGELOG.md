@@ -697,6 +697,106 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 · propagation rebinds the voiceprint and versions priors through StationIdentityDao
+
+**Scope:** `:app`, this package's files only — `ui/data/CorrectionPolling.kt`,
+`ui/screens/PropagatedScreen.kt`; `app/src/test/.../ui/data/CorrectionPollingTest.kt`, new
+`app/src/test/.../ui/screens/PropagatedScreenTest.kt`. `ui/data/CorrectionFlow.kt` was read and
+needed no change — [CorrectionRequest.tier] already carried what this fix needed to gate on.
+Addendum to the WP6 entry directly below, same package, a follow-up commit at the coordinator's
+request after `main` (merged here at `555cd4e`) landed `:data`'s `StationIdentityDao` (schema v3).
+
+**Requirements/ACs:** R-052 (closed — was partial in the entry below), FR-UI-6, FR-LEX-9,
+constitution I ("every machine conclusion MUST be inspectable"), constitution III ("nothing is
+deleted quietly").
+
+**Constitution Check.** Principle I: `PropagationOutcome.voiceprintReassigned`/`.priorsUpdatedCount`
+are now real counts derived from what was actually written
+(`PropagationOutcome.voiceprintRebind`/`.priorAdjustments`), never the fixed `false`/`0` the
+previous revision reported as an honest gap. Principle III: every write through
+`StationIdentityDao` is append-only by construction (`bindVoiceprintToStation`/`updatePriorWeight`
+each keep the row they supersede) — `undoAll` reverses both as **further** writes, never a delete,
+so `0 deleted` stays literally true even after an undo. Principle VII: the gate
+(`tier != FREE_TEXT && scope == EVERY_OVER_SAME_VOICE && voiceprintId != null`) is a real
+conditional in code, not a comment promising callers will behave — an unverified or
+`this-over-only` correction cannot rebind a shared voiceprint or feed a prior no matter what a
+future caller passes.
+
+**What changed:**
+
+1. **R-052 complete.** `CorrectionPolling.applyCorrection` now calls
+   `StationIdentityDao.bindVoiceprintToStation` (old binding copied to
+   `voiceprint_binding_history` first) and `StationIdentityDao.updatePriorWeight` for the two
+   named priors `Detail-Propagated.dc.html` counts (`on_this_repeater`, `recent_corrections`), but
+   **only** when the correction is verified (`CorrectionTier.PICK_CANDIDATE`/`.SEARCH_LEXICON`,
+   never `.FREE_TEXT` — `Detail-Correct-C.dc.html`'s own words: unverified "cannot feed the priors
+   or the voice match"), scoped to `EVERY_OVER_SAME_VOICE` (a `this over only` correction must not
+   rebind a voiceprint shared by overs the operator deliberately left alone), and the target
+   actually carries a `voiceprintId`.
+2. **Finding the voiceprint's real previous binding.** No `:data` DAO exposes `getById` for
+   `VoiceprintEntity` (only `CatalogDao.voiceprintsForStation(stationId)`, a read this package does
+   not own and cannot add to) — `rebindVoiceprint`/`findVoiceprint` search
+   `voiceprintsForStation` over every distinct `stationId` the propagation's own affected
+   transmissions currently carry (real data already fetched, not a guess); genuinely never having
+   been bound to any of them is a real, honestly-reported outcome (`previousStationId = null`),
+   not a failure.
+3. **`PriorAdjustmentEntity.weight` is additive**, `PRIOR_ADJUSTMENT_INCREMENT = 0.15` a disclosed
+   policy constant (documented in `CorrectionPolling`'s own KDoc as *not* a measured figure — there
+   is no corpus-fitted value for "how much one correction should move a prior" anywhere in spec or
+   design) chosen to match `StationIdentityDaoTest`'s own worked example (`0.2` → `0.35`) so the two
+   independently-chosen numbers in this codebase agree. A prior with no earlier row starts from
+   `0.0` — the same FR-LEX-31 cold-start-is-exactly-zero invariant `InspectionSurface.kt`'s mapper
+   already uses, not a fabricated confidence.
+4. **`PropagationOutcome` restructured**: `voiceprintReassigned`/`priorsUpdatedCount` are now
+   computed properties (`voiceprintRebind != null`, `priorAdjustments.size`) over two new real
+   types, `VoiceprintRebindOutcome`/`PriorAdjustmentOutcome`, each carrying exactly what `undoAll`
+   needs to reverse it. `PropagatedScreen`'s own `outcome.voiceprintReassigned`/
+   `.priorsUpdatedCount` reads needed **no change** — the computed properties keep the same names.
+5. **`undoAll` reverses both**, each as a further, kept write: a new `VoiceprintBindingHistoryEntity`
+   restoring the previous station (or `null`, if it was never bound) as the *new* value, and a new
+   `PriorAdjustmentEntity` per adjusted prior restoring its pre-correction weight as the new
+   current row. Neither deletes anything — the correction's own binding/weight rows stay reachable
+   in history exactly like every other superseded value in this schema.
+6. **`PropagatedScreen`'s "priors updated" line now names the real priors** ("priors updated — on
+   this repeater and recent corrections", matching `Detail-Propagated.dc.html` exactly) via a new
+   `priorsUpdatedLabel` helper, built from `PriorAdjustmentOutcome.name` — falls back to the bare
+   label when nothing was adjusted, never a fabricated name.
+
+**New tests:**
+- `CorrectionPollingTest`: `R_052_propagation_rebinds_the_voiceprint_and_keeps_the_old_binding_reachable`,
+  `R_052_undo_all_restores_the_previous_binding_without_deleting`,
+  `R_052_propagated_counts_are_the_real_row_counts` (the three named in the request), plus
+  `R_052_a_free_text_correction_never_rebinds_the_voiceprint_or_feeds_the_priors` and
+  `R_052_this_over_only_never_rebinds_a_voiceprint_shared_with_overs_left_alone` (proving the gate
+  itself, not just the happy path).
+- `PropagatedScreenTest` (new file): `` `R_052 a verified propagation names the real priors it
+  adjusted` ``, `` `R_052 an unverified correction shows zero, real counts, never a fabricated one` ``.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.CorrectionPollingTest" --tests
+  "org.ort.app.ui.screens.PropagatedScreenTest"` — **BUILD SUCCESSFUL**, all 18 tests green (16 in
+  `CorrectionPollingTest`, 2 in the new `PropagatedScreenTest`).
+- `.\gradlew.bat :app:testDebugUnitTest` (whole module) — **BUILD SUCCESSFUL**, 629 tests total.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**; `dependencyRules: OK`;
+  `platformGuards: OK` (also confirmed as separate invocations). One `:app:ktlintFormat` pass
+  needed first, for two `MaxLineLength` violations in the new test file; re-verified with
+  `:app:detekt` and the full gate afterward.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged, same reason as the
+  entries below) and `.\gradlew.bat coverageMatrixCheck` (separate invocation, up to date) — both
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- `undoAll`'s voiceprint-restore writes `previousBindingConfidence`/`previousBindingSource` exactly
+  as they were found (or `null`/`null` if the voiceprint was never bound) — this is complete for
+  R-052's own scope, not a new gap.
+- Splitting a voiceprint cluster (`StationIdentityDao.splitVoiceprint`, R-073) is a separate WP8
+  concern and untouched here.
+
+---
+
 ### (pending) — ui-conformance WP6 · correction sheet scrim, origin back labels, deprecated overload removed
 
 **Scope:** `:app`, this package's files only — `ui/screens/TransmissionDetailScreen.kt`,

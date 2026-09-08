@@ -59,7 +59,7 @@ public fun PropagatedScreen(
                     count = if (outcome.voiceprintReassigned) 1 else 0,
                     label = "voiceprint now belongs to ${outcome.newCallsign}",
                 )
-                ChangeRow(count = outcome.priorsUpdatedCount, label = "priors updated")
+                ChangeRow(count = outcome.priorsUpdatedCount, label = priorsUpdatedLabel(outcome))
                 ChangeRow(count = outcome.deletedCount, label = "records deleted — every earlier attribution is kept")
                 TextAction(
                     text = "Undo all ${outcome.overCount}",
@@ -78,6 +78,22 @@ public fun PropagatedScreen(
             primaryLabel = "Done",
             onPrimary = onDone,
         )
+    }
+}
+
+/**
+ * `Detail-Propagated.dc.html`: "priors updated — on this repeater and recent corrections" — the
+ * real, adjusted prior names (`PriorAdjustmentOutcome.name`, snake_case) rendered as prose, joined
+ * the way the artboard joins exactly two. Falls back to the bare label when nothing was adjusted
+ * (an unverified correction, or one scoped to this over only — see
+ * [org.ort.app.ui.data.CorrectionPolling]'s class doc for why), never a fabricated name.
+ */
+private fun priorsUpdatedLabel(outcome: PropagationOutcome): String {
+    val names = outcome.priorAdjustments.map { it.name.replace('_', ' ') }
+    return if (names.isEmpty()) {
+        "priors updated"
+    } else {
+        "priors updated — " + names.joinToString(" and ")
     }
 }
 
