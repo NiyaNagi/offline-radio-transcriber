@@ -2102,6 +2102,72 @@ rendered "not measured" or omitted rather than invented) and IV (liveness from h
 
 ## 2026-09-08 (ui-conformance WP7: search)
 
+### (pending) — ui-conformance WP7 · query field icons, keyboard search action, degraded cue on the shared field
+
+**Scope:** `:app` only — `ui/screens/SearchScreen.kt`, `ui/screens/SearchFiltersSheet.kt`,
+`ui/screens/SearchScreenTest.kt`. Merged `main` (`39c8b11`, "ui-conformance WP2 fix: text field
+keeps editable semantics") first, fast-forward, before starting.
+
+**Requirements/ACs:** R-060 (keyboard search action restored, complete), R-063 (degraded
+"not applied" cue restored on the field itself).
+
+**What changed:**
+- **Constitution Check.** Principle VII (guide §9/accessibility): the "not applied" cue is
+  text-based (never colour alone) and its tone is `FieldTone.Degraded`, never the `halt/text` red
+  constitution reserves for capture actually having stopped — the exact rule the previous
+  addendum's own "accepted regression" note flagged as lost, now restored at the component level
+  rather than worked around in this package.
+- The query field (`SearchScreen.kt`) now passes `leadingIcon = OrtIcons.search` and
+  `trailingAction` (the clear `×`, same `"Clear search text"` content description as before) to
+  the shared `TextField`, restoring both inside its own bordered box per `Search.dc.html` — WP2's
+  fix moved them from being drawn outside it (this package's own round-two workaround) into the
+  component's `decorationBox`.
+- `keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search)` and
+  `keyboardActions = KeyboardActions(onSearch = { onSearch() })` restore R-060's keyboard search
+  action — the field's own `BasicTextField` now takes them directly, so the IME's "search" key
+  re-runs the search exactly as the original hand-rolled field did before either `TextField`
+  migration round.
+- `errorText = "Not applied"` with `errorTone = FieldTone.Degraded` when
+  `result.textSearchUnavailable` restores the field's own cue that the text term did not apply —
+  amber (`accentAmberText`/`bannerAmberBorder`), not the halt-red a bare `errorText` would have
+  drawn before `FieldTone` existed. The amber `Banner` in `UnavailableState` still carries the full
+  explanation; this is the field's own terse echo of the same fact, in words.
+- Dropped the `Box(Modifier.weight(1f))` wrappers around every `TextField` call in
+  `SearchScreen.kt`/`SearchFiltersSheet.kt` (the query field, the callsign/frequency fields, the
+  Range from/to pair): `TextField`'s `modifier` now lands on the field's own root node (WP2's
+  fix), so `Modifier.weight(1f)` is honoured directly.
+- New tests: `R_060_the_keyboard_search_action_runs_the_search` (`performImeAction()` on the query
+  field invokes `onSearch`); `R_063 the unavailable field shows a degraded not-applied cue, never
+  a halt one` (asserts the specific "Not applied" text — a halt-styled field would read
+  differently, e.g. "Error"/"Invalid" — the only tone-adjacent thing observable from outside
+  `TextField` itself, since colour is not exposed through Compose semantics); `no not-applied cue
+  shows once the search actually ran` (the cue disappears once `textSearchUnavailable` is false).
+
+**Verified:**
+- `git merge --ff-only main` — fast-forward, `240ba9c..39c8b11`; `git log --oneline -1` confirmed
+  `39c8b11` before starting.
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL, 770 tests, 0 failed, 0 skipped**
+  (counted from every `app/build/test-results/testDebugUnitTest/*.xml`'s `tests`/`failures`
+  attributes, 107 files — main's merge brought digest/improve/settings/failures packages' tests
+  since this package's branch last synced).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered (unchanged — R-060/R-063 were
+  already counted covered; these tests add depth, not a new covered id).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 181 of 419.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:ktlintCheck`, `:app:detekt` — both clean.
+
+**Left open / not done:**
+- The "not applied" cue's colour itself (amber vs halt-red) is not asserted by a Compose semantics
+  test — Compose does not expose rendered colour through the accessibility tree in this
+  environment, so the test above is the closest available proxy (the specific wording, which only
+  the `Degraded` branch of the field's own code path produces); a real screenshot/pixel comparison
+  would be needed to prove the colour directly, and none exists in this project's test harness.
+- Every gap the earlier WP7 entries below already list (the recently-heard-frequency chips, sheet
+  drag-to-dismiss, `RecentSearches`' single-term label) is unchanged by this addendum.
+
 ### (pending) — ui-conformance WP7 · matched-word highlighting, filters chip icon, shared text field
 
 **Scope:** `:app` only — `ui/data/SearchViewData.kt` (new `MatchHighlighter`), new

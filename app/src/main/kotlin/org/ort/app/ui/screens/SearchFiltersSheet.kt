@@ -1,7 +1,6 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -133,28 +132,24 @@ private fun TimeSection(input: SearchFilterInput, onInputChange: (SearchFilterIn
             modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.xs),
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
         ) {
-            // `TextField`'s outer wrapper always `fillMaxWidth()`s itself (the modifier passed in
-            // lands on the inner field only — its own KDoc), so `weight(1f)` given directly to it
-            // is silently dropped; a `Box(Modifier.weight(1f))` around each gives the two fields
-            // an even split of the row instead of one claiming it all.
-            Box(modifier = Modifier.weight(1f)) {
-                TextField(
-                    value = input.rangeFromLocal,
-                    onValueChange = { onInputChange(input.copy(rangeFromLocal = it)) },
-                    mono = true,
-                    placeholder = "from",
-                    contentDescriptionText = "Range start",
-                )
-            }
-            Box(modifier = Modifier.weight(1f)) {
-                TextField(
-                    value = input.rangeToLocal,
-                    onValueChange = { onInputChange(input.copy(rangeToLocal = it)) },
-                    mono = true,
-                    placeholder = "to",
-                    contentDescriptionText = "Range end",
-                )
-            }
+            // WP2 follow-up (round two): `TextField`'s `modifier` now lands on the field's own
+            // root node, so `Modifier.weight(1f)` works directly — no `Box` wrapper needed.
+            TextField(
+                value = input.rangeFromLocal,
+                onValueChange = { onInputChange(input.copy(rangeFromLocal = it)) },
+                mono = true,
+                placeholder = "from",
+                contentDescriptionText = "Range start",
+                modifier = Modifier.weight(1f),
+            )
+            TextField(
+                value = input.rangeToLocal,
+                onValueChange = { onInputChange(input.copy(rangeToLocal = it)) },
+                mono = true,
+                placeholder = "to",
+                contentDescriptionText = "Range end",
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
