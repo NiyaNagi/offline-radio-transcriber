@@ -118,8 +118,10 @@ are individually green.*
   `:data`)* — done 2026-09-08. FR-UI-6 (one-tap correction, Q8's tiers), FR-UI-8 (the inspection
   surface, honestly empty until a future `:pipeline` change writes lattice/candidate rows), and
   FR-OBS-4 (labelled-sample capture per `docs/reference/labelling-protocol.md`) — see
-  CHANGELOG.md for the CORRECTED-lock enforcement and the module-boundary substitution for "search
-  the lexicon".
+  CHANGELOG.md for the CORRECTED-lock enforcement. **Update (audit F-018, 2026-09-08):** the
+  "search the lexicon" tier's module-boundary substitution ("search known stations") is resolved —
+  `:pipeline` now exposes `passb/LexiconLookup.kt`, and `:app`'s middle correction tier
+  (`CorrectionTier.SEARCH_LEXICON`) calls it for real. See CHANGELOG.md's audit F-018 entry.
 - [x] **P17 · Station and frequency views with activity patterns** *(`:app`, `:data`)* —
   done 2026-09-08. FR-UI-9/FR-UI-10 (everything heard from one station/on one frequency, across
   every session), FR-UI-11 (hour-of-day activity patterns), and FR-UI-12 (the not-heard/not-

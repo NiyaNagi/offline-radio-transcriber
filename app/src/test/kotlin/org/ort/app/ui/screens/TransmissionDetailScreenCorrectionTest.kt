@@ -21,6 +21,7 @@ import org.ort.app.ui.data.PriorContributionViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
+import org.ort.pipeline.passb.LexiconMatch
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -153,8 +154,9 @@ class TransmissionDetailScreenCorrectionTest {
     }
 
     @Test
-    fun `Q8 searching known stations and picking a result applies a verified correction`() {
+    fun `FR_UI_6_Q8 searching the lexicon and picking a result applies a verified correction`() {
         var applied: CorrectionRequest? = null
+        var searched: String? = null
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
@@ -162,18 +164,22 @@ class TransmissionDetailScreenCorrectionTest {
                     player = FakeTransmissionAudioPlayer(),
                     onBack = {},
                     onCorrect = { applied = it },
-                    onSearchStations = { listOf("K9ZZZ") },
+                    onSearchLexicon = { query ->
+                        searched = query
+                        listOf(LexiconMatch("K9ZZZ", ituPrefix = "K", ituCountry = "United States", ituIso = "US"))
+                    },
                 )
             }
         }
 
         composeTestRule.onNodeWithContentDescription("Correct attribution").performScrollTo().performClick()
-        composeTestRule.onNodeWithContentDescription("Search known stations").performScrollTo().performTextInput("K9")
+        composeTestRule.onNodeWithContentDescription("Search the lexicon").performScrollTo().performTextInput("K9")
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithContentDescription("Correct to K9ZZZ").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
-        assert(applied?.tier == CorrectionTier.SEARCH_KNOWN_STATION)
+        assert(searched == "K9") { "expected the lexicon search seam to be called with the typed query, got $searched" }
+        assert(applied?.tier == CorrectionTier.SEARCH_LEXICON)
         assert(applied?.newStationId == "K9ZZZ")
     }
 

@@ -33,6 +33,7 @@ import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.SystemClock
+import org.ort.pipeline.passb.LexiconMatch
 
 /**
  * The transmission detail drill-in (build-plan P14, extended by P16, `design/canvas/Detail.dc.html`):
@@ -43,7 +44,7 @@ import org.ort.core.SystemClock
  * FR-UI-5 (audio playback): [player] is the seam — [org.ort.app.ui.audio.RealTransmissionAudioPlayer]
  * on a device, [org.ort.app.ui.audio.FakeTransmissionAudioPlayer] under test.
  *
- * [onCorrect], [onSearchStations] and [onRecordLabel] are the I/O seams for the three build-plan
+ * [onCorrect], [onSearchLexicon] and [onRecordLabel] are the I/O seams for the three build-plan
  * P16 features — real implementations go through [org.ort.app.ui.data.ReaderPolling]; every
  * Compose test here drives a fake in-memory lambda, matching [player]'s own pattern. Default no-op
  * implementations mean existing call sites (P14's own tests) compile unchanged.
@@ -54,7 +55,7 @@ public fun TransmissionDetailScreen(
     player: TransmissionAudioPlayer,
     onBack: () -> Unit,
     onCorrect: suspend (CorrectionRequest) -> Unit = {},
-    onSearchStations: suspend (String) -> List<String> = { emptyList() },
+    onSearchLexicon: suspend (String) -> List<LexiconMatch> = { emptyList() },
     onRecordLabel: suspend (LabelledSample) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -65,7 +66,7 @@ public fun TransmissionDetailScreen(
         TranscriptSection(state)
         RevisionHistorySection(state)
         InspectionSection(state)
-        CorrectionSection(state, onCorrect, onSearchStations)
+        CorrectionSection(state, onCorrect, onSearchLexicon)
         LabelSampleSection(state, onRecordLabel)
     }
 }
@@ -221,20 +222,21 @@ private fun InspectionSection(state: TransmissionDetailViewState) {
 
 /**
  * FR-UI-6 + FR-SPK-7, Q8's tiered correction. Tier A (pick a resolved candidate) and Tier B
- * (search a known station) both name an already-known identity; Tier C (free text) is recorded
- * unverified. See [org.ort.app.ui.data.CorrectionTier]'s doc comment for the module-boundary
- * reason Tier B searches known stations rather than the full lexicon.
+ * (search the lexicon) both name an already-known, ITU-allocated identity; Tier C (free text) is
+ * recorded unverified. See [org.ort.app.ui.data.CorrectionTier]'s doc comment for audit F-018 —
+ * Tier B now searches the real lexicon ([org.ort.pipeline.passb.LexiconLookup]), not a substitute
+ * over known stations.
  */
 @Composable
 private fun CorrectionSection(
     state: TransmissionDetailViewState,
     onCorrect: suspend (CorrectionRequest) -> Unit,
-    onSearchStations: suspend (String) -> List<String>,
+    onSearchLexicon: suspend (String) -> List<LexiconMatch>,
 ) {
     val scope = rememberCoroutineScope()
     var expanded by remember(state.id) { mutableStateOf(false) }
     var query by remember(state.id) { mutableStateOf("") }
-    var searchResults by remember(state.id) { mutableStateOf(emptyList<String>()) }
+    var searchResults by remember(state.id) { mutableStateOf(emptyList<LexiconMatch>()) }
     var freeText by remember(state.id) { mutableStateOf("") }
 
     fun apply(newStationId: String, tier: CorrectionTier) {
@@ -284,7 +286,7 @@ private fun CorrectionSection(
         }
 
         Text(
-            text = "Search known stations",
+            text = "Search the lexicon",
             style = OrtType.sectionLabel,
             modifier = Modifier.padding(top = OrtSpacing.sm),
         )
@@ -292,17 +294,17 @@ private fun CorrectionSection(
             value = query,
             onValueChange = { text ->
                 query = text
-                scope.launch { searchResults = onSearchStations(text) }
+                scope.launch { searchResults = onSearchLexicon(text) }
             },
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Search known stations" },
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Search the lexicon" },
         )
         searchResults.forEach { found ->
             Text(
-                text = found,
+                text = "${found.callsign} — ${found.ituCountry} (${found.ituPrefix})",
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier
-                    .clickable { apply(found, CorrectionTier.SEARCH_KNOWN_STATION) }
-                    .semantics { contentDescription = "Correct to $found" }
+                    .clickable { apply(found.callsign, CorrectionTier.SEARCH_LEXICON) }
+                    .semantics { contentDescription = "Correct to ${found.callsign}" }
                     .padding(vertical = OrtSpacing.xs),
             )
         }
