@@ -50,8 +50,14 @@ underlying breakdown each prompt draws on.
   the existing `CaptureEvent.Interrupted`/`Resumed` pair, closed immediately by `GapTracker` — AC-3
   now holds on the real capture path. `RingBuffer` is unchanged and still unused in production.
   audit F-021 (2026-09-07): shed events were memory-only in `ShedController` with no `shed_event`
-  table — the `:data` half is now fixed (`ShedEventEntity`/`ShedEventDao`, schema v2, migration),
-  but the `:pipeline` persist call from `ShedController` into the new DAO is still not wired
+  table — the `:data` half is now fixed (`ShedEventEntity`/`ShedEventDao`, schema v2, migration).
+  audit F-007 (2026-09-07): `ShedController` was never constructed in `RealCaptureService` at all —
+  it only ever ran (against a fake) in `:app`'s status display — so FR-RUN-3's shed order could
+  never trigger and F-021's persist call had nothing to be called from. `RealCaptureService` now
+  ticks a real `ShedController` backed by the new `AndroidShedSignals` every 10 s, persists each
+  transition via `ShedEventPersister` into F-021's table, republishes level+backlog through the new
+  `ShedStatus` holder, and stops capture loudly at a documented free-storage floor (FR-STO-4). The
+  `:app` display side (F-002: still reads its own fake-fed `ShedController`) is not done here.
 - [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07;
   audit F-027 (2026-09-07) named/added tests for FR-LEX-6/11(partial)/14/18/19/20/21/23/29,
   FR-TST-2/4/5, FR-A11Y-6, NFR-1a/1c, AC-57 — FR-LEX-15/16/22/32 and AC-13/35 remain genuinely

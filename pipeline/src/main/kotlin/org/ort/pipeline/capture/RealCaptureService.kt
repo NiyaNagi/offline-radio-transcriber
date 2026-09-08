@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.ort.capture.android.AndroidAudioIo
@@ -42,6 +43,9 @@ import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
 import org.ort.pipeline.passb.RealAsrEngineProvider
 import org.ort.pipeline.passb.UnavailableAsrEngine
+import org.ort.pipeline.shed.AndroidShedSignals
+import org.ort.pipeline.shed.ShedController
+import org.ort.pipeline.shed.ShedEventPersister
 import org.ort.segment.FrameSpec
 import org.ort.segment.SegmentConfig
 import org.ort.segment.SegmentId
@@ -159,6 +163,24 @@ public class RealCaptureService : Service() {
         // real gap (FR-RUN-12, AC-48; constitution IV).
         val gapPersister = GapPersister(db.captureGapDao(), SystemClock)
         val gapRelay = CaptureGapRelay(GapTracker(SystemClock)) { gap -> gapPersister.persist(sessionId, gap) }
+
+        // audit F-007: before this, nothing in the running service ever constructed a
+        // ShedController against a real ShedSignals -- it was only ever built (against
+        // FakeShedSignals) for :app's status display (F-002), so FR-RUN-3's shed order could
+        // never actually trigger and a full disk was discovered only when a write threw. This
+        // ticks a real ShedController every SHED_SAMPLE_INTERVAL_MILLIS, persists each level
+        // transition (FR-RUN-5) and republishes level+backlog through ShedStatus for :app to
+        // read; a free-storage floor breach stops capture loudly rather than letting a write fail
+        // silently (FR-STO-4, FR-RUN-6; constitution IV).
+        val shedSignals = AndroidShedSignals(applicationContext, db.workQueueDao(), filesDir)
+        val shedController = ShedController(shedSignals, SystemClock)
+        val shedRelay = ShedEventRelay(
+            controller = shedController,
+            sessionId = sessionId,
+            persister = ShedEventPersister(db.shedEventDao(), SystemClock),
+            samplePosition = { segmenter?.position() ?: 0L },
+        )
+        scope.launch { runShedMonitor(shedSignals, shedController, shedRelay) }
 
         // The processing loop (build-plan P12, defect 3): drains whatever RealSegmentSink
         // enqueues, independent of the capture flow above -- a stalled or unavailable ASR engine
@@ -280,6 +302,49 @@ public class RealCaptureService : Service() {
         CaptureProcessingLoop(PassDrainRunner(queue, runId = sessionId), pass).runForever()
     }
 
+    /**
+     * audit F-007: the loop FR-RUN-3/5/6 needed and never had. Runs for as long as [source] is
+     * set (i.e. capture is actually running for this session) — cancelled either by that guard or
+     * by `scope.cancel()` on service destruction, whichever comes first.
+     *
+     * Order matters within a tick: the backlog is refreshed, then the controller is sampled (so
+     * its shed-level decision sees the fresh count), then any new transitions are persisted and
+     * republished, and only then is the storage floor checked — a floor breach's loud stop should
+     * reflect the same tick's shed level, not a stale one from before this tick ran.
+     */
+    private suspend fun runShedMonitor(
+        signals: AndroidShedSignals,
+        controller: ShedController,
+        relay: ShedEventRelay,
+    ) {
+        while (source != null) {
+            signals.refreshBacklog()
+            controller.sample()
+            relay.drain()
+            ShedStatus.update(controller.currentLevel, signals.queueBacklog())
+
+            if (storageFloorBreached(signals.freeStorageBytes())) {
+                stopForStorageExhaustion()
+                return
+            }
+            delay(SHED_SAMPLE_INTERVAL_MILLIS)
+        }
+    }
+
+    /**
+     * FR-STO-4 / FR-RUN-3 level 5 / constitution IV: "only storage exhaustion stops capture,
+     * loudly". Uses the same failure path a route mismatch already relies on
+     * ([CaptureState.failed] plus a visible notification), then actually stops the audio source
+     * -- stopping capture "loudly" means the surface reads `Failed` with the real reason, never a
+     * write that silently throws later.
+     */
+    private fun stopForStorageExhaustion() {
+        val reason = "storage exhausted: free space below the ${STORAGE_FLOOR_BYTES / (1024 * 1024)} MiB floor"
+        CaptureState.failed(reason)
+        updateNotification("Failed: storage exhausted")
+        source?.stop()
+    }
+
     private fun onHeartbeat() {
         // audit F-005: samplePosition used to be a fabricated 0L literal. The segmenter is the
         // one thing here that knows how much audio has actually been fed to it (Segmenter.position(),
@@ -355,8 +420,30 @@ public class RealCaptureService : Service() {
         private const val HEARTBEAT_INTERVAL_MILLIS: Long = 30_000
         private const val WAKE_LOCK_TIMEOUT_MILLIS: Long = 12 * 60 * 60 * 1000L
         private const val SHORT_MAX: Float = 32_768f
+
+        /** technical design §7.3's 10 s shed-controller tick (audit F-007). */
+        private const val SHED_SAMPLE_INTERVAL_MILLIS: Long = 10_000
+
+        /**
+         * FR-STO-4's storage floor (audit F-007) — deliberately generous, not tuned: this is the
+         * honest "stop before a write throws" line, not the full FR-STO-3 budget/warning system
+         * (still open, F-020/F-021 note it separately). 100 MiB is comfortably above a single
+         * FLAC-encoded transmission (minutes of 16 kHz mono speech, low tens of KB) plus Room's
+         * WAL/journal overhead, so normal operation never brushes it — it only fires when the
+         * device is genuinely, materially out of space, which is exactly when capture must stop
+         * loudly rather than let a write fail silently underneath the segmenter.
+         */
+        internal const val STORAGE_FLOOR_BYTES: Long = 100L * 1024 * 1024
     }
 }
+
+/**
+ * FR-STO-4: `true` once free storage has dropped to or below [STORAGE_FLOOR_BYTES] (or a caller-
+ * supplied [floorBytes] in tests). A plain function, not a method on [AndroidShedSignals], so it
+ * is testable without a live signal source and so its threshold can be asserted on directly.
+ */
+internal fun storageFloorBreached(freeBytes: Long, floorBytes: Long = RealCaptureService.STORAGE_FLOOR_BYTES): Boolean =
+    freeBytes < floorBytes
 
 /**
  * audit F-005: the exact seam that used to write a fabricated `samplePosition = 0L` into every
@@ -389,6 +476,33 @@ internal class CaptureGapRelay(private val tracker: GapTracker, private val pers
         tracker.onEvent(event)
         while (persistedCount < tracker.gaps.size) {
             persist(tracker.gaps[persistedCount])
+            persistedCount++
+        }
+    }
+}
+
+/**
+ * audit F-007: the same shape [CaptureGapRelay] uses, for [ShedController]'s `events` list instead
+ * of [GapTracker]'s `gaps` — nothing in the running service used to construct a real
+ * [ShedController] at all, so this is new ground, not a persistence gap in an otherwise-wired
+ * class. [controller]'s `events` list only grows, one entry per transition; [drain] notices when
+ * it has grown since the last call and persists exactly what's new, once, tracking the level
+ * immediately before each transition itself (the controller only exposes the level *after*).
+ */
+internal class ShedEventRelay(
+    private val controller: ShedController,
+    private val sessionId: String,
+    private val persister: ShedEventPersister,
+    private val samplePosition: () -> Long,
+) {
+    private var persistedCount = 0
+    private var levelBeforeNext = controller.currentLevel
+
+    suspend fun drain() {
+        while (persistedCount < controller.events.size) {
+            val event = controller.events[persistedCount]
+            persister.persist(sessionId, levelBeforeNext, event, samplePosition())
+            levelBeforeNext = event.level
             persistedCount++
         }
     }
