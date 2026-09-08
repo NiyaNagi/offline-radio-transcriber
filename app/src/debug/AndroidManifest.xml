@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Merged into the debug build variant only (AGP's default `src/debug` source set - see
+  `app/build.gradle.kts`'s own comment: no Gradle change was needed to pick this up, and none was
+  made - checked first, per this package's brief).
+
+  spec/ui-conformance-plan.md WP0, register R-110: the scenario simulator's entry point. Every
+  phase-E validation scenario is loaded by
+
+    adb shell am broadcast -a org.ort.app.debug.SCENARIO -es name (scenario)
+
+  android:exported="true" is deliberate and debug-only (adb use from a host machine, never
+  shipped in release - this file is never merged into a release build) - the receiver has no
+  other caller and does nothing a release build should expose.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".debug.ScenarioReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.ort.app.debug.SCENARIO" />
+            </intent-filter>
+        </receiver>
+
+        <!-- org.ort.app.ui.ReaderActivity is exported="false" (register R-007); this debug-only
+             alias is how tools/ui-audit/nav.ps1 reaches it - see ScenarioReaderActivity's own
+             doc comment. -->
+        <activity android:name=".debug.ScenarioReaderActivity" android:exported="true" />
+    </application>
+</manifest>

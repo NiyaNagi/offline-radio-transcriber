@@ -32,6 +32,133 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP0)
+
+### (pending commit) — ui-conformance WP0 · debug scenario simulator and audit tooling
+
+**Scope:** `app/src/debug/**` (new — `ScenarioReceiver.kt`, `Scenarios.kt`, `ScenarioFixtures.kt`,
+`OvernightScenario.kt`, `StationsFixtures.kt`, `ScenarioReaderActivity.kt`,
+`AndroidManifest.xml`), `app/src/test/kotlin/org/ort/app/debug/ScenariosTest.kt` (new),
+`tools/ui-audit/**` (new — `boot.ps1`, `create-avd.ps1`, `install.ps1`, `scenario.ps1`,
+`shoot.ps1`, `nav.ps1`, `run-set.ps1`, `screens.json`, `sets.json`), `results/ui-audit/README.md`
+(new), `results/ui-audit/overnight/log.png` (new, verification evidence), `app/build.gradle.kts`
+(one addition — see "What changed"), `results/coverage-matrix.md` (regenerated, a side effect of
+the required `coverageMatrix` gate — not hand-edited).
+
+**Requirements/ACs:** register R-110, R-111 (`results/ui-audit/register.md`), plan
+`spec/ui-conformance-plan.md` WP0/§E. Constitution I (every attribution carries its state — the
+fixtures never write an incomplete one), III (no real callsign/voiceprint/location — fictional
+callsigns only, nothing from `corpus/`, `eval` never read), IV (a "live" scenario proves liveness
+by a real heartbeat write, never by flipping a flag alone), VII (the module graph is untouched —
+no new project dependency edge; `DeflatePredictiveCodec` was already transitively on `:app`'s
+classpath via `:pipeline`'s existing `api(project(":capture-android"))`).
+
+**Constitution check.** Principle I bore directly on `Scenarios.kt`'s fixture builders — every
+`TransmissionEntity` is built through one helper (`ScenarioFixtures.transmission`) that requires
+an `attributionState` with no default, so a scenario cannot accidentally omit one. Principle III
+bore on every callsign choice (the artboards' own fictional set, `ScenarioFixtures.CALLSIGNS`) and
+on the explicit decision not to touch `corpus/` or the `eval` fold anywhere in this package.
+Principle IV bore on the `markCapturing` helper: a "live" scenario writes a real heartbeat record,
+not just `CaptureState.capturing(...)`, so `CaptureStatusRepository`'s own liveness check (which
+reads heartbeat continuity, never a flag) reports the same thing a real capture would. Principle
+VII bore on the clearing strategy: `clearPriorScenarioData` reaches Room's own public
+`openHelper.writableDatabase` rather than adding delete queries to `:data`'s DAOs (out of package),
+and the audio fixture writer reuses the exact codec (`DeflatePredictiveCodec`) `RealSegmentSink`
+already encodes with, rather than inventing a second decode path.
+
+**What changed:**
+
+- **R-110 — `ScenarioReceiver`** (debug manifest only, `exported="true"`, action
+  `org.ort.app.debug.SCENARIO`, extra `name`): loads one of fifteen named scenarios through
+  `:data`'s real DAOs/entities, logs `scenario <name>: <n> transmissions, <m> sessions` plus a
+  second line naming the primary session id, and also returns the session id via the broadcast's
+  own result extras (`EXTRA_SESSION`) so a caller isn't forced through logcat.
+- **`Scenarios.kt`**: the registry, the clearing (`DELETE` statements scoped to the
+  `scenario-`-prefixed session/transmission ids every scenario writes, plus an unconditional wipe
+  of `station`/`voiceprint` — see the object's own doc comment for why those two can't be
+  prefix-tagged), and the process-wide capture-facet reset (`CaptureState`, `AsrAvailability`,
+  `VadAvailability`, `ShedStatus`) that runs before every scenario applies its own facts.
+- **Fifteen scenarios**: `empty`, `first-session`, `overnight` (the big one — a real 6h42m,
+  two-frequency, ~42-over session exercising every `Rows.dc.html` variant: CONFIRMED, INFERRED
+  linked to its confirming over, AMBIGUOUS, UNKNOWN, a corrected row + its `CorrectionEntity`
+  audit row, a revised row (two transcript versions), a rejected row (retained, not hidden), a
+  first-heard station, a four-over QSO thread, a 38s capture gap, mixed signal strength, mixed
+  retained audio, and lattice/candidate rows for the confirmed/inferred/ambiguous overs including
+  one cold-start and one negative prior for `Detail-Why`), `unclean-end`, `gap-call`,
+  `pass-a-partial`, `corrected`, `no-audio`, `revisions`, `stations-14-nights` (fourteen sessions
+  over a fifteen-day span with a real, unlistened whole day), `field-tier1`, `search-corpus`
+  (fourteen "park activation" transcripts across three nights), and three status-facet scenarios
+  the brief asked to be checked for settability from `:app` without a `:pipeline` edit —
+  `backlog` and `model-missing` are (both singletons `ReaderPolling` already reads directly);
+  `storage-warn` reuses `RealCaptureService`'s own exhaustion reason (there is no earlier "warning"
+  signal in `:pipeline` to distinguish from exhaustion). `thermal` and `rig-lost` are **not**
+  simulable — no thermal signal exists anywhere in `:pipeline` (`ShedSignals` carries
+  battery/backlog/storage only), and no rig connection-state singleton exists at all (the rig
+  module is not built). Both need a new process-wide holder in `:pipeline`, the same pattern as
+  `ShedStatus`, which is a `:pipeline` change outside this package — reported for WP11 per the
+  brief's own instruction, not built here.
+- **`ScenarioReaderActivity`** (new, debug-manifest-only, `exported="true"`): found by actually
+  running the brief's own documented command
+  (`adb shell am start -n org.ort.app/.ui.ReaderActivity --es session_id <id>`) that
+  `org.ort.app.ui.ReaderActivity` is `exported="false"` (register R-007) and refuses that start
+  with a `SecurityException`. `ReaderActivity`'s manifest entry is `app/src/main/AndroidManifest.xml`
+  — outside this package's ownership — so rather than widen it, this adds one debug-only
+  forwarding activity that relays the `session_id` extra and finishes; it exists only in the debug
+  manifest and touches no file under `app/src/main`.
+- **`app/build.gradle.kts`**: one addition beyond the narrow "pick up the source set" allowance
+  (which needed nothing — `src/debug` is a default source set, checked first). `./gradlew build`
+  failed at `:app:compileReleaseUnitTestKotlin` — a pre-existing gap in
+  `buildSrc/.../ort.android-app.gradle.kts` (outside this package) already disables
+  `testReleaseUnitTest`'s *execution* for an unrelated reason (Compose's `ui-test-manifest` stub
+  is debug-only) but not the release variant's unit-test *compilation*, which compiles the same
+  `app/src/test/kotlin` source set this package's own `ScenariosTest.kt` now lives in against a
+  classpath that never carries `app/src/debug`. Found by running `./gradlew build`, not by
+  inspection. Fixed by disabling `compileReleaseUnitTestKotlin` the same way its sibling already
+  is — no release artifact consumes that task's output.
+- **`tools/ui-audit/**`**: `boot.ps1`, `create-avd.ps1`, `install.ps1`, `scenario.ps1`,
+  `shoot.ps1`, `nav.ps1`, `run-set.ps1`, `screens.json` (real coordinates, captured from a live
+  `uiautomator dump` of the built reader on `emulator-5554`), `sets.json` (V3/V5 only — see
+  `run-set.ps1`'s own doc comment for why the other five phase-E sets are deliberately absent
+  rather than faked).
+
+**Verified:**
+
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.*" --rerun-tasks` — 21/21
+  `ScenariosTest` tests passed (list in the builder's report to the lead).
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL`, 841 actionable tasks;
+  `dependencyRules: checked 17 modules ... OK`; `platformGuards: checked 17 modules ... OK.`
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — 7/8 checks pass; check 2 fails on two pre-existing
+  dangling references in `spec/ui-conformance-plan.md` (`Q01`, `Q05` — scenario names in its own
+  §E table, misread as open-question ids). `git diff` confirms this file is untouched by this
+  package; not fixed here (outside WP0's ownership).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (two separate
+  invocations) — `coverageMatrix: 419 requirements, 179 covered`;
+  `coverageMatrixCheck: up to date (179 covered of 419)`.
+- A real device run: `scenario.ps1 -Port 5554 -Name overnight` → `session=scenario-overnight`,
+  then `am start -n org.ort.app/.debug.ScenarioReaderActivity --es session_id scenario-overnight`,
+  then `nav.ps1 -Port 5554 -Screen log`, then
+  `shoot.ps1 -Port 5554 -Scenario overnight -Screen log` → `results/ui-audit/overnight/log.png`
+  (430,345 bytes), on `emulator-5554` (`ort_audit`, Pixel 6, API 34).
+
+**Left open / not done:**
+
+- `thermal` and `rig-lost` scenarios — need a new `:pipeline` singleton each (see "What changed");
+  assigning to WP11 is the lead's call, not made here.
+- `storage-warn` only reproduces F6's exhaustion reason; there is no distinct "getting low"
+  warning signal in `:pipeline` to simulate separately.
+- `gap-call`'s second gap uses `CaptureGapCause.INTERRUPTION` — `CaptureGapEntity` has no
+  CALL-specific cause value and no free-text reason field, so "incoming call" (the artboard's own
+  wording) is not representable exactly.
+- `sets.json` covers only V3 and V5 — V1, V2, V4, V6 and V7 depend on screens/flows (setup,
+  detail states, settings, failure banners) other work packages have not landed yet; their
+  scenario/screen pairs belong there.
+- `screens.json`'s coordinates are captured against *today's* unconformed UI and will need
+  re-pointing as WP1–WP11 land — expected, documented in `results/ui-audit/README.md`, not a
+  defect in this tooling.
+- `results/ui-audit/register.md` R-110/R-111 rows are not edited here — the lead updates them from
+  this package's report, per the brief.
+
 ## 2026-09-08 (audit — F-029)
 
 ### (pending commit) — audit F-029 · coverage matrix's own hygiene: hyphenated audit ids and a fixture's self-reference no longer read as false orphans

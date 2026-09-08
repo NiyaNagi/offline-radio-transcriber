@@ -1,0 +1,45 @@
+{
+  "now": [],
+  "drawer": [
+    { "action": "tap", "x": 74, "y": 359 },
+    { "action": "wait", "ms": 900 }
+  ],
+  "log": [
+    { "action": "tap", "x": 74, "y": 359 },
+    { "action": "wait", "ms": 900 },
+    { "action": "tap", "x": 472, "y": 384 },
+    { "action": "wait", "ms": 900 }
+  ],
+  "search": [
+    { "action": "tap", "x": 74, "y": 359 },
+    { "action": "wait", "ms": 900 },
+    { "action": "tap", "x": 472, "y": 466 },
+    { "action": "wait", "ms": 900 }
+  ],
+  "threads": [
+    { "action": "tap", "x": 74, "y": 359 },
+    { "action": "wait", "ms": 900 },
+    { "action": "tap", "x": 472, "y": 548 },
+    { "action": "wait", "ms": 900 }
+  ],
+  "stations": [
+    { "action": "tap", "x": 74, "y": 359 },
+    { "action": "wait", "ms": 900 },
+    { "action": "tap", "x": 472, "y": 629 },
+    { "action": "wait", "ms": 900 }
+  ],
+  "frequencies": [
+    { "action": "tap", "x": 74, "y": 359 },
+    { "action": "wait", "ms": 900 },
+    { "action": "tap", "x": 472, "y": 709 },
+    { "action": "wait", "ms": 900 }
+  ],
+  "detail": [
+    { "action": "tap", "x": 74, "y": 359 },
+    { "action": "wait", "ms": 900 },
+    { "action": "tap", "x": 472, "y": 384 },
+    { "action": "wait", "ms": 900 },
+    { "action": "tap", "x": 400, "y": 490 },
+    { "action": "wait", "ms": 900 }
+  ]
+}
