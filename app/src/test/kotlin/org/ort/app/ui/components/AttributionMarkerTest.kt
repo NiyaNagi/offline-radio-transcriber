@@ -55,11 +55,13 @@ class AttributionMarkerTest {
             "ambiguous" to "half-filled circle",
             "unknown" to "small dot",
         )
+        // R-162: prose ("Confirmed"), never the all-caps glyph-adjacent label the pre-fix
+        // description borrowed from the reader's own display string.
         val expectedStateName = mapOf(
-            "confirmed" to "CONFIRMED",
-            "inferred" to "INFERRED",
-            "ambiguous" to "AMBIGUOUS",
-            "unknown" to "UNKNOWN",
+            "confirmed" to "Confirmed",
+            "inferred" to "Inferred",
+            "ambiguous" to "Ambiguous",
+            "unknown" to "Unknown",
         )
 
         states.keys.forEach { tag ->
@@ -111,6 +113,82 @@ class AttributionMarkerTest {
         composeTestRule.onNodeWithText("CONFIRMED").assertDoesNotExist()
         composeTestRule.onNodeWithText("0.95").assertDoesNotExist()
         composeTestRule.onNodeWithText("W7NPC").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_162 the legacy marker names the state in prose with no glyph and no confidence when no chip renders`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    // T02 "How these were attributed" (register R-162): a caller that keeps the
+                    // legacy shape-only rendering — no chip shown, so the description must not
+                    // claim one either, even though this Attribution does carry a confidence.
+                    AttributionMarker(
+                        attribution = Attribution.confirmed("W7NPC", 0.85),
+                        modifier = Modifier.testTag("shape-only"),
+                        showConfidence = false,
+                    )
+                }
+            }
+        }
+
+        val node = composeTestRule.onNodeWithTag("shape-only")
+        node.assert(hasContentDescription("Confirmed", substring = true))
+        node.assert(doesNotHaveContentDescription("confidence"))
+        node.assert(doesNotHaveContentDescription("✓"))
+        node.assert(doesNotHaveContentDescription("CONFIRMED"))
+    }
+
+    @Test
+    fun `R_162 the legacy marker mentions confidence only when showConfidence actually renders the chip`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    // Same Attribution, only `showConfidence` differs — the description must
+                    // track the chip that is actually rendered, not the data's mere presence of
+                    // a confidence value.
+                    AttributionMarker(
+                        attribution = Attribution.confirmed("W7NPC", 0.85),
+                        modifier = Modifier.testTag("with-chip"),
+                    )
+                    AttributionMarker(
+                        attribution = Attribution.confirmed("W7NPC", 0.85),
+                        modifier = Modifier.testTag("without-chip"),
+                        showConfidence = false,
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("with-chip").assert(hasContentDescription("confidence 0.85", substring = true))
+        composeTestRule.onNodeWithTag("without-chip").assert(doesNotHaveContentDescription("confidence"))
+    }
+
+    @Test
+    fun `R_162 no legacy marker description carries a checkmark, tilde, question mark or dash glyph`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    AttributionMarker(
+                        attribution = Attribution.confirmed("W7NPC", 0.95),
+                        modifier = Modifier.testTag("c"),
+                    )
+                    AttributionMarker(
+                        attribution = Attribution.inferred("K7LWH", 0.82),
+                        modifier = Modifier.testTag("i"),
+                    )
+                    AttributionMarker(attribution = Attribution.ambiguous(), modifier = Modifier.testTag("a"))
+                    AttributionMarker(attribution = Attribution.unknown(), modifier = Modifier.testTag("u"))
+                }
+            }
+        }
+
+        listOf("c", "i", "a", "u").forEach { tag ->
+            val node = composeTestRule.onNodeWithTag(tag)
+            listOf("✓", "~", "?", "—").forEach { glyph ->
+                node.assert(doesNotHaveContentDescription(glyph))
+            }
+        }
     }
 
     @Test
