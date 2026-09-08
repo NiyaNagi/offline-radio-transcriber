@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="padding: 10px 20px 0; display: flex; align-items: center; gap: 14px;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">1 of 7</div>
+  </div>
+  <div style="display: flex; gap: 4px; padding: 14px 20px 0;">
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.15 25);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+  </div>
+
+  <div style="padding: 26px 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.2;">Microphone refused</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Capture cannot start without it</div>
+  </div>
+
+  <div style="padding: 20px 20px 0;">
+    <div style="border-radius: 8px; background: oklch(0.20 0.045 25); border: 1px solid oklch(0.42 0.10 25); padding: 13px 14px; display: flex; gap: 11px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.15 25)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px;"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v6M12 16v.5"></path></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">Android will not ask again</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">"Don't allow" was chosen twice, so the prompt is gone. The permission can only be granted from the system settings now. Nothing else in setup can proceed until it is.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 22px 20px 0;">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250);">In the system settings</div>
+    <div style="display: flex; flex-direction: column; margin-top: 4px;">
+      <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 22px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">1</div>
+        <div style="font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">Apps → Offline radio transcriber → Permissions</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 22px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">2</div>
+        <div style="font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">Microphone → <span style="font-weight: 500; color: oklch(0.94 0.006 250);">Allow only while using the app</span></div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 22px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">3</div>
+        <div style="font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">Come back — this screen checks again on its own</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 18px 20px 0;">
+    <div style="font-size: 12.5px; line-height: 1.5; color: oklch(0.62 0.008 250); text-wrap: pretty;">The microphone is how the radio's audio reaches the app. It is never used for anything else, and the next step proves the audio is the radio, not the room.</div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Open app settings</div></div>
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 44px;"><div style="font-size: 13.5px; color: oklch(0.66 0.008 250);">Check again</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

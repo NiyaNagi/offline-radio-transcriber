@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .r { display: flex; align-items: center; gap: 12px; padding: 11px 20px; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .n { font-size: 14.5px; color: oklch(0.94 0.006 250); }
+    .s { font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .tg-on { width: 42px; height: 24px; border-radius: 12px; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: flex-end; padding: 0 3px; box-sizing: border-box; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Settings</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">TH-D75A</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Connected · USB serial · reading both bands unpolled</div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+      <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 13px 14px;">
+        <div class="m" style="font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250);">Band A</div>
+        <div class="m" style="font-size: 17px; font-weight: 600; margin-top: 5px;">145.230</div>
+        <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+          <div style="width: 6px; height: 6px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+          <div style="font-size: 11.5px; color: oklch(0.66 0.008 250);">FM · squelch open · 318 overs</div>
+        </div>
+      </div>
+      <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 13px 14px;">
+        <div class="m" style="font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250);">Band B</div>
+        <div class="m" style="font-size: 17px; font-weight: 600; margin-top: 5px; color: oklch(0.86 0.006 250);">146.960</div>
+        <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+          <div style="width: 6px; height: 6px; border-radius: 50%; border: 1px solid oklch(0.45 0.008 250); box-sizing: border-box;"></div>
+          <div style="font-size: 11.5px; color: oklch(0.66 0.008 250);">FM · closed · 94 overs</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">How overs are attributed to a band</div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div class="n">By squelch state, <span class="m">BY</span></div><div class="s">the radio mixes both bands into one audio stream · whichever squelch opened owns the over · both open at once is logged as both, marked so</div></div>
+    </div>
+
+    <div class="lbl">Connection</div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Rig module</div><div class="s">th-d75a · built in · verified command set <span class="m">FQ BY FO BC MR ME AI BL</span></div></div>
+    </div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Serial</div><div class="s"><span class="m">vid 0x0451 pid 0x16a8</span> · 9600 8N1 · USB permission granted, not persistent</div></div>
+    </div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Auto-information, <span class="m">AI 1</span></div><div class="s">changes arrive without polling · fallback poll every 2 s if it stops</div></div>
+      <div class="tg-on"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.16 0.01 150);"></div></div>
+    </div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div class="n">Radio battery, <span class="m">BL</span></div><div class="s"><span class="m">62%</span> · shown on the status surface · warns at 15%</div></div>
+    </div>
+
+    <div class="lbl">If it disconnects</div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0;"></div>
+      <div style="flex-grow: 1;"><div class="n">Capture continues on the last-known frequency, marked stale</div><div class="s">every over logged meanwhile carries a stale mark · you are told loudly, and again when it is back</div></div>
+    </div>
+
+    <div style="padding: 16px 20px 0; display: flex; gap: 9px;">
+      <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 44px; border: 1px solid oklch(0.30 0.010 250); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.86 0.006 250);">Reconnect</div></div>
+      <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 44px; border: 1px solid oklch(0.30 0.010 250); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.86 0.006 250);">Change radio</div></div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

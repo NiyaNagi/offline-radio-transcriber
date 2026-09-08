@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Capture</div>
+    <div style="flex-grow: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <div style="width: 7px; height: 7px; border-radius: 50%; background: oklch(0.78 0.13 75);"></div>
+      <div class="m" style="font-size: 12px; color: oklch(0.68 0.008 250);">4:05</div>
+    </div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Level</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">USB Audio Device · last 60 s</div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="border-radius: 8px; background: oklch(0.185 0.012 60); border: 1px solid oklch(0.38 0.06 60); padding: 13px 14px; display: flex; gap: 11px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.74 0.09 60)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px;"><path d="M12 8v5M12 16.5v.5"></path><circle cx="12" cy="12" r="9"></circle></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">Too quiet since 03:31 — speech peaks at −34 dBFS</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">The radio's volume dropped, or the squelch is opening on weaker signals. Weak stations will be missed and the model will hear less. Turn the radio up until the peaks sit in the green band.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div style="position: relative; height: 150px; background: oklch(0.11 0.006 250); border-radius: 8px; border: 1px solid oklch(0.24 0.010 250); overflow: hidden;">
+      <div style="position: absolute; left: 0; right: 0; top: 34px; height: 46px; background: oklch(0.72 0.14 150); opacity: 0.09;"></div>
+      <div style="position: absolute; left: 0; right: 0; top: 34px; height: 1px; background: oklch(0.72 0.14 150); opacity: 0.5;"></div>
+      <div style="position: absolute; left: 0; right: 0; top: 80px; height: 1px; background: oklch(0.72 0.14 150); opacity: 0.5;"></div>
+      <div style="position: absolute; left: 0; right: 0; top: 10px; height: 1px; background: oklch(0.72 0.15 25); opacity: 0.6;"></div>
+      <div style="position: absolute; left: 0; right: 0; top: 122px; border-top: 1px dashed oklch(0.55 0.07 60);"></div>
+      <div style="position: absolute; left: 10px; right: 10px; bottom: 0; top: 0; display: flex; align-items: flex-end; gap: 1px;">
+        <div style="flex-grow: 1; height: 62%; background: oklch(0.64 0.12 150);"></div><div style="flex-grow: 1; height: 70%; background: oklch(0.72 0.14 150);"></div><div style="flex-grow: 1; height: 58%; background: oklch(0.64 0.12 150);"></div><div style="flex-grow: 1; height: 20%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 18%; background: oklch(0.42 0.04 250);"></div>
+        <div style="flex-grow: 1; height: 30%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 34%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 28%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 32%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 26%; background: oklch(0.62 0.10 60);"></div>
+        <div style="flex-grow: 1; height: 18%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 17%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 19%; background: oklch(0.42 0.04 250);"></div>
+        <div style="flex-grow: 1; height: 31%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 35%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 29%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 33%; background: oklch(0.62 0.10 60);"></div>
+        <div style="flex-grow: 1; height: 18%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 20%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 17%; background: oklch(0.42 0.04 250);"></div>
+        <div style="flex-grow: 1; height: 30%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 34%; background: oklch(0.62 0.10 60);"></div><div style="flex-grow: 1; height: 27%; background: oklch(0.62 0.10 60);"></div>
+        <div style="flex-grow: 1; height: 19%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 18%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 20%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 18%; background: oklch(0.42 0.04 250);"></div><div style="flex-grow: 1; height: 17%; background: oklch(0.42 0.04 250);"></div>
+      </div>
+      <div style="position: absolute; right: 8px; top: 4px;" class="m"><span style="font-size: 9.5px; color: oklch(0.72 0.15 25);">0</span></div>
+      <div style="position: absolute; right: 8px; top: 24px;" class="m"><span style="font-size: 9.5px; color: oklch(0.68 0.10 150);">−12</span></div>
+      <div style="position: absolute; right: 8px; top: 70px;" class="m"><span style="font-size: 9.5px; color: oklch(0.68 0.10 150);">−18</span></div>
+      <div style="position: absolute; right: 8px; top: 96px;" class="m"><span style="font-size: 9.5px; color: oklch(0.74 0.09 60);">−34 ←</span></div>
+      <div style="position: absolute; right: 8px; top: 112px;" class="m"><span style="font-size: 9.5px; color: oklch(0.55 0.07 60);">−58</span></div>
+    </div>
+    <div style="display: flex; justify-content: space-between; margin-top: 6px;">
+      <div class="m" style="font-size: 10px; color: oklch(0.50 0.008 250);">−60 s</div>
+      <div style="font-size: 10.5px; color: oklch(0.62 0.05 60);">speech peaks below the band since 03:31</div>
+      <div class="m" style="font-size: 10px; color: oklch(0.50 0.008 250);">now</div>
+    </div>
+  </div>
+
+  <div style="padding: 18px 20px 0; display: flex; flex-direction: column;">
+    <div style="display: flex; align-items: baseline; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+      <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); flex-grow: 1;">Speech peaks, last 60 s</div>
+      <div class="m" style="font-size: 13px; color: oklch(0.78 0.13 75);">−34 dBFS</div>
+    </div>
+    <div style="display: flex; align-items: baseline; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+      <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); flex-grow: 1;">Was, at 23:32</div>
+      <div class="m" style="font-size: 13px; color: oklch(0.86 0.006 250);">−14 dBFS</div>
+    </div>
+    <div style="display: flex; align-items: baseline; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); flex-grow: 1;">Overs since 03:31 with no callsign resolved</div>
+      <div class="m" style="font-size: 13px; color: oklch(0.86 0.006 250);">9 of 11</div>
+    </div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; text-wrap: pretty;">Everything captured since 03:31 is kept as-is. Once the level is back, those overs can be re-run from Improve records — a quiet recording is still a recording.</div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="border-top: 1px solid oklch(0.38 0.06 60); background: oklch(0.185 0.012 60); padding: 10px 20px 14px; display: flex; align-items: center; gap: 11px;">
+    <div style="display: flex; gap: 2px; align-items: flex-end; height: 14px;">
+      <div style="width: 2px; height: 3px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 5px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 4px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 5px; background: oklch(0.62 0.10 60);"></div>
+    </div>
+    <div style="font-size: 13px; color: oklch(0.74 0.07 60); flex-grow: 1; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">…station calling, you're very weak, say again…</div>
+    <div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75);">Quiet</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

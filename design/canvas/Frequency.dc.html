@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .fact { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+    .fk { font-size: 12.5px; color: oklch(0.62 0.008 250); width: 92px; flex-shrink: 0; }
+    .fv { font-size: 13.5px; color: oklch(0.94 0.006 250); flex-grow: 1; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .st { display: flex; align-items: center; gap: 11px; padding: 9px 20px; border-top: 1px solid oklch(0.21 0.010 250); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Frequencies</div>
+    <div style="flex-grow: 1;"></div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="5" r="1.4" fill="oklch(0.62 0.008 250)"></circle><circle cx="12" cy="12" r="1.4" fill="oklch(0.62 0.008 250)"></circle><circle cx="12" cy="19" r="1.4" fill="oklch(0.62 0.008 250)"></circle></svg>
+  </div>
+
+  <div style="padding: 0 20px 14px;">
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 27px; font-weight: 600; letter-spacing: -0.01em;">145.230</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px;">Repeater · 2 m · FM · −600 kHz · tone 100.0</div>
+  </div>
+
+  <div style="padding: 0 20px;">
+    <div style="display: flex; flex-direction: column;">
+      <div class="fact"><div class="fk">Overs</div><div class="fv"><span class="m">4,112</span> all time · <span class="m">318</span> tonight</div><div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">Log</div></div>
+      <div class="fact"><div class="fk">Stations</div><div class="fv"><span class="m">64</span> all time · <span class="m">12</span> tonight</div></div>
+      <div class="fact"><div class="fk">Listened</div><div class="fv">14 nights of 14 · <span class="m">96 h</span> total</div></div>
+      <div class="fact" style="border-bottom: 1px solid oklch(0.21 0.010 250);"><div class="fk">Nets</div><div class="fv">Tuesday 19:00 · <span class="m">W7NPC</span> control · 3 of 3 seen</div></div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div style="display: flex; align-items: baseline;">
+      <div class="lbl" style="flex-grow: 1;">Typical night, by hour</div>
+      <div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">More</div>
+    </div>
+    <div style="display: flex; align-items: flex-end; gap: 1.5px; height: 38px; margin-top: 12px;">
+      <div style="flex-grow:1; height:30%; background: oklch(0.42 0.03 250);"></div>
+      <div style="flex-grow:1; height:100%; background: oklch(0.72 0.14 150);"></div>
+      <div style="flex-grow:1; height:84%; background: oklch(0.64 0.12 150);"></div>
+      <div style="flex-grow:1; height:70%; background: oklch(0.64 0.12 150);"></div>
+      <div style="flex-grow:1; height:56%; background: oklch(0.58 0.10 150);"></div>
+      <div style="flex-grow:1; height:40%; background: oklch(0.46 0.055 150);"></div>
+      <div style="flex-grow:1; height:26%; background: oklch(0.42 0.03 250);"></div>
+      <div style="flex-grow:1; height:14%; background: oklch(0.36 0.02 250);"></div>
+      <div style="flex-grow:1; height:8%; background: oklch(0.34 0.02 250);"></div>
+      <div style="flex-grow:1; height:6%; background: oklch(0.34 0.02 250);"></div>
+      <div style="flex-grow:1; height:10%; background: oklch(0.36 0.02 250);"></div>
+      <div style="flex-grow:1; height:22%; background: oklch(0.40 0.03 250);"></div>
+      <div style="flex-grow:1; height:48%; background: oklch(0.52 0.08 150);"></div>
+      <div style="flex-grow:1; height:62%; background: oklch(0.58 0.10 150);"></div>
+      <div style="flex-grow:1; height:44%; background: oklch(0.46 0.055 150);"></div>
+      <div style="flex-grow:1; height:30%; background: oklch(0.42 0.03 250);"></div>
+    </div>
+    <div style="display: flex; align-items: center; margin-top: 6px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.008 250);">18:00</div>
+      <div style="flex-grow: 1; text-align: center; font-size: 10.5px; color: oklch(0.52 0.008 250);">averaged over 14 nights · no hatch: always listening here</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.008 250);">10:00</div>
+    </div>
+    <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); margin-top: 10px;">Busy 19:00–22:00, quiet 02:00–05:00, a morning commute bump at 06:00–08:00.</div>
+  </div>
+
+  <div style="height: 1px; background: oklch(0.24 0.010 250); margin: 16px 20px 0;"></div>
+
+  <div style="display: flex; align-items: baseline; padding: 14px 20px 6px;">
+    <div class="lbl" style="flex-grow: 1;">Regulars</div>
+    <div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">All 64</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+    <div class="st" style="border-top-color: oklch(0.26 0.010 250);">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600; width: 80px;">W7NPC</div>
+      <div style="font-size: 13px; color: oklch(0.60 0.008 250); flex-grow: 1;">612 overs · 14 of 14 nights</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.56 0.008 250);">02:14</div>
+    </div>
+    <div class="st">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600; width: 80px;">KJ7ABC</div>
+      <div style="font-size: 13px; color: oklch(0.60 0.008 250); flex-grow: 1;">388 overs · 12 of 14 nights</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.56 0.008 250);">02:18</div>
+    </div>
+    <div class="st">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600; width: 80px;">KA7OEI</div>
+      <div style="font-size: 13px; color: oklch(0.60 0.008 250); flex-grow: 1;">201 overs · Tuesdays only</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.56 0.008 250);">19:31</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

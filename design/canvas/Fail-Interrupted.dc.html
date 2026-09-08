@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .k { font-size: 13.5px; color: oklch(0.62 0.008 250); width: 96px; flex-shrink: 0; }
+    .v { font-size: 14px; color: oklch(0.94 0.006 250); flex-grow: 1; }
+    .sub { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; }
+    .lr { display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; flex-shrink: 0; }
+    .tx { font-size: 13px; line-height: 1.35; color: oklch(0.66 0.008 250); margin-top: 3px; font-style: italic; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 10px 20px 0;">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Capturing</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Session resumed 06:48 · <span class="m">0:00:09</span> · alive</div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="border-radius: 8px; background: oklch(0.26 0.012 250); padding: 12px 14px; display: flex; gap: 11px;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0; margin-top: 5px;"></div>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">3 overs were mid-transcription when the app stopped</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">Found in <span class="m">processing</span> at launch with no result. Returned to <span class="m">captured</span> and re-queued — their audio was safely on disk before any pass began. They run again from the start; a pass that ran twice produces the same record.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div class="lbl" style="padding-bottom: 4px;">Processing</div>
+    <div class="row">
+      <div class="k">Backlog</div>
+      <div class="v"><span class="m">3</span> overs waiting<div class="sub">re-queued at 06:48:02 · oldest first · Pass B starting now</div></div>
+    </div>
+    <div class="row">
+      <div class="k">Lost</div>
+      <div class="v">Nothing<div class="sub">0 overs · 0 s of audio · the ring buffer flushes before a pass is claimed</div></div>
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+    </div>
+    <div class="row" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div class="k">Gap</div>
+      <div class="v"><span class="m">3 h 36 m</span> not listening<div class="sub">03:12 – 06:48 · app stopped by the OS · in the log and the pattern chart</div></div>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: baseline; padding: 16px 20px 6px;">
+    <div class="lbl" style="flex-grow: 1;">The 3 overs</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+    <div class="lr" style="border-top-color: oklch(0.26 0.010 250);">
+      <div class="t">03:12:31</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.50 0.008 250); box-sizing: border-box; border-right-color: transparent; flex-shrink: 0;"></div>
+          <div style="font-size: 11.5px; color: oklch(0.62 0.008 250); font-style: italic;">resolving again…</div>
+        </div>
+        <div class="tx">seven three, going to get some sleep</div>
+      </div>
+    </div>
+    <div class="lr">
+      <div class="t">03:12:08</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.50 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-size: 11.5px; color: oklch(0.62 0.008 250); font-style: italic;">queued</div>
+        </div>
+        <div class="tx">okay, sounds good, I'll catch you tomorrow night</div>
+      </div>
+    </div>
+    <div class="lr">
+      <div class="t">03:11:40</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.50 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-size: 11.5px; color: oklch(0.62 0.008 250); font-style: italic;">queued</div>
+        </div>
+        <div class="tx">yeah I'm about done here too</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 8px 20px 10px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.45;">These keep their live partial in the log until Pass B finishes, exactly like a fresh over — being interrupted is not a state the operator has to understand.</div>
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.28 0.010 250); background: oklch(0.19 0.010 250); padding: 10px 20px 14px; display: flex; align-items: center; gap: 11px;">
+    <div style="display: flex; gap: 2px; align-items: flex-end; height: 14px;">
+      <div style="width: 2px; height: 3px; background: oklch(0.60 0.10 150);"></div>
+      <div style="width: 2px; height: 4px; background: oklch(0.60 0.10 150);"></div>
+      <div style="width: 2px; height: 3px; background: oklch(0.60 0.10 150);"></div>
+      <div style="width: 2px; height: 5px; background: oklch(0.60 0.10 150);"></div>
+    </div>
+    <div style="font-size: 13px; color: oklch(0.62 0.008 250); flex-grow: 1; font-style: italic;">squelch closed · 3 in queue</div>
+    <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Live</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

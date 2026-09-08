@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .ver { padding: 14px 20px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .vh { display: flex; align-items: center; gap: 8px; }
+    .vk { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .vt { font-size: 12px; color: oklch(0.58 0.008 250); flex-grow: 1; }
+    .tx { font-size: 14px; line-height: 1.45; margin-top: 8px; text-wrap: pretty; }
+    .del { color: oklch(0.62 0.05 60); text-decoration: line-through; text-decoration-color: oklch(0.55 0.07 60); }
+    .ins { background: oklch(0.22 0.04 150); border-radius: 3px; padding: 0 3px; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);"><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600;">W7NPC</span> · 02:18:20</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 14px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Earlier versions</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">3 versions · none deleted · the current one is what the log shows</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="ver" style="border-top-color: oklch(0.26 0.010 250); background: oklch(0.175 0.009 250);">
+      <div class="vh">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+        <div class="vk" style="color: oklch(0.68 0.10 150);">current</div>
+        <div class="vt">Pass B · whisper-small · 02:18:31 · corrected by you 06:20</div>
+      </div>
+      <div class="tx" style="color: oklch(0.94 0.006 250);">kilo juliet seven alpha bravo charlie this is whiskey seven november papa charlie, back to you</div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600;">W7NPC</div>
+        <div style="font-size: 10px; font-weight: 500; letter-spacing: 0.04em; color: oklch(0.62 0.008 250); border: 1px solid oklch(0.30 0.010 250); padding: 0 5px; border-radius: 3px; text-transform: uppercase;">corrected</div>
+      </div>
+    </div>
+
+    <div class="ver">
+      <div class="vh">
+        <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.45 0.008 250); box-sizing: border-box;"></div>
+        <div class="vk" style="color: oklch(0.52 0.008 250);">superseded</div>
+        <div class="vt">Pass B · whisper-small · 02:18:31 · machine attribution</div>
+      </div>
+      <div class="tx" style="color: oklch(0.76 0.006 250);">kilo juliet seven alpha bravo charlie this is whiskey seven november papa charlie, back to you</div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box;"></div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600; color: oklch(0.86 0.006 250);">W7NPC</div>
+        <div style="font-size: 11px; color: oklch(0.78 0.13 75);">or W7NPG</div>
+        <div style="flex-grow: 1;"></div>
+        <div style="font-size: 12px; color: oklch(0.72 0.14 150);">Restore</div>
+      </div>
+      <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 6px;">Same text. The attribution changed: you chose W7NPC over the ambiguity.</div>
+    </div>
+
+    <div class="ver">
+      <div class="vh">
+        <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.45 0.008 250); box-sizing: border-box;"></div>
+        <div class="vk" style="color: oklch(0.52 0.008 250);">superseded</div>
+        <div class="vt">Pass A · whisper-tiny · 02:18:22 · live partial</div>
+      </div>
+      <div class="tx" style="color: oklch(0.76 0.006 250);">kilo juliet seven alpha bravo charlie this is whiskey seven <span class="del">november pop a</span> <span class="ins">november papa</span> charlie, back to you</div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+        <div style="font-size: 11.5px; color: oklch(0.62 0.008 250); font-style: italic;">no attribution — partials are never attributed</div>
+        <div style="flex-grow: 1;"></div>
+        <div style="font-size: 12px; color: oklch(0.72 0.14 150);">Restore</div>
+      </div>
+      <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 6px;">Diff against current: two words. The live model heard "pop a" for "papa".</div>
+    </div>
+
+    <div style="border-top: 1px solid oklch(0.215 0.010 250);"></div>
+
+    <div style="padding: 16px 20px 0;">
+      <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; text-wrap: pretty;">Restoring an earlier version makes it current and keeps this one as superseded. Nothing here can be deleted from this screen — retention handles audio, and never transcripts.</div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

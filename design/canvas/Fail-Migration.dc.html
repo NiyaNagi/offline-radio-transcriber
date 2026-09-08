@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .st { display: flex; align-items: center; gap: 13px; padding: 12px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+    .sn { font-size: 14.5px; color: oklch(0.94 0.006 250); }
+    .ss { font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px; line-height: 1.4; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="padding: 58px 20px 0;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M7 8v8M17 8v8M3 11v2M21 11v2"></path></svg>
+      <div class="m" style="font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250);">Updated to 1.1.0</div>
+    </div>
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; margin-top: 22px; line-height: 1.2;">The records did not fully carry over</div>
+    <div style="font-size: 15px; line-height: 1.45; color: oklch(0.76 0.006 250); margin-top: 14px; text-wrap: pretty;">Step 3 of the database migration failed. Everything that matters is intact; one derived field could not be rebuilt, and the overs it touches are marked to be re-derived.</div>
+  </div>
+
+  <div style="padding: 24px 20px 0;">
+    <div class="lbl">What happened</div>
+    <div style="display: flex; flex-direction: column; margin-top: 4px;">
+      <div class="st">
+        <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+        <div style="flex-grow: 1;"><div class="sn">Audio untouched</div><div class="ss"><span class="m">38.2 GB</span> · 4,318 files · checksums match</div></div>
+      </div>
+      <div class="st">
+        <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+        <div style="flex-grow: 1;"><div class="sn">Transcripts, all versions, untouched</div><div class="ss">current and superseded · 6,904 rows</div></div>
+      </div>
+      <div class="st">
+        <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+        <div style="flex-grow: 1;"><div class="sn">Attributions, corrections, stations untouched</div><div class="ss">every state, every correction, every name you gave</div></div>
+      </div>
+      <div class="st" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.78 0.13 75); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 75)" stroke-width="3" stroke-linecap="round"><path d="M12 7v6M12 16.5v.5"></path></svg></div>
+        <div style="flex-grow: 1;"><div class="sn">Activity patterns need rebuilding</div><div class="ss">the hour-bucket table changed shape and the rebuild ran out of time · <span class="m">4,318</span> overs marked · about 2 minutes, runs in the background</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 18px 20px 0;">
+    <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; text-wrap: pretty;">A migration can never destroy audio or a superseded transcript — that is tested against every released version before this one ships. Station and frequency views will show <span style="font-style: italic;">pattern rebuilding</span> until the marked overs are re-derived.</div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Rebuild now and continue</div></div>
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 44px;"><div style="font-size: 13.5px; color: oklch(0.66 0.008 250);">Save a diagnostic bundle first</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

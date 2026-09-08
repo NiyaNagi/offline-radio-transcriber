@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .card { width: 170px; height: 210px; background: oklch(0.185 0.009 250); border-radius: 10px; border: 1px solid oklch(0.26 0.010 250); padding: 12px 13px; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+    .id { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250); }
+    .ttl { font-size: 13.5px; font-weight: 600; color: oklch(0.94 0.006 250); line-height: 1.25; }
+    .sum { font-size: 11px; color: oklch(0.62 0.008 250); line-height: 1.4; flex-grow: 1; }
+    .arr { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 80px; flex-shrink: 0; gap: 4px; }
+    .al { font-size: 10px; color: oklch(0.62 0.008 250); text-align: center; line-height: 1.3; }
+    .ln { width: 100%; height: 1px; background: oklch(0.40 0.010 250); position: relative; }
+    .ln::after { content: ""; position: absolute; right: 0; top: -3px; width: 0; height: 0; border-left: 6px solid oklch(0.40 0.010 250); border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .rowmini { background: oklch(0.155 0.008 250); border-radius: 5px; padding: 6px 8px; margin-top: 4px; }
+  </style>
+</helmet>
+
+<div style="width: 1560px; height: 560px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); padding: 30px 34px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px;">
+
+  <div>
+    <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">One over, start to log</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px; max-width: 760px; line-height: 1.5;">What the operator sees as a single transmission moves through the pipeline. Provisional looks provisional at every stage, and the swap to final is marked, never silent.</div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start;">
+    <div class="card"><div class="id">S12 → N01</div><div class="ttl">Start capture</div><div class="sum">Now home appears with the live bar. Header shows the live dot and elapsed. Notification posts.</div>
+      <div class="rowmini"><div style="font-size: 10px; color: oklch(0.62 0.008 250); font-style: italic;">squelch closed · −58 dBFS</div></div>
+    </div>
+    <div class="arr"><div class="al">squelch opens</div><div class="ln"></div></div>
+    <div class="card"><div class="id">Live bar</div><div class="ttl">Hearing</div><div class="sum">Level meter moves. Pass A partial text streams into the live bar, italic, ellipsized. No row yet.</div>
+      <div class="rowmini"><div style="font-size: 10px; color: oklch(0.72 0.006 250); font-style: italic;">and we're clear on the rep…</div></div>
+    </div>
+    <div class="arr"><div class="al">segment closes</div><div class="ln"></div></div>
+    <div class="card"><div class="id">L03 · row 1</div><div class="ttl">Row appears, partial</div><div class="sum">A log row with the Pass A text, italic and dim, a mini meter where the marker goes, "hearing…". No attribution.</div>
+      <div class="rowmini"><div style="display: flex; align-items: center; gap: 5px;"><div style="display: flex; gap: 1px; align-items: flex-end; height: 7px;"><div style="width: 2px; height: 4px; background: oklch(0.60 0.10 150);"></div><div style="width: 2px; height: 7px; background: oklch(0.60 0.10 150);"></div></div><div style="font-size: 9.5px; color: oklch(0.62 0.008 250); font-style: italic;">hearing…</div></div></div>
+    </div>
+    <div class="arr"><div class="al">Pass B done</div><div class="ln"></div></div>
+    <div class="card"><div class="id">L03 · row 2</div><div class="ttl">Resolving</div><div class="sum">Final text lands, still italic. Marker slot shows a spinner ring, "resolving…". Pass C and the priors are running.</div>
+      <div class="rowmini"><div style="display: flex; align-items: center; gap: 5px;"><div style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid oklch(0.50 0.008 250); border-right-color: transparent; box-sizing: border-box;"></div><div style="font-size: 9.5px; color: oklch(0.62 0.008 250); font-style: italic;">resolving…</div></div></div>
+    </div>
+    <div class="arr"><div class="al">attributed</div><div class="ln"></div></div>
+    <div class="card" style="border-color: oklch(0.34 0.06 150);"><div class="id">L01 · final</div><div class="ttl">Marker lands</div><div class="sum">One of four states, always. If the text changed from Pass A, a "revised" badge. The Pass A text is kept under revisions.</div>
+      <div class="rowmini"><div style="display: flex; align-items: center; gap: 5px;"><div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div><div class="m" style="font-size: 10.5px; font-weight: 600;">W7NPC</div><div style="font-size: 9.5px; letter-spacing: 0.04em; color: oklch(0.62 0.05 60); border: 1px solid oklch(0.40 0.04 60); padding: 0 3px; border-radius: 2px; text-transform: uppercase;">revised</div></div></div>
+    </div>
+    <div class="arr"><div class="al">also</div><div class="ln"></div></div>
+    <div class="card"><div class="id">N01 · Now</div><div class="ttl">Home updates</div><div class="sum">Over count +1. Chart bar for this hour grows. If a new station, a digest item and a Stations-heard row. Notification count +1.</div>
+      <div class="rowmini"><div style="font-size: 10px; color: oklch(0.62 0.008 250);">413 overs · 19 stations</div></div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 40px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Rejected</span> instead of attributed: the row becomes the dimmed rejected variant with its reason, hidden by default, one chip away. Its audio is kept.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Deferred</span> (backlog): the row stays at "resolving…" with the partial for as long as it takes. Never blank, never a spinner with no words beside it.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Tier 1</span>: there is no Pass C, so "resolving…" is short and the outcome is more often unknown. The row never guesses in its place.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

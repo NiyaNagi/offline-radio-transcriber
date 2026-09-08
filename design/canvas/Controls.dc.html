@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .cap { font-size: 11px; color: oklch(0.52 0.008 250); }
+  </style>
+</helmet>
+
+<div style="width: 900px; height: 820px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); padding: 30px 34px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px;">
+
+  <div>
+    <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">Controls</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px; max-width: 660px; line-height: 1.5;">This is a dense instrument, so most actions are text in the accent colour rather than filled buttons. A text action still needs a real hit area and a pressed state — if it acts, it must look like it acts.</div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 26px;">
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Text action — the default</div>
+      <div style="display: flex; gap: 26px; margin-top: 15px; align-items: center;">
+        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 7px;">
+          <div style="display: flex; align-items: center; min-height: 44px; padding: 0 4px;"><div style="font-size: 13px; color: oklch(0.72 0.14 150);">Filter</div></div>
+          <div class="cap">default</div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 7px;">
+          <div style="display: flex; align-items: center; min-height: 44px; padding: 0 4px; background: oklch(0.22 0.010 250); border-radius: 6px;"><div style="font-size: 13px; color: oklch(0.80 0.14 150);">Filter</div></div>
+          <div class="cap">pressed</div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 7px;">
+          <div style="display: flex; align-items: center; min-height: 44px; padding: 0 4px;"><div style="font-size: 13px; color: oklch(0.46 0.008 250);">Filter</div></div>
+          <div class="cap">disabled</div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 14px;">The label is 13px but the target is 44px tall. The padding is invisible and mandatory.</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Filled button — setup and destructive only</div>
+      <div style="display: flex; gap: 12px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.16 0.01 150);">Start capture</div></div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px; border: 1px solid oklch(0.30 0.010 250); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.86 0.006 250);">Not now</div></div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px; background: oklch(0.30 0.012 250); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.46 0.008 250);">Continue</div></div>
+      </div>
+      <div style="font-size: 12px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 14px;">Primary, secondary, disabled. A setup step's primary stays disabled until its verify passes.</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Filter chips</div>
+      <div style="display: flex; gap: 7px; margin-top: 15px; flex-wrap: wrap;">
+        <div style="font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 14px; background: oklch(0.30 0.012 250); color: oklch(0.94 0.006 250);">All</div>
+        <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">145.230</div>
+        <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">Named</div>
+        <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">Rejected</div>
+      </div>
+      <div style="display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 5px 9px 5px 11px; border-radius: 14px; background: oklch(0.30 0.012 250); color: oklch(0.94 0.006 250);">
+          <span>Confirmed</span>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.70 0.008 250)" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 5px 9px 5px 11px; border-radius: 14px; background: oklch(0.30 0.012 250); color: oklch(0.94 0.006 250);">
+          <span>02:00 – 04:00</span>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.70 0.008 250)" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 14px;">Applied filters carry a dismiss affordance. Chips scroll horizontally; they never wrap in the log header.</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Fields</div>
+      <div style="display: flex; flex-direction: column; gap: 11px; margin-top: 15px;">
+        <div style="display: flex; align-items: center; height: 44px; padding: 0 13px; background: oklch(0.175 0.009 250); border: 1px solid oklch(0.28 0.010 250); border-radius: 8px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-right: 9px;"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+          <div style="font-size: 14px; color: oklch(0.50 0.008 250);">Search transcripts</div>
+        </div>
+        <div style="display: flex; align-items: center; height: 44px; padding: 0 13px; background: oklch(0.175 0.009 250); border: 1px solid oklch(0.72 0.14 150); border-radius: 8px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: oklch(0.94 0.006 250);">W7NPC</div>
+          <div style="width: 1px; height: 17px; background: oklch(0.72 0.14 150); margin-left: 1px;"></div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 14px;">Placeholder and focused. A field holding a callsign or frequency uses mono.</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Selection — enum, not a cycle</div>
+      <div style="display: flex; flex-direction: column; margin-top: 13px;">
+        <div style="display: flex; align-items: center; gap: 11px; min-height: 44px; border-bottom: 1px solid oklch(0.21 0.010 250);">
+          <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div></div>
+          <div style="font-size: 14px; color: oklch(0.94 0.006 250); flex-grow: 1;">All bands</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 11px; min-height: 44px; border-bottom: 1px solid oklch(0.21 0.010 250);">
+          <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.40 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">2 m</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.55 0.008 250);">318</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 11px; min-height: 44px;">
+          <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.40 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">70 cm</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.55 0.008 250);">94</div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 14px;">A closed set is a list with every option visible and its count. Never a tap-to-cycle label — the operator cannot see the options, cannot go back, and cannot tell it is interactive.</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Toggle and stepper</div>
+      <div style="display: flex; flex-direction: column; gap: 0; margin-top: 13px;">
+        <div style="display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid oklch(0.21 0.010 250);">
+          <div style="flex-grow: 1;">
+            <div style="font-size: 14px; color: oklch(0.94 0.006 250);">Retain audio</div>
+            <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 1px;">lossless, 1.4 GB / night</div>
+          </div>
+          <div style="width: 42px; height: 24px; border-radius: 12px; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: flex-end; padding: 0 3px; box-sizing: border-box; flex-shrink: 0;"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.16 0.01 150);"></div></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; min-height: 44px;">
+          <div style="flex-grow: 1;">
+            <div style="font-size: 14px; color: oklch(0.94 0.006 250);">Contribute to corpus</div>
+            <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 1px;">off by default, always</div>
+          </div>
+          <div style="width: 42px; height: 24px; border-radius: 12px; background: oklch(0.30 0.012 250); display: flex; align-items: center; padding: 0 3px; box-sizing: border-box; flex-shrink: 0;"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 14px;">A toggle carries its consequence as a sub-line, so the operator is never guessing what it costs.</div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

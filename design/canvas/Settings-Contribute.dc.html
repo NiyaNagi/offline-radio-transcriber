@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .r { display: flex; align-items: center; gap: 12px; padding: 11px 20px; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .n { font-size: 14px; color: oklch(0.94 0.006 250); }
+    .s { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; line-height: 1.4; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .tg-off { width: 42px; height: 24px; border-radius: 12px; background: oklch(0.30 0.012 250); display: flex; align-items: center; padding: 0 3px; box-sizing: border-box; flex-shrink: 0; }
+    .tg-on { width: 42px; height: 24px; border-radius: 12px; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: flex-end; padding: 0 3px; box-sizing: border-box; flex-shrink: 0; }
+    .never { display: flex; align-items: center; gap: 12px; padding: 9px 20px; border-top: 1px solid oklch(0.21 0.010 250); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Settings</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Contribute to the corpus</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px; line-height: 1.45;">Off unless you turn each part on. Nothing leaves this phone until you save a bundle and send it yourself.</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">Can be included, each with its own switch</div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Audio of overs you have labelled</div><div class="s">only overs you marked with a callsign and a certainty · the labelling protocol's format</div></div>
+      <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Transcripts and your corrections</div><div class="s">the machine's text, the text you fixed it to, and the attribution state</div></div>
+      <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Rejected segments</div><div class="s">the squelch tails and hallucinations, so the next model learns to refuse them too</div></div>
+      <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div class="n">Resolver statistics</div><div class="s">counts and scores only — how often each prior helped, no callsigns, no audio</div></div>
+      <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+
+    <div class="lbl">Never included — there is no switch</div>
+    <div class="never">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      <div style="flex-grow: 1;"><div class="n" style="color: oklch(0.86 0.006 250);">Voiceprints</div><div class="s">a voice is a biometric · it is used here and only here</div></div>
+    </div>
+    <div class="never">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      <div style="flex-grow: 1;"><div class="n" style="color: oklch(0.86 0.006 250);">Names and notes you gave stations</div></div>
+    </div>
+    <div class="never">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      <div style="flex-grow: 1;"><div class="n" style="color: oklch(0.86 0.006 250);">Station knowledge</div><div class="s">who is a regular where, when they are around — the patterns this phone has learned</div></div>
+    </div>
+    <div class="never" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      <div style="flex-grow: 1;"><div class="n" style="color: oklch(0.86 0.006 250);">Your location, precise or coarse</div><div class="s">signal reports are stripped too — S-meter readings can place a receiver</div></div>
+    </div>
+
+    <div class="lbl">Before anything is saved</div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="flex-grow: 1;"><div class="n">You read the bundle</div><div class="s">every file listed, every row openable · then you choose where it goes · the app cannot send it</div></div>
+    </div>
+
+  </div>
+
+  <div style="padding: 12px 20px 24px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.30 0.012 250); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.46 0.008 250);">Preview bundle · nothing selected</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.11 0.006 250); position: relative; overflow: hidden;">
+
+  <div style="position: absolute; inset: 0; padding-top: 44px; opacity: 0.22;">
+    <div style="padding: 10px 20px 0; color: oklch(0.94 0.006 250);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 27px; font-weight: 600; margin-top: 36px;">K7LWH</div>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; bottom: 0; background: oklch(0.185 0.009 250); border-radius: 18px 18px 0 0; border-top: 1px solid oklch(0.28 0.010 250); padding: 10px 20px 20px; box-sizing: border-box; color: oklch(0.94 0.006 250); display: flex; flex-direction: column;">
+
+    <div style="width: 36px; height: 4px; border-radius: 2px; background: oklch(0.34 0.010 250); margin: 0 auto;"></div>
+
+    <div style="display: flex; align-items: center; gap: 10px; padding: 14px 0 4px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+      <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">Type a callsign</div>
+    </div>
+
+    <div style="display: flex; align-items: center; height: 48px; padding: 0 13px; background: oklch(0.155 0.008 250); border: 1px solid oklch(0.72 0.14 150); border-radius: 8px; margin-top: 12px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600; color: oklch(0.94 0.006 250); letter-spacing: 0.04em;">VE7ABC</div>
+      <div style="width: 1px; height: 19px; background: oklch(0.72 0.14 150); margin-left: 2px;"></div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 8px; padding: 10px 0 0;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="font-size: 12.5px; color: oklch(0.86 0.006 250);">Valid Canadian callsign · <span style="font-family: 'IBM Plex Mono', monospace;">VE7</span> is British Columbia</div>
+    </div>
+
+    <div style="margin-top: 16px; background: oklch(0.175 0.010 75); border: 1px solid oklch(0.38 0.06 60); border-radius: 8px; padding: 12px 14px;">
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0; margin-top: 4px;"></div>
+        <div style="flex-grow: 1;">
+          <div style="font-size: 13.5px; font-weight: 500; color: oklch(0.94 0.006 250);">Recorded as unverified</div>
+          <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 3px; text-wrap: pretty;">This callsign was not parsed from the audio and has not been heard before, so it cannot feed the priors or the voice match. The over will show it with a <span style="font-style: italic;">corrected</span> mark and the machine's own reading kept underneath.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="lbl" style="padding: 18px 0 8px;">Apply to</div>
+    <div style="display: flex; flex-direction: column;">
+      <div style="display: flex; align-items: center; gap: 11px; min-height: 44px; border-top: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div></div>
+        <div style="font-size: 14px; color: oklch(0.94 0.006 250); flex-grow: 1;">This over only</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 11px; min-height: 44px; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.40 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+        <div style="font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">Every over matched to this voice</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.55 0.008 250);">6</div>
+      </div>
+    </div>
+
+    <div style="padding: 20px 0 0; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Save unverified correction</div></div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .opt { display: flex; align-items: center; gap: 11px; min-height: 44px; padding: 4px 20px; border-top: 1px solid oklch(0.21 0.010 250); }
+    .rad-on { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .rad-off { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.40 0.008 250); box-sizing: border-box; flex-shrink: 0; }
+    .chk-on { width: 16px; height: 16px; border-radius: 4px; background: oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .chk-off { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid oklch(0.40 0.008 250); box-sizing: border-box; flex-shrink: 0; }
+    .n { font-size: 14px; color: oklch(0.94 0.006 250); }
+    .s { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 1px; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Settings</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Export</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">A file you save yourself. The app has nowhere to send it.</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">What</div>
+    <div class="opt">
+      <div class="rad-on"><div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div></div>
+      <div style="flex-grow: 1;"><div class="n">Tonight</div><div class="s">412 overs · 23:32 – 06:14</div></div>
+    </div>
+    <div class="opt">
+      <div class="rad-off"></div>
+      <div style="flex-grow: 1;"><div class="n">A range of nights</div><div class="s">choose from Earlier nights</div></div>
+    </div>
+    <div class="opt" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div class="rad-off"></div>
+      <div style="flex-grow: 1;"><div class="n">Everything</div><div class="s">14 sessions · 4,318 overs</div></div>
+    </div>
+
+    <div class="lbl">Include</div>
+    <div class="opt">
+      <div class="chk-on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div style="flex-grow: 1;"><div class="n">Log with attributions and their state</div><div class="s">the state travels with every callsign — an export without it would be a lie</div></div>
+    </div>
+    <div class="opt">
+      <div class="chk-on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div style="flex-grow: 1;"><div class="n">Transcripts, current version</div><div class="s">superseded versions optional below</div></div>
+    </div>
+    <div class="opt">
+      <div class="chk-on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div style="flex-grow: 1;"><div class="n">Digest</div></div>
+    </div>
+    <div class="opt">
+      <div class="chk-off"></div>
+      <div style="flex-grow: 1;"><div class="n">Superseded transcripts and corrections history</div></div>
+    </div>
+    <div class="opt" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div class="chk-off"></div>
+      <div style="flex-grow: 1;"><div class="n">Audio</div><div class="s">1.4 GB tonight · FLAC · the callsign state is embedded in each file's tags</div></div>
+    </div>
+
+    <div class="lbl">Format</div>
+    <div style="display: flex; gap: 7px; padding: 10px 20px 4px;">
+      <div style="font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 14px; background: oklch(0.30 0.012 250); color: oklch(0.94 0.006 250);">ADIF</div>
+      <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">CSV</div>
+      <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">JSON</div>
+      <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">Text</div>
+    </div>
+    <div style="padding: 4px 20px 0;"><div class="s">ADIF carries the state as <span class="m">APP_ORT_STATE</span>; inferred and ambiguous overs are never written as plain QSOs</div></div>
+
+    <div style="margin: 16px 20px 0; background: oklch(0.195 0.009 250); border-radius: 10px; padding: 13px 16px;">
+      <div style="display: flex; gap: 10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 1px;"><rect x="4" y="10" width="16" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>
+        <div style="font-size: 12.5px; line-height: 1.5; color: oklch(0.86 0.006 250);">Never exported, by any option: voiceprints, names you gave stations, notes, your location, the level of any signal that would locate you.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="padding: 12px 20px 24px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Save file · <span class="m">overnight-2026-09-07.adi</span> · 184 KB</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .r { display: flex; align-items: center; gap: 12px; padding: 11px 20px; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .n { font-size: 14.5px; color: oklch(0.94 0.006 250); }
+    .s { font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px; line-height: 1.4; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Models and lexicon</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Installed, not yet active</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Lexicon 2026.09 verified · takes effect when this session ends</div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="border-radius: 8px; background: oklch(0.26 0.012 250); padding: 12px 14px; display: flex; gap: 11px;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0; margin-top: 5px;"></div>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">A session is running — the swap waits</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">Replacing the lexicon under a live capture would make tonight's log half one version and half another, with no record of where the line is. So it does not happen. Tonight finishes on 2026.08; tomorrow starts on 2026.09.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">Lexicon</div>
+    <div class="r">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="flex-grow: 1;"><div class="n">2026.08 <span style="font-size: 11px; color: oklch(0.68 0.10 150);">active · this session</span></div><div class="s"><span class="m">1,104,208</span> records · in use since 23:32</div></div>
+    </div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+      <div style="flex-grow: 1;"><div class="n">2026.09 <span style="font-size: 11px; color: oklch(0.62 0.008 250);">staged · next session</span></div><div class="s"><span class="m">1,122,410</span> records · verified 06:12 · +18,202 new callsigns, 1,340 lapsed</div></div>
+    </div>
+
+    <div class="lbl">Options</div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Wait for the session to end</div><div class="s">the default · nothing else to do</div></div>
+      <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div></div>
+    </div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Stop capture, swap, start a new session</div><div class="s">tonight's log ends here · a second session begins on 2026.09 · both stay in Earlier nights</div></div>
+      <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.40 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+    </div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div class="n">Afterwards, re-run tonight on 2026.09</div><div class="s">Improve records will offer it · 12 ambiguous overs might resolve with the new prefixes</div></div>
+      <div style="width: 16px; height: 16px; border-radius: 4px; background: oklch(0.72 0.14 150); box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+    </div>
+
+    <div style="padding: 16px 20px 0;">
+      <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; text-wrap: pretty;">Every over records which lexicon and model resolved it. When an asset changes, the overs from before are the ones Improve records lists — the line is always visible.</div>
+    </div>
+
+  </div>
+
+  <div style="padding: 12px 20px 24px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Done</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

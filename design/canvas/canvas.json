@@ -1,34 +1,1076 @@
 {
   "pages": [
-    { "id": "page-1", "name": "App" },
-    { "id": "page-2", "name": "Explorations" }
+    {
+      "id": "page-1",
+      "name": "Foundations"
+    },
+    {
+      "id": "page-2",
+      "name": "Setup"
+    },
+    {
+      "id": "page-3",
+      "name": "Now and capture"
+    },
+    {
+      "id": "page-4",
+      "name": "Log and threads"
+    },
+    {
+      "id": "page-5",
+      "name": "Transmission detail"
+    },
+    {
+      "id": "page-6",
+      "name": "Search, stations, frequencies"
+    },
+    {
+      "id": "page-7",
+      "name": "Digest and improve"
+    },
+    {
+      "id": "page-8",
+      "name": "Settings"
+    },
+    {
+      "id": "page-9",
+      "name": "Failure states"
+    },
+    {
+      "id": "page-10",
+      "name": "Flows"
+    },
+    {
+      "id": "page-11",
+      "name": "Explorations"
+    }
   ],
   "artboards": [
-    { "file": "Menu.dc.html", "x": 0, "y": 0, "w": 390, "h": 844, "title": "Drawer", "page": "page-1" },
-    { "file": "Main.dc.html", "x": 490, "y": 0, "w": 390, "h": 844, "title": "Now — home", "page": "page-1" },
-    { "file": "Log.dc.html", "x": 980, "y": 0, "w": 390, "h": 844, "title": "Log", "page": "page-1" },
-    { "file": "Detail.dc.html", "x": 1470, "y": 0, "w": 390, "h": 844, "title": "Drill-in — why this callsign", "page": "page-1" },
-    { "file": "States.dc.html", "x": 490, "y": 984, "w": 900, "h": 470, "title": "Attribution states + greyscale proof", "page": "page-1" },
-    { "file": "Editorial.dc.html", "x": 0, "y": 0, "w": 390, "h": 844, "title": "B · Editorial (original sketch)", "page": "page-2" },
-    { "file": "Timeline.dc.html", "x": 490, "y": 0, "w": 390, "h": 844, "title": "C · Timeline (original sketch)", "page": "page-2" }
-  ],
-  "annotations": [
     {
-      "id": "integrated",
+      "file": "Tokens.dc.html",
       "x": 0,
-      "y": 984,
-      "w": 400,
-      "text": "Integrated: Editorial's typography and rhythm as the base, Timeline's activity chart on the home, Instrument's density in the Log, and the drill-in kept as it was.\n\nThe drawer replaces the tab bar — Log, Threads, Stations, Frequencies and Earlier nights do not fit in tabs, and Capture, Improve records and Settings belong in the same place.\n\nOne addition worth noticing: the drawer footer carries the storage budget (D26), because on this product that is a thing you actually watch.",
+      "y": 0,
+      "w": 900,
+      "h": 900,
+      "title": "Colour",
       "page": "page-1"
     },
     {
-      "id": "explorations",
+      "file": "Type.dc.html",
+      "x": 1000,
+      "y": 0,
+      "w": 900,
+      "h": 700,
+      "title": "Typography",
+      "page": "page-1"
+    },
+    {
+      "file": "Rows.dc.html",
+      "x": 2000,
+      "y": 0,
+      "w": 900,
+      "h": 1010,
+      "title": "Log row — every variant",
+      "page": "page-1"
+    },
+    {
+      "file": "States.dc.html",
+      "x": 0,
+      "y": 1150,
+      "w": 900,
+      "h": 470,
+      "title": "Attribution states + greyscale proof",
+      "page": "page-1"
+    },
+    {
+      "file": "Controls.dc.html",
+      "x": 1000,
+      "y": 1150,
+      "w": 900,
+      "h": 820,
+      "title": "Controls",
+      "page": "page-1"
+    },
+    {
+      "file": "Feedback.dc.html",
+      "x": 2000,
+      "y": 1150,
+      "w": 900,
+      "h": 860,
+      "title": "Feedback",
+      "page": "page-1"
+    },
+    {
+      "file": "Charts.dc.html",
+      "x": 0,
+      "y": 2150,
+      "w": 900,
+      "h": 780,
+      "title": "Activity patterns",
+      "page": "page-1"
+    },
+    {
+      "file": "Grid.dc.html",
+      "x": 1000,
+      "y": 2150,
+      "w": 900,
+      "h": 940,
+      "title": "Grid, rhythm, targets",
+      "page": "page-1"
+    },
+    {
+      "file": "Icons.dc.html",
+      "x": 2000,
+      "y": 2150,
+      "w": 900,
+      "h": 620,
+      "title": "Icons",
+      "page": "page-1"
+    },
+    {
+      "file": "Setup-Welcome.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "S01 Welcome",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Mic.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "S02 Microphone",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Mic-Denied.dc.html",
       "x": 980,
       "y": 0,
-      "w": 360,
-      "text": "The two original direction sketches, kept for reference. The Instrument direction is not here separately — it became the Log view on the App page.",
+      "w": 390,
+      "h": 844,
+      "title": "S02b Microphone refused",
       "page": "page-2"
+    },
+    {
+      "file": "Setup-Notify.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "S03 Notifications",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Input.dc.html",
+      "x": 1960,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "S04 Input",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Verify.dc.html",
+      "x": 2450,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "S05 Verifying",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Route-Mismatch.dc.html",
+      "x": 0,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "S06 Route mismatch — halt",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Level.dc.html",
+      "x": 490,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "S07 Level",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Battery.dc.html",
+      "x": 980,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "S08 Overnight",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Rig.dc.html",
+      "x": 1470,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "S09 Radio",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Rig-Usb.dc.html",
+      "x": 1960,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "S10 USB permission",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Rig-Verified.dc.html",
+      "x": 2450,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "S11 Rig verified",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Done.dc.html",
+      "x": 0,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "S12 Ready",
+      "page": "page-2"
+    },
+    {
+      "file": "Menu.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Drawer",
+      "page": "page-3"
+    },
+    {
+      "file": "Main.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "N01 Now — home",
+      "page": "page-3"
+    },
+    {
+      "file": "Now-Idle.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "N02 Now — idle",
+      "page": "page-3"
+    },
+    {
+      "file": "Now-First.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "N03 Now — first session",
+      "page": "page-3"
+    },
+    {
+      "file": "Capture-Status.dc.html",
+      "x": 1960,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "N04 Capture status",
+      "page": "page-3"
+    },
+    {
+      "file": "Capture-Notification.dc.html",
+      "x": 2450,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "N05 Notification",
+      "page": "page-3"
+    },
+    {
+      "file": "Level-Meter.dc.html",
+      "x": 0,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "N06 Level meter",
+      "page": "page-3"
+    },
+    {
+      "file": "Log.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "L01 Log",
+      "page": "page-4"
+    },
+    {
+      "file": "Log-Filter.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "L02 Log filter",
+      "page": "page-4"
+    },
+    {
+      "file": "Log-Partial.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "L03 Pass A → Pass B",
+      "page": "page-4"
+    },
+    {
+      "file": "Log-Empty.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "L04 Log empty",
+      "page": "page-4"
+    },
+    {
+      "file": "Log-Rejected.dc.html",
+      "x": 1960,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "L05 Rejected shown",
+      "page": "page-4"
+    },
+    {
+      "file": "Threads.dc.html",
+      "x": 2450,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "T01 Threads",
+      "page": "page-4"
+    },
+    {
+      "file": "Thread-Detail.dc.html",
+      "x": 0,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "T02 Thread",
+      "page": "page-4"
+    },
+    {
+      "file": "Threads-Ungrouped.dc.html",
+      "x": 490,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "T03 Not yet grouped",
+      "page": "page-4"
+    },
+    {
+      "file": "Detail-Confirmed.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "D01 Confirmed",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "D02 Inferred",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Ambiguous.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "D03 Ambiguous",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Unknown.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "D04 Unknown",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Why.dc.html",
+      "x": 1960,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "D05 Why this callsign",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Playback.dc.html",
+      "x": 2450,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "D06 Playback",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Revisions.dc.html",
+      "x": 0,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "D07 Revisions",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Correct-A.dc.html",
+      "x": 490,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "D08 Correct — tier A",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Correct-B.dc.html",
+      "x": 980,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "D09 Correct — tier B",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Correct-C.dc.html",
+      "x": 1470,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "D10 Correct — tier C",
+      "page": "page-5"
+    },
+    {
+      "file": "Detail-Propagated.dc.html",
+      "x": 1960,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "D11 Propagated",
+      "page": "page-5"
+    },
+    {
+      "file": "Search.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Q01 Search",
+      "page": "page-6"
+    },
+    {
+      "file": "Search-Filters.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Q02 Filters",
+      "page": "page-6"
+    },
+    {
+      "file": "Search-Results.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Q03 Results",
+      "page": "page-6"
+    },
+    {
+      "file": "Search-Empty.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Q04 No results",
+      "page": "page-6"
+    },
+    {
+      "file": "Search-Unavailable.dc.html",
+      "x": 1960,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Q05 Text unavailable",
+      "page": "page-6"
+    },
+    {
+      "file": "Stations.dc.html",
+      "x": 2450,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "ST01 Stations",
+      "page": "page-6"
+    },
+    {
+      "file": "Station.dc.html",
+      "x": 0,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "ST02 Station",
+      "page": "page-6"
+    },
+    {
+      "file": "Station-Pattern.dc.html",
+      "x": 490,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "ST03 Pattern",
+      "page": "page-6"
+    },
+    {
+      "file": "Station-Identity.dc.html",
+      "x": 980,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "ST04 Identity",
+      "page": "page-6"
+    },
+    {
+      "file": "Frequencies.dc.html",
+      "x": 1470,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "FQ01 Frequencies",
+      "page": "page-6"
+    },
+    {
+      "file": "Frequency.dc.html",
+      "x": 1960,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "FQ02 Frequency",
+      "page": "page-6"
+    },
+    {
+      "file": "Frequency-Change.dc.html",
+      "x": 2450,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "FQ03 Departure",
+      "page": "page-6"
+    },
+    {
+      "file": "Digest.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "DG01 Digest",
+      "page": "page-7"
+    },
+    {
+      "file": "Digest-Item.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "DG02 Digest item",
+      "page": "page-7"
+    },
+    {
+      "file": "Sessions.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "DG03 Earlier nights",
+      "page": "page-7"
+    },
+    {
+      "file": "Session.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "DG04 Session",
+      "page": "page-7"
+    },
+    {
+      "file": "Improve.dc.html",
+      "x": 1960,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "R01 Improve records",
+      "page": "page-7"
+    },
+    {
+      "file": "Improve-Select.dc.html",
+      "x": 2450,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "R02 Choose passes",
+      "page": "page-7"
+    },
+    {
+      "file": "Improve-Running.dc.html",
+      "x": 0,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "R03 Improving",
+      "page": "page-7"
+    },
+    {
+      "file": "Improve-Done.dc.html",
+      "x": 490,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "R04 Improved",
+      "page": "page-7"
+    },
+    {
+      "file": "Settings.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "CF01 Settings",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Capture.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "CF02 Input and level",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Storage.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "CF03 Storage",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Assets.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "CF04 Models",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Tier.dc.html",
+      "x": 1960,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "CF05 Tier",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Rig.dc.html",
+      "x": 2450,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "CF06 Radio",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Export.dc.html",
+      "x": 0,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "CF07 Export",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Contribute.dc.html",
+      "x": 490,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "CF08 Contribute",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Diagnostics.dc.html",
+      "x": 980,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "CF09 Diagnostics",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-About.dc.html",
+      "x": 1470,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "CF10 About",
+      "page": "page-8"
+    },
+    {
+      "file": "Fail-Route.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "F1 Route — halt",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Disconnect.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "F2 Input disconnected",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Level.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "F3 Level",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Hallucination.dc.html",
+      "x": 1470,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "F4 Hallucination",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Killed.dc.html",
+      "x": 1960,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "F5 OEM killed",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Storage.dc.html",
+      "x": 2450,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "F6 Storage",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Thermal.dc.html",
+      "x": 0,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "F7 Thermal",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Backlog.dc.html",
+      "x": 490,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "F8 Backlog",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Rig.dc.html",
+      "x": 980,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "F9 Rig lost",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Cluster.dc.html",
+      "x": 1470,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "F10 Cluster split",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Wrong.dc.html",
+      "x": 1960,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "F11 Confident but wrong",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Lexicon.dc.html",
+      "x": 2450,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "F12 Lexicon refused",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Model.dc.html",
+      "x": 0,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "F13 Model fallback",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Clock.dc.html",
+      "x": 490,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "F14 Clock / DST",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Call.dc.html",
+      "x": 980,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "F15 Phone call",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Usb.dc.html",
+      "x": 1470,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "F16 USB permission",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Interrupted.dc.html",
+      "x": 1960,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "F17 Interrupted pass",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Pass.dc.html",
+      "x": 2450,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "F18 Failed pass",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Reconcile.dc.html",
+      "x": 0,
+      "y": 2952,
+      "w": 390,
+      "h": 844,
+      "title": "F19 Reconciliation",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Migration.dc.html",
+      "x": 490,
+      "y": 2952,
+      "w": 390,
+      "h": 844,
+      "title": "F20 Migration",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Asset-Swap.dc.html",
+      "x": 980,
+      "y": 2952,
+      "w": 390,
+      "h": 844,
+      "title": "F21 Asset swap",
+      "page": "page-9"
+    },
+    {
+      "file": "Fail-Calibration.dc.html",
+      "x": 1470,
+      "y": 2952,
+      "w": 390,
+      "h": 844,
+      "title": "F22 Calibration",
+      "page": "page-9"
+    },
+    {
+      "file": "Flow-Setup.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1560,
+      "h": 620,
+      "title": "FL1 Setup",
+      "page": "page-10"
+    },
+    {
+      "file": "Flow-Capture.dc.html",
+      "x": 0,
+      "y": 760,
+      "w": 1560,
+      "h": 560,
+      "title": "FL2 One over",
+      "page": "page-10"
+    },
+    {
+      "file": "Flow-Correct.dc.html",
+      "x": 0,
+      "y": 1460,
+      "w": 1560,
+      "h": 640,
+      "title": "FL3 Inspect and correct",
+      "page": "page-10"
+    },
+    {
+      "file": "Flow-Search.dc.html",
+      "x": 0,
+      "y": 2240,
+      "w": 1560,
+      "h": 520,
+      "title": "FL4 Search",
+      "page": "page-10"
+    },
+    {
+      "file": "Flow-Improve.dc.html",
+      "x": 0,
+      "y": 2900,
+      "w": 1560,
+      "h": 540,
+      "title": "FL5 Field to home",
+      "page": "page-10"
+    },
+    {
+      "file": "Flow-Degrade.dc.html",
+      "x": 0,
+      "y": 3580,
+      "w": 1560,
+      "h": 560,
+      "title": "FL6 Degradation",
+      "page": "page-10"
+    },
+    {
+      "file": "Editorial.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "B · Editorial (original sketch)",
+      "page": "page-11"
+    },
+    {
+      "file": "Timeline.dc.html",
+      "x": 490,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "C · Timeline (original sketch)",
+      "page": "page-11"
     }
   ],
-  "launch": { "view": "canvas", "page": "page-1" }
+  "annotations": [
+    {
+      "id": "foundations-note",
+      "x": 0,
+      "y": -190,
+      "w": 620,
+      "page": "page-1",
+      "text": "The system itself, drawn so it can be checked rather than described.\n\nEvery value on these boards is the one the screens use. Where a screen and a foundation disagree, the foundation is the defect report.\n\nThe rule underneath all of it: colour is reinforcement, never signal. Every state is carried by shape, fill, size or position first — the greyscale strip is the proof."
+    },
+    {
+      "id": "setup-note",
+      "x": 0,
+      "y": -150,
+      "w": 520,
+      "page": "page-2",
+      "text": "Seven steps, each with a verify state. No step advances on assumption. The route mismatch is the one halt — there is no continue-anyway."
+    },
+    {
+      "id": "integrated",
+      "x": 0,
+      "y": -230,
+      "w": 400,
+      "page": "page-3",
+      "text": "Integrated: Editorial's typography and rhythm as the base, Timeline's activity chart on the home, Instrument's density in the Log, and the drill-in kept as it was.\n\nThe drawer replaces the tab bar. The drawer footer carries the storage budget (D26), because on this product that is a thing you actually watch."
+    },
+    {
+      "id": "detail-note",
+      "x": 0,
+      "y": -150,
+      "w": 520,
+      "page": "page-5",
+      "text": "Four states, one screen each, and the same inspection surface under all of them. Correction is three tiers; the propagation screen is the point of the whole flow."
+    },
+    {
+      "id": "failures-note",
+      "x": 0,
+      "y": -170,
+      "w": 620,
+      "page": "page-9",
+      "text": "Every row of functional spec §12, drawn as the screen the operator would be looking at when it happens. Each shows the response column, not just the failure. Amber is degradation; red is only for capture actually stopping."
+    },
+    {
+      "id": "explorations",
+      "x": 0,
+      "y": -150,
+      "w": 360,
+      "page": "page-11",
+      "text": "The two original direction sketches, kept for reference. The Instrument direction is not here separately — it became the Log view."
+    }
+  ],
+  "launch": {
+    "view": "canvas",
+    "page": "page-3"
+  }
 }

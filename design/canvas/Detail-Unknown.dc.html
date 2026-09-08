@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .tried { display: flex; align-items: flex-start; gap: 11px; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+    .tn { font-size: 13.5px; color: oklch(0.86 0.006 250); }
+    .tr { font-size: 12px; color: oklch(0.58 0.008 250); margin-top: 2px; line-height: 1.4; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Log</div>
+    <div style="flex-grow: 1;"></div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="5" r="1.4" fill="oklch(0.62 0.008 250)"></circle><circle cx="12" cy="12" r="1.4" fill="oklch(0.62 0.008 250)"></circle><circle cx="12" cy="19" r="1.4" fill="oklch(0.62 0.008 250)"></circle></svg>
+  </div>
+
+  <div style="padding: 0 20px 16px;">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 6px; height: 6px; border-radius: 50%; background: oklch(0.50 0.008 250); margin: 0 3px;"></div>
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; font-style: italic; color: oklch(0.62 0.008 250);">unknown station</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.66 0.008 250); margin-top: 7px; line-height: 1.45;">No callsign heard, and the voice matched no one heard before. Nothing is claimed.</div>
+    <div style="display: flex; gap: 14px; margin-top: 11px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.58 0.008 250);">
+      <div>02:16:12</div><div>146.960</div><div>2.4 s</div><div>S2</div>
+    </div>
+  </div>
+
+  <div style="margin: 0 16px 18px; background: oklch(0.20 0.010 250); border-radius: 10px; padding: 13px 14px; display: flex; align-items: center; gap: 13px;">
+    <div style="width: 34px; height: 34px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="oklch(0.16 0.01 150)"><path d="M8 5l11 7-11 7z"></path></svg>
+    </div>
+    <div style="flex-grow: 1; display: flex; align-items: center; gap: 1.5px; height: 26px;">
+      <div style="flex-grow:1; height: 24%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 30%; background: oklch(0.46 0.03 250);"></div>
+      <div style="flex-grow:1; height: 36%; background: oklch(0.52 0.08 150);"></div>
+      <div style="flex-grow:1; height: 28%; background: oklch(0.46 0.03 250);"></div>
+      <div style="flex-grow:1; height: 40%; background: oklch(0.52 0.08 150);"></div>
+      <div style="flex-grow:1; height: 32%; background: oklch(0.46 0.03 250);"></div>
+      <div style="flex-grow:1; height: 26%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 34%; background: oklch(0.46 0.03 250);"></div>
+      <div style="flex-grow:1; height: 22%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 20%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 26%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 18%; background: oklch(0.42 0.02 250);"></div>
+    </div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.58 0.008 250);">2.4s</div>
+  </div>
+
+  <div style="padding: 0 20px 16px;">
+    <div style="font-size: 15px; line-height: 1.45; color: oklch(0.76 0.006 250); text-wrap: pretty;">…any station on frequency, this is</div>
+    <div style="font-size: 12px; color: oklch(0.58 0.008 250); margin-top: 6px;">Transcript confidence 0.61 · weak signal, cut off</div>
+  </div>
+
+  <div style="height: 1px; background: oklch(0.24 0.010 250);"></div>
+
+  <div style="flex-grow: 1; overflow: hidden; padding: 16px 20px 0;">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); margin-bottom: 4px;">What was tried</div>
+
+    <div class="tried">
+      <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.45 0.008 250); box-sizing: border-box; flex-shrink: 0; margin-top: 4px;"></div>
+      <div style="flex-grow: 1;">
+        <div class="tn">Callsign grammar over the phonetic lattice</div>
+        <div class="tr">No slot sequence parsed as a callsign. Best partial: <span style="font-family: 'IBM Plex Mono', monospace;">?7??</span> at 0.31, below the floor.</div>
+      </div>
+    </div>
+    <div class="tried">
+      <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.45 0.008 250); box-sizing: border-box; flex-shrink: 0; margin-top: 4px;"></div>
+      <div style="flex-grow: 1;">
+        <div class="tn">Voice match against 19 stations heard tonight</div>
+        <div class="tr">Nearest was <span style="font-family: 'IBM Plex Mono', monospace;">N7XYZ</span> at 0.38 — well under the 0.70 needed to infer.</div>
+      </div>
+    </div>
+    <div class="tried">
+      <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.45 0.008 250); box-sizing: border-box; flex-shrink: 0; margin-top: 4px;"></div>
+      <div style="flex-grow: 1;">
+        <div class="tn">Thread context</div>
+        <div class="tr">No QSO in progress on 146.960 at 02:16 to inherit from.</div>
+      </div>
+    </div>
+    <div class="tried" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0; margin-top: 4px;"></div>
+      <div style="flex-grow: 1;">
+        <div class="tn">Kept as an unidentified voice</div>
+        <div class="tr">If this voice is heard again with a callsign, this over will be re-attributed by inference and marked as such.</div>
+      </div>
+    </div>
+
+    <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; margin-top: 14px; text-wrap: pretty;">If you know who this was, naming them here teaches the voice match — the next over from this voice will be inferred, not unknown.</div>
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.26 0.010 250); padding: 12px 16px 16px; display: flex; gap: 9px;">
+    <div style="flex-grow: 1; background: oklch(0.72 0.14 150); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 600; color: oklch(0.16 0.01 150);">I know who this is</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

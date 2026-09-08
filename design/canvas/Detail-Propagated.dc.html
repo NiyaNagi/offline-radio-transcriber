@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .row { display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; flex-shrink: 0; }
+    .cs { font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; }
+    .old { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250); text-decoration: line-through; }
+    .tx { font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; }
+    .chg { display: flex; align-items: baseline; gap: 12px; padding: 9px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Log</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 14px;">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 11px; height: 11px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Corrected to <span style="font-family: 'IBM Plex Mono', monospace;">KA7LWH</span></div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Was <span style="font-family: 'IBM Plex Mono', monospace;">K7LWH</span> · picked from the resolver's candidates · 06:20</div>
+  </div>
+
+  <div style="margin: 0 16px; background: oklch(0.20 0.010 250); border-radius: 10px; padding: 13px 14px;">
+    <div class="lbl">What changed</div>
+    <div style="margin-top: 4px;">
+      <div class="chg">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 600; width: 30px;">6</div>
+        <div style="font-size: 13.5px; color: oklch(0.94 0.006 250); flex-grow: 1;">overs re-attributed — this one and 5 matched to the same voice</div>
+      </div>
+      <div class="chg">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 600; width: 30px;">1</div>
+        <div style="font-size: 13.5px; color: oklch(0.94 0.006 250); flex-grow: 1;">voiceprint now belongs to <span style="font-family: 'IBM Plex Mono', monospace;">KA7LWH</span></div>
+      </div>
+      <div class="chg">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 600; width: 30px;">2</div>
+        <div style="font-size: 13.5px; color: oklch(0.94 0.006 250); flex-grow: 1;">priors updated — <span style="font-style: italic;">on this repeater</span> and <span style="font-style: italic;">recent corrections</span></div>
+      </div>
+      <div class="chg" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 600; width: 30px; color: oklch(0.62 0.008 250);">0</div>
+        <div style="font-size: 13.5px; color: oklch(0.86 0.006 250); flex-grow: 1;">records deleted — every earlier attribution is kept as superseded</div>
+      </div>
+    </div>
+    <div style="display: flex; gap: 18px; padding-top: 10px;">
+      <div style="display: flex; align-items: center; min-height: 40px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Undo all 6</div></div>
+    </div>
+  </div>
+
+  <div class="lbl" style="padding: 18px 20px 6px;">The 6 overs, as they read now</div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+    <div class="row" style="border-top-color: oklch(0.26 0.010 250); background: oklch(0.175 0.009 250);">
+      <div class="t">02:14:22</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs">KA7LWH</div>
+          <div class="old">K7LWH</div>
+          <div style="font-size: 10px; font-weight: 500; letter-spacing: 0.04em; color: oklch(0.62 0.008 250); border: 1px solid oklch(0.30 0.010 250); padding: 0 5px; border-radius: 3px; text-transform: uppercase;">corrected</div>
+        </div>
+        <div class="tx">roger that, good copy on the repeater this morning</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="t">02:16:02</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">KA7LWH</div>
+          <div class="old">K7LWH</div>
+          <div style="font-size: 10px; font-weight: 500; letter-spacing: 0.04em; color: oklch(0.62 0.008 250); border: 1px solid oklch(0.30 0.010 250); padding: 0 5px; border-radius: 3px; text-transform: uppercase;">corrected</div>
+        </div>
+        <div class="tx">appreciate it, kilo alpha seven lima whiskey hotel clear</div>
+        <div style="font-size: 11.5px; color: oklch(0.62 0.05 60); margin-top: 3px;">the source over — the lattice had the A at .29 and the grammar dropped it</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="t">00:41:15</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs">KA7LWH</div>
+          <div class="old">K7LWH</div>
+        </div>
+        <div class="tx">yeah I'm mobile, heading north on the five</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="t">00:39:50</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs">KA7LWH</div>
+          <div class="old">K7LWH</div>
+        </div>
+        <div class="tx">copy that, I'll give you a call when I'm closer</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="t">00:38:04</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs">KA7LWH</div>
+          <div class="old">K7LWH</div>
+        </div>
+        <div class="tx">good evening, anybody around on the machine tonight</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.26 0.010 250); padding: 12px 16px 16px; display: flex; gap: 9px;">
+    <div style="flex-grow: 1; background: oklch(0.24 0.010 250); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 500;">Back to the over</div>
+    <div style="flex-grow: 1; background: oklch(0.72 0.14 150); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 600; color: oklch(0.16 0.01 150);">Done</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

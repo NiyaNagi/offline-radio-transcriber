@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .r { display: flex; align-items: center; gap: 12px; padding: 11px 20px; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .n { font-size: 14.5px; color: oklch(0.94 0.006 250); }
+    .s { font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px; }
+    .chk { display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-top: 1px solid oklch(0.21 0.010 250); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Models and lexicon</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Import refused</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;"><span class="m">lexicon-2026.09.tsv.zst</span> · the current lexicon is untouched</div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="border-radius: 8px; background: oklch(0.185 0.012 60); border: 1px solid oklch(0.38 0.06 60); padding: 13px 14px; display: flex; gap: 11px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.74 0.09 60)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px;"><path d="M12 8v5M12 16.5v.5"></path><circle cx="12" cy="12" r="9"></circle></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">The file is not what its manifest says it is</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">Checksum mismatched and the record count came up 118,000 short — a partial download, most likely. Nothing was replaced. Lexicon 2026.08 is still active and capture never noticed.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">What was checked</div>
+    <div class="chk">
+      <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div style="flex-grow: 1;"><div class="n">Manifest readable</div><div class="s">version 2026.09 · declares <span class="m">1,122,410</span> records · <span class="m">sha256 4b81…</span></div></div>
+    </div>
+    <div class="chk">
+      <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.60 0.16 25); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 25)" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></div>
+      <div style="flex-grow: 1;"><div class="n">Checksum</div><div class="s">computed <span class="m">sha256 e07c…</span> · does not match</div></div>
+    </div>
+    <div class="chk">
+      <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.60 0.16 25); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 25)" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></div>
+      <div style="flex-grow: 1;"><div class="n">Record count</div><div class="s">read <span class="m">1,004,392</span> · declared <span class="m">1,122,410</span> · file ends mid-record</div></div>
+    </div>
+    <div class="chk" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid oklch(0.30 0.010 250); box-sizing: border-box; flex-shrink: 0;"></div>
+      <div style="flex-grow: 1;"><div class="n" style="color: oklch(0.52 0.008 250);">Prefix table consistency</div><div class="s">not reached</div></div>
+    </div>
+
+    <div class="lbl">Still active</div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div style="flex-grow: 1;"><div class="n">Callsign lexicon 2026.08</div><div class="s"><span class="m">1,104,208</span> records · verified · in use by the running session</div></div>
+    </div>
+
+    <div style="padding: 16px 20px 0;">
+      <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; text-wrap: pretty;">Re-download the file and try again. An import only ever replaces the current lexicon after every check passes, and even then only at the next session.</div>
+    </div>
+
+  </div>
+
+  <div style="padding: 12px 20px 24px; display: flex; gap: 9px;">
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 48px; border: 1px solid oklch(0.30 0.010 250); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.86 0.006 250);">Choose another file</div></div>
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Done</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

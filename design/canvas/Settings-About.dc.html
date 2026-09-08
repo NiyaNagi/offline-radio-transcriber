@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .r { display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .k { font-size: 12.5px; color: oklch(0.62 0.008 250); width: 96px; flex-shrink: 0; }
+    .v { font-size: 13.5px; color: oklch(0.94 0.006 250); flex-grow: 1; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .p { display: flex; gap: 11px; padding: 9px 0; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Settings</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M7 8v8M17 8v8M3 11v2M21 11v2"></path></svg>
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Offline radio transcriber</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px;"><span class="m">1.0.0</span> · build <span class="m">412</span> · <span class="m">6aaa608</span></div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">The offline promise</div>
+    <div style="padding: 8px 20px 0;">
+      <div class="p">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0; margin-top: 5px;"></div>
+        <div style="font-size: 13.5px; line-height: 1.45; color: oklch(0.86 0.006 250);">No part of capture, transcription, resolution or the reader can reach the network. The build enforces it: only one module may link an HTTP client, and none of these is that module.</div>
+      </div>
+      <div class="p">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0; margin-top: 5px;"></div>
+        <div style="font-size: 13.5px; line-height: 1.45; color: oklch(0.86 0.006 250);">Voiceprints, the names you give stations, what this phone has learned about who is around when, and your location never leave it — not in an export, a contribution, a diagnostic bundle or a backup.</div>
+      </div>
+      <div class="p">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0; margin-top: 5px;"></div>
+        <div style="font-size: 13.5px; line-height: 1.45; color: oklch(0.86 0.006 250);">Nothing is deleted quietly. Every attribution carries its confidence. A weaker phone knows less; it is never more wrong.</div>
+      </div>
+    </div>
+
+    <div class="lbl">Build</div>
+    <div class="r"><div class="k">Models</div><div class="v">sherpa-onnx <span class="m">1.10.30</span> · whisper · Silero</div></div>
+    <div class="r"><div class="k">Runtime</div><div class="v">ONNX Runtime <span class="m">1.18</span> · NNAPI on this device</div></div>
+    <div class="r"><div class="k">Radio</div><div class="v">usb-serial-for-android <span class="m">3.7</span></div></div>
+    <div class="r"><div class="k">Android</div><div class="v"><span class="m">14</span> · min <span class="m">8.0</span></div></div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);"><div class="k">Licences</div><div class="v">Apache 2.0 · third-party notices</div><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"></path></svg></div>
+
+    <div class="lbl">Source and spec</div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);"><div class="v" style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5;">Every screen in this app is specified by a requirement id and drawn as an artboard before it is built. The functional spec, the design canvas and the audit register ship with the source.</div></div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

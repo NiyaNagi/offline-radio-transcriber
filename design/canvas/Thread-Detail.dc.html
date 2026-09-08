@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .row { display: flex; gap: 10px; padding: 9px 20px 10px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; flex-shrink: 0; }
+    .cs { font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; }
+    .tx { font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; text-wrap: pretty; }
+    .why { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 4px; }
+    .lnk { color: oklch(0.72 0.14 150); font-family: 'IBM Plex Mono', monospace; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    <div style="font-size: 14.5px; font-weight: 500; color: oklch(0.86 0.006 250);">Threads</div>
+    <div style="flex-grow: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <div style="width: 7px; height: 7px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.68 0.008 250);">6:42</div>
+    </div>
+  </div>
+
+  <div style="padding: 10px 20px 0;">
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250);">QSO · 145.230 · FM</div>
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; margin-top: 4px;"><span style="font-family: 'IBM Plex Mono', monospace;">W7NPC</span> <span style="color: oklch(0.58 0.008 250); font-weight: 400;">and</span> <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.86 0.006 250);">K7LWH</span></div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">4 overs · 02:14:07 – 02:16:02 · 1 m 55 s</div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 12px 14px;">
+      <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250);">How these were attributed</div>
+      <div style="display: flex; flex-direction: column; gap: 7px; margin-top: 9px;">
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: oklch(0.86 0.006 250);">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600;">W7NPC</span> heard in overs 1 and 3</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: oklch(0.86 0.006 250);">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600;">K7LWH</span> heard in over 4</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: oklch(0.86 0.006 250);">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div>Over 2 matched <span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600;">K7LWH</span>'s voice from over 4 · 0.82</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 14px 20px 6px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.46 0.008 250); display: flex; gap: 10px;">
+    <div style="width: 52px;">time</div>
+    <div style="flex-grow: 1;">over</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="row" style="border-top-color: oklch(0.26 0.010 250);">
+      <div class="t">02:14:07</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">W7NPC</div>
+        </div>
+        <div class="tx">this is whiskey seven november papa charlie, monitoring</div>
+        <div class="why">callsign heard in this over</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t">02:14:22</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs" style="color: oklch(0.86 0.006 250);">K7LWH</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.58 0.008 250); background: oklch(0.24 0.010 250); padding: 1px 5px; border-radius: 3px;">0.82</div>
+        </div>
+        <div class="tx">roger that, good copy on the repeater this morning</div>
+        <div class="why">inherited by voice from <span class="lnk">02:16:02</span></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t">02:15:18</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">W7NPC</div>
+        </div>
+        <div class="tx">good morning, you're full quieting into the machine, whiskey seven november papa charlie</div>
+        <div class="why">callsign heard in this over</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t">02:16:02</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">K7LWH</div>
+        </div>
+        <div class="tx">appreciate it, kilo seven lima whiskey hotel clear</div>
+        <div class="why">callsign heard in this over · the source for 02:14:22</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.28 0.010 250); background: oklch(0.19 0.010 250); padding: 10px 20px 14px; display: flex; align-items: center; gap: 11px;">
+    <div style="display: flex; gap: 2px; align-items: flex-end; height: 14px;">
+      <div style="width: 2px; height: 6px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 13px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 9px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 14px; background: oklch(0.72 0.14 150);"></div>
+    </div>
+    <div style="font-size: 13px; color: oklch(0.72 0.006 250); flex-grow: 1; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">and we're clear on the repeater, seven th…</div>
+    <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Live</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

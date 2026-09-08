@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .fact { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+    .fk { font-size: 12.5px; color: oklch(0.62 0.008 250); width: 92px; flex-shrink: 0; }
+    .fv { font-size: 13.5px; color: oklch(0.94 0.006 250); flex-grow: 1; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .row { display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; flex-shrink: 0; }
+    .f { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px; flex-shrink: 0; }
+    .tx { font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Stations</div>
+    <div style="flex-grow: 1;"></div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="5" r="1.4" fill="oklch(0.62 0.008 250)"></circle><circle cx="12" cy="12" r="1.4" fill="oklch(0.62 0.008 250)"></circle><circle cx="12" cy="19" r="1.4" fill="oklch(0.62 0.008 250)"></circle></svg>
+  </div>
+
+  <div style="padding: 0 20px 14px;">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 11px; height: 11px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 27px; font-weight: 600; letter-spacing: -0.01em;">W7NPC</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px;">Net control, Tuesday night net · heard 14 nights of 14</div>
+  </div>
+
+  <div style="padding: 0 20px;">
+    <div style="display: flex; flex-direction: column;">
+      <div class="fact"><div class="fk">Overs</div><div class="fv"><span class="m">612</span> all time · <span class="m">48</span> tonight</div><div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">Log</div></div>
+      <div class="fact"><div class="fk">Attribution</div><div class="fv"><span class="m">590</span> confirmed · <span class="m">22</span> inferred · <span class="m">0</span> corrected</div></div>
+      <div class="fact"><div class="fk">Frequencies</div><div class="fv"><span class="m">145.230</span> almost always · <span class="m">146.960</span> twice</div></div>
+      <div class="fact"><div class="fk">First heard</div><div class="fv">Tue 25 Aug, 18:58</div></div>
+      <div class="fact" style="border-bottom: 1px solid oklch(0.21 0.010 250);"><div class="fk">Last heard</div><div class="fv">Tonight, 02:14 · <span class="m">S7</span></div></div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div style="display: flex; align-items: baseline;">
+      <div class="lbl" style="flex-grow: 1;">When they are around</div>
+      <div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">By day</div>
+    </div>
+    <div style="display: flex; align-items: flex-end; gap: 1.5px; height: 38px; margin-top: 12px;">
+      <div style="flex-grow:1; height:8%; background: oklch(0.34 0.02 250);"></div>
+      <div style="flex-grow:1; height:6%; background: oklch(0.34 0.02 250);"></div>
+      <div style="flex-grow:1; height:4%; background: oklch(0.34 0.02 250);"></div>
+      <div style="flex-grow:1; height:5%; background: oklch(0.34 0.02 250);"></div>
+      <div style="flex-grow:1; height:100%; background: repeating-linear-gradient(45deg, oklch(0.40 0.055 60), oklch(0.40 0.055 60) 2px, transparent 2px, transparent 5px);"></div>
+      <div style="flex-grow:1; height:100%; background: repeating-linear-gradient(45deg, oklch(0.40 0.055 60), oklch(0.40 0.055 60) 2px, transparent 2px, transparent 5px);"></div>
+      <div style="flex-grow:1; height:12%; background: oklch(0.36 0.02 250);"></div>
+      <div style="flex-grow:1; height:18%; background: oklch(0.38 0.02 250);"></div>
+      <div style="flex-grow:1; height:30%; background: oklch(0.42 0.03 250);"></div>
+      <div style="flex-grow:1; height:100%; background: oklch(0.72 0.14 150);"></div>
+      <div style="flex-grow:1; height:84%; background: oklch(0.64 0.12 150);"></div>
+      <div style="flex-grow:1; height:40%; background: oklch(0.46 0.055 150);"></div>
+      <div style="flex-grow:1; height:26%; background: oklch(0.42 0.03 250);"></div>
+      <div style="flex-grow:1; height:52%; background: oklch(0.52 0.08 150);"></div>
+      <div style="flex-grow:1; height:36%; background: oklch(0.46 0.055 150);"></div>
+      <div style="flex-grow:1; height:14%; background: oklch(0.36 0.02 250);"></div>
+    </div>
+    <div style="display: flex; align-items: center; margin-top: 6px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.008 250);">12:00</div>
+      <div style="flex-grow: 1; display: flex; justify-content: center; align-items: center; gap: 5px;">
+        <div style="width: 9px; height: 7px; background: repeating-linear-gradient(45deg, oklch(0.55 0.07 60), oklch(0.55 0.07 60) 2px, transparent 2px, transparent 4px);"></div>
+        <div style="font-size: 10.5px; color: oklch(0.62 0.05 60);">not listening 16:00–18:00, most days</div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.008 250);">04:00</div>
+    </div>
+    <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); margin-top: 10px;">Peaks 21:00–23:00. Tuesdays from 19:00.</div>
+  </div>
+
+  <div style="height: 1px; background: oklch(0.24 0.010 250); margin: 16px 20px 0;"></div>
+
+  <div style="display: flex; align-items: baseline; padding: 14px 20px 6px;">
+    <div class="lbl" style="flex-grow: 1;">Recent overs</div>
+    <div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">All 612</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+    <div class="row" style="border-top-color: oklch(0.26 0.010 250);">
+      <div class="t">02:15:18</div><div class="f">145.230</div>
+      <div class="tx" style="flex-grow: 1; min-width: 0;">good morning, you're full quieting into the machine</div>
+    </div>
+    <div class="row">
+      <div class="t">02:14:07</div><div class="f">145.230</div>
+      <div class="tx" style="flex-grow: 1; min-width: 0;">this is whiskey seven november papa charlie, monitoring</div>
+    </div>
+    <div class="row">
+      <div class="t">00:52:40</div><div class="f">146.960</div>
+      <div class="tx" style="flex-grow: 1; min-width: 0;">seven three, clear</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

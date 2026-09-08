@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .k { font-size: 13.5px; color: oklch(0.62 0.008 250); width: 96px; flex-shrink: 0; }
+    .v { font-size: 14px; color: oklch(0.94 0.006 250); flex-grow: 1; }
+    .sub { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 10px 20px 0;">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0;"></div>
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Capturing, tier 1</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Since 23:32 · <span class="m">0:00:41</span> · alive</div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="border-radius: 8px; background: oklch(0.185 0.012 60); border: 1px solid oklch(0.38 0.06 60); padding: 13px 14px; display: flex; gap: 11px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.74 0.09 60)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px;"><path d="M12 8v5M12 16.5v.5"></path><circle cx="12" cy="12" r="9"></circle></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">The small model failed to load — running on the tiny one</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;"><span class="m">whisper-small-int8</span> was built for a different runtime version and the loader refused it. Capture fell back to tier 1: live transcripts, plainly spelled callsigns only, no voice match. Everything captured tonight can be improved once the model is fixed.</div>
+        <div style="display: flex; align-items: center; gap: 18px;">
+          <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75);">Models and lexicon</div></div>
+          <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75);">What tier 1 does not do</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div class="lbl" style="padding-bottom: 4px;">Models</div>
+    <div class="row">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.60 0.16 25); flex-shrink: 0;"></div>
+      <div class="k">Pass B</div>
+      <div class="v" style="color: oklch(0.86 0.006 250);">whisper-small-int8<div class="sub">load failed · <span class="m">ORT 1.18 expected opset 17, file is opset 19</span></div></div>
+    </div>
+    <div class="row">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div class="k">Pass A</div>
+      <div class="v">whisper-tiny-en-int8<div class="sub">loaded · now also serving Pass B, at lower quality</div></div>
+    </div>
+    <div class="row">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div class="k">VAD</div>
+      <div class="v">Silero 5.1<div class="sub">loaded</div></div>
+    </div>
+    <div class="row" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.45 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+      <div class="k">Pass C</div>
+      <div class="v" style="color: oklch(0.62 0.008 250);">Off at tier 1<div class="sub">needs the small model's encoder</div></div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div class="lbl">Tonight will show</div>
+    <div style="display: flex; flex-direction: column; gap: 9px; margin-top: 10px;">
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0; margin-top: 5px;"></div>
+        <div style="font-size: 13.5px; line-height: 1.45; color: oklch(0.86 0.006 250);">Confirmed callsigns where the phonetics were clear</div>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 5px; height: 5px; border-radius: 50%; background: oklch(0.45 0.008 250); flex-shrink: 0; margin: 7px 2px 0;"></div>
+        <div style="font-size: 13.5px; line-height: 1.45; color: oklch(0.86 0.006 250);">More <span style="font-style: italic;">unknown station</span> than usual — and never a guess in their place</div>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0; margin-top: 5px;"></div>
+        <div style="font-size: 13.5px; line-height: 1.45; color: oklch(0.86 0.006 250);">Every over marked <span style="font-style: italic;">improvable</span>, ready for Improve records once the model is replaced</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="border-top: 1px solid oklch(0.38 0.06 60); background: oklch(0.185 0.012 60); padding: 10px 20px 14px; display: flex; align-items: center; gap: 11px;">
+    <div style="display: flex; gap: 2px; align-items: flex-end; height: 14px;">
+      <div style="width: 2px; height: 3px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 4px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 3px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 5px; background: oklch(0.62 0.10 60);"></div>
+    </div>
+    <div style="font-size: 13px; color: oklch(0.74 0.07 60); flex-grow: 1; font-style: italic;">squelch closed · tiny model only</div>
+    <div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75);">Tier 1</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

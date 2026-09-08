@@ -32,6 +32,77 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (UI conformance — phases A and B)
+
+### (pending) — ui-conformance A+B · complete design canvas: 108 artboards, design guide, design intent, conformance plan
+
+**Scope:** `design/` — `design-guide.md` (new), `design-intent.md` (new), `review-2026-09.md`
+(new), `canvas/` (101 new `.dc.html` artboards beside the 7 that existed, `canvas.json`
+regenerated to 11 pages). `spec/ui-conformance-plan.md` (new — the program this is phase A/B of).
+No product code touched.
+**Requirements/ACs:** FR-UI-1..12 (every one has at least one artboard that fully expresses it —
+`design-intent.md` §14), FR-A11Y-1..6 (the `States` greyscale proof, 44px targets on the `Grid`
+board, sp-scaling asserted in the guide), P1–P12 of functional spec §13 (each mapped to the
+screen where its cost is paid — `review-2026-09.md` §1), F1–F22 of §12 (one full-screen artboard
+each, showing the response column), D15, D26. "none new" for code.
+**What changed:**
+
+- **Constitution Check.** Principle I (uncertainty is content) is what the whole canvas is built
+  around: four attribution states as a closed set with a greyscale proof, a Pass A partial that
+  carries no marker at all, "unknown station" as a result rather than a failure, and a
+  `Detail-Unknown` board whose body is *what was tried*. Principle III (nothing leaves the
+  device) is stated on `Settings-Contribute`, `Settings-Export`, `Settings-Diagnostics` and
+  `Station-Identity`, each naming what is never included and that there is no switch for it.
+  Principle VII (structural, not conventional) is why `Controls` specifies a closed set as a
+  visible list with counts and calls a tap-to-cycle label wrong — the built app's search filter
+  is exactly that, and the audit (phase C) will cite this board against it.
+- **The canvas.** 108 artboards across 11 pages: foundations (colour, type, rows, states,
+  controls, feedback, charts, grid, icons), setup (13, with the route-mismatch halt and the
+  mic-refused state), Now and capture (7), Log and threads (8), transmission detail (11: four
+  states, the inspection surface, playback, revisions, three correction tiers, propagation),
+  search / stations / frequencies (12), digest and improve (8), settings (10), failure states
+  (22), flows (6), explorations (2, unchanged). Every board is 390×844 and dark; every value is
+  from the token set; every tappable thing is ≥44px including the ones styled as text.
+- **`design-guide.md`.** Tokens lifted from the artboards (OKLCH, the chroma rule, the full
+  text ramp, both accent families, the `halt/*` red reserved for capture-stopped, three chart
+  ramps), the type ramp with every size the boards use, spacing/radii/targets, 19 component
+  specs, icon rules, the not-listening rule, copy rules, density, the accessibility floor, and
+  what the design deliberately does not do.
+- **`design-intent.md`.** The inventory: every screen with its purpose, the requirement ids it
+  serves, every interaction enumerated, and status. 108 rows, all `drawn`. §14 maps FR-UI-1..12
+  to boards.
+- **`review-2026-09.md`.** Phase B's record: coverage against FR-UI / P1–P12 / F1–F22, and the
+  consistency pass — the guide was found to have dropped seven greys and four sizes the original
+  boards use (fixed in the guide), and 43 genuine strays across 28 boards were normalised.
+- **`spec/ui-conformance-plan.md`.** Phases A–G, roles (lead draws/audits/delegates; builders
+  and validators run as separate agents), 12 work packages partitioned by file ownership, 7
+  emulator validation scenario sets, concurrency and safety rules.
+
+**Verified:**
+
+- `node seed-canvas.mjs --check offline-radio-transcriber-design-system.html` → `ok: … 109
+  files` (108 artboards + `canvas.json`), 3.3 MB. Published to
+  https://claude.ai/code/artifact/1c9b3001-cc3f-4805-8e3f-b917eae44417.
+- The manifest generator asserts every `.dc.html` on disk is listed and every listed file
+  exists: `artboards: 108 · on disk: 108`.
+- Colour/size census over all boards (PowerShell regex count): after normalisation, no
+  `oklch()` value outside the guide's token set remains in any board other than `Editorial` and
+  `Timeline`; no `font-size` outside §4's table other than the `Type` board's scaling demo.
+- `design-intent.md` has zero `planned` rows (`replaced 100 planned -> drawn`).
+
+**Left open / not done:**
+
+- No product code changed. Phase C (audit of the built UI against these boards → the findings
+  register) and phases D–G (build, validate on emulator, iterate) follow, per the plan.
+- Artboards are not rendered to PNG; emulator comparison in phase E is by eye against the
+  `.dc.html` source. A headless render step is noted in the review as a possible tightening.
+- `Editorial.dc.html` and `Timeline.dc.html` keep their original off-token values; they are the
+  exploration sketches and are not audit targets.
+- The design canvas's saving path depends on the artifact runtime being pinned at contract
+  0.1.31; the published page cannot pick up later editor fixes (a stated limit of the preview).
+
+---
+
 ## 2026-09-08 (audit — F-018)
 
 ### (pending) — audit F-018 · Q8's "search the lexicon" correction tier is now real lexicon search

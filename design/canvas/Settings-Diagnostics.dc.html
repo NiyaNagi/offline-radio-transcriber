@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .f { display: flex; align-items: center; gap: 12px; padding: 9px 20px; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .fn { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: oklch(0.94 0.006 250); }
+    .fs { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; }
+    .sz { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.55 0.008 250); flex-shrink: 0; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Settings</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Diagnostics</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">What a bundle contains, shown before it exists</div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+      <div style="background: oklch(0.195 0.009 250); border-radius: 8px; padding: 9px 11px;"><div class="m" style="font-size: 15px; font-weight: 600; color: oklch(0.68 0.10 150);">alive</div><div style="font-size: 10.5px; color: oklch(0.58 0.008 250); margin-top: 2px;">heartbeat 4 s ago</div></div>
+      <div style="background: oklch(0.195 0.009 250); border-radius: 8px; padding: 9px 11px;"><div class="m" style="font-size: 15px; font-weight: 600;">0.31</div><div style="font-size: 10.5px; color: oklch(0.58 0.008 250); margin-top: 2px;">RTF, small model</div></div>
+      <div style="background: oklch(0.195 0.009 250); border-radius: 8px; padding: 9px 11px;"><div class="m" style="font-size: 15px; font-weight: 600;">0</div><div style="font-size: 10.5px; color: oklch(0.58 0.008 250); margin-top: 2px;">failed passes</div></div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">In the bundle · 7 files · 2.1 MB</div>
+    <div class="f">
+      <div style="flex-grow: 1;"><div class="fn">lifecycle.log</div><div class="fs">service start, stop, heartbeat gaps, OS kills — the F5 evidence</div></div>
+      <div class="sz">140 KB</div>
+    </div>
+    <div class="f">
+      <div style="flex-grow: 1;"><div class="fn">capture.log</div><div class="fs">route verifications, input device changes, level warnings, overruns</div></div>
+      <div class="sz">88 KB</div>
+    </div>
+    <div class="f">
+      <div style="flex-grow: 1;"><div class="fn">pipeline.log</div><div class="fs">per-pass timings, tier changes with their cause, queue depth over time</div></div>
+      <div class="sz">1.6 MB</div>
+    </div>
+    <div class="f">
+      <div style="flex-grow: 1;"><div class="fn">rig.log</div><div class="fs">CAT traffic, band changes, disconnects · frequencies included, they are not private</div></div>
+      <div class="sz">210 KB</div>
+    </div>
+    <div class="f">
+      <div style="flex-grow: 1;"><div class="fn">assets.json</div><div class="fs">every model and lexicon: name, version, checksum, install date</div></div>
+      <div class="sz">2 KB</div>
+    </div>
+    <div class="f">
+      <div style="flex-grow: 1;"><div class="fn">device.json</div><div class="fs">SoC, RAM, Android version, OEM, thermal history · no serial, no IMEI, no account</div></div>
+      <div class="sz">1 KB</div>
+    </div>
+    <div class="f" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div class="fn">counts.json</div><div class="fs">overs by state, rejections by reason, corrections by tier · numbers only</div></div>
+      <div class="sz">3 KB</div>
+    </div>
+
+    <div class="lbl">Not in the bundle</div>
+    <div style="padding: 8px 20px 0;">
+      <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); line-height: 1.55;">Audio. Transcripts. Callsigns. Voiceprints. Names. Location. The logs above are scrubbed of callsigns before they are written — a line reads <span class="m" style="color: oklch(0.62 0.008 250);">resolved [callsign] at 0.94</span>, never the callsign itself.</div>
+    </div>
+
+    <div style="padding: 16px 20px 0;">
+      <div style="font-size: 12px; color: oklch(0.58 0.008 250); line-height: 1.5;">Preview opens every file in a reader before you save. Saving produces a zip you keep; the app has no way to send it.</div>
+    </div>
+
+  </div>
+
+  <div style="padding: 12px 20px 24px; display: flex; gap: 9px;">
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 48px; border: 1px solid oklch(0.30 0.010 250); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.86 0.006 250);">Preview</div></div>
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Save bundle</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

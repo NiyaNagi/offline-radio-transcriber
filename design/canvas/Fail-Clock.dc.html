@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .fact { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+    .fk { font-size: 12.5px; color: oklch(0.62 0.008 250); width: 92px; flex-shrink: 0; }
+    .fv { font-size: 13.5px; color: oklch(0.94 0.006 250); flex-grow: 1; }
+    .row { display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; flex-shrink: 0; }
+    .cs { font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; }
+    .tx { font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Earlier nights</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 14px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Overnight, Sat 31 Oct</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">23:10 – 06:40 · <span class="m">8 h 30 m</span> · the clock went back at 02:00</div>
+  </div>
+
+  <div style="padding: 0 20px;">
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 13px 14px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+        <div style="font-size: 13.5px; color: oklch(0.94 0.006 250);">Daylight saving ended during this session</div>
+      </div>
+      <div style="font-size: 12.5px; color: oklch(0.66 0.008 250); margin-top: 6px; line-height: 1.5; text-wrap: pretty;">02:00 happened twice. Every duration on this screen is from the phone's monotonic clock, so nothing here is off by an hour. Wall-clock times are shown with their offset where it matters, and the log is ordered by when things actually happened, not by what the clock said.</div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div class="lbl">Session</div>
+    <div style="display: flex; flex-direction: column; margin-top: 4px;">
+      <div class="fact"><div class="fk">Ran for</div><div class="fv"><span class="m">8 h 30 m</span> <span style="color: oklch(0.62 0.008 250);">— not 7 h 30 m, which is what the wall clock would say</span></div></div>
+      <div class="fact"><div class="fk">Started</div><div class="fv">23:10 <span class="m" style="color: oklch(0.62 0.008 250);">PDT −07:00</span></div></div>
+      <div class="fact"><div class="fk">Ended</div><div class="fv">06:40 <span class="m" style="color: oklch(0.62 0.008 250);">PST −08:00</span></div></div>
+      <div class="fact" style="border-bottom: 1px solid oklch(0.21 0.010 250);"><div class="fk">Stored as</div><div class="fv">both times, every record<div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px;">wall time with offset, and a monotonic counter · export carries both</div></div></div>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: baseline; padding: 16px 20px 6px;">
+    <div class="lbl" style="flex-grow: 1;">Around the change</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+    <div class="row" style="border-top-color: oklch(0.26 0.010 250);">
+      <div class="t">01:58<span style="color: oklch(0.50 0.008 250); font-size: 9.5px;"> −7</span></div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">W7NPC</div>
+        </div>
+        <div class="tx">clock goes back in a couple minutes, don't let it confuse you</div>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 7px 20px; border-top: 1px solid oklch(0.215 0.010 250); background: oklch(0.185 0.008 250);">
+      <div class="m" style="font-size: 11px; color: oklch(0.62 0.008 250); width: 52px;">02:00</div>
+      <div style="display: flex; align-items: center; gap: 6px; flex-grow: 1;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+        <div style="font-size: 11.5px; color: oklch(0.66 0.008 250);">clock set back one hour · PDT → PST · capture unaffected</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="t">01:02<span style="color: oklch(0.50 0.008 250); font-size: 9.5px;"> −8</span></div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">KJ7ABC</div>
+        </div>
+        <div class="tx">yeah my phone just jumped, we're back to one o'clock</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="t">01:14<span style="color: oklch(0.50 0.008 250); font-size: 9.5px;"> −8</span></div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">W7NPC</div>
+        </div>
+        <div class="tx">seven three, going to get some sleep, again</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 8px 20px 20px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.45;">Rows stay in the order they happened. The offset suffix appears only on nights where it changed; on every other night the time column is as plain as usual.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

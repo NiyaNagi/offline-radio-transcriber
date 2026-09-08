@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .slot { flex-grow: 1; background: oklch(0.21 0.010 250); border-radius: 5px; padding: 6px 0; text-align: center; }
+    .u { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; }
+    .sc { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.68 0.11 150); margin-top: 2px; }
+    .cand { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; background: oklch(0.20 0.010 250); min-height: 44px; box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Log</div>
+    <div style="flex-grow: 1;"></div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="5" r="1.4" fill="oklch(0.62 0.008 250)"></circle><circle cx="12" cy="12" r="1.4" fill="oklch(0.62 0.008 250)"></circle><circle cx="12" cy="19" r="1.4" fill="oklch(0.62 0.008 250)"></circle></svg>
+  </div>
+
+  <div style="padding: 0 20px 16px;">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 11px; height: 11px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 2px solid oklch(0.78 0.13 75); box-sizing: border-box;"></div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 27px; font-weight: 600; letter-spacing: -0.01em; color: oklch(0.88 0.006 250);">KE7QRS</div>
+      <div style="font-size: 14px; color: oklch(0.78 0.13 75); margin-top: 6px;">or QRF</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.66 0.008 250); margin-top: 7px; line-height: 1.45;">Two candidates survived and the phonetics do not separate them. The last letter was heard as <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.86 0.006 250);">S</span> or <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.86 0.006 250);">F</span>.</div>
+    <div style="display: flex; gap: 14px; margin-top: 11px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.58 0.008 250);">
+      <div>02:14:41</div><div>145.230</div><div>3.8 s</div><div>S3</div>
+    </div>
+  </div>
+
+  <div style="margin: 0 16px 18px; background: oklch(0.20 0.010 250); border-radius: 10px; padding: 13px 14px; display: flex; align-items: center; gap: 13px;">
+    <div style="width: 34px; height: 34px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="oklch(0.16 0.01 150)"><path d="M8 5l11 7-11 7z"></path></svg>
+    </div>
+    <div style="flex-grow: 1; display: flex; align-items: center; gap: 1.5px; height: 26px;">
+      <div style="flex-grow:1; height: 20%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 44%; background: oklch(0.46 0.03 250);"></div>
+      <div style="flex-grow:1; height: 58%; background: oklch(0.68 0.13 150);"></div>
+      <div style="flex-grow:1; height: 40%; background: oklch(0.46 0.03 250);"></div>
+      <div style="flex-grow:1; height: 62%; background: oklch(0.68 0.13 150);"></div>
+      <div style="flex-grow:1; height: 36%; background: oklch(0.46 0.03 250);"></div>
+      <div style="flex-grow:1; height: 50%; background: oklch(0.68 0.13 150);"></div>
+      <div style="flex-grow:1; height: 30%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 46%; background: oklch(0.46 0.03 250);"></div>
+      <div style="flex-grow:1; height: 24%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 18%; background: oklch(0.42 0.02 250);"></div>
+      <div style="flex-grow:1; height: 22%; background: oklch(0.42 0.02 250);"></div>
+    </div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.58 0.008 250);">3.8s</div>
+  </div>
+
+  <div style="padding: 0 20px 16px;">
+    <div style="font-size: 15px; line-height: 1.45; color: oklch(0.86 0.006 250); text-wrap: pretty;"><span style="background: oklch(0.22 0.04 75); border-radius: 3px; padding: 0 3px;">kilo echo seven quebec romeo sierra</span>, portable</div>
+  </div>
+
+  <div style="height: 1px; background: oklch(0.24 0.010 250);"></div>
+
+  <div style="flex-grow: 1; overflow: hidden; padding: 16px 20px 0;">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); margin-bottom: 12px;">Choose, if you heard it</div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+      <div class="cand">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 600; width: 80px;">KE7QRS</div>
+        <div style="flex-grow: 1; font-size: 12px; color: oklch(0.62 0.008 250);">heard on this repeater 3 times · Oregon</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.62 0.008 250);">0.51</div>
+      </div>
+      <div class="cand">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 600; width: 80px;">KE7QRF</div>
+        <div style="flex-grow: 1; font-size: 12px; color: oklch(0.62 0.008 250);">never heard before · Oregon</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.62 0.008 250);">0.46</div>
+      </div>
+      <div style="display: flex; align-items: center; min-height: 44px; padding: 0 14px;">
+        <div style="font-size: 13px; color: oklch(0.72 0.14 150);">Neither — it was something else</div>
+      </div>
+    </div>
+
+    <div style="font-size: 12px; color: oklch(0.60 0.008 250); margin-bottom: 7px;">Heard</div>
+    <div style="display: flex; gap: 5px; margin-bottom: 12px;">
+      <div class="slot"><div class="u">K</div><div class="sc">.95</div></div>
+      <div class="slot"><div class="u">E</div><div class="sc">.91</div></div>
+      <div class="slot"><div class="u">7</div><div class="sc">.99</div></div>
+      <div class="slot"><div class="u">Q</div><div class="sc">.93</div></div>
+      <div class="slot"><div class="u">R</div><div class="sc">.89</div></div>
+      <div class="slot" style="border: 1px solid oklch(0.42 0.07 75);"><div class="u">S<span style="color: oklch(0.58 0.008 250); font-weight: 400;">/</span>F</div><div class="sc" style="color: oklch(0.78 0.13 75);">.52 / .48</div></div>
+    </div>
+    <div style="font-size: 12px; color: oklch(0.62 0.008 250); line-height: 1.45;">Sierra and foxtrot share a fricative onset. On an S3 signal the model cannot tell them apart, and nothing else in the record does either.</div>
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.26 0.010 250); padding: 12px 16px 16px; display: flex; gap: 9px;">
+    <div style="flex-grow: 1; background: oklch(0.24 0.010 250); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 500;">Leave ambiguous</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

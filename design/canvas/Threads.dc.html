@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .th { display: flex; gap: 12px; padding: 12px 20px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .kind { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250); }
+    .ttl { font-size: 14.5px; color: oklch(0.94 0.006 250); margin-top: 3px; }
+    .meta { font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 3px; }
+    .cs { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <div style="width: 7px; height: 7px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.68 0.008 250);">6:42</div>
+    </div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+  </div>
+
+  <div style="padding: 10px 20px 12px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Threads</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">31 conversations · 412 overs · newest first</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="th" style="border-top-color: oklch(0.26 0.010 250);">
+      <div class="t">02:14</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div class="kind">QSO · 145.230 · 4 overs</div>
+        <div class="ttl"><span class="cs">W7NPC</span> and <span class="cs" style="color: oklch(0.86 0.006 250);">K7LWH</span></div>
+        <div class="meta">3 confirmed · 1 inferred from voice · 02:14 – 02:16</div>
+      </div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-top: 14px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+    <div class="th">
+      <div class="t">02:17</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div class="kind">Activation · 146.960 · 6 overs</div>
+        <div class="ttl"><span class="cs">WA7HJR</span> at <span class="cs" style="font-weight: 500;">K-4412</span> <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.05em; color: oklch(0.16 0.01 150); background: oklch(0.72 0.14 150); padding: 1px 5px; border-radius: 3px; text-transform: uppercase; vertical-align: middle;">new</span></div>
+        <div class="meta">5 hunters · 02:17 – 02:41</div>
+      </div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-top: 14px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+    <div class="th" style="background: oklch(0.175 0.010 75);">
+      <div class="t">02:14</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div class="kind">QSO · 145.230 · 2 overs</div>
+        <div class="ttl"><span class="cs" style="color: oklch(0.88 0.006 250);">KE7QRS</span> <span style="font-size: 11px; color: oklch(0.78 0.13 75);">or QRF</span> and an unknown station</div>
+        <div class="meta">1 ambiguous · 1 unknown · tap to choose</div>
+      </div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-top: 14px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+    <div class="th">
+      <div class="t">19:00</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div class="kind">Net · 145.230 · 61 overs</div>
+        <div class="ttl">Tuesday night net, <span class="cs">W7NPC</span> control</div>
+        <div class="meta">14 check-ins · 41 min · unusually long</div>
+      </div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-top: 14px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+    <div class="th">
+      <div class="t">03:10</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div class="kind">Activity · 146.960 · 7 overs</div>
+        <div class="ttl" style="color: oklch(0.66 0.008 250); font-style: italic;">4 unidentified voices</div>
+        <div class="meta">weak signals, S1–S3 · 03:10 – 04:40 · not grouped into a conversation</div>
+      </div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-top: 14px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+    <div class="th">
+      <div class="t">00:31</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div class="kind">QSO · 146.960 · 9 overs</div>
+        <div class="ttl"><span class="cs">KJ7ABC</span>, <span class="cs" style="color: oklch(0.86 0.006 250);">N7XYZ</span> and <span class="cs">W7NPC</span></div>
+        <div class="meta">7 confirmed · 2 inferred · 00:31 – 00:52</div>
+      </div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-top: 14px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.28 0.010 250); background: oklch(0.19 0.010 250); padding: 10px 20px 14px; display: flex; align-items: center; gap: 11px;">
+    <div style="display: flex; gap: 2px; align-items: flex-end; height: 14px;">
+      <div style="width: 2px; height: 6px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 13px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 9px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 14px; background: oklch(0.72 0.14 150);"></div>
+    </div>
+    <div style="font-size: 13px; color: oklch(0.72 0.006 250); flex-grow: 1; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">and we're clear on the repeater, seven th…</div>
+    <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Live</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

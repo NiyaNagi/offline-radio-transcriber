@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="padding: 10px 20px 0; display: flex; align-items: center; gap: 14px;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">2 of 7</div>
+  </div>
+  <div style="display: flex; gap: 4px; padding: 14px 20px 0;">
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+  </div>
+
+  <div style="padding: 26px 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.2;">Notifications</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">One persistent notification, so you can always see it is running</div>
+  </div>
+
+  <div style="padding: 22px 20px 0; display: flex; flex-direction: column; gap: 16px;">
+    <div style="font-size: 15px; line-height: 1.45; color: oklch(0.76 0.006 250); text-wrap: pretty;">Capture runs as a foreground service. Android requires it to show a notification while it does, and that notification is how you check the state from the lock screen.</div>
+
+    <div style="background: oklch(0.11 0.006 250); border-radius: 12px; padding: 12px 14px; border: 1px solid oklch(0.24 0.010 250);">
+      <div style="display: flex; align-items: center; gap: 9px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round"><path d="M12 4v16M7 8v8M17 8v8M3 11v2M21 11v2"></path></svg>
+        <div style="font-size: 11.5px; color: oklch(0.62 0.008 250); flex-grow: 1;">Offline radio transcriber</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">now</div>
+      </div>
+      <div style="font-size: 13.5px; font-weight: 500; color: oklch(0.94 0.006 250); margin-top: 7px;">Capturing · 6:42 · 412 overs</div>
+      <div style="font-size: 12.5px; color: oklch(0.66 0.008 250); margin-top: 2px;">145.230 and 146.960 · tier 3 · 38.2 GB used</div>
+      <div style="display: flex; gap: 18px; margin-top: 10px;">
+        <div style="font-size: 12.5px; font-weight: 500; color: oklch(0.72 0.14 150);">Open</div>
+        <div style="font-size: 12.5px; font-weight: 500; color: oklch(0.72 0.14 150);">Stop</div>
+      </div>
+    </div>
+
+    <div style="font-size: 12.5px; line-height: 1.5; color: oklch(0.62 0.008 250); text-wrap: pretty;">You can skip this. Capture still runs, but you will not see it is running without opening the app, and the OS is more likely to end it.</div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Allow notifications</div></div>
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 44px;"><div style="font-size: 13.5px; color: oklch(0.66 0.008 250);">Skip</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .row { display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); align-items: flex-start; }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; flex-shrink: 0; }
+    .cs { font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; }
+    .tx { font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; }
+    .chk-on { width: 16px; height: 16px; border-radius: 4px; background: oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .chk-off { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid oklch(0.40 0.008 250); box-sizing: border-box; flex-shrink: 0; margin-top: 1px; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);"><span class="m" style="font-weight: 600;">N7XYZ</span></div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 12px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Split this voice</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px; line-height: 1.45;">One cluster, 38 overs. If some of these are not Dave, tick them — they become a new unidentified voice.</div>
+  </div>
+
+  <div style="padding: 0 20px 12px;">
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 12px 14px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0;"></div>
+        <div style="font-size: 13.5px; color: oklch(0.94 0.006 250);">The matcher thinks these 7 are the least like the rest</div>
+      </div>
+      <div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 5px; line-height: 1.45;">Pre-ticked as a suggestion, not a decision. Play any of them; the voice is the only evidence.</div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 10px; padding: 0 20px 6px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.46 0.008 250);">
+    <div style="width: 16px;"></div>
+    <div style="width: 52px;">time</div>
+    <div style="flex-grow: 1;">over</div>
+    <div>fit</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+    <div class="row" style="border-top-color: oklch(0.26 0.010 250); background: oklch(0.175 0.010 75);">
+      <div class="chk-on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div class="t">00:41:15</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs" style="color: oklch(0.86 0.006 250);">N7XYZ</div>
+          <div style="font-size: 11px; color: oklch(0.62 0.008 250);">inferred</div>
+        </div>
+        <div class="tx">yeah I'm mobile, heading north on the five</div>
+      </div>
+      <div class="m" style="font-size: 11px; color: oklch(0.74 0.09 60); padding-top: 2px;">0.41</div>
+    </div>
+    <div class="row" style="background: oklch(0.175 0.010 75);">
+      <div class="chk-on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div class="t">00:39:50</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs" style="color: oklch(0.86 0.006 250);">N7XYZ</div>
+          <div style="font-size: 11px; color: oklch(0.62 0.008 250);">inferred</div>
+        </div>
+        <div class="tx">copy that, I'll give you a call when I'm closer</div>
+      </div>
+      <div class="m" style="font-size: 11px; color: oklch(0.74 0.09 60); padding-top: 2px;">0.44</div>
+    </div>
+    <div class="row">
+      <div class="chk-off"></div>
+      <div class="t">02:12:03</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">N7XYZ</div>
+          <div style="font-size: 11px; color: oklch(0.62 0.008 250);">heard</div>
+        </div>
+        <div class="tx">november seven x-ray yankee zulu, back to net control</div>
+      </div>
+      <div class="m" style="font-size: 11px; color: oklch(0.68 0.10 150); padding-top: 2px;">0.91</div>
+    </div>
+    <div class="row">
+      <div class="chk-off"></div>
+      <div class="t">02:08:44</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">N7XYZ</div>
+          <div style="font-size: 11px; color: oklch(0.62 0.008 250);">heard</div>
+        </div>
+        <div class="tx">this is november seven x-ray yankee zulu, checking in</div>
+      </div>
+      <div class="m" style="font-size: 11px; color: oklch(0.68 0.10 150); padding-top: 2px;">0.94</div>
+    </div>
+    <div class="row">
+      <div class="chk-off"></div>
+      <div class="t">01:55:10</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs" style="color: oklch(0.86 0.006 250);">N7XYZ</div>
+          <div style="font-size: 11px; color: oklch(0.62 0.008 250);">inferred</div>
+        </div>
+        <div class="tx">roger, good copy</div>
+      </div>
+      <div class="m" style="font-size: 11px; color: oklch(0.68 0.10 150); padding-top: 2px;">0.86</div>
+    </div>
+  </div>
+
+  <div style="padding: 8px 20px 10px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.45;">Splitting marks every moved over <span style="font-style: italic;">corrected</span>, keeps its old attribution as superseded, and re-derives both clusters. Overs where the callsign was heard cannot be moved — those are the anchor.</div>
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.26 0.010 250); padding: 12px 16px 16px; display: flex; gap: 9px;">
+    <div style="flex-grow: 1; background: oklch(0.24 0.010 250); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 500;">Cancel</div>
+    <div style="flex-grow: 1; background: oklch(0.72 0.14 150); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 600; color: oklch(0.16 0.01 150);">Split off 7 overs</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

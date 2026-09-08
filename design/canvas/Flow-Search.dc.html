@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .card { width: 165px; height: 200px; background: oklch(0.185 0.009 250); border-radius: 10px; border: 1px solid oklch(0.26 0.010 250); padding: 12px 13px; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+    .id { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250); }
+    .ttl { font-size: 13.5px; font-weight: 600; color: oklch(0.94 0.006 250); line-height: 1.25; }
+    .sum { font-size: 11px; color: oklch(0.62 0.008 250); line-height: 1.4; flex-grow: 1; }
+    .act { font-size: 11px; color: oklch(0.72 0.14 150); font-weight: 500; }
+    .arr { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 70px; flex-shrink: 0; gap: 4px; }
+    .al { font-size: 10px; color: oklch(0.62 0.008 250); text-align: center; line-height: 1.3; }
+    .ln { width: 100%; height: 1px; background: oklch(0.40 0.010 250); position: relative; }
+    .ln::after { content: ""; position: absolute; right: 0; top: -3px; width: 0; height: 0; border-left: 6px solid oklch(0.40 0.010 250); border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; }
+  </style>
+</helmet>
+
+<div style="width: 1560px; height: 520px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); padding: 30px 34px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px;">
+
+  <div>
+    <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">Find a conversation</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px; max-width: 760px; line-height: 1.5;">Search is reached from the magnifier on every destination's header. Filters are a sheet, applied filters are chips with a dismiss, and coming back from a result keeps everything as it was.</div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start;">
+    <div class="card"><div class="id">any header</div><div class="ttl">Magnifier</div><div class="sum">Top-right on Now, Log, Threads, Stations, Frequencies, Earlier nights</div><div class="act">tap →</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card"><div class="id">Q01</div><div class="ttl">Search</div><div class="sum">Field focused, keyboard up. Recent searches with counts. What to try. Tonight / all nights quick chips.</div><div class="act">type + submit → Q03 · Filters → Q02</div></div>
+    <div class="arr"><div class="al">Filters</div><div class="ln"></div></div>
+    <div class="card"><div class="id">Q02</div><div class="ttl">Filters</div><div class="sum">Callsign prefix, frequency and band chips, time as chips or a range, attribution states with counts, include rejected / corrected</div><div class="act">Show N overs → Q03</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card" style="border-color: oklch(0.34 0.06 150);"><div class="id">Q03</div><div class="ttl">Results</div><div class="sum">Grouped by night, dense rows, matched words highlighted, applied filters as dismissable chips, count and station count up top</div><div class="act">row → D01 · chip × → re-run</div></div>
+    <div class="arr"><div class="al">row</div><div class="ln"></div></div>
+    <div class="card"><div class="id">D01</div><div class="ttl">Detail</div><div class="sum">Back label reads "Search", not "Log"</div><div class="act">back → Q03, scrolled to the same row, filters intact</div></div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start; gap: 20px; padding-left: 705px;">
+    <div class="card" style="height: 150px;"><div class="id">Q04</div><div class="ttl">No results</div><div class="sum">Says which filters narrowed it. Offers to widen each, with the count each would give. Similar callsigns one edit away.</div></div>
+    <div class="card" style="height: 150px; border-color: oklch(0.38 0.06 60);"><div class="id">Q05</div><div class="ttl">Text unavailable</div><div class="sum">Index rebuilding. The text term was not applied; the other filters were. Says so, shows what it did apply, offers retry.</div></div>
+  </div>
+
+  <div style="display: flex; gap: 40px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Nothing runs on keystroke.</span> Submit runs it. A running search is cancellable and the previous results stay until the new ones land.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">A filter is never a tap-to-cycle label.</span> Closed sets are lists with counts; ranges are two fields; applied ones are chips.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">The Log's own Filter</span> (L02) is the same sheet minus the text field, and it does not leave the Log.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

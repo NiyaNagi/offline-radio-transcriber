@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .k { font-size: 13.5px; color: oklch(0.62 0.008 250); width: 96px; flex-shrink: 0; }
+    .v { font-size: 14px; color: oklch(0.94 0.006 250); flex-grow: 1; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .sub { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding-bottom: 4px; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 10px 20px 0;">
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.15 25); flex-shrink: 0;"></div>
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Halted</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">02:41:12 · after <span class="m">3:09:40</span> · 188 overs kept</div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div style="border-radius: 8px; background: oklch(0.20 0.045 25); border: 1px solid oklch(0.42 0.10 25); padding: 13px 14px; display: flex; gap: 11px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.15 25)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px;"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v6M12 16v.5"></path></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">Audio switched to the built-in microphone</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">At 02:41:12 the route changed from USB Audio Device to the phone's own mic. Capture stopped in the same second. Nothing from this mic was recorded.</div>
+        <div style="display: flex; align-items: center; gap: 18px;">
+          <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.15 25);">Choose the input again</div></div>
+          <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.15 25);">Why this halts</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div class="lbl">Audio</div>
+    <div class="row">
+      <div class="k">Input</div>
+      <div class="v" style="color: oklch(0.86 0.006 250);">USB Audio Device<div class="sub">chosen · not currently routed</div></div>
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.15 25);"></div>
+      <div class="sub m" style="margin: 0; color: oklch(0.72 0.15 25);">mismatch</div>
+    </div>
+    <div class="row">
+      <div class="k">Routed to</div>
+      <div class="v">Built-in microphone<div class="sub">the adapter dropped off the bus at 02:41:11</div></div>
+    </div>
+    <div class="row" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div class="k">Radio</div>
+      <div class="v">TH-D75A<div class="sub">still connected · still reading frequency</div></div>
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div class="lbl">Not recorded</div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 8px 0;">
+      <div style="width: 9px; height: 7px; background: repeating-linear-gradient(45deg, oklch(0.55 0.07 60), oklch(0.55 0.07 60) 2px, transparent 2px, transparent 4px);"></div>
+      <div style="font-size: 13.5px; color: oklch(0.86 0.006 250);">02:41:12 onward is a gap, reason <span style="font-style: italic;">route lost</span></div>
+    </div>
+    <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; text-wrap: pretty;">The app would rather record nothing than record the room. When the USB input is back, choosing it re-runs the route check; the session resumes and the gap is closed with its length.</div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Choose the input again</div></div>
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 44px;"><div style="font-size: 13.5px; color: oklch(0.66 0.008 250);">End the session here</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

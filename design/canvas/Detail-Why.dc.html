@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .slot { flex-grow: 1; background: oklch(0.21 0.010 250); border-radius: 5px; padding: 5px 0 4px; text-align: center; display: flex; flex-direction: column; gap: 1px; }
+    .u { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; }
+    .sc { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.68 0.11 150); }
+    .alt { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: oklch(0.52 0.008 250); }
+    .pr { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+    .pn { font-size: 12.5px; width: 122px; color: oklch(0.80 0.006 250); flex-shrink: 0; }
+    .bar { flex-grow: 1; height: 5px; background: oklch(0.24 0.010 250); border-radius: 3px; overflow: hidden; position: relative; }
+    .pv { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.62 0.008 250); width: 34px; text-align: right; flex-shrink: 0; }
+    .cand { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);"><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600;">K7LWH</span> · 02:14:22</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 14px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Why this callsign</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Everything the resolver saw, in the order it used it</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden; padding: 0 20px;">
+
+    <div class="lbl">1 · Phonetic lattice, from the source over 02:16:02</div>
+    <div style="font-size: 12px; color: oklch(0.60 0.008 250); margin: 6px 0 8px;">Each slot: what was heard best, with the alternates that were kept</div>
+    <div style="display: flex; gap: 5px; margin-bottom: 6px;">
+      <div class="slot"><div class="u">K</div><div class="sc">.96</div><div class="alt">C .03</div></div>
+      <div class="slot"><div class="u">7</div><div class="sc">.99</div><div class="alt">—</div></div>
+      <div class="slot"><div class="u">L</div><div class="sc">.91</div><div class="alt">M .06</div></div>
+      <div class="slot" style="border: 1px solid oklch(0.42 0.07 75);"><div class="u">W</div><div class="sc" style="color: oklch(0.78 0.13 75);">.64</div><div class="alt">V .29</div></div>
+      <div class="slot"><div class="u">H</div><div class="sc">.88</div><div class="alt">A .07</div></div>
+    </div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-bottom: 14px;">Model whisper-small-int8 · lattice built from audio, not from the transcript</div>
+
+    <div class="lbl">2 · Grammar</div>
+    <div style="display: flex; align-items: center; gap: 9px; padding: 8px 0 12px;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+      <div style="font-size: 13px; color: oklch(0.86 0.006 250);">Parsed as <span style="font-family: 'IBM Plex Mono', monospace;">prefix K · region 7 · suffix LWH</span> — a valid US 1×3</div>
+    </div>
+
+    <div class="lbl">3 · Candidates that survived</div>
+    <div style="margin-top: 4px;">
+      <div class="cand">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; width: 72px;">K7LWH</div>
+        <div style="flex-grow: 1; font-size: 12px; color: oklch(0.62 0.008 250);">score 8.6</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.68 0.10 150);">chosen</div>
+      </div>
+      <div class="cand">
+        <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.45 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; width: 72px; color: oklch(0.86 0.006 250);">KA7LWH</div>
+        <div style="flex-grow: 1; font-size: 12px; color: oklch(0.62 0.008 250);">score 4.4 · needs an A the lattice did not hear</div>
+      </div>
+      <div class="cand" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.45 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; width: 72px; color: oklch(0.86 0.006 250);">K7LVH</div>
+        <div style="flex-grow: 1; font-size: 12px; color: oklch(0.62 0.008 250);">score 3.1 · V for W, never heard before</div>
+      </div>
+    </div>
+
+    <div class="lbl" style="margin-top: 14px;">4 · Priors, for the chosen candidate</div>
+    <div style="margin-top: 4px;">
+      <div class="pr"><div class="pn">Heard acoustically</div><div class="bar"><div style="width: 84%; height: 100%; background: oklch(0.72 0.14 150);"></div></div><div class="pv">+3.1</div></div>
+      <div class="pr"><div class="pn">On this repeater</div><div class="bar"><div style="width: 62%; height: 100%; background: oklch(0.72 0.14 150);"></div></div><div class="pv">+2.3</div></div>
+      <div class="pr"><div class="pn">Heard this session</div><div class="bar"><div style="width: 40%; height: 100%; background: oklch(0.72 0.14 150);"></div></div><div class="pv">+1.5</div></div>
+      <div class="pr"><div class="pn" style="color: oklch(0.62 0.008 250);">In the FCC database</div><div class="bar"><div style="width: 22%; height: 100%; background: oklch(0.48 0.05 250);"></div></div><div class="pv" style="color: oklch(0.55 0.008 250);">+0.8</div></div>
+      <div class="pr"><div class="pn" style="color: oklch(0.62 0.008 250);">Time of day</div><div class="bar"><div style="position: absolute; left: 50%; width: 1px; height: 100%; background: oklch(0.34 0.010 250);"></div><div style="position: absolute; right: 50%; width: 12%; height: 100%; background: oklch(0.62 0.10 60);"></div></div><div class="pv" style="color: oklch(0.62 0.05 60);">−0.4</div></div>
+      <div class="pr" style="border-bottom: 1px solid oklch(0.21 0.010 250);"><div class="pn" style="color: oklch(0.52 0.008 250);">Recent corrections</div><div class="bar"></div><div class="pv" style="color: oklch(0.52 0.008 250); font-size: 10px; width: 80px;">cold start</div></div>
+    </div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 8px; line-height: 1.45;">A prior that argued against is negative and amber. One with no data yet says <span style="font-style: italic;">cold start</span>, not zero — the two are different facts.</div>
+
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.26 0.010 250); padding: 12px 16px 16px; display: flex; gap: 9px;">
+    <div style="flex-grow: 1; background: oklch(0.24 0.010 250); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 500;">Not right?</div>
+    <div style="flex-grow: 1; background: oklch(0.72 0.14 150); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 600; color: oklch(0.16 0.01 150);">Confirm</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

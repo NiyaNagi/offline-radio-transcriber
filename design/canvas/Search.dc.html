@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .rc { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 4px 0; border-top: 1px solid oklch(0.21 0.010 250); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 0;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="flex-grow: 1; display: flex; align-items: center; height: 44px; padding: 0 13px; background: oklch(0.175 0.009 250); border: 1px solid oklch(0.72 0.14 150); border-radius: 8px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-right: 9px;"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+      <div style="font-size: 14px; color: oklch(0.50 0.008 250); flex-grow: 1;">Search transcripts, callsigns, frequencies</div>
+      <div style="width: 1px; height: 17px; background: oklch(0.72 0.14 150);"></div>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 8px; padding: 12px 20px 0;">
+    <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>
+      <span>Filters</span>
+    </div>
+    <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">Tonight</div>
+    <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">All nights</div>
+  </div>
+
+  <div class="lbl" style="padding: 24px 20px 4px;">Recent</div>
+  <div style="padding: 0 20px;">
+    <div class="rc">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">WA7HJR</div>
+      <div style="font-size: 11.5px; color: oklch(0.55 0.008 250);">6 overs</div>
+    </div>
+    <div class="rc">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+      <div style="font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">grid square</div>
+      <div style="font-size: 11.5px; color: oklch(0.55 0.008 250);">14 overs</div>
+    </div>
+    <div class="rc" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+      <div style="font-size: 14px; color: oklch(0.86 0.006 250); flex-grow: 1;">ambiguous on <span style="font-family: 'IBM Plex Mono', monospace;">146.960</span></div>
+      <div style="font-size: 11.5px; color: oklch(0.55 0.008 250);">3 overs</div>
+    </div>
+  </div>
+
+  <div class="lbl" style="padding: 24px 20px 4px;">Try</div>
+  <div style="padding: 0 20px;">
+    <div class="rc">
+      <div style="font-size: 13.5px; color: oklch(0.76 0.006 250); flex-grow: 1;">A callsign, or part of one — <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.86 0.006 250);">K7L</span></div>
+    </div>
+    <div class="rc">
+      <div style="font-size: 13.5px; color: oklch(0.76 0.006 250); flex-grow: 1;">A frequency — <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.86 0.006 250);">146.96</span></div>
+    </div>
+    <div class="rc">
+      <div style="font-size: 13.5px; color: oklch(0.76 0.006 250); flex-grow: 1;">Words from a transcript — <span style="color: oklch(0.86 0.006 250);">park activation</span></div>
+    </div>
+    <div class="rc" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="font-size: 13.5px; color: oklch(0.76 0.006 250); flex-grow: 1;">A POTA reference — <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.86 0.006 250);">K-4412</span></div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div style="font-size: 12px; color: oklch(0.58 0.008 250); line-height: 1.5;">Full-text over every transcript on this phone, all nights. Nothing is sent anywhere.</div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+</div>
+</x-dc>
+</body>
+</html>

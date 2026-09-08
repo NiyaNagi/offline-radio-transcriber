@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .card { width: 165px; height: 210px; background: oklch(0.185 0.009 250); border-radius: 10px; border: 1px solid oklch(0.26 0.010 250); padding: 12px 13px; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+    .id { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250); }
+    .ttl { font-size: 13.5px; font-weight: 600; color: oklch(0.94 0.006 250); line-height: 1.25; }
+    .sum { font-size: 11px; color: oklch(0.62 0.008 250); line-height: 1.4; flex-grow: 1; }
+    .act { font-size: 11px; color: oklch(0.72 0.14 150); font-weight: 500; }
+    .arr { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 70px; flex-shrink: 0; gap: 4px; }
+    .al { font-size: 10px; color: oklch(0.62 0.008 250); text-align: center; line-height: 1.3; }
+    .ln { width: 100%; height: 1px; background: oklch(0.40 0.010 250); position: relative; }
+    .ln::after { content: ""; position: absolute; right: 0; top: -3px; width: 0; height: 0; border-left: 6px solid oklch(0.40 0.010 250); border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; }
+    .phone { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; display: inline-block; }
+  </style>
+</helmet>
+
+<div style="width: 1560px; height: 540px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); padding: 30px 34px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px;">
+
+  <div>
+    <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">Capture in the field, improve at home</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px; max-width: 800px; line-height: 1.5;">A headline workflow, not an edge case. A spare tier-1 phone captures; the good phone improves. The framing everywhere is "can get better" — never "broken". Nothing is ever worse afterwards.</div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start;">
+    <div class="card" style="border-color: oklch(0.38 0.06 60);"><div class="phone" style="background: oklch(0.26 0.012 250); color: oklch(0.78 0.13 75);">field phone · tier 1</div><div class="ttl">Capture</div><div class="sum">Tiny model, no voice match, no Pass C. Many unknowns, no guesses. Every over marked improvable from the start.</div><div class="act">session ends</div></div>
+    <div class="arr"><div class="al">export or move the app data</div><div class="ln"></div></div>
+    <div class="card"><div class="phone" style="background: oklch(0.26 0.012 250); color: oklch(0.68 0.10 150);">home phone · tier 3</div><div class="id" style="margin-top: 2px;">N02 · DG03</div><div class="ttl">Sessions arrive</div><div class="sum">Earlier nights lists "Field, Thu 3 Sep · tier 1 · can be improved". Now-idle shows a "Can get better" section with the count.</div><div class="act">Improve → R01</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card"><div class="id">R01</div><div class="ttl">What can get better</div><div class="sum">Grouped by why: captured at tier 1, processed while warm, older lexicon. Counts overlap and the total is distinct.</div><div class="act">Improve all → · group → R02</div></div>
+    <div class="arr"><div class="al">group</div><div class="ln"></div></div>
+    <div class="card"><div class="id">R02</div><div class="ttl">Choose passes</div><div class="sum">Transcribe again, resolve from audio, match voices. Segmentation is listed and locked — the one thing that never re-runs. Time, battery, storage estimated.</div><div class="act">Improve 64 → R03</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card"><div class="id">R03</div><div class="ttl">Improving</div><div class="sum">Progress per pass. Live capture unaffected. Changed-so-far list grows. Pause and cancel both keep what is done.</div><div class="act">done → R04</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card" style="border-color: oklch(0.34 0.06 150);"><div class="id">R04</div><div class="ttl">Before and after</div><div class="sum">State counts side by side. Overs that gained a callsign, transcripts revised, voices recognised, corrections re-applied, and "0 got worse" with why.</div><div class="act">Review changes → L01 filtered</div></div>
+  </div>
+
+  <div style="display: flex; gap: 40px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">The same flow runs on one phone</span> after a thermal drop, a model swap, or a lexicon update — R01's groups are the same, only the reasons differ.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Corrections survive.</span> Anything the operator fixed is re-applied on top of the new results and listed as such on R04.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Nothing is replaced.</span> Every superseded transcript and attribution stays under revisions, and the log rows carry "revised".</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

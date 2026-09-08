@@ -1,0 +1,161 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; }
+    .f { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px; }
+    .s { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.008 250); padding-top: 2px; }
+    .row { display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .cs { font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; }
+    .tx { font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; text-wrap: pretty; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <div style="width: 7px; height: 7px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.68 0.008 250);">2:47</div>
+    </div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+  </div>
+
+  <div style="display: flex; align-items: baseline; padding: 10px 20px 12px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; flex-grow: 1;">Log</div>
+    <div style="font-size: 13px; color: oklch(0.72 0.14 150);">Filter</div>
+  </div>
+
+  <div style="display: flex; gap: 7px; padding: 0 20px 12px;">
+    <div style="font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 14px; background: oklch(0.30 0.012 250); color: oklch(0.94 0.006 250);">All</div>
+    <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">145.230</div>
+    <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">Named</div>
+    <div style="font-size: 12px; padding: 5px 11px; border-radius: 14px; border: 1px solid oklch(0.30 0.010 250); color: oklch(0.66 0.008 250);">Rejected</div>
+  </div>
+
+  <div style="display: flex; gap: 10px; padding: 0 20px 6px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.46 0.008 250);">
+    <div style="width: 52px;">time</div>
+    <div style="width: 56px;">freq</div>
+    <div style="flex-grow: 1;">station</div>
+    <div>sig</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="row" style="border-top-color: oklch(0.26 0.010 250);">
+      <div class="t">02:19:31</div>
+      <div class="f">146.960</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <div style="display: flex; gap: 2px; align-items: flex-end; height: 9px;">
+            <div style="width: 2px; height: 5px; background: oklch(0.60 0.10 150);"></div>
+            <div style="width: 2px; height: 9px; background: oklch(0.60 0.10 150);"></div>
+            <div style="width: 2px; height: 7px; background: oklch(0.60 0.10 150);"></div>
+          </div>
+          <div style="font-size: 11.5px; color: oklch(0.62 0.008 250); font-style: italic;">hearing…</div>
+        </div>
+        <div class="tx" style="color: oklch(0.60 0.008 250); font-style: italic;">yeah go ahead and give me your grid when you</div>
+      </div>
+      <div class="s"></div>
+    </div>
+
+    <div class="row">
+      <div class="t">02:19:04</div>
+      <div class="f">146.960</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.50 0.008 250); box-sizing: border-box; border-right-color: transparent; flex-shrink: 0;"></div>
+          <div style="font-size: 11.5px; color: oklch(0.62 0.008 250); font-style: italic;">resolving…</div>
+        </div>
+        <div class="tx" style="color: oklch(0.66 0.008 250); font-style: italic;">and we're clear on the repeater, seven three</div>
+      </div>
+      <div class="s"></div>
+    </div>
+
+    <div class="row">
+      <div class="t">02:18:20</div>
+      <div class="f">146.960</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">W7NPC</div>
+          <div style="font-size: 10px; font-weight: 500; letter-spacing: 0.04em; color: oklch(0.62 0.05 60); border: 1px solid oklch(0.40 0.04 60); padding: 0 5px; border-radius: 3px; text-transform: uppercase;">revised</div>
+        </div>
+        <div class="tx">kilo juliet seven alpha bravo charlie this is whiskey seven november papa charlie, back to you</div>
+      </div>
+      <div class="s">S8</div>
+    </div>
+
+    <div class="row">
+      <div class="t">02:17:55</div>
+      <div class="f">146.960</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">WA7HJR</div>
+          <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.05em; color: oklch(0.16 0.01 150); background: oklch(0.72 0.14 150); padding: 1px 5px; border-radius: 3px; text-transform: uppercase;">new</div>
+        </div>
+        <div class="tx">whiskey alpha seven hotel juliet romeo at park kilo dash four four one two</div>
+      </div>
+      <div class="s">S9</div>
+    </div>
+
+    <div class="row">
+      <div class="t">02:16:12</div>
+      <div class="f">146.960</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 5px; height: 5px; border-radius: 50%; background: oklch(0.45 0.008 250); flex-shrink: 0; margin: 0 2px;"></div>
+          <div style="font-size: 13px; color: oklch(0.52 0.008 250); font-style: italic;">unknown station</div>
+        </div>
+        <div class="tx" style="color: oklch(0.66 0.008 250);">…any station on frequency, this is</div>
+      </div>
+      <div class="s">S2</div>
+    </div>
+
+    <div class="row">
+      <div class="t">02:14:41</div>
+      <div class="f">145.230</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs" style="color: oklch(0.88 0.006 250);">KE7QRS</div>
+          <div style="font-size: 11px; color: oklch(0.78 0.13 75);">or QRF</div>
+        </div>
+        <div class="tx">kilo echo seven quebec romeo sierra, portable</div>
+      </div>
+      <div class="s">S3</div>
+    </div>
+
+  </div>
+
+  <div style="padding: 8px 20px 10px; background: oklch(0.155 0.008 250);">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.45; text-wrap: pretty;">Three stages of one over: <span style="font-style: italic;">hearing</span> is Pass A streaming, no marker; <span style="font-style: italic;">resolving</span> has the final text and no attribution yet; then the marker lands and the row is marked revised if the text changed.</div>
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.28 0.010 250); background: oklch(0.19 0.010 250); padding: 10px 20px 14px; display: flex; align-items: center; gap: 11px;">
+    <div style="display: flex; gap: 2px; align-items: flex-end; height: 14px;">
+      <div style="width: 2px; height: 6px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 13px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 9px; background: oklch(0.72 0.14 150);"></div>
+      <div style="width: 2px; height: 14px; background: oklch(0.72 0.14 150);"></div>
+    </div>
+    <div style="font-size: 13px; color: oklch(0.72 0.006 250); flex-grow: 1; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">yeah go ahead and give me your grid when you…</div>
+    <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Live</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

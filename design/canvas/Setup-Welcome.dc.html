@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="padding: 58px 20px 0;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M7 8v8M17 8v8M3 11v2M21 11v2"></path></svg>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250);">Offline radio transcriber</div>
+    </div>
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; margin-top: 22px; line-height: 1.2; text-wrap: pretty;">Everything your radio heard, written down, on this phone only.</div>
+    <div style="font-size: 15px; line-height: 1.45; color: oklch(0.76 0.006 250); margin-top: 14px; text-wrap: pretty;">Transcription, callsign resolution and the log all run here. No account, no upload, no network in the capture path — ever.</div>
+  </div>
+
+  <div style="padding: 30px 20px 0; display: flex; flex-direction: column; gap: 0;">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding-bottom: 6px;">Setup takes a few minutes and asks for</div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 22px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">1</div>
+      <div style="font-size: 14.5px; color: oklch(0.86 0.006 250); flex-grow: 1;">Microphone and notifications</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 22px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">2</div>
+      <div style="font-size: 14.5px; color: oklch(0.86 0.006 250); flex-grow: 1;">Which input is the radio — and proof that it is</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 22px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">3</div>
+      <div style="font-size: 14.5px; color: oklch(0.86 0.006 250); flex-grow: 1;">An input level set against the noise floor</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 22px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">4</div>
+      <div style="font-size: 14.5px; color: oklch(0.86 0.006 250); flex-grow: 1;">Permission to keep running overnight</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="width: 22px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.52 0.008 250);">5</div>
+      <div style="font-size: 14.5px; color: oklch(0.86 0.006 250); flex-grow: 1;">A radio to read the frequency from</div>
+      <div style="font-size: 11px; color: oklch(0.58 0.008 250);">optional</div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Begin</div></div>
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 44px;"><div style="font-size: 13.5px; color: oklch(0.72 0.14 150);">What is captured, and what never leaves this phone</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

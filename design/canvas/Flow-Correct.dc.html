@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .card { width: 160px; height: 200px; background: oklch(0.185 0.009 250); border-radius: 10px; border: 1px solid oklch(0.26 0.010 250); padding: 12px 13px; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+    .id { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250); }
+    .ttl { font-size: 13.5px; font-weight: 600; color: oklch(0.94 0.006 250); line-height: 1.25; }
+    .sum { font-size: 11px; color: oklch(0.62 0.008 250); line-height: 1.4; flex-grow: 1; }
+    .act { font-size: 11px; color: oklch(0.72 0.14 150); font-weight: 500; }
+    .arr { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; flex-shrink: 0; gap: 4px; }
+    .al { font-size: 10px; color: oklch(0.62 0.008 250); text-align: center; line-height: 1.3; }
+    .ln { width: 100%; height: 1px; background: oklch(0.40 0.010 250); position: relative; }
+    .ln::after { content: ""; position: absolute; right: 0; top: -3px; width: 0; height: 0; border-left: 6px solid oklch(0.40 0.010 250); border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; }
+    .tier { width: 160px; background: oklch(0.185 0.009 250); border-radius: 10px; border: 1px solid oklch(0.26 0.010 250); padding: 10px 13px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; }
+  </style>
+</helmet>
+
+<div style="width: 1560px; height: 640px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); padding: 30px 34px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px;">
+
+  <div>
+    <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">Inspect, then correct</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px; max-width: 760px; line-height: 1.5;">Every machine conclusion is one tap from its evidence, and one more from being fixed. The fix propagates, and the propagation is shown — never implied.</div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start;">
+    <div class="card"><div class="id">L01</div><div class="ttl">A row looks wrong</div><div class="sum">K7LWH, inferred, 0.82 — but the transcript has an extra "alpha"</div><div class="act">tap row →</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card"><div class="id">D02 · Detail</div><div class="ttl">Why this callsign</div><div class="sum">Marker, source-over link, playback, transcript with the callsign span, lattice, priors, runner-up — all on one screen</div><div class="act">Full lattice → D05 · Not right? → D08</div></div>
+    <div class="arr"><div class="al">Not right?</div><div class="ln"></div></div>
+    <div class="card"><div class="id">D08 · sheet</div><div class="ttl">Who was it?</div><div class="sum">The resolver's other candidates first. Then "a station heard before". Then "type a callsign".</div><div class="act">three tiers ↓</div></div>
+    <div class="arr"><div class="al">pick</div><div class="ln"></div></div>
+    <div class="card" style="border-color: oklch(0.34 0.06 150);"><div class="id">D11</div><div class="ttl">Corrected — and 5 more</div><div class="sum">What changed, counted: overs re-attributed, voiceprint reassigned, priors updated, nothing deleted. Undo all.</div><div class="act">Done → L01 · Undo</div></div>
+    <div class="arr"><div class="al">back</div><div class="ln"></div></div>
+    <div class="card"><div class="id">L01</div><div class="ttl">The rows read right</div><div class="sum">Each affected row carries a "corrected" flag beside the marker. The old callsign is under revisions.</div><div class="act">P3: the eleventh is already right</div></div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start; gap: 20px; padding-left: 448px;">
+    <div class="tier">
+      <div class="id">Tier A · D08</div>
+      <div class="ttl" style="font-size: 12.5px;">Pick a candidate</div>
+      <div class="sum" style="flex-grow: 0;">A callsign the resolver already parsed from the audio. Strongest: the lexicon and voice match both learn from it.</div>
+    </div>
+    <div class="tier">
+      <div class="id">Tier B · D09</div>
+      <div class="ttl" style="font-size: 12.5px;">A station heard before</div>
+      <div class="sum" style="flex-grow: 0;">Search the stations this phone knows, by callsign or given name. Teaches the priors and, if a voice is on file, the matcher.</div>
+    </div>
+    <div class="tier" style="border-color: oklch(0.38 0.06 60);">
+      <div class="id">Tier C · D10</div>
+      <div class="ttl" style="font-size: 12.5px;">Type a callsign</div>
+      <div class="sum" style="flex-grow: 0;">Validated against the grammar, recorded unverified. Does not feed the priors. The machine's reading is kept underneath.</div>
+    </div>
+    <div class="tier" style="border-color: oklch(0.38 0.06 60);">
+      <div class="id">Ambiguous · D03</div>
+      <div class="ttl" style="font-size: 12.5px;">Choose between two</div>
+      <div class="sum" style="flex-grow: 0;">The detail itself is the chooser — both candidates, tappable, or "neither". Choosing is a Tier A correction.</div>
+    </div>
+    <div class="tier">
+      <div class="id">Unknown · D04</div>
+      <div class="ttl" style="font-size: 12.5px;">I know who this is</div>
+      <div class="sum" style="flex-grow: 0;">Names the voice. The next over from it is inferred, not unknown. Tier B or C.</div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 40px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Scope</span>: this over only, or every over matched to the same voice. The count is shown before applying, and the propagation screen lists every affected row.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Undo</span> is on the propagation screen and on the toast, and reverts every affected over in one action. Corrections are themselves kept as revisions.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 470px;"><span style="color: oklch(0.86 0.006 250);">Confirm</span> on a detail records that a human agreed — it counts toward calibration, and it is not a fifth state.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

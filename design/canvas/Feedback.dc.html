@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .note { font-size: 12px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 12px; }
+  </style>
+</helmet>
+
+<div style="width: 900px; height: 860px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); padding: 30px 34px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px;">
+
+  <div>
+    <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">Feedback</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px; max-width: 680px; line-height: 1.5;">Six treatments, never conflated. The difference between <em>empty</em> and <em>failed</em> matters most: a screen with nothing on it because a capability is missing is failed, and must say so.</div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Banner — halting</div>
+      <div style="margin-top: 13px; border-radius: 8px; background: oklch(0.20 0.045 25); border: 1px solid oklch(0.42 0.10 25); padding: 13px 14px; display: flex; gap: 11px;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.15 25)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px;"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v6M12 16v.5"></path></svg>
+        <div style="flex-grow: 1;">
+          <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">Capture halted — audio is coming from the built-in microphone</div>
+          <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">The route resolved to the phone's own mic, not the radio. Nothing has been recorded.</div>
+          <div style="display: flex; align-items: center; min-height: 44px; margin-top: 2px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.15 25);">Choose another input</div></div>
+        </div>
+      </div>
+      <div class="note">Red is reserved for this: capture has stopped and the operator must act. There is no "continue anyway".</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Banner — degradation</div>
+      <div style="margin-top: 13px; border-radius: 8px; background: oklch(0.185 0.012 60); border: 1px solid oklch(0.38 0.06 60); padding: 13px 14px; display: flex; gap: 11px;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.74 0.09 60)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px;"><path d="M12 3v3M12 18v3M5 12H2M22 12h-3M6.3 6.3L4.2 4.2M19.8 19.8l-2.1-2.1M6.3 17.7l-2.1 2.1M19.8 4.2l-2.1 2.1"></path><circle cx="12" cy="12" r="4"></circle></svg>
+        <div style="flex-grow: 1;">
+          <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">Running warm — dropped to tier 2</div>
+          <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">Fewer callsigns will resolve until it cools. Everything captured is kept and can be improved later.</div>
+          <div style="display: flex; align-items: center; min-height: 44px; margin-top: 2px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75);">What changes at tier 2</div></div>
+        </div>
+      </div>
+      <div class="note">Amber is degradation, not failure. The framing is always "can get better" — never "broken".</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Toast — transient confirmation</div>
+      <div style="margin-top: 13px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="border-radius: 8px; background: oklch(0.26 0.012 250); padding: 12px 14px; display: flex; align-items: center; gap: 11px;">
+          <div style="font-size: 13.5px; color: oklch(0.94 0.006 250); flex-grow: 1;">Corrected to <span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600;">K7LWH</span> · 6 overs updated</div>
+          <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Undo</div>
+        </div>
+      </div>
+      <div class="note">Every propagating action gets one, and every one carries Undo. It states the blast radius — "6 overs" — not just success.</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Dialog — announced deletion</div>
+      <div style="margin-top: 13px; border-radius: 10px; background: oklch(0.185 0.009 250); border: 1px solid oklch(0.28 0.010 250); padding: 16px;">
+        <div style="font-size: 15px; font-weight: 600; color: oklch(0.94 0.006 250);">Delete audio older than 30 days?</div>
+        <div style="font-size: 12.5px; color: oklch(0.66 0.008 250); line-height: 1.5; margin-top: 6px; text-wrap: pretty;">This removes the audio for <span style="font-family: 'IBM Plex Mono', monospace; color: oklch(0.86 0.006 250);">2,140</span> overs recorded before 8 Aug. Transcripts, attributions and revisions are kept.</div>
+        <div style="display: flex; gap: 10px; margin-top: 15px; justify-content: flex-end;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 18px; border: 1px solid oklch(0.30 0.010 250); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.86 0.006 250);">Keep</div></div>
+          <div style="display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 18px; background: oklch(0.60 0.16 25); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.16 0.01 25);">Delete audio</div></div>
+        </div>
+      </div>
+      <div class="note">Deletion is announced in advance and names exactly what goes and what stays.</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Empty — nothing yet, working correctly</div>
+      <div style="margin-top: 13px; padding: 22px 0;">
+        <div style="font-size: 15px; color: oklch(0.66 0.008 250);">No overs on this frequency yet.</div>
+        <div style="font-size: 12.5px; color: oklch(0.58 0.008 250); margin-top: 5px; line-height: 1.45;">Listening since 22:14.</div>
+      </div>
+      <div class="note">A plain sentence at the page margin, saying what would appear and why it has not. No spinner, no illustration.</div>
+    </div>
+
+    <div style="background: oklch(0.195 0.009 250); border-radius: 10px; padding: 18px;">
+      <div class="lbl">Failed — a capability is missing</div>
+      <div style="margin-top: 13px; padding: 14px 0;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-size: 15px; color: oklch(0.94 0.006 250);">No transcription model installed</div>
+        </div>
+        <div style="font-size: 12.5px; color: oklch(0.66 0.008 250); margin-top: 6px; line-height: 1.5; text-wrap: pretty;">Audio is being captured and kept. Transcripts will appear for every over already recorded once a model is installed.</div>
+        <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Install a model</div></div>
+      </div>
+      <div class="note">Not an empty state. It names the missing capability, confirms nothing is being lost, and carries the fix.</div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
