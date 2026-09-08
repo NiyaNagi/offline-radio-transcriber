@@ -338,53 +338,38 @@ public object SettingsPolling {
         neverIncluded = NEVER_LEAVES_DEVICE,
     )
 
-    public fun diagnostics(): SettingsDiagnosticsViewState {
+    /**
+     * R-137 (round 9, register): sourced from WP11e's real `DiagnosticsBundleBuilder.preview` —
+     * every file's real, current byte size (rendered through the exact same producer `write` uses,
+     * never a separate stat, so a preview number can never drift from what a save actually writes)
+     * and the board's own "In the bundle · N files · X.X MB" running total. `suspend` (was not,
+     * before this round) because `preview` is real file/database/asset I/O.
+     */
+    public suspend fun diagnostics(context: Context): SettingsDiagnosticsViewState {
         val thermal = ThermalStatus.state
+        val preview = org.ort.app.diagnostics.DiagnosticsBundleBuilder.preview(context)
         return SettingsDiagnosticsViewState(
             aliveLabel = if (CaptureState.isCapturing) "alive" else "not capturing",
             realTimeFactorLabel = thermal.realTimeFactor?.let { "%.2f".format(Locale.ROOT, it) } ?: "not measured",
             // No aggregate "failed passes across every pass id" query exists on `WorkQueueDao`
             // (its `selectFailed` takes a specific pass and error-prefix) — never fabricated here.
             failedPassCount = null,
-            // R-137 (register, round 7 System validator pass 3): every description below is now
-            // `Settings-Diagnostics.dc.html`'s own trailing clause verbatim — round 4 had dropped
-            // each file's second half (what the clause is *for*, or its own privacy note). The
-            // per-file byte size and the header's own running total stay absent: no diagnostics-
-            // bundle producer exists in `:app`/`:pipeline` (checked again before writing this) to
-            // report a real size for a file nothing here has ever written — `2.1 MB`/per-file KB
-            // figures on the board are illustrative, not a fact this build could compute
-            // (constitution I). See this file's own `SettingsDiagnosticsScreen` doc comment.
-            files = listOf(
-                SettingsDiagnosticsFileViewState(
-                    "lifecycle.log",
-                    "service start, stop, heartbeat gaps, OS kills — the F5 evidence",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "capture.log",
-                    "route verifications, input device changes, level warnings, overruns",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "pipeline.log",
-                    "per-pass timings, tier changes with their cause, queue depth over time",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "rig.log",
-                    "CAT traffic, band changes, disconnects · frequencies included, they are not private",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "assets.json",
-                    "every model and lexicon: name, version, checksum, install date",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "device.json",
-                    "SoC, RAM, Android version, OEM, thermal history · no serial, no IMEI, no account",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "counts.json",
-                    "overs by state, rejections by reason, corrections by tier · numbers only",
-                ),
-            ),
+            files = preview.entries.map { entry ->
+                SettingsDiagnosticsFileViewState(entry.fileName, entry.clause, formatDiagnosticsSize(entry.sizeBytes))
+            },
+            totalSizeLabel = formatDiagnosticsSize(preview.totalBytes),
         )
+    }
+
+    /** `140 KB`/`1.6 MB`-style tiered size — the board's own precision for a bundle file/total (a
+     * plain `toGigabyteLabel()` would round every one of these real, small files to `0.0 GB`). */
+    private fun formatDiagnosticsSize(bytes: Long): String {
+        val mb = bytes / 1_000_000.0
+        val kb = bytes / 1_000.0
+        return when {
+            mb >= 1.0 -> "%.1f MB".format(Locale.ROOT, mb)
+            else -> "%.0f KB".format(Locale.ROOT, kb)
+        }
     }
 
     public fun about(context: Context): SettingsAboutViewState = SettingsAboutViewState(

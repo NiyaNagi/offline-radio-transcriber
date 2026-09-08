@@ -127,7 +127,10 @@ public data class SettingsContributeViewState(
     val neverIncluded: List<NeverLeavesDeviceItem>,
 )
 
-public data class SettingsDiagnosticsFileViewState(val name: String, val description: String)
+/** R-137 (round 9): [sizeLabel] is now real — WP11e's `DiagnosticsBundleBuilder.preview` renders
+ * this exact file's real bytes (the same render `write` uses, never a separate stat — see that
+ * object's own doc comment for why that equality matters for a scrubbed log). */
+public data class SettingsDiagnosticsFileViewState(val name: String, val description: String, val sizeLabel: String)
 
 public data class SettingsDiagnosticsViewState(
     val aliveLabel: String,
@@ -135,6 +138,10 @@ public data class SettingsDiagnosticsViewState(
     /** `null` — no aggregate failed-pass-count query exists yet; never a fabricated number. */
     val failedPassCount: Int?,
     val files: List<SettingsDiagnosticsFileViewState>,
+    /** R-137 (round 9): the board's own "In the bundle · N files · X.X MB" header total — real,
+     * `DiagnosticsBundleBuilder.preview`'s own `BundlePreview.totalBytes`, never the board's
+     * illustrative "2.1 MB". */
+    val totalSizeLabel: String,
 )
 
 public data class SettingsAboutViewState(

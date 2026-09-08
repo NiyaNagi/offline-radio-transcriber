@@ -2,6 +2,10 @@ package org.ort.app.ui.settings
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -10,13 +14,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.ort.app.diagnostics.DiagnosticsBundleBuilder
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.theme.OrtSpacing
+import java.time.LocalDate
 
 /**
  * WP10 (register R-090): the stateful entry point `OrtNavHost` dispatches `SETTINGS` to — owns the
@@ -193,8 +203,8 @@ private fun SettingsSubScreen(
             modifier = modifier,
         )
 
-        SettingsScreenId.DIAGNOSTICS -> SettingsDiagnosticsScreen(
-            state = remember { SettingsPolling.diagnostics() },
+        SettingsScreenId.DIAGNOSTICS -> SettingsDiagnosticsSubScreen(
+            context = context,
             onBack = onBack,
             modifier = modifier,
         )
@@ -294,6 +304,67 @@ private fun SettingsStorageSubScreen(
     } else {
         LoadingSettings(modifier = modifier)
     }
+}
+
+/** The `DIAGNOSTICS` branch of [SettingsSubScreen], split out purely to keep that function's own
+ * length/parameter-count under detekt's limits — the same reason [SettingsStorageSubScreen] was.
+ *
+ * R-137 (round 9, register): `SettingsPolling.diagnostics` became `suspend` once it started
+ * calling WP11e's real `DiagnosticsBundleBuilder.preview` — the same async-load shape every other
+ * real-I/O sub-screen here uses. `Save bundle` writes through the Storage Access Framework
+ * ([ActivityResultContracts.CreateDocument]) on [Dispatchers.IO], then names the *real* file the
+ * system actually created (its own `DISPLAY_NAME` column — a user can rename the suggested name in
+ * the picker, so this never assumes the suggestion was kept). `Preview` is a local `previewOpen`
+ * toggle — see [SettingsDiagnosticsScreen]'s own doc comment for why it is an in-app listing
+ * rather than the board's own per-file external-reader wording.
+ */
+@Composable
+private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    var diagnosticsState by remember { mutableStateOf<SettingsDiagnosticsViewState?>(null) }
+    LaunchedEffect(Unit) { diagnosticsState = SettingsPolling.diagnostics(context) }
+    var previewOpen by remember { mutableStateOf(false) }
+    var saveConfirmationLabel by remember { mutableStateOf<String?>(null) }
+
+    val saveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    DiagnosticsBundleBuilder.write(context, out)
+                }
+            }
+            saveConfirmationLabel = "Saved ${realFileName(context, uri)}"
+        }
+    }
+
+    val state = diagnosticsState
+    if (state != null) {
+        SettingsDiagnosticsScreen(
+            state = state,
+            onBack = onBack,
+            onPreview = { previewOpen = true },
+            onSaveBundle = { saveLauncher.launch("diagnostics-${LocalDate.now()}.zip") },
+            previewOpen = previewOpen,
+            onDismissPreview = { previewOpen = false },
+            saveConfirmationLabel = saveConfirmationLabel,
+            modifier = modifier,
+        )
+    } else {
+        LoadingSettings(modifier = modifier)
+    }
+}
+
+/** The real name of the document the Storage Access Framework picker actually created — never the
+ * suggested name assumed unchanged, since a user can rename it in the picker itself. */
+private fun realFileName(context: Context, uri: Uri): String {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (nameIndex >= 0 && cursor.moveToFirst()) return cursor.getString(nameIndex)
+    }
+    return uri.lastPathSegment ?: "the diagnostics bundle"
 }
 
 private fun applyContributeToggle(store: SettingsStore, index: Int, value: Boolean) {

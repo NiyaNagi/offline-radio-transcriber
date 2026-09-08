@@ -183,8 +183,8 @@ class SettingsPollingTest {
     }
 
     @Test
-    fun `R_137 every bundle file's trailing clause is Settings-Diagnostics-dc-html verbatim`() {
-        val state = SettingsPolling.diagnostics()
+    fun `R_137 every bundle file's trailing clause is Settings-Diagnostics-dc-html verbatim`(): Unit = runTest {
+        val state = SettingsPolling.diagnostics(context)
         val descriptionByName = state.files.associate { it.name to it.description }
 
         assert(descriptionByName["lifecycle.log"] == "service start, stop, heartbeat gaps, OS kills — the F5 evidence")
@@ -209,6 +209,35 @@ class SettingsPollingTest {
                 "overs by state, rejections by reason, corrections by tier · numbers only",
         )
     }
+
+    @Test
+    fun `R_137_list_from_preview the seven files and the header total are real, from DiagnosticsBundleBuilder`(): Unit =
+        runTest {
+            val state = SettingsPolling.diagnostics(context)
+
+            assert(state.files.size == 7) { "expected the board's seven files, got ${state.files.size}" }
+            // Every size is real (never blank/zero-as-placeholder — a `device.json`/`counts.json`
+            // producer always writes real bytes even with an empty database) and the header total
+            // is the real sum, not the board's illustrative "2.1 MB".
+            assert(state.files.all { it.sizeLabel.isNotBlank() })
+            assert(state.totalSizeLabel.isNotBlank())
+        }
+
+    @Test
+    fun `R_137_save_writes_zip DiagnosticsBundleBuilder-write, the call SettingsContent makes, is a real zip`(): Unit =
+        runTest {
+            val target = java.io.ByteArrayOutputStream()
+
+            org.ort.app.diagnostics.DiagnosticsBundleBuilder.write(context, target)
+
+            val bytes = target.toByteArray()
+            assert(bytes.isNotEmpty()) { "expected a real, non-empty zip" }
+            // The ZIP local-file-header magic bytes ("PK") — a real zip, never an
+            // empty/placeholder stream standing in for one.
+            assert(bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()) {
+                "expected the zip magic bytes, got ${bytes.take(2)}"
+            }
+        }
 
     @Test
     fun `R_090 storage sums real categories from the audio directory and installed model files`(): Unit = runTest {

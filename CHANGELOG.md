@@ -32,6 +32,97 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 round 9: R-137 Preview/Save bundle wired to WP11e's real DiagnosticsBundleBuilder)
+
+### (pending) — ui-conformance WP10 · Settings-Diagnostics wired to the real diagnostics-bundle producer (R-137)
+
+**Scope:** `ui/settings/{SettingsDiagnosticsScreen,SettingsPolling,SettingsContent,
+SettingsViewData}.kt`, and tests beside each. `git merge main` (local `main`) — landed WP11e's
+`243bc79`-era `app/src/main/kotlin/org/ort/app/diagnostics/**` (confirmed
+`DiagnosticsBundleBuilder.kt` on disk before starting, per the coordinator's own instruction); one
+conflict, `CHANGELOG.md` (my pending round-8 entry vs. WP11e's own new entry, both added at the
+file's same insertion point) plus a trivial `results/coverage-matrix.md` conflict (regenerated
+fresh instead of hand-merged, the correct resolution for a generated file) — resolved by keeping
+both entries, mine first (chronologically the older of the two), no content dropped from either
+side; merge commit `909b036`.
+
+**Requirements/ACs:** R-137 (spec → design, closing this round), FR-OBS-1/3/5, AC-109/AC-120
+(unchanged, structurally enforced in WP11e's own package, not this one). Constitution I, V.
+
+**What changed:**
+
+*Constitution Check.* Principle I: the header total and every per-file size are
+`DiagnosticsBundleBuilder.preview`'s own real, computed bytes — never the board's illustrative
+"2.1 MB". Principle V (module boundaries): this package still queries nothing sensitive itself: it
+calls `preview()`/`write()` and renders exactly what they return, the same structural non-access
+WP11e's own package proved for AC-109/AC-120.
+
+- **The `IN THE BUNDLE` list is real now.** `SettingsPolling.diagnostics` became `suspend` (real
+  file/database/asset I/O through WP11e's `DiagnosticsBundleBuilder.preview(context)`) — the
+  header now reads the board's own "In the bundle · N files · X.X MB" shape with a real total, and
+  every row carries its real, current size (rendered through the exact same producer `write` uses,
+  so a preview number can never drift from what a save actually writes — the property
+  `DiagnosticsBundleBuilder`'s own doc comment names as the reason it renders both the same way).
+- **The amber "Preview and Save bundle are not available in this build" `FailedState` is gone** —
+  both are real actions now. `Save bundle` writes through the Storage Access Framework
+  (`ActivityResultContracts.CreateDocument("application/zip")`, wired in the new
+  `SettingsDiagnosticsSubScreen`), on `Dispatchers.IO`, through `DiagnosticsBundleBuilder.write`;
+  the confirmation line names the *real* file the system created (its own `DISPLAY_NAME` column —
+  a user can rename the suggested `diagnostics-<date>.zip` in the picker, so this never assumes
+  the suggestion was kept). `includeAudio` stays `false` — confirmed again this round
+  (`Settings-Diagnostics.dc.html` has no such toggle) — matching FR-OBS-3's "excluded unless
+  explicitly included" and `DiagnosticsBundleBuilder`'s own default.
+- **`Preview` is real, but not the board's own literal shape — reported, not silently
+  substituted.** `Settings-Diagnostics.dc.html`'s own prose ("Preview opens every file in a reader
+  before you save") reads as launching a *per-file external* viewer — a `FileProvider`, a manifest
+  change, one `ACTION_VIEW` intent per file, genuinely a larger platform feature than a single
+  Compose screen can add on its own. This round's `Preview` instead opens a new, real, in-app
+  `DiagnosticsPreviewScreen` — the exact same entries/total `Save bundle` would write, shown before
+  committing to it. **Reported for a decision**: keep the in-app listing, or file the external-
+  reader shape as its own follow-up unit (a `FileProvider` touches the manifest, outside this
+  package's ownership regardless).
+- **The scrubbing example is no longer hypothetical.** "The logs above would be scrubbed" →
+  "are scrubbed" — WP11e's `CallsignScrubber` genuinely runs on every log entry
+  `DiagnosticsBundleBuilder` renders now, so the board's own example line
+  (`resolved [callsign] at 0.94`) states a real behaviour, not a future one.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.*"` — `BUILD SUCCESSFUL in
+  42s`, 56 tests, all `PASSED`, including `SettingsDiagnosticsScreenTest`'s four (the never-included
+  prose, `R_137_list_from_preview`, `Preview` open/dismiss, `R_137_save_writes_zip`'s screen-level
+  click/confirmation) and `SettingsPollingTest`'s own `R_137_list_from_preview` (real seven files,
+  real non-blank sizes/total) and `R_137_save_writes_zip` (calls the exact same
+  `DiagnosticsBundleBuilder.write` `SettingsContent` calls, against a real `ByteArrayOutputStream`,
+  asserts the real ZIP magic bytes `PK` — a genuine, non-empty zip, not a stub).
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 2m 47s`, 846 tasks
+  (full `:app` unit test suite, `dependencyRules`, `platformGuards`, `:app:assembleDebug`/
+  `:app:assembleRelease`/`:app:lint`/`:app:check`), no failures this round (the two `ReadyScreenTest`
+  failures noted two rounds ago were already gone last round and remain gone).
+- `.\gradlew.bat :app:ktlintFormat` — one line-length violation this round introduced, fixed
+  (shortened a test name); `git status --porcelain` afterward showed only files this round
+  legitimately touched, no foreign-file pollution.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, no findings (the `SettingsDiagnosticsSubScreen`
+  extraction — mirroring `SettingsStorageSubScreen`'s own round-8 precedent — kept
+  `SettingsSubScreen` and the new function both under detekt's `LongParameterList`/`LongMethod`
+  thresholds from the first run, no round-trip needed this time).
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`, 8/8 `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations —
+  the pre-existing combined-invocation Gradle task-graph gap, unchanged) — `coverageMatrix: 419
+  requirements, 190 covered` (unchanged from the post-merge count — R-137 was already counted once
+  WP11e's own tests landed; this round adds screen-level coverage for ids already counted, not new
+  ones).
+
+**Left open / not done:**
+- `Preview`'s in-app listing vs. the board's own per-file external-reader wording — reported above
+  for a decision; not silently resolved either way.
+- `OrtNavHost.kt` must still wire the real `onReviewSession` (R-133, previous round) — unrelated to
+  this round's own work, restated here only because it remains the one open cross-package hand-off
+  this package cannot close on its own.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
 ## 2026-09-08 (ui-conformance WP10 round 8: R-133 board rendering from WP11c's real StorageAccounting)
 
 ### (pending) — ui-conformance WP10 · Settings-Storage's real usage bar and Next-deletion row (R-133)
