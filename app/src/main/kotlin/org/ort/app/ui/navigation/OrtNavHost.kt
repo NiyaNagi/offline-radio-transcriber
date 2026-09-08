@@ -293,7 +293,7 @@ private fun TransmissionDetailContent(
                 ReaderPolling.applyCorrection(context, request)
                 refresh()
             },
-            onSearchStations = { query -> ReaderPolling.searchKnownStations(context, query) },
+            onSearchLexicon = { query -> ReaderPolling.searchLexicon(query) },
             onRecordLabel = { sample ->
                 org.ort.app.ui.data.LabelledSampleWriter.append(
                     java.io.File(context.filesDir, "labelled-samples.tsv"),

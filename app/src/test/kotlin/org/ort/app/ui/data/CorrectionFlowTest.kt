@@ -5,12 +5,16 @@ import org.junit.jupiter.api.Test
 import org.ort.data.dao.CorrectionDao
 
 /**
- * Build-plan P16, FR-UI-6 + Q8's tiered correction: pick from a resolved candidate, search a
- * known station, or type free text. Only the first two can feed the priors (they name an already-
- * known identity); free text must be *marked* unverified, not quietly treated as ground truth.
- * This is pure mapping — [org.ort.app.ui.data.ReaderPolling]'s extension is what actually calls
- * [org.ort.data.dao.CorrectionDao.recordCorrection]; this class only proves the tier -> field
+ * Build-plan P16, FR-UI-6 + Q8's tiered correction: pick from a resolved candidate, search the
+ * lexicon, or type free text. Only the first two can feed the priors (they name an already-known,
+ * ITU-allocated identity); free text must be *marked* unverified, not quietly treated as ground
+ * truth. This is pure mapping — [org.ort.app.ui.data.ReaderPolling]'s extension is what actually
+ * calls [org.ort.data.dao.CorrectionDao.recordCorrection]; this class only proves the tier -> field
  * mapping the write path depends on.
+ *
+ * Audit F-018: the middle tier was `SEARCH_KNOWN_STATION` (a substitute over `:data`'s known
+ * stations, since `:app` had no path to `:lexicon`); it is now `SEARCH_LEXICON`, backed by
+ * `:pipeline`'s `LexiconLookup` — see [org.ort.app.ui.data.CorrectionTier]'s doc comment.
  */
 class CorrectionFlowTest {
 
@@ -33,12 +37,12 @@ class CorrectionFlowTest {
     }
 
     @Test
-    fun `FR_UI_6 searching a known station also records a verified station correction`() {
+    fun `FR_UI_6_Q8 searching the lexicon also records a verified station correction`() {
         val entity = CorrectionRequest(
             transmissionId = "TX1",
             previousStationId = null,
             newStationId = "K9ZZZ",
-            tier = CorrectionTier.SEARCH_KNOWN_STATION,
+            tier = CorrectionTier.SEARCH_LEXICON,
             correctedAtMillis = 5L,
         ).toEntity(idGenerator = { "CORR2" })
 

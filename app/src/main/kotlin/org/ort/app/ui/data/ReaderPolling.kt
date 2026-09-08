@@ -2,6 +2,8 @@ package org.ort.app.ui.data
 
 import android.content.Context
 import android.os.PowerManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.ort.app.status.StatusViewState
 import org.ort.app.status.StatusViewStateMapper
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
@@ -16,6 +18,9 @@ import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.VadAvailability
+import org.ort.pipeline.passb.LexiconLookup
+import org.ort.pipeline.passb.LexiconMatch
+import org.ort.pipeline.passb.RealLexiconLookup
 import org.ort.pipeline.shed.FakeShedSignals
 import org.ort.pipeline.shed.ShedController
 import java.io.File
@@ -154,17 +159,20 @@ public object ReaderPolling {
     }
 
     /**
-     * Q8's second correction tier (Tier B): known stations this device has already heard, as the
-     * reachable substitute for "search the lexicon" — see [CorrectionTier]'s own doc comment for
-     * why full lexicon search is out of this prompt's reach.
+     * Audit F-018: Q8's real "search the lexicon" correction tier, now reachable through
+     * `:pipeline`'s [LexiconLookup] over the bundled ITU table and callsign grammar — the
+     * `:pipeline` call site P16 recorded as missing (CHANGELOG "Left open"). [lexiconLookup] is
+     * lazily built once, not per keystroke, since [RealLexiconLookup.bundled] parses the bundled
+     * assets. Runs off the main thread on [Dispatchers.Default] (a CPU-bound pool, not `IO`) — the
+     * grammar's beam search is real CPU work, not I/O, and this is a live search box a caller may
+     * invoke on every keystroke.
      */
-    public suspend fun searchKnownStations(context: Context, query: String): List<String> {
-        val db = OrtDatabase.create(context.applicationContext)
+    private val lexiconLookup: LexiconLookup by lazy { RealLexiconLookup.bundled() }
+
+    public suspend fun searchLexicon(query: String, limit: Int = 20): List<LexiconMatch> {
         val q = query.trim()
         if (q.isEmpty()) return emptyList()
-        return db.activityDao().listStations()
-            .map { it.id }
-            .filter { it.contains(q, ignoreCase = true) }
+        return withContext(Dispatchers.Default) { lexiconLookup.search(q, limit) }
     }
 
     /**

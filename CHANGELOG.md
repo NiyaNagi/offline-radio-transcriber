@@ -32,6 +32,89 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (audit — F-018)
+
+### (pending) — audit F-018 · Q8's "search the lexicon" correction tier is now real lexicon search
+
+**Scope:** `:pipeline` — new `passb/LexiconLookup.kt` (`LexiconMatch`, `LexiconLookup`,
+`RealLexiconLookup`), new `passb/fake/FakeLexiconLookup.kt`, new test
+`passb/LexiconLookupTest.kt`. `:app` — `ui/data/CorrectionFlow.kt` (`CorrectionTier` renamed
+`SEARCH_KNOWN_STATION` → `SEARCH_LEXICON`), `ui/data/ReaderPolling.kt` (`searchKnownStations`
+replaced with `searchLexicon`), the correction section of `ui/screens/TransmissionDetailScreen.kt`,
+`ui/navigation/OrtNavHost.kt`'s wiring, and the corresponding tests
+(`CorrectionFlowTest.kt`, `TransmissionDetailScreenCorrectionTest.kt`).
+**Requirements/ACs:** FR-UI-6, `spec/open-questions.md` Q8/D32 (tiered correction), AC-11 (an
+unallocated prefix is never a candidate), constitution I ("the correction must be able to name a
+callsign the lexicon knows even when no candidate matched" — this fix's own framing).
+**What changed:**
+
+- **Constitution Check.** Principle I (Uncertainty Is Content) is squarely the one that bears:
+  P16 shipped a real but narrower feature than Q8 asked for (searching only stations already
+  heard) and reported the gap honestly rather than silently — this fix closes that reported gap
+  rather than leaving it open indefinitely. Principle VII (structural, not conventional) is why
+  the fix lives where it does: `LexiconMatch` carries plain `String` fields
+  (`ituPrefix`/`ituCountry`/`ituIso`), not `:lexicon`'s `ItuAllocation`, so `:app` never gains a
+  compile edge to `:lexicon` it should not have — the module graph stays exactly as
+  `dependencyRules` already enforces it.
+- **`:pipeline`'s new call site.** `LexiconLookup.search(prefixOrPartial, limit)` returns
+  grammar-valid callsigns and/or live ITU prefix allocations for a typed fragment.
+  `RealLexiconLookup` is built over the identical bundled `ItuPrefixTable`/`CallsignGrammar`
+  `PassBFactory` already constructs (`RealLexiconLookup.bundled()`) — one lexicon, not a second,
+  drifting copy. Two lookup paths, both routed through real ITU data so AC-11 holds structurally:
+  (1) an exact, complete callsign is checked by spelling the typed text into `PhoneticUnit`s
+  (`PhoneticUnit.spell` — the same closed alphabet the grammar itself uses) and running it through
+  the real `CallsignGrammar.parse`, keeping only the literal exact-text match (never a
+  confusion-based near-miss — this is a deliberate typed search, not acoustic resolution); (2) a
+  partial fragment inside a known allocated block (e.g. "K7" while typing "K7ABC") or a fragment
+  a block could still grow from (e.g. "K" surfacing "K"/"KH6"/"KL7") is read directly off
+  `ItuPrefixTable.allocationFor`/`.allocations`. A fragment containing anything outside the
+  phonetic-unit alphabet (a stray symbol) is rejected before either lookup path runs, so
+  `ItuPrefixTable`'s character trie cannot silently match on just a garbled fragment's valid
+  leading substring and misreport the whole string as inside a block — a real bug caught by
+  `FR_UI_6_an_unknown-symbol_fragment_does_not_throw...` failing first with the wrong assertion.
+  `FakeLexiconLookup` (constitution II) is scriptable to return a fixed per-query result map or
+  throw, and records every query it was asked, for `:app`-side tests that need to assert what was
+  actually searched.
+- **`:app`'s tier, replaced not added.** Q8 (`spec/open-questions.md`) names exactly three tiers —
+  pick a candidate, search the lexicon, free text — not four; it never asked for a
+  known-stations tier. Per this fix's own instruction ("keep 'search known stations' as its own
+  tier if Q8 lists both; otherwise replace it"), `CorrectionTier.SEARCH_KNOWN_STATION` is renamed
+  `SEARCH_LEXICON` and `ReaderPolling.searchKnownStations` (which queried `:data`'s
+  `ActivityDao.listStations()`) is replaced by `ReaderPolling.searchLexicon`, which calls the new
+  `:pipeline` seam on `Dispatchers.Default` (a CPU-bound pool — the grammar's beam search is real
+  work, not I/O, and this runs on every keystroke of a live search box). The correction sheet's
+  middle section is now labelled "Search the lexicon" and renders each match as
+  `"$callsign — $ituCountry ($ituPrefix)"`; picking one applies the correction exactly as the other
+  two tiers do — `CorrectionDao.recordCorrection` via `CorrectionDao.FIELD_STATION` (eligible to
+  feed a future prior), the same `CORRECTED` lock (`INFERRED`, no confidence, no propagation
+  source) `CorrectionDaoTest`'s existing re-propagation-lock test already proves; this fix does not
+  touch `:data` or that contract.
+**Verified:**
+`./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.passb.LexiconLookupTest"` —
+first run (before the implementation existed) failed to compile
+(`Unresolved reference 'RealLexiconLookup'` / `'search'`); after adding `LexiconLookup.kt`, 8/8
+green, including `AC_11 a callsign whose prefix is not ITU allocated is never a match` and the
+unknown-symbol-fragment case above, which failed once for the wrong reason (asserted `false` — the
+trie-walk bug) before the phonetic-alphabet gate fixed it.
+`./gradlew :pipeline:test` — full module green (no regressions).
+`./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.CorrectionFlowTest" --tests "org.ort.app.ui.screens.TransmissionDetailScreenCorrectionTest"` —
+all green, including `FR_UI_6_Q8 searching the lexicon and picking a result applies a verified
+correction` (asserts both the query reaching the seam and the resulting `CorrectionRequest`).
+`./gradlew :app:test` — full module green (no regressions). `./gradlew build dependencyRules` —
+green; `dependencyRules` confirms no new module edge (`LexiconMatch` is plain strings, not a
+`:lexicon` type, so `:app` still has no edge to `:lexicon`). `python tools/spec-check/spec_check.py`
+— all 8 checks pass. All Robolectric/JVM only — no device has run this.
+**Left open / not done:** the lexicon search box surfaces live ITU prefix-block suggestions (e.g.
+typing "K" shows "K", "KH6", "KL7") alongside exact callsign matches, by design (an expert operator
+benefits from seeing the block is valid while still typing) — but picking a bare prefix suggestion
+records it as the station identity exactly like a full callsign would (`CorrectionDao.FIELD_STATION`
+takes whatever string is picked); this is a UI/UX judgment call, not re-litigated here, and a
+future session could restrict picking to exact-callsign matches only if that proves confusing in
+practice. FR-UI-8's inspection surface (P16's other reported gap — no writer for lattice/candidate
+rows) is untouched; that is a separate finding.
+
+---
+
 ## 2026-09-08 (audit — F-008 follow-up)
 
 ### (pending) — audit F-008 follow-up · real, cited sha256 checksums replace the placeholder in `ModelCatalog`
