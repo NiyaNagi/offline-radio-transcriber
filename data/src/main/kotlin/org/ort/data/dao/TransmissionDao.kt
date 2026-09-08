@@ -42,11 +42,16 @@ public interface TransmissionDao {
      * resolver output previously had nowhere to land). The attribution's non-optional state
      * (constitution I) is always written; [stationId]/[confidence]/[sourceTransmissionId] are
      * null exactly when the state does not carry them (`AMBIGUOUS`/`UNKNOWN`).
+     *
+     * `AND corrected = 0` (build-plan P16, FR-SPK-7): a machine re-resolution must never silently
+     * overwrite a user's correction. This is the structural half of the `CORRECTED` lock —
+     * [org.ort.data.dao.CorrectionDao.recordCorrection] is the only way to change the attribution
+     * of a transmission once `corrected` is set, and it does so deliberately, not through here.
      */
     @Query(
         "UPDATE transmission SET attributionState = :state, stationId = :stationId, " +
             "attributionConfidence = :confidence, attributionSourceTransmissionId = :sourceTransmissionId " +
-            "WHERE id = :id",
+            "WHERE id = :id AND corrected = 0",
     )
     public suspend fun updateAttribution(
         id: String,

@@ -269,15 +269,27 @@ private fun TransmissionDetailContent(
     onBack: () -> Unit,
 ) {
     var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
-    LaunchedEffect(transmissionId) {
+    suspend fun refresh() {
         detail = ReaderPolling.transmissionDetail(context, transmissionId)
     }
+    LaunchedEffect(transmissionId) { refresh() }
     val current = detail
     if (current != null) {
         TransmissionDetailScreen(
             state = ReaderTransmissionViewStateMapper.detailView(current),
             player = player,
             onBack = onBack,
+            onCorrect = { request ->
+                ReaderPolling.applyCorrection(context, request)
+                refresh()
+            },
+            onSearchStations = { query -> ReaderPolling.searchKnownStations(context, query) },
+            onRecordLabel = { sample ->
+                org.ort.app.ui.data.LabelledSampleWriter.append(
+                    java.io.File(context.filesDir, "labelled-samples.tsv"),
+                    sample,
+                )
+            },
         )
     } else {
         Text(

@@ -32,6 +32,150 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
+
+### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture
+
+**Scope:** `:app` — new `ui/data/InspectionSurface.kt`, `ui/data/CorrectionFlow.kt`,
+`ui/data/LabelledSample.kt`; `ui/data/TransmissionDetail.kt` and `ui/data/ReaderPolling.kt`
+extended (additive fields/functions); `ui/screens/TransmissionDetailScreen.kt` extended with three
+new sections. `:data` — new `dao/CorrectionDao.kt` (the CorrectionEntity write path); one line on
+`dao/TransmissionDao.kt`'s existing `updateAttribution` query (the `AND corrected = 0` guard, see
+below) and one accessor line on `OrtDatabase.kt` (`correctionDao()`). No schema change —
+`CorrectionEntity`, `TransmissionEntity.corrected`, `PhoneticLatticeEntity` and
+`CallsignCandidateEntity` already existed (P5); this session only writes/reads them. P15's
+`SearchDao.kt` and search/thread screens were not touched.
+**Requirements/ACs:** FR-UI-6 + FR-SPK-7 (one-tap correction, `CORRECTED` lock against
+re-propagation), FR-UI-8 (the inspection surface — lattice, candidates, per-prior breakdown,
+FR-LEX-31's cold-start distinction), FR-OBS-4 (labelled-sample capture per
+`docs/reference/labelling-protocol.md`), Q8 (tiered correction).
+
+**What changed:**
+
+- **Constitution Check.** Principle I (Uncertainty Is Content) is the one that bears hardest here
+  — the prompt's own framing. "Every machine conclusion MUST be inspectable... a conclusion that
+  cannot be explained cannot be corrected" is FR-UI-8's whole justification, and "a prior that
+  abstained and a prior that argued against are different facts and must not look the same" is
+  tested explicitly, not just asserted in prose. `CONFIRMED means heard in *this* transmission" and
+  the ban on promoting a voice/correction to it is why `CorrectionDao.applyCorrectedAttribution`
+  hard-codes `INFERRED`, never accepting a state parameter that could produce `CONFIRMED`.
+  Principle VII (structural, not conventional) governs the lock: it is enforced by a `WHERE`
+  clause the machine-resolution write path cannot get past, not by a comment asking callers to
+  check a flag first.
+- **The `CORRECTED` lock, made structural.** `CorrectionDao.recordCorrection` (new,
+  `@Transaction`) inserts the audit row and calls `applyCorrectedAttribution`, which always writes
+  `INFERRED`/no-confidence/no-source and sets `transmission.corrected = 1` — the exact shape
+  `Attribution.withCorrection()` (`:core`, already existed) produces. The other half is the actual
+  fix: `TransmissionDao.updateAttribution` (P12's machine-resolution write path, used by
+  `DataPassBResultSink` in `:pipeline`) gained `AND corrected = 0` in its `WHERE` clause — a
+  one-line, additive change to an existing query, not owned by any concurrent session. Before this
+  change nothing in the codebase checked the lock at all (confirmed by searching the repo — P16 is
+  the first place it is enforced end to end); after it, a later Pass B re-resolution silently
+  no-ops against a corrected row instead of overwriting it. Tested directly:
+  `CorrectionDaoTest.a_correction_locks_the_attribution_against_later_machine_re_propagation`
+  applies a correction, then calls `TransmissionDao.updateAttribution` with a different station and
+  a `CONFIRMED` state (simulating a real propagation write) and asserts the row is unchanged.
+- **Q8's tiered correction.** `CorrectionTier` — `PICK_CANDIDATE`, `SEARCH_KNOWN_STATION`,
+  `FREE_TEXT`. The first two are recorded as `CorrectionDao.FIELD_STATION` (eligible, in
+  principle, to feed a future prior); free text is recorded as `FIELD_STATION_UNVERIFIED` — a
+  distinction that survives in the `correction` table's own `field` column, not just in a
+  transient UI state, so a later prior-feeding pass has something to check.
+  **Module-boundary substitution, reported rather than worked around:** Q8's middle tier is "search
+  the lexicon". `:app`'s allowed edges are `{:pipeline, :data, :net, :core}` — `:lexicon` is
+  deliberately not among them, and `:pipeline` depends on `:lexicon` via `implementation`, not
+  `api`, so lexicon search has no path to `:app` without either widening the module graph or
+  adding a `:pipeline` call site, and this prompt explicitly forbids touching `:pipeline` and
+  says to report a boundary block rather than route around it. `SEARCH_KNOWN_STATION` searches
+  stations `:data` already knows about (`ActivityDao.listStations()`, filtered by substring) as the
+  honest, reachable substitute — labelled "Search known stations" in the UI, not "search the
+  lexicon" — documented in `CorrectionTier`'s own doc comment as a real, reported divergence, not
+  a silent narrowing of Q8. True lexicon search needs a future `:pipeline` call site.
+- **FR-UI-8, the inspection surface, reading around the same boundary.** `InspectionViewStateMapper`
+  builds its view state from the plain `:data` entities `PhoneticLatticeEntity`/
+  `CallsignCandidateEntity` (`CallsignCandidateEntity.priorBreakdown: Map<String, Double>?`) rather
+  than from `:lexicon`'s `RankedCandidate`/`PriorContribution`, for the identical reason above.
+  **The cold-start distinction (FR-LEX-31) survives the boundary crossing exactly**: `:lexicon`'s
+  own invariant is that a cold-start prior contributes *exactly* zero, never a default and never a
+  small value — so `PriorContributionViewState.isColdStart = (logOdds == 0.0)` recovers the same
+  fact from the persisted `Double` alone, without needing `PriorContribution`'s own boolean field.
+  `InspectionViewStateMapperTest` proves a `0.0` entry renders as cold start and a `-0.42` entry
+  renders as "argued against" — different labels, tested explicitly, matching the prompt's own
+  framing that these "must not look the same." `TransmissionDetailScreenCorrectionTest` proves the
+  same distinction at the UI layer (`"cold start"` vs `"argued against"` both present as separate
+  text nodes).
+  **Be honest about thin data, as instructed:** nothing in this codebase writes
+  `PhoneticLatticeEntity`/`CallsignCandidateEntity` rows yet — `DataPassBResultSink` (`:pipeline`,
+  P12) only ever persisted the transcript and the final `Attribution`, never `PassBResult.lattice`/
+  `.ranked`. Wiring that write is a `:pipeline` change, out of this prompt's scope by its own
+  "do not touch" list. So today, for every real transmission, the inspection surface renders its
+  tested empty state — "No resolver output recorded for this transmission yet." — truthfully, not
+  a demo lattice. The read path is built and tested against the real schema so it renders real
+  data the moment a future session adds that write; this is named as the deliberate, reported gap
+  the prompt asked for, not a silent no-op.
+- **FR-OBS-4, labelled-sample capture.** `LabelledSampleFormatter`/`LabelledSampleWriter`
+  (`ui/data/LabelledSample.kt`) produce and append exactly the TSV
+  `docs/reference/labelling-protocol.md`'s "Output format" section specifies — column order,
+  `outcome`/`certainty` vocabulary, and the protocol's own invariant that `certainty` is set
+  *exactly* when `callsign` is non-blank, enforced by `require()` rather than trusted to every
+  caller. A tab or newline in a free-text field (`note`/`tactical`) is refused rather than silently
+  corrupting the TSV. The UI form in `TransmissionDetailScreen` defaults `session_id`/
+  `start_sample`/`end_sample` from the real transmission being viewed (`TransmissionDetail` gained
+  `sessionId`/`samplePosition`; `endSample` is computed at the 16 kHz capture rate technical design
+  §5 fixes), so an operator does not have to re-type facts the app already knows. The protocol
+  document itself says the TSV→`LabeledOccurrence` conversion `corpus/`'s harness will eventually
+  need is "not built and is a real, separate follow-up task" — this session does not invent that
+  conversion or a JSON schema; it produces exactly the TSV row the document specifies and nothing
+  more.
+- **A real bug found and fixed along the way, not just a test workaround.**
+  `TransmissionDetailScreen`'s outer `Column` had no scroll container. P14 shipped it that way
+  because the screen was short; P16 added enough content (candidate lists, the correction form, the
+  label form) that it now overflows a normal screen height, and *any* content below the fold was
+  laid out with a collapsed, zero-height bound — not just visually clipped, but effectively
+  unreachable (confirmed by instrumented debugging: a click dispatched at a zero-height node's
+  position never invoked its handler). The fix is `Modifier.verticalScroll(rememberScrollState())`
+  on the screen's root `Column`; the revision-history list, which was a `LazyColumn`, had to become
+  a plain `Column` with `forEach` in the same change, since a vertically-scrolling `LazyColumn`
+  nested inside another vertical scroll container measures with an infinite height constraint and
+  crashes. This is a real fix a future device install would also have needed — not a test-only
+  accommodation — and Compose UI tests that reach content below the fold now call
+  `.performScrollTo()` first, since the test framework does not auto-scroll before a click or text
+  input.
+**Verified:**
+`./gradlew :data:testDebugUnitTest --tests "org.ort.data.dao.CorrectionDaoTest"` — 4/4 green,
+including the re-propagation-lock test, after first failing with `Unresolved reference
+'correctionDao'`.
+`./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.InspectionViewStateMapperTest"
+--tests "org.ort.app.ui.data.CorrectionFlowTest" --tests "org.ort.app.ui.data.LabelledSampleTest"
+--tests "org.ort.app.ui.data.TransmissionDetailViewMapperTest"
+--tests "org.ort.app.ui.screens.TransmissionDetailScreenCorrectionTest"` — all green, each
+observed failing first (`Unresolved reference` for not-yet-existing types, then a real Compose
+test failure — "could not find any node" — that led to the scroll-container fix above, not just a
+test change).
+`./gradlew :data:testDebugUnitTest` — full module green (24 tests). `./gradlew :app:testDebugUnitTest`
+— full module green (112 tests), including every pre-existing P8/P11/P13/P14/P17 test unchanged.
+`./gradlew build dependencyRules` — full repo green (840 actionable tasks); `dependencyRules`
+output confirms `:app -> :core, :data, :net, :pipeline` and `:data -> :core`, exactly the permitted
+edge sets — **no new module edge anywhere**, including no `:app -> :lexicon` edge, despite FR-UI-8
+and Q8 both wanting one. `python tools/spec-check/spec_check.py` — all 7 checks pass.
+**Left open / not done:** the module boundary genuinely blocks two things this prompt asked for,
+reported rather than routed around: (1) FR-UI-8's lattice/candidates have no writer yet — a
+`:pipeline` change (`DataPassBResultSink` persisting `PassBResult.lattice`/`.ranked`) that this
+prompt's "do not touch :pipeline" rule puts out of scope; today's inspection surface is real but
+permanently empty until that lands. (2) Q8's "search the lexicon" tier is actually "search known
+stations" (`:data`-only), for the identical reason — real lexicon search needs a `:pipeline` call
+site. Both are named exactly where they bite, not discovered later. No device is available to this
+session, so the `verticalScroll` fix and the correction/label UI are proven on Robolectric's layout
+and semantics tree, not a real touchscreen. `OrtNavHost.TransmissionDetailContent` now wires
+`ReaderPolling.applyCorrection`/`.searchKnownStations` and a real `LabelledSampleWriter` (appending
+to `labelled-samples.tsv` in app-private storage) as the screen's real `onCorrect`/
+`onSearchStations`/`onRecordLabel` — applying a correction refreshes the detail view immediately
+so the corrected attribution and lock are visible without waiting for the next poll — but this
+wiring itself is untested beyond compiling and the existing screen-level Robolectric tests
+(no device to confirm a correction survives a real app restart or that the labelled-sample file is
+actually written to a real filesystem).
+
+---
+
 ## 2026-09-08 (night, cont. — P17: station and frequency views, and FR-UI-12's not-heard/not-listening distinction)
 
 ### (pending) — P17 · Station and frequency views with activity patterns
