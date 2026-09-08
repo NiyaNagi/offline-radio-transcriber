@@ -21,6 +21,7 @@ import org.ort.pipeline.Pass
 import org.ort.pipeline.PassDrainRunner
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.diagnostics.DiagnosticsLog
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
 import org.ort.pipeline.passb.RealAsrEngineProvider
@@ -363,6 +364,10 @@ internal class SafePass(private val delegate: Pass) : Pass {
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        // FR-OBS-1 "SafePass failures": the exception's own class name only, never e.message --
+        // a message string is free text the failing library chose, exactly what DiagnosticsLog's
+        // structural no-free-text guarantee exists to keep out of pipeline.log.
+        DiagnosticsLog.logSafePassFailure(e::class.simpleName ?: "unknown")
         PassRunOutcome.Errored(e.message ?: e::class.simpleName ?: "unknown reprocess error")
     }
 }

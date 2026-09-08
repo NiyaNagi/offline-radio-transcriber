@@ -32,6 +32,135 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11c follow-up: FR-OBS-1 diagnostics log writers)
+
+### (pending) — ui-conformance WP11c · the diagnostics log writer: real lifecycle/capture/pipeline/rig lines, structurally private
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt` (new),
+`pipeline/src/test/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLogTest.kt` (new). Real-source
+hooks touch four existing `:pipeline` files: `capture/RealCaptureService.kt` (this package's own
+file — `onCreate`, `startCapture`, `persistUncleanEndGapIfAny`, `stopCaptureInternal`,
+`refreshInputStatusFromRoute`, `publishLevelStatus`, the `CaptureEvent.Interrupted` branch,
+`runShedMonitor`, and `ThermalTrackingPass.run`), `reprocess/ReprocessRunner.kt`'s `SafePass` (a
+one-line hook in the catch block already reused across two earlier rounds), and, disclosed as an
+exception to this package's usual file-ownership discipline, `passb/PassB.kt` (P11/audit-authored,
+not previously WP11c's) for the one two-line hook needed to log a rejection's real
+`RejectionRuleId` rather than a generic "rejected" tag. No `:data`/`:app` change; no edit to
+WP11e's `DiagnosticsBundleBuilder`/`DiagnosticsLogPaths`/`LogFileProducer`
+(`:app/diagnostics`) — read once, on `main`, not touched. `results/coverage-matrix.md`
+regenerated (189 of 419 covered, up from 186).
+
+**Requirements/ACs:** FR-OBS-1 (M); AC-109, FR-OBS-3 (structural privacy, proven again from the
+writer side — WP11e already proved it from the bundle-producer side).
+
+**Constitution check.** Principle V (nothing private leaves the device, and nothing private is
+even *written* in the first place) is this round's whole point: `DiagnosticsLog`'s public API has
+no free-text parameter anywhere — every function takes only `Int`/`Long`/`Double`/`Boolean`, a
+closed project enum (`PassId`, `Tier`, `TerminationReason`, `RejectionRuleId`, `AudioDeviceKind`),
+or a ULID id — so a callsign, transcript fragment, user-supplied name/note, location or voiceprint
+cannot reach a log line no matter what a caller has in scope, not merely "the current call sites
+happen not to pass one." Principle VII (module boundaries are structural):
+`dependencyRules` confirms `:pipeline` still has no edge to `:app` after this round (see
+Verified) — `DiagnosticsLog.configure` takes a plain `filesDir: File` and independently derives
+`filesDir/diagnostics-logs/<fileName>`, the same relative path `:app`'s `DiagnosticsLogPaths`
+computes, by convention rather than a shared type (disclosed as the one thing to watch if that
+convention ever drifts — see "Left open"). Principle IV (capture never blocks): every `log*` call
+is a synchronous, non-blocking channel offer; one `Dispatchers.IO` consumer coroutine does all
+file I/O, including rotation, off the caller's thread — several real call sites
+(`publishLevelStatus`) are on the audio frame path, where blocking on disk I/O would itself have
+been a new capture-blocking bug introduced while fixing an unrelated one.
+
+**What changed:**
+- **`DiagnosticsLog`** (new object, `pipeline/diagnostics`): four categories
+  (`lifecycle.log`/`capture.log`/`pipeline.log`/`rig.log`), append-only lines shaped
+  `<ISO-8601 UTC> <LEVEL> <event> key=value key=value...`, rotating each category file at 2 MiB to
+  one `.1` backup generation (`ROTATE_AT_BYTES`, two generations total, exactly the coordinator's
+  brief). `configure(filesDir, clock)` starts a single consumer coroutine reading an unbounded
+  `Channel`; `flush()` (test-only) sends a barrier message and awaits it, so a test can assert on
+  file contents deterministically without polling; `shutdown()` (test-only) cancels the consumer.
+- **The path-contract mismatch, disclosed as asked**: WP11e's `DiagnosticsLogPaths.logFile`
+  (`:app/diagnostics`) is the documented convention `LogFileProducer` reads back from, but it is an
+  `:app`-owned type and `:pipeline` cannot import it — the dependency graph is `:app -> :pipeline`
+  only. `DiagnosticsLog.configure` independently computes the identical relative path
+  (`filesDir/diagnostics-logs/<fileName>`) rather than adding the forbidden edge. The two sides
+  agree today because both were read/written against the same convention in the same round; there
+  is no shared type enforcing that they keep agreeing if either changes later.
+- **Sixteen typed logging functions**, one call site each, wired to real production data (not the
+  scenario simulator) everywhere real production data exists:
+  - *lifecycle.log*: `logServiceStarted`/`logServiceStopped` (`RealCaptureService.startCapture`/
+    `stopCaptureInternal` — every session-ending path, clean or unclean, same as R-173/R-302's own
+    holder resets), `logUncleanRestart` (`persistUncleanEndGapIfAny`, the F5 "OS_STOPPED" gap
+    detection), `logHeartbeatGap`.
+  - *capture.log*: `logRouteVerified`/`logRouteMismatch` (`refreshInputStatusFromRoute`, beside
+    every real `InputStatus.opened`/`mismatch` call), `logInputLost` (the `CaptureEvent.Interrupted`
+    branch, beside `InputStatus.lost`), `logLevelClip` (`publishLevelStatus`, **only** when
+    `snapshot.clipped` — logging every ~10 Hz tick unconditionally would rotate capture.log
+    constantly on an ordinary healthy session), `logOverrun` (the same `Interrupted` branch,
+    decoding F-010's dropped-span duration via a small regex duplicated from `GapPersister.kt`'s own
+    — `:pipeline` cannot reference `:capture-android`'s `internal DroppedSpanCause`, the identical
+    cross-module constraint `GapPersister.causeFor`'s own kdoc already documents).
+  - *pipeline.log*: `logPassLatency` (`ThermalTrackingPass.run`, beside the existing
+    `ThermalStatus.recordPassTiming` measurement — every real pass this loop drives, tagged with the
+    tier it ran at), `logRejection` (`PassB.run`'s `Rejected` branch — the real `RejectionRuleId`,
+    never `outcome.detail`), `logTierChange` (`runShedMonitor`'s existing tick, reusing
+    `ReprocessRunner.currentTierFromShedLevel()` so live capture and reprocessing can never disagree
+    about what a shed level means), `logSafePassFailure` (`SafePass`'s catch block — the exception's
+    class name only, **never** `Throwable.message`, which is free text a failing library chose).
+  - *rig.log*: `logRigAbsent` (`RealCaptureService.startCapture`, beside the one real `RigStatus.absent()`
+    call — the rig module, FR-RIG, is unbuilt; `logRigConnected`/`logRigStale`/`logRigBand` exist,
+    fully tested, but have no real production caller yet for the same reason `RigStatus.connected`/
+    `stale` do not — disclosed, not hidden).
+- **`AC_109_no_private_field_ever_logged`**: rather than smuggling a callsign into an id parameter
+  (an artificial, non-representative test — production code never populates a session/transmission
+  id from a callsign; they are `Ulid` values), this seeds a callsign inside a simulated exception's
+  *message* — the one place a careless caller really could leak free text — and proves
+  `logSafePassFailure` never receives it, matching exactly what `SafePass`'s real catch block does
+  (`e::class.simpleName`, never `e.message`). All sixteen functions are driven in the same test;
+  the four written files are scanned together.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.diagnostics.DiagnosticsLogTest"` —
+  6 tests, all green: `FR_OBS_1_lifecycle …`, `FR_OBS_1_capture …`, `FR_OBS_1_pipeline …`,
+  `FR_OBS_1_rig …`, `FR_OBS_1_rotation keeps at most two generations per category file`,
+  `AC_109_no_private_field_ever_logged`.
+- `.\gradlew.bat :pipeline:testDebugUnitTest` (whole module) — green, no regression across the
+  four touched production files (`RealCaptureService.kt`, `ReprocessRunner.kt`, `PassB.kt`, the new
+  `DiagnosticsLog.kt`).
+- `.\gradlew.bat :pipeline:ktlintCheck :pipeline:detekt` — clean (one `ktlintFormat` pass, plus one
+  manual test-name shortening detekt's `MaxLineLength` could not auto-wrap).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK; `:pipeline`'s dependency row is
+  unchanged (`:asr-api, :asr-sherpa, :capture-android, :capture-api, :core, :data, :identity,
+  :lexicon, :onnx, :rig, :rig-usb, :segment` — no `:app`), confirming the path-contract disclosure
+  above did not quietly add the forbidden edge.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — 419 requirements, 189
+  covered (up from 186); check reports up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `:app:testDebugUnitTest`'s pre-existing, unrelated `ReadyScreenTest` failure (WP9's file,
+  disclosed in this file's earlier entries) is unaffected — this round touches no `:app` file at
+  all, so it was not re-verified a second time.
+
+**Left open / not done:**
+- The path-contract duplication between `DiagnosticsLog` (`:pipeline`) and `DiagnosticsLogPaths`
+  (`:app`) is convention, not a shared type — flagged above as the one thing to watch if either
+  side's directory/file-name literals ever change without the other.
+- `logRigConnected`/`logRigStale`/`logRigBand` have no real production caller — the rig module
+  (FR-RIG, register R-084) is unbuilt, matching `RigStatus.connected`/`stale`'s own pre-existing
+  disclosure. They will start receiving real data with no further change to this file once FR-RIG
+  lands, exactly like `logRigAbsent` already does today.
+- "VAD statistics," named in FR-OBS-1's board clause, has no real, already-computed source
+  anywhere in `:pipeline`/`:capture-android` to log honestly — not fabricated, not wired.
+- `pipeline.log`'s "queue depth over time" (the board's own clause for that file) is not logged —
+  `ShedStatus`/`WorkQueue`'s backlog count is already covered by `shed_event` rows in `:data`; adding
+  a redundant periodic log line for the same figure was judged lower value than the ten events
+  actually wired, and was left out rather than added un-asked-for.
+- `PassB.kt`'s two-line hook is the one file this round touched outside the file-ownership pattern
+  the rest of this session has followed — disclosed above, not silently absorbed into "this
+  package's files."
+
+---
+
 ## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
 
 ### (pending) — ui-conformance WP11c · storage accounting and the next automatic-prune candidate, exposed for Settings-Storage
