@@ -12,7 +12,7 @@ import org.robolectric.RobolectricTestRunner
 class OemGuidanceResolverTest {
 
     @Test
-    @Requirement("AC-66", "FR-SVC-5a")
+    @Requirement("AC-66", "FR-SVC-5a", "NFR-9")
     fun `AC_66 a deep link nothing on the device can handle is dropped, the step's text is kept`() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val resolver = OemGuidanceResolver(context)
