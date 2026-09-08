@@ -4,10 +4,15 @@ import android.content.Context
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
+import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
+import org.ort.data.dao.StationIdentityDao
+import org.ort.data.dao.VoiceprintSplitMember
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
+import org.ort.data.entity.StationIdentityHistoryEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintEntity
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -130,6 +135,9 @@ public object StationPolling {
      * always `null` today — cross-station voice-distance comparison needs the identity pipeline
      * (M4) to have written comparable embeddings, which it does not yet do (see this package's
      * report); rendered honestly absent rather than computed from an undocumented byte layout.
+     * "Given by you" reads the *latest* [org.ort.data.dao.StationIdentityDao] history row for each
+     * field — the same source [renameStation]/[updateStationNote] write to and [stationRow] reads
+     * for the Stations list, so a rename shows up identically in both places.
      */
     public suspend fun stationIdentity(context: Context, stationId: String): StationIdentityViewState {
         val db = OrtDatabase.create(context.applicationContext)
@@ -139,6 +147,7 @@ public object StationPolling {
         val clusterOvers = voiceprints.sumOf { it.memberCount }
         val confirmed = entities.count { it.attributionState == AttributionState.CONFIRMED }
         val inferred = entities.count { it.attributionState == AttributionState.INFERRED }
+        val (name, note) = currentGivenByYou(db, stationId, station?.userName, station?.notes)
         return StationIdentityViewState(
             stationId = stationId,
             callsign = station?.callsign ?: stationId,
@@ -149,8 +158,146 @@ public object StationPolling {
                 confirmedCount = confirmed,
                 inferredCount = inferred,
             ),
-            givenByYou = StationGivenByYouViewState(name = station?.userName, note = station?.notes),
+            givenByYou = StationGivenByYouViewState(name = name, note = note),
         )
+    }
+
+    /**
+     * Renames [stationId] (R-073, FR-SPK-25 — user-supplied, never inferred, never contributed).
+     * Records the real previous value from history before writing, so
+     * [org.ort.data.dao.StationIdentityDao.stationIdentityHistoryFor] keeps it reachable
+     * (constitution III) even though `station.userName` only ever holds the current one.
+     */
+    public suspend fun renameStation(context: Context, stationId: String, name: String?) {
+        val db = OrtDatabase.create(context.applicationContext)
+        val station = db.catalogDao().getStation(stationId)
+        val (previousName, _) = currentGivenByYou(db, stationId, station?.userName, station?.notes)
+        db.stationIdentityDao().renameStation(
+            StationIdentityHistoryEntity(
+                id = Ulid.generate().toString(),
+                stationId = stationId,
+                field = StationIdentityDao.FIELD_NAME,
+                previousValue = previousName,
+                newValue = name,
+                changedAt = SystemClock.wallMillis(),
+            ),
+        )
+    }
+
+    /** Adds or edits [stationId]'s note (R-073), versioned the same way as [renameStation]. */
+    public suspend fun updateStationNote(context: Context, stationId: String, note: String?) {
+        val db = OrtDatabase.create(context.applicationContext)
+        val station = db.catalogDao().getStation(stationId)
+        val (_, previousNote) = currentGivenByYou(db, stationId, station?.userName, station?.notes)
+        db.stationIdentityDao().updateStationNote(
+            StationIdentityHistoryEntity(
+                id = Ulid.generate().toString(),
+                stationId = stationId,
+                field = StationIdentityDao.FIELD_NOTE,
+                previousValue = previousNote,
+                newValue = note,
+                changedAt = SystemClock.wallMillis(),
+            ),
+        )
+    }
+
+    /**
+     * `Fail-Cluster.dc.html`'s chooser (R-073): the real overs in [stationId]'s largest voiceprint
+     * cluster. `null` when the station has no voiceprint bound at all — there is nothing to split.
+     * No pre-ticked suggestion: the artboard's "matcher thinks these are least like the rest" needs
+     * a per-over voiceprint-distance score this package does not compute (see this package's
+     * report) — never a fabricated suggestion standing in for one.
+     */
+    public suspend fun voiceSplitCandidates(context: Context, stationId: String): StationVoiceSplitViewState? {
+        val db = OrtDatabase.create(context.applicationContext)
+        val station = db.catalogDao().getStation(stationId)
+        val cluster = db.catalogDao().voiceprintsForStation(stationId).maxByOrNull { it.memberCount } ?: return null
+        val entities = db.activityDao().transmissionsForStation(stationId)
+            .filter { it.voiceprintId == cluster.id }
+            .sortedByDescending { it.startedAtUtc }
+        if (entities.isEmpty()) return null
+        val overs = entities.map { entity ->
+            val detail = ReaderPolling.detailFromEntity(context, entity)
+            val listEntry = ReaderTransmissionViewStateMapper.listEntry(detail)
+            VoiceprintSplitOverViewState(
+                transmissionId = entity.id,
+                timeLabel = listEntry.timeLabel,
+                transcriptText = listEntry.transcriptText,
+                attribution = detail.attribution,
+                isAnchor = detail.attribution.state == AttributionState.CONFIRMED,
+                corrected = entity.corrected,
+            )
+        }
+        return StationVoiceSplitViewState(
+            stationId = stationId,
+            callsign = station?.callsign ?: stationId,
+            fromVoiceprintId = cluster.id,
+            overs = overs,
+        )
+    }
+
+    /**
+     * Splits [transmissionIds] away from [fromVoiceprintId] into a new, unbound voiceprint
+     * (R-073) — `Station-Identity.dc.html`'s own copy: "they become a new unidentified voice.
+     * Every affected over is marked corrected and its old attribution kept." Returns the station's
+     * refreshed identity so a caller can re-render without a second round trip. A no-op (identity
+     * unchanged) when [transmissionIds] is empty — never a split of nothing.
+     */
+    public suspend fun splitVoiceprint(
+        context: Context,
+        stationId: String,
+        fromVoiceprintId: String,
+        transmissionIds: List<String>,
+    ): StationIdentityViewState {
+        if (transmissionIds.isNotEmpty()) {
+            val db = OrtDatabase.create(context.applicationContext)
+            val newVoiceprintId = Ulid.generate().toString()
+            db.catalogDao().insert(
+                VoiceprintEntity(
+                    id = newVoiceprintId,
+                    embedding = ByteArray(0),
+                    memberCount = 0,
+                    centroidUpdatedAt = null,
+                    boundStationId = null,
+                    bindingConfidence = null,
+                    lastConfirmedAt = null,
+                    isEnrolled = false,
+                    enrolmentObservationCount = 0,
+                    enrolmentSessionIds = null,
+                    enrolledAt = null,
+                    lastMatchedAt = null,
+                    bindingSource = null,
+                    embeddingModelId = null,
+                    embeddingModelVersion = null,
+                ),
+            )
+            val members = transmissionIds.map { VoiceprintSplitMember(it, Ulid.generate().toString()) }
+            db.stationIdentityDao().splitVoiceprint(
+                fromVoiceprintId = fromVoiceprintId,
+                intoVoiceprintId = newVoiceprintId,
+                members = members,
+                splitAt = SystemClock.wallMillis(),
+            )
+        }
+        return stationIdentity(context, stationId)
+    }
+
+    /**
+     * The current given name/note, from the *latest* [org.ort.data.dao.StationIdentityDao] history
+     * row for each field — [fallbackName]/[fallbackNote] (the plain `station` columns) cover a
+     * station renamed before this history table existed, which real fixture/legacy data can still
+     * be.
+     */
+    private suspend fun currentGivenByYou(
+        db: OrtDatabase,
+        stationId: String,
+        fallbackName: String?,
+        fallbackNote: String?,
+    ): Pair<String?, String?> {
+        val history = db.stationIdentityDao().stationIdentityHistoryFor(stationId)
+        val name = history.lastOrNull { it.field == StationIdentityDao.FIELD_NAME }?.newValue ?: fallbackName
+        val note = history.lastOrNull { it.field == StationIdentityDao.FIELD_NOTE }?.newValue ?: fallbackNote
+        return name to note
     }
 
     private suspend fun stationRow(
@@ -158,7 +305,8 @@ public object StationPolling {
         station: StationEntity,
         latest: SessionEntity?,
     ): StationListEntryViewState {
-        val base = StationViewMapper.listEntry(station)
+        val (givenName, _) = currentGivenByYou(db, station.id, station.userName, station.notes)
+        val base = StationViewMapper.listEntry(station).copy(givenName = givenName)
         val tonightTx = if (latest != null) {
             db.transmissionDao().listBySession(latest.id).filter { it.stationId == station.id }
         } else {

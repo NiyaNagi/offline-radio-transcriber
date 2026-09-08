@@ -1094,8 +1094,121 @@ conflicting with the builders who own `:app`.
 - `splitVoiceprint` does not adjust `VoiceprintEntity.enrolmentObservationCount`/
   `.enrolmentSessionIds`/`.centroidUpdatedAt` for either voiceprint — those describe the acoustic
   model's own state (M4/identity pipeline territory) and recomputing them correctly needs that
-  pipeline's own logic, not a data-layer guess.## 2026-09-08 (ui-conformance WP8: stations and frequencies)
-### (pending) — ui-conformance WP8 · origin back labels on station and frequency drill-ins
+  pipeline's own logic, not a data-layer guess.
+
+## 2026-09-08 (ui-conformance WP8: stations and frequencies)
+
+### (pending) — ui-conformance WP8 · station rename, note and voiceprint split persist through StationIdentityDao
+
+**Scope:** `:app` `ui/data/StationPolling.kt`, `ui/data/StationsAndFrequencies.kt`,
+`ui/screens/StationIdentityScreen.kt`, `ui/screens/StationDetailContent.kt`; tests beside each.
+Addendum to this package's own WP8 entry directly below, at the coordinator's request after
+`org.ort.data.dao.StationIdentityDao` (schema v3) landed on main.
+
+**Requirements/ACs:** R-073 (`Station-Identity.dc.html`, FR-SPK-10), FR-SPK-25 (user-supplied names
+never inferred, never contributed), constitution III (nothing deleted quietly).
+
+**What changed:**
+
+*Constitution Check.* Principle III is the one this unit exists to satisfy end to end, not just at
+the DAO: `renameStation`/`updateStationNote` read the *previous* value from
+`StationIdentityDao.stationIdentityHistoryFor` before writing, so the history row it produces
+records a real previous value, not a guess — and "Given by you" on both Station-Identity and the
+Stations list now reads from that same history (`currentGivenByYou`, a new private helper both
+`stationIdentity` and `stationRow` call), so a rename shows up identically everywhere rather than
+one place reading the stale `StationEntity.userName` column. Principle V/FR-SPK-25: the name and
+note stay exactly where they already lived — `StationEntity.userName`/`.notes`, mirrored into
+`station_identity_history` — nothing new crosses the device boundary. Principle VII: no new
+cross-module edge — this package only calls the `:data` DAO WP-data already built and merged.
+
+- **`StationPolling.renameStation`/`.updateStationNote`** (R-073): each reads the current
+  name/note via `currentGivenByYou`, then writes a `StationIdentityHistoryEntity` through
+  `StationIdentityDao.renameStation`/`.updateStationNote` with that real previous value and a real
+  `SystemClock.wallMillis()` timestamp. `StationDetailContent` wires both to `StationIdentityScreen`'s
+  `onRename`/`onAddNote`, then refetches identity (`refreshIdentity`) rather than optimistically
+  patching local state — the screen always reflects what was actually written.
+- **`StationPolling.voiceSplitCandidates`/`.splitVoiceprint`** (R-073, `Fail-Cluster.dc.html`):
+  `voiceSplitCandidates` finds the station's largest voiceprint cluster and lists its real overs
+  (time, transcript, attribution, `isAnchor` for a `CONFIRMED` over — the artboard's "those are the
+  anchor" — and whether it is already `corrected`), with no pre-ticked suggestion (a per-over
+  voiceprint-distance score is not something this package computes). `splitVoiceprint` inserts a
+  fresh, unbound `VoiceprintEntity`, then calls `StationIdentityDao.splitVoiceprint` to move the
+  chosen transmissions into it, and returns the refreshed `StationIdentityViewState` so the caller
+  never guesses at the new cluster size. `StationDetailContent` reached `Split` from
+  `Station-Identity`'s own action, presents `StationSplitScreen`, and on confirm refetches both
+  identity and split-candidates before returning to Station-Identity.
+- **`StationIdentityScreen`**: `onRename`/`onAddNote` now take `(String?) -> Unit`. `Rename`/`Add`
+  opens an inline Material `TextField` (`InlineEditRow` — no WP2 field component exists yet, so
+  this follows `TransmissionDetailScreen`'s own precedent) with `Cancel`/`Save`; `Save` trims and
+  maps a blank draft to `null`, never an empty string. `Split` opens `StationSplitScreen`
+  (`Fail-Cluster.dc.html`): every real over in the cluster, a checkbox per non-anchor over, `Cancel`/
+  `Split off N overs`. The Heard/Voice facts and the two Given-by-you rows were split into
+  `HeardAndVoiceFacts`/`GivenByYouName`/`GivenByYouNote` composables to keep `StationIdentityScreen`
+  itself under detekt's `LongMethod` limit; `StationDetailContent`'s `IDENTITY`/`SPLIT` branches
+  were split into `IdentitySubScreen`/`SplitSubScreen` for the same reason.
+- **A real bug found and fixed, not a workaround**: earlier work on this addendum spent a long
+  session chasing what looked like a Robolectric/Compose interaction where clicking `Rename`/`Save`
+  intermittently did nothing, correlated (wrongly) with how many `KeyValueRow`s preceded it on the
+  screen. The real cause: `StationIdentityScreen`'s content sits in a `Column().verticalScroll(...)`,
+  and the `Rename`/`Save`/`Add note` controls can sit below the fold in the test host's default
+  window. `assertHasClickAction()` passes on an off-screen node (existence and capability do not
+  require visibility), but `performClick()` on one silently does nothing, because the coordinate it
+  dispatches to is scrolled out of the root's viewport — confirmed by isolating `InlineEditRow`
+  alone (passed immediately) versus mounting the full screen (failed) and by adding `println`
+  tracing to every relevant callback, which showed `onAction` firing but `onSave` never called. The
+  fix is `.performScrollTo()` before every below-the-fold click in `StationIdentityScreenTest`, not
+  a change to production layout; the screen itself needed no defensive restructuring once this was
+  understood, so an earlier, incorrect workaround (merging `KeyValueRow`s, building a parallel
+  `GivenByYouRow` composable outside `KeyValueRow`'s own `trailingMarker` slot) was reverted in full.
+- **"CORRECTED badge appears where the DAO recorded it"**: `StationSplitScreen`'s own row shows a
+  `CORRECTED` badge on an already-corrected over inside the split chooser. After a split, the moved
+  over's `stationId` becomes `null` (per `StationIdentityDao.splitVoiceprint`'s own contract), so it
+  no longer belongs to the originating station at all — there is no honest place on *that* station's
+  own Station-Identity/Stations-list screens to show a badge for an over that is not attributed to
+  it any more. The badge is real where the correction actually lives (the moved over's own record,
+  reachable through `db.correctionDao().correctionsFor(transmissionId)`), not fabricated on the
+  station it left.
+
+**Verified:**
+- `git merge --ff-only main` — confirmed `org.ort.data.dao.StationIdentityDao` (schema v3) present
+  before starting; no merge was needed this round (already ahead).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.StationIdentityScreenTest"` —
+  12 tests, 0 failed (`R_073 tapping Add opens the name field and Save persists the typed value`,
+  `R_073 clearing the name field and saving persists null, never an empty string`,
+  `R_073 tapping Add note opens the note field and Save persists the typed value`,
+  `R_073 Cancel on the name field never calls onRename`, plus the pre-existing Heard/Voice/never-
+  leaves/nearest-other/Split-reachable and all four `StationSplitScreen` tests, all PASSED).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.StationPollingTest"` — 8 tests,
+  0 failed (new: `R_073_rename_persists_and_the_previous_name_stays_reachable`,
+  `R_073_split_moves_the_chosen_overs_into_a_new_voiceprint`, both DB-backed against a real
+  file-backed `OrtDatabase`, same pattern as the file's existing tests).
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — BUILD SUCCESSFUL, 622 tests, 0
+  failed, 0 ignored.
+- `.\gradlew.bat :app:ktlintFormat :app:detekt` — BUILD SUCCESSFUL, no issues.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` unchanged (no new requirement ids added this
+  round).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Grepped `ActivityPatternMapper.buildPattern(` again: still the same two production call sites on
+  the three-arg UTC-default overload noted in the entry below (`ReaderPolling.kt:548`,
+  `NowViewState.kt:125`, both WP4's files) — unchanged this round.
+
+**Left open / not done:**
+- `StationVoiceViewState.nearestOtherStationId`/`.nearestOtherDistance` are still always `null` —
+  unchanged from the entry below; cross-station voice-distance comparison needs the identity
+  pipeline (M4) to write comparable embeddings, which it does not yet do.
+- No pre-ticked suggestion in the split chooser (see above) — a deliberate absence, not a gap to
+  close later without a real per-over distance score to back it.
+- `splitVoiceprint`'s new voiceprint is inserted with `memberCount = 0` and let
+  `StationIdentityDao.splitVoiceprint`'s own `setMemberCount` recompute both clusters — this package
+  does not touch `enrolmentObservationCount`/`enrolmentSessionIds`/`centroidUpdatedAt` on either
+  voiceprint, same open item `:data`'s own entry already recorded.
+
+
+  pipeline's own logic, not a data-layer guess.## 2026-09-08 (ui-conformance WP8: stations and frequencies)### (pending) — ui-conformance WP8 · origin back labels on station and frequency drill-ins
 
 **Scope:** `:app` `ui/screens/StationScreen.kt`, `FrequencyScreen.kt`, `StationDetailContent.kt`,
 `FrequencyDetailContent.kt`; tests beside each. Addendum to this package's own WP8 entry directly

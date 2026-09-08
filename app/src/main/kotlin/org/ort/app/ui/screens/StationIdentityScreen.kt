@@ -1,117 +1,282 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.components.ActionBar
+import org.ort.app.ui.components.AttributionMarker
+import org.ort.app.ui.components.Badge
+import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.StationIdentityViewState
+import org.ort.app.ui.data.StationVoiceSplitViewState
+import org.ort.app.ui.data.VoiceprintSplitOverViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 import java.util.Locale
 
+private enum class EditTarget { NONE, NAME, NOTE }
+
 /**
  * `Station-Identity.dc.html` (R-073, FR-SPK-10, constitution III): how this station is known —
  * heard (callsign, lexicon allocation), voice (cluster size, confirmed vs inferred split, nearest
  * other station and its distance where the identity pipeline has written one), given by you (name,
- * note), and the never-leaves-the-device statement. `Rename`/`Add note`/`Split` are reachable
- * actions here; their write paths need a `:data` update query this package does not have (see
- * this package's report) — the callback fires, so the affordance exists and is testable, but does
- * not yet persist.
+ * note), and the never-leaves-the-device statement. `Rename`/`Add`/`Edit note` open an inline
+ * [TextField] (no WP2 field component exists yet — this package follows `TransmissionDetailScreen`'s
+ * own precedent, a plain Material [TextField] with a real content description) and persist through
+ * [onRename]/[onAddNote]; `Split` opens [StationSplitScreen].
  */
 @Composable
 public fun StationIdentityScreen(
     state: StationIdentityViewState,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
-    onRename: () -> Unit = {},
-    onAddNote: () -> Unit = {},
+    onRename: (String?) -> Unit = {},
+    onAddNote: (String?) -> Unit = {},
     onSplit: () -> Unit = {},
 ) {
+    var editing by remember(state.stationId) { mutableStateOf(EditTarget.NONE) }
+    var draft by remember(state.stationId) { mutableStateOf("") }
+
     Column(modifier = modifier.fillMaxSize()) {
         DrillInHeader(parentLabel = state.callsign, onBack = onBack)
-        Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
-            Text(
-                text = "How this station is known",
-                style = OrtType.screenTitle,
-                modifier = Modifier.semantics { heading() },
-            )
-            Text(
-                text = "Three things, kept separately, none of which leave this phone",
-                style = OrtType.subtitle,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.md),
-            )
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
+                Text(
+                    text = "How this station is known",
+                    style = OrtType.screenTitle,
+                    modifier = Modifier.semantics { heading() },
+                )
+                Text(
+                    text = "Three things, kept separately, none of which leave this phone",
+                    style = OrtType.subtitle,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.md),
+                )
 
-            SectionHeader(label = "Heard")
-            KeyValueRow(key = "Callsign", value = state.callsign, subLine = "heard ${state.heardOverCount} time(s)")
-            KeyValueRow(key = "Lexicon", value = state.lexiconLabel ?: "not known")
+                HeardAndVoiceFacts(state = state, onSplit = onSplit)
 
-            SectionHeader(label = "Voice", modifier = Modifier.padding(top = OrtSpacing.md))
-            val voiceSubLine = "${state.voice.confirmedCount} with the callsign heard · " +
-                "${state.voice.inferredCount} inferred from it"
-            KeyValueRow(
-                key = "Voiceprint",
-                value = "One cluster, ${state.voice.clusterOverCount} overs",
-                subLine = voiceSubLine,
-            )
-            val nearestId = state.voice.nearestOtherStationId
-            val nearestDistance = state.voice.nearestOtherDistance
-            val nearestValue = if (nearestId != null && nearestDistance != null) {
-                "$nearestId at %.2f".format(Locale.ROOT, nearestDistance)
-            } else {
-                "not computed yet"
+                SectionHeader(label = "Given by you", modifier = Modifier.padding(top = OrtSpacing.md))
+
+                GivenByYouName(
+                    state = state,
+                    editing = editing == EditTarget.NAME,
+                    draft = draft,
+                    onDraftChange = { draft = it },
+                    onStartEditing = {
+                        draft = state.givenByYou.name.orEmpty()
+                        editing = EditTarget.NAME
+                    },
+                    onSave = {
+                        onRename(draft.trim().ifBlank { null })
+                        editing = EditTarget.NONE
+                    },
+                    onCancel = { editing = EditTarget.NONE },
+                )
+
+                GivenByYouNote(
+                    state = state,
+                    editing = editing == EditTarget.NOTE,
+                    draft = draft,
+                    onDraftChange = { draft = it },
+                    onStartEditing = {
+                        draft = state.givenByYou.note.orEmpty()
+                        editing = EditTarget.NOTE
+                    },
+                    onSave = {
+                        onAddNote(draft.trim().ifBlank { null })
+                        editing = EditTarget.NONE
+                    },
+                    onCancel = { editing = EditTarget.NONE },
+                )
             }
-            val nearestSubLine = if (nearestId == null) "voice matching does not compare across stations yet" else null
-            KeyValueRow(
-                key = "Nearest other",
-                value = nearestValue,
-                subLine = nearestSubLine,
-                trailingMarker = { TextAction(text = "Split", onClick = onSplit) },
-            )
 
-            SectionHeader(label = "Given by you", modifier = Modifier.padding(top = OrtSpacing.md))
-            val nameActionLabel = if (state.givenByYou.name != null) "Rename" else "Add"
-            KeyValueRow(
-                key = "Name",
-                value = state.givenByYou.name ?: "None",
-                trailingMarker = { TextAction(text = nameActionLabel, onClick = onRename) },
-            )
-            val noteActionLabel = if (state.givenByYou.note != null) "Edit" else "Add"
-            KeyValueRow(
-                key = "Note",
-                value = state.givenByYou.note ?: "None",
-                trailingMarker = { TextAction(text = noteActionLabel, onClick = onAddNote) },
-            )
+            Column(modifier = Modifier.padding(OrtSpacing.lg)) {
+                NeverLeavesCard()
+                Text(
+                    text = "Split is for when one cluster turns out to be two people — pick the overs " +
+                        "that are not this station and they become a new unidentified voice. Every " +
+                        "affected over is marked corrected and its old attribution kept.",
+                    style = OrtType.cardBody,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = OrtSpacing.md),
+                )
+            }
         }
+    }
+}
 
-        Column(modifier = Modifier.padding(OrtSpacing.lg)) {
-            NeverLeavesCard()
-            Text(
-                text = "Split is for when one cluster turns out to be two people — pick the overs " +
-                    "that are not this station and they become a new unidentified voice. Every " +
-                    "affected over is marked corrected and its old attribution kept.",
-                style = OrtType.cardBody,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(top = OrtSpacing.md),
-            )
+/** The "Heard" and "Voice" facts (callsign, lexicon, cluster size, `Split`, nearest other) — split
+ * out of [StationIdentityScreen] to keep that composable under detekt's `LongMethod` limit. */
+@Composable
+private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        KeyValueRow(
+            key = "Callsign",
+            value = state.callsign,
+            subLine = "heard ${state.heardOverCount} time(s)",
+        )
+        KeyValueRow(key = "Lexicon", value = state.lexiconLabel ?: "not known")
+
+        SectionHeader(label = "Voice", modifier = Modifier.padding(top = OrtSpacing.md))
+        val voiceSubLine = "${state.voice.confirmedCount} with the callsign heard · " +
+            "${state.voice.inferredCount} inferred from it"
+        KeyValueRow(
+            key = "Voiceprint",
+            value = "One cluster, ${state.voice.clusterOverCount} overs",
+            subLine = voiceSubLine,
+            trailingMarker = {
+                TextAction(text = "Split", onClick = onSplit, modifier = Modifier.testTag("station-identity-split"))
+            },
+        )
+        val nearestId = state.voice.nearestOtherStationId
+        val nearestDistance = state.voice.nearestOtherDistance
+        val nearestValue = if (nearestId != null && nearestDistance != null) {
+            "$nearestId at %.2f".format(Locale.ROOT, nearestDistance)
+        } else {
+            "not computed yet"
+        }
+        KeyValueRow(key = "Nearest other", value = nearestValue)
+    }
+}
+
+/** The "Given by you" name row — a plain [KeyValueRow] with a `Rename`/`Add` action, or an
+ * [InlineEditRow] while [editing]. Split out of [StationIdentityScreen] for the same reason as
+ * [HeardAndVoiceFacts]. */
+@Composable
+private fun GivenByYouName(
+    state: StationIdentityViewState,
+    editing: Boolean,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    onStartEditing: () -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (editing) {
+        InlineEditRow(
+            testTag = "station-identity-name-field",
+            label = "Name",
+            value = draft,
+            onValueChange = onDraftChange,
+            onSave = onSave,
+            onCancel = onCancel,
+            modifier = modifier,
+        )
+    } else {
+        KeyValueRow(
+            key = "Name",
+            value = state.givenByYou.name ?: "None",
+            modifier = modifier,
+            trailingMarker = {
+                TextAction(
+                    text = if (state.givenByYou.name != null) "Rename" else "Add",
+                    onClick = onStartEditing,
+                    modifier = Modifier.testTag("station-identity-rename"),
+                )
+            },
+        )
+    }
+}
+
+/** The "Given by you" note row — [GivenByYouName]'s own twin. */
+@Composable
+private fun GivenByYouNote(
+    state: StationIdentityViewState,
+    editing: Boolean,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    onStartEditing: () -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (editing) {
+        InlineEditRow(
+            testTag = "station-identity-note-field",
+            label = "Note",
+            value = draft,
+            onValueChange = onDraftChange,
+            onSave = onSave,
+            onCancel = onCancel,
+            modifier = modifier,
+        )
+    } else {
+        KeyValueRow(
+            key = "Note",
+            value = state.givenByYou.note ?: "None",
+            modifier = modifier,
+            trailingMarker = {
+                TextAction(
+                    text = if (state.givenByYou.note != null) "Edit" else "Add",
+                    onClick = onStartEditing,
+                    modifier = Modifier.testTag("station-identity-add-note"),
+                )
+            },
+        )
+    }
+}
+
+@Composable
+private fun InlineEditRow(
+    testTag: String,
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs)) {
+        TextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label) },
+            modifier = Modifier.fillMaxWidth().testTag(testTag),
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+            modifier = Modifier.padding(top = OrtSpacing.xs),
+        ) {
+            TextAction(text = "Cancel", onClick = onCancel)
+            TextAction(text = "Save", onClick = onSave, modifier = Modifier.testTag("$testTag-save"))
         }
     }
 }
@@ -141,5 +306,164 @@ private fun NeverLeavesCard(modifier: Modifier = Modifier) {
             color = OrtColors.textBody,
             modifier = Modifier.padding(start = OrtSpacing.sm),
         )
+    }
+}
+
+// -------------------------------------------------------------------------------------------
+// Split (R-073) — Fail-Cluster.dc.html, reached from Station-Identity's "Split" action.
+// -------------------------------------------------------------------------------------------
+
+/**
+ * `Fail-Cluster.dc.html` (R-073): the real overs in [state]'s cluster, a checkbox per over
+ * (disabled — [VoiceprintSplitOverViewState.isAnchor] — for an over where the callsign was heard
+ * directly, per the artboard's own copy "those are the anchor"), and `Cancel`/`Split off N overs`.
+ * No suggestion is pre-ticked (see [StationVoiceSplitViewState]'s own doc comment for why).
+ */
+@Composable
+public fun StationSplitScreen(
+    state: StationVoiceSplitViewState,
+    onCancel: () -> Unit,
+    onSplit: (List<String>) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var selected by remember(state.fromVoiceprintId) { mutableStateOf(emptySet<String>()) }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        DrillInHeader(parentLabel = state.callsign, onBack = onCancel)
+        Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+            Text(
+                text = "Split this voice",
+                style = OrtType.screenTitle,
+                modifier = Modifier.semantics { heading() },
+            )
+            Text(
+                text = "One cluster, ${state.overs.size} overs. If some of these are not " +
+                    "${state.callsign}, tick them — they become a new unidentified voice.",
+                style = OrtType.subtitle,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = OrtSpacing.xs),
+            )
+        }
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            items(state.overs, key = { it.transmissionId }) { over ->
+                SplitOverRow(
+                    over = over,
+                    checked = over.transmissionId in selected,
+                    onToggle = {
+                        selected = if (over.transmissionId in selected) {
+                            selected - over.transmissionId
+                        } else {
+                            selected + over.transmissionId
+                        }
+                    },
+                )
+            }
+        }
+        Text(
+            text = "Splitting marks every moved over corrected, keeps its old attribution as " +
+                "superseded, and re-derives both clusters. Overs where the callsign was heard " +
+                "cannot be moved — those are the anchor.",
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
+        )
+        ActionBar(
+            secondaryLabel = "Cancel",
+            onSecondary = onCancel,
+            primaryLabel = "Split off ${selected.size} overs",
+            onPrimary = { onSplit(selected.toList()) },
+        )
+    }
+}
+
+@Composable
+private fun SplitOverRow(
+    over: VoiceprintSplitOverViewState,
+    checked: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val stateWord = when {
+        over.isAnchor -> "heard, cannot be moved"
+        checked -> "selected to move"
+        else -> "not selected"
+    }
+    val description = "${over.timeLabel}, ${over.transcriptText}, $stateWord" +
+        if (over.corrected) ", corrected" else ""
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("split-over-${over.transmissionId}")
+            .then(
+                if (over.isAnchor) {
+                    Modifier
+                } else {
+                    Modifier.clickable(role = Role.Checkbox, onClickLabel = stateWord, onClick = onToggle)
+                },
+            )
+            .semantics(mergeDescendants = true) { contentDescription = description }
+            .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
+        verticalAlignment = Alignment.Top,
+    ) {
+        SplitCheckboxGlyph(checked = checked, enabled = !over.isAnchor)
+        Spacer(modifier = Modifier.width(OrtSpacing.sm))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AttributionMarker(attribution = over.attribution, showConfidence = false)
+                Text(
+                    text = over.timeLabel,
+                    style = OrtType.timeFreq,
+                    color = OrtColors.textTime,
+                    modifier = Modifier.padding(start = OrtSpacing.sm),
+                )
+                Text(
+                    text = if (over.isAnchor) "heard" else "inferred",
+                    style = OrtType.subLine,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(start = OrtSpacing.xs),
+                )
+                if (over.corrected) {
+                    Spacer(modifier = Modifier.width(OrtSpacing.xs))
+                    Badge(text = "corrected", kind = BadgeKind.CORRECTED)
+                }
+            }
+            Text(
+                text = over.transcriptText,
+                style = OrtType.transcript,
+                color = OrtColors.textSecondary,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * guide §6.11's 16dp checkbox shape, drawn directly rather than through [org.ort.app.ui.components.CheckboxRow] —
+ * that component has no way to render the disabled, non-interactive state an anchor over needs
+ * (its checkbox is never a real choice), and this row's layout (marker + two text lines) does not
+ * match `CheckboxRow`'s single-label shape either.
+ */
+@Composable
+private fun SplitCheckboxGlyph(checked: Boolean, enabled: Boolean, modifier: Modifier = Modifier) {
+    val box = Modifier
+        .padding(top = 2.dp)
+        .size(16.dp)
+    Box(
+        modifier = modifier.then(
+            when {
+                checked && enabled -> box.background(OrtColors.accentGreen, RoundedCornerShape(4.dp))
+                else -> box.border(1.5.dp, OrtColors.lineControl, RoundedCornerShape(4.dp))
+            },
+        ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked && enabled) {
+            Icon(
+                imageVector = OrtIcons.check,
+                contentDescription = null,
+                tint = OrtColors.accentOnGreen,
+                modifier = Modifier.size(11.dp),
+            )
+        }
     }
 }

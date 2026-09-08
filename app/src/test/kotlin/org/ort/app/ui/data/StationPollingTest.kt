@@ -11,9 +11,11 @@ import org.junit.runner.RunWith
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.dao.StationIdentityDao
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintEntity
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -230,5 +232,98 @@ class StationPollingTest {
         val row = frequencies.single { it.frequencyHz == 146_960_000L }
         assertEquals("2 m · FM", row.whatItIs)
         assertTrue(row.busierThanUsual)
+    }
+
+    private fun voiceprint(id: String, boundStationId: String?, memberCount: Int) = VoiceprintEntity(
+        id = id,
+        embedding = ByteArray(0),
+        memberCount = memberCount,
+        centroidUpdatedAt = null,
+        boundStationId = boundStationId,
+        bindingConfidence = null,
+        lastConfirmedAt = null,
+        isEnrolled = false,
+        enrolmentObservationCount = 0,
+        enrolmentSessionIds = null,
+        enrolledAt = null,
+        lastMatchedAt = null,
+        bindingSource = null,
+        embeddingModelId = null,
+        embeddingModelVersion = null,
+    )
+
+    @Test
+    fun `R_073_rename_persists_and_the_previous_name_stays_reachable`(): Unit = runTest {
+        db.catalogDao().insert(station("N7XYZ"))
+
+        StationPolling.renameStation(context, "N7XYZ", "Dave")
+        StationPolling.renameStation(context, "N7XYZ", "David")
+
+        // The identity screen (and the Stations list, via the same read path) only ever shows
+        // the current name...
+        val identity = StationPolling.stationIdentity(context, "N7XYZ")
+        assertEquals("David", identity.givenByYou.name)
+        val row = StationPolling.listStations(context).single { it.stationId == "N7XYZ" }
+        assertEquals("David", row.givenName)
+
+        // ...but the name it replaced (constitution III) stays reachable in the DAO's own history,
+        // oldest first, exactly the shape StationIdentityDaoTest proves at the `:data` layer.
+        val history = db.stationIdentityDao().stationIdentityHistoryFor("N7XYZ")
+            .filter { it.field == StationIdentityDao.FIELD_NAME }
+        assertEquals(listOf(null, "Dave"), history.map { it.previousValue })
+        assertEquals(listOf("Dave", "David"), history.map { it.newValue })
+    }
+
+    @Test
+    fun `R_073_split_moves_the_chosen_overs_into_a_new_voiceprint`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.catalogDao().insert(station("N7DAVE"))
+        db.catalogDao().insert(voiceprint("V1", boundStationId = "N7DAVE", memberCount = 2))
+        db.transmissionDao().insert(
+            tx(
+                "TX1",
+                "S1",
+                0L,
+                attribution = FixtureAttribution("N7DAVE", AttributionState.CONFIRMED, 0.9, voiceprintId = "V1"),
+            ),
+        )
+        db.transmissionDao().insert(
+            tx(
+                "TX2",
+                "S1",
+                1_000L,
+                attribution = FixtureAttribution("N7DAVE", AttributionState.INFERRED, 0.7, voiceprintId = "V1"),
+            ),
+        )
+
+        val candidates = StationPolling.voiceSplitCandidates(context, "N7DAVE")!!
+        assertEquals(setOf("TX1", "TX2"), candidates.overs.map { it.transmissionId }.toSet())
+        assertTrue(candidates.overs.single { it.transmissionId == "TX1" }.isAnchor)
+        assertTrue(!candidates.overs.single { it.transmissionId == "TX2" }.isAnchor)
+
+        val refreshed = StationPolling.splitVoiceprint(context, "N7DAVE", candidates.fromVoiceprintId, listOf("TX2"))
+
+        // The identity screen reflects the smaller remaining cluster (constitution III's "nothing
+        // deleted" cuts the other way here too: TX2 did not vanish, it moved).
+        assertEquals(1, refreshed.voice.clusterOverCount)
+
+        val tx2 = db.transmissionDao().getById("TX2")!!
+        assertEquals(AttributionState.UNKNOWN, tx2.attributionState)
+        assertNull(tx2.stationId)
+        assertTrue(tx2.corrected)
+        assertTrue(tx2.voiceprintId != "V1")
+
+        val tx1 = db.transmissionDao().getById("TX1")!!
+        assertEquals("N7DAVE", tx1.stationId)
+        assertEquals("V1", tx1.voiceprintId)
+
+        // A CORRECTED badge belongs where the DAO actually recorded the correction: on the moved
+        // over itself, not manufactured for the originating station's own screens (TX2 no longer
+        // belongs to N7DAVE at all once split, so there is nowhere honest on *this* station's
+        // screens to show it — see this package's report).
+        val corrections = db.correctionDao().correctionsFor("TX2")
+        assertEquals(1, corrections.size)
+        assertEquals("N7DAVE", corrections.single().previousValue)
+        assertEquals(StationIdentityDao.FIELD_VOICEPRINT_SPLIT, corrections.single().field)
     }
 }
