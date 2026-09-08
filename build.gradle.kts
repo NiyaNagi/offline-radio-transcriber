@@ -1,3 +1,4 @@
+import org.ort.gradle.CoverageMatrixCheckTask
 import org.ort.gradle.CoverageMatrixTask
 import org.ort.gradle.DependencyRulesTask
 import org.gradle.api.artifacts.ProjectDependency
@@ -30,20 +31,35 @@ gradle.projectsEvaluated {
     dependencyRules.configure { actualGraph.set(actual) }
 }
 
+/** Test source roots the coverage matrix and its staleness check both scan (test-plan §9). */
+val coverageMatrixTestRoots =
+    subprojects.flatMap {
+        listOf(
+            it.layout.projectDirectory.dir("src/test/kotlin"),
+            it.layout.projectDirectory.dir("src/androidTest/kotlin"),
+        )
+    }
+
 /** `coverageMatrix` — regenerates results/coverage-matrix.md (test-plan §9). */
 tasks.register<CoverageMatrixTask>("coverageMatrix") {
     group = "documentation"
     description = "Regenerates results/coverage-matrix.md from spec ids and test sources."
     specDir.set(layout.projectDirectory.dir("spec"))
-    testRoots.setFrom(
-        subprojects.flatMap {
-            listOf(
-                it.layout.projectDirectory.dir("src/test/kotlin"),
-                it.layout.projectDirectory.dir("src/androidTest/kotlin"),
-            )
-        },
-    )
+    testRoots.setFrom(coverageMatrixTestRoots)
     output.set(layout.projectDirectory.file("results/coverage-matrix.md"))
+}
+
+/**
+ * `coverageMatrixCheck` — F-014: fails if the committed results/coverage-matrix.md differs
+ * from what `coverageMatrix` would generate right now, ignoring trailing-newline/line-ending
+ * differences. CI runs this as a gate; `coverageMatrix` itself only regenerates.
+ */
+tasks.register<CoverageMatrixCheckTask>("coverageMatrixCheck") {
+    group = "verification"
+    description = "Fails if results/coverage-matrix.md is stale (run coverageMatrix to fix)."
+    specDir.set(layout.projectDirectory.dir("spec"))
+    testRoots.setFrom(coverageMatrixTestRoots)
+    committed.set(layout.projectDirectory.file("results/coverage-matrix.md"))
 }
 
 /** A root `check` that also runs the meta-guards, so CI's lint job is one invocation. */

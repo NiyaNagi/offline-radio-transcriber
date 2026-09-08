@@ -83,4 +83,41 @@ class CoverageMatrixTest {
         assertTrue(coverage.orphanTests.containsKey("AC-999"))
         assertFalse(coverage.covered.contains("AC-999"))
     }
+
+    // F-014: results/coverage-matrix.md is committed but nothing failed CI when it went stale.
+    // contentMatches() is the comparison `coverageMatrixCheck` uses to fail loudly instead.
+
+    @Test
+    fun `contentMatches is false when the committed matrix is stale`() {
+        val generated = "# Coverage matrix\n\n| Metric | Count |\n|---|---:|\n| Requirement ids in `spec/` | 117 |\n"
+        val committed = "# Coverage matrix\n\n| Metric | Count |\n|---|---:|\n| Requirement ids in `spec/` | 101 |\n"
+        assertFalse(CoverageMatrix.contentMatches(generated, committed))
+    }
+
+    @Test
+    fun `contentMatches is true for byte-identical content`() {
+        val text = "# Coverage matrix\n\nsome body\n"
+        assertTrue(CoverageMatrix.contentMatches(text, text))
+    }
+
+    @Test
+    fun `contentMatches ignores a trailing-newline-only difference`() {
+        val generated = "# Coverage matrix\n\nsome body\n"
+        val committed = "# Coverage matrix\n\nsome body"
+        assertTrue(CoverageMatrix.contentMatches(generated, committed))
+    }
+
+    @Test
+    fun `contentMatches ignores a line-ending-only difference`() {
+        val generated = "# Coverage matrix\n\nsome body\n"
+        val committed = "# Coverage matrix\r\n\r\nsome body\r\n"
+        assertTrue(CoverageMatrix.contentMatches(generated, committed))
+    }
+
+    @Test
+    fun `contentMatches still catches a real content difference under CRLF`() {
+        val generated = "line one\nline two\n"
+        val committed = "line one\r\nline TWO\r\n"
+        assertFalse(CoverageMatrix.contentMatches(generated, committed))
+    }
 }

@@ -61,6 +61,49 @@ implementation existed. After the fix: `./gradlew :data:test` — 11/11 `WorkQue
 **Left open / not done:** No caller wires this into a model-install action yet — that lives with
 F-008, which is a separate finding/module (`:app`/`:pipeline` orchestration) and was out of this
 fix's scope. No queue behavioural fake exists yet in `:testing` to update.
+## 2026-09-07 (audit — F-014)
+
+### (pending) — audit F-014 · coverage-matrix delta is now a CI gate
+
+**Scope:** `buildSrc/` (new `CoverageMatrixCheckTask.kt`, `CoverageMatrix.contentMatches` and its
+tests), root `build.gradle.kts` (new `coverageMatrixCheck` task registration only),
+`.github/workflows/ci.yml` (`report` job); `results/coverage-matrix.md` regenerated.
+
+**Requirements/ACs:** constitution, Development Workflow ("CI gates every push... the
+coverage-matrix delta"); test-plan §9.
+
+**What changed:** `results/audit-2026-09-07.md` F-014 found that `.github/workflows/ci.yml`'s
+`report` job only ran `./gradlew coverageMatrix` and uploaded the regenerated file as an
+artefact — it never compared the regeneration to the committed `results/coverage-matrix.md`, so
+the committed file had drifted a whole wave stale (101 covered committed vs. 117 actually
+covered) with no CI failure. Added `CoverageMatrix.contentMatches(generated, committed)` — a pure
+comparison that normalises CRLF/LF and a trailing-newline difference before comparing, so only
+real content drift fails — and a new `CoverageMatrixCheckTask` that regenerates the matrix from
+the current spec/tests and throws with a clear message
+(`results\coverage-matrix.md is stale — run ./gradlew coverageMatrix and commit the result.`)
+when it disagrees with the committed file. Registered as `coverageMatrixCheck` in root
+`build.gradle.kts`, sharing the same `specDir`/`testRoots` wiring `coverageMatrix` already used.
+`ci.yml`'s `report` job now runs `coverageMatrixCheck` before `coverageMatrix`, keeping the
+existing regenerate-and-upload steps. Regenerated `results/coverage-matrix.md` in the same
+change so the check passes on the committed tree (101 → 117 covered — the actual staleness the
+finding described).
+
+**Verified:** `./gradlew -p buildSrc test` — new `CoverageMatrixTest` cases seen failing first
+(`Unresolved reference: contentMatches`, a compile failure — the right reason, since the method
+did not exist yet), green after implementing `contentMatches`. `./gradlew coverageMatrixCheck`
+failed on the stale committed file before regeneration ("results\coverage-matrix.md is stale");
+green after regenerating and committing it. Confirmed the check still fails on real drift by
+editing one number in the committed matrix and re-running (failed as expected), then reverting.
+Full gate: `./gradlew build dependencyRules coverageMatrixCheck` green;
+`python tools/spec-check/spec_check.py` — all 8 checks PASS. All JVM/Robolectric only, per the
+standing constraint; no device verification claimed.
+
+**Left open / not done:** `coverageMatrixCheck` is wired only into the existing `report` CI job,
+not into local pre-commit tooling — a contributor can still forget to run `coverageMatrix`
+locally and will only find out from CI. That matches how `dependencyRules` and the other gates in
+this repo already work, so left as is rather than inventing a new mechanism.
+
+---
 
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 

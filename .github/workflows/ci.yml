@@ -132,6 +132,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
+      - name: coverage-matrix delta is a gate (F-014) — fails if the committed file is stale
+        run: ./gradlew coverageMatrixCheck
       - run: ./gradlew coverageMatrix
       - name: publish to the run summary
         run: cat results/coverage-matrix.md >> "$GITHUB_STEP_SUMMARY"
