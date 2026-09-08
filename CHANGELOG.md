@@ -32,6 +32,101 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: NavRow and tier badge)
+
+### (pending) — ui-conformance WP2 · NavRow and tier badge
+
+**Scope:** `:app` `ui/components/Rows.kt` and `RowsTest.kt` only. Requested by WP10, for
+`Settings.dc.html`/`Improve.dc.html`/`Sessions.dc.html`'s row family; register finding R-131
+(`Settings` rows lack their 18px leading icons — a `NavRow` is the shared component that carries
+one). `main` fast-forward merged first (`git merge --ff-only main`; this branch already an
+ancestor; no rebase, no stash) — no other package's files touched.
+
+**Requirements/ACs:** R-131 (`Settings.dc.html`'s row family: an 18px leading icon, a sub-line
+that names what it needs to, never truncated).
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) governs this directly: WP10
+  needs one shared row across three destination screens rather than three hand-rolled ones, so the
+  target/description/pressed-state contract lives in one place, testable once, rather than
+  re-derived per screen with its own chance of drifting from the guide. Principle III (never
+  delete quietly) governs `NavRowTone.NotBuilt`: a destination the guide describes but no module
+  has shipped yet still renders and still navigates — dimmer, not hidden.
+- **`NavRow` (new, `Rows.kt`).** `rowTitle: String`, `onClick: () -> Unit`, `modifier: Modifier =
+  Modifier`, `icon: ImageVector? = null` (18dp, `OrtIcons`), `subLine: String? = null` (wraps —
+  no `maxLines`/`overflow` restriction, so a real status sentence is never cut to one ellipsised
+  line), `trailing: (@Composable () -> Unit)? = null` (a free slot for a value or a `Badge` — the
+  guide's mono-value styling is the caller's call, per `Controls.dc.html`, not this component's to
+  impose), `tone: NavRowTone = NavRowTone.Neutral`. A real >=44dp target (`heightIn(min = 44.dp)`),
+  `Role.Button`, one merged content description (`"<rowTitle>. <subLine>"`, or bare `rowTitle`
+  when there is no sub-line — never a dangling `". "`), `bg/pressed` while pressed (the
+  `TextAction`/guide §6.7 pattern: a real `MutableInteractionSource` + `collectIsPressedAsState`,
+  not a ripple), and an always-present trailing `OrtIcons.chevron` — every row here is a
+  destination, so unlike `icon`/`subLine`/`trailing` the chevron is not optional.
+- **`NavRowTone { Neutral, NotBuilt }` (new).** `NotBuilt` dims the title/icon to `textFaint`
+  (from `textHigh`/`textDim`) for a destination the guide describes but no module has shipped —
+  the row still renders, still navigates, and still has its full sub-line; only the colour signals
+  "not yet real," and per the constitution that signal is never colour alone in isolation — the
+  caller supplying this tone is expected to say so in the sub-line's own words too, the same
+  contract `RadioRow`'s `RowTone.Warning` already established for this package.
+- **`BadgeKind.TIER` — confirmed, not added.** Checked against guide §6.14/the design guide
+  (`design/design-guide.md`, "the tier chip (`text/dim` on `line/chip`, `TIER 1`)"): `BadgeKind
+  .TIER` already exists in `Controls.kt` (`Badge(text, kind = BadgeKind.TIER)` →
+  `Triple(Color.Transparent, OrtColors.lineChip, OrtColors.textDim)`) and matches that spec
+  exactly — transparent background, `lineChip` border, `textDim` foreground, uppercase mono/sans
+  per `OrtType.badge`. `NEW`/`REVISED`/`CORRECTED` were already in the same enum from R-023. No
+  code change was needed; `R_131_nav_row fires onClick and renders an optional trailing slot
+  beside the chevron` below exercises `NavRow`'s `trailing` slot with exactly this badge
+  (`Badge(text = "Tier 1", kind = BadgeKind.TIER)`) to prove the two compose together, which is
+  the actual WP10 use case this was requested for.
+- **A measurement limitation, again.** The first version of the sub-line test tried to prove
+  wrapping directly by comparing a long-sub-line row's measured height against a short-sub-line
+  row's at font scale 2.0 — both rows measured identically (88px) regardless of sub-line length,
+  the same degenerate-glyph-metrics finding this file already recorded against R-152's fix.
+  Dropped that approach; the sub-line test instead confirms the full sentence survives verbatim
+  into the semantics tree (catches a future truncation/summarisation regression, which needs no
+  font metric to detect) and documents, in its own body, why a rendered-height assertion isn't
+  attempted here.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **844 of 844 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`: `Total: 844, Failures: 0`; was 828 before this commit). New tests, all in
+  `RowsTest`: `R_131_nav_row carries its leading icon, title, sub-line and a trailing chevron`,
+  `R_131_nav_row is a real 44dp Role_Button target with a merged title-then-subLine description`,
+  `R_131_nav_row fires onClick and renders an optional trailing slot beside the chevron`,
+  `R_131_nav_row's sub-line renders in full at font scale 2 point 0, never truncated`,
+  `R_131_nav_row's NotBuilt tone dims the row without hiding it`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**, clean on the first
+  full-gate run this round (no detekt/ktlint fixes needed). `dependencyRules: checked 17 modules
+  ... OK — every edge is permitted by the design graph.` `platformGuards: checked 17 modules'
+  external dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 183 covered`
+  (up from 181 before this branch's changes, already reflected by `main`'s own merged coverage
+  before this commit's own tests were added — `git status` shows no diff on
+  `results/coverage-matrix.md` from this commit specifically). `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — `up to date (183 covered of 419)`. `.\gradlew.bat
+  :app:assembleDebug` — included in and passed as part of the `build` run above.
+
+**Left open / not done:**
+- **WP10's own screens are not migrated to `NavRow` by this commit** — they are outside this
+  package (`ui/screens/**`/wherever WP10 owns). WP10 requested this component; switching
+  `Settings`/`Improve`/`Sessions`' own row call sites to it is WP10's own follow-up.
+- **The register is not updated by this commit** — closing out R-131 (marking it fixed, citing
+  this commit) is the validator/coordinator's own bookkeeping on that file, outside this package.
+- **No screenshot/emulator re-capture** of `overnight/CF01-settings.png` to visually confirm
+  `NavRow` against the actual artboard once WP10 adopts it — Robolectric assertions only, per the
+  plan (Phase E/Validators own screenshot verification).
+- **`NavRow`'s `bg/pressed` state has no dedicated test** — `TextAction`, the pattern it copies,
+  has none either in this package's existing test suite; pressed-state visuals are, like the
+  wrapping question above, a rendered-pixel property this package's Robolectric setup cannot
+  verify reliably, and the interaction wiring itself (`MutableInteractionSource` +
+  `collectIsPressedAsState`) is standard, unmodified Compose API usage, not custom logic this
+  package invented and could get subtly wrong.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: marker descriptions in prose without confidence; live-bar meter tone override)
 
 ### (pending) — ui-conformance WP2 · marker descriptions in prose without confidence; live-bar meter tone override
