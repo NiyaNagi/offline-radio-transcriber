@@ -6229,6 +6229,78 @@ conflicting with the builders who own `:app`.
 
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
+### (pending) — ui-conformance WP8 · Frequency-Change survives a Log round trip
+
+**Scope:** `:app` `ui/screens/FrequencyDetailContent.kt`, `ui/data/StationsAndFrequencies.kt`; new
+test `ui/screens/FrequencyDetailContentTest.kt`. Addendum to this package's own WP8 entry directly
+below, filed against register R-276's own follow-on (coordinator round 2026-09-08, after `main`
+merged WP3's `ddd515b`).
+
+**Requirements/ACs:** R-276, FR-UI-10, FR-UI-11, constitution VII.
+
+**What changed:**
+
+*Constitution Check.* Principle VII (Boundaries Are Structural) governs the placement of the new
+enum: `FrequencyDetailView` is a top-level type, so it lives in `ui/data/StationsAndFrequencies.kt`
+alongside `TimeWindow` and this package's other shared view-state types, not in the screen file
+that consumes it — the same boundary this package has drawn for `StationsListState` and
+`SplitSubScreenState` in earlier rounds, and the reason detekt's `MatchingDeclarationName` (see
+Verified) caught the first attempt to declare it inline.
+
+- **R-276 follow-on (spec) — reopening on `Frequency-Change`, not the drill-in root.** WP3's
+  `ddd515b` routes "The N overs" to the filtered Log; system back from there reopened
+  `FrequencyDetailContent` with no way to land back on `Frequency-Change` — the operator's own
+  starting point — because the composable had no parameter to seed its local sub-screen state.
+  Fixed: `FrequencyDetailContent` gained `initialView: FrequencyDetailView = FrequencyDetailView.Detail`,
+  which seeds the existing `remember(frequencyHz) { mutableStateOf(...) }` sub-screen state
+  directly. The prior private `FrequencySubScreen { NONE, CHANGE }` is now the exposed
+  `FrequencyDetailView { Detail, Change }` (`ui/data/StationsAndFrequencies.kt`) — same two states,
+  renamed to read at the call site (`initialView = FrequencyDetailView.Change`) rather than an
+  internal implementation label. The default keeps every existing caller (`OrtNavHost.kt`)
+  compiling unchanged; `Frequency-Change`'s own `onBack` still returns to `FrequencyDetailView.Detail`
+  (FQ02) exactly as before. **Exact parameter and enum for WP3 round 10:**
+  `FrequencyDetailContent(..., initialView: FrequencyDetailView = FrequencyDetailView.Detail)`,
+  `public enum class FrequencyDetailView { Detail, Change }` — pass `FrequencyDetailView.Change`
+  when reopening from the Log.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded to `4eb78e3` (brought in WP3's `ddd515b` this
+  addendum responds to, plus WP6's register flips and other packages' unrelated work).
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD SUCCESSFUL.
+- New `R_276_back` test (`FrequencyDetailContentTest`, a real file-backed `OrtDatabase`, the same
+  pattern `StationDetailContentTest` established) — composes `FrequencyDetailContent` with
+  `initialView = FrequencyDetailView.Change` and waits for `Frequency-Change`'s own closing-
+  paragraph opener ("A departure is a finding, not an alarm.") — text with no equivalent on the
+  drill-in's root, so its presence proves the sub-screen was seeded, not defaulted. First attempt
+  asserted the screen's uppercase-styled `SectionHeader` text case-sensitively and always timed
+  out — not a data-layer bug; switched to the un-transformed closing-paragraph text once a
+  `printToString()` dump of the real tree showed the screen had, in fact, rendered correctly all
+  along.
+- `.\gradlew.bat :app:testDebugUnitTest --tests
+  "org.ort.app.ui.screens.FrequencyDetailContentTest" --tests
+  "org.ort.app.ui.screens.FrequencyChangeScreenTest" --tests
+  "org.ort.app.ui.screens.FrequencyScreenTest" --tests
+  "org.ort.app.ui.screens.StationDetailContentTest"` — all passed.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — **1151 tests, 0 failures.**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL outright, including
+  `:app:detekt` (after moving `FrequencyDetailView` out of the screen file — detekt's own
+  `MatchingDeclarationName` caught the first, inline placement) and `:app:assembleDebug`/
+  `:app:assembleRelease`.
+- `git status --short` after the full gate — only this package's own files modified/added
+  (`FrequencyDetailContent.kt`, `StationsAndFrequencies.kt`, new `FrequencyDetailContentTest.kt`);
+  no collateral edits outside WP8 ownership.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` regenerated, 190 of 419 covered (up from 185
+  — the new `R_276_back` test).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- WP3 round 10 still needs to pass `initialView = FrequencyDetailView.Change` on the actual
+  reopen-from-Log navigation — this package only adds the parameter and seeds the state; it does
+  not own `OrtNavHost.kt`'s route back into this drill-in.
+
 ### (pending) — ui-conformance WP8 · Frequencies caption and row plurals
 
 **Scope:** `:app` `ui/screens/FrequencyScreen.kt`; test beside it. Addendum to this package's own
