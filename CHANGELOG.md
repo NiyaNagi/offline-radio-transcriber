@@ -206,6 +206,82 @@ it is M8/M10 scope, and the fix sketch's alternative (build it now, e.g. via `Wo
 rejected for the reasons above: it is a scheduling and battery-behaviour design decision on the
 ColorOS reference device (constitution IV's liveness-by-heartbeat concern), not a documentation
 fix, and belongs to the milestone that already claims it.
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 (`:pipeline` slice) · naming the built-but-untested pipeline ids: FR-RUN-1, FR-RUN-9, AC-29, NFR-2b, NFR-4a; FR-RUN-4 and FR-RUN-6's warning half remain honestly unestablished
+
+**Scope:** `pipeline/src/test/**` only — `RealCaptureServiceTest.kt` (two new tests: FR-RUN-1,
+NFR-4a), `CaptureProcessingLoopTest.kt` (one new test: FR-RUN-9, plus the neighbouring REJECTED
+test tagged the same id), `backlog/BacklogGrowthMonitorTest.kt` (one new test: AC-29/NFR-2b, plus
+the existing 15%-activity test tagged NFR-2b), `capture/RealCaptureServiceShedTest.kt` (kdoc only,
+no behaviour change: documents that FR-RUN-6's tag there covers only the exhaustion-floor half).
+`results/coverage-matrix.md` regenerated. No `pipeline/src/main` change — every id in this slice
+was already built; only the tests were missing or unnamed.
+
+**Requirements/ACs:** FR-RUN-1, FR-RUN-9, AC-29, NFR-2b, NFR-4a established by name in
+`:pipeline`. FR-RUN-4 and the "warn before exhaustion" half of FR-RUN-6 are reported NOT
+established (see below) rather than tagged, per constitution I.
+
+**What changed:**
+- **FR-RUN-1** (capture never blocks on inference): `RealCaptureServiceTest` gained
+  `FR_RUN_1 capture keeps producing new transmissions while a pass is stalled on inference` —
+  starts the real service with a `FakeAsrEngine(Behaviour.HangsFor(30_000))`, waits for segment 0
+  to reach `PROCESSING` (genuinely stuck in the hung `transcribe()` call), then proves segment 1
+  is fully captured, FLAC-encoded and persisted *while segment 0 is still stuck* — capture did not
+  wait on the stalled inference call. The pre-existing `AC_31` test only proved the happy-path
+  composition against a fast fake engine; it does not prove "never blocks", so a new test was
+  needed rather than a rename.
+- **FR-RUN-9** (`FAILED` distinct from `REJECTED`): `CaptureProcessingLoopTest` gained
+  `FR_RUN_9 a pass that errors reaches FAILED, distinct from REJECTED` — a real `PassB` against
+  `FakeAsrEngine(Behaviour.Throws(...))`; `RejectionPipeline` catches the throw into
+  `PassBOutcome.Failed`, `PassB.run` turns that into `PassRunOutcome.Errored`, and `WorkQueue`
+  (maxAttempts=1) commits `FAILED` — proven distinct from the neighbouring `TX-SHORT` test, now
+  also tagged `FR-RUN-9`, whose pre-decode rule *correctly declines* to `REJECTED`. (The matrix
+  already listed FR-RUN-9 as covered via `:app`/`:data` tests of the UI label and the retry-ladder
+  mechanics; this adds the missing `:pipeline`-layer proof of the error-vs-decline distinction
+  itself.)
+- **AC-29 / NFR-2b** (40% activity queues then degrades; 15% keeps up): `BacklogGrowthMonitorTest`
+  gained `AC_29 at 40 percent activity the system queues, degrades, and reports backlog --
+  mechanism only`, combining `BacklogGrowthMonitor` (trend) with a real `ShedController` fed a
+  deterministic 40%-duty-cycle, zero-drain backlog: it grows (queues), `ShedController.currentLevel`
+  rises above 0 (degrades), and `FakeShedSignals.queueBacklog()` stays queryable throughout
+  (reports backlog). The pre-existing 15%-activity test is now tagged `NFR-2b`. Both are explicitly
+  documented as mechanism-only — `FakeShedSignals` stands in for a real device queue; there is no
+  reference device in this session, so the real 40%/15% numbers are NOT MEASURED here.
+- **NFR-4a** (unexpected termination loses at most the in-flight segment): `RealCaptureServiceTest`
+  gained `NFR_4a an unexpected termination loses at most the in-flight segment` — closes segment 0
+  normally, opens segment 1 with speech but deliberately never closes it (no trailing silence), then
+  calls `controller.destroy()` directly (never `ACTION_STOP`) to simulate an abrupt kill. Segment 0
+  survives; segment 1 never became a persisted row (it never got a chance to — `close()` is what
+  creates the `TransmissionEntity`, and `stopCaptureInternal` makes no attempt to flush or salvage
+  an open segment); the heartbeat store honestly records an unclean end.
+- **FR-RUN-4** (shed-affected records marked reprocessing candidates): investigated, not fixed.
+  `TransmissionDao.setReprocessCandidate(id, value)` exists (schema column `isReprocessCandidate`,
+  migration-tested) but grep across `:pipeline` and `:data` shows it is **never called** from
+  anywhere except its own DAO definition and raw-SQL migration fixtures. `ShedController` never
+  touches a transmission row. **Reported NOT established** — no test was written for it, since
+  writing one against the current code would either be vacuous or would require production code
+  this session does not own to add. This is a genuine gap, not a naming gap; it should be filed as
+  its own finding if not already covered elsewhere in the audit.
+- **FR-RUN-6** (queue bounded by storage; warn before exhaustion): confirmed the existing
+  `RealCaptureServiceShedTest` tag only establishes the first half. `storageFloorBreached(...)` is
+  a single hard floor (`RealCaptureService.STORAGE_FLOOR_BYTES`, 100 MiB) with no earlier,
+  configurable warning threshold anywhere in `ShedSignals`/`AndroidShedSignals`. Added a kdoc note
+  on the test making this explicit rather than silently leaving the matrix's "Covered" claim to
+  overstate what is proven. **The warning-threshold half is reported NOT established** (unbuilt).
+
+**Verified:** `./gradlew :pipeline:testDebugUnitTest` — 83 tests, 0 failures, 0 errors (aggregated
+across all `TEST-*.xml` under `pipeline/build/test-results/testDebugUnitTest`).
+`./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` — green; FR-RUN-1, FR-RUN-9, AC-29
+and NFR-4a moved from "Not yet covered" to "Covered"; NFR-2b's existing coverage now carries a
+named test; FR-RUN-4 correctly remains in "Not yet covered". `./gradlew build dependencyRules` —
+green (JVM/Robolectric only; nothing here is on-device verification). `python
+tools/spec-check/spec_check.py` — all 8 checks PASS.
+
+**Left open / not done:** FR-RUN-4 (reprocess-candidate marking on shed) and FR-RUN-6's warning
+threshold are genuinely unbuilt, not just untested — flagged above rather than worked around.
+AC-29/NFR-2b's 40%/15% activity figures are mechanism-only; the real numbers need the reference
+device (NFR-2b, AC-29 device runs are still open per the audit's DEVICE/MEASURED bucket).
 
 ## 2026-09-07 (audit — F-008)
 

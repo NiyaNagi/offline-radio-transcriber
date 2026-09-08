@@ -96,6 +96,42 @@ public class CaptureProcessingLoopTest {
     }
 
     @Test
+    @Requirement("FR-RUN-9")
+    public fun `FR_RUN_9 a pass that errors reaches FAILED, distinct from REJECTED`(): Unit = runBlocking {
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-ERR"))
+        stageAudio("TX-ERR")
+
+        // maxAttempts = 1 so one drain is enough to reach the terminal FAILED state, rather
+        // than a mid-retry READY (FR-RUN-9's distinction is FAILED vs REJECTED, not the retry
+        // ladder itself -- that is FR-RUN-10, proven in TransmissionLifecycleTest).
+        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        queue.enqueue("TX-ERR", PassId.B_OFFLINE)
+
+        // A real PassB against a FakeAsrEngine that throws: RejectionPipeline.process(...)
+        // catches this and returns PassBOutcome.Failed, which PassB.run(...) turns into
+        // PassRunOutcome.Errored -- the pass *ran and errored*, not a pre-decode rule
+        // *correctly declining* the segment (that is TX-SHORT's REJECTED, above).
+        val engine = FakeAsrEngine(FakeAsrEngine.Behaviour.Throws(RuntimeException("engine crashed")))
+        val pass = PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"), provider = "cpu")
+        val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
+
+        loop.drainOnce()
+
+        val transmission = db.transmissionDao().getById("TX-ERR")!!
+        assertEquals(
+            "FR-RUN-9: a pass that errored must reach FAILED, never REJECTED",
+            TransmissionState.FAILED,
+            transmission.processingState,
+        )
+        assertNull(
+            "no transcript can exist for a run the engine never completed",
+            db.transcriptDao().getCurrent("TX-ERR"),
+        )
+    }
+
+    @Test
+    @Requirement("FR-RUN-9")
     public fun `a rejected segment reaches REJECTED and records its reason, with no transcript row`(): Unit =
         runBlocking {
             db.sessionDao().insert(PipelineTestFixtures.session())

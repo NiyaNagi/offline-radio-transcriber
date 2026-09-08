@@ -79,6 +79,17 @@ class RealCaptureServiceShedTest {
         assertEquals(2, rows[1].levelAfter)
     }
 
+    /**
+     * Establishes only the first half of FR-RUN-6 ("bounded by available storage, not a fixed
+     * item count") via the hard exhaustion floor. **The second half -- "warn at configurable
+     * thresholds well before exhaustion" -- is NOT established here and, as far as this session
+     * found, is not built anywhere**: [storageFloorBreached] is a single hard floor
+     * ([RealCaptureService.STORAGE_FLOOR_BYTES]), not a set of earlier, configurable warning
+     * thresholds, and no signal in [ShedSignals][org.ort.pipeline.shed.ShedSignals] or
+     * [AndroidShedSignals][org.ort.pipeline.shed.AndroidShedSignals] surfaces an approaching-
+     * exhaustion warning ahead of the floor. Constitution I: naming FR-RUN-6 "covered" here would
+     * overclaim what this test proves.
+     */
     @Test
     @Requirement("FR-STO-4", "FR-RUN-6")
     fun `FR_STO_4 free storage below the floor is reported as breached`() {
