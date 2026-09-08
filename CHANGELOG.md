@@ -32,6 +32,68 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9: ready rows on the native focusable KeyValueRow)
+
+### (pending) — ui-conformance WP9 · ready rows on the native focusable KeyValueRow
+
+**Scope:** `:app` `ui/setup/ReadyScreen.kt` and its own test only. `git merge --ff-only main` run
+first (fast-forward through `afed3e8`, then again through `cc0d922` once the register's own pass-3
+update landed on main — no rebase, no stash, no `--stop`); none of this file's own history touched
+by either merge.
+
+**Requirements/ACs:** R-264, R-265 (both already `fixed`, this is the coordinator's follow-up after
+WP2's own independent `KeyValueRow` merge landed and changed what S12's rows actually announce).
+
+**What changed:**
+- WP2 made `KeyValueRow` (`Rows.kt`) itself a merged, focusable semantics node natively. This
+  screen's own R-265 workaround — wrapping each row's outer `Row` in
+  `Modifier.focusable()` + `Modifier.semantics(mergeDescendants = true) { contentDescription = ... }`
+  — is removed: nesting it *around* `KeyValueRow`'s own new merge boundary put two overlapping
+  `contentDescription` entries on the same merged node, double-announcing every row (confirmed by
+  running it, not assumed). Every row now relies on `KeyValueRow`'s own merge alone.
+- `KeyValueRow`'s own explicit `contentDescription` is built from `key`/`value`/`subLine` only — its
+  `trailingMarker` slot (which this screen uses, correctly per `Setup-Done.dc.html`'s *trailing*
+  placement of "verified"/`Fix`/`Install`) never reached it. Rather than misplace the status against
+  the board by moving it into `subLine`, each `trailingMarker` composable now carries its own
+  targeted fix: `ReadyRow.statusText` (non-interactive) gets a lone, non-merging
+  `Modifier.semantics { contentDescription = ... }`, swallowed cleanly into `KeyValueRow`'s existing
+  merge as one further list entry (no second boundary, no collision) — "Overnight, Battery exemption
+  skipped" + "verified" now read as one TalkBack announcement. `ReadyRow.actionLabel` (via
+  `TextAction`) is deliberately left alone: `TextAction`'s own `Modifier.clickable` +
+  `Modifier.semantics(mergeDescendants = true) {}` (`Rows.kt`) makes it a genuine merge boundary of
+  its own that stays a distinct child semantics node even nested inside `KeyValueRow`'s merge rather
+  than being absorbed — confirmed directly (the row's own merged node reports one child, and does
+  not gain "Fix" in its `ContentDescription`). This is documented as the *correct* shape, not a
+  residual gap: the row reads its facts as one stop, `Fix`/`Install` is reached and activated as its
+  own real button stop straight after — the two-stop pattern a screen reader needs to tell
+  "information" from "action" apart.
+- `readyRowDescription`'s own doc comment corrected to say what it actually is now: a convenience
+  string matching a *verified* row's full announcement, explicitly **not** what an amber
+  `actionLabel` row announces (that row's own `contentDescription` stops at `"$label, $value"`).
+- `R_226 the full label renders and never collides with the value at font scale 2_0` re-confirmed
+  unchanged (already used `useUnmergedTree = true` from the previous round).
+- `R_265 every row is a real TalkBack traversal stop` re-pointed at the native `KeyValueRow` node
+  (found via `onNodeWithContentDescription`, since this screen's own outer `Row`/testTag carries no
+  semantics any more). The two content-description tests were rewritten to assert the real, current
+  merged output — `"Input, USB Audio Device"` + `"verified"` as two content-description entries for
+  a status row (`assertContentDescriptionEquals` compares element-by-element, not a joined string);
+  `"Overnight, Battery exemption skipped"` alone for an action row, plus a direct assertion that
+  `Fix` is its own real, clickable button (`assertHasClickAction`).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.ReadyScreenTest"` —
+  **BUILD SUCCESSFUL**, all 7 tests PASSED.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- Full gate re-run together with the pass-3 fixes below in the same session (see that entry) —
+  `:app:testDebugUnitTest` (1058 tests, 0 failures), `build dependencyRules platformGuards`,
+  `-p buildSrc test`, `python tools\spec-check\spec_check.py` (8/8 PASS), `coverageMatrix`/
+  `coverageMatrixCheck` (185/419), `:app:assembleDebug` — all **BUILD SUCCESSFUL**.
+
+**Left open / not done:** none for R-264/R-265 themselves. The pass-3 register findings (R-280
+through R-285) the coordinator raised in the same round are a separate, following commit.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: ktlint)
 
 ### (pending) — ui-conformance WP2 · ktlint
