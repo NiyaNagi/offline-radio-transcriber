@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.capture.android.heartbeat.UncleanEndReport
 import org.ort.pipeline.CaptureStatus
+import org.ort.pipeline.capture.AsrAvailability
+import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 
 class StatusViewStateMapperTest {
@@ -65,5 +67,50 @@ class StatusViewStateMapperTest {
     fun `every shed level has a distinct, non-colour label`() {
         val labels = (0..5).map { StatusViewStateMapper.from(status(shedLevel = it)).shedLevelLabel }
         assertEquals(labels.toSet().size, labels.size, "every level must render distinguishably")
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 unset ASR and VAD availability read as not started, never as available`() {
+        val view = StatusViewStateMapper.from(status())
+        assertTrue(view.asrStatusLabel.contains("not started"), view.asrStatusLabel)
+        assertTrue(!view.asrStatusLabel.contains("available"), view.asrStatusLabel)
+        assertTrue(view.vadStatusLabel.contains("not started"), view.vadStatusLabel)
+        assertTrue(view.transcriptionUnavailableMessage != null)
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 unavailable ASR shows its reason`() {
+        val view = StatusViewStateMapper.from(
+            status(),
+            asrState = AsrAvailability.State.Unavailable("no model at /data/models/asr"),
+        )
+        assertTrue(view.asrStatusLabel.contains("no model at /data/models/asr"), view.asrStatusLabel)
+        assertEquals(
+            "No transcription model installed — transcripts will not appear",
+            view.transcriptionUnavailableMessage,
+        )
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 unavailable VAD shows its fallback reason`() {
+        val view = StatusViewStateMapper.from(
+            status(),
+            vadState = VadAvailability.State.StubWithReason("Silero model not installed"),
+        )
+        assertTrue(view.vadStatusLabel.contains("Silero model not installed"), view.vadStatusLabel)
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 an available ASR model clears the unavailable message`() {
+        val view = StatusViewStateMapper.from(
+            status(),
+            asrState = AsrAvailability.State.Available("distil-small.en"),
+        )
+        assertTrue(view.asrStatusLabel.contains("distil-small.en"), view.asrStatusLabel)
+        assertNull(view.transcriptionUnavailableMessage)
     }
 }

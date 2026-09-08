@@ -40,6 +40,18 @@ public fun NowScreen(status: StatusViewState, summary: NowSummaryViewState, modi
                 },
         )
 
+        // FR-UI-7 / audit F-004: when no ASR model is installed, transcripts silently never
+        // appear; say so here, in the header area, not only in the status detail rows below.
+        status.transcriptionUnavailableMessage?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .padding(bottom = OrtSpacing.md)
+                    .semantics { contentDescription = message },
+            )
+        }
+
         StatusScreen(state = status)
 
         Text(

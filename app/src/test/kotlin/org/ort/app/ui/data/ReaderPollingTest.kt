@@ -2,9 +2,11 @@ package org.ort.app.ui.data
 
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -18,6 +20,9 @@ import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.AsrAvailability
+import org.ort.pipeline.capture.VadAvailability
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -42,6 +47,42 @@ class ReaderPollingTest {
         // database here is what makes this test exercise the real read path rather than a second,
         // disconnected database.
         db = OrtDatabase.create(context)
+    }
+
+    @After
+    fun resetProcessWideAvailability() {
+        // AsrAvailability/VadAvailability are process-wide holders (not persisted, by design —
+        // see their own doc comments); reset so this test's fixtures never leak into another test.
+        AsrAvailability.reset()
+        VadAvailability.reset()
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 currentStatus reads the real ASR and VAD availability, not a healthy default`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        AsrAvailability.unavailable("no model at /data/models/asr")
+        VadAvailability.stub("Silero model not installed")
+
+        val view = ReaderPolling.currentStatus(context, "S1", startedAtWallMillis = 0L)
+
+        assertTrue(view.asrStatusLabel.contains("no model at /data/models/asr"))
+        assertTrue(view.vadStatusLabel.contains("Silero model not installed"))
+        assertEquals(
+            "No transcription model installed — transcripts will not appear",
+            view.transcriptionUnavailableMessage,
+        )
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 currentStatus reports not started when the service has not set availability yet`(): Unit = runTest {
+        db.sessionDao().insert(session())
+
+        val view = ReaderPolling.currentStatus(context, "S1", startedAtWallMillis = 0L)
+
+        assertTrue(view.asrStatusLabel.contains("not started"))
+        assertFalse(view.asrStatusLabel.contains("available ("))
     }
 
     private fun session(id: String = "S1") = SessionEntity(
