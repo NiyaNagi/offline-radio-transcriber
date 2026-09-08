@@ -178,14 +178,13 @@ public object OrtIcons {
     }
     public val edit: ImageVector = buildIcon("edit") { strokePath("M4 20h4l10-10-4-4L4 16v4z M12 8l4 4", 1.9f) }
 
-    private fun buildIcon(name: String, build: ImageVector.Builder.() -> Unit): ImageVector =
-        ImageVector.Builder(
-            name = name,
-            defaultWidth = 24.dp,
-            defaultHeight = 24.dp,
-            viewportWidth = 24f,
-            viewportHeight = 24f,
-        ).apply(build).build()
+    private fun buildIcon(name: String, build: ImageVector.Builder.() -> Unit): ImageVector = ImageVector.Builder(
+        name = name,
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply(build).build()
 
     private fun ImageVector.Builder.strokePath(d: String, strokeWidth: Float) {
         addPath(

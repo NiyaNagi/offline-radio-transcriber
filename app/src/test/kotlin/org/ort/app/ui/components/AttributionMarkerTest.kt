@@ -92,13 +92,14 @@ class AttributionMarkerTest {
     }
 
     @Test
-    fun `R_020 the shape-only marker renders no glyph, no state word and no confidence number as visible text`() {
+    fun `R_020 showConfidence false renders no glyph, no state word and no confidence number as visible text`() {
         composeTestRule.setContent {
             OrtTheme {
                 Column {
                     AttributionMarker(
                         attribution = Attribution.confirmed("W7NPC", 0.95),
                         modifier = Modifier.testTag("m"),
+                        showConfidence = false,
                     )
                 }
             }
@@ -110,6 +111,34 @@ class AttributionMarkerTest {
         composeTestRule.onNodeWithText("CONFIRMED").assertDoesNotExist()
         composeTestRule.onNodeWithText("0.95").assertDoesNotExist()
         composeTestRule.onNodeWithText("W7NPC").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the legacy default showConfidence renders a confidence chip beside the shape, matching today's callers`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    // No `showConfidence` argument — proves the default, which is what
+                    // LogScreen/SearchScreen/ThreadScreen/TransmissionDetailScreen (and their own
+                    // tests, outside this package) still rely on until they migrate to
+                    // AttributionRow.
+                    AttributionMarker(
+                        attribution = Attribution.confirmed("W7NPC", 0.95),
+                        modifier = Modifier.testTag("confirmed"),
+                    )
+                    AttributionMarker(
+                        attribution = Attribution.inferred("K7LWH", 0.82),
+                        modifier = Modifier.testTag("inferred"),
+                    )
+                    AttributionMarker(attribution = Attribution.unknown(), modifier = Modifier.testTag("unknown"))
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.95").assertExists()
+        composeTestRule.onNodeWithText("0.82").assertExists()
+        // UNKNOWN never carries a confidence, so none is fabricated even with showConfidence true.
+        composeTestRule.onNode(hasContentDescription("small dot", substring = true)).assertExists()
     }
 
     @Test

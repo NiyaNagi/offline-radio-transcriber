@@ -34,33 +34,54 @@ import org.ort.core.AttributionState
  *
  * There are two forms, on purpose:
  *
- * - [AttributionMarker] (this function) is the **shape only** — CONFIRMED a solid `accentGreen`
- *   circle, INFERRED a hollow ring, AMBIGUOUS a half-filled amber ring, UNKNOWN a smaller solid
- *   dot. It carries no text of its own. This is what the pre-R-020 component rendered as a
- *   glyph-and-label `Text` row beside the shape (`✓ CONFIRMED`, a confidence number even on
- *   CONFIRMED) — the artboard has never shown that; the artboard is shape + the caller's own
- *   mono callsign. Every caller today (`LogScreen`, `SearchScreen`, `ThreadScreen`,
- *   `TransmissionDetailScreen`) already appends its own callsign text right after this
- *   component, so keeping the signature unchanged and shape-only means those call sites now
- *   render correctly (shape + their callsign) instead of doubled (shape + glyph-label +
- *   confidence + their callsign) — see this package's `CHANGELOG.md` entry for exactly which of
- *   those screens should switch to [AttributionRow] to also pick up the score chip / alternate /
- *   per-state callsign colour R-020 specifies, since none of them may be edited from this
- *   package (ui-conformance-plan WP2 owns the `ui/components` package only).
+ * - [AttributionMarker] (this function) is the **shape**, plus a **migration shim**. The
+ *   artboard (`States.dc.html`) is shape + the caller's own mono callsign, with a score chip only
+ *   on INFERRED — never a number on CONFIRMED — but every caller today (`LogScreen`,
+ *   `SearchScreen`, `ThreadScreen`, `TransmissionDetailScreen`) and their own tests
+ *   (`LogScreenTest`, `TransmissionDetailScreenTest`, owned by WP5/WP6/WP7, not this package)
+ *   still expect the pre-R-020 behaviour of a visible confidence number next to the shape for
+ *   *any* state that carries one, including CONFIRMED. [showConfidence] (default `true`, so every
+ *   existing call site keeps its current behaviour unchanged) renders that confidence — in
+ *   [ScoreChip] style per guide §6.2, not the old plain `Text` — right after the shape when the
+ *   attribution carries one. **This parameter is a deprecated migration shim, not the spec**: the
+ *   spec form is guide §6.2 (a score chip only ever beside INFERRED), which [AttributionRow]
+ *   already implements correctly. Pass `showConfidence = false` for true shape-only rendering.
+ *   Callers should switch to [AttributionRow] and this parameter should come out once they do —
+ *   see this package's `CHANGELOG.md` entry for exactly which screens still need to switch, since
+ *   none of them may be edited from this package (ui-conformance-plan WP2 owns the
+ *   `ui/components` package only).
  * - [AttributionRow] is the **full form**: shape, callsign (styled per state), and — only where
  *   the guide says one belongs — a [ScoreChip] (INFERRED) or an `or QRF` alternate (AMBIGUOUS).
- *   New call sites (WP4-WP10) should prefer this one.
+ *   It does not call [AttributionMarker] or its `showConfidence` shim at all — it owns the
+ *   INFERRED-only chip natively, which is equivalent to the shim's `showConfidence = false` case
+ *   plus the callsign/colour/alternate behaviour the shim never had. New call sites (WP4-WP10)
+ *   should prefer this one.
  *
  * Both merge their accessibility semantics into one node (FR-A11Y-2): a screen reader hears the
  * shape, the state and, where present, the confidence or alternate — never a bare colour swatch.
  */
 @Composable
-public fun AttributionMarker(attribution: Attribution, modifier: Modifier = Modifier) {
-    AttributionShape(
-        state = attribution.state,
-        size = MARKER_ROW_SIZE,
-        modifier = modifier.semantics { contentDescription = legacyMarkerDescription(attribution) },
-    )
+public fun AttributionMarker(
+    attribution: Attribution,
+    modifier: Modifier = Modifier,
+    // Deprecated migration shim (KDoc above) — not the spec form (guide §6.2: a score chip only
+    // on INFERRED). Defaults true only so today's callers and their own tests keep today's
+    // behaviour unchanged until they migrate to AttributionRow; prefer that for any new call site.
+    showConfidence: Boolean = true,
+) {
+    Row(
+        modifier = modifier.semantics(mergeDescendants = true) {
+            contentDescription = legacyMarkerDescription(attribution)
+        },
+    ) {
+        AttributionShape(state = attribution.state, size = MARKER_ROW_SIZE)
+        if (showConfidence) {
+            attribution.confidence?.let { confidence ->
+                Spacer(modifier = Modifier.width(OrtSpacing.xs))
+                ScoreChip(confidence = confidence)
+            }
+        }
+    }
 }
 
 /**
@@ -202,12 +223,16 @@ private fun attributionRowDescription(attribution: Attribution, callsign: String
         append(", ")
         append(stateProse(attribution.state))
         val identity = callsign ?: if (attribution.state == AttributionState.UNKNOWN) "unknown station" else null
-        identity?.let { append(", "); append(it) }
+        identity?.let {
+            append(", ")
+            append(it)
+        }
         if (attribution.state == AttributionState.INFERRED) {
             attribution.confidence?.let { append(", confidence %.2f".format(it)) }
         }
         if (attribution.state == AttributionState.AMBIGUOUS && alternate != null) {
-            append(", or "); append(alternate)
+            append(", or ")
+            append(alternate)
         }
     }
 

@@ -402,10 +402,12 @@ private fun LogRowMarkerLine(state: LogRowViewState, modifier: Modifier = Modifi
                 )
             }
 
-            null -> state.attribution?.let { attribution -> AttributionRow(
-                attribution = attribution,
-                alternate = state.alternate,
-            ) }
+            null -> state.attribution?.let { attribution ->
+                AttributionRow(
+                    attribution = attribution,
+                    alternate = state.alternate,
+                )
+            }
         }
         state.badge?.let { badge ->
             val (label, kind) = when (badge) {

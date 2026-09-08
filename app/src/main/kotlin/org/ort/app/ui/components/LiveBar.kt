@@ -45,7 +45,10 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
     val palette = liveBarPalette(state)
     val description = buildString {
         append(state.label)
-        state.partialText?.let { append(": "); append(it) }
+        state.partialText?.let {
+            append(": ")
+            append(it)
+        }
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {

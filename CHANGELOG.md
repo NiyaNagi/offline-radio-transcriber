@@ -34,6 +34,65 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-08 (ui-conformance WP2: shared components)
 
+### (pending) — ui-conformance WP2 · legacy marker keeps confidence until callers migrate
+
+**Scope:** `:app` `ui/components/**` only (`AttributionMarker.kt`, `AttributionMarkerTest.kt`).
+Addendum to the WP2 entry directly below — same package, one commit later, at the coordinator's
+request so `main` stays green between merges while WP5/WP6/WP7 still own the callers that must
+migrate to `AttributionRow`.
+
+**Requirements/ACs:** R-020 (register row; refines, doesn't reopen, the fix below), FR-UI-4
+(confidence never fabricated — UNKNOWN still shows none even with the shim on).
+
+**What changed:**
+- **Constitution Check.** Principle II (Test-Backed Change): the shim is opt-out
+  (`showConfidence: Boolean = true`), documented as a deprecated migration path in KDoc (not the
+  spec — guide §6.2 is), and every branch has a test. Principle I (Uncertainty Is Content) still
+  holds: `showConfidence = true` never fabricates a number for UNKNOWN, which has none.
+- `AttributionMarker(attribution, modifier, showConfidence: Boolean = true)`: when `true` (the
+  default, unchanged call sites), a `ScoreChip`-styled confidence (guide §6.2's chip look, not the
+  old plain `Text`) renders after the shape whenever the attribution carries one — restoring the
+  visible number `LogScreen`/`SearchScreen`/`ThreadScreen`/`TransmissionDetailScreen` and their
+  own tests (`LogScreenTest`, `TransmissionDetailScreenTest`, both outside this package) still
+  expect, including on CONFIRMED. `showConfidence = false` is the true shape-only render R-020
+  specifies. `AttributionRow` is unchanged — it never called `AttributionMarker` or this shim; it
+  already owns the INFERRED-only chip (plus callsign/colour/alternate) natively, which is what
+  `showConfidence = false` covers only the shape-only half of.
+- `AttributionMarkerTest.kt`: the existing shape-only test now passes `showConfidence = false`
+  explicitly (it was proving that code path, which is no longer the default) and a new test —
+  `` `the legacy default showConfidence renders a confidence chip beside the shape, matching
+  today's callers` `` — proves the default restores `"0.95"`/`"0.82"` as visible text for
+  CONFIRMED/INFERRED, with UNKNOWN still showing nothing.
+- **Also fixed, found only by finally reaching it:** `:app:ktlintMainSourceSetCheck`/
+  `ktlintTestSourceSetCheck` had 20 pre-existing `standard:statement-wrapping`/
+  `import-ordering`/`no-unused-imports`/`function-signature` violations across `AttributionMarker.kt`,
+  `ActivityPatternChart.kt`, `Feedback.kt`, `Inspection.kt`, `LiveBar.kt`, `OrtIcons.kt`, `Rows.kt`
+  and two test files, present since the WP2 commit below but never surfaced because `:app:build`
+  had always stopped earlier at the two known `testDebugUnitTest` failures before Gradle's task
+  graph reached ktlint. Fixed with `.\gradlew.bat :app:ktlintFormat` (formatting-only; re-verified
+  with `:app:detekt`, `:app:testDebugUnitTest` and the full gate below afterward) — this is the
+  first time `build dependencyRules platformGuards` has actually gone green for WP2 end to end.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` — **304 of 304 passing** (303 from the WP2 commit + the
+  one new test this addendum adds; the two previously-failing tests, `LogScreenTest.FR_UI_4 the
+  confidence value is shown as visible text...` and `TransmissionDetailScreenTest.FR_UI_4 the
+  confidence value is shown as visible text in the header...`, now pass unmodified).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `dependencyRules:
+  OK — every edge is permitted by the design graph.` `platformGuards: OK.`
+- `.\gradlew.bat :app:detekt`, `python tools\spec-check\spec_check.py` (8/8 PASS),
+  `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered), `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation, up to date), `.\gradlew.bat -p buildSrc test`,
+  `.\gradlew.bat :app:assembleDebug` — all **BUILD SUCCESSFUL**, re-run after the `ktlintFormat`
+  pass.
+
+**Left open / not done:**
+- The four callers named in the WP2 entry below (and their two `FR_UI_4` tests) still need to
+  migrate to `AttributionRow` and, when they do, drop their reliance on `showConfidence`'s default
+  — at which point this shim's default should flip to `false` (or the parameter should come out
+  entirely) and this addendum's two tests should be revisited by whoever removes it. Not done here
+  since none of those files are in this package.
+
 ### (pending) — ui-conformance WP2 · shared components: marker, rows, live bar, chips, banners, sheet, chart, icons
 
 **Scope:** `:app` `ui/components/**` only (`AttributionMarker.kt`, `ActivityPatternChart.kt`

@@ -24,13 +24,13 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import java.time.DayOfWeek
-import kotlin.math.roundToInt
 import org.ort.app.ui.data.ActivityBucket
 import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
+import java.time.DayOfWeek
+import kotlin.math.roundToInt
 
 private val CHART_HEIGHT = 38.dp
 private val BAR_GAP = 1.5.dp

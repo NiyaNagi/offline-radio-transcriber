@@ -223,9 +223,14 @@ public data class LatticeSlotViewState(
 public fun LatticeSlot(state: LatticeSlotViewState, modifier: Modifier = Modifier) {
     val scoreColor = if (state.belowThreshold) OrtColors.accentAmber else OrtColors.scoreGood
     val description = buildString {
-        append(state.unit); append(", score "); append("%.2f".format(state.score))
+        append(state.unit)
+        append(", score ")
+        append("%.2f".format(state.score))
         if (state.belowThreshold) append(", below threshold")
-        state.alternate?.let { append(", alternate "); append(it) }
+        state.alternate?.let {
+            append(", alternate ")
+            append(it)
+        }
     }
     Column(
         modifier = modifier

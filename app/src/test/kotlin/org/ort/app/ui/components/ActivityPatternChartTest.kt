@@ -5,7 +5,6 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import java.time.DayOfWeek
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -13,6 +12,7 @@ import org.ort.app.ui.data.HourActivityBucket
 import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
+import java.time.DayOfWeek
 
 /**
  * FR-UI-11/FR-UI-12 (build-plan P17; R-021, ui-conformance-plan WP2): the activity-by-hour
