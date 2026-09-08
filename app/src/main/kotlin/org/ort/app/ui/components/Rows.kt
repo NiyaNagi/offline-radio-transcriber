@@ -329,7 +329,10 @@ public fun KeyValueRow(
                     append(key)
                     append(", ")
                     append(value)
-                    subLine?.let { append(", "); append(it) }
+                    subLine?.let {
+                        append(", ")
+                        append(it)
+                    }
                 }
             },
     ) {
@@ -866,8 +869,14 @@ public fun RejectedRow(
                     append(frequencyLabel)
                     append(", rejected, ")
                     append(reason)
-                    why?.let { append(", "); append(it) }
-                    durationLabel?.let { append(", "); append(it) }
+                    why?.let {
+                        append(", ")
+                        append(it)
+                    }
+                    durationLabel?.let {
+                        append(", ")
+                        append(it)
+                    }
                 }
             },
     ) {

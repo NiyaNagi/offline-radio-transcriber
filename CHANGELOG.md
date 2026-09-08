@@ -32,6 +32,35 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: ktlint)
+
+### (pending) — ui-conformance WP2 · ktlint
+
+**Scope:** `:app` `ui/components/Rows.kt` only. `git merge --ff-only main` run first (fast-forward,
+`d79fc28..1b3f645`, none of this package's files touched by the merge — main's coverage-matrix
+regeneration and register update, plus WP9's own work). No rebase, no stash, no `--stop`.
+
+**Requirements/ACs:** none new — a lint-only fix for the previous commit's own diff. Main's gate
+reported 9 `ktlintMainSourceSetCheck` violations in `Rows.kt` after that commit merged.
+
+**What changed:**
+- Ran `.\gradlew.bat :app:ktlintFormat`, then confirmed with `git status --short` that it touched
+  exactly one file — `Rows.kt` — nothing outside this package. The diff is pure reformatting, no
+  behavioural change: two single-line `?.let { append(", "); append(it) }` blocks (`KeyValueRow`'s
+  `subLine` and `RejectedRow`'s `why`/`durationLabel`, both added by the previous commit) had their
+  two statements expanded onto separate lines inside the `let` body, matching this project's
+  ktlint style for multi-statement lambda blocks.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**. Confirmed genuinely clean,
+  not just a passing task: `app/build/reports/ktlint/ktlintMainSourceSetCheck/
+  ktlintMainSourceSetCheck.txt` and `app/build/reports/detekt/detekt.txt` are both **0 bytes**.
+
+**Left open / not done:** none — this closes the one item the coordinator flagged. WP2's
+component package has no further known open items unless a validator reopens one.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: nameable drill-in kebab; log row description carries the attribution; rejected-row duration; provisional italics; sheet focus trap; key-value traversal stop)
 
 ### (pending) — ui-conformance WP2 · nameable drill-in kebab; log row description carries the attribution
