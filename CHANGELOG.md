@@ -10326,6 +10326,79 @@ rendered "not measured" or omitted rather than invented) and IV (liveness from h
 
 ## 2026-09-08 (ui-conformance WP7: search)
 
+### (pending) — ui-conformance WP7 · filters sheet traps system back
+
+**Scope:** `:app` only — `ui/screens/SearchContent.kt` (new `BackHandler`) and a new test file,
+`ui/screens/SearchContentBackHandlerTest.kt`. `git merge main` first (a real, non-fast-forward
+merge — main had diverged with WP2/WP3/WP4/WP5/WP8/lexicon work since `e4bdd05`; one trivial
+conflict in the generated `results/coverage-matrix.md`, resolved by taking main's row and then
+regenerating the file via `coverageMatrix`, which reproduced byte-identical content, confirming
+the resolution). Addresses R-333's Search half from `results/ui-audit/register.md` (the host half
+already fixed by WP3, commit `d021fd4`).
+
+**Requirements/ACs:** R-333 (system back must be predictable and never silently exit a screen with
+an open overlay — the register's own wording, established for the drawer/drill-in case WP3 fixed
+in `OrtNavHost.kt`; this closes the same class for Search's own filters sheet).
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural): `SearchContent`'s
+  `filtersSheetOpen` is local, screen-owned state the host (`OrtNavHost.kt`) has no visibility
+  into — its own `BackHandler` correctly stays scoped to what it *does* own (the drawer, drill-in
+  navigation) rather than reaching into every screen's private state, so each screen with its own
+  dismissable overlay is responsible for its own back interception. This is the second `BackHandler`
+  in the app (`OrtNavHost.kt`'s own doc comment, before this: "this app installs no other
+  `BackHandler`") — both now correctly `enabled` only while their own condition holds, so neither
+  intercepts back anywhere it shouldn't.
+- `SearchContent.kt` gained `BackHandler(enabled = filtersSheetOpen) { filtersSheetOpen = false }`,
+  declared right beside the `filtersSheetOpen` state it closes over — the filters sheet is a plain
+  overlay `Box` (`FiltersSheetOverlay`, `SearchScreen.kt`), never a `ModalBottomSheet` (which would
+  have handled this itself), so without this, system back with the sheet open fell through the
+  host's own handler entirely (it knows nothing about this screen's local state) and exited Search
+  altogether instead of just closing the sheet.
+- **New test file, not an addition to `SearchContentTest.kt`.** A real `OnBackPressedDispatcher`
+  dispatch needs a genuine `Activity` behind the composition to call it through —
+  `SearchContentTest.kt`'s own `createComposeRule()` exposes no such handle. Matches this exact
+  package's own established precedent (`LogAndThreadContentActivityTest.kt`, for an unrelated
+  reason — a real `SaveableStateRegistry`): `createAndroidComposeRule<ComponentActivity>()` hosts
+  the content inside a real, `ActivityScenario`-backed `Activity`, whose `onBackPressedDispatcher`
+  the test calls directly — the same mechanism a real system back gesture drives, not a simulated
+  substitute for it.
+- **Test:** `R_333_search_sheet_back` (`SearchContentBackHandlerTest.kt`) — opens the filters sheet
+  via the `Filters` chip, dispatches back through `composeTestRule.activity.onBackPressedDispatcher
+  .onBackPressed()`, and asserts the sheet is gone while the query field (`"Search text"`) is still
+  present in the same composition — proving system back closed the sheet, not the whole screen.
+- **`DebugSearchOverride`/`SearchPolling.search()`'s new `search-unavailable`-scenario guard
+  (WP4, commit `bdcb168`) — reviewed in passing, per instruction, and kept: not yet in this
+  worktree.** `git merge main` (`e8f9eb6`/`b0911bc`, this round's tip) does not yet contain
+  `bdcb168` — confirmed directly (`git merge-base --is-ancestor bdcb168 HEAD` exits 1; `bdcb168`
+  is reachable only from a sibling worktree branch, `worktree-agent-ade4f02b8a81975b7`, not yet
+  merged into `main`). Nothing to review or keep-or-revert here yet; will read it against
+  `SearchPolling.search()`'s existing fts5-degrade contract (never silently drop a query term, only
+  degrade for the specific, known fts5-missing case) the next round this package touches `main`
+  after it lands.
+
+**Verified** (scoped gate, per the coordinator's load policy):
+- `git merge main` — real merge, `e8f9eb6` (WP3's R-333 host half/R-334/R-133) now an ancestor;
+  one conflict in `results/coverage-matrix.md`, resolved and confirmed byte-identical to a fresh
+  `coverageMatrix` regeneration.
+- `.\gradlew.bat :app:testDebugUnitTest --tests
+  "org.ort.app.ui.screens.SearchContentBackHandlerTest" --tests
+  "org.ort.app.ui.screens.SearchContentTest"` — **BUILD SUCCESSFUL, 6 tests, 0 failed**.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both against real sources.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 191 covered (unchanged — R-333 is a register
+  finding, not an `FR-*`/`AC-*`/`NFR-*` id this tool tracks).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 191 of 419.
+
+**Left open / not done:**
+- `bdcb168`'s `DebugSearchOverride`/`SearchPolling.search()` guard is not yet reviewed for real
+  (not yet merged into this worktree) — see above; picked up next round.
+- Every gap the earlier WP7 entries below already list (R-373 routed to and now fixed by WP2 —
+  register confirms, `ac48941` — WP3's still-doubled header for `SEARCH`, `RecentSearches`'
+  single-term label, sheet drag-to-dismiss) is unchanged by this addendum.
+
 ### (pending) — ui-conformance WP7 · frequency-and-callsign query routing, real widen options, locale day headers, row-width parity diagnosis
 
 **Scope:** `:app` only — `ui/data/SearchViewData.kt`, `ui/screens/SearchScreen.kt`, and their tests
