@@ -183,6 +183,12 @@ are individually green.*
   `AttributionMarker`'s merged `contentDescription`, never as visible text in the Log row or
   Detail header — fixed in `AttributionMarker.kt`; see the 2026-09-07 (audit — F-012) CHANGELOG
   entry.
+  **Correction (2026-09-08, audit F-015):** `Log.dc.html`'s rejected-row dimming, "new" badge and
+  filter chips, and `Detail.dc.html`'s playback scrubber were unrecorded divergences from the
+  artboards. Recorded, not built — `design/canvas/README.md` (new) is the standing register; the
+  scrubber (and even a cheap progress-text half of it) cannot be built without extending
+  `TransmissionAudioPlayer`'s API, which exposes no position/duration — see the 2026-09-08
+  (audit — F-015) CHANGELOG entry.
 - [x] **P15 · Search and threads** *(`:app`, `:data`)* — done 2026-09-08. `SearchDao` (a new DAO
   file, per the prompt, to stay conflict-free with concurrent P17) queries the FTS5 index P5 built
   and nothing queried until now, with callsign/frequency/date filters; `SearchScreen`/`ThreadScreen`

@@ -112,6 +112,44 @@ takes whatever string is picked); this is a UI/UX judgment call, not re-litigate
 future session could restrict picking to exact-callsign matches only if that proves confusing in
 practice. FR-UI-8's inspection surface (P16's other reported gap — no writer for lattice/candidate
 rows) is untouched; that is a separate finding.
+## 2026-09-08 (audit — F-015)
+
+### (pending) — audit F-015 · design-canvas divergences named as recorded deferrals; no scrubber built
+
+**Scope:** `design/canvas/README.md` (new), `spec/build-plan.md` (P14 progress note only).
+**Requirements/ACs:** FR-UI-5 (playback); none of the other elements below are named in the
+functional spec, so they are cosmetic (audit class D) rather than a requirement gap.
+**What changed:** `results/audit-2026-09-07.md`'s F-015 found four unrecorded divergences between
+the design artboards and the shipped Compose screens: `Log.dc.html`'s rejected-row dimming and
+"new" badge, filter chips on the Log screen itself, and `Detail.dc.html`'s playback
+waveform/scrubber (`TransmissionDetailScreen.kt`'s `PlaybackSection` has a text "▶ Play" only). The
+register's own fix sketch says recording is acceptable, which is what this change does:
+`design/canvas/README.md` is a new standing "implemented vs artboard" table, one row per artboard
+with a real Compose build, naming every element left out and where it is deferred to — the four
+F-015 items above, plus the previously-scattered-across-CHANGELOG deferrals gathered into one
+place: the Now screen's activity chart and digest (M9), Log's QSO-header thread grouping (M6) and
+inline gap row (P17 follow-up), Detail's lattice/per-prior panel (built as text instead, P16), the
+drawer's live badge counts and per-category storage footer (F-020, open), and the light theme (no
+artboard exists to derive one from — not tied to any milestone).
+
+Before recording the scrubber as a pure deferral, this session checked whether the cheap real half
+— a playback progress/position *text* indicator, no seeking — was buildable without touching the
+player. It is not: `TransmissionAudioPlayer` (`app/src/main/kotlin/org/ort/app/ui/audio/
+TransmissionAudioPlayer.kt`) exposes only `suspend fun play(transmissionId): PlaybackOutcome`
+(`Played` / `Unavailable(reason)`) and `fun stop()` — no position, no duration, no in-progress
+state — and neither `RealTransmissionAudioPlayer` (a `MODE_STATIC` `AudioTrack`, fire-and-forget
+once `play()` returns) nor `FakeTransmissionAudioPlayer` tracks one either. Per the constitution's
+"stop rather than half-finish": extending that interface (and both implementations, plus a new
+behavioural-fake capability) is a larger, separate piece of work than this finding's fix, so
+`PlaybackSection` is unchanged and no progress text was added.
+**Verified:** no test-affecting code changed — `PlaybackSection` and `TransmissionAudioPlayer` are
+untouched. Read `design/canvas/README.md`'s own tables for the (manual) cross-check against
+`LogScreen.kt`, `TransmissionDetailScreen.kt`, `NowScreen.kt`, and the two `.dc.html` artboards
+named in the finding. `./gradlew :app:test` unaffected (no `:app` source changed).
+**Left open / not done:** the scrubber and the progress-text half of it remain unbuilt — genuinely
+deferred, with no P-number, until a prompt extends `TransmissionAudioPlayer` with a position API.
+Rejected-row dimming, the "new" badge, and Log's filter chips remain unbuilt (class D — not named
+in the functional spec).
 
 ---
 
