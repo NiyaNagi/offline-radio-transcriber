@@ -13,7 +13,6 @@ import org.ort.data.entity.StationEntity
 import org.ort.data.entity.StationIdentityHistoryEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintEntity
-import java.time.DayOfWeek
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -621,4 +620,3 @@ public object FrequencyPolling {
             SessionWindow(startedAtUtc = session.startedAt, endedAtUtc = session.endedAt, gaps = gaps)
         }
 }
-

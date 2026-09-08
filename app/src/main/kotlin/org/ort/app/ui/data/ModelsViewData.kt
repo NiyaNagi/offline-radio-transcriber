@@ -423,7 +423,12 @@ public object ModelsController {
             is LexiconImportResult.Accepted ->
                 LexiconImportViewState.Accepted(result.fileName, checks, result.version, result.recordCount)
             is LexiconImportResult.Rejected ->
-                LexiconImportViewState.Rejected(result.fileName, checks, result.reason, result.stillActive?.let(::activeLexiconLabel))
+                LexiconImportViewState.Rejected(
+                    result.fileName,
+                    checks,
+                    result.reason,
+                    result.stillActive?.let(::activeLexiconLabel),
+                )
         }
     }
 

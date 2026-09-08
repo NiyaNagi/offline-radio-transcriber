@@ -98,6 +98,12 @@ import org.robolectric.RobolectricTestRunner
  * and `NowContent`'s own unconditional ones — only for the one case that actually needs real seeded
  * row data to reach its drill-in.
  */
+/** Shorthand for the one [AndroidComposeTestRule] shape this whole file builds — the fully
+ * spelled-out generic (`AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>,
+ * ReaderActivity>`) does not fit a single line at any indent this file uses (ktlint's own
+ * 120-column limit), and a receiver of that exact length has no shorter, still-explicit spelling. */
+private typealias ReaderComposeRule = AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>, ReaderActivity>
+
 @RunWith(RobolectricTestRunner::class)
 class ReaderActivityDestinationSmokeTest {
 
@@ -332,7 +338,7 @@ class ReaderActivityDestinationSmokeTest {
     private fun runReaderActivity(
         destination: ReaderDestination,
         sessionId: String? = null,
-        body: (rule: AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>, ReaderActivity>) -> Unit,
+        body: (rule: ReaderComposeRule) -> Unit,
     ) {
         val activityRule = ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId))
         val rule = AndroidComposeTestRule(activityRule) { r ->
@@ -401,10 +407,7 @@ class ReaderActivityDestinationSmokeTest {
      * allowance `OrtNavHostDestinationDispatchTest.waitUntilTextExists` already makes for the same
      * reason.
      */
-    private fun AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>, ReaderActivity>.waitUntilContentDescriptionExists(
-        substring: String,
-        timeoutMillis: Long = 15_000,
-    ) {
+    private fun ReaderComposeRule.waitUntilContentDescriptionExists(substring: String, timeoutMillis: Long = 15_000) {
         waitUntil(timeoutMillis) {
             onAllNodes(hasContentDescription(substring, substring = true)).fetchSemanticsNodes().isNotEmpty()
         }
