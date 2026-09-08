@@ -195,9 +195,14 @@ public fun StationDetailScreen(
     onOpenPattern: () -> Unit = {},
     onOpenIdentity: () -> Unit = {},
     onViewAllOvers: () -> Unit = {},
+    // R-017: `OrtNavHost` (WP3) does not render a second header over this drill-in's own — this
+    // screen's `DrillInHeader` is the only one drawn — but it does not yet know the operator's
+    // real navigation origin either, so it hands nothing down. Defaulted so `OrtNavHost.kt`
+    // (WP10 is editing it concurrently) compiles unchanged; WP3 wires the true origin afterwards.
+    backLabel: String = "Stations",
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = "Stations", onBack = onBack, onKebab = onOpenIdentity)
+        DrillInHeader(parentLabel = backLabel, onBack = onBack, onKebab = onOpenIdentity)
         // A single top-level LazyColumn — the header/facts/chart section as its first item, then
         // one item per recent over. A `verticalScroll` Column was tried here first and measured
         // fine, but a `clickable` Row nested inside it silently swallowed its own tap in this

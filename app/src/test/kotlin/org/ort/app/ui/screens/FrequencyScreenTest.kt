@@ -205,4 +205,37 @@ class FrequencyScreenTest {
 
         assert(openedChange)
     }
+
+    @Test
+    fun `R_017 backLabel defaults to Frequencies, matching OrtNavHost's own hardcoded label today`() {
+        val state = FrequencyDetailViewState(
+            frequencyHz = 146_960_000L,
+            label = "146.960 MHz",
+            transmissionCount = 0,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Frequencies").assertExists()
+    }
+
+    @Test
+    fun `R_017 backLabel is a real parameter WP3 can wire to the true navigation origin`() {
+        val state = FrequencyDetailViewState(
+            frequencyHz = 146_960_000L,
+            label = "146.960 MHz",
+            transmissionCount = 0,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { FrequencyDetailScreen(state = state, onBack = {}, backLabel = "Search") }
+        }
+
+        composeTestRule.onNodeWithText("Search").assertExists()
+        composeTestRule.onNodeWithText("Frequencies").assertDoesNotExist()
+    }
 }

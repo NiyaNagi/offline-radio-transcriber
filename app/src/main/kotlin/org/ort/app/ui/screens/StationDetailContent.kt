@@ -35,6 +35,10 @@ public fun StationDetailContent(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenTransmission: (String) -> Unit = {},
+    // R-017: passed straight through to `StationDetailScreen`'s own `backLabel` — see that
+    // composable's doc comment. Defaulted so `OrtNavHost.kt` compiles unchanged; WP3 wires the
+    // real navigation origin afterwards.
+    backLabel: String = "Stations",
 ) {
     var sub by remember(stationId) { mutableStateOf(StationSubScreen.NONE) }
     var detail by remember(stationId) { mutableStateOf<StationDetailViewState?>(null) }
@@ -82,6 +86,7 @@ public fun StationDetailContent(
                     onOpenTransmission = onOpenTransmission,
                     onOpenPattern = { sub = StationSubScreen.PATTERN },
                     onOpenIdentity = { sub = StationSubScreen.IDENTITY },
+                    backLabel = backLabel,
                 )
             } else {
                 LoadingLine(modifier)
