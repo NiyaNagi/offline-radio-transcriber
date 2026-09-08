@@ -28,6 +28,13 @@ public object ReprocessStatus {
      * corrected = 0` guard (build-plan P16, FR-SPK-7) — unchanged, relied on rather than
      * duplicated — structurally refuses to let any pass overwrite its locked attribution, so such a
      * transmission can contribute to [transcriptsChanged] but never to [attributionsChanged].
+     *
+     * **register R-290**: [failed] is a count; [failureReasons] is *why*, so a status surface (e.g.
+     * `Improve-Done`) can say "3 could not be improved — expected retained audio at … (and 2
+     * others)" without a separate `:data` query. Distinct messages only, first-seen order, capped
+     * implicitly by however many distinct causes a real run actually hits — most runs hit one or
+     * zero. A missing-audio item is never worse than before the run started (FR-REP-11): its
+     * previous current transcript/attribution stay exactly as they were.
      */
     public data class Summary(
         public val total: Int,
@@ -36,6 +43,7 @@ public object ReprocessStatus {
         public val rejected: Int = 0,
         public val failed: Int = 0,
         public val correctedCount: Int = 0,
+        public val failureReasons: List<String> = emptyList(),
     ) {
         /** Every transmission whose stored record is observably different after the run. */
         public val changedCount: Int get() = transcriptsChanged + attributionsChanged

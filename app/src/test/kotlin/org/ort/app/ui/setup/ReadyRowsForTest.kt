@@ -17,6 +17,7 @@ class ReadyRowsForTest {
         onFixLevel = {},
         onFixOvernight = {},
         onFixRadio = {},
+        onChangeRadio = {},
         onInstallModel = {},
     )
 
@@ -89,6 +90,31 @@ class ReadyRowsForTest {
         assertTrue(row.value.contains("145.230"))
     }
 
+    /** R-285 (validator pass 3): an `ok` row must still offer a way back into S09..S11 — before
+     * this, choosing "no radio" left the row with no action at all. */
+    @Test
+    fun `R_285 choosing no radio still offers Change, wired to onChangeRadio not onFixRadio`() {
+        var changed = false
+        var fixed = false
+        val actions = ReadyActions(
+            onFixInput = {},
+            onFixLevel = {},
+            onFixOvernight = {},
+            onFixRadio = { fixed = true },
+            onChangeRadio = { changed = true },
+            onInstallModel = {},
+        )
+        val store = InMemorySetupStore(radioChoice = RadioChoice.NONE, manualFrequencyHz = 145_230_000L)
+        val row = readyRowsFor(store, false, RigStatus.State.Absent, AsrAvailability.State.NotYetChecked, actions)
+            .first { it.label == "Radio" }
+
+        assertEquals("Change", row.actionLabel)
+        assertEquals(null, row.statusText)
+        row.onAction?.invoke()
+        assertTrue(changed)
+        assertFalse(fixed)
+    }
+
     @Test
     fun `R_084 a chosen rig with no real rig support renders amber and honest, never a fabricated connection`() {
         val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
@@ -107,6 +133,35 @@ class ReadyRowsForTest {
 
         assertTrue(row.ok)
         assertEquals("verified", row.statusText)
+    }
+
+    /** R-285 (validator pass 3): a genuinely connected rig is still `ok` -- no `Fix` makes sense --
+     * but must still offer `Change`, the one row in this whole screen where [ReadyRow.statusText]
+     * and [ReadyRow.actionLabel] are both set together ([radioRow]'s own doc comment), wired to
+     * [ReadyActions.onChangeRadio], not the broken-rig [ReadyActions.onFixRadio]. */
+    @Test
+    fun `R_285 a genuinely connected rig also offers Change, wired to onChangeRadio not onFixRadio`() {
+        var changed = false
+        var fixed = false
+        val actions = ReadyActions(
+            onFixInput = {},
+            onFixLevel = {},
+            onFixOvernight = {},
+            onFixRadio = { fixed = true },
+            onChangeRadio = { changed = true },
+            onInstallModel = {},
+        )
+        val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
+        val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
+        val connected = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band))
+        val row = readyRowsFor(store, false, connected, AsrAvailability.State.NotYetChecked, actions)
+            .first { it.label == "Radio" }
+
+        assertEquals("verified", row.statusText)
+        assertEquals("Change", row.actionLabel)
+        row.onAction?.invoke()
+        assertTrue(changed)
+        assertFalse(fixed)
     }
 
     @Test

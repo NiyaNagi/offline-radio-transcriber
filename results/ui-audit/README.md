@@ -194,6 +194,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `input-mismatch` | `InputStatus.Mismatch` — built-in mic routed instead of the chosen USB device (F1, register R-113). Capture is **not** marked running — see "Known gaps" below. |
 | `setup-verified` | Seeds `org.ort.app.setup`'s real `SharedPreferences` (through `SharedPreferencesSetupStore`, not a duplicated key set) so `SetupStateMachine.stepFor` lands at `SetupStep.READY` (S12) directly, its Level row already green (register R-227) — see "Reaching S07/S12" below. |
 | `setup-level` | The same verified-input base as `setup-verified`, but `levelInBand`/`levelPeakDbfs` are left honestly unset so `stepFor` lands at `SetupStep.LEVEL` (S07) directly, from a cold launch (register R-264) — see "Reaching S07/S12" below. |
+| `setup-radio` | The same verified-input/level/overnight base as `setup-verified`, but `radioChoice`/`manualFrequencyHz` are left honestly unset (explicitly cleared — `SharedPreferences` persist across scenario loads, unlike `:data`) so `stepFor` lands at `SetupStep.RADIO` (S09) directly, from a cold launch (register R-285) — see "Reaching S07/S09/S12" below. |
 | `clock-dst` | F14 (`Fail-Clock.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Clock`. No runtime signal exists; see "Known gaps" below. |
 | `usb-permission` | F16 (`Fail-Usb.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Usb`. No runtime signal exists. |
 | `interrupted-pass` | F17 (`Fail-Interrupted.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Interrupted`. No runtime signal exists. |
@@ -203,15 +204,18 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `calibration` | F22 (`Fail-Calibration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Calibration`, a five-point reliability scatter. No runtime signal exists. |
 | `lexicon-corrupt` | R-154, F12 (`Fail-Lexicon.dc.html`), FR-LEX-12/FR-LEX-30/FR-AST-2 — unlike every scenario above, this one is **not** a `DebugFailureOverride` stand-in: it seeds a real "previous" `lexicon_version` row (2026.08 · 1,104,208 records), then calls the *real* `org.ort.app.ui.data.ModelsController.installLexicon` against a genuinely corrupt bundled asset (`app/src/debug/assets/lexicon-corrupt/lexicon-2026.09.tsv` — a manifest declaring 1,122,410 records whose checksum matches neither the 2 data rows actually present nor their count), through the new `:lexicon` package `org.ort.lexicon.import` (`LexiconImportValidator`/`LexiconImportInstaller`). The genuine `LexiconImportResult.Rejected` this produces is stored in `org.ort.app.debug.LexiconCorruptScenario.lastResult` — see "Known gaps" below for why nothing renders it yet. |
 
-### Reaching S07/S12 (register R-227, R-264)
+### Reaching S07/S09/S12 (register R-227, R-264, R-285)
 
-Before `setup-verified`, S07 (`Setup-Level.dc.html`) and S12 (`Setup-Done.dc.html`) were
-unreachable on this AVD at all: `SetupStateMachine.stepFor` resumes at `SetupStep.INPUT` until
-`SetupStore.inputVerified` is real, and the only way that becomes real is S05's own 30 s
-raw-signal listen (`RealRouteCheck`) actually hearing something — which the AVD's silent virtual
-mic never does. `setup-verified`/`setup-level` seed the real `SetupStore` preferences (not a fake)
-so setup's own state machine resumes at S12/S07 respectively, no `run-as`/manual `SharedPreferences`
-edit needed.
+Before `setup-verified`, S07 (`Setup-Level.dc.html`), S09 (`Setup-Rig.dc.html`) and S12
+(`Setup-Done.dc.html`) were unreachable on this AVD at all: `SetupStateMachine.stepFor` resumes at
+`SetupStep.INPUT` until `SetupStore.inputVerified` is real, and the only way that becomes real is
+S05's own 30 s raw-signal listen (`RealRouteCheck`) actually hearing something — which the AVD's
+silent virtual mic never does. `setup-verified` itself also resolves `radioChoice` up front (`NONE`,
+a manual frequency), so it alone never stops at S09 either — not even via S12's own Radio row,
+since that row previously had no action at all once a choice already existed (R-285's own finding,
+now fixed by the `Change` action `readyRowsFor`'s `radioRow` adds). `setup-verified`/`setup-level`/
+`setup-radio` seed the real `SetupStore` preferences (not a fake) so setup's own state machine
+resumes at S12/S07/S09 respectively, no `run-as`/manual `SharedPreferences` edit needed.
 
 **R-264 (V7 accessibility pass) found the recipe below this line used to launch — `adb shell am
 start -n org.ort.app/org.ort.app.ui.setup.SetupActivity` — throws a `SecurityException` on a real
@@ -233,6 +237,10 @@ $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.
 
 # S07 (Level), reached directly rather than via S12's own Fix row:
 .\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-level
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/.MainActivity
+
+# S09 (Rig), reached directly rather than via S12's own Radio row's new Change action:
+.\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-radio
 $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/.MainActivity
 ```
 

@@ -1,10 +1,12 @@
 package org.ort.app.ui.setup
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -14,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.InProgressRing
 import org.ort.app.ui.components.OrtIcons
@@ -40,6 +43,14 @@ import org.ort.app.ui.theme.OrtType
  * [RouteMismatchScreen] already offers for a route mismatch — this is the same kind of stuck state,
  * just discovered differently), and [onBack] is now always supplied — a genuinely halted
  * verification is exactly the situation where "the back chevron must always exist" matters most.
+ *
+ * R-284 (validator pass 3): `Setup-Verify.dc.html` draws a `Choose a different input` link under
+ * the disabled `Continue` for the whole time a check is still in progress (up to the 30 s signal
+ * wait), not only after [RouteCheckState.TimedOut] — an operator who already knows the wrong
+ * device is selected should not have to sit out the full timeout first. Built directly here rather
+ * than via [TextAction] (`Controls.kt`, WP2's file): the board's own colour for this link,
+ * `oklch(0.66 0.008 250)`, is [OrtColors.textMuted] — noticeably dimmer than [TextAction]'s fixed
+ * `accent/green`, which has no enabled-but-muted mode of its own to select.
  */
 @Composable
 public fun VerifyScreen(
@@ -84,6 +95,11 @@ public fun VerifyScreen(
                     enabled = allPassed,
                     modifier = Modifier.fillMaxWidth().testTag("setup-verify-continue"),
                 )
+                // R-284: the same "wrong device, do not make me wait out the timeout" escape the
+                // board offers for the whole in-progress window, not only once TimedOut arrives.
+                if (!allPassed) {
+                    ChooseADifferentInputLink(onClick = onChooseAnotherInput)
+                }
             }
         },
     ) {
@@ -122,6 +138,24 @@ public fun VerifyScreen(
             done = RouteCheckStage.RESAMPLER in passed,
             testTag = "setup-verify-check-resampler",
         )
+    }
+}
+
+/** R-284's own doc comment (above, on [VerifyScreen]) explains why this is a lone `Text` rather
+ * than [TextAction] — [OrtColors.textMuted], `Setup-Verify.dc.html`'s own colour for this link,
+ * `Role.Button` + a real 44dp target either way. */
+@Composable
+private fun ChooseADifferentInputLink(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .heightIn(min = 44.dp)
+                .clickable(onClickLabel = "Choose a different input", role = Role.Button, onClick = onClick)
+                .testTag("setup-verify-choose-different"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text = "Choose a different input", style = OrtType.textAction, color = OrtColors.textMuted)
+        }
     }
 }
 

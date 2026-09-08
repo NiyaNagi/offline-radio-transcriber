@@ -13,7 +13,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.failures.DebugFailureOverride
-import org.ort.app.ui.failures.FailurePresentation
 import org.ort.app.ui.failures.FailureSignals
 import org.ort.app.ui.failures.RecoveryAnnouncer
 import org.ort.app.ui.setup.SetupStateMachine
@@ -45,6 +44,11 @@ import java.io.File
  * attribution (constitution I), that the tag-and-clear between scenario loads actually clears, and
  * that no scenario references anything outside its own fixture. House style follows
  * `app/src/test/kotlin/org/ort/app/ui/data/ReaderPollingTest.kt`.
+ *
+ * WP11b's seven `DebugFailureOverride`-only scenarios (register R-100) live in
+ * [FailureOverrideScenariosTest] instead — split out after the R-285 tests below pushed this class
+ * past detekt's `LargeClass` threshold, the same fix `RowsTest.kt`'s own `NavRowTest.kt` split
+ * already established as house style (moved verbatim, not suppressed).
  */
 @RunWith(RobolectricTestRunner::class)
 class ScenariosTest {
@@ -701,111 +705,54 @@ class ScenariosTest {
         assertEquals(SetupStep.LEVEL, step)
     }
 
+    /**
+     * R-285 (V1 pass 3): no sanctioned path reached S09..S11 (`Setup-Rig*.dc.html`) on an emulator
+     * before this -- `setup-verified` itself resolves `radioChoice` up front, so `stepFor` never
+     * stopped at `RADIO` even via S12's own `Fix` row. Proves `setup-radio` lands `stepFor` at
+     * `SetupStep.RADIO` directly, given fully-granted permissions -- the same real decision function
+     * `MainActivity`/`SetupActivity` themselves call.
+     */
+    @Test
+    @Requirement("R-285")
+    fun `R_285_setup-radio seeds a verified input with no radio choice yet so stepFor resumes at RADIO`() = runTest {
+        Scenarios.load(context, "setup-radio")
+
+        val store = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+        )
+        assertTrue(store.inputVerified)
+        assertTrue(store.levelInBand)
+        assertTrue(store.overnightStepSeen)
+        assertNull("the radio choice must be left honestly unset, never fabricated", store.radioChoice)
+
+        val fullyGranted = PermissionsState(
+            recordAudioGranted = true,
+            notificationsGranted = true,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+        )
+        val step = SetupStateMachine.stepFor(fullyGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
+        assertEquals(SetupStep.RADIO, step)
+    }
+
+    /** A `setup-verified` load immediately before `setup-radio` must not leave a stale
+     * `radioChoice` behind — [SharedPreferencesSetupStore] persists across scenario loads unlike
+     * the `:data` tables [Scenarios.load] clears each time (this scenario's own doc comment). */
+    @Test
+    @Requirement("R-285")
+    fun `R_285_setup-radio clears a stale radioChoice a prior setup-verified load would have left behind`() = runTest {
+        Scenarios.load(context, "setup-verified")
+        Scenarios.load(context, "setup-radio")
+
+        val store = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+        )
+        assertNull(store.radioChoice)
+    }
+
     // -----------------------------------------------------------------------------------------
     // WP11b (register R-100): the seven ids with no runtime signal today, driven through
-    // DebugFailureOverride — each scenario's only real job is to set the exact FailurePresentation
-    // its board needs, so these tests assert exactly that rather than re-testing the composables
-    // (FailureScreensTest already does that).
+    // DebugFailureOverride — moved verbatim into FailureOverrideScenariosTest.kt (detekt's
+    // LargeClass finding, this file's own size after the R-285 tests above; the same fix
+    // RowsTest.kt's own NavRowTest.kt split already establishes as house style).
     // -----------------------------------------------------------------------------------------
-
-    @Test
-    @Requirement("F-014", "R-100")
-    fun `F14_clock-dst sets the Clock debug override`() = runTest {
-        Scenarios.load(context, "clock-dst")
-        assertTrue(DebugFailureOverride.current is FailurePresentation.Clock)
-    }
-
-    @Test
-    @Requirement("R-147")
-    fun `R_147 F14_clock-dst carries the facts and Around the change log the full screen needs`() = runTest {
-        Scenarios.load(context, "clock-dst")
-        val presentation = DebugFailureOverride.current
-        assertTrue(presentation is FailurePresentation.Clock)
-        presentation as FailurePresentation.Clock
-        assertTrue(presentation.state.nightLabel.isNotEmpty())
-        assertTrue(presentation.state.windowLabel.isNotEmpty())
-        assertTrue(presentation.state.logRows.isNotEmpty())
-    }
-
-    @Test
-    @Requirement("F-016", "R-100")
-    fun `F16_usb-permission sets the Usb debug override`() = runTest {
-        Scenarios.load(context, "usb-permission")
-        assertTrue(DebugFailureOverride.current is FailurePresentation.Usb)
-    }
-
-    @Test
-    @Requirement("F-017", "R-100")
-    fun `F17_interrupted-pass sets the Interrupted debug override`() = runTest {
-        Scenarios.load(context, "interrupted-pass")
-        assertTrue(DebugFailureOverride.current is FailurePresentation.Interrupted)
-    }
-
-    @Test
-    @Requirement("R-147")
-    fun `R_147 F17_interrupted-pass carries the backlog label and the 3 overs list the full screen needs`() = runTest {
-        Scenarios.load(context, "interrupted-pass")
-        val presentation = DebugFailureOverride.current
-        assertTrue(presentation is FailurePresentation.Interrupted)
-        presentation as FailurePresentation.Interrupted
-        assertTrue(presentation.state.backlogLabel.isNotEmpty())
-        assertEquals(3, presentation.state.overs.size)
-    }
-
-    @Test
-    @Requirement("F-019", "R-100")
-    fun `F19_reconcile sets the Reconcile debug override with both mismatch directions`() = runTest {
-        Scenarios.load(context, "reconcile")
-        val presentation = DebugFailureOverride.current
-        assertTrue(presentation is FailurePresentation.Reconcile)
-        presentation as FailurePresentation.Reconcile
-        assertTrue(presentation.state.recordsNoFile.isNotEmpty())
-        assertTrue(presentation.state.filesNoRecord.isNotEmpty())
-    }
-
-    @Test
-    @Requirement("F-020", "R-100")
-    fun `F20_migration-failed sets the Migration debug override with a failed step`() = runTest {
-        Scenarios.load(context, "migration-failed")
-        val presentation = DebugFailureOverride.current
-        assertTrue(presentation is FailurePresentation.Migration)
-        presentation as FailurePresentation.Migration
-        assertTrue(presentation.state.steps.any { !it.ok })
-    }
-
-    @Test
-    @Requirement("F-021", "R-100")
-    fun `F21_asset-swap sets the AssetSwap debug override`() = runTest {
-        Scenarios.load(context, "asset-swap")
-        assertTrue(DebugFailureOverride.current is FailurePresentation.AssetSwap)
-    }
-
-    @Test
-    @Requirement("R-148")
-    fun `R_148 F21_asset-swap's options each carry a real sub-line, not a bare label`() = runTest {
-        Scenarios.load(context, "asset-swap")
-        val presentation = DebugFailureOverride.current
-        assertTrue(presentation is FailurePresentation.AssetSwap)
-        presentation as FailurePresentation.AssetSwap
-        assertTrue(presentation.state.options.isNotEmpty())
-        presentation.state.options.forEach { option -> assertTrue(option.subLine.isNotEmpty()) }
-    }
-
-    @Test
-    @Requirement("F-022", "R-100")
-    fun `F22_calibration sets the Calibration debug override`() = runTest {
-        Scenarios.load(context, "calibration")
-        assertTrue(DebugFailureOverride.current is FailurePresentation.Calibration)
-    }
-
-    @Test
-    @Requirement("R-100")
-    fun `R_100 loading a real-signal scenario clears a prior debug override`() = runTest {
-        Scenarios.load(context, "clock-dst")
-        assertNotNull(DebugFailureOverride.current)
-
-        Scenarios.load(context, "thermal")
-
-        assertNull("a later scenario must not leave the previous one's override behind", DebugFailureOverride.current)
-    }
 }

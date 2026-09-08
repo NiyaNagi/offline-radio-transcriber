@@ -1,11 +1,16 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -139,5 +144,48 @@ class RouteMismatchScreenTest {
         assert(chooseAnother)
         composeTestRule.onNodeWithTag("setup-route-mismatch-try-again").performClick()
         assert(tryAgain)
+    }
+
+    /** R-280 (validator pass 3): S06 is one of the screens named for the ghost, semi-transparent
+     * duplicate of the bottom bar's secondary action reported near the status bar -- proof
+     * `MicrophoneScreensTest`'s own `R_220` test already carries for S02b's "Check again". */
+    @Test
+    fun `R_280 exactly one Try this one again renders, never a ghost duplicate`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RouteMismatchScreen(
+                    mismatch = mismatch,
+                    selectedTypeLabel = "USB audio",
+                    onChooseAnotherInput = {},
+                    onTryAgain = {},
+                )
+            }
+        }
+        composeTestRule.onAllNodesWithText("Try this one again").assertCountEquals(1)
+    }
+
+    /** R-282 (validator pass 3): at font scale 2.0 the mono "chosen X · routed Y" descriptor line
+     * was cut mid-word by the fixed bar (`setup/S06-route-mismatch@2x.png`) — `SetupScaffold`'s own
+     * shared `weight(1f)` + `verticalScroll` mechanism already covers this screen like every other;
+     * this is the per-screen regression proof `SetupScaffoldTest`'s generic version cannot stand in
+     * for, matching `WelcomeScreenTest`'s/`InputScreenTest`'s own R-123 tests for S01/S04. */
+    @Test
+    fun `R_282 the mono descriptor line scrolls clear of the fixed bar at font scale 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    RouteMismatchScreen(
+                        mismatch = mismatch,
+                        selectedTypeLabel = "USB audio",
+                        onChooseAnotherInput = {},
+                        onTryAgain = {},
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "chosen USB Audio Device (USB audio) · routed Built-in microphone (Built-in microphone)",
+        ).performScrollTo().assertIsDisplayed()
     }
 }

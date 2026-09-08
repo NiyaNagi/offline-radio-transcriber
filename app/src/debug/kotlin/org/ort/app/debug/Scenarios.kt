@@ -93,10 +93,11 @@ public object Scenarios {
      * R-100) adds `clock-dst`/`usb-permission`/`interrupted-pass`/`reconcile`/`migration-failed`/
      * `asset-swap`/`calibration` — the seven ids with no runtime signal today, driven through
      * `org.ort.app.ui.failures.DebugFailureOverride` (that object's own kdoc says exactly why for
-     * each). `setup-verified`/`setup-level` (register R-227/R-264) are the two scenarios this
-     * registry seeds outside `:data` and the process-wide capture facets — see [setupVerified]'s
-     * and [setupLevel]'s own doc comments for why (S05's `SetupStore` gates, not a runtime signal,
-     * are what block S07/S12 from ever being reached on an emulator with no real signal to hear).
+     * each). `setup-verified`/`setup-level`/`setup-radio` (register R-227/R-264/R-285) are the
+     * three scenarios this registry seeds outside `:data` and the process-wide capture facets — see
+     * [setupVerified]'s, [setupLevel]'s and [setupRadio]'s own doc comments for why (S05's
+     * `SetupStore` gates, not a runtime signal, are what block S07/S09/S12 from ever being reached
+     * on an emulator with no real signal to hear).
      */
     public val NAMES: List<String> = listOf(
         "empty",
@@ -128,6 +129,7 @@ public object Scenarios {
         "input-mismatch",
         "setup-verified",
         "setup-level",
+        "setup-radio",
         "clock-dst",
         "usb-permission",
         "interrupted-pass",
@@ -184,6 +186,7 @@ public object Scenarios {
             "input-mismatch" -> inputMismatch(db)
             "setup-verified" -> setupVerified(context)
             "setup-level" -> setupLevel(context)
+            "setup-radio" -> setupRadio(context)
             "clock-dst" -> clockDst(context, db)
             "usb-permission" -> usbPermission(context, db)
             "interrupted-pass" -> interruptedPass(context, db)
@@ -1114,6 +1117,35 @@ public object Scenarios {
      */
     private fun setupLevel(context: Context): LoadResult {
         verifiedInputStore(context)
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-radio` — R-285 (V1 pass 3). No sanctioned path reached S09..S11 (`Setup-Rig*.dc.html`)
+     * on an emulator before this: the linear flow stalls at S05's own 30 s raw-signal listen (a
+     * silent emulator mic never hears anything, [setupVerified]'s own doc comment), and
+     * `setupVerified` itself resolves straight through [SetupStep.RADIO] to `READY` by setting
+     * [SetupStore.radioChoice] up front — so even the `Fix` action on S12's own Radio row landed
+     * back on `READY` immediately rather than ever showing S09, since [SetupStateMachine.stepFor]
+     * only stops at [SetupStep.RADIO] while [SetupSnapshot.radioChoice] is still unset. This
+     * scenario is the same verified-input/level/overnight base [setupVerified] seeds, but leaves
+     * [SetupStore.radioChoice] at its honest, unset default (`null` — never a fabricated choice), so
+     * `stepFor` resumes at [SetupStep.RADIO] directly from a cold `MainActivity` launch, the same
+     * "leave the one gate this screen exists to test unset" recipe [setupLevel] already uses for S07.
+     *
+     * `radioChoice`/`manualFrequencyHz` are set to `null` explicitly, not merely left untouched —
+     * [SharedPreferencesSetupStore] persists across scenario loads (unlike the `:data` tables
+     * [clearPriorScenarioData] wipes), so a `setup-verified` run immediately before this one would
+     * otherwise leave `radioChoice = NONE` behind and this scenario would resume at `READY`, not
+     * `RADIO`, defeating its own purpose.
+     */
+    private fun setupRadio(context: Context): LoadResult {
+        val store = verifiedInputStore(context)
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = null
+        store.manualFrequencyHz = null
         return LoadResult(0, 0, null)
     }
 
