@@ -32,6 +32,146 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
+
+### (pending) — ui-conformance WP4 · Now home, capture status surface, level meter, live-bar feed
+
+**Scope:** `:app` — `ui/screens/NowScreen.kt`, `ui/screens/StatusScreen.kt` (deleted, renamed to)
+`ui/screens/CaptureStatusScreen.kt`, new `ui/screens/LevelMeterScreen.kt`, new
+`ui/screens/NowContent.kt`, new `ui/screens/CaptureStatusContent.kt`, `status/StatusViewState.kt`
+(mapper prefix fix only), all of `ui/data/ReaderPolling.kt`, new `ui/data/NowSummaryMapper.kt`
+(extracted from `ui/data/TransmissionDetail.kt`), new `ui/data/CaptureStatusViewState.kt`, new
+`ui/data/NowViewState.kt`, new `ui/data/LiveBarPolling.kt`, and every test alongside these. Two
+files outside this package's formal row were touched, both documented at the point of change:
+`ui/data/TransmissionDetail.kt` (WP5's file — the two-declaration extraction the master plan
+itself names as WP4's) and `ui/ReaderAccessibilityTest.kt` (no clear owner — updated to reference
+`CaptureStatusScreen` instead of the `StatusScreen` this package's brief required deleting).
+
+**Requirements/ACs:** R-030, R-031, R-032, R-033, R-034, R-035 (partial — see Left open), R-036,
+R-037, R-038, R-039; FR-UI-7, FR-UI-9, FR-UI-11, FR-UI-12, FR-CAP-3, F3, FR-RUN-5, FR-A11Y-1,
+FR-A11Y-2, FR-A11Y-3; constitution I (never fabricate — Input/Level/tier-Pass-C/band-count are all
+rendered "not measured" or omitted rather than invented) and IV (liveness from heartbeat, never
+`isIgnoringBatteryOptimizations()`).
+
+**What changed:**
+
+- **Constitution Check.** Principle I bears on almost every mapper here: `CaptureStatusMapper`
+  and `NowViewStateMapper` both render "Not measured" / omit a field rather than invent one for
+  every fact this session cannot honestly compute (Input device, Level dBFS, band count, Pass C
+  state, device-tier "current" baseline). Principle IV bears on the live bar and capture-status
+  title: liveness reads from `CaptureState`/heartbeat data only. Principle VII (structural
+  boundaries) bears on the file-ownership exceptions below, each justified in place, not silently
+  taken.
+- **R-031/R-034 (doubled "ASR: ASR:" / raw file paths on Now/status).** Fixed at the source:
+  `StatusViewStateMapper.asrLabel`/`vadLabel` no longer prepend their own `"ASR: "`/`"VAD: "`
+  prefix (a caller's own label was doubling it). The raw sentences themselves no longer reach any
+  operator surface at all: `CaptureStatusMapper.tierFacts` builds the Tier row's sub-line
+  ("whisper-small · Silero VAD" / "no model — see Models · energy VAD (not Silero)") directly from
+  `AsrAvailability`/`VadAvailability`, never touching the old prefixed strings, and never printing
+  a file path — an `Unavailable` reason string (which can contain a path) is reduced to "no model
+  — see Models" instead of surfaced verbatim.
+- **R-038 (no more "Shed level: N").** `CaptureStatusMapper` maps `ShedStatus.currentLevel` onto
+  Tier's headline number by the *exact* formula `RealCaptureService.tierFromShedLevel()` already
+  uses in production (`(3 - shedLevel).coerceIn(0, 3)`, reused rather than re-derived so the
+  notification and this screen can never disagree), and onto Thermal/Backlog's own rows — no row
+  named "shed level" exists anywhere on the new screen.
+- **R-032/R-035 (`Capture-Status.dc.html`, FR-UI-7's nine facts).** New `CaptureStatusScreen.kt`
+  replaces the deleted `StatusScreen.kt` field dump: title + state dot (Capturing / Capturing,
+  warm / Halted / Not capturing — see Left open for "Capturing, text only"), since/elapsed/
+  heartbeat line, a `Stop` action behind a confirm dialog (`Feedback.dc.html`'s pattern), and three
+  `KeyValueRow` sections (Audio: Input/Level/Radio; Processing: Overs/Backlog/Tier/Thermal; Device:
+  Storage/Battery). `CaptureStatusContent.kt` polls it every 2 s from `ReaderPolling.captureStatus`
+  and `LiveBarPolling`. Reachable only once WP3 wires the drawer's Capture row to it — see Left
+  open.
+- **R-030/R-033/R-036/R-037 (`Main`/`Now-Idle`/`Now-First.dc.html`).** `NowScreen.kt` rewritten
+  from scratch as a scrolling home over `NowViewState` (sealed `Idle`/`Active`): session title
+  ("Tonight" while `overCount == 0`, "Overnight" once it isn't — `SessionEntity` carries no
+  name/label column, so this is the most honest signal available, documented in
+  `NowViewStateMapper.active`'s kdoc), the session's own hour activity chart (WP2's
+  `ActivityPatternChart` fed by WP8's `ActivityPatternMapper.buildPattern`, called with a
+  single-session `SessionWindow`, not the "every session" aggregate the station/frequency screens
+  use), a `WORTH KNOWING` section built only from what tonight's real data supports (first-time-
+  heard stations via `StationEntity.firstHeardAt` falling inside this session, "N overs could not
+  be attributed with confidence" from AMBIGUOUS+UNKNOWN counts, the longest real gap), the honest
+  `Now-First` "Nothing yet." empty state (the old hardcoded "see spec/build-plan.md" developer note
+  is gone), `STATIONS HEARD` rows (marker + mono callsign + "N overs"/"N by voice match" + last
+  time), and the `Feedback.dc.html` failed block when `AsrAvailability` is not `Available`. Idle:
+  "Not capturing" + last-session summary, a real `Start capture` `PrimaryButton` wired to
+  `ReaderPolling.startCapture` (mirrors `MainActivity.startCaptureAndShowStatus` exactly — same
+  same-process liveness guard, same `RealCaptureService.EXTRA_SESSION_ID` extra, same
+  `startForegroundService`/`startService` SDK split), input/rig/tier line, `Earlier nights` (top 3
+  from `sessionDao().listAll()`), and `Can get better` when any session carries a real, parseable
+  `deviceTier` (R-107's write path already exists via the `field-tier1` scenario; this is the
+  first read of it — WP10 still owns the Improve destination itself).
+- **R-039 (`Level-Meter.dc.html`).** No level (dBFS) signal exists anywhere in `:pipeline` —
+  confirmed by search (`ShedStatus`/`ThermalStatus`/`RigStatus`/`StorageForecast` are WP11a's four
+  holders; none is a level reading). New `LevelViewState`/`LevelMeterScreen.kt` render guide
+  §6.8's *failed* treatment (not empty) naming the missing signal, never fabricated bars.
+- **Live bar (guide §6.6).** New `LiveBarPolling.current` builds `LiveBarViewState` from
+  `CaptureState`/`ShedStatus`/`ThermalStatus`/`RigStatus`/`StorageForecast`, `Flow-Degrade.dc.html`'s
+  priority order (halted > storage-at-floor > shed-level tier drop > thermal warm > stale rig >
+  nominal "Live"), level bars at their floor height (no level signal — see R-039), and the newest
+  Pass A transcript across the session's last few transmissions as the partial text (reusing
+  `TransmissionDao.listBySession` + `TranscriptDao.getAllVersions`, not a new `:data` query).
+  `NowScreen`/`CaptureStatusScreen` both pin it via WP2's `LiveBar`.
+- **Deliberate divergences from the artboards' literal copy, each constitution-I-driven and
+  documented in code:** no "· N bands" in Now's summary (no frequency-to-band table exists —
+  `NowSummaryMapper`'s own pre-existing rule, carried forward); no "Pass C on/off" in the Tier
+  sub-line (no Pass C flag exists anywhere in `:pipeline` — M4's fork is unbuilt); "N unidentified
+  overs", not "N unidentified voices" (nothing here clusters voiceprints into distinct voices);
+  "Capturing, text only" is not reachable (no audio-retention-pause signal exists yet).
+- **Compatibility shim so the build stays green mid-wave:** `NowScreen`'s old
+  `(status: StatusViewState, summary: NowSummaryViewState)` signature is kept as a `@Deprecated`
+  overload (`NowViewStateMapper.legacyFrom`) — `OrtNavHost.kt`'s inline `NowContent` (WP3's file,
+  explicitly off limits to this package) still calls it today and would not otherwise compile.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** (one transient
+  `mergeDexRelease` Windows file-lock failure on the first attempt, unrelated to any source change
+  here; green on immediate retry).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (all 8 checks PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 181 covered**; `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` — **344 of 344 passing**, 0 failed (full `:app` suite,
+  not just this package's own tests). New tests added by name: `CaptureStatusMapperTest` (15
+  cases, e.g. `R_032 title reads Capturing warm when thermal is not nominal`, `R_038 tier is
+  derived from the shed level by the exact RealCaptureService formula`, `R_034 the tier sub-line
+  states real ASR VAD facts without a doubled prefix or a fabricated Pass C claim`),
+  `NowViewStateMapperTest` (9 cases, e.g. `R_030 the session title reads Tonight while nothing has
+  been heard yet, Overnight once it has`, `R_033 the summary never fabricates a band count`,
+  `R_037 worth knowing is an honest empty list, never a hardcoded developer note`),
+  `CaptureStatusScreenTest` (6 cases), `NowScreenTest` (rewritten, 7 cases),
+  `LevelMeterScreenTest` (2 cases), plus 6 new cases appended to `ReaderPollingTest`
+  (`R_032 captureStatus reads every real process-wide signal at once`, `R_030 nowViewState is
+  Active with the real session's own facts once CaptureState confirms it is live`, `R_036 a
+  session with a real deviceTier makes Can get better appear...`, etc.) and one regression test in
+  `StatusViewStateMapperTest` (`R_031 asrStatusLabel and vadStatusLabel never carry their own
+  doubled ASR VAD prefix`).
+
+**Left open / not done:**
+- **R-035 is partial.** The Capture destination is reachable only once WP3 (owner of
+  `ui/navigation/**`) flips `ReaderDestination.CAPTURE.hasScreen` to `true` and dispatches it to
+  `CaptureStatusContent` — both are WP3's file, out of this package's row. `CaptureStatusContent`
+  itself is built, tested via `CaptureStatusScreen`'s own suite, and ready to be called.
+- **Input device (name/verified/resampler id) and the Level signal (dBFS) are honestly "not
+  measured" on every build, not a bug this package can fix.** `RealCaptureService` (WP11a's file)
+  knows the selected `AudioDeviceDescriptor` and `AudioRecordSource.resamplerIdentity` but
+  republishes neither to a process-wide holder the way `CaptureState`/`ThermalStatus`/`RigStatus`/
+  `StorageForecast` are; no level (dBFS) signal exists in `:pipeline` at all. Both are named,
+  in-code, as gaps for whichever package next owns `RealCaptureService.kt`'s wiring.
+- **Two UI affordances are inert, both documented in code as intentional gaps:** Now's "Stations
+  heard · All N" trailing action (no "view all stations from Now" navigation hook exists) and the
+  missing-model failed block's "Install a model" action (`onOpenModels`, wired to `{}` in
+  `NowContent` — the Models destination is WP3/WP10's).
+- **"Capturing, text only" is not reachable from real data** — no signal for a paused audio-
+  retention state exists in `:pipeline` yet (see What changed).
+- Deliberate copy divergences from the literal artboard text (band count, Pass C, "voices" →
+  "overs") are listed above, each with its constitution-I reasoning in code and here.
+
+---
+
 ## 2026-09-08 (ui-conformance WP7: search)
 
 ### (pending) — ui-conformance WP7 · search: initial, filters sheet, grouped results, empty and unavailable states

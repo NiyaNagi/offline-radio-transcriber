@@ -1,6 +1,7 @@
 package org.ort.app.status
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -134,5 +135,21 @@ class StatusViewStateMapperTest {
         )
         assertTrue(view.asrStatusLabel.contains("distil-small.en"), view.asrStatusLabel)
         assertNull(view.transcriptionUnavailableMessage)
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `R_031 asrStatusLabel and vadStatusLabel never carry their own doubled ASR VAD prefix`() {
+        val unavailable = StatusViewStateMapper.from(
+            status(),
+            asrState = AsrAvailability.State.Unavailable("no model at /data/models/asr"),
+            vadState = VadAvailability.State.StubWithReason("Silero model not installed"),
+        )
+        // The bug this guards: a caller that prepends its own "ASR: "/"VAD: " label used to
+        // produce "ASR: ASR: unavailable — …" because the field already carried that prefix.
+        assertFalse(unavailable.asrStatusLabel.startsWith("ASR:"), unavailable.asrStatusLabel)
+        assertFalse(unavailable.vadStatusLabel.startsWith("VAD:"), unavailable.vadStatusLabel)
+        assertEquals("not started", StatusViewStateMapper.from(status()).asrStatusLabel)
+        assertFalse(StatusViewStateMapper.from(status()).vadStatusLabel.startsWith("VAD:"))
     }
 }

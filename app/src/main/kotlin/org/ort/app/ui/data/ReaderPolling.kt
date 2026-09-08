@@ -1,6 +1,9 @@
 package org.ort.app.ui.data
 
 import android.content.Context
+import android.content.Intent
+import android.os.BatteryManager
+import android.os.Build
 import android.os.PowerManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,13 +14,21 @@ import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
+import org.ort.core.Tier
 import org.ort.core.TransmissionId
+import org.ort.core.TransmissionState
+import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureStatusRepository
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.RealCaptureService
+import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.capture.StorageForecast
+import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.ort.pipeline.passb.LexiconLookup
 import org.ort.pipeline.passb.LexiconMatch
@@ -26,6 +37,8 @@ import org.ort.pipeline.shed.FakeShedSignals
 import org.ort.pipeline.shed.ShedController
 import java.io.File
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * The read path build-plan P8/P11's original plain-view smoke-test Activities used to poll
@@ -111,6 +124,243 @@ public object ReaderPolling {
         val m = (totalSeconds % 3600) / 60
         val s = totalSeconds % 60
         return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Capture status (ui-conformance-plan WP4, R-031/R-032/R-034/R-035/R-038) — Capture-Status.dc.html.
+    // -------------------------------------------------------------------------------------------
+
+    /**
+     * `Capture-Status.dc.html`'s full read path — see [org.ort.app.ui.data.CaptureStatusMapper]'s
+     * own kdoc for the two facts (Input, Level) this cannot honestly measure yet and why. Every
+     * other fact is real: [ShedStatus]/[ThermalStatus]/[RigStatus]/[StorageForecast] are the same
+     * process-wide holders [currentStatus] above already reads (or, for the three R-104/R-105
+     * additions, are the new ones `RealCaptureService`'s shed tick now publishes).
+     */
+    public suspend fun captureStatus(context: Context, sessionId: String): CaptureStatusViewState {
+        val db = OrtDatabase.create(context.applicationContext)
+        val session = db.sessionDao().getById(sessionId)
+        val transmissions = db.transmissionDao().listBySession(sessionId)
+        val gapCount = db.captureGapDao().listBySession(sessionId).size
+        val rejectedCount = transmissions.count { it.processingState == TransmissionState.REJECTED }
+        val failedCount = transmissions.count { it.processingState == TransmissionState.FAILED }
+
+        val heartbeatStore = FileHeartbeatStore(File(context.filesDir, "heartbeat.txt"))
+        val lastHeartbeat = heartbeatStore.last()
+        val nowMillis = SystemClock.wallMillis()
+        val heartbeatSecondsAgo = lastHeartbeat?.let { (nowMillis - it.wallMillis) / 1000 }
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        val isAlive = lastHeartbeat != null &&
+            org.ort.capture.android.heartbeat.LivenessChecker().isAlive(
+                lastHeartbeat.wallMillis,
+                nowMillis,
+                pm.isIgnoringBatteryOptimizations(context.packageName),
+            )
+
+        val shedMeasured = CaptureState.state != CaptureState.State.Idle
+        val (batteryPercent, charging) = batteryReading(context)
+
+        return CaptureStatusMapper.from(
+            captureState = CaptureState.state,
+            shedLevel = if (shedMeasured) ShedStatus.currentLevel else null,
+            backlog = if (shedMeasured) ShedStatus.backlog else null,
+            thermal = ThermalStatus.state,
+            rig = RigStatus.state,
+            storage = StorageForecast.state,
+            asr = AsrAvailability.state,
+            vad = VadAvailability.state,
+            sinceLabel = session?.startedAt?.let { hourMinuteUtcLabel(it) },
+            elapsedLabel = session?.let { formatElapsedShort(nowMillis - it.startedAt) } ?: "0:00",
+            heartbeatSecondsAgo = heartbeatSecondsAgo,
+            isAlive = isAlive,
+            transmissionCount = transmissions.size,
+            rejectedCount = rejectedCount,
+            failedCount = failedCount,
+            gapCount = gapCount,
+            batteryPercent = batteryPercent,
+            batteryCharging = charging,
+            batteryExemptionReportsIgnoring = pm.isIgnoringBatteryOptimizations(context.packageName),
+        )
+    }
+
+    /** `%02d:%02d` in UTC — matches [ReaderTransmissionViewStateMapper]'s own row-time convention. */
+    private fun hourMinuteUtcLabel(utcMillis: Long): String {
+        val totalMinutes = Math.floorDiv(utcMillis, 60_000L)
+        val hour = Math.floorMod(totalMinutes / 60, 24L)
+        val minute = Math.floorMod(totalMinutes, 60L)
+        return "%02d:%02d".format(Locale.ROOT, hour, minute)
+    }
+
+    /** `BatteryManager`'s live percent/charging state — `null` percent only when the property is
+     * genuinely unreadable (constitution I: never a fabricated reading). */
+    private fun batteryReading(context: Context): Pair<Int?, Boolean> {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return null to false
+        val capacity = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val percent = capacity.takeIf { it in 0..100 }
+        return percent to bm.isCharging
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Now home (ui-conformance-plan WP4, R-030/R-033/R-036/R-037) — Main/Now-Idle/Now-First.dc.html.
+    // -------------------------------------------------------------------------------------------
+
+    private val nightDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ROOT)
+        .withZone(ZoneId.systemDefault())
+
+    /**
+     * The "Now" home's full read path. Renders [NowViewState.Idle] whenever [sessionId] is not
+     * the session [CaptureState] itself says is live right now — matching
+     * [MainActivity][org.ort.app.MainActivity]'s own same-process liveness check, never trusting a
+     * caller-supplied id that capture is not actually running.
+     */
+    public suspend fun nowViewState(context: Context, sessionId: String?): NowViewState {
+        val nowMillis = SystemClock.wallMillis()
+        val liveSessionId = sessionId?.takeIf { CaptureState.isCapturing && CaptureState.sessionId == it }
+        return if (liveSessionId == null) {
+            idleNowViewState(context)
+        } else {
+            activeNowViewState(context, liveSessionId, nowMillis)
+        }
+    }
+
+    private suspend fun activeNowViewState(context: Context, sessionId: String, nowMillis: Long): NowViewState {
+        val db = OrtDatabase.create(context.applicationContext)
+        val session = db.sessionDao().getById(sessionId)
+        val details = currentTransmissionDetails(context, sessionId)
+        val gaps = db.captureGapDao().listBySession(sessionId).map { GapWindow(it.startedAt, it.endedAt) }
+
+        val attributedStationIds = details.mapNotNull { it.attribution.stationId }.toSet()
+        val sessionStart = session?.startedAt ?: (details.minOfOrNull { it.startedAtUtcMillis } ?: nowMillis)
+        val sessionEnd = session?.endedAt
+        val firstHeardStationIds = attributedStationIds.filter { stationId ->
+            val firstHeardAt = db.catalogDao().getStation(stationId)?.firstHeardAt ?: return@filter false
+            firstHeardAt in sessionStart..(sessionEnd ?: nowMillis)
+        }.toSet()
+
+        val listeningOnLabel = (RigStatus.state as? RigStatus.State.Connected)?.bands
+            ?.mapNotNull { it.frequencyHz }
+            ?.joinToString(" and ") { "%.3f".format(Locale.ROOT, it / 1_000_000.0) }
+            ?.let { if (it.isEmpty()) null else "listening on $it" }
+
+        return NowViewStateMapper.active(
+            details = details,
+            gaps = gaps,
+            sessionStartedAtUtc = sessionStart,
+            sessionEndedAtUtc = sessionEnd,
+            nowMillis = nowMillis,
+            firstHeardStationIds = firstHeardStationIds,
+            asrAvailable = AsrAvailability.isAvailable,
+            missingModel = MissingModelFacts(
+                title = "No transcription model installed",
+                body = "Audio is being captured and kept; every over is transcribed once one is installed.",
+                actionLabel = "Install a model",
+            ),
+            listeningOnLabel = listeningOnLabel,
+        )
+    }
+
+    private suspend fun idleNowViewState(context: Context): NowViewState {
+        val db = OrtDatabase.create(context.applicationContext)
+        val allSessions = db.sessionDao().listAll()
+        val lastEnded = allSessions.firstOrNull { it.endedAt != null }
+        val lastSessionSummaryLabel = lastEnded?.endedAt?.let { endedAt ->
+            val session = lastEnded
+            val overCount = db.transmissionDao().listBySession(session.id).size
+            val duration = (endedAt - session.startedAt).coerceAtLeast(0)
+            "Last session ended ${hourMinuteUtcLabel(endedAt)} · $overCount overs · ${durationHoursMinutes(duration)}"
+        }
+
+        val earlierNights = allSessions.take(EARLIER_NIGHTS_LIMIT).map { session -> earlierNightRow(db, session) }
+        val canGetBetter = canGetBetterRow(db, allSessions)
+
+        val rig = RigStatus.state
+        val rigLabel = when (rig) {
+            RigStatus.State.Absent -> null
+            is RigStatus.State.Connected -> rig.descriptor
+            is RigStatus.State.Stale -> rig.lastKnown.descriptor
+        }
+
+        return NowViewStateMapper.idle(
+            lastSessionSummaryLabel = lastSessionSummaryLabel,
+            // R-036/this package's report: no process-wide input-device holder exists to read from
+            // idle (see CaptureStatusViewState's kdoc for the same gap while capturing) — honestly
+            // omitted rather than guessed.
+            inputLabel = null,
+            rigLabel = rigLabel,
+            tierLabel = null,
+            earlierNights = earlierNights,
+            canGetBetter = canGetBetter,
+        )
+    }
+
+    private suspend fun earlierNightRow(db: OrtDatabase, session: SessionEntity): EarlierNightRow {
+        val overCount = db.transmissionDao().listBySession(session.id).size
+        val stationCount = db.transmissionDao().listBySession(session.id)
+            .mapNotNull { it.stationId }.toSet().size
+        val gapCount = db.captureGapDao().listBySession(session.id).size
+        val endedLabel = session.endedAt?.let { hourMinuteUtcLabel(it) } ?: "still running"
+        val startedLabel = hourMinuteUtcLabel(session.startedAt)
+        return EarlierNightRow(
+            sessionId = session.id,
+            title = "Overnight, ${nightDateFormat.format(java.time.Instant.ofEpochMilli(session.startedAt))}",
+            subLine = "$startedLabel – $endedLabel · $overCount overs · $stationCount stations",
+            gapsLabel = if (gapCount > 0) "$gapCount gap" + (if (gapCount == 1) "" else "s") else null,
+        )
+    }
+
+    /**
+     * R-036: "Can get better" when any recorded session's [SessionEntity.deviceTier] is a real,
+     * parseable [Tier] — every such session was, by definition, captured below full capability
+     * (nothing writes a non-null `deviceTier` for a full-capability session — see
+     * `RealCaptureService.runCaptureFlow`, which always writes `null`). WP10 owns the Improve
+     * destination itself (register R-107); this only builds the row and its honest count.
+     */
+    private suspend fun canGetBetterRow(db: OrtDatabase, sessions: List<SessionEntity>): CanGetBetterRow? {
+        val qualifyingWithTier = sessions.mapNotNull { session ->
+            val tier = session.deviceTier?.let { runCatching { Tier.valueOf(it) }.getOrNull() }
+            if (tier != null) session to tier else null
+        }
+        if (qualifyingWithTier.isEmpty()) return null
+        val overCount = qualifyingWithTier.sumOf { (session, _) -> db.transmissionDao().listBySession(session.id).size }
+        val lowestTier = qualifyingWithTier.map { (_, tier) -> tier }.minByOrNull { it.ordinal }
+        return CanGetBetterRow(
+            headline = "$overCount overs were processed below this phone's capability",
+            subLine = "captured at ${lowestTier?.name ?: "a lower"} tier · open Improve to reprocess",
+        )
+    }
+
+    private fun durationHoursMinutes(millis: Long): String {
+        val totalMinutes = millis / 60_000
+        val h = totalMinutes / 60
+        val m = totalMinutes % 60
+        return "$h h $m m"
+    }
+
+    private const val EARLIER_NIGHTS_LIMIT = 3
+
+    // -------------------------------------------------------------------------------------------
+    // Starting capture from the reader (ui-conformance-plan WP4, R-036: Now-Idle's Start capture).
+    // -------------------------------------------------------------------------------------------
+
+    /**
+     * `Now-Idle.dc.html`'s `Start capture` button — starts [RealCaptureService] exactly as
+     * [org.ort.app.MainActivity.startCaptureAndShowStatus] does (this package's brief's own words):
+     * the same same-process liveness guard (never mint a second session id while one is already
+     * capturing), the same [RealCaptureService.EXTRA_SESSION_ID] extra, the same
+     * `startForegroundService`/`startService` split by SDK level.
+     */
+    public fun startCapture(context: Context): String {
+        val liveSessionId = CaptureState.sessionId.takeIf { CaptureState.isCapturing }
+        if (liveSessionId != null) return liveSessionId
+        val newSessionId = Ulid.generate().value
+        val intent = Intent(context, RealCaptureService::class.java)
+            .putExtra(RealCaptureService.EXTRA_SESSION_ID, newSessionId)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+        return newSessionId
     }
 
     /**

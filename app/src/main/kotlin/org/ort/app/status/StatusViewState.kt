@@ -37,8 +37,15 @@ public data class StatusViewState(
     val shedLevelLabel: String,
     val livenessLabel: String,
     val uncleanEndBanner: String?,
-    val asrStatusLabel: String = "ASR: not started",
-    val vadStatusLabel: String = "VAD: not started",
+    // R-031: these two fields used to carry their own "ASR: "/"VAD: " prefix baked in, and every
+    // caller that displayed them (the old StatusScreen.LabeledLine("ASR", state.asrStatusLabel))
+    // added a second one, rendering "ASR: ASR: unavailable — …". Neither field is displayed as a
+    // labelled line on the reader any more (CaptureStatusScreen's Tier row carries the ASR/VAD
+    // facts as a plain sub-line sentence instead — R-034), but the fields themselves are fixed
+    // here too, at the source, so nothing that reads them next gets to reintroduce the bug by
+    // pairing an unprefixed label with an already-prefixed value.
+    val asrStatusLabel: String = "not started",
+    val vadStatusLabel: String = "not started",
     val transcriptionUnavailableMessage: String? =
         "No transcription model installed — transcripts will not appear",
     val backlog: Int? = null,
@@ -88,16 +95,19 @@ public object StatusViewStateMapper {
         backlogLabel = backlog?.let { "$it queued" } ?: StatusViewState.NOT_MEASURED_LABEL,
     )
 
+    // R-031: no "ASR: "/"VAD: " prefix here — that was the other half of the doubled-prefix bug
+    // (see asrStatusLabel/vadStatusLabel's own comment). A caller that wants a label prepends its
+    // own, once.
     private fun asrLabel(state: AsrAvailability.State): String = when (state) {
-        AsrAvailability.State.NotYetChecked -> "ASR: not started"
-        is AsrAvailability.State.Available -> "ASR: available (${state.modelRef})"
-        is AsrAvailability.State.Unavailable -> "ASR: unavailable — ${state.reason}"
+        AsrAvailability.State.NotYetChecked -> "not started"
+        is AsrAvailability.State.Available -> "available (${state.modelRef})"
+        is AsrAvailability.State.Unavailable -> "unavailable — ${state.reason}"
     }
 
     private fun vadLabel(state: VadAvailability.State): String = when (state) {
-        VadAvailability.State.Stub -> "VAD: energy fallback (not started)"
-        VadAvailability.State.Real -> "VAD: Silero (real)"
-        is VadAvailability.State.StubWithReason -> "VAD: energy fallback (${state.reason})"
+        VadAvailability.State.Stub -> "energy fallback (not started)"
+        VadAvailability.State.Real -> "Silero (real)"
+        is VadAvailability.State.StubWithReason -> "energy fallback (${state.reason})"
     }
 
     private fun shedLabel(level: Int): String = when (level) {
