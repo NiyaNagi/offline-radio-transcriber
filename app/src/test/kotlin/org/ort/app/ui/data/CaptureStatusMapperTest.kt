@@ -37,6 +37,7 @@ class CaptureStatusMapperTest {
         level: LevelStatus.State = LevelStatus.State.NotMeasured,
         nowMillis: Long = 100_000L,
         batteryExemptionReportsIgnoring: Boolean = true,
+        gapCount: Int = 0,
     ) = CaptureStatusMapper.from(
         captureState = captureState,
         shedLevel = shedLevel,
@@ -56,7 +57,7 @@ class CaptureStatusMapperTest {
         transmissionCount = 412,
         rejectedCount = 6,
         failedCount = 0,
-        gapCount = 0,
+        gapCount = gapCount,
         batteryPercent = 71,
         batteryCharging = true,
         batteryExemptionReportsIgnoring = batteryExemptionReportsIgnoring,
@@ -107,6 +108,13 @@ class CaptureStatusMapperTest {
         val view = state()
         assertEquals("412 captured", view.overs.value)
         assertEquals("6 rejected · 0 failed · 0 gaps", view.overs.subLine)
+    }
+
+    @Test
+    @Requirement("R-301")
+    fun `R_301 the overs row reads 1 gap, singular, never 1 gaps`() {
+        val view = state(gapCount = 1)
+        assertEquals("6 rejected · 0 failed · 1 gap", view.overs.subLine)
     }
 
     @Test
