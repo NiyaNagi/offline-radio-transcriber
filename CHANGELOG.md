@@ -32,6 +32,107 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (audit close-out — the 2026-09-07 audit-and-remediate run)
+
+### (many) — Audit of the whole repository against constitution, spec and build plan; 27 of 28 findings closed
+
+**Scope:** every module. Register: `results/audit-2026-09-07.md` (the durable record — read it, not
+this summary, for evidence and per-finding status). Method per
+`docs/reference/audit-and-remediate-prompt.md`: Fable audited and merged, ~30 Sonnet worktree
+agents fixed, one finding per agent, each commit prefixed `audit F-0NN ·` and carrying its own
+CHANGELOG entry (all of them sit below this one under `2026-09-07 (audit — F-0NN)` headings).
+**Requirements/ACs:** see each F-entry. Headline ids re-established for real: FR-RUN-15/16
+(F-001, F-005), FR-SEG-6/AC-72 (F-006), FR-RUN-3/5/FR-STO-4 (F-007), FR-RUN-9 (F-003, F-016),
+FR-UI-7 (F-002, F-004, F-020, F-022), FR-UI-8/FR-LEX-12 (F-009), FR-UI-4 (F-012), FR-REP-1
+(F-013), AC-48/FR-RUN-12 (F-028), AC-3 (F-010), AC-31 at service level (F-011), FR-ASR-1 +
+constitution V channel (F-008), FR-UI-3 (F-017), FR-UI-6/Q8/AC-11 (F-018), FR-UI-11 (F-019),
+FR-STO-5 (F-020), plus ~60 built-but-unnamed ids across every module (F-027).
+**What changed:** found by class — B silently-wrong 5, C constitution 2, A wiring 4, E claimed-not-
+established 4, D unrecorded divergence 1, F recorded gaps 12. Fixed: all of A–E and every F that
+was unblocked. The two constitution breaches were real: too-short segments were deleted at the
+production sink (III), and no shed controller or storage floor ran in the capture service (IV).
+The worst silent-failure: every real transmission was persisted with `startedAtUtc = 0L`. New
+structural gates: `coverageMatrixCheck` (stale matrix fails CI) and `platformGuards` (no
+telemetry dependency anywhere, HTTP client and INTERNET permission only in `:net`, and `:net`
+must declare it). The coverage matrix now also scans `buildSrc` and `corpus/tests`.
+**How verified:** every merge into `main` ran `./gradlew build dependencyRules platformGuards`,
+`./gradlew -p buildSrc test`, `python tools/spec-check/spec_check.py` and regenerated the matrix.
+Coverage: 101 covered / 318 uncovered (committed, stale) → 117 / 302 (regenerated at audit
+start) → 179 / 240 at close-out, 419 ids. Every fix is Robolectric/JVM only.
+**Left open / not done:**
+- **Class G — cannot be closed without the physical world:** P9 device matrix (AC-4/AC-64, D1–D12),
+  AC-6 (needs the Q2 noise tape + Q16 labelling round), AC-73/AC-75 latency and backlog on device,
+  R4 (Fearless Steps registration), R1 CI lane, M3 dev-fold precision/recall, the pure-Kotlin FLAC
+  codec's on-device cost (F-026), release signing, and — above all — **nothing in this repository
+  has ever run on a physical device**, including the new Models download screen (real digests are
+  pinned for the Whisper encoder/decoder and Silero VAD; `tiny.en-tokens.txt` has no published
+  sha256 anywhere and is structurally sideload-only).
+- **Class H — unbuilt milestones, not defects (198 uncovered ids):** M6 identity/voice/threading
+  (FR-SPK ×29, `threadId` writer, FR-UI-2), M7 rig (FR-RIG ×12, FR-SEG-5), M8 streaming (the
+  post-capture drain, F-025), M9 digest/station knowledge/contribution/export (FR-DIG ×18,
+  FR-CON ×8, FR-EXP ×6, FR-LEX-24), M10 tiers/reprocessing (FR-TIER ×7, FR-REP ×8, FR-RUN-4),
+  M11 reference levers (FR-ENH ×4, eval unseal), the asset lifecycle FR-AST-1/4/7/9, storage
+  budgets FR-STO-3.., profiles FR-CFG-3/4, diagnostics FR-OBS-1..3, and the M4 fork decision.
+- **Honestly not established although the family is built:** FR-LEX-15/16/22/32, FR-CAP-2/7,
+  FR-PLT-2/4, FR-RUN-6 (warning half), FR-RUN-14, FR-SVC-5/6/8, FR-A11Y-5 (strings are hard-coded
+  literals), FR-ASR-10, FR-TST-6 (no load/endurance generator exists), FR-STO-2/2a, CON-STO-1,
+  CON-CAP-1, NFR-5 (androidTest naming), AC-13, AC-35 — each named in its slice's F-027 entry.
+- Small residues named in the register: FAILED rows show no `lastError`; oldest-unprocessed age is
+  not displayed; the week-over-week trend is text with one data point per side; F-019's tests were
+  written alongside the code rather than seen red first.
+- The clean-tree spec check fails on `spec/ui-conformance-plan.md`'s `Q01`/`Q05` references, which
+  arrived on `main` from concurrent UI-conformance work outside this audit; not touched here.
+
+## 2026-09-08 (UI conformance — phase C)
+
+### (pending) — ui-conformance C · findings register: 63 rows, every one assigned to a work package
+
+**Scope:** `results/ui-audit/register.md` (new). `.gitignore` (the seeded canvas page is a
+build output of `design/canvas/`, not a source). No product code touched.
+**Requirements/ACs:** the register cites the requirement each row fails — FR-UI-1..12, FR-UI-7
+in particular (six of nine required facts absent, R-032), FR-A11Y-2 (R-011, R-014, R-024),
+FR-CAP-2a/F1 (R-081, R-101), FR-SPK-10 (R-073), P3/P5/P8/P9/P12, and constitution I (R-012,
+R-034). "none new" for code.
+**What changed:**
+
+- **Constitution Check.** Principle I decides severity: a row is `halt` when the built screen
+  is *misleading* to the operator, not merely unlike the artboard — the drawer footer that draws
+  device free space as if it were the audio budget (R-012), the status surface that prints a
+  file path and a class name as the reason transcripts are missing (R-034), the two-line
+  "ASR: ASR:" label (R-031), the unreachable "Worth knowing" (R-030), the tap-to-cycle filters
+  the operator cannot see the options of (R-061). Principle VII is why every finding names an
+  artboard and a token, never "looks wrong": a builder can close it without asking what right
+  looks like.
+- **The register.** 63 rows across the eleven work packages of `spec/ui-conformance-plan.md`
+  §D, each with the screen, the artboard compared against, what is wrong, a severity (`halt` 11,
+  `spec` 27, `design` 23, `polish` 1, `process` 2) and a status. Evidence is the nine emulator
+  screenshots taken at `6aaa608` and the reader source at `bff688b`, which includes the F-002,
+  F-004, F-017, F-018 and F-019 fixes other sessions merged while phase A was drawing — the
+  audit is against the code as it is now, not as it was when this session began.
+- **What the audit found, in one line each.** The reader has a second header from the platform
+  theme on every screen; Now is a status field dump where the artboard is a home; the status
+  surface lacks six of FR-UI-7's nine facts; the Log has none of the row variants the canvas
+  specifies and no partial state at all; the detail's inspection surface and correction flow are
+  text and `TextField`s where the boards are lattice slots, prior bars, a three-tier sheet and a
+  propagation screen; search has three things labelled "Search" and cycling filters; stations
+  and frequencies show a fraction of their boards; setup, settings, improve, digest, sessions
+  and all 22 failure states are placeholders or absent; there is no live bar; no shared
+  component exists for chips, banners, toasts, sheets, badges or icons.
+
+**Verified:** each row was checked against the named artboard's source and the named file;
+the screenshot rows cite the file in this session's scratchpad by name (`01-launch.png` …
+`09-search-run.png`). No number is claimed that was not counted.
+**Left open / not done:**
+
+- Rows are `open`; none is `building` yet. Phase D assigns WP0 and WP1 first (no dependencies),
+  then WP2, then the rest in parallel per the plan's ownership table.
+- The screenshots themselves are in the session scratchpad, not the repo; WP0's tooling writes
+  future ones to `results/ui-audit/<scenario>/`.
+- R-102 (notification content) needs `:pipeline`'s `RealCaptureService` read; it is assigned to
+  WP11, whose brief lists the emit points it may touch.
+
+---
+
 ## 2026-09-08 (UI conformance — phases A and B)
 
 ### (pending) — ui-conformance A+B · complete design canvas: 108 artboards, design guide, design intent, conformance plan

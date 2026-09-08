@@ -108,6 +108,12 @@ on disk, a session can wire it into `corpus/src/corpus/probes/speaker_separation
 `probe_r4` and install a real WeSpeaker/3D-Speaker embedder to get R4's actual verdict — see
 `results/r4-speaker-separation.md` for what's blocked pending this.
 
+**Audit 2026-09-07/08.** `results/audit-2026-09-07.md` is the register: 28 findings, 27 closed
+(the 28th, the FLAC codec's device cost, waits for P9). It corrected several notes above in place
+(look for "audit F-0NN"). Two new CI gates exist because of it: `coverageMatrixCheck` and
+`platformGuards`. Coverage went 101 → 179 of 419 ids. Nothing has run on a device; P9 is still the
+gate that matters.
+
 **Wave E — make it an app.** *Added 2026-09-08, after the first real on-device test of the v0
 smoke build. Waves A–D produced eleven green modules and a debug APK that starts a real
 foreground capture service — and a user who installed it correctly observed "I see no UI." That
