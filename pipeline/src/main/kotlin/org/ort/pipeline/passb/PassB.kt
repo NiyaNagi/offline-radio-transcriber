@@ -10,11 +10,11 @@ import org.ort.core.TransmissionState
 import org.ort.data.PassRunOutcome
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.lexicon.CallsignGrammar
-import org.ort.lexicon.LatticeSource
 import org.ort.lexicon.PhoneticLattice
 import org.ort.lexicon.PriorCombiner
 import org.ort.lexicon.RankedCandidate
 import org.ort.lexicon.RankingContext
+import org.ort.lexicon.TextDerivedLatticeBuilder
 import org.ort.lexicon.VariantTable
 import org.ort.pipeline.Pass
 import org.ort.pipeline.diagnostics.DiagnosticsLog
@@ -60,16 +60,17 @@ public fun interface PassBResultSink {
  * [Attribution]. One real [Pass], carrying its [fingerprint] end to end (constitution III: "every
  * pass is a pure function ... and records the fingerprint of what produced it").
  *
- * **Text-to-lattice is per-token, not whole-transcript** (unlike
- * [org.ort.lexicon.TextDerivedLatticeBuilder.build], which throws on the first unrecognised
- * word): a real Pass B transcript of ordinary speech contains many words that are not phonetic
- * spellings, and Pass B must not crash on "the weather here is clear" the way it would reject an
- * out-of-vocabulary NATO word inside a deliberately spelled callsign. Only tokens the
- * [VariantTable] recognises become lattice slots; an unrecognised token is silently excluded
- * rather than aborting the whole transcript. Spotting a callsign embedded in continuous speech
- * — as opposed to a transcript that is *only* the spelled callsign — is exactly the acoustic
- * spotting problem M4 (`UnitSpotter`) exists to solve properly; this is T0's necessarily degraded
- * approximation (FR-LEX-6).
+ * **Text-to-lattice never aborts on an unrecognised word** (unlike
+ * [org.ort.lexicon.TextDerivedLatticeBuilder.build], which throws on the first one): a real Pass B
+ * transcript of ordinary speech contains many words that are not phonetic spellings, and Pass B
+ * must not crash on "the weather here is clear" the way it would reject an out-of-vocabulary NATO
+ * word inside a deliberately spelled callsign. [resolveFromText] uses
+ * [org.ort.lexicon.TextDerivedLatticeBuilder.buildAnchored] instead (R-182/FR-UI-4): only tokens
+ * the [VariantTable] recognises become lattice slots, each carrying its real transcript character
+ * span; an unrecognised token is silently excluded rather than aborting the whole transcript.
+ * Spotting a callsign embedded in continuous speech — as opposed to a transcript that is *only*
+ * the spelled callsign — is exactly the acoustic spotting problem M4 (`UnitSpotter`) exists to
+ * solve properly; this is T0's necessarily degraded approximation (FR-LEX-6).
  */
 /**
  * The resolution-side collaborators [PassB] composes, grouped so the constructor stays under
@@ -121,17 +122,30 @@ public class PassB(
         }
     }
 
+    /**
+     * R-182/FR-UI-4: built with [TextDerivedLatticeBuilder.buildAnchored] rather than the plain
+     * [PhoneticLattice.ofUnits] this used before — `buildAnchored` records each kept unit's real
+     * `[charStart, charEnd)` offset into [text] on its `LatticeSlot`, which `CallsignGrammar.parse`
+     * then carries into every emitted `CallsignCandidate.slotDetails` automatically (that class's
+     * own kdoc: "the only real producer, and always fills it") — no further change needed here for
+     * `slotDetails` to reach [resolution]'s ranking or [sink] unchanged, since [RankedCandidate]
+     * wraps the same `CallsignCandidate` instance [combiner] ranks, never copying it without its
+     * `slotDetails`. `buildAnchored` keeps [PassB]'s existing "an unrecognised token is silently
+     * excluded, never aborts the whole transcript" behaviour itself (see this class's own kdoc) —
+     * the manual split/`mapNotNull` this replaced only ever duplicated that same rule less exactly.
+     *
+     * Never confused with an audio-derived (Pass C) lattice: [TextDerivedLatticeBuilder] always
+     * tags its output `LatticeSource.TEXT_DERIVED`, and only *this* code path ever calls
+     * `buildAnchored` — an acoustic lattice's slots keep `charStart`/`charEnd` `null` (constitution
+     * I: never fabricate a transcript-text relationship a text-derived lattice alone can offer).
+     */
     private fun resolveFromText(
         text: String,
         context: RankingContext,
     ): Triple<PhoneticLattice?, List<RankedCandidate>, Attribution> {
-        val units = text.trim()
-            .split(Regex("\\s+"))
-            .filter { it.isNotBlank() }
-            .mapNotNull { resolution.variants.resolve(it) }
-        if (units.isEmpty()) return Triple(null, emptyList(), Attribution.unknown())
+        val lattice = TextDerivedLatticeBuilder(resolution.variants).buildAnchored(text)
+        if (lattice.isEmpty) return Triple(null, emptyList(), Attribution.unknown())
 
-        val lattice = PhoneticLattice.ofUnits(units, LatticeSource.TEXT_DERIVED)
         val candidates = resolution.grammar.parse(lattice)
         if (candidates.isEmpty()) return Triple(lattice, emptyList(), Attribution.unknown())
 
