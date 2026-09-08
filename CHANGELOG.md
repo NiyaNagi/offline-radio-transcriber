@@ -70,6 +70,37 @@ be run in the same Gradle invocation without an explicit task dependency (Gradle
 undeclared output/input relationship) — pre-existing, out of this finding's scope
 (`buildSrc/CoverageMatrixCheckTask.kt` is unowned by F-023), so they were run as separate
 invocations.
+## 2026-09-07 (audit — F-006)
+
+### (pending) — audit F-006 · too-short segments are retained as REJECTED rows instead of being deleted
+
+**Scope:** `:pipeline` — `capture/RealCaptureService.kt` (`RealSegmentSink.close()`),
+`capture/RealSegmentSinkTest.kt`.
+**Requirements/ACs:** FR-SEG-6, AC-72; constitution III ("nothing is deleted quietly").
+**What changed:** `RealSegmentSink.close()` previously deleted the staged PCM and returned early
+for any `SegmentOutcome` other than `SPEECH`, so a `REJECTED_TOO_SHORT` segment left no trace at
+all — no row, no audio, nothing in the queue, and nothing to distinguish it from audio that was
+never captured. It now FLAC-encodes and persists a `TransmissionEntity` for `REJECTED_TOO_SHORT`
+exactly as it does for `SPEECH` (same derived timestamps, same pre-/post-roll, same audio path),
+but with `processingState = TransmissionState.REJECTED` and `rejectionReason = "too_short"`
+(FR-SEG-6/AC-72's `rejected:too_short`, as the free-text `rejectionReason` value the rest of the
+schema already uses — see `TransmissionDetail.kt`'s `"(rejected: <reason>)"` rendering), and only
+enqueues for Pass B when the outcome is `SPEECH`. `TransmissionDao.insert` has no legal-transition
+check (it is a plain `@Insert`), so writing `REJECTED` directly at insert time needed no schema or
+state-machine change. The reader built for F-003 already renders `REJECTED` rows with their
+reason, so this segment becomes visible with no further change.
+**Verified:** new test `AC_72_a_too_short_segment_is_retained_as_a_rejected_row_with_its_audio_and_never_enqueued`
+in `RealSegmentSinkTest` — seen to fail first (`AssertionError: a too-short segment must still be
+recorded as a row`, because the old code returned before inserting anything) by stashing the
+production change and rerunning; after the fix it asserts a `REJECTED` row exists with
+`rejectionReason = "too_short"`, its encoded FLAC file exists on disk, the staged PCM is gone
+(deleted only as a side effect of `FlacStore.encodeAndVerify`'s post-verify cleanup, not by the
+old unconditional `staged.delete()`), and `WorkQueueDao.findByTransmissionAndPass` returns no
+item for it. `./gradlew :pipeline:test` — all 53 tests pass (JVM/Robolectric only, no device
+verification claimed). Full gate: `./gradlew build dependencyRules` green, `python
+tools/spec-check/spec_check.py` — all 8 checks pass.
+**Left open / not done:** none for this finding. F-007 (shedding/storage-exhaustion wiring) is a
+separate open finding in the same file, not touched here.
 
 ## 2026-09-07 (audit — F-016)
 
