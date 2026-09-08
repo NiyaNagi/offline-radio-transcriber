@@ -122,11 +122,11 @@ in the row).
 
 | id | screen | artboard | what is wrong | sev | status |
 |---|---|---|---|---|---|
-| R-080 | first run | `Setup-Welcome` … `Setup-Done`, `Flow-Setup`, P8 | There is no setup sequence. `MainActivity` requests RECORD_AUDIO then POST_NOTIFICATIONS with bare OS prompts, fires the battery intent, starts capture, opens the reader. P8: a guided sequence, each step verifiable before proceeding. Thirteen boards. | spec | building |
-| R-081 | setup › input | `Setup-Input`, `Setup-Verify`, `Setup-Route-Mismatch`, FR-CAP-2a, F1 | No input selection, no verified-route step, no halt on mismatch. `getRoutedDevice()` is checked in `:capture-android`; nothing surfaces it. | spec | building |
-| R-082 | setup › level | `Setup-Level`, FR-CAP-3 | No level step. | spec | building |
-| R-083 | setup › overnight | `Setup-Battery` | The battery-exemption intent fires with no rationale and no statement that the API lies (the artboard says it in the operator's words). | spec | building |
-| R-084 | setup › radio | `Setup-Rig`, `Setup-Rig-Usb`, `Setup-Rig-Verified` | No rig setup. | spec | building |
+| R-080 | first run | `Setup-Welcome` … `Setup-Done`, `Flow-Setup`, P8 | There is no setup sequence. `MainActivity` requests RECORD_AUDIO then POST_NOTIFICATIONS with bare OS prompts, fires the battery intent, starts capture, opens the reader. P8: a guided sequence, each step verifiable before proceeding. Thirteen boards. | spec | fixed |
+| R-081 | setup › input | `Setup-Input`, `Setup-Verify`, `Setup-Route-Mismatch`, FR-CAP-2a, F1 | No input selection, no verified-route step, no halt on mismatch. `getRoutedDevice()` is checked in `:capture-android`; nothing surfaces it. | spec | fixed |
+| R-082 | setup › level | `Setup-Level`, FR-CAP-3 | No level step. | spec | fixed |
+| R-083 | setup › overnight | `Setup-Battery` | The battery-exemption intent fires with no rationale and no statement that the API lies (the artboard says it in the operator's words). | spec | fixed |
+| R-084 | setup › radio | `Setup-Rig`, `Setup-Rig-Usb`, `Setup-Rig-Verified` | No rig setup. | spec | fixed |
 | R-085 | setup › mic denied | `Setup-Mic-Denied` | Denying the mic twice leaves the app on "Requesting microphone access…" forever with no path to settings. | halt | fixed |
 
 ## Settings, improve, digest, sessions — WP10
