@@ -84,8 +84,7 @@ class RealSherpaDecoderRealModelTest {
         return defaultModelDir()
     }
 
-    private fun defaultModelDir(): File =
-        File("").absoluteFile.resolve(".models-cache/sherpa-onnx-whisper-tiny.en")
+    private fun defaultModelDir(): File = File("").absoluteFile.resolve(".models-cache/sherpa-onnx-whisper-tiny.en")
 
     /** Minimal PCM16 mono WAV reader — good enough for this fixture; no new module dependency. */
     private fun readPcm16MonoWav(file: File): FloatArray {

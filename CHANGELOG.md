@@ -32,6 +32,23 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (evening, cont. — post-merge ktlint fix)
+
+### (pending) — Fix a ktlint class-signature violation in RealSherpaDecoder after merging
+
+**Scope:** `asr-sherpa/src/main/kotlin/org/ort/asrsherpa/real/RealSherpaDecoder.kt` only.
+**Requirements/ACs:** none — style only.
+**What changed:** merging the real-sherpa-onnx follow-up in surfaced a ktlint
+`standard:class-signature` violation (`: SherpaDecoder, AutoCloseable` needed to start on its own
+line) that the follow-up's own narrower verification (`:asr-sherpa:test`, `dependencyRules`)
+didn't run against — `./gradlew build`'s full `ktlintMainSourceSetCheck` caught it. Fixed with
+`./gradlew :asr-sherpa:ktlintFormat` rather than hand-editing, so the result matches the project's
+own formatter exactly.
+**Verified:** `./gradlew build dependencyRules` — full multi-module build green (830 tasks).
+**Left open / not done:** none — this is a reminder for future sessions to run the full
+`./gradlew build`, not just their own module's tests, before calling a merge clean; noted here
+rather than silently fixed with no trace.
+
 ## 2026-09-07 (evening, cont. — drafting Q16 while P11 and a P10 follow-up run)
 
 ### (pending) — Draft the Q16 labelling protocol

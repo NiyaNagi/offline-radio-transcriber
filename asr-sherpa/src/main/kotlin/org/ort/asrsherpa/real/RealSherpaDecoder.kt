@@ -39,7 +39,8 @@ public class RealSherpaDecoder(
     decoderOnnxPath: String,
     tokensPath: String,
     numThreads: Int = 1,
-) : SherpaDecoder, AutoCloseable {
+) : SherpaDecoder,
+    AutoCloseable {
 
     private val recognizer: OfflineRecognizer = OfflineRecognizer(
         OfflineRecognizerConfig.builder()
