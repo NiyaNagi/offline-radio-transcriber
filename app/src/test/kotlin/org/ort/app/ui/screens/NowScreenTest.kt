@@ -2,22 +2,26 @@ package org.ort.app.ui.screens
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.ort.app.status.StatusViewState
-import org.ort.app.ui.data.NowSummaryViewState
+import org.ort.app.ui.data.CanGetBetterRow
+import org.ort.app.ui.data.EarlierNightRow
+import org.ort.app.ui.data.MissingModelFacts
+import org.ort.app.ui.data.NowStationRow
+import org.ort.app.ui.data.NowStationsSection
+import org.ort.app.ui.data.NowViewState
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.core.AttributionState
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
- * The "Now" home (build-plan P14, `design/canvas/Main.dc.html`). The header counts are real
- * (`NowSummaryMapperTest` covers the mapping); the "Worth knowing" digest is an honest empty
- * state, not a fabricated look-alike — digest computation is M9, after the M4 fork, and no data
- * for it exists yet (see this class's own doc comment for why that is not this prompt's gap to
- * fill).
+ * The "Now" home (ui-conformance-plan WP4, R-030/R-033/R-036/R-037; `Main.dc.html`,
+ * `Now-Idle.dc.html`, `Now-First.dc.html`).
  */
 @RunWith(RobolectricTestRunner::class)
 class NowScreenTest {
@@ -25,91 +29,123 @@ class NowScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private val idleStatus = StatusViewState(
-        stateLabel = "Idle",
-        elapsedLabel = "00:00:00",
-        transmissionCount = 0,
-        gapCount = 0,
-        shedLevel = 0,
-        shedLevelLabel = "Nominal",
-        livenessLabel = "No session",
-        uncleanEndBanner = null,
+    private fun activeState(
+        sessionTitle: String = "Overnight",
+        summaryLabel: String = "412 overs · 19 stations",
+        missingModel: MissingModelFacts? = null,
+        worthKnowing: List<org.ort.app.ui.data.WorthKnowingItem> = emptyList(),
+        stations: NowStationsSection = NowStationsSection(0, emptyList(), null, "None yet."),
+    ) = NowViewState.Active(
+        sessionTitle = sessionTitle,
+        summaryLabel = summaryLabel,
+        activityPattern = emptyList(),
+        axisStartLabel = null,
+        axisEndLabel = null,
+        notListeningLabel = null,
+        missingModel = missingModel,
+        worthKnowing = worthKnowing,
+        stations = stations,
     )
 
     @Test
-    fun `the header shows real over and station counts`() {
+    @Requirement("R-033")
+    fun `R_033 the populated Main artboard shows the real over and station counts`() {
         composeTestRule.setContent {
-            OrtTheme {
-                NowScreen(status = idleStatus, summary = NowSummaryViewState(overCount = 412, stationCount = 19))
-            }
+            OrtTheme { NowScreen(state = activeState(summaryLabel = "412 overs · 19 stations")) }
         }
 
         composeTestRule.onNodeWithText("412 overs · 19 stations", substring = true).assertExists()
     }
 
     @Test
-    fun `an empty session shows an honest zero summary, not a placeholder number`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                NowScreen(status = idleStatus, summary = NowSummaryViewState(overCount = 0, stationCount = 0))
-            }
-        }
+    @Requirement("R-037")
+    fun `R_037 worth knowing is the honest Nothing yet state, never a hardcoded developer note`() {
+        composeTestRule.setContent { OrtTheme { NowScreen(state = activeState(worthKnowing = emptyList())) } }
 
-        composeTestRule.onNodeWithText("0 overs · 0 stations", substring = true).assertExists()
+        composeTestRule.onNodeWithContentDescription("Nothing yet", substring = true).assertExists()
+        composeTestRule.onNodeWithText("build-plan.md", substring = true).assertDoesNotExist()
     }
 
     @Test
-    fun `worth knowing is an honest empty state, not a fabricated digest`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                NowScreen(status = idleStatus, summary = NowSummaryViewState(overCount = 0, stationCount = 0))
-            }
-        }
+    @Requirement("R-034")
+    fun `R_034 the missing-model failed block appears with its recovery action, not a raw path`() {
+        val missing = MissingModelFacts(
+            title = "No transcription model installed",
+            body = "Audio is being captured and kept.",
+            actionLabel = "Install a model",
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = activeState(missingModel = missing)) } }
 
-        composeTestRule.onNodeWithContentDescription("Nothing to report yet", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("now-missing-model").assertExists()
+        composeTestRule.onNodeWithText("Install a model", substring = true).assertExists()
     }
 
     @Test
-    @Requirement("FR-UI-7")
-    fun `FR_UI_7 the header says no transcription model is installed when unavailable`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                NowScreen(status = idleStatus, summary = NowSummaryViewState(overCount = 0, stationCount = 0))
-            }
-        }
+    @Requirement("R-030")
+    fun `R_030 stations heard rows show marker callsign count and last time`() {
+        val stations = NowStationsSection(
+            totalCount = 1,
+            rows = listOf(NowStationRow("W7NPC", AttributionState.CONFIRMED, "W7NPC", "48 overs", "02:14")),
+            unidentifiedLabel = "4 unidentified overs",
+            emptyMessage = null,
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = activeState(stations = stations)) } }
 
-        composeTestRule.onNodeWithText(
-            "No transcription model installed — transcripts will not appear",
-            substring = true,
-        ).assertExists()
+        composeTestRule.onNodeWithTag("now-station-W7NPC").assertExists()
+        composeTestRule.onNodeWithText("48 overs", substring = true).assertExists()
+        composeTestRule.onNodeWithText("4 unidentified overs", substring = true).assertExists()
     }
 
     @Test
-    @Requirement("FR-UI-7")
-    fun `FR_UI_7 the header stays silent once a transcription model is actually available`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                NowScreen(
-                    status = idleStatus.copy(transcriptionUnavailableMessage = null),
-                    summary = NowSummaryViewState(overCount = 0, stationCount = 0),
-                )
-            }
-        }
+    @Requirement("R-036")
+    fun `R_036 the idle artboard shows Not capturing, a Start capture button and earlier nights`() {
+        val idle = NowViewState.Idle(
+            lastSessionSummaryLabel = "Last session ended 06:14 · 412 overs · 6 h 42 m",
+            inputLabel = null,
+            rigLabel = null,
+            tierLabel = null,
+            earlierNights = listOf(
+                EarlierNightRow("S1", "Overnight, Mon 7 Sep", "23:32 – 06:14 · 412 overs · 19 stations", null),
+            ),
+            canGetBetter = null,
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = idle) } }
 
-        composeTestRule.onNodeWithText("No transcription model installed", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithTag("now-idle-title").assertExists()
+        composeTestRule.onNodeWithTag("now-idle-start-capture").assertExists()
+        composeTestRule.onNodeWithText("Overnight, Mon 7 Sep", substring = true).assertExists()
     }
 
     @Test
-    fun `capture state is still shown, unchanged from the status screen`() {
+    @Requirement("R-036")
+    fun `R_036 Can get better appears only when a session qualifies`() {
+        val idle = NowViewState.Idle(
+            lastSessionSummaryLabel = null,
+            inputLabel = null,
+            rigLabel = null,
+            tierLabel = null,
+            earlierNights = emptyList(),
+            canGetBetter = CanGetBetterRow(
+                headline = "64 overs were processed below this phone's capability",
+                subLine = "captured at T1 tier · open Improve to reprocess",
+            ),
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = idle) } }
+
+        composeTestRule.onNodeWithTag("now-can-get-better").assertExists()
+        composeTestRule.onNodeWithText("64 overs were processed below this phone's capability", substring = true)
+            .assertExists()
+    }
+
+    @Test
+    fun `tapping Start capture invokes the callback`() {
+        var started = false
+        val idle = NowViewState.Idle(null, null, null, null, emptyList(), null)
         composeTestRule.setContent {
-            OrtTheme {
-                NowScreen(
-                    status = idleStatus.copy(stateLabel = "Capturing"),
-                    summary = NowSummaryViewState(overCount = 1, stationCount = 1),
-                )
-            }
+            OrtTheme { NowScreen(state = idle, onStartCapture = { started = true }) }
         }
 
-        composeTestRule.onNodeWithText("Capturing").assertExists()
+        composeTestRule.onNodeWithTag("now-idle-start-capture").performClick()
+        assert(started)
     }
 }
