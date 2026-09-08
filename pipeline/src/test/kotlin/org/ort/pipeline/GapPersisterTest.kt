@@ -37,4 +37,26 @@ class GapPersisterTest {
         assertEquals(CaptureGapCause.INTERRUPTION, stored.cause)
         assertEquals(true, stored.recoveredAutomatically)
     }
+
+    @Test
+    @Requirement("AC-48", "AC-3", "FR-RUN-12")
+    fun `AC_48 F-010's dropped-span cause is mapped to DEVICE_LOST, not UNKNOWN`() = runTest {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        val persister = GapPersister(db.captureGapDao(), TestClock())
+
+        // The exact string capture-android's DroppedSpanCause.encode() produces (its PREFIX and
+        // parenthetical are internal, so this is duplicated verbatim rather than referenced).
+        val gap = GapRecord(
+            startMonotonicNanos = 0,
+            endMonotonicNanos = 30_000_000,
+            startWallMillis = 0,
+            endWallMillis = 30,
+            cause = "dropped samples: 480 samples over 30ms (stalled consumer or read shortfall)",
+        )
+        persister.persist("SESSION01", gap)
+
+        val stored = db.captureGapDao().listBySession("SESSION01").single()
+        assertEquals(CaptureGapCause.DEVICE_LOST, stored.cause)
+    }
 }
