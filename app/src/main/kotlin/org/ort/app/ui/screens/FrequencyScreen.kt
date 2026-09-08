@@ -133,9 +133,12 @@ public fun FrequencyDetailScreen(
     onOpenStation: (String) -> Unit = {},
     onOpenChange: () -> Unit = {},
     onViewAllOvers: () -> Unit = {},
+    // R-017: see StationDetailScreen's own `backLabel` doc comment — same reasoning, same default
+    // pending WP3 wiring the real navigation origin.
+    backLabel: String = "Frequencies",
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = "Frequencies", onBack = onBack)
+        DrillInHeader(parentLabel = backLabel, onBack = onBack)
         // A single top-level LazyColumn — see StationDetailScreen's own doc comment for why
         // (a `verticalScroll` Column measured fine here too, but silently swallowed a nested
         // `clickable` Row's own tap in this host).

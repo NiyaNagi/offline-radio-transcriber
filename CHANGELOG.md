@@ -34,6 +34,55 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
+### (pending) — ui-conformance WP8 · origin back labels on station and frequency drill-ins
+
+**Scope:** `:app` `ui/screens/StationScreen.kt`, `FrequencyScreen.kt`, `StationDetailContent.kt`,
+`FrequencyDetailContent.kt`; tests beside each. Addendum to this package's own WP8 entry directly
+below, at the coordinator's request after WP8 merged (`8d28e80`) and WP3 wired `OrtNavHost` to this
+package's `*Content.kt` composables.
+
+**Requirements/ACs:** R-017 (drill-in header names the real navigation origin).
+
+**What changed:**
+
+*Constitution Check.* Principle VII (Boundaries Are Structural): the fix is a parameter with a
+named default, not a convention a caller has to remember — `OrtNavHost.kt` (owned concurrently by
+WP10, then WP3) keeps compiling unchanged either way. No principle bears on the label text itself.
+
+- `StationDetailScreen`/`FrequencyDetailScreen` gained a `backLabel: String` parameter (default
+  `"Stations"`/`"Frequencies"` — today's hardcoded value, unchanged behaviour for every existing
+  caller) that now drives their own `DrillInHeader(parentLabel = ...)` instead of a literal.
+- `StationDetailContent`/`FrequencyDetailContent` gained the same `backLabel` parameter (same
+  defaults) and pass it straight through to the screen.
+- `Station-Pattern`/`Station-Identity`/`Frequency-Change` — the sub-screens reached from inside a
+  station or frequency drill-in — were **not** changed: their `DrillInHeader` already reads
+  `state.label`/`state.callsign`, the real "Back to `<callsign>`" origin, which is correct as-is
+  per the coordinator's own instruction.
+- Two new tests per screen (`StationScreenTest`, `FrequencyScreenTest`): the default matches
+  today's hardcoded label, and passing `backLabel` overrides it (proving the parameter is real and
+  wired, not a decorative default).
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded `45f5f20` → `ffd4e1e`; `git merge-base --is-ancestor
+  8d28e80 HEAD` exits 0.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module, forced rerun) — BUILD SUCCESSFUL,
+  618 tests, 0 failed, 0 ignored.
+
+**Left open / not done:**
+- `backLabel` is still a default, not yet fed the true origin — that wiring is WP3's, per the
+  coordinator's own message (R-017 stays open on the register until then).
+- Item 2 of the coordinator's request (report only, no code change): grep for
+  `ActivityPatternMapper.buildPattern(` across `:app` shows two production call sites still on the
+  three-arg UTC-default overload — `ReaderPolling.kt:548` (WP4, `activityPatternForEverySession`)
+  and `NowViewState.kt:125` (WP4). Neither touched; the overload stays for both until WP4 finishes
+  switching.
+
 ### (pending) — ui-conformance WP8 · stations and frequencies: lists, detail, hour-by-day pattern, identity, departure
 
 **Scope:** `:app` `ui/screens/StationScreen.kt`, `FrequencyScreen.kt`, new `StationPatternScreen.kt`,

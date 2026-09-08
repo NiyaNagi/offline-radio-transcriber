@@ -33,6 +33,9 @@ public fun FrequencyDetailContent(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenStation: (String) -> Unit = {},
+    // R-017: passed straight through to `FrequencyDetailScreen`'s own `backLabel` — see
+    // `StationDetailScreen`'s doc comment for the same reasoning.
+    backLabel: String = "Frequencies",
 ) {
     var sub by remember(frequencyHz) { mutableStateOf(FrequencySubScreen.NONE) }
     var detail by remember(frequencyHz) { mutableStateOf<FrequencyDetailViewState?>(null) }
@@ -71,6 +74,7 @@ public fun FrequencyDetailContent(
                     modifier = modifier,
                     onOpenStation = onOpenStation,
                     onOpenChange = { sub = FrequencySubScreen.CHANGE },
+                    backLabel = backLabel,
                 )
             } else {
                 LoadingLine(modifier)

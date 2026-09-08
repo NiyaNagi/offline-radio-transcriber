@@ -252,4 +252,37 @@ class StationScreenTest {
 
         assert(openedPattern)
     }
+
+    @Test
+    fun `R_017 backLabel defaults to Stations, matching OrtNavHost's own hardcoded label today`() {
+        val state = StationDetailViewState(
+            stationId = "W7NPC",
+            label = "W7NPC",
+            transmissionCount = 0,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent { OrtTheme { StationDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Stations").assertExists()
+    }
+
+    @Test
+    fun `R_017 backLabel is a real parameter WP3 can wire to the true navigation origin`() {
+        val state = StationDetailViewState(
+            stationId = "W7NPC",
+            label = "W7NPC",
+            transmissionCount = 0,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { StationDetailScreen(state = state, onBack = {}, backLabel = "Search") }
+        }
+
+        composeTestRule.onNodeWithText("Search").assertExists()
+        composeTestRule.onNodeWithText("Stations").assertDoesNotExist()
+    }
 }
