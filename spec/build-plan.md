@@ -39,6 +39,8 @@ underlying breakdown each prompt draws on.
 - [x] **P4 · Capture and segmentation** — source, resampler, ring, VAD *(`:capture-api`, `:segment`)* — done 2026-09-07
 - [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07; audit F-016 (2026-09-07) added `WorkQueue.requeueFailed` so terminally `FAILED` items get a path back to `READY` (FR-RUN-9, FR-REP-8); audit F-027 (2026-09-07) named FR-ASR-7, FR-AST-5/6/8, FR-RUN-2, FR-STO-1, FR-LEX-12 and NFR-4b in the coverage matrix (renamed/added tests, no production change); FR-STO-2, FR-STO-2a and CON-STO-1 stay genuinely uncovered — `:data` stores `audioFormat` as an unvalidated string, it does not choose or enforce a codec — see CHANGELOG
 - [x] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)* — done 2026-09-07; both probes NOT RUN (no Fearless Steps / no LoRA+sherpa-onnx toolchain or GPU in this environment) — see `results/r4-speaker-separation.md`, `results/r1-lora-export.md`
+- [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07
+- [x] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)* — done 2026-09-07; both probes NOT RUN (no Fearless Steps / no LoRA+sherpa-onnx toolchain or GPU in this environment) — see `results/r4-speaker-separation.md`, `results/r1-lora-export.md`. **FR-TST-6 (audit F-027, 2026-09-07): the D22 callsign generator built here is not the FR-TST-6 load/endurance synthetic traffic generator (activity fraction, transmission length distribution, SNR) — that is unbuilt, not just untested.**
 
 **Wave C — composition.**
 

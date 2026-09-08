@@ -57,7 +57,7 @@ def test_phonetic_expansion_round_trips_through_the_label():
     assert contract(label["tokens"]) == "N7XYZ/P"
 
 
-def test_generated_output_is_barred_from_the_eval_fold():
+def test_FR_TST_9_generated_output_is_barred_from_the_eval_fold():
     voice = FakeTtsVoice()
     channel = ChannelModel(gain=1.0, noise_rms=0.0, tilt=0.0, seed=0)
     with pytest.raises(EvalFoldForbidden):

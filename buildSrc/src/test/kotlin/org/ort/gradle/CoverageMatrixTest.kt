@@ -170,5 +170,48 @@ class CoverageMatrixTest {
         val generated = "line one\nline two\n"
         val committed = "line one\r\nline TWO\r\n"
         assertFalse(CoverageMatrix.contentMatches(generated, committed))
+    // F-027: corpus/ is Python (pyproject.toml, pytest), not Kotlin — the matrix must also scan
+    // its test root so ids established there (FR-TST-6/8-style) are not stuck "not yet covered"
+    // just because the requirement's home is the desktop tooling, not a Gradle module.
+
+    @Test
+    fun `a python test naming a requirement id in its function name is linked, attributed to corpus`(
+        @TempDir dir: Path,
+    ) {
+        val corpusTests = dir.resolve("corpus").resolve("tests").toFile().apply { mkdirs() }
+        File(corpusTests, "test_manifest.py").writeText(
+            """
+            def test_FR_TST_8_source_missing_licence_is_rejected():
+                pass
+
+
+            def test_something_unrelated():
+                pass
+            """.trimIndent(),
+        )
+        val map = CoverageMatrix.testsByRequirement(listOf(corpusTests))
+        assertTrue(map.containsKey("FR-TST-8"), map.toString())
+        val attributions = map.getValue("FR-TST-8")
+        assertTrue(
+            attributions.any {
+                it == "corpus/tests/test_manifest.py::test_FR_TST_8_source_missing_licence_is_rejected"
+            },
+            attributions.toString(),
+        )
+    }
+
+    @Test
+    fun `a python test naming a requirement id is covered end to end via analyse`(@TempDir dir: Path) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("**FR-TST-6 (S)** synthetic traffic generator.")
+
+        val corpusTests = dir.resolve("corpus").resolve("tests").toFile().apply { mkdirs() }
+        File(corpusTests, "test_traffic.py").writeText(
+            "def test_FR_TST_6_activity_fraction_controls_transmission_density():\n    pass\n",
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(corpusTests))
+        assertTrue(coverage.covered.contains("FR-TST-6"), coverage.covered.toString())
+        assertFalse(coverage.uncovered.contains("FR-TST-6"), coverage.uncovered.toString())
     }
 }

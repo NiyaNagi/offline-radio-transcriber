@@ -1081,6 +1081,84 @@ throughout — no device, no real accelerator, no real network involved anywhere
   of them). Not part of F-027, not touched or committed by this change; noted so `./gradlew
   build` failing on `:app:compileDebugKotlin` for an unrelated `Band` reference is not mistaken
   for a regression from this fix.
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · Coverage matrix now scans corpus/'s pytest suite; FR-TST-8/7/9 pytest tests named for the id they establish
+
+**Scope:** `corpus/tests/` (rename only — five test functions), `buildSrc/` (`CoverageMatrix.kt`,
+`CoverageMatrixTest.kt`), root `build.gradle.kts` (task wiring only — `coverageMatrix`'s
+`testRoots`), `results/coverage-matrix.md`.
+
+**Requirements/ACs:** FR-TST-8, FR-TST-7, FR-TST-9. **FR-TST-6 is explicitly NOT closed here —
+see "Left open" below; the finding's premise was wrong about it.**
+
+**What changed:** F-027 grouped `FR-TST-6`/`FR-TST-8` under "corpus/: Python tests exist; the
+Kotlin matrix cannot see them." Only half of that was true.
+
+- `CoverageMatrix.testsByRequirement` now also walks `**/*.py` under each test root and matches
+  `def test_...(` (a new `PY_TEST_FUNCTION` regex), reusing the existing `NAME_ID` extraction so
+  `test_FR_TST_8_source_missing_licence_is_rejected` yields `FR-TST-8` exactly as the Kotlin
+  `_`-separated convention does. A Python match is attributed as
+  `corpus/tests/<file>.py::<function>` (a new `corpusRelativePath` helper, rooted at the last
+  `corpus` path segment so the attribution is identical regardless of checkout location) rather
+  than the Kotlin `ClassName.function` form. `CoverageMatrixTest` gained two cases: one asserting
+  the exact `corpus/tests/test_manifest.py::test_FR_TST_8_...` attribution string, one exercising
+  `analyse()` end-to-end with a synthetic `FR-TST-6`-named fixture (a mechanism test — it does
+  **not** claim the real FR-TST-6 exists; see below).
+- Root `build.gradle.kts`: extracted `coverageMatrixTestRoots` (previously inlined into the
+  `coverageMatrix` task registration) and added `corpus/tests` to it, so the one `val` is now the
+  single place a future task (e.g. a `coverageMatrixCheck`, not present on this branch) would
+  also draw from.
+- `corpus/tests/test_manifest.py`, `test_harness.py`, `test_fold_gate.py`, `test_synth_generator.py`:
+  renamed five tests that already genuinely established a requirement, per the matrix's `test_ID_`
+  convention adapted to Python (`test_FR_TST_8_...`, `test_FR_TST_7_...`, `test_FR_TST_9_...`) —
+  no assertion changed:
+  - `test_source_missing_licence_is_rejected` → `test_FR_TST_8_...` (FR-TST-8's
+    "licence-recorded" half; `test_evaluate_reports_per_source_and_aggregate` →
+    `test_FR_TST_8_...` in `test_harness.py` covers its "metrics per source" half).
+  - `test_eval_fold_is_refused_without_the_flag` and `test_eval_fold_opens_only_with_explicit_opt_in`
+    → `test_FR_TST_7_...` (the harness-side eval-fold gate; already established on the Kotlin side
+    too, per F-027).
+  - `test_synthetic_session_in_eval_is_rejected` (manifest-level) and
+    `test_generated_output_is_barred_from_the_eval_fold` (generator-level) → `test_FR_TST_9_...`.
+- Regenerated `results/coverage-matrix.md`: `FR-TST-8` moved from "Not yet covered" to "Covered",
+  attributed to the four `corpus/tests/...::test_...` entries above; `FR-TST-7` and `FR-TST-9`'s
+  "Covered" rows gained the corpus-side attributions alongside their existing Kotlin ones.
+
+**Left open / not done — FR-TST-6 could not be closed, and was not faked:** the finding's premise
+— "FR-TST-6 ... built in `corpus/src/corpus/`" — does not hold. FR-TST-6 (functional-spec §7.17)
+is a **synthetic traffic generator with configurable activity fraction, transmission length
+distribution and SNR, for load/endurance testing of the running pipeline without an 8-hour tape**.
+Grepped for `activity`/`fraction`/`SNR`/`endurance`/`traffic` across all of `corpus/src/` and
+`corpus/tests/`: no matches. What *does* exist — `corpus/src/corpus/synth/generator.py`
+(`generate_utterance`/`generate_dataset`) — is the D22 per-callsign accuracy-training generator
+(ULS callsign → phonetic → TTS/splice → learned channel), a different, already-tested feature
+(FR-TST-9's generator, which this change did rename a test for). It has no activity-fraction,
+transmission-length-distribution or SNR-sweep controls, and produces isolated utterances, not a
+continuous traffic stream. Building FR-TST-6 for real is new functionality under `corpus/src/`,
+which this brief's scope explicitly excludes ("do not touch `corpus/src/**` unless a genuine bug
+is found") and which the audit itself buckets elsewhere as unbuilt work, not a coverage-naming
+gap — so no test was written or renamed to claim it, and `results/coverage-matrix.md` correctly
+still lists `FR-TST-6` under "Not yet covered." This should be re-filed as its own UNBUILT finding
+rather than reopened as F-027.
+
+Also left open: no `coverageMatrixCheck` task exists on this branch (only `coverageMatrix` does),
+so the second half of the standing brief's verification step — "then run `./gradlew
+coverageMatrixCheck` in a separate invocation" — could not be run; `coverageMatrixTestRoots` is
+structured as a shared `val` so wiring it in is a one-line addition whenever that task lands.
+
+**Verified:** `cd corpus; python -m pytest -q` — 68 passed, 1 skipped, before and after the
+renames (renames only, no assertion changes). `./gradlew -p buildSrc test --console=plain -q`:
+the two new `CoverageMatrixTest` cases were confirmed to FAIL first (`2 tests failed` against the
+pre-fix `CoverageMatrix.kt`, stashed and restored to prove it), then pass after the `.py`-scanning
+change (7/7 green). `./gradlew coverageMatrix --console=plain -q` regenerated
+`results/coverage-matrix.md` — `FR-TST-8` now under "Covered" with the four corpus attributions
+above; `FR-TST-6` remains under "Not yet covered" (honestly — see above). `./gradlew build
+dependencyRules --console=plain -q` — exit 0 (the interleaved Robolectric `CloseGuard` stack
+traces in its log are known-noisy warnings from Room/SQLite teardown, not task failures — the
+build's own exit code and lint HTML-report lines confirm completion). `python
+tools/spec-check/spec_check.py` — all 8 checks PASS. All runs: this machine (`TAMBURLAINE`), JVM
+only, Robolectric where used — no on-device verification was performed or claimed.
 
 ---
 

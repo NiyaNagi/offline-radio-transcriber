@@ -79,14 +79,14 @@ def test_session_in_two_folds_is_rejected(tmp_path):
         load_manifest(_write(tmp_path, doc))
 
 
-def test_synthetic_session_in_eval_is_rejected(tmp_path):
+def test_FR_TST_9_synthetic_session_in_eval_is_rejected(tmp_path):
     doc = _base()
     doc["sessions"][1]["fold"] = "eval"  # synth-callsigns -> eval
     with pytest.raises(ManifestError, match="synthetic.*eval|FR-TST-9"):
         load_manifest(_write(tmp_path, doc))
 
 
-def test_source_missing_licence_is_rejected(tmp_path):
+def test_FR_TST_8_source_missing_licence_is_rejected(tmp_path):
     doc = _base()
     del doc["sources"][0]["licence"]
     with pytest.raises(ManifestError, match="licence"):

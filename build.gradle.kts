@@ -62,7 +62,12 @@ gradle.projectsEvaluated {
     }
 }
 
-/** Test source roots the coverage matrix and its staleness check both scan (test-plan §9). */
+/**
+ * Test source roots the coverage matrix and its staleness check both scan (test-plan §9).
+ * `corpus/tests` is Python (`corpus/` has its own `pyproject.toml` and CI job — AGENTS.md), not a
+ * Gradle subproject, so it is added alongside the per-module Kotlin roots rather than discovered
+ * from `subprojects`. A `val` shared by every task that needs the same roots (F-027).
+ */
 val coverageMatrixTestRoots =
     subprojects.flatMap {
         listOf(
@@ -75,6 +80,7 @@ val coverageMatrixTestRoots =
         // buildSrc is a separate included build, not a member of `subprojects` — without this
         // it is silently invisible to the matrix regardless of what its tests actually prove.
         layout.projectDirectory.dir("buildSrc/src/test/kotlin"),
+        layout.projectDirectory.dir("corpus/tests"),
     )
 
 /** `coverageMatrix` — regenerates results/coverage-matrix.md (test-plan §9). */
