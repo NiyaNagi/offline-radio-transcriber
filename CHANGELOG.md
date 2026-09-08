@@ -10167,6 +10167,93 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · round 10: R-276's back half lands on Frequency-Change; R-133 blocked on SessionsContent
+
+**Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`), tests
+(`ui/navigation/ReaderActivityDestinationSmokeTest.kt`), `CHANGELOG.md`. Eleventh reconciliation
+addendum, two merges in one round (the coordinator's own "same round, same commit is fine"). `git
+merge main` (this branch stayed an ancestor of `main` throughout, so both were clean fast-forwards)
+first to `8d39df4` (WP8's `FrequencyDetailContent.initialView`, `enum class FrequencyDetailView {
+Detail, Change }` confirmed present in `ui/data/StationsAndFrequencies.kt` before building against
+it), then to `41710d8` (WP10's `SettingsContent.onReviewSession`, R-133).
+
+**Requirements/ACs:** R-276 (fully routed now, including the back half), R-133 (investigated;
+routing not built — blocked, reported below, the same standing this row already took for
+`LogContent.initialFilter` two rounds ago).
+
+**Constitution check.** Principle VII (file-ownership discipline, this engagement's own standing
+rule): `SessionsContent.kt` (WP10's file) has no external "land on this session's detail" entry
+point — the identical shape `LogContent.initialFilter`/`CaptureStatusContent.openLevelMeter` both
+had before this row reported them and WP5/WP4 (round 4) added them. Not worked around by wiring
+`onReviewSession` to open `Earlier nights`' bare root list instead: unlike a generic destination
+switch, "Review" specifically promises the *one* session under threat of deletion — landing on the
+full list instead would read as "wrong session" or "nothing happened," the same "a partial route
+that contradicts its own label is worse than a no-op" reasoning R-276's own round-9 entry already
+established for a hypothetical unfiltered Log. Reported precisely instead, per that same standing.
+
+**What changed:**
+
+- **R-276's back half — done.** `NavHostNavState.frequencyInitialView: MutableState<
+  FrequencyDetailView>` (new, `rememberSaveable`, a plain two-value enum needing no custom Saver)
+  seeds `FrequencyDetailContent`'s new `initialView` parameter at the frequency drill-in's dispatch
+  site — `Detail` for every ordinary open, and set to `Change` by the `BackHandler` (round 9) the
+  moment before it restores `openFrequencyHz`, so system back from the filtered `Log` lands the
+  operator on `Frequency-Change` itself (FQ03), not the drill-in's plain detail root (FQ02) — closing
+  exactly the gap round 9's own report named. Reset to `Detail` inside `closeDrillIns()`, the same
+  reasoning `pendingLogFilter`/`logFrequencyOrigin` already follow, so no ordinary frequency open can
+  inherit a stale `Change`. `FrequencyChangeScreen`'s own `onBack` is unchanged (WP8's file, still
+  returns to `Detail`/FQ02) — nothing here needed to know about or restore anything past this one
+  level, exactly as the coordinator's brief said it would be.
+- **R-133 — investigated, not routed; the exact blocker matches this row's own round-8 precedent.**
+  `SettingsStorageScreen.kt`'s "Next deletion … Review" link now calls a real
+  `SettingsContent.onReviewSession(sessionId)` (WP10's own merge), but `ui/digest/SessionsContent.kt`
+  has no parameter to land its own internal `page` state on `SessionsPage.Detail(sessionId)` from
+  outside — that state is a plain `remember { mutableStateOf<SessionsPage>(SessionsPage.List) }`
+  with no seed of any kind, read in full before concluding this. The needed change, for the
+  coordinator to route to WP10, is the identical shape `LogContent.initialFilter`/
+  `CaptureStatusContent.openLevelMeter` already are:
+  ```kotlin
+  @Composable
+  public fun SessionsContent(
+      context: Context,
+      onDrawer: () -> Unit,
+      modifier: Modifier = Modifier,
+      onOpenTransmission: (String) -> Unit = {},
+      initialSessionId: String? = null,  // new
+  ) {
+      var page by remember {
+          mutableStateOf<SessionsPage>(initialSessionId?.let { SessionsPage.Detail(it) } ?: SessionsPage.List)
+      }
+      ...
+  }
+  ```
+  Once this lands, this row's own remaining work is mechanical: `onReviewSession = { sessionId ->
+  navigator... switch to EARLIER_NIGHTS with a new NavHostNavState field carrying sessionId, passed
+  as SessionsContent's new initialSessionId }`; "back returns to Settings-Storage" needs no
+  cooperation from `SessionsContent` itself — that package installs no `BackHandler` of its own
+  (confirmed by reading it), so system back from a session opened this way already propagates
+  straight to a new host-level `BackHandler` (the same shape as R-276's own), which can call
+  `navigator.openSettings(SettingsScreenId.STORAGE)` directly.
+
+**Verified:**
+- `git merge main` × 2 — both clean fast-forwards, to `8d39df4` then `41710d8`.
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:ktlintCheck` — `BUILD SUCCESSFUL`, fully clean.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, fully clean.
+- `.\gradlew.bat dependencyRules` — `OK`, 17 modules, no new edge.
+- `.\gradlew.bat :app:testDebugUnitTest` — 1176 tests, 0 failed.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --rerun-tasks`, run twice — `BUILD SUCCESSFUL` both
+  times, 17 tests, 0 failed each time, including the extended `R_276` case (confirmed not flaky).
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat coverageMatrix` — no delta to `results/coverage-matrix.md` this round.
+- `python tools/spec-check/spec_check.py` — 8/8 `PASS`.
+
+**Left open / not done:**
+- **R-133 — not routed.** Blocked on the `SessionsContent.initialSessionId` signature above landing
+  from WP10; this row's own remaining work is mechanical and already scoped in What changed.
+- Round 5–8's own prior open items (`onOpenLevelMeter`'s further gaps, `onRetryInput`/`onEndSession`/
+  `onRequestUsbPermission` no-ops) are unchanged.
+
 ### (pending) — ui-conformance WP3 · round 9: R-276 fully routed, frequency overs open a real filtered Log
 
 **Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`), tests

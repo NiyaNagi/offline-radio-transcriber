@@ -40,6 +40,7 @@ import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.components.ScreenHeader
 import org.ort.app.ui.data.DrawerCounts
 import org.ort.app.ui.data.DrawerCountsViewState
+import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.LiveBarPolling
 import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.data.ReaderPolling
@@ -172,12 +173,19 @@ public fun OrtNavHost(
     // `ui/**` before adding this, its first use) — `NavHostNavState.openLogFilteredByFrequency`'s
     // own doc comment names exactly what this does and does not restore. `enabled` only while both
     // conditions hold, so this never intercepts back anywhere else in the app.
+    //
+    // Round 10 (WP8 shipped `FrequencyDetailContent.initialView`): lands on `FrequencyDetailView
+    // .Change` — `Frequency-Change` itself, not the drill-in's plain detail root — closing the gap
+    // round 9's own report named explicitly. That screen's own `onBack` still returns to `Detail`
+    // (WP8's own file, unchanged), so nothing here needs to know or restore anything past this one
+    // level.
     BackHandler(enabled = current == ReaderDestination.LOG && navState.logFrequencyOrigin.value != null) {
         val frequencyHz = navState.logFrequencyOrigin.value
         navState.logFrequencyOrigin.value = null
         navState.pendingLogFilter.value = null
         if (frequencyHz != null) {
             navState.openedFrom.value = ReaderDestination.LOG
+            navState.frequencyInitialView.value = FrequencyDetailView.Change
             navState.openFrequencyHz.value = frequencyHz
         }
     }
@@ -218,6 +226,7 @@ public fun OrtNavHost(
                         navState.openCaptureLevelMeter.value,
                         navState.pendingLogFilter.value,
                     ),
+                    navState.frequencyInitialView.value,
                 ),
                 callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
                 sessionId = sessionId,
@@ -266,6 +275,12 @@ private data class NavHostNavState(
     // custom Saver needed) since, unlike [pendingLogFilter], this is read only by a later user
     // action (the back gesture), which can genuinely happen after a `recreate()`.
     val logFrequencyOrigin: MutableState<Long?>,
+    // Round 10, register R-276 (WP8 shipped `FrequencyDetailContent.initialView`): which of that
+    // composable's own two sub-screens a freshly-opened frequency drill-in should land on —
+    // `Detail` for every ordinary open (`onOpenFrequency`, this default), `Change` only when the
+    // `BackHandler` above is what reopened it, so system back from the filtered `Log` lands the
+    // operator on `Frequency-Change` again, not the drill-in's plain root.
+    val frequencyInitialView: MutableState<FrequencyDetailView>,
 ) {
     fun closeDrillIns() {
         openTransmissionId.value = null
@@ -281,6 +296,9 @@ private data class NavHostNavState(
         // navigation never made.
         pendingLogFilter.value = null
         logFrequencyOrigin.value = null
+        // Round 10: same reasoning again — an ordinary drill-in close must not leave a stale
+        // `Change` behind for whatever frequency is opened next.
+        frequencyInitialView.value = FrequencyDetailView.Detail
     }
 
     /** R-017: records which destination a drill-in opened from before running [setter], so a
@@ -351,6 +369,9 @@ private fun rememberNavHostNavState(): NavHostNavState {
     // doc comments for why one is a plain `remember` and the other `rememberSaveable`.
     val pendingLogFilter = remember { mutableStateOf<LogFilterSelection?>(null) }
     val logFrequencyOrigin = rememberSaveable { mutableStateOf<Long?>(null) }
+    // Round 10, register R-276 — a plain two-value enum, Bundle-saveable via the default Saver the
+    // same way `ReaderDestination` (above) already is, no custom Saver needed.
+    val frequencyInitialView = rememberSaveable { mutableStateOf(FrequencyDetailView.Detail) }
     return NavHostNavState(
         openedFrom,
         searchOpenedFrom,
@@ -363,6 +384,7 @@ private fun rememberNavHostNavState(): NavHostNavState {
         openCaptureLevelMeter,
         pendingLogFilter,
         logFrequencyOrigin,
+        frequencyInitialView,
     )
 }
 
@@ -475,6 +497,9 @@ private data class NavHostIds(
     val frequencyHz: Long?,
     val threadId: String?,
     val contentInitialState: DestinationInitialState,
+    // Round 10, register R-276: which sub-screen a freshly-opened frequency drill-in lands on —
+    // see `NavHostNavState.frequencyInitialView`'s own doc comment.
+    val frequencyInitialView: FrequencyDetailView,
 )
 
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
@@ -607,6 +632,9 @@ private fun NavHostBody(
                     onBack = callbacks.onCloseDrillIns,
                     onOpenStation = callbacks.onOpenStation,
                     onOpenOvers = callbacks.onOpenOvers, // R-276, real now — see NavHostCallbacks.onOpenOvers
+                    // Round 10: real now — WP8 merged it. `Detail` for every ordinary open; `Change`
+                    // only when the `BackHandler` above set it, restoring `Frequency-Change` itself.
+                    initialView = ids.frequencyInitialView,
                     backLabel = ids.openedFrom.label,
                 )
 
