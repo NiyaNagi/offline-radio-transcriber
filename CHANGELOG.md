@@ -198,6 +198,122 @@ confirming no change was needed and recording why.
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: key-value and column widths grow with font scale)
+
+### (pending) — ui-conformance WP2 · key-value and column widths grow with font scale
+
+**Scope:** `:app` `ui/components/Rows.kt` and `RowsTest.kt` only. Validator finding R-152 in
+`results/ui-audit/register.md` (screenshot `results/ui-audit/stations-14-nights/DG04@2x.png`).
+`main` fast-forward merged first (`git merge --ff-only main`; this branch already an ancestor; no
+rebase, no stash) — no other package's files touched.
+
+**Requirements/ACs:** R-152 (`Session`/`Capture-Status` at font scale 2.0: `KeyValueRow`'s
+fixed-width label column does not grow, so label and value collide — "Stations5").
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) bears indirectly: a collided label
+  and value ("Stations5") is not just ugly, it is a reading a user could misattribute to the wrong
+  field entirely — the same family of harm as an unlabelled number. Principle II (Test-Backed
+  Change) governs the audit itself: rather than eyeballing the other fixed-width columns, each one
+  now has a Robolectric test at font scale 2.0 that measures real screen positions and asserts no
+  overlap, so "fixed what breaks" is a checked claim, not an impression.
+- **Root cause.** `KeyValueRow`'s key `Text` used `Modifier.width(96.dp)` — an exact width, not a
+  floor — with no `horizontalArrangement` gap on the `Row` at all: the *only* separation between
+  the key box and the value column was whatever slack the key's own text left unused inside its
+  96dp box. At the guide's own text scale, short keys ("Route", "Input") leave plenty of that
+  slack, and it reads as the gap. At font scale 2.0 a key like "Stations" needs nearly the full
+  96dp, the slack disappears, and the value starts drawing immediately after with no whitespace
+  between them — "Stations5". The same fragile pattern — a `width()` ceiling on a label/column,
+  sized for the guide's scale and never revisited for a larger one — is shared by
+  `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN`/the signal column (`Rows.kt` file-level constants, used by
+  `ColumnHeaderRow`, `LogRow`, `RejectedRow`, `GapRow`) and by `NotificationCard`'s expanded
+  key/value rows (`Modifier.width(62.dp)` on the row key) — all audited for the same defect.
+- **The fix.** Every one of these `Modifier.width(X)` label/column declarations is now
+  `Modifier.widthIn(min = X)` — a floor, not a ceiling: at the guide's own scale (1.0), where every
+  label/value pair already fits inside `X`, this is visually a no-op (the same width results,
+  since `widthIn(min = X)` and `width(X)` coincide once content is narrower than `X`). At a larger
+  scale, the column can grow past `X` to fit its content instead of being pinned there regardless.
+  `KeyValueRow` also gained `horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm)` (8dp) —
+  this is the part that actually fixes the reported defect: `LogRow`, `RejectedRow`,
+  `ColumnHeaderRow` and `GapRow` already had `Arrangement.spacedBy(10dp)` between their columns
+  (a real, unconditional gap regardless of any column's width), and `NotificationCard`'s expanded
+  rows already had `spacedBy(8dp)`; `KeyValueRow` was the one row with *no* arrangement gap at
+  all, which is what let its slack-as-gap illusion collapse to zero in the first place.
+  `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN`'s KDoc now says "floor" explicitly, so a future caller
+  doesn't reintroduce a hard `width()` against them.
+- Changed: `KeyValueRow`'s key `Text` (`width(96.dp)` → `widthIn(min = 96.dp)`, plus the new
+  `spacedBy` gap); `ColumnHeaderRow`'s three fixed-column `Text`s; `LogRow`'s time/freq/signal
+  `Text`s; `RejectedRow`'s time/freq `Text`s; `GapRow`'s time `Text`; `NotificationCard`'s expanded
+  row key `Text`. No signature changed on any of these composables — every fix is inside the
+  existing function body.
+- **A measurement limitation found and worked around while writing the tests, worth recording.**
+  The first version of this fix's tests tried to prove the "grows past the floor for a wide key"
+  behaviour directly, by rendering a 23-character key at font scale 2.0 and asserting its measured
+  width exceeded 96dp. It didn't — Robolectric's `Paint` returns degenerate glyph metrics for this
+  codebase's custom `sans`/`mono` `fontFamily`s in the unit-test JVM (confirmed directly: the
+  23-character key measured exactly 96px — the floor, unmoved — and a lone digit measured 1px,
+  regardless of the 2.0 font scale actually being applied to the `Density` the content composed
+  under). An intrinsic-text-width assertion in this environment would therefore pass or fail on an
+  artefact of the test host's font substitution, not on real behaviour, so it was dropped. What
+  *is* deterministic and host-independent — because it follows from Compose's own documented
+  `widthIn`/`Arrangement.spacedBy` semantics rather than from font rendering — is that a real,
+  code-enforced minimum gap now exists between every one of these column pairs; that is what the
+  tests below check instead, and it is exactly the property `KeyValueRow` was missing.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **792 of 792 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`: `Total: 792, Failures: 0`; was 737 before this commit — 55 new tests, mostly
+  from other packages' concurrent work already merged via `main`, plus this commit's own 5). New
+  tests, all in `RowsTest`, named for R-152: `R_152_a key value row keeps a real enforced gap
+  between its label and its value at font scale 2`, `R_152_a column header row keeps a real
+  enforced gap between its time and freq columns at font scale 2`, `R_152_a log row keeps a real
+  enforced gap between its time and freq columns at font scale 2`, `R_152_a rejected row keeps a
+  real enforced gap between its time and freq columns at font scale 2`, `R_152_a notification
+  card's expanded key-value row keeps a real enforced gap at font scale 2`. Each measures the real
+  `positionInRoot`/`size` of the two adjacent columns' `Text` nodes at `Density(fontScale = 2f)`
+  (`useUnmergedTree = true` — `LogRow`/`RejectedRow`/`NotificationCard` wrap their content in
+  `semantics(mergeDescendants = true)` for a single accessible target, which on the default merged
+  tree collapses every column's `Text` into one outer node, making a naive bounds check compare
+  the same merged node with itself — confirmed the hard way: the first version of these tests,
+  before adding `useUnmergedTree = true`, reported nonsense like `'145.230' (starting at 0.0px)`
+  because that string had resolved to the whole row's merged node, not the frequency `Text`) and
+  asserts the enforced gap between them is at least the row's own declared `Arrangement.spacedBy`
+  value (8px for `KeyValueRow`/`NotificationCard`, 10px for the others) — not merely non-negative,
+  so a regression back to zero explicit spacing is caught even though the boxes would still be
+  technically non-overlapping. Re-verified genuinely, not just by construction: temporarily
+  reverted `KeyValueRow` to `width(96.dp)` with no arrangement (its exact pre-fix form) and reran
+  its test — it failed with `expected at least 8px between 'Stations' (ending at 96.0px) and '5'
+  (starting at 96.0px) at font scale 2.0, got 0.0px`, i.e. the two columns touching exactly, zero
+  gap — real, logged proof of the defect this fix removes, not an assumption; then restored the
+  fix and reran clean.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `dependencyRules:
+  checked 17 modules ... OK — every edge is permitted by the design graph.` `platformGuards:
+  checked 17 modules' external dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`
+  (unchanged — R-152 is a validator finding, not a spec requirement id, so no new coverage row).
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (181 covered of 419)`.
+  `.\gradlew.bat :app:assembleDebug` — included in and passed as part of the `build` run above.
+
+**Left open / not done:**
+- **The register (`results/ui-audit/register.md`) is not updated by this commit** — closing out
+  R-152's row (marking it fixed, citing this commit) is the validator/coordinator's own
+  bookkeeping on that file, outside this package.
+- **No screenshot/emulator re-capture** of `DG04@2x.png` to visually confirm the fix against the
+  actual artboard — Robolectric position assertions only, per the plan (Phase E/Validators own
+  screenshot verification). This one matters more than usual here, given the font-metrics
+  limitation above: a real-device/emulator capture is the only way to see the *actual* grown width
+  of a genuinely long key, which Robolectric cannot exercise meaningfully.
+- **`GapRow`'s time column got the same `widthIn` fix but has no dedicated R-152 test** — its
+  column is followed by an `Icon`, not a `Text`, so the `onNodeWithText`-based gap-measurement
+  helper this commit's other tests use doesn't apply to it directly. The fix is the same
+  mechanical change (`width(LOG_TIME_COLUMN)` → `widthIn(min = LOG_TIME_COLUMN)`) as every other
+  row built from that constant, and `GapRow`'s existing `a gap row and a rejected row stay
+  reachable rather than disappearing` test still passes unchanged.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: text field keeps its editable semantics on the inner node)
 
 ### (pending) — ui-conformance WP2 · text field keeps its editable semantics on the inner node

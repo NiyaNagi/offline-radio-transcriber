@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -40,13 +41,23 @@ import org.ort.core.AttributionState
 /**
  * R-023 (ui-conformance-plan WP2): the row family from guide §6.5 and `Rows.dc.html` — the
  * densest part of the product (P7). Time and frequency are fixed-width columns so they align
- * down the whole log; the station block grows; signal is right-aligned mono.
+ * down the whole log at the guide's own text scale; the station block grows; signal is
+ * right-aligned mono.
+ *
+ * R-152: every column built from these constants is applied as a `widthIn(min = …)` floor, never
+ * a `width(…)` ceiling — at a large font scale the guide's own column widths are too narrow for
+ * the scaled text they hold, and a hard `width()` lets that overflow run straight into whatever
+ * sits to its right with no visible gap (`Session`/`Capture-Status`'s "Stations5"). A floor keeps
+ * every row's columns aligned at the guide's scale (1.0) — where content is always narrower than
+ * the floor — and lets a column grow past it, never collide, at 2.0.
  */
 
-/** Fixed time column — 52dp, so every row's time aligns down the whole log (guide §6.5/§5). */
+/** Time column floor — 52dp at the guide's own scale, so every row's time aligns down the whole
+ * log there (guide §6.5/§5); grows past 52dp rather than colliding with what follows it at a
+ * larger font scale. */
 public val LOG_TIME_COLUMN: androidx.compose.ui.unit.Dp = 52.dp
 
-/** Fixed frequency column — 56dp. */
+/** Frequency column floor — 56dp at the guide's own scale. */
 public val LOG_FREQ_COLUMN: androidx.compose.ui.unit.Dp = 56.dp
 
 private val SIGNAL_COLUMN = 24.dp
@@ -175,13 +186,13 @@ public fun ColumnHeaderRow(
             text = "time".uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
-            modifier = Modifier.width(LOG_TIME_COLUMN),
+            modifier = Modifier.widthIn(min = LOG_TIME_COLUMN),
         )
         Text(
             text = "freq".uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
-            modifier = Modifier.width(LOG_FREQ_COLUMN),
+            modifier = Modifier.widthIn(min = LOG_FREQ_COLUMN),
         )
         Text(
             text = stationLabel.uppercase(),
@@ -193,13 +204,17 @@ public fun ColumnHeaderRow(
             text = signalLabel.uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
-            modifier = Modifier.width(SIGNAL_COLUMN),
+            modifier = Modifier.widthIn(min = SIGNAL_COLUMN),
         )
     }
 }
 
-/** `Capture-Status.dc.html`'s key/value row: a 96dp key column, a value + optional sub-line, and
- * an optional trailing marker slot. */
+/** `Capture-Status.dc.html`'s key/value row: a key column sized to its content (a 96dp floor,
+ * per the guide, but never a fixed ceiling — R-152: at large font scales a fixed-width column
+ * cannot grow, so a long key runs directly into the value with no gap between them, e.g.
+ * "Stations5"), a value + optional sub-line, and an optional trailing marker slot. The row's own
+ * [OrtSpacing.sm] gap between columns is the floor that keeps key and value apart even when the
+ * key's intrinsic width already reaches the value column's edge. */
 @Composable
 public fun KeyValueRow(
     key: String,
@@ -211,8 +226,14 @@ public fun KeyValueRow(
     Row(
         modifier = modifier.fillMaxWidth().heightIn(min = 44.dp).padding(vertical = OrtSpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
-        Text(text = key, style = OrtType.control, color = OrtColors.textDim, modifier = Modifier.width(96.dp))
+        Text(
+            text = key,
+            style = OrtType.control,
+            color = OrtColors.textDim,
+            modifier = Modifier.widthIn(min = 96.dp),
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(text = value, style = OrtType.control, color = OrtColors.textHigh)
             subLine?.let { Text(text = it, style = OrtType.subLine, color = OrtColors.textDim) }
@@ -356,13 +377,13 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
                 text = state.timeLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.width(LOG_TIME_COLUMN),
+                modifier = Modifier.widthIn(min = LOG_TIME_COLUMN),
             )
             Text(
                 text = state.frequencyLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.width(LOG_FREQ_COLUMN),
+                modifier = Modifier.widthIn(min = LOG_FREQ_COLUMN),
             )
             Column(modifier = Modifier.weight(1f)) {
                 LogRowMarkerLine(state = state)
@@ -378,7 +399,7 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
                     text = it,
                     style = OrtType.signal,
                     color = OrtColors.textLow,
-                    modifier = Modifier.width(SIGNAL_COLUMN),
+                    modifier = Modifier.widthIn(min = SIGNAL_COLUMN),
                 )
             }
         }
@@ -516,7 +537,7 @@ public fun GapRow(timeLabel: String, label: String, modifier: Modifier = Modifie
                 text = timeLabel,
                 style = OrtType.signal,
                 color = OrtColors.accentGap,
-                modifier = Modifier.width(LOG_TIME_COLUMN),
+                modifier = Modifier.widthIn(min = LOG_TIME_COLUMN),
             )
             Icon(
                 imageVector = OrtIcons.gapWarn,
@@ -567,13 +588,13 @@ public fun RejectedRow(
                 text = timeLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.width(LOG_TIME_COLUMN),
+                modifier = Modifier.widthIn(min = LOG_TIME_COLUMN),
             )
             Text(
                 text = frequencyLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.width(LOG_FREQ_COLUMN),
+                modifier = Modifier.widthIn(min = LOG_FREQ_COLUMN),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -682,7 +703,8 @@ public fun NotificationCard(
                             text = row.key,
                             style = OrtType.cardBody,
                             color = OrtColors.textFaint,
-                            modifier = Modifier.width(62.dp),
+                            // R-152: a floor, not a ceiling — see LOG_TIME_COLUMN's doc.
+                            modifier = Modifier.widthIn(min = 62.dp),
                         )
                         Text(text = row.value, style = OrtType.cardBody, color = OrtColors.textPrior)
                     }
