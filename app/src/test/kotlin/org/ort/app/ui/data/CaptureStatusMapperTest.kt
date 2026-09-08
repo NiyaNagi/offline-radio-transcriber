@@ -5,8 +5,12 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
@@ -14,7 +18,8 @@ import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 
 /**
- * `Capture-Status.dc.html`'s facts, pure (ui-conformance-plan WP4, R-031/R-032/R-034/R-035/R-038).
+ * `Capture-Status.dc.html`'s facts, pure (ui-conformance-plan WP4, R-031/R-032/R-034/R-035/R-038,
+ * R-112/R-113).
  */
 class CaptureStatusMapperTest {
 
@@ -28,6 +33,9 @@ class CaptureStatusMapperTest {
         storage: StorageForecast.State = StorageForecast.State.NotYetMeasured(0L, 0L),
         asr: AsrAvailability.State = AsrAvailability.State.NotYetChecked,
         vad: VadAvailability.State = VadAvailability.State.Stub,
+        input: InputStatus.State = InputStatus.State.None,
+        level: LevelStatus.State = LevelStatus.State.NotMeasured,
+        nowMillis: Long = 100_000L,
         batteryExemptionReportsIgnoring: Boolean = true,
     ) = CaptureStatusMapper.from(
         captureState = captureState,
@@ -38,6 +46,9 @@ class CaptureStatusMapperTest {
         storage = storage,
         asr = asr,
         vad = vad,
+        input = input,
+        level = level,
+        nowMillis = nowMillis,
         sinceLabel = "23:32",
         elapsedLabel = "6:42:18",
         heartbeatSecondsAgo = 4,
@@ -50,6 +61,9 @@ class CaptureStatusMapperTest {
         batteryCharging = true,
         batteryExemptionReportsIgnoring = batteryExemptionReportsIgnoring,
     )
+
+    private fun descriptor(label: String = "USB Audio Device") =
+        AudioDeviceDescriptor(id = "usb-1", kind = AudioDeviceKind.USB_DEVICE, label = label)
 
     @Test
     @Requirement("FR-UI-7")
@@ -155,10 +169,133 @@ class CaptureStatusMapperTest {
     }
 
     @Test
-    fun `input and level are honestly not measured on every build today`() {
-        val view = state()
+    fun `R_113 input reads Not measured before any device has been opened this session`() {
+        val view = state(input = InputStatus.State.None)
         assertEquals("Not measured", view.input.value)
+    }
+
+    @Test
+    @Requirement("FR-CAP-2a")
+    fun `R_113 an opened, verified input shows the device native rate resampler id and verified`() {
+        val view = state(
+            input = InputStatus.State.Opened(
+                descriptor = descriptor("USB Audio Device"),
+                nativeRateHz = 48_000,
+                resamplerId = "a41c",
+                routeVerified = true,
+                routedDeviceMatches = true,
+                openedAtMillis = 0L,
+            ),
+        )
+        assertEquals("USB Audio Device", view.input.value)
+        assertTrue(view.input.subLine!!.contains("48 kHz"))
+        assertTrue(view.input.subLine!!.contains("a41c"))
+        assertEquals("verified", view.input.trailingText)
+        assertEquals(CaptureStateTone.NOMINAL, view.input.trailingDot)
+    }
+
+    @Test
+    fun `R_113 an opened but not yet verified input never claims verified early`() {
+        val view = state(
+            input = InputStatus.State.Opened(
+                descriptor = descriptor(),
+                nativeRateHz = 48_000,
+                resamplerId = "a41c",
+                routeVerified = false,
+                routedDeviceMatches = false,
+                openedAtMillis = 0L,
+            ),
+        )
+        assertFalse(view.input.trailingText == "verified")
+    }
+
+    @Test
+    fun `R_113 a mismatched route reads mismatch halted, never silently substituted`() {
+        val view = state(
+            input = InputStatus.State.Mismatch(
+                expected = descriptor("USB Audio Device"),
+                actual = descriptor("Built-in Microphone"),
+            ),
+        )
+        assertEquals("mismatch — halted", view.input.trailingText)
+        assertEquals(CaptureStateTone.HALTED, view.input.trailingDot)
+        assertTrue(view.input.subLine!!.contains("Built-in Microphone"))
+    }
+
+    @Test
+    fun `R_113 a lost input states how long ago it was lost, from the real clock given`() {
+        val opened = InputStatus.State.Opened(
+            descriptor = descriptor(),
+            nativeRateHz = 48_000,
+            resamplerId = "a41c",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val view = state(
+            input = InputStatus.State.Lost(lastKnown = opened, sinceMillis = 10_000L),
+            nowMillis = 25_000L,
+        )
+        assertEquals("lost 15s ago", view.input.trailingText)
+        assertEquals(CaptureStateTone.DEGRADED, view.input.trailingDot)
+    }
+
+    @Test
+    fun `R_112 level reads Not measured before any frame has been measured this session`() {
+        val view = state(level = LevelStatus.State.NotMeasured)
         assertEquals("Not measured", view.level.value)
+    }
+
+    @Test
+    fun `R_112 a measured level shows peak and RMS dBFS`() {
+        val view = state(
+            level = LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+        )
+        assertEquals("-14 dBFS peaks", view.level.value)
+        assertTrue(view.level.subLine!!.contains("-20"))
+        assertTrue(view.level.subLine!!.contains("-58"))
+        assertNull(view.level.trailingDot)
+    }
+
+    @Test
+    fun `R_112 clipping is called out in amber, not folded silently into the peak`() {
+        val view = state(
+            level = LevelStatus.State.Measured(
+                peakDbfs = 0f,
+                rmsDbfs = -4f,
+                noiseFloorDbfs = -58f,
+                clipped = true,
+                clipCountLastSecond = 3,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+        )
+        assertEquals("clipping", view.level.trailingText)
+        assertEquals(CaptureStateTone.DEGRADED, view.level.trailingDot)
+    }
+
+    @Test
+    fun `R_112 a noise floor not yet tracked reads honestly, never a fabricated figure`() {
+        val view = state(
+            level = LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = null,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+        )
+        assertTrue(view.level.subLine!!.contains("not yet tracked"))
     }
 
     @Test

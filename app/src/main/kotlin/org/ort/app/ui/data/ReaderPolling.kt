@@ -24,6 +24,8 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureStatusRepository
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RealCaptureService
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
@@ -131,11 +133,10 @@ public object ReaderPolling {
     // -------------------------------------------------------------------------------------------
 
     /**
-     * `Capture-Status.dc.html`'s full read path — see [org.ort.app.ui.data.CaptureStatusMapper]'s
-     * own kdoc for the two facts (Input, Level) this cannot honestly measure yet and why. Every
-     * other fact is real: [ShedStatus]/[ThermalStatus]/[RigStatus]/[StorageForecast] are the same
-     * process-wide holders [currentStatus] above already reads (or, for the three R-104/R-105
-     * additions, are the new ones `RealCaptureService`'s shed tick now publishes).
+     * `Capture-Status.dc.html`'s full read path. Every fact is real: [ShedStatus]/[ThermalStatus]/
+     * [RigStatus]/[StorageForecast] are the same process-wide holders [currentStatus] above already
+     * reads, and [InputStatus]/[LevelStatus] (WP11c, register R-112/R-113) are the two that used to
+     * be honestly "not measured" here — see [org.ort.app.ui.data.CaptureStatusMapper]'s own kdoc.
      */
     public suspend fun captureStatus(context: Context, sessionId: String): CaptureStatusViewState {
         val db = OrtDatabase.create(context.applicationContext)
@@ -169,6 +170,9 @@ public object ReaderPolling {
             storage = StorageForecast.state,
             asr = AsrAvailability.state,
             vad = VadAvailability.state,
+            input = InputStatus.state,
+            level = LevelStatus.state,
+            nowMillis = nowMillis,
             sinceLabel = session?.startedAt?.let { hourMinuteUtcLabel(it) },
             elapsedLabel = session?.let { formatElapsedShort(nowMillis - it.startedAt) } ?: "0:00",
             heartbeatSecondsAgo = heartbeatSecondsAgo,
@@ -484,104 +488,12 @@ public object ReaderPolling {
         }
     }
 
-    /** The "Stations" list (FR-UI-9): every station ever heard, most recently heard first. */
-    public suspend fun listStationSummaries(context: Context): List<StationListEntryViewState> {
-        val db = OrtDatabase.create(context.applicationContext)
-        return db.activityDao().listStations().map { StationViewMapper.listEntry(it) }
-    }
-
-    /** The "Frequencies" list (FR-UI-10): every frequency ever recorded on a transmission. */
-    public suspend fun listFrequencySummaries(context: Context): List<FrequencyListEntryViewState> {
-        val db = OrtDatabase.create(context.applicationContext)
-        return db.activityDao().listDistinctFrequencies().map { frequencyHz ->
-            val count = db.activityDao().transmissionsForFrequency(frequencyHz).size
-            FrequencyViewMapper.listEntry(frequencyHz, count)
-        }
-    }
-
-    /**
-     * Everything heard from [stationId], across every session (FR-UI-9), plus its activity
-     * pattern (FR-UI-11), built from the *real* [org.ort.data.entity.SessionEntity] start/end and
-     * [org.ort.data.entity.CaptureGapEntity] rows every recorded session carries — FR-UI-12's "not
-     * heard" vs "not listening" distinction is structural in [ActivityPatternMapper], not decided
-     * here.
-     */
-    public suspend fun stationDetail(context: Context, stationId: String, nowMillis: Long): StationDetailViewState {
-        val db = OrtDatabase.create(context.applicationContext)
-        val entities = db.activityDao().transmissionsForStation(stationId)
-        val details = entities.map { detailFrom(context, db, it) }
-        val timestamps = entities.map { it.startedAtUtc }
-        val pattern = activityPatternForEverySession(db, timestamps, nowMillis)
-        val dayOfWeekPattern = dayOfWeekPatternForEverySession(db, timestamps, nowMillis)
-        val weekOverWeek = weekOverWeekComparisonForEverySession(db, timestamps, nowMillis)
-        val label = db.catalogDao().getStation(stationId)?.callsign ?: stationId
-        return StationViewMapper.detail(stationId, label, details, pattern, dayOfWeekPattern, weekOverWeek)
-    }
-
-    /** Everything heard on [frequencyHz], across every session (FR-UI-10), plus its activity pattern (FR-UI-11). */
-    public suspend fun frequencyDetail(context: Context, frequencyHz: Long, nowMillis: Long): FrequencyDetailViewState {
-        val db = OrtDatabase.create(context.applicationContext)
-        val entities = db.activityDao().transmissionsForFrequency(frequencyHz)
-        val details = entities.map { detailFrom(context, db, it) }
-        val timestamps = entities.map { it.startedAtUtc }
-        val pattern = activityPatternForEverySession(db, timestamps, nowMillis)
-        val dayOfWeekPattern = dayOfWeekPatternForEverySession(db, timestamps, nowMillis)
-        val weekOverWeek = weekOverWeekComparisonForEverySession(db, timestamps, nowMillis)
-        return FrequencyViewMapper.detail(frequencyHz, details, pattern, dayOfWeekPattern, weekOverWeek)
-    }
-
-    /**
-     * The [SessionWindow] for **every session ever recorded**, not only the ones a station or
-     * frequency happened to be heard in (FR-UI-12): capture does not know in advance which
-     * station or frequency the operator will later ask about, so an hour a session was capturing
-     * through but this particular station/frequency stayed quiet is genuinely
-     * [HourActivityState.SILENT_WHILE_LISTENING] — restricting to only the sessions that produced
-     * a match would wrongly turn every other, equally-real listening hour into
-     * [HourActivityState.NOT_LISTENING], which is exactly the fabricated-absence direction FR-UI-12
-     * forbids, just aimed the other way.
-     */
-    private suspend fun activityPatternForEverySession(
-        db: OrtDatabase,
-        matchingTimestamps: List<Long>,
-        nowMillis: Long,
-    ): List<HourActivityBucket> =
-        ActivityPatternMapper.buildPattern(everySessionWindow(db), matchingTimestamps, nowMillis)
-
-    /**
-     * The day-of-week half of FR-UI-11 (audit F-019) — same every-session windows as
-     * [activityPatternForEverySession], bucketed by calendar day in the device's own zone (F-001:
-     * real wall-clock timestamps, never a sample position).
-     */
-    private suspend fun dayOfWeekPatternForEverySession(
-        db: OrtDatabase,
-        matchingTimestamps: List<Long>,
-        nowMillis: Long,
-    ): List<DayOfWeekActivityBucket> = ActivityPatternMapper.buildDayOfWeekPattern(
-        everySessionWindow(db),
-        matchingTimestamps,
-        nowMillis,
-        ZoneId.systemDefault(),
-    )
-
-    /** FR-UI-11's "how that has changed" half (audit F-019). */
-    private suspend fun weekOverWeekComparisonForEverySession(
-        db: OrtDatabase,
-        matchingTimestamps: List<Long>,
-        nowMillis: Long,
-    ): List<WeekOverWeekBucket> = ActivityPatternMapper.buildWeekOverWeekComparison(
-        everySessionWindow(db),
-        matchingTimestamps,
-        nowMillis,
-        ZoneId.systemDefault(),
-    )
-
-    private suspend fun everySessionWindow(db: OrtDatabase): List<SessionWindow> =
-        db.sessionDao().listAll().map { session ->
-            val gaps = db.captureGapDao().listBySession(session.id).map { gap ->
-                GapWindow(startedAt = gap.startedAt, endedAt = gap.endedAt)
-            }
-            SessionWindow(startedAtUtc = session.startedAt, endedAtUtc = session.endedAt, gaps = gaps)
-        }
+    // R-round-two coordinator note: listStationSummaries/listFrequencySummaries/stationDetail/
+    // frequencyDetail (and the activityPatternForEverySession/dayOfWeekPatternForEverySession/
+    // weekOverWeekComparisonForEverySession/everySessionWindow helpers that existed only to serve
+    // them) moved to WP8's own `ui/data/StationPolling.kt`, which now owns every "every session"
+    // read — removed here rather than left as dead/duplicated code (WP3 confirmed nothing in the
+    // nav host still calls the copies that used to live in this file).
 
     private fun sourceId(entity: TransmissionEntity): TransmissionId? =
         entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }

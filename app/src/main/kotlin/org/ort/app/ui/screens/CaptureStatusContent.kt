@@ -15,8 +15,11 @@ import org.ort.app.ui.data.CaptureStatusMapper
 import org.ort.app.ui.data.CaptureStatusViewState
 import org.ort.app.ui.data.LiveBarPolling
 import org.ort.app.ui.data.ReaderPolling
+import org.ort.core.SystemClock
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RealCaptureService
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.StorageForecast
@@ -77,6 +80,9 @@ private fun idleCaptureStatus(): CaptureStatusViewState = CaptureStatusMapper.fr
     storage = StorageForecast.state,
     asr = AsrAvailability.state,
     vad = VadAvailability.state,
+    input = InputStatus.state,
+    level = LevelStatus.state,
+    nowMillis = SystemClock.wallMillis(),
     sinceLabel = null,
     elapsedLabel = "0:00",
     heartbeatSecondsAgo = null,

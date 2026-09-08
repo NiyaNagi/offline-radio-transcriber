@@ -1,6 +1,7 @@
 package org.ort.app.ui.data
 
 import org.ort.core.AttributionState
+import java.time.ZoneId
 import java.util.Locale
 
 /**
@@ -126,6 +127,7 @@ public object NowViewStateMapper {
             sessions = listOf(SessionWindow(sessionStartedAtUtc, sessionEndedAtUtc, gaps)),
             matchingTransmissionTimestamps = details.map { it.startedAtUtcMillis },
             nowMillis = nowMillis,
+            zone = ZoneId.systemDefault(),
         )
 
         return NowViewState.Active(

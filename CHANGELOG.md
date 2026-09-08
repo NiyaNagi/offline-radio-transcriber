@@ -32,7 +32,94 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (ui-conformance WP8: stations and frequencies)
+## 2026-09-08 (ui-conformance WP4, round two: capture status and level meter from InputStatus/LevelStatus)
+
+### (pending) — ui-conformance WP4 · capture status and level meter from InputStatus and LevelStatus; Now navigation hooks; ReaderPolling copies removed
+
+**Scope:** `:app` only, this package's own row — addendum to the WP4 entry below ("Now home,
+capture status surface, level meter, live-bar feed"), after merging `main` at `8d28e80` (WP3's
+rewired nav host dispatching to this package's content composables; WP5/6/7/8's own reads; WP9's
+setup sequence; WP11c's new `InputStatus`/`LevelStatus` signals). Files touched: `ui/data/
+CaptureStatusViewState.kt`, `ui/data/NowViewState.kt`, `ui/data/ReaderPolling.kt`, `ui/screens/
+CaptureStatusContent.kt`, `ui/screens/LevelMeterScreen.kt`, `ui/screens/NowContent.kt`, `ui/
+screens/NowScreen.kt`, and their tests, plus a new `ui/data/LevelViewStateMapperTest.kt`.
+`ui/data/LiveBarPolling.kt` deliberately **not** touched this round (WP11b is adding the failure
+variants there concurrently, per the coordinator's instruction).
+
+**Requirements/ACs:** R-112, R-113 (both now read for real, closing the two named gaps from the
+first WP4 entry), R-032 (Input/Level rows), R-039 (the real meter), R-030/R-033 (Now navigation
+hooks), constitution I (the target band on the level chart is a fixed UI reference, documented as
+such, never presented as a measurement; a lost input's "N s ago" is computed from a caller-supplied
+`nowMillis`, never a bare `System.currentTimeMillis()` inside the otherwise-pure mapper) and IV
+(a route is never called "verified" before `InputStatus.State.Opened.routeVerified` is actually
+`true`; `Mismatch` reads "mismatch — halted", never silently substituted).
+
+**What changed:**
+- **Constitution Check.** Principle I: the level chart's target band/clip line are named in code as
+  fixed references, not measurements; `clippedLastSecondLabel` is deliberately not renamed to a
+  session total, since `LevelStatus.State.Measured.clipCountLastSecond` is the only real figure
+  available. Principle IV: `inputFacts` only ever renders `"verified"` when both
+  `routeVerified && routedDeviceMatches` are true; `Mismatch`/`Lost` are their own distinct,
+  honestly-labelled states, never folded into `Opened`.
+- **`CaptureStatusMapper.from`** gained `input: InputStatus.State` and `level: LevelStatus.State`
+  parameters (plus `nowMillis: Long`, needed only for `Lost`'s "how long ago" text). `inputFacts`
+  covers all four `InputStatus.State` cases (`None`/`Opened`/`Mismatch`/`Lost`) per `Capture-
+  Status.dc.html`'s Input row; `levelFacts` covers `LevelStatus.State`'s two, amber-and-named
+  `"clipping"` (never silently folded into the peak number) when the current tick clipped.
+  `ReaderPolling.captureStatus` and `CaptureStatusContent.idleCaptureStatus` both now read
+  `InputStatus.state`/`LevelStatus.state` directly (the same process-wide-holder pattern every
+  other capture signal here already uses) instead of the two dropped `notMeasuredFacts(...)` calls.
+- **`LevelMeterScreen` + new `LevelViewStateMapper`** render the real thing per `Level-Meter.dc.html`:
+  a 60 s peak-history bar chart (`LevelStatus.peakHistoryDbfs`, read alongside `LevelStatus.state`
+  by the caller so both always belong to one snapshot), the fixed target band (`-12`/`-18` dBFS,
+  named as a UI reference in `LevelViewState`'s own kdoc, not derived from a reading), a clip line
+  at 0 dBFS in halt colour, a dashed noise-floor line only when one has actually been tracked, and
+  the peak/RMS/headroom/clipped-last-second facts beneath it. `LevelViewState.notMeasuredReason`
+  non-null is still the one case this renders `FailedState` instead — genuinely rare now (only
+  before the first frame of a session has been measured), not the default it was.
+- **`NowContent`/`NowScreen`** gained `onOpenStations: () -> Unit = {}` and
+  `onOpenModels: () -> Unit = {}`, both defaulted so the host (`OrtNavHost.kt`, being edited
+  concurrently by WP10 this round) keeps compiling unchanged; wired to `Main.dc.html`'s `Stations
+  heard · All N` trailing action and the missing-model failed block's `Install a model` action,
+  both previously no-ops.
+- **`ReaderPolling`**: `stationDetail`/`frequencyDetail`/`listStationSummaries`/
+  `listFrequencySummaries` (and the `activityPatternForEverySession`/`dayOfWeekPatternForEverySession`/
+  `weekOverWeekComparisonForEverySession`/`everySessionWindow` helpers that existed only to serve
+  them) removed — WP8's own `ui/data/StationPolling.kt` now owns every "every session" read, and
+  WP3 confirmed nothing in the nav host still called the copies here. The one remaining
+  `ActivityPatternMapper.buildPattern` call in this package (`NowViewStateMapper.active`, the
+  session-scoped chart on Now) now passes `zone = ZoneId.systemDefault()` explicitly, so WP8 can
+  drop `buildPattern`'s `ZoneId.of("UTC")` default without silently changing this call's behaviour.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded from `0600763` to `8d28e80` cleanly (this branch was
+  an ancestor); confirmed via `git log --oneline -1`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 181 covered**; `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` — **622 of 622 passing**, 0 failed (full `:app` suite).
+  New/changed test coverage: `CaptureStatusMapperTest` gained 9 cases for `InputStatus`/
+  `LevelStatus` (`R_113 an opened, verified input shows the device native rate resampler id and
+  verified`, `R_113 a mismatched route reads mismatch halted, never silently substituted`, `R_113
+  a lost input states how long ago it was lost, from the real clock given`, `R_112 clipping is
+  called out in amber, not folded silently into the peak`, etc.); new `LevelViewStateMapperTest`
+  (4 cases); `LevelMeterScreenTest` rewritten for the real-data case
+  (`R_112 a real reading renders the chart and every fact, never the failed state`); `ReaderPollingTest`
+  had its four deleted-function tests removed and its remaining suite re-verified green.
+
+**Left open / not done:**
+- Level meter has no navigation entry point wired to it this round (not asked for) — the screen
+  and mapper are complete and tested standalone via `LevelMeterScreen(state = ...)`.
+- The live bar's level bars are still the honest floor-height placeholder (`ui/data/
+  LiveBarPolling.kt` deliberately untouched this round, per the coordinator's instruction — WP11b
+  owns the failure variants landing there next).
+- **`R-035` is now fixed**, not by this package: `main`'s merged-in `OrtNavHost.kt` (WP3's file)
+  now dispatches `ReaderDestination.CAPTURE` to this package's `CaptureStatusContent` (confirmed by
+  reading that file post-merge) — the register row this package's first WP4 entry left partial is
+  closed by WP3's own change, not a further edit here.
 
 ### (pending) — ui-conformance WP8 · stations and frequencies: lists, detail, hour-by-day pattern, identity, departure
 
