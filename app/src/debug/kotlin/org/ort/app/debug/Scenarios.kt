@@ -124,6 +124,10 @@ public object Scenarios {
         "migration-failed",
         "asset-swap",
         "calibration",
+        // R-154, FR-LEX-12/FR-LEX-30/FR-AST-2: the one scenario in this list that runs the real
+        // production validator (LexiconCorruptScenario.run) rather than hand-setting a
+        // FailurePresentation override — see that file's own kdoc for why.
+        "lexicon-corrupt",
     )
 
     public suspend fun load(context: Context, name: String): LoadResult {
@@ -172,6 +176,7 @@ public object Scenarios {
             "migration-failed" -> migrationFailed(context, db)
             "asset-swap" -> assetSwap(context, db)
             "calibration" -> calibration(context, db)
+            "lexicon-corrupt" -> LexiconCorruptScenario.run(context, db)
             else -> error("unreachable — guarded by the require() above")
         }
     }
@@ -180,6 +185,7 @@ public object Scenarios {
     // Clearing
     // ---------------------------------------------------------------------------------------
 
+<<<<<<< HEAD
     /**
      * **Root cause of the intermittent `SQLiteBusyException` this function used to throw**
      * (register R-110, `ScenariosTest :: R_110 every declared scenario name loads without
@@ -287,6 +293,13 @@ public object Scenarios {
             // cannot be tagged by the same session-id-prefix convention.
             sql.execSQL("DELETE FROM station")
             sql.execSQL("DELETE FROM voiceprint")
+            // `lexicon-corrupt` (R-154) is the only scenario that writes `lexicon_version` — scoped
+            // by asset id, the same reason station/voiceprint above are cleared unconditionally rather
+            // than by the `scenario-` session-id prefix (a LexiconVersionEntity carries neither).
+            sql.execSQL(
+                "DELETE FROM lexicon_version WHERE assetId = ?",
+                arrayOf<Any>(org.ort.app.ui.data.ModelsController.CALLSIGN_LEXICON_ASSET_ID),
+            )
         }
     }
 

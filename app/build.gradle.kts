@@ -51,6 +51,10 @@ dependencies {
     implementation(project(":pipeline"))
     implementation(project(":data"))
     implementation(project(":net"))
+    // R-154 (FR-LEX-30, FR-AST-2): the Models screen's lexicon-import flow calls
+    // LexiconImportValidator/LexiconImportInstaller directly. Previously test-only below;
+    // promoted to main so ModelsViewData.kt can call it from real (non-test) code.
+    implementation(project(":lexicon"))
     implementation(libs.androidx.core.ktx)
     // :data's Room types (OrtDatabase, its DAOs) are used directly by StatusActivity/
     // TransmissionListActivity's real-data polling (v0 smoke test — see RealCaptureService's doc
@@ -61,7 +65,9 @@ dependencies {
 
     testImplementation(project(":testing"))
     testImplementation(project(":eval"))
-    testImplementation(project(":lexicon"))
+    // :lexicon is now a main `implementation` dependency above (R-154), so it no longer needs its
+    // own testImplementation/androidTestImplementation lines here — both test source sets already
+    // see it transitively.
     // Test-only (ModuleGraph/dependencyRules deliberately exempts test scope, buildSrc's
     // build.gradle.kts comment): build-plan P14's playback tests need to write a real
     // codec-encoded fixture file the same way `:capture-android`'s `RealSegmentSink` does, to
@@ -79,5 +85,4 @@ dependencies {
     // sourceSets comment above and ModuleGraph.kt's documented test-scope exemption.
     androidTestImplementation(project(":eval"))
     androidTestImplementation(project(":testing"))
-    androidTestImplementation(project(":lexicon"))
 }

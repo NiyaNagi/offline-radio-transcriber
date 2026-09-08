@@ -2,11 +2,18 @@ package org.ort.app.ui.data
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.ort.core.Outcome
 import org.ort.core.SystemClock
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
+import org.ort.data.entity.LexiconVersionEntity
+import org.ort.lexicon.import.ActiveLexiconRecord
+import org.ort.lexicon.import.ActiveLexiconStore
+import org.ort.lexicon.import.CheckStatus
+import org.ort.lexicon.import.LexiconImportInstaller
+import org.ort.lexicon.import.LexiconImportResult
 import org.ort.net.AcquiredModel
 import org.ort.net.Checksum
 import org.ort.net.HttpRangeClient
@@ -196,11 +203,69 @@ public sealed interface ModelActionResult {
 public data class ModelDownloadFailureViewState(public val id: ModelId, public val reason: String)
 
 /**
+ * R-154 (`Fail-Lexicon.dc.html`, FR-LEX-30, FR-AST-2): one row of the board's "What was checked"
+ * list, pre-formatted for [org.ort.app.ui.screens.ModelsScreen] (WP10's file — not edited here) to
+ * render directly. [status] is the same closed three-state set
+ * [org.ort.lexicon.import.CheckStatus] uses; [detail] is never blank (constitution I — carried
+ * over from [org.ort.lexicon.import.LexiconCheck]'s own non-blank invariant).
+ */
+public data class LexiconCheckViewRow(val name: String, val status: CheckStatus, val detail: String)
+
+/**
+ * R-154: the view-facing shape of a [LexiconImportResult] the Models screen's "Install a lexicon
+ * from a file" action needs — everything `Fail-Lexicon.dc.html` draws: the file name, every check
+ * with its outcome in order, and (on refusal) the reason and what remains active, already formatted
+ * as the one-line label the board shows ("Callsign lexicon 2026.08 · 1,104,208 records") rather than
+ * a raw [ActiveLexiconRecord] the screen would otherwise have to format itself.
+ */
+public sealed interface LexiconImportViewState {
+    public val fileName: String
+    public val checks: List<LexiconCheckViewRow>
+
+    /** Every check passed; the file is now the active lexicon. */
+    public data class Accepted(
+        override val fileName: String,
+        override val checks: List<LexiconCheckViewRow>,
+        val version: String,
+        val recordCount: Int,
+    ) : LexiconImportViewState
+
+    /**
+     * At least one check failed; nothing was replaced. [stillActiveLabel] is `null` only when there
+     * was genuinely no lexicon active before this import attempt (a first-ever install) — never
+     * omitted for any other reason.
+     */
+    public data class Rejected(
+        override val fileName: String,
+        override val checks: List<LexiconCheckViewRow>,
+        val reason: String,
+        val stillActiveLabel: String?,
+    ) : LexiconImportViewState
+}
+
+/**
  * Reads and drives model install state for the Models screen. Every write goes through
  * [ModelAcquisition] — this object never writes a model file itself — so "installed" always means
  * what [ModelAcquisition] itself verified, never a file this code merely observed to exist.
  */
 public object ModelsController {
+
+    /** The one lexicon asset id this build imports (technical design §12.1's `LexiconVersion.assetId`). */
+    public const val CALLSIGN_LEXICON_ASSET_ID: String = "callsign-lexicon"
+
+    /**
+     * R-154: validates [source] and, only when every check passes, installs it as the new callsign
+     * lexicon (FR-LEX-30, FR-AST-2) — the "Install from a file" action's real call site. Makes no
+     * network call, ever (constitution V — [org.ort.lexicon.import.LexiconImportValidator] reads only
+     * [source]), and runs off whatever dispatcher the caller (a Compose coroutine scope) is on.
+     */
+    public suspend fun installLexicon(
+        context: Context,
+        source: File,
+        store: ActiveLexiconStore = RoomActiveLexiconStore(context),
+    ): LexiconImportViewState = withContext(Dispatchers.IO) {
+        toViewState(LexiconImportInstaller.installValidated(source, CALLSIGN_LEXICON_ASSET_ID, store))
+    }
 
     /**
      * [specFor] defaults to the real [ModelCatalog] and exists as a seam purely for this object's
@@ -346,4 +411,62 @@ public object ModelsController {
         override fun get(url: String, rangeStart: Long): HttpRangeResult =
             error("sideload() must never make a network call")
     }
+
+    /**
+     * [LexiconImportResult] (a `:lexicon`-owned, storage-agnostic type) to [LexiconImportViewState]
+     * (this file's own, screen-ready type) — a straight field-for-field re-shape, plus formatting
+     * [ActiveLexiconRecord] into the one-line label the board shows.
+     */
+    private fun toViewState(result: LexiconImportResult): LexiconImportViewState {
+        val checks = result.checks.map { LexiconCheckViewRow(it.name, it.status, it.detail) }
+        return when (result) {
+            is LexiconImportResult.Accepted ->
+                LexiconImportViewState.Accepted(result.fileName, checks, result.version, result.recordCount)
+            is LexiconImportResult.Rejected ->
+                LexiconImportViewState.Rejected(result.fileName, checks, result.reason, result.stillActive?.let(::activeLexiconLabel))
+        }
+    }
+
+    private fun activeLexiconLabel(record: ActiveLexiconRecord): String =
+        "Callsign lexicon ${record.version} · ${"%,d".format(record.recordCount)} records"
+}
+
+/**
+ * R-154: the real [ActiveLexiconStore] — the "active lexicon" [org.ort.lexicon.import] itself has no
+ * way to persist (`:lexicon` is a pure JVM module, constitution VII) actually lives in `:data`'s
+ * `lexicon_version` table (technical design §12.1's `LexiconVersion`), read/written through
+ * [org.ort.data.dao.CatalogDao] exactly the way every other catalog entity in this schema is. "The
+ * active lexicon" is the most recently imported (hence [org.ort.data.dao.CatalogDao.versionsFor]'s own
+ * `ORDER BY importedAt DESC`) row for [assetId] — [activate] never deletes a superseded row, matching
+ * constitution III's "nothing is deleted quietly" for every other asset in this schema.
+ *
+ * [current]/[activate] are plain (non-suspend) — the [ActiveLexiconStore] interface [org.ort.lexicon.import.LexiconImportInstaller]
+ * calls is deliberately synchronous, since `:lexicon` carries no coroutines dependency. Both call
+ * sites here already run on [Dispatchers.IO] ([ModelsController.installLexicon]), so bridging to the
+ * DAO's `suspend` functions with [runBlocking] blocks a thread that is already meant for blocking
+ * I/O, not the caller's own dispatcher.
+ */
+public class RoomActiveLexiconStore(private val context: Context) : ActiveLexiconStore {
+
+    override fun current(): ActiveLexiconRecord? = runBlocking {
+        db().catalogDao().versionsFor(ModelsController.CALLSIGN_LEXICON_ASSET_ID).firstOrNull()?.let {
+            ActiveLexiconRecord(it.assetId, it.version, it.recordCount, it.checksum)
+        }
+    }
+
+    override fun activate(record: ActiveLexiconRecord) {
+        runBlocking {
+            db().catalogDao().insert(
+                LexiconVersionEntity(
+                    assetId = record.assetId,
+                    version = record.version,
+                    importedAt = SystemClock.wallMillis(),
+                    recordCount = record.recordCount,
+                    checksum = record.checksum ?: "",
+                ),
+            )
+        }
+    }
+
+    private fun db(): OrtDatabase = OrtDatabase.create(context.applicationContext)
 }

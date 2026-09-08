@@ -160,6 +160,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `migration-failed` | F20 (`Fail-Migration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Migration`, one failed step (activity patterns) among three passed ones. No runtime signal exists. |
 | `asset-swap` | F21 (`Fail-Asset-Swap.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.AssetSwap`, an active and a staged lexicon. No runtime signal exists. |
 | `calibration` | F22 (`Fail-Calibration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Calibration`, a five-point reliability scatter. No runtime signal exists. |
+| `lexicon-corrupt` | R-154, F12 (`Fail-Lexicon.dc.html`), FR-LEX-12/FR-LEX-30/FR-AST-2 — unlike every scenario above, this one is **not** a `DebugFailureOverride` stand-in: it seeds a real "previous" `lexicon_version` row (2026.08 · 1,104,208 records), then calls the *real* `org.ort.app.ui.data.ModelsController.installLexicon` against a genuinely corrupt bundled asset (`app/src/debug/assets/lexicon-corrupt/lexicon-2026.09.tsv` — a manifest declaring 1,122,410 records whose checksum matches neither the 2 data rows actually present nor their count), through the new `:lexicon` package `org.ort.lexicon.import` (`LexiconImportValidator`/`LexiconImportInstaller`). The genuine `LexiconImportResult.Rejected` this produces is stored in `org.ort.app.debug.LexiconCorruptScenario.lastResult` — see "Known gaps" below for why nothing renders it yet. |
 
 ### WP11b's failure screens (register R-100/R-101/R-103)
 
@@ -234,6 +235,15 @@ DebugFailureOverride`'s own kdoc says precisely what each would need and from wh
   path is ready, not that the screen shows it.
 - **`field-tier1` is representable, unread.** `SessionEntity.deviceTier` is a free `String?`; no
   screen renders it yet (register R-090, `Settings-Tier`/CF05 is a placeholder).
+- **`lexicon-corrupt` is representable, unread — and, unlike every other row in this list, the
+  underlying feature is now real, not just the fixture.** R-154's own register row previously said
+  "no lexicon-import validator exists in `:app`/`:lexicon`/`:net` — F12 is an unbuilt feature, not a
+  staging gap"; that validator now exists (`:lexicon`'s `org.ort.lexicon.import` package,
+  `ModelsController.installLexicon` in `:app`). What is still missing is the **screen**:
+  `Fail-Lexicon.dc.html` has no WP10 build, so nothing in `ui/screens/ModelsScreen.kt` reads
+  `LexiconCorruptScenario.lastResult` (or the `LexiconImportViewState` an "Install from a file"
+  gesture would produce) yet. `ModelsViewData.kt`'s `LexiconImportViewState`/`LexiconCheckViewRow`
+  are exactly what such a screen needs — see that file's own kdoc for the shape.
 
 ## `screens.json` and `sets.json`
 

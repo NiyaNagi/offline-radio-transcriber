@@ -32,8 +32,143 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (debug: scenarios complete their writes before returning; clear step is one transaction)
+## 2026-09-08 (ui-conformance lexicon: import validator, R-154)
 
+### (pending) — ui-conformance lexicon · import validator rejects corrupt lexicons and keeps the previous one active; lexicon-corrupt scenario
+
+**Scope:** new `:lexicon` package `lexicon/src/main/kotlin/org/ort/lexicon/import/**` and its tests
+(`lexicon/src/test/kotlin/org/ort/lexicon/import/**`); `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`
+(only the lexicon-import call site — `ui/screens/ModelsScreen.kt` is WP10's file, not touched);
+`app/src/debug/**` — new `LexiconCorruptScenario.kt`, a bundled corrupt asset
+(`app/src/debug/assets/lexicon-corrupt/lexicon-2026.09.tsv`), and `Scenarios.kt` wiring; new tests
+`app/src/test/kotlin/org/ort/app/debug/LexiconCorruptScenarioTest.kt` and
+`app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerLexiconTest.kt`; `results/ui-audit/README.md`;
+and, as necessary build-graph plumbing, `buildSrc/src/main/kotlin/org/ort/gradle/ModuleGraph.kt`
+(`:app` may now depend on `:lexicon`) and `app/build.gradle.kts` (promoted `:lexicon` from
+test-only to a main `implementation`).
+
+**Requirements/ACs:** FR-LEX-30 ("every asset import SHALL be transactional and validated ...
+before replacing the previous version, with rollback on failure"), FR-AST-2 ("a failed
+verification SHALL leave the previous version active"), F12 (lexicon import corrupt/partial),
+AC-52, register R-154. Constitution I (an attribution/check never omits its state — every check
+here always reports pass, fail, or not-reached, never silently), II (strict TDD — the validator's
+test suite was green before any `:app` wiring was written), VII (`:lexicon` stays a pure JVM
+module with no Android dependency; the new `:app -> :lexicon` edge is enforced, not assumed).
+
+**Constitution Check:** Principle I bears directly — every `LexiconCheck` carries a non-blank
+detail regardless of outcome (a `require()` in the type itself), and `NOT_REACHED` is a distinct
+third state from `FAILED` so a check that never ran cannot be misread as one that ran and passed.
+Principle VII bears on where this lives: `:lexicon` has `:core` as its only dependency
+(`lexicon/build.gradle.kts`, unchanged), so the validator's own checksum/grammar/duplicate-key
+logic runs on a desktop JVM with fast tests, and persistence (the "keep the previous lexicon
+active" part) is injected via `ActiveLexiconStore` rather than pulling Room into `:lexicon`.
+
+**What changed:**
+
+*The register's own citation of "FR-LEX-12" for this board is a pre-existing naming clash, not
+this change's invention* — the functional spec's actual FR-LEX-12 ("store the raw phonetic
+lattice ... alongside the chosen result") is a different, already-built requirement (see
+`pipeline`'s own `DataPassBResultSinkTest.FR_LEX_12_...` tests, unrelated to import validation).
+The real backing requirements for R-154/F12 are FR-LEX-30 and FR-AST-2, cited above. The two test
+names the task brief specified (`FR_LEX_12_a_corrupt_file_is_rejected_and_the_previous_lexicon_stays_active`,
+`FR_LEX_12_every_check_reports_pass_or_fail_with_a_reason`) are kept verbatim as directed, appearing
+in three files (`LexiconImportValidatorTest`, `ModelsControllerLexiconTest`,
+`LexiconCorruptScenarioTest`) against the real FR-LEX-30/FR-AST-2/F12 behaviour.
+
+- **`org.ort.lexicon.import.LexiconImportValidator`** (`lexicon/src/main/kotlin/.../LexiconImportValidator.kt`):
+  runs five checks in a fixed order against a lexicon import file — a small `#`-prefixed manifest
+  header (`# version <v>`, `# records <n>`, `# sha256 <hex>`, extending the same convention
+  `Assets.kt`'s bundled-asset `# version` line already uses) followed by tab-separated data rows,
+  one callsign record per line: **Manifest readable**, **Checksum** (sha256 of the data section vs.
+  the declared value), **Record count and shape** (row count and per-row field-count consistency vs.
+  the manifest), **Callsign grammar sample** (up to 500 rows' first column checked structurally
+  against the bundled `ItuPrefixTable`), **No duplicate keys**. Once the data is known untrustworthy
+  (a checksum or record-count/shape failure), the two checks that would have to trust that data
+  report `NOT_REACHED` rather than running against data already known corrupt — matching
+  `Fail-Lexicon.dc.html`'s own "not reached" row exactly. Returns a closed
+  `LexiconImportResult` (`Accepted` | `Rejected`), both carrying the full ordered `checks` list;
+  `Rejected` also carries a human `reason` and `stillActive: ActiveLexiconRecord?` (the board's
+  "Still active" fact — `null` only on a genuine first-ever import, never omitted otherwise).
+- **`org.ort.lexicon.import.LexiconImportInstaller.installValidated`**: the one entry point allowed
+  to change which lexicon is active — calls `validate()`, and only on `Accepted` calls
+  `ActiveLexiconStore.activate(...)`. `ActiveLexiconStore` (`current()`/`activate()`) is a port
+  `:lexicon` defines but does not implement, keeping the module's only dependency `:core`
+  (constitution VII); persistence lives in `:app`/`:data`.
+- **`RoomActiveLexiconStore`** (`ModelsViewData.kt`): the real `ActiveLexiconStore`, backed by
+  `:data`'s `lexicon_version` table (technical design §12.1's `LexiconVersion`) through
+  `CatalogDao.versionsFor`/`insert` — "the active lexicon" is the most recently imported row for
+  the asset id, and a superseded row is never deleted (constitution III). `current()`/`activate()`
+  are plain (non-suspend, matching the `:lexicon`-side interface) and bridge to the DAO's suspend
+  functions with `runBlocking`, on the `Dispatchers.IO` thread `ModelsController.installLexicon`
+  already runs on.
+- **`ModelsController.installLexicon(context, source, store)`** (`ModelsViewData.kt`): the "Install
+  from a file" action's real call site — validates and, only on success, installs `source` as the
+  new callsign lexicon. No network call, ever. New view types `LexiconImportViewState`
+  (`Accepted`/`Rejected`) and `LexiconCheckViewRow` are the screen-ready shape WP10's
+  `ModelsScreen.kt` needs: every check pre-formatted, and (on `Rejected`) `stillActiveLabel`
+  already rendered as the one-line string the board shows ("Callsign lexicon 2026.08 · 1,104,208
+  records") rather than a raw `ActiveLexiconRecord` the screen would have to format itself.
+- **`:app -> :lexicon`** is now an allowed compile-time edge (`ModuleGraph.kt`) — not on technical
+  design §2's forbidden list (only `:capture-*` -> asr/lexicon/identity is named), added the same
+  way audit F-008 added `:app -> :net` for model downloads. `app/build.gradle.kts` promotes
+  `:lexicon` from `testImplementation`/`androidTestImplementation` (build-plan P14's playback
+  fixtures) to a main `implementation`, so `ModelsViewData.kt` can call it from real code; the
+  now-redundant test-scope lines were removed (main `implementation` already reaches both test
+  source sets transitively).
+- **`lexicon-corrupt` debug scenario** (`app/src/debug/kotlin/org/ort/app/debug/LexiconCorruptScenario.kt`,
+  wired into `Scenarios.NAMES`/`Scenarios.load`): unlike every other F-id scenario in this file,
+  this one does **not** set a `DebugFailureOverride`/`FailurePresentation` stand-in (that would
+  mean hand-asserting the outcome the board describes, not proving the validator produces it) —
+  it seeds a real "previous" `lexicon_version` row (2026.08 · 1,104,208 records), then calls the
+  *real* `ModelsController.installLexicon` against a genuinely corrupt bundled asset
+  (`app/src/debug/assets/lexicon-corrupt/lexicon-2026.09.tsv`: a manifest declaring 1,122,410
+  records whose checksum matches neither the two data rows actually present nor their count — the
+  same "partial download" shape the board depicts). The resulting `LexiconImportResult.Rejected`
+  is genuinely computed by `LexiconImportValidator`, not asserted by the scenario. Stored in
+  `LexiconCorruptScenario.lastResult` for a future screen (or a test) to read.
+  `Scenarios.clearPriorScenarioData` now also clears `lexicon_version` rows for the callsign-lexicon
+  asset id (unconditionally, the same reason `station`/`voiceprint` are — a `LexiconVersionEntity`
+  carries no `scenario-`-prefixed session id to filter by), so re-running the scenario is clean.
+
+**Left open / not done:**
+- **No screen renders `LexiconImportViewState` yet.** `Fail-Lexicon.dc.html` has no WP10 build —
+  `ui/screens/ModelsScreen.kt` was read but deliberately not edited (WP10's file, per this
+  package's brief). `LexiconImportViewState`/`LexiconCheckViewRow` (`ModelsViewData.kt`) are the
+  exact shape such a screen needs to consume; `LexiconCorruptScenario.lastResult` is where it
+  would read a real refusal from once built. Documented as a known gap in
+  `results/ui-audit/README.md`.
+- **The "Install from a file" gesture itself (a file picker launch) is not wired into any screen**
+  — `ModelsController.installLexicon` is the call site a picker's result callback would invoke;
+  no picker UI exists yet (same WP10 dependency as above).
+- A `:pipeline:testDebugUnitTest` run during this package's gate hit one flaky failure
+  (`ThermalTrackingPassTest`, a Robolectric SQLite "Illegal connection pointer" race under
+  parallel test execution, unrelated to any file this package touched) — reproduced as flaky by
+  re-running that single test class in isolation (green) and the full gate again (green); not a
+  regression from this change.
+
+**Verified:**
+- `.\gradlew.bat :lexicon:test --tests "org.ort.lexicon.import.*"` — `BUILD SUCCESSFUL`, all 10
+  tests `PASSED`, including `FR_LEX_12_a_corrupt_file_is_rejected_and_the_previous_lexicon_stays_active`
+  and `FR_LEX_12_every_check_reports_pass_or_fail_with_a_reason`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests "org.ort.app.ui.data.ModelsController*"`
+  — `BUILD SUCCESSFUL`, every test `PASSED` (54 total across `LexiconCorruptScenarioTest` ×4,
+  `ScenariosTest` ×44 unchanged, `ModelsControllerLexiconTest` ×4, `ModelsControllerTest` ×6
+  unchanged), including `R_154_lexicon_corrupt_scenario_renders_the_refusal`.
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 52s`, 728 actionable
+  tasks (first attempt hit the flaky `ThermalTrackingPassTest` noted above; the immediate re-run
+  was green with no code change in between).
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL` (`ModuleGraphTest` green, including "the
+  real design graph has no violations against itself" against the new `:app -> :lexicon` edge).
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` — `184 covered of 419` (up from 183).
+- `.\gradlew.bat coverageMatrixCheck` — `up to date (184 covered of 419)`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+
+---
+
+## 2026-09-08 (ui-conformance WP2: line length)
+
+## 2026-09-08 (debug: scenarios complete their writes before returning; clear step is one transaction)
 ### (pending) — debug · scenarios complete their writes before returning; clear step is one transaction
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
