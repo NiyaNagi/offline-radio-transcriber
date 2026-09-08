@@ -23,13 +23,13 @@ in the row).
 
 | id | screen | artboard | what is wrong | sev | status |
 |---|---|---|---|---|---|
-| R-001 | every | any phone board | No `android:theme` in the manifest, so every Activity renders a platform `DeviceDefault` ActionBar titled "Offline Radio Transcriber" *above* the Compose top bar. Every screen shows two headers. Screenshot `03-now.png`. | halt | building |
-| R-002 | launch | `Setup-Mic` | `MainActivity` is an unthemed `TextView` reading "scaffold running… Requesting microphone access…" on the platform ground, then fires bare OS prompts. Screenshot `01-launch.png`. | design | building |
+| R-001 | every | any phone board | No `android:theme` in the manifest, so every Activity renders a platform `DeviceDefault` ActionBar titled "Offline Radio Transcriber" *above* the Compose top bar. Every screen shows two headers. Screenshot `03-now.png`. | halt | fixed |
+| R-002 | launch | `Setup-Mic` | `MainActivity` is an unthemed `TextView` reading "scaffold running… Requesting microphone access…" on the platform ground, then fires bare OS prompts. Screenshot `01-launch.png`. | design | fixed |
 | R-003 | every drawer destination | `Main`, `Log` headers | The Compose `TopAppBar` carries the destination label as a title, and the screen body repeats it 27px below. "Now" / "Log" / "Search" each appear twice. The artboard header is icons only — drawer, live dot + elapsed, search — with no title text. | design | open |
 | R-004 | every | `Icons` | The drawer control is the text glyph `=` in body type. The artboard is the 21px three-line stroke icon at `text/icon` in a 44px target. Same for search: absent. | design | open |
-| R-005 | every | `Type` | `OrtType.typography` maps M3 `bodyMedium` to the 12.5px caption and `bodyLarge` to 15px, so every screen that asks for `MaterialTheme.typography.bodyMedium` gets caption size for body copy. The ramp has no 14 / 14.5 / 11.5 / 17px roles, which the boards use for controls, row titles, sub-lines and figures. Platform fallback faces are correct per constitution V; weights and tracking must still match §4 of the guide. | design | building |
-| R-006 | every | `Tokens` | `OrtTheme` sets a colour scheme but no root `Surface`; the window ground is whatever `DeviceDefault` gives. Screens must sit on `bg/screen` `oklch(0.155 0.008 250)` (≈ `#202329`) from the theme, not from the OS. | design | building |
-| R-007 | every | — | `ReaderActivity` is `exported="false"` and `MainActivity` `finish()`es after launching it; the back stack after a cold start is `Reader` alone, which is right — but a process death mid-session relaunches into `MainActivity`'s permission flow rather than the reader. Verify and route. | polish | building |
+| R-005 | every | `Type` | `OrtType.typography` maps M3 `bodyMedium` to the 12.5px caption and `bodyLarge` to 15px, so every screen that asks for `MaterialTheme.typography.bodyMedium` gets caption size for body copy. The ramp has no 14 / 14.5 / 11.5 / 17px roles, which the boards use for controls, row titles, sub-lines and figures. Platform fallback faces are correct per constitution V; weights and tracking must still match §4 of the guide. | design | fixed |
+| R-006 | every | `Tokens` | `OrtTheme` sets a colour scheme but no root `Surface`; the window ground is whatever `DeviceDefault` gives. Screens must sit on `bg/screen` `oklch(0.155 0.008 250)` (≈ `#202329`) from the theme, not from the OS. | design | fixed |
+| R-007 | every | — | `ReaderActivity` is `exported="false"` and `MainActivity` `finish()`es after launching it; the back stack after a cold start is `Reader` alone, which is right — but a process death mid-session relaunches into `MainActivity`'s permission flow rather than the reader. Verify and route. | polish | fixed |
 
 ## Drawer and navigation — WP3
 
@@ -126,7 +126,7 @@ in the row).
 | R-082 | setup › level | `Setup-Level`, FR-CAP-3 | No level step. | spec | open |
 | R-083 | setup › overnight | `Setup-Battery` | The battery-exemption intent fires with no rationale and no statement that the API lies (the artboard says it in the operator's words). | spec | open |
 | R-084 | setup › radio | `Setup-Rig`, `Setup-Rig-Usb`, `Setup-Rig-Verified` | No rig setup. | spec | open |
-| R-085 | setup › mic denied | `Setup-Mic-Denied` | Denying the mic twice leaves the app on "Requesting microphone access…" forever with no path to settings. | halt | building |
+| R-085 | setup › mic denied | `Setup-Mic-Denied` | Denying the mic twice leaves the app on "Requesting microphone access…" forever with no path to settings. | halt | fixed |
 
 ## Settings, improve, digest, sessions — WP10
 
