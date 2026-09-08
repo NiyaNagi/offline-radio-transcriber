@@ -9485,6 +9485,107 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · round 9: R-276 fully routed, frequency overs open a real filtered Log
+
+**Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`), tests
+(`ui/navigation/ReaderActivityDestinationSmokeTest.kt`), `CHANGELOG.md`. Tenth reconciliation
+addendum. `git merge main` (not `--ff-only`; this branch was still an ancestor so it fast-forwarded
+cleanly anyway — `git status` confirmed a clean working tree immediately after) to `4f23303`, WP5's
+own merge shipping exactly the `LogContent.initialFilter` signature round 8's own report specified,
+confirmed by reading `ui/screens/LogContent.kt` in full before wiring anything against it (not built
+against this row's own guess).
+
+**Requirements/ACs:** R-276 (fully routed this round — register flips from `partial`), R-090
+(re-confirmed, unchanged).
+
+**Constitution check.** Principle I (uncertainty is content): the smoke test's own "count line"
+assertion (`"Show 5 overs"`) is deliberately chosen to distinguish a *correct* filter from a
+*half-applied* one — three "usual" nights are seeded alongside tonight's five specifically so a
+regression that filtered by frequency but dropped the window would read `8`, not `5`, and this test
+would catch it; a chip-selected check alone could not. Principle VII (file-ownership discipline,
+this engagement's own standing rule): `FrequencyDetailContent.kt`/`FrequencyChangeScreen.kt` (WP8's
+files) are read, not edited — the "back restores the drill-in root, not the `Frequency-Change`
+sub-screen it was opened from" limitation this round's own `openLogFilteredByFrequency` doc comment
+states is exactly the boundary that file ownership draws, named rather than worked around by editing
+a file outside this row's grant.
+
+**What changed:**
+
+- **R-276 — `Frequency-Change`'s "The N overs" now opens a real, filtered `Log`.**
+  `NavHostCallbacks.onOpenOvers: (Long, TimeWindow) -> Unit` (new) wires into
+  `FrequencyDetailContent`'s own `onOpenOvers` (WP8's real parameter, merged two rounds ago) and
+  calls a new `NavHostNavState.openLogFilteredByFrequency(currentFrequencyHz, frequencyHz, window)`:
+  clears the live frequency drill-in first (its id has absolute priority over `current` in
+  `NavHostBody`'s own dispatch `when` — leaving it set would keep showing the frequency screen
+  regardless of what `current` became, found by reading that dispatch before wiring this), saves the
+  frequency being left into a new `logFrequencyOrigin` field, and stores a new
+  `pendingLogFilter = LogFilterSelection(frequencyHz, fromMillis = window.startMillis, toMillis =
+  window.endMillis)`. `DestinationContent`'s `LOG` dispatch passes it through as `LogContent`'s new
+  `initialFilter` (WP5's own merge). `pendingLogFilter` is a plain `remember`, not
+  `rememberSaveable` — it only has to survive until `LogContent`'s own `rememberSaveable` `selection`
+  captures it at first composition, the same reasoning `searchResult` (WP7's own doc comment)
+  already rests on; `logFrequencyOrigin` is `rememberSaveable` since a later user action (the back
+  gesture) can genuinely happen after a `recreate()`. Both are reset inside `closeDrillIns()` too,
+  so any ordinary way of reaching `Log` (the drawer row) can never inherit a stale filter or a false
+  "back to the frequency" promise a normal navigation never made.
+- **Back returns to the frequency, partially — named precisely, not silently short of the ask.**
+  This app's first `BackHandler` (`androidx.activity.compose.BackHandler`, confirmed no other exists
+  by grepping `ui/**` first): while `current == LOG` and `logFrequencyOrigin` holds a value, system
+  back reopens the frequency drill-in at that frequency — landing on `FrequencyDetailContent`'s own
+  root/`NONE` sub-screen. It does **not** restore `Frequency-Change` (the sub-screen `onOpenOvers`
+  was actually reached from) — that sub-screen is `FrequencyDetailContent`'s own internal,
+  unexported `FrequencySubScreen` state; restoring it exactly would need a parameter on that file
+  (WP8's), not lead-approved this round. `openLogFilteredByFrequency`'s own doc comment states this
+  precisely, and no code pretends otherwise.
+- **`DestinationInitialState`** (new, bundles `settingsInitialScreen`/`openCaptureLevelMeter`/the
+  new `logInitialFilter`): `NavHostIds`/`DestinationContent` had grown to nine parameters the moment
+  `logInitialFilter` was added as a fourth scalar — over detekt's `LongParameterList` threshold
+  (found by running detekt, not anticipated) — bundled the same way `NavHostIds`/`NavHostCallbacks`
+  themselves already are, rather than raising the threshold.
+- **`ReaderActivityDestinationSmokeTest` gains
+  `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`** — a real tap
+  sequence (`Frequencies` list → a row → "Busier than usual — see what changed" → "The 5 overs" →
+  `Log`), not a shortcut around the UI. Reaching it for real needs
+  [`NightlyDeparture.isBusierThanUsual`](app/src/main/kotlin/org/ort/app/ui/data/ActivityPattern.kt)
+  to genuinely hold (tonight's heard-count more than double the average of every other *listened*
+  night) — the one case in this class with its own seeding (`seedFrequencyOversPattern`, three real
+  "usual" nights plus tonight, all anchored to the real wall clock at test run time via
+  `ZonedDateTime.now`, not the fixed epoch the shared `@Before` uses for every other case, which
+  never needs a real night pattern), returning "tonight"'s own session id for `runReaderActivity` to
+  launch with (`LogPolling`'s quick-filter chips are scoped to the *launched* session, confirmed by
+  reading `LogViewData.kt`, not the corpus as a whole). Asserts the frequency's own quick-filter
+  chip renders selected (`isSelected()`, Compose's standard semantics property) and the filter
+  sheet's own count line reads `"Show 5 overs"` — not `8`, which is what a frequency-only filter
+  that dropped the window would read (see Constitution check) — both before and after `recreate()`.
+  **Found and fixed while writing it**: the naive `waitUntilContentDescriptionExists("Open
+  navigation")` (present unconditionally, before `LogContent`'s own first poll has necessarily run)
+  followed immediately by an assertion raced that poll and failed on a real run; a new
+  `waitUntilChipSelected` polls for the real, selected chip node directly instead.
+
+**Verified:**
+- `git merge main` — clean, fast-forward (this branch was still an ancestor of `main`) to `4f23303`.
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:ktlintCheck` — `BUILD SUCCESSFUL`, fully clean.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, fully clean (the `LongParameterList` finding
+  this round's own work introduced was fixed in the same round, before this run).
+- `.\gradlew.bat dependencyRules` — `OK`, 17 modules, no new edge.
+- `.\gradlew.bat :app:testDebugUnitTest` — 1102 tests, **0 failed** (the `ReadyScreenTest.kt`
+  failures the last two rounds both reported did not reproduce this run — not this row's file
+  regardless of outcome, not chased further).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --rerun-tasks`, run twice — `BUILD SUCCESSFUL` both
+  times, 17 tests, 0 failed each time, including the new `R_276` case (confirmed not flaky).
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat coverageMatrix --rerun-tasks` — 419 requirements, 185 covered, unchanged, no delta
+  to `results/coverage-matrix.md` this round.
+- `python tools/spec-check/spec_check.py` — 8/8 `PASS`.
+
+**Left open / not done:**
+- **Back from the filtered `Log` restores the frequency drill-in's root, not the `Frequency-Change`
+  sub-screen it was opened from** — see What changed's own account; a full fix needs a parameter on
+  `FrequencyDetailContent.kt` (WP8's file), not lead-approved this round.
+- Round 5–7's own open items (`onOpenLevelMeter`'s further gaps, `onRetryInput`/`onEndSession`/
+  `onRequestUsbPermission` no-ops) are unchanged.
+
 ### (pending) — ui-conformance WP3 · round 8: settings header count confirmed; R-276 blocked on LogContent.initialFilter
 
 **Scope:** `:app` `ui/navigation/**`, tests, `CHANGELOG.md`. Ninth reconciliation addendum. No

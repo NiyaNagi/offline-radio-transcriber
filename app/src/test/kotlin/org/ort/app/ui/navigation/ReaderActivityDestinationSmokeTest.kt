@@ -7,6 +7,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -30,6 +31,8 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TransmissionEntity
 import org.robolectric.RobolectricTestRunner
+import java.time.ZoneId
+import java.time.ZonedDateTime
 
 /** Shorthand for this file's one specific [AndroidComposeTestRule] instantiation — keeps later
  * receiver-type usages under ktlint's line-length limit without wrapping generics awkwardly. */
@@ -297,6 +300,62 @@ class ReaderActivityDestinationSmokeTest {
         }
     }
 
+    // Round 9, register R-276: `Frequency-Change`'s "The N overs" now has a real destination —
+    // `NavHostCallbacks.onOpenOvers` routes to `Log`, seeded with `LogFilterSelection(frequencyHz,
+    // fromMillis, toMillis)` via `LogContent`'s new `initialFilter` (WP5's own commit). Reaching
+    // the real button through a real tap sequence needs a genuine "busier than usual" pattern —
+    // see `seedFrequencyOversPattern`'s own doc comment for why this is the one case in this class
+    // with its own seeding, not the shared `@Before`. The filter sheet's own "Show N overs" count
+    // line (`LogFilterSheet.kt`) is this test's proof the window narrowed the corpus for real —
+    // seeded with three "usual" nights (one over each) besides "tonight"'s [TONIGHT_OVER_COUNT],
+    // so a filter that silently fell back to "everything ever heard on this frequency" would read
+    // `TONIGHT_OVER_COUNT + 3`, not `TONIGHT_OVER_COUNT` — a wrong-count failure this test can
+    // actually distinguish from "no filter applied at all", not merely a chip rendering selected.
+    @Test
+    fun `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`() {
+        val tonightSessionId = seedFrequencyOversPattern()
+        runReaderActivity(ReaderDestination.FREQUENCIES, sessionId = tonightSessionId) { rule ->
+            rule.waitUntilContentDescriptionExists(OVERS_FREQUENCY_LABEL)
+            rule.onNodeWithContentDescription(OVERS_FREQUENCY_LABEL, substring = true).performClick()
+            // `FrequencyDetailScreen`'s own `DrillInHeader(parentLabel = backLabel, ...)`.
+            rule.waitUntilContentDescriptionExists("Back to Frequencies")
+
+            // `FrequencyHeaderSection.kt`'s `TextAction(text = "Busier than usual — see what
+            // changed", onClick = onOpenChange)` — only rendered while `busierThanUsual` holds,
+            // which `seedFrequencyOversPattern`'s real multi-night pattern makes true.
+            rule.onNode(hasText("Busier than usual", substring = true) and hasClickAction()).performClick()
+            // `FrequencyChangeScreen`'s own `DrillInHeader(parentLabel = state.label, ...)` —
+            // `state.label` is the frequency's own label, `OVERS_FREQUENCY_LABEL`.
+            rule.waitUntilContentDescriptionExists("Back to $OVERS_FREQUENCY_LABEL")
+
+            // `FrequencyChangeScreen.kt`'s own `TextAction(text = "The ${pluralize(state.overCount,
+            // "over")}", onClick = { onOpenOvers(state.frequencyHz, state.window) })`.
+            rule.onNode(hasText("The $TONIGHT_OVER_COUNT overs") and hasClickAction()).performClick()
+
+            // `Log` is a normal destination — the host's own `ScreenHeader` renders for it (unlike
+            // `SETTINGS`/`SEARCH`, round 7/5's own exceptions), immediately, before its own
+            // `LaunchedEffect` poll has necessarily run even once — `waitUntilChipSelected` (not
+            // `waitUntilContentDescriptionExists("Open navigation")` followed by an immediate
+            // assertion) is what actually gives that first real poll time to land; the frequency's
+            // own quick-filter chip rendering selected (Compose's standard `Selected` semantics
+            // property, set by `FilterChip`'s own `.selectable(selected = ...)`) is the real,
+            // honest proof this landed pre-filtered, not just that some destination opened.
+            rule.waitUntilChipSelected(OVERS_FREQUENCY_LABEL)
+
+            // The count line: opens the filter sheet and waits for its real, polled
+            // `matchingCount` — narrowed to the frequency *and* tonight's window, not the whole
+            // corpus (see this test's own doc comment on why `TONIGHT_OVER_COUNT` alone, not
+            // `TONIGHT_OVER_COUNT + 3`, is what proves the window, not just the frequency, applied).
+            rule.onNode(hasText("Filter") and hasClickAction()).performClick()
+            rule.waitUntilTextExists("Show $TONIGHT_OVER_COUNT overs")
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            rule.waitUntilChipSelected(OVERS_FREQUENCY_LABEL)
+        }
+    }
+
     // -- drill-ins ------------------------------------------------------------------------------
 
     @Test
@@ -505,6 +564,23 @@ class ReaderActivityDestinationSmokeTest {
         }
     }
 
+    /** Round 9: same allowance as [waitUntilContentDescriptionExists], for the filter sheet's own
+     * polled "Show N overs" count line (`LogFilterSheet.kt`), which carries no content description
+     * of its own — its visible text is the only thing there is to match. */
+    private fun ReaderComposeTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 15_000) {
+        waitUntil(timeoutMillis) { onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    /** Round 9: a quick-filter chip's own `Selected` semantics property only reflects the real,
+     * polled `LogScreenViewState.quickFilters` — waiting on a header element that renders
+     * unconditionally (`waitUntilContentDescriptionExists("Open navigation")`) and then asserting
+     * immediately can race `LogContent`'s own first poll, catching it still at its pre-poll
+     * `remember` default. Polls for the real thing directly instead. */
+    private fun ReaderComposeTestRule.waitUntilChipSelected(chipLabelSubstring: String, timeoutMillis: Long = 15_000) {
+        val matcher = hasText(chipLabelSubstring, substring = true) and isSelected()
+        waitUntil(timeoutMillis) { onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+    }
+
     /**
      * Round 7 (R-090's own double-header saga, this time asserted against directly rather than
      * left to a `recreate()` timeout to catch by accident): counts every node whose content
@@ -521,6 +597,84 @@ class ReaderActivityDestinationSmokeTest {
         }
     }
 
+    /**
+     * R-276's own real repro requirement: [org.ort.app.ui.data.NightlyDeparture.isBusierThanUsual]
+     * (`ActivityPattern.kt`) is a genuine, multi-night comparison ("tonight" must be more than
+     * double the average heard-count
+     * of every other *listened* night), so reaching `Frequency-Change`'s "Busier than usual"
+     * action for real needs real, distinct-calendar-day session/transmission rows, not the single
+     * fixed-epoch transmission [seedSession] gives every other case in this class (which never
+     * needs a real night pattern). Three "usual" nights (one over each, `daysAgo` 1..3) and
+     * "tonight" (`daysAgo` 0, [TONIGHT_OVER_COUNT] overs — more than double the usual average of
+     * 1) — all anchored to the real wall clock at test run time (`ZonedDateTime.now`), the same
+     * clock `NightlyDeparture`/`FrequencyPolling` read in production. Returns "tonight"'s own
+     * session id, the one [runReaderActivity] must launch with: `LogPolling`'s quick-filter chip
+     * list is scoped to the *launched* session (`db.transmissionDao().listBySession`, confirmed by
+     * reading `LogViewData.kt` before relying on it), not the corpus as a whole.
+     */
+    private fun seedFrequencyOversPattern(): String = runBlocking {
+        val db = OrtDatabase.create(context)
+        val zone = ZoneId.systemDefault()
+        val now = ZonedDateTime.now(zone)
+
+        suspend fun seedNight(id: String, daysAgo: Long, overCount: Int) {
+            val windowEnd = now.minusDays(daysAgo)
+            val windowStart = windowEnd.minusMinutes(NIGHT_WINDOW_MINUTES)
+            db.sessionDao().insert(
+                SessionEntity(
+                    id = id,
+                    startedAt = windowStart.toInstant().toEpochMilli(),
+                    endedAt = windowEnd.toInstant().toEpochMilli(),
+                    profileId = null,
+                    deviceTier = null,
+                    appVersion = "test",
+                    terminationReason = null,
+                    sourceId = null,
+                    schemaVersion = OrtDatabase.SCHEMA_VERSION,
+                ),
+            )
+            repeat(overCount) { index ->
+                val at = windowStart.plusMinutes(10L + index * 15L).toInstant().toEpochMilli()
+                db.transmissionDao().insert(
+                    TransmissionEntity(
+                        id = "$id-tx$index",
+                        sessionId = id,
+                        threadId = "$id-th",
+                        startedAtUtc = at,
+                        endedAtUtc = at + 1_000L,
+                        durationMs = 4_200L,
+                        audioFormat = "flac/16k/mono",
+                        preRollMs = 200,
+                        postRollMs = 200,
+                        frequencyHz = OVERS_FREQUENCY_HZ,
+                        frequencyProvenance = "measured",
+                        mode = null,
+                        signalStrength = 7.0,
+                        channelName = null,
+                        voiceprintId = null,
+                        attributionState = AttributionState.UNKNOWN,
+                        stationId = null,
+                        attributionConfidence = 0.0,
+                        attributionSourceTransmissionId = null,
+                        processingState = TransmissionState.COMPLETE,
+                        rejectionReason = null,
+                        samplePosition = index.toLong(),
+                        monotonicStartNanos = 0L,
+                        utcOffsetMinutes = 0,
+                        calibrationId = null,
+                        executionProvider = null,
+                    ),
+                )
+            }
+        }
+
+        seedNight("overs-usual-1", daysAgo = 1, overCount = 1)
+        seedNight("overs-usual-2", daysAgo = 2, overCount = 1)
+        seedNight("overs-usual-3", daysAgo = 3, overCount = 1)
+        seedNight(TONIGHT_SESSION_ID, daysAgo = 0, overCount = TONIGHT_OVER_COUNT)
+        TONIGHT_SESSION_ID
+    }
+
     private companion object {
         const val STATION_ID = "K7LWH"
         const val FREQUENCY_HZ = 146_960_000L
@@ -528,5 +682,19 @@ class ReaderActivityDestinationSmokeTest {
         // `TransmissionDetail.frequencyLabel`/`FrequencyViewMapper.listEntry` — "146.960" (Log,
         // Frequencies list rows) — matches both call sites' formatting for this Hz value.
         const val FREQUENCY_LABEL = "146.960"
+
+        // Round 9, register R-276 — `seedFrequencyOversPattern`'s own frequency, kept distinct
+        // from `FREQUENCY_HZ` so this test's own seeding never touches any other case's data.
+        const val OVERS_FREQUENCY_HZ = 446_100_000L
+        const val OVERS_FREQUENCY_LABEL = "446.100"
+        const val TONIGHT_SESSION_ID = "overs-tonight"
+
+        // More than double `seedFrequencyOversPattern`'s "usual" average of 1 — the real threshold
+        // `NightlyDeparture.isBusierThanUsual` checks — with room to spare, not a boundary value.
+        const val TONIGHT_OVER_COUNT = 5
+
+        // Each seeded night's own listening window — short enough to stay clear of a calendar-day
+        // boundary this test does not control (the real wall clock at whatever time it runs).
+        const val NIGHT_WINDOW_MINUTES = 90L
     }
 }
