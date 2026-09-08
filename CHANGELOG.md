@@ -32,6 +32,199 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: shared components)
+
+### (pending) — ui-conformance WP2 · shared components: marker, rows, live bar, chips, banners, sheet, chart, icons
+
+**Scope:** `:app` `ui/components/**` only (`AttributionMarker.kt`, `ActivityPatternChart.kt`
+rewritten in place; new `Controls.kt`, `Feedback.kt`, `Rows.kt`, `Inspection.kt`, `LiveBar.kt`,
+`OrtIcons.kt`) and their tests under `app/src/test/kotlin/org/ort/app/ui/components/**`. Also
+regenerated `results/coverage-matrix.md` (`coverageMatrix`, mandated gate output — not otherwise
+touched). Working from `spec/ui-conformance-plan.md` WP2 and `results/ui-audit/register.md` rows
+R-020..R-025.
+
+**Requirements/ACs:** R-020, R-021, R-022, R-023, R-024, R-025 (register rows, all closed —
+details below); AC-62, FR-A11Y-1, FR-A11Y-2, FR-A11Y-4 (four states distinguishable without
+colour, merged semantics, 44dp targets, contrast); FR-UI-4 (confidence never fabricated, never
+shown on CONFIRMED); FR-UI-8 (inspection surface — lattice slot, prior bar); FR-UI-11/FR-UI-12
+(activity charts; not-listening is a full-height hatch, never a short bar); FR-UI-6/FR-SPK-7
+(correction affordances via `ActionBar`); guide §6 (all of 6.1–6.19), §7 (icons), §8 (charts).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-020 end to end: the
+  rewritten `AttributionRow` shows a score only where the guide allows one (INFERRED) and never
+  fabricates a number for UNKNOWN or a cold-start prior (`PriorBar`'s `cold start` text, never
+  `0.00`). Principle VII (Boundaries Are Structural) governs R-024/FR-A11Y-2: every interactive
+  component built here carries a real `>=44dp` target and a `Role`, proven by
+  `assertHeightIsAtLeast(44.dp)` in tests, not asserted in prose. Principle II (Test-Backed
+  Change): every new component has a failing-first test named for the AC/FR/R it establishes.
+- **R-020 — `AttributionMarker`/`AttributionRow`.** The old `AttributionMarker(attribution,
+  modifier)` drew a shape *and* a `✓/~/?/—` glyph-and-state-name `Text` plus a confidence number
+  on every state including CONFIRMED — never what the artboard showed, and every real caller
+  (`LogScreen`, `SearchScreen`, `ThreadScreen`, `TransmissionDetailScreen`) then appended its own
+  callsign text after it, doubling the row. The signature is unchanged, but it now renders
+  **shape only** (`AttributionShape`, shared with the new full form) — so those callers now show
+  shape + their own callsign correctly, with no doubling. Its content description is kept
+  byte-for-byte identical to before (`"<shape>, <glyph> <STATE>[, confidence N.NN]"`) specifically
+  so those callers' existing content-description assertions keep passing (see "Left open" below
+  for the two that assert the old *visible* confidence text, which R-020 explicitly forbids on
+  CONFIRMED and which the shape-only render therefore no longer shows). New `AttributionRow(
+  attribution, callsign = attribution.stationId, alternate = null, modifier, size = 9.dp)` is the
+  full form: shape, then the callsign in `OrtType.callsignRow` mono — `textHigh` CONFIRMED,
+  `textBody` INFERRED, `textAmbiguous` AMBIGUOUS, or italic `textLow` "unknown station" for
+  UNKNOWN — then, only for INFERRED, a `ScoreChip`, and only for AMBIGUOUS with a supplied
+  `alternate`, "or `<alternate>`" in `accentAmber`. One merged semantics node throughout. `size`
+  also takes `MARKER_CARD_SIZE` (12dp, ring weight 2dp) for `States.dc.html`'s card variant; the
+  UNKNOWN dot scales with it (5dp at 9dp, ~6.7dp at 12dp) rather than staying fixed. New
+  `ScoreChip(confidence, modifier)` (§6.2: mono 10.5px on `bg/score`, `text/faint`) is its own
+  public composable, reusable per R-023.
+- **R-021 — `ActivityPatternChart`.** Signature unchanged (`pattern, modifier, title,
+  summaryLabel, barLabels`) plus three new optional trailing params (`axisStart`, `axisEnd`,
+  `notListeningLabel`) so existing call sites (`StationScreen`, `FrequencyScreen`) compile and
+  render unchanged. Bars are now 38dp tall with a 1.5dp gap (`Arrangement.spacedBy`, no per-bar
+  padding — was 34dp/1dp padding); HEARD bars pick one of `OrtColors.chartGreenRamp`'s five steps
+  by intensity instead of a flat green; SILENT_WHILE_LISTENING uses `chartNeutralRamp`, not
+  `text/low`; NOT_LISTENING is a full-height 45°-hatch in `hatchBar` (`drawHatchRegion`, a shared
+  internal helper also used by the legend swatch, the day-of-week grid's not-listening cell and
+  `Sparkline`) — never a short bar, and the legend is a 9×7dp hatch swatch (`accentGapDim`) +
+  `"not listening · <label>"` in `accentAmberText`, never the `▨` font glyph the pre-R-021
+  component drew. Title renders through `OrtType.sectionLabel`/`textFaint` with the guide's copy
+  passed by the caller — the `"ACTIVITY BY HOUR (UTC)"` default stays only as the parameter's
+  default value, not a literal baked into the render path. New `DayOfWeekGrid(cells: List<
+  DayHourCell>, modifier, hours)` for `Station-Pattern.dc.html`'s hour×day grid (16dp cells, 3dp
+  gap, mono day-initial labels, three-swatch legend) and `Sparkline(nights: List<
+  HourActivityState>, modifier)` for `Frequencies.dc.html` (56×18dp, hatched nights) — both share
+  the same three-state, never-conflate-not-listening-with-quiet treatment (FR-UI-12).
+- **R-022 — `LiveBar`.** New. `LiveBarViewState(level: List<Float>, partialText: String?, label:
+  String, tone: LiveBarTone)`, `LiveBarTone { NOMINAL, DEGRADED, HALTED }`. `LiveBar(state,
+  onClick, modifier)`: `bgLive`/`lineStrong`/`accentGreen` nominal, `bgRowGap`/
+  `bannerAmberBorder`/`accentAmberDim` degraded, `haltBg`/`haltBorder`/`haltText` halted — never
+  colour alone, since `label` and `partialText` differ per tone too (constitution: "colour is
+  reinforcement, never signal"). The whole bar is one `>=44dp` clickable target with a merged
+  `Role.Button` + description reading label and partial text together.
+- **R-023 — the set (guide §6.3–6.19).** All new: `TextAction`, `PrimaryButton` (48dp),
+  `SecondaryButton`, `DestructiveButton` (`Controls.kt`, §6.7); `FilterChip` + `FilterChipRow`
+  (§6.3, `.selectable` so TalkBack announces selection state); `Badge` with `BadgeKind { NEW,
+  REVISED, CORRECTED, TIER, COUNT }` (§6.14); `ProgressBar` (§6.12, never indeterminate);
+  `StepIndicator(steps, currentStep, modifier, haltedStep)` (§6.10, with the halted-segment
+  variant + mono "n of N"); `RadioRow`/`CheckboxRow`/`ToggleRow` (§6.11, 44dp rows with count and
+  sub-line slots) — all in `Controls.kt`. `Banner(title, body, tone: BannerTone, primaryActionLabel,
+  onPrimaryAction, secondaryActionLabel, onSecondaryAction)`, `Toast(message, onUndo)`,
+  `Sheet(title, modifier, onClearAll, content)`, `EmptyState`, `FailedState` — `Feedback.kt`
+  (§6.8–6.9). `SectionHeader`, `DrillInHeader`, `ScreenHeader`, `ColumnHeaderRow`, `KeyValueRow`,
+  `ActionBar`, `Tile`, the `LogRow`/`LogRowViewState`/`LogRowPartial`/`LogRowBadge` family,
+  `LogGroupHeader`, `GapRow`, `RejectedRow` — `Rows.kt` (§6.5/§6.18, `Rows.dc.html`'s fixed
+  52dp/56dp time/freq columns, `8dp 20dp 9dp` row padding, `line/row` divider, right-aligned mono
+  signal). `WaveformCard`/`WaveformViewState`/`WaveformBar`, `LatticeSlot`/
+  `LatticeSlotViewState`, `PriorBar`/`PriorBarViewState` — `Inspection.kt` (§6.16–6.17, including
+  the cold-start no-bar case and the argued-against reverse-fill case).
+- **R-024 (44dp targets).** Every interactive component above asserts `>=44dp` in its own test
+  (`ControlsTest`, `RowsTest`, `LiveBarTest`) — closed by construction, not by convention: several
+  rows (`LogRow`, `GapRow`, `RejectedRow`, `LogGroupHeader`, `DrillInHeader`, `ScreenHeader`) are
+  built as an outer `Box` carrying the `heightIn(min = 44.dp)` + click target with an inner `Row`
+  free to lay out padded columns — a `Row` carrying `heightIn` *and* a trailing `padding()` in the
+  same modifier chain was empirically found, mid-session, to sometimes under-report its measured
+  height in this Compose/Robolectric combination (a real, reproducible defect, not a flaky test —
+  `RowsTest`'s `assertHeightIsAtLeast` caught it at exactly the wrong 35dp both before and after
+  swapping `heightIn` for `defaultMinSize`, and only the outer-Box restructuring fixed it); every
+  row family member follows the same safe shape now.
+- **R-025 — `OrtIcons`.** New. 34 stroke icons as `ImageVector`s built via `ImageVector.Builder
+  .addPath(pathData = addPathNodes(<exact Icons.dc.html 'd' string>), ...)` — `<rect>`/`<circle>`
+  SVG elements converted to their exact path equivalents by the standard formula so every icon
+  traces the board's own geometry (not redrawn by eye): `drawer`, `back`, `search`, `more`,
+  `chevron`, `dismiss`, `expand`, `filters`; the nine drawer destination icons (`now`, `log`,
+  `threads`, `stations`, `frequencies`, `earlierNights`, `capture`, `improve`, `settings`);
+  `gapWarn`, `halt`, `check`, `play` (the one filled icon, `accentGreen`), `recent`, `lock`
+  ("never leaves"), `call`, `thermal`; `usbAudio`, `headset`, `builtInMic`, `rig`, `storage`,
+  `models`, `export`, `diagnostics`, `edit`. All stroke icons build with `Color.Black` as a
+  build-time placeholder (`Icon(..., tint = ...)` overrides every path's paint at the call site).
+  `InProgressRing(modifier, size = 17.dp, color, strokeWidth = 2.dp)` draws the open-quadrant ring
+  (guide §6.13/`Icons.dc.html`'s "in progress") via `drawArc`, not an `ImageVector` (a genuinely
+  unknown-length indicator, distinct from `ProgressBar`'s "never indeterminate" rule).
+- **Detekt.** `MaxLineLength` (120, `config/detekt/detekt.yml`) flagged ~93 lines across every new
+  file on first `:app:detekt` run; fixed by wrapping call arguments one per line and, where a
+  single SVG path-data string itself exceeded 120 chars, splitting it at an internal space with
+  Kotlin `+` string concatenation — verified character-for-character against the source `Icons.dc.html`
+  `d` strings after wrapping (an early mechanical wrap script dropped the boundary space at four
+  split points — `lock`, `usbAudio`, `builtInMic`, `models` — corrupting their path data without
+  breaking compilation; caught by comparing every wrapped string back to its source `d` attribute,
+  not by detekt, which cannot see semantic content). `Feedback.kt` also carries
+  `@file:Suppress("MatchingDeclarationName")` (`BannerTone` is one of several public declarations
+  in a multi-declaration file). `LiveBar.kt`'s `DestructuringDeclarationWithTooManyEntries` (4
+  entries) fixed by naming the `LiveBarPalette` result instead of destructuring it.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` — 303 tests, **301 passing**, 2 failing (both outside
+  this package, both an expected, explained consequence of R-020 — see "Left open"). New tests by
+  name: `AttributionMarkerTest` — `R_020 the shape-only marker renders no glyph, no state word and
+  no confidence number as visible text`, `R_020_confirmed_renders_no_score_and_inferred_renders_a_score_chip`,
+  `R_020 ambiguous shows the or QRF alternate only when one is supplied`, `R_020 unknown shows
+  italic unknown station and never a callsign`, `R_020 the full row is one merged semantics node
+  reading shape, state and callsign`. `ActivityPatternChartTest` — `R_021 the not-listening legend
+  is a hatch swatch, never the font glyph`, `R_021 axis labels render at both ends when supplied`,
+  `AC_62 a day-of-week grid distinguishes heard, quiet and not-listening cells without colour
+  alone`, `a sparkline reports how many of its nights were not-listening rather than quiet` (plus
+  the pre-existing `FR_UI_12`/summary tests, retained). `LiveBarTest` — `R_022 live bar degraded
+  and halted variants differ in more than colour`, `FR_A11Y_2 the live bar is one 44dp target with
+  a role and a merged description`, `P5 a live partial renders italic and dimmed, distinct from a
+  resolved row`. `ControlsTest` — `FR_A11Y_2 every interactive component has a 44dp target and a
+  role`, `a disabled text action carries text_disabled and does not fire its click`, `a filter
+  chip is selectable and its dismiss affordance is a real icon, never text`, `R_023 badges render
+  the guide's complete set as distinct visible labels`, `R_023 a halted step indicator differs
+  from a done or upcoming one`, `a progress bar reports its percentage rather than spinning
+  indeterminately`. `FeedbackTest` — `a halting banner and a degradation banner differ in tone,
+  copy and action colour, not just hue`, `a toast always carries Undo and states the blast radius,
+  not just success`, `AC_6_8 empty and failed states are never conflated`, `a sheet renders its
+  handle, title and an optional Clear all action with a 44dp target`. `RowsTest` — `every LogRow
+  variant from Rows_dc_html is distinguishable and clickable`, `a gap row and a rejected row stay
+  reachable rather than disappearing`, `a log group header names the thread and a column header
+  row names every column`, `a drill-in header and a screen header carry their own targets and
+  descriptions`, `a key value row and an action bar render at a 44dp target`. `InspectionTest` —
+  `the four waveform card states render distinctly`, `a playing waveform's play control is a
+  44dp-ish real target with a role`, `a lattice slot below threshold is described as such and a
+  kept alternate is announced`, `a prior that abstained reads cold start rather than a fabricated
+  zero`. `OrtIconsTest` — `R_025 every required icon exists and renders without crashing`,
+  `R_025 every icon has at least one path, so none renders as an empty glyph`, `an in-progress
+  ring renders without a Context or polling`.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules`: OK, 17 modules, every
+  edge permitted. `platformGuards`: OK, no analytics/telemetry, `INTERNET` only in `:net`. `build`
+  itself fails only at `:app:testDebugUnitTest`, on the same 2 known failures above (every other
+  module's `build`, detekt, lint pass).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered, regenerated
+  `results/coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 181 of 419.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- **Two tests outside this package fail, and cannot be fixed from WP2.** `LogScreenTest.FR_UI_4
+  the confidence value is shown as visible text, not only in the content description` and
+  `TransmissionDetailScreenTest.FR_UI_4 the confidence value is shown as visible text in the
+  header, not only in the content description` both assert `onNodeWithText("0.95")` exists for a
+  **CONFIRMED** attribution. R-020 requires CONFIRMED to show no number, and the old
+  `AttributionMarker` was the only thing visibly rendering that "0.95" (via its own now-removed
+  `Text`) — so these two assertions were pinning the exact bug R-020 fixes. `LogScreen.kt`,
+  `SearchScreen.kt`, `ThreadScreen.kt` and `TransmissionDetailScreen.kt` (owned by WP5/WP7/WP6
+  respectively) all still call the old two-argument `AttributionMarker(attribution, modifier)`
+  and append their own callsign text after it — that still renders correctly (shape + their
+  callsign, no longer doubled) but does not yet pick up `AttributionRow`'s score chip / alternate
+  / per-state callsign colour. All four should switch to `AttributionRow(attribution, callsign =
+  <already-computed callsign>, alternate = <if any>)` when their owning WPs next touch them; when
+  `TransmissionDetailScreen`/`LogScreen` do, their own `FR_UI_4` tests should be updated to assert
+  what R-020 actually specifies (a score chip visible for INFERRED, never a number for CONFIRMED)
+  rather than the pre-R-020 behaviour.
+- **Not pixel-verified against the artboards.** No screenshot/emulator pass — Robolectric
+  semantics-tree assertions only, per the plan (Phase E/Validators own that).
+- **`DayOfWeekGrid`/`Sparkline`** are built to the guide's stated numbers (16dp/3dp gap; 56×18dp)
+  since I did not have `Station-Pattern.dc.html` open to cross-check pixel-for-pixel; the guide's
+  own §21-style prose for these two was the source of truth used.
+- **Missing typography tokens (reported, not added — WP1 owns `OrtType`).** No exact 11sp
+  non-mono row for the AMBIGUOUS "or QRF" alternate (used `OrtType.subLine`, 11.5sp, the closest
+  named row); no exact 13px-non-italic-context row separate from `textAction`/`transcript` for
+  UNKNOWN's "unknown station" (used `textAction.copy(fontStyle = Italic)`, same size/weight/family
+  as the guide's 13px sans row).
+
 ## 2026-09-08 (ui-conformance WP1: theme, tokens, manifest, scaffold; themed permission screens)
 
 ### (pending) — ui-conformance WP1 · theme, tokens, manifest, scaffold; themed permission screens
