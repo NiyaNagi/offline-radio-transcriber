@@ -1,11 +1,13 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -19,11 +21,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -34,6 +38,7 @@ import org.ort.app.ui.audio.TransmissionAudioPlayer
 import org.ort.app.ui.components.ActionBar
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
+import org.ort.app.ui.components.MARKER_TITLE_SIZE
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.PriorBar
 import org.ort.app.ui.components.RadioRow
@@ -50,6 +55,7 @@ import org.ort.app.ui.data.DetailViewState
 import org.ort.app.ui.data.LabelCertainty
 import org.ort.app.ui.data.LabelOutcome
 import org.ort.app.ui.data.LabelledSample
+import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.data.TriedStepViewState
 import org.ort.app.ui.theme.OrtColors
@@ -97,12 +103,19 @@ public fun TransmissionDetailScreen(
     onOpenWhy: () -> Unit = {},
     onOpenRevisions: () -> Unit = {},
     onRecordLabel: suspend (LabelledSample) -> Unit = {},
+    onRetryPass: () -> Unit = {},
+    onKeepPartial: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var labelExpanded by remember(state.detail.id) { mutableStateOf(false) }
     Column(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            HeaderSection(state, onOpenTransmission)
+            val passFailure = state.passFailure
+            if (passFailure != null) {
+                FailedPassHeaderSection(state.detail, passFailure)
+            } else {
+                HeaderSection(state, onOpenTransmission)
+            }
             PlaybackSection(state.detail, player)
             TranscriptSection(state.detail)
             AmbiguousChooserSection(state.body, onChooseCandidate, onNeither)
@@ -123,6 +136,8 @@ public fun TransmissionDetailScreen(
             onLeaveAmbiguous = onLeaveAmbiguous,
             onIKnowWhoThisIs = onIKnowWhoThisIs,
             onRecordLabel = { labelExpanded = true },
+            onRetryPass = onRetryPass,
+            onKeepPartial = onKeepPartial,
         )
     }
 }
@@ -157,17 +172,85 @@ private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -
                 onClick = { onOpenTransmission(inferred.sourceTransmissionId) },
             )
         }
-        Row(modifier = Modifier.padding(top = OrtSpacing.xs)) {
-            Text(text = detail.timeLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
+        MetaRow(detail)
+    }
+}
+
+/** Shared by [HeaderSection] and [FailedPassHeaderSection] — time/frequency/duration/signal, mono, faint. */
+@Composable
+private fun MetaRow(detail: TransmissionDetailViewState) {
+    Row(modifier = Modifier.padding(top = OrtSpacing.xs)) {
+        Text(text = detail.timeLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
+        Spacer(modifier = Modifier.width(OrtSpacing.md))
+        Text(text = detail.frequencyLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
+        Spacer(modifier = Modifier.width(OrtSpacing.md))
+        Text(text = detail.durationLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
+        detail.signalLabel?.let {
             Spacer(modifier = Modifier.width(OrtSpacing.md))
-            Text(text = detail.frequencyLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
-            Spacer(modifier = Modifier.width(OrtSpacing.md))
-            Text(text = detail.durationLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
-            detail.signalLabel?.let {
-                Spacer(modifier = Modifier.width(OrtSpacing.md))
-                Text(text = it, style = OrtType.timeFreq, color = OrtColors.textFaint)
-            }
+            Text(text = it, style = OrtType.timeFreq, color = OrtColors.textFaint)
         }
+    }
+}
+
+/**
+ * R-153, F18 `Fail-Pass.dc.html`, FR-RUN-9: the failed-pass header — no callsign (none was ever
+ * resolved; this over's own [DetailBodyViewState] would otherwise render a misleading "no callsign
+ * heard, voice matched no one" UNKNOWN sentence, which is not what happened here — the pass never
+ * finished, it errored). The marker adapts design-guide.md §6.13's "Resolving" ring (a 9px ring,
+ * one quadrant open) — the closest real, already-specified shape for "the attribution never
+ * finished" — in amber rather than `text/signal`, matching `Fail-Pass.dc.html`'s own halted-amber
+ * reading; no shared composable for either ring exists in [org.ort.app.ui.components.AttributionMarker]
+ * yet (only [TitleAttributionRow]'s four closed attribution states and [ScoreChip][org.ort.app.ui.components.ScoreChip]
+ * do), so this is a minimal, local, documented one — not a look-alike of a component that exists.
+ */
+@Composable
+private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFailure: PassFailureViewState) {
+    val attempts = passFailure.attempts
+    val attemptsWord = if (attempts == 1) "1 time" else "$attempts times"
+    Column(
+        modifier = Modifier
+            .padding(horizontal = OrtSpacing.lg)
+            .testTag("pass-failure-section"),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Canvas(modifier = Modifier.size(MARKER_TITLE_SIZE)) {
+                // design-guide.md §6.13's "Resolving" ring — a 9px ring, one quadrant open — drawn
+                // as a 270° arc (open the last 90°) rather than the artboard's CSS
+                // transparent-two-sides trick, since Compose's `Modifier.border` has no per-side
+                // colour; the visual result (an open quadrant) is the same real shape.
+                drawArc(
+                    color = OrtColors.accentAmber,
+                    startAngle = -45f,
+                    sweepAngle = 270f,
+                    useCenter = false,
+                    style = Stroke(width = size.minDimension * 0.16f),
+                )
+            }
+            Spacer(modifier = Modifier.width(OrtSpacing.sm))
+            Text(
+                text = "not transcribed",
+                style = OrtType.callsignTitle.copy(fontStyle = FontStyle.Italic),
+                color = OrtColors.textBody,
+            )
+        }
+        Text(
+            text = "${passFailure.passLabel} errored $attemptsWord on this over and stopped trying. " +
+                "The audio is here; the queue moved on without it.",
+            style = OrtType.subtitle,
+            color = OrtColors.textMuted,
+            modifier = Modifier.padding(top = OrtSpacing.sm),
+        )
+        MetaRow(detail)
+        SectionHeader(label = "What went wrong · $attemptsWord", modifier = Modifier.padding(top = OrtSpacing.sm))
+        // Named schema gap (see PassFailureViewState's own doc comment): `:data` keeps only the
+        // aggregate attempt count and the single most recent error, not one row per attempt, so
+        // this is one honest line — never the artboard's fabricated three-row attempt list.
+        Text(
+            text = passFailure.lastError.replaceFirstChar { it.titlecase() },
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-last-error"),
+        )
     }
 }
 
@@ -411,7 +494,15 @@ private fun RevisionsLinkSection(detail: TransmissionDetailViewState, onOpenRevi
     }
 }
 
+/**
+ * R-153: a failed pass gets its own bottom bar — `Fail-Pass.dc.html`'s "Keep the partial" (there is
+ * nothing to write; the over already reads honestly as it is) / "Retry now" (wired to
+ * [org.ort.app.ui.data.CorrectionPolling.retryFailedPass] by the caller) — checked before the
+ * normal attribution-state `when`, since [state]'s [DetailBodyViewState] still reflects whatever
+ * (likely UNKNOWN) attribution the transmission carries, not the fact that a pass errored.
+ */
 @Composable
+@Suppress("LongParameterList") // one callback per independently-testable interaction, precedent above.
 private fun BottomActionBar(
     state: DetailViewState,
     onNotRight: () -> Unit,
@@ -419,7 +510,18 @@ private fun BottomActionBar(
     onLeaveAmbiguous: () -> Unit,
     onIKnowWhoThisIs: () -> Unit,
     onRecordLabel: () -> Unit,
+    onRetryPass: () -> Unit,
+    onKeepPartial: () -> Unit,
 ) {
+    if (state.passFailure != null) {
+        ActionBar(
+            secondaryLabel = "Keep the partial",
+            onSecondary = onKeepPartial,
+            primaryLabel = "Retry now",
+            onPrimary = onRetryPass,
+        )
+        return
+    }
     when (state.body) {
         is DetailBodyViewState.Confirmed ->
             ActionBar(

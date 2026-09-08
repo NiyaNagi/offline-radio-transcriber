@@ -105,6 +105,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `unclean-end` | A heartbeat file that reads as an unclean end (never marked clean shutdown) for a prior session; this process is not capturing. |
 | `os-stopped` | The same unclean-end heartbeat as `unclean-end`, plus the `CaptureGapCause.OS_STOPPED` gap `RealCaptureService` itself now persists on relaunch, from the last heartbeat to the moment of detection (F5, register R-106). Does not "reopen" the previous session — a policy the lead has not decided. |
 | `pass-a-partial` | A transmission whose only transcript row is a current Pass A partial, `processingState = PROCESSING`. |
+| `pass-failed` | R-153, F18 `Fail-Pass.dc.html`: a transmission whose Pass B is terminally `FAILED` (a real `work_queue_item` row, 3 attempts, `lastError = "out of memory in the decoder"`), `processingState = FAILED`, its Pass A partial kept as the current transcript, and retained audio. |
 | `corrected` | A single transmission carrying the exact shape a one-tap correction produces, plus its `CorrectionEntity` audit row. |
 | `no-audio` | A confirmed transmission with no retained-audio file at all. |
 | `revisions` | A single transmission with two transcript versions, the older superseded. |

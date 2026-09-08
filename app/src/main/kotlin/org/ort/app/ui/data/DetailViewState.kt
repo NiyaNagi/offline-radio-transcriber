@@ -2,6 +2,7 @@ package org.ort.app.ui.data
 
 import org.ort.app.ui.components.PriorBarViewState
 import org.ort.core.AttributionState
+import org.ort.core.PassId
 
 /**
  * ui-conformance WP6 (R-050/R-051/R-053/R-057), `Detail.dc.html`/`Detail-Confirmed.dc.html`/
@@ -66,10 +67,36 @@ public data class DetailWhyViewState(
     val runnerUp: RankedCandidateViewState?,
 )
 
+/**
+ * R-153, F18 `Fail-Pass.dc.html`, FR-RUN-9: a pass that errored repeatedly and stopped retrying
+ * automatically — real per-transmission facts read from `:data`'s
+ * [org.ort.data.entity.WorkQueueItemEntity] (`state = FAILED`) by
+ * [org.ort.app.ui.data.CorrectionPolling.passFailure], never fabricated. [passId]/[passLabel] name
+ * which pass failed in operator terms (guide §9's "pass" vocabulary — "Pass B", not `B_OFFLINE`);
+ * [attempts] and [lastError] are the real `attemptCount`/`lastError` columns.
+ *
+ * **Named schema gap** (this package's brief asked for it to be reported, not invented):
+ * `Fail-Pass.dc.html` shows three separately-timestamped attempts, each with its own message and
+ * backoff — `WorkQueueItemEntity` keeps only the aggregate [attempts] count and the single most
+ * recent [lastError]; every earlier attempt's own timestamp and message is not retained anywhere
+ * in `:data` today. [org.ort.app.ui.screens.TransmissionDetailScreen] renders exactly what this
+ * class carries — one "what went wrong" line, not a fabricated three-row list — and this package's
+ * CHANGELOG names the gap explicitly.
+ */
+public data class PassFailureViewState(
+    val passId: PassId,
+    val passLabel: String,
+    val lastError: String,
+    val attempts: Int,
+)
+
 public data class DetailViewState(
     val detail: TransmissionDetailViewState,
     val body: DetailBodyViewState,
     val why: DetailWhyViewState,
+    /** R-153: non-null exactly when [org.ort.app.ui.data.CorrectionPolling.passFailure] found a
+     * real terminally-FAILED [org.ort.data.entity.WorkQueueItemEntity] for this transmission. */
+    val passFailure: PassFailureViewState? = null,
 )
 
 public object DetailViewStateMapper {
@@ -79,11 +106,19 @@ public object DetailViewStateMapper {
      * +3.1/+3.8, so 4.0 leaves headroom without ever clipping a real value silently at 1.0. */
     private const val PRIOR_BAR_SCALE = 4.0
 
-    public fun from(detail: TransmissionDetailViewState): DetailViewState = DetailViewState(
-        detail = detail,
-        body = bodyFor(detail),
-        why = whyFor(detail.inspection),
-    )
+    /**
+     * [passFailure] is optional and defaults to `null` so every existing call site (built before
+     * R-153) compiles unchanged; a caller that has looked one up (`:app`'s
+     * [org.ort.app.ui.screens.TransmissionDetailContent], gated on `processingState == FAILED`)
+     * passes it through.
+     */
+    public fun from(detail: TransmissionDetailViewState, passFailure: PassFailureViewState? = null): DetailViewState =
+        DetailViewState(
+            detail = detail,
+            body = bodyFor(detail),
+            why = whyFor(detail.inspection),
+            passFailure = passFailure,
+        )
 
     private fun bodyFor(detail: TransmissionDetailViewState): DetailBodyViewState {
         val attribution = detail.attribution

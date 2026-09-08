@@ -1623,6 +1623,146 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 · failed-pass detail state and pass-failed scenario
+
+**Scope:** `:app`, this package's files only — `ui/data/DetailViewState.kt`,
+`ui/data/CorrectionPolling.kt`, `ui/screens/TransmissionDetailScreen.kt`,
+`ui/screens/TransmissionDetailContent.kt`; `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+(granted for this round only — WP11b's directory, otherwise free); `results/ui-audit/README.md`
+(documenting the new scenario only); `app/src/test/.../ui/data/CorrectionPollingTest.kt`,
+`app/src/test/.../ui/screens/TransmissionDetailScreenTest.kt`,
+`app/src/test/.../ui/screens/TransmissionDetailContentTest.kt`. Addendum to the WP6 entry below,
+a follow-up commit at the coordinator's request after `main` (merged here at `4390683`) landed
+register row R-153.
+
+**Requirements/ACs:** R-153 (closed — F18 `Fail-Pass.dc.html` now has a real detail state and a
+seeding scenario), FR-RUN-9 (closed for this surface — a failed pass reads with its recorded
+error, stays visible, offers a manual retry, and never blocks the rest of the over from
+rendering).
+
+**Constitution Check.** Principle I ("never fabricate a number/fact"): [`PassFailureViewState`]
+carries only what `:data`'s `WorkQueueItemEntity` actually stores (`attemptCount`, the single
+`lastError`) — the artboard's three separately-timestamped attempts cannot be built from this
+schema and are not invented; the gap is named in the view-state's own doc comment and below.
+Principle III ("nothing deleted quietly"): retrying a failed pass keeps the prior `lastError` in
+place (`WorkQueueDao.requeueToReady` never touches it) rather than clearing it. Principle IX
+("`:capture-*` must never depend on `:asr-*`/`:lexicon`/`:identity`"): unaffected — this is a
+`:data`-read-only UI surface. FR-RUN-9's "never blocking": the retry write can fail to find a
+match (already retried, already completed) and returns `false` rather than throwing, so a stale
+button press cannot crash the screen; the rest of the over (audio, the Pass A partial) renders
+unconditionally, never gated on the failure lookup succeeding.
+
+**What changed:**
+
+1. **The real schema, read.** `WorkQueueItemEntity` (`state`, `pass`, `attemptCount`, `lastError`)
+   is the *only* record `:data` keeps of a failed pass — no per-attempt table exists anywhere.
+   `CorrectionPolling.passFailure(context, transmissionId)` checks every `PassId` (pipeline order)
+   via `WorkQueueDao.findByTransmissionAndPass`, since no `:data` query finds a failed item by
+   transmission alone, and returns the first terminally-`FAILED` match as a real
+   `PassFailureViewState` (`passId`, `passLabel` in guide §9's "pass" vocabulary, `lastError`,
+   `attempts`) — `null` for every other transmission.
+2. **`DetailViewState.passFailure: PassFailureViewState?`**, default `null` so every existing call
+   site compiles unchanged; `DetailViewStateMapper.from(detail, passFailure = null)` gained the
+   optional second parameter the same way.
+3. **`TransmissionDetailContent`** now looks up `passFailure` in `refresh()`, gated on
+   `processingState == FAILED` (never an extra read for a healthy transmission), and passes it
+   into the mapper.
+4. **`TransmissionDetailScreen` renders the failed-pass state** in place of the normal
+   attribution-based header and bottom bar exactly when `state.passFailure != null` — never
+   alongside it, since the transmission's own `DetailBodyViewState` (typically UNKNOWN) would
+   otherwise render a misleading "no callsign heard, voice matched no one" sentence for an over
+   whose pass simply never finished. The new `FailedPassHeaderSection` shows: an italic "not
+   transcribed" title beside a marker adapting design-guide.md §6.13's "Resolving" open-quadrant
+   ring (amber, matching `Fail-Pass.dc.html`'s halted reading — no shared composable for either
+   ring exists in `AttributionMarker.kt` yet, so this is a minimal, local, documented one, not a
+   look-alike of a component that exists); the real explanation sentence ("Pass B errored 3 times
+   on this over and stopped trying..."); the same meta row (extracted into a shared `MetaRow`
+   composable); a "What went wrong · N times" section showing the one honest line the schema
+   supports (never a fabricated three-row attempt list). The waveform (`PlaybackSection`) and the
+   transcript (`TranscriptSection`, which already shows the real Pass A partial when one exists, or
+   the honest `"(transcription failed)"` label via `ReaderTransmissionViewStateMapper.transcriptLabel`
+   when it does not) render completely unchanged below it — "the rest of the over" was already
+   real and needed no new plumbing. The bottom bar becomes `Keep the partial` (secondary, writes
+   nothing — there is nothing to change) / `Retry now` (primary).
+5. **`CorrectionPolling.retryFailedPass(context, transmissionId, pass)`** — `Retry this pass`,
+   scoped to exactly this transmission's item via `WorkQueueDao.requeueToReady` plus the same
+   `TransmissionDao.canTransition`/`requireLegalTransition` FAILED→PROCESSING pairing
+   `WorkQueue.failPass`/`requeueFailed` use internally, in one `db.withTransaction`. **Deliberately
+   not** `WorkQueue.requeueFailed(pass, ...)` — that matches every `FAILED` item for a pass across
+   the whole queue, which would retry every other stuck transmission too. **Searched
+   `pipeline/src/main/kotlin` for a scheduler/`WorkManager` job to trigger a synchronous re-run —
+   none exists** (the only hit is a comment in `RealCaptureService.kt` noting the drain is
+   in-process only, M8/M10 work), so this write — a genuine, durable `FAILED`→`READY` +
+   `FAILED`→`PROCESSING` flip the next drain picks up — is the real re-queue this build has, not a
+   no-op standing in for one.
+6. **`pass-failed` debug scenario** (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`): a
+   transmission with `processingState = FAILED`, a real `work_queue_item` row
+   (`pass = B_OFFLINE`, `state = FAILED`, 3 attempts, `lastError = "out of memory in the decoder"`),
+   its Pass A partial as the current transcript, and retained audio — the same "write the shape the
+   real write path produces" approach `os-stopped` already uses for its gap row.
+   `clearPriorScenarioData` gained a `work_queue_item` delete (the first scenario to write that
+   table). Documented in `results/ui-audit/README.md`'s scenario table.
+
+**Named schema gap** (reported honestly per this round's instruction, not fixed): `:data` keeps
+only the aggregate `attemptCount` and the single most recent `lastError` for a work-queue item —
+`Fail-Pass.dc.html`'s three individually-timestamped attempts, each with its own message and
+backoff, cannot be built from what exists today. `PassFailureViewState`'s own doc comment and the
+screen's inline comment both name this rather than rendering a fabricated attempt list.
+
+**New tests:**
+- `CorrectionPollingTest`: `R_153_passFailure_reads_the_real_failed_items_pass_attempts_and_error`,
+  `R_153_passFailure_is_null_when_no_work_queue_item_is_terminally_failed`,
+  `FR_RUN_9_retryFailedPass_requeues_the_item_and_returns_the_transmission_to_processing`,
+  `FR_RUN_9_retryFailedPass_is_scoped_to_this_transmissions_item_only`,
+  `FR_RUN_9_retryFailedPass_returns_false_and_never_throws_when_nothing_matches`.
+- `TransmissionDetailScreenTest`:
+  `R_153_a_failed_pass_shows_which_pass_failed_the_recorded_error_and_attempts`,
+  `R_153_the_rest_of_the_over_still_renders_audio_and_partial_text_when_a_pass_has_failed`,
+  `FR_RUN_9_retry_this_pass_is_always_offered_and_calls_back`,
+  `FR_RUN_9_keep_the_partial_is_offered_beside_retry_and_never_blocks_the_screen`.
+- `TransmissionDetailContentTest`:
+  `R_153_a_failed_transmission_shows_the_failed_pass_state_from_the_real_queue_row`,
+  `FR_RUN_9_tapping_retry_now_requeues_the_real_item_and_returns_the_transmission_to_processing`
+  (a real tap through the composed screen, polling the real `OrtDatabase` afterwards — not a
+  direct call to `retryFailedPass`).
+
+**testTags added** (validator reachability): `pass-failure-section` (the whole failed-pass header
+block), `pass-failure-last-error` (the recorded-error line). `waveform-card` (already existed,
+R-054) and the `Retry now`/`Keep the partial` button labels (via `onNodeWithText`, `ActionBar`'s
+own established pattern) round out reachability for this state — no further tags were needed since
+every other new element is discoverable by its visible text, matching this package's existing
+convention throughout WP6.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.CorrectionPollingTest"
+  --tests "org.ort.app.ui.screens.TransmissionDetailScreenTest"
+  --tests "org.ort.app.ui.screens.TransmissionDetailContentTest"` — **BUILD SUCCESSFUL**, all 44
+  tests green across the three classes (21 in `CorrectionPollingTest`, 16 in
+  `TransmissionDetailScreenTest`, 7 in `TransmissionDetailContentTest`).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged; R-153/FR-RUN-9 were
+  already counted as covered by other requirements' rows) and `.\gradlew.bat coverageMatrixCheck`
+  (separate invocation) — both **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- Whole-module count: 107 test classes, **798 tests, 0 failures** (`app/build/test-results/testDebugUnitTest/*.xml`, summed).
+- `:app:ktlintFormat` then `:app:detekt` — both **BUILD SUCCESSFUL**, no violations.
+
+**Left open / not done:**
+- Per-attempt history (three separate timestamped attempts with distinct messages, as
+  `Fail-Pass.dc.html` shows) cannot be built — no `:data` table records one row per attempt, only
+  the aggregate count and the most recent error. Adding that would be a `:data` schema change,
+  outside this package's row.
+- `Retry this pass` changes real, durable queue state (`FAILED`→`READY`) but does not trigger a
+  synchronous re-run — there is no scheduler/`WorkManager` job anywhere in `:pipeline` today (only
+  in-process draining during active capture); the retried item runs whenever the queue next drains.
+- `Keep the partial` is a genuine no-op — there is no field left to write once the over already
+  reads honestly as it is; wired for discoverability and symmetry with `Fail-Pass.dc.html`'s own
+  two-button bar, not because it changes state.
+
+---
+
 ### (pending) — ui-conformance WP6 · title attribution row and waveform scrubbing
 
 **Scope:** `:app`, this package's files only — `ui/screens/TransmissionDetailScreen.kt`,
