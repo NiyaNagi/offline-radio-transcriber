@@ -553,7 +553,12 @@ private fun TransmissionListEntryViewState.toLogRowViewState(query: String): Log
     highlightRanges = MatchHighlighter.rangesFor(transcriptText, query),
 )
 
-private val DAY_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ROOT)
+// R-370: `Locale.ROOT` has no real month-name data, so "MMM" degraded to the literal "M09"
+// rather than "Sep" — the same defect R-170 already fixed in `ReaderPolling`'s own (`private`,
+// so replicated here rather than shared directly) `nightDateFormat`. Dates are prose, read in the
+// device's own locale (guide §9) — `Locale.ROOT` stays correct elsewhere in this file, for the
+// mono numeric time/frequency labels that must never localize.
+private val DAY_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
 
 private fun dayLabel(startedAtUtcMillis: Long): String =
     Instant.ofEpochMilli(startedAtUtcMillis).atZone(ZoneOffset.UTC).toLocalDate().format(DAY_FORMAT)
@@ -603,6 +608,14 @@ private fun EmptyState(
                                 includeRejected = true,
                                 includeCorrected = true,
                             )
+                            // R-372: "drop each active filter" — the dedicated Filters-sheet
+                            // fields clear directly; a free-text callsign/frequency (R-371) has no
+                            // dedicated field of its own to clear, so this drops the whole query
+                            // box instead (its remaining text, if any, would otherwise re-apply the
+                            // same routed filter right back).
+                            "drop_band" -> input.copy(band = null)
+                            "drop_frequency" -> input.copy(frequencyMhz = "")
+                            "drop_callsign" -> input.copy(callsign = "", text = "")
                             else -> input
                         }
                         onInputChange(updated)

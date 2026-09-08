@@ -8,6 +8,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.AttributionState
+import org.ort.data.Band
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
@@ -116,16 +117,57 @@ class SearchWidenSuggestionsTest {
         db.catalogDao().insert(station("ST1", "VE7ABD"))
         val input = SearchFilterInput(callsign = "VE7ABC")
 
+        // R-372: sourced from `params.callsign`, the parsed value every real caller
+        // (`SearchContent.kt`) actually passes — `SearchQueryParams(callsign = input.callsign)`
+        // here rather than the bare `SearchFilterParser.parse(input, ...)` call, since this test's
+        // own point is the callsign-set/callsign-unset behaviour, not the parser itself (that is
+        // `SearchFilterParserTest`'s job).
         val widen = SearchWidenSuggestions.build(
             context,
             input,
-            SearchQueryParams(),
+            SearchQueryParams(callsign = input.callsign),
             includeEverything,
             SearchFacetCounts.EMPTY,
         )
 
         assertEquals(listOf("VE7ABD"), widen.similarCallsigns)
     }
+
+    @Test
+    fun `R_372 a callsign typo'd into the free-text query box still offers a similar-callsign suggestion`(): Unit =
+        runTest {
+            // The register's own worked example: KE7QRT (typed into the search box, never the
+            // Filters sheet's dedicated callsign field) should offer KE7QRS, one edit away.
+            db.catalogDao().insert(station("ST1", "KE7QRS"))
+            val input = SearchFilterInput(text = "KE7QRT")
+            val params = SearchFilterParser.parse(input, nowUtcMillis = 0L)
+
+            val widen = SearchWidenSuggestions.build(context, input, params, includeEverything, SearchFacetCounts.EMPTY)
+
+            assertEquals(listOf("KE7QRS"), widen.similarCallsigns)
+        }
+
+    @Test
+    fun `R_372 a drop-frequency widen option offers the real count once the frequency filter alone is dropped`(): Unit =
+        runTest {
+            db.sessionDao().insert(session())
+            // The shared `transmission()` helper above fixes frequencyHz at 145.230MHz (2M band).
+            db.transmissionDao().insert(transmission("TX1", 1L, "ST1", AttributionState.CONFIRMED))
+
+            val input = SearchFilterInput(band = Band.VHF_2M, frequencyMhz = "146.960")
+            // band=2M genuinely matches TX1 (145.230MHz); frequencyHz is deliberately wrong
+            // (146.960MHz) so the combined query matches nothing — exactly `Search-Empty.dc.html`'s
+            // own scenario — while dropping *only* the frequency filter (band kept) matches TX1.
+            val params = SearchQueryParams(frequencyHz = 146_960_000L, band = Band.VHF_2M)
+
+            val widen = SearchWidenSuggestions.build(context, input, params, includeEverything, SearchFacetCounts.EMPTY)
+
+            val dropFrequency = widen.options.single { it.id == "drop_frequency" }
+            assertTrue(dropFrequency.detail.contains("1 over"))
+            // Dropping band instead (frequency kept, still wrong) still excludes TX1 — a 0-count
+            // drop option is never fabricated as a row.
+            assertTrue(widen.options.none { it.id == "drop_band" })
+        }
 
     @Test
     fun `the narrowing summary names which filters narrowed the search`(): Unit = runTest {

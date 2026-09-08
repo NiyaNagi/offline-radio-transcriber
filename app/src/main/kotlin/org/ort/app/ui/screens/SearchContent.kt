@@ -1,5 +1,6 @@
 package org.ort.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +52,12 @@ public fun SearchContent(
     var recent by remember { mutableStateOf(emptyList<RecentSearchEntry>()) }
     var widenSuggestions by remember { mutableStateOf<SearchWidenViewState?>(null) }
     var filtersSheetOpen by remember { mutableStateOf(false) }
+    // R-333 (Search half): the filters sheet is a plain overlay `Box`, not a `ModalBottomSheet` —
+    // WP3's host `BackHandler` (`OrtNavHost.kt`) handles the drawer and drill-ins, but knows
+    // nothing about this screen's own local `filtersSheetOpen` state, so system back with the
+    // sheet open fell through the host's handler entirely and exited Search. `enabled` only while
+    // the sheet is actually open, so this never intercepts back anywhere else on this screen.
+    BackHandler(enabled = filtersSheetOpen) { filtersSheetOpen = false }
     var filterFacetCounts by remember { mutableStateOf(SearchFacetCounts.EMPTY) }
     var heardFrequenciesHz by remember { mutableStateOf(emptyList<Long>()) }
 
