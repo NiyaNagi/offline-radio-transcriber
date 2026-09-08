@@ -85,7 +85,7 @@ start) → 179 / 240 at close-out, 419 ids. Every fix is Robolectric/JVM only.
 
 ## 2026-09-08 (UI conformance — phase C)
 
-### (pending) — ui-conformance C · findings register: 63 rows, every one assigned to a work package
+### (pending) — ui-conformance C · findings register: 73 rows, every one assigned to a work package
 
 **Scope:** `results/ui-audit/register.md` (new). `.gitignore` (the seeded canvas page is a
 build output of `design/canvas/`, not a source). No product code touched.
@@ -103,9 +103,9 @@ R-034). "none new" for code.
   the operator cannot see the options of (R-061). Principle VII is why every finding names an
   artboard and a token, never "looks wrong": a builder can close it without asking what right
   looks like.
-- **The register.** 63 rows across the eleven work packages of `spec/ui-conformance-plan.md`
+- **The register.** 73 rows across the eleven work packages of `spec/ui-conformance-plan.md`
   §D, each with the screen, the artboard compared against, what is wrong, a severity (`halt` 11,
-  `spec` 27, `design` 23, `polish` 1, `process` 2) and a status. Evidence is the nine emulator
+  `spec` 27, `design` 32, `polish` 1, `process` 2) and a status. Evidence is the nine emulator
   screenshots taken at `6aaa608` and the reader source at `bff688b`, which includes the F-002,
   F-004, F-017, F-018 and F-019 fixes other sessions merged while phase A was drawing — the
   audit is against the code as it is now, not as it was when this session began.

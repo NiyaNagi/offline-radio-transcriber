@@ -27,6 +27,10 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Design canvas: the seeded, publishable page is built from design/canvas/*.dc.html by the
+# design skill's helper and republished from it — the artboards are the source, not this file.
+/offline-radio-transcriber-design-system.html
+
 # Test / corpus artifacts that are large or fold-sensitive
 /corpus/data/
 /corpus/downloads/
