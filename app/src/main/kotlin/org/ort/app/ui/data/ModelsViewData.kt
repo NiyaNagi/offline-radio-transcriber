@@ -88,14 +88,25 @@ public data class ModelCatalogEntry(
 
 public object ModelCatalog {
 
-    private const val ASR_TOKENS_UNKNOWN_REASON =
-        "tiny.en-tokens.txt is not Git-LFS-tracked on HuggingFace: the repository's file-listing " +
-            "API reports only a 40-hex-character git blob id for it (a SHA-1 from git's own blob " +
-            "hashing, not a SHA-256), and no sha256 for this individual file is published anywhere " +
-            "else found (checked 2026-09-07: HuggingFace's raw/API endpoints for this path, and " +
-            "sherpa-onnx's own `checksum.txt` release manifest, which covers whole .tar.bz2 archives " +
-            "only, not files extracted from them). Side-load this file yourself; it cannot be " +
-            "checksum-verified against a known-good value."
+    /**
+     * R-267 (register, round 6/7 System validator): [ASR_TOKENS_UNKNOWN_REASON] is
+     * [ModelRowViewState.detail] for the `ASR_TOKENS` row when [ModelRowStatus.NOT_INSTALLED] —
+     * an operator-facing sub-line fragment (`Settings-Assets.dc.html`'s "size · checksum prefix ·
+     * tier" shape, guide §9), never a maintainer's research trail. It used to *be* that trail
+     * verbatim (SHA-1-vs-SHA-256 git-internals, which HuggingFace/sherpa-onnx endpoints were
+     * checked, the date checked) — real and cited, but the wrong audience: this developer note
+     * belongs in a code comment, not read aloud to an operator deciding whether to sideload a
+     * file. That full note now lives here instead:
+     *
+     * tiny.en-tokens.txt is not Git-LFS-tracked on HuggingFace: the repository's file-listing API
+     * reports only a 40-hex-character git blob id for it (a SHA-1 from git's own blob hashing, not
+     * a SHA-256), and no sha256 for this individual file is published anywhere else found (checked
+     * 2026-09-07: HuggingFace's raw/API endpoints for this path, and sherpa-onnx's own
+     * `checksum.txt` release manifest, which covers whole .tar.bz2 archives only, not files
+     * extracted from them). Side-load this file yourself; it cannot be checksum-verified against a
+     * known-good value.
+     */
+    private const val ASR_TOKENS_UNKNOWN_REASON = "not on the published manifest"
 
     /**
      * Individual, flat file URLs — confirmed to exist as of this change (HuggingFace mirrors the
@@ -194,6 +205,16 @@ public sealed interface ModelActionResult {
     public data class Failure(public val reason: String) : ModelActionResult
 }
 
+/** R-154 (round 5): [org.ort.app.ui.screens.ModelsScreen]'s last-action-message params, bundled to
+ * keep that composable's own parameter list under detekt's threshold once the lexicon row added a
+ * ninth. [lastMessage] and [downloadFailure] were already mutually exclusive in practice
+ * (`ModelsContent` clears one when it sets the other) — this makes that structural, not just a
+ * convention two separate optional params relied on. */
+public data class ModelsScreenStatus(
+    val lastMessage: String? = null,
+    val downloadFailure: ModelDownloadFailureViewState? = null,
+)
+
 /** R-140 (register, round 4 System validator): a failed *download* specifically — split out of the
  * generic `lastMessage` string so [org.ort.app.ui.screens.ModelsScreen] can render it as the amber
  * `FailedState` guide §9 gives every other operator-facing failure, with a real `Retry`, instead of
@@ -210,6 +231,43 @@ public data class ModelDownloadFailureViewState(public val id: ModelId, public v
  * over from [org.ort.lexicon.import.LexiconCheck]'s own non-blank invariant).
  */
 public data class LexiconCheckViewRow(val name: String, val status: CheckStatus, val detail: String)
+
+/**
+ * R-154 (round 5, System validator addendum): makes the `lexicon-corrupt` debug scenario's
+ * [LexiconImportViewState] reachable from the real `Settings-Assets` screen for a screenshot,
+ * following [org.ort.app.ui.failures.DebugFailureOverride]'s exact pattern — that object's own
+ * class kdoc explains why this shape (a plain object in `:app`'s **main** source set, read gated on
+ * [isDebugBuild], written only by debug-sourceset callers) rather than reading the scenario's own
+ * `internal object` directly: `app/src/debug/kotlin/org/ort/app/debug/LexiconCorruptScenario.kt`
+ * cannot be imported from `app/src/main` (the main source set does not depend on the debug one),
+ * so this main-sourceset holder is the bridge — the scenario (debug sourceset, which *does* depend
+ * on main) writes to it via [show] in addition to setting its own `lastResult`
+ * (`LexiconCorruptScenarioTest.kt` already asserts against that field directly, so it stays).
+ */
+public object DebugLexiconImportOverride {
+
+    @Volatile
+    public var current: LexiconImportViewState? = null
+        private set
+
+    /** Test seam (see class kdoc) — production code never assigns this. */
+    @Volatile
+    internal var isDebugBuild: () -> Boolean = { org.ort.app.BuildConfig.DEBUG }
+
+    /** The scenario simulator's own entry point (debug-sourceset-only caller — see class kdoc). */
+    public fun show(result: LexiconImportViewState) {
+        current = result
+    }
+
+    public fun clear() {
+        current = null
+    }
+
+    /** The Models screen's own read — gated on [isDebugBuild], `null` in any non-debug build no
+     * matter what [current] holds. */
+    public val activeOverride: LexiconImportViewState?
+        get() = if (isDebugBuild()) current else null
+}
 
 /**
  * R-154: the view-facing shape of a [LexiconImportResult] the Models screen's "Install a lexicon
@@ -243,6 +301,25 @@ public sealed interface LexiconImportViewState {
     ) : LexiconImportViewState
 }
 
+/** R-154 (register): the Assets screen's own lexicon row — [installed] false and [label]
+ * "not installed" for a fresh device, never a fabricated version. */
+public data class LexiconAssetRowViewState(val installed: Boolean, val label: String)
+
+/** R-154 (round 5): [org.ort.app.ui.screens.ModelsScreen]'s lexicon-specific params, bundled to
+ * keep that composable's own parameter list under detekt's threshold — the same reason
+ * `SettingsCaptureToggleActions`/`ui/navigation`'s `NavHostCallbacks` bundles exist. [row] is
+ * `null` while the real row has not loaded yet (`ModelsContent`'s own first composition, before
+ * its `LaunchedEffect` resolves); [importResult] is the live-or-debug-override
+ * [LexiconImportViewState] to render as `Fail-Lexicon.dc.html` (a [LexiconImportViewState.Rejected])
+ * or fold back into the assets row in place (a [LexiconImportViewState.Accepted]) — `null` means
+ * "no import in flight or shown", the ordinary assets-list state. */
+public data class LexiconAssetActions(
+    val row: LexiconAssetRowViewState?,
+    val importResult: LexiconImportViewState?,
+    val onInstall: () -> Unit,
+    val onDismissResult: () -> Unit,
+)
+
 /**
  * Reads and drives model install state for the Models screen. Every write goes through
  * [ModelAcquisition] — this object never writes a model file itself — so "installed" always means
@@ -265,6 +342,23 @@ public object ModelsController {
         store: ActiveLexiconStore = RoomActiveLexiconStore(context),
     ): LexiconImportViewState = withContext(Dispatchers.IO) {
         toViewState(LexiconImportInstaller.installValidated(source, CALLSIGN_LEXICON_ASSET_ID, store))
+    }
+
+    /**
+     * R-154 (round 5): the Assets screen's own lexicon row — real, from [ActiveLexiconStore.current]
+     * (no `ModelId` covers the lexicon, so it is not part of [currentState]'s rows), formatted with
+     * the same one-line label a rejected import's "Still active" row shows.
+     */
+    public suspend fun lexiconRow(
+        context: Context,
+        store: ActiveLexiconStore = RoomActiveLexiconStore(context),
+    ): LexiconAssetRowViewState = withContext(Dispatchers.IO) {
+        val active = store.current()
+        if (active != null) {
+            LexiconAssetRowViewState(installed = true, label = activeLexiconLabel(active))
+        } else {
+            LexiconAssetRowViewState(installed = false, label = "not installed")
+        }
     }
 
     /**

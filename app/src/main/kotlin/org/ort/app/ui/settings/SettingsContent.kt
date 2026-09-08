@@ -42,6 +42,19 @@ import org.ort.app.ui.theme.OrtSpacing
  * shape exists inside `ui/settings`, and `OrtNavHost.kt` is outside this round's file ownership).
  * Defaults to a no-op so every existing caller (`OrtNavHost.kt`) keeps compiling unchanged; the
  * host is expected to wire it the same way it wires every other cross-package drill-in.
+ *
+ * **Round 6 (WP3's own smoke test find):** the root now draws its own [org.ort.app.ui.components.ScreenHeader]
+ * again (drawer icon via [onDrawer], live dot, search via the new [onSearch]) — R-130 (round 4) had
+ * removed it on the premise that `OrtNavHost`'s host header always covers this destination, but
+ * that host header is keyed only on the current drawer *destination*, not on this composable's own
+ * internal root/sub-screen state: once WP3 started landing directly on a sub-screen via
+ * [initialScreen], the host's `ScreenHeader` and that sub-screen's own `DrillInHeader` rendered
+ * stacked (the double-header bug again, just one level down). Root screens across every other WP10
+ * sub-package ([org.ort.app.ui.improve.ImproveContent], [org.ort.app.ui.digest.SessionsContent])
+ * are unaffected — neither exposes an `initialScreen`-shaped external entry into a sub-screen, so
+ * the host's own header, drawn once for the whole destination, is still the only one for them.
+ * **`OrtNavHost.kt`'s own `ScreenHeader` for the `SETTINGS` destination must be removed to match** —
+ * outside this round's file ownership, reported for WP3 to make.
  */
 @Composable
 public fun SettingsContent(
@@ -50,6 +63,7 @@ public fun SettingsContent(
     modifier: Modifier = Modifier,
     initialScreen: SettingsScreenId? = null,
     onOpenLevelMeter: () -> Unit = {},
+    onSearch: () -> Unit = {},
 ) {
     val store = remember {
         SharedPreferencesSettingsStore(
@@ -69,7 +83,13 @@ public fun SettingsContent(
     if (current == null) {
         val state = root
         if (state != null) {
-            SettingsRootScreen(state = state, onDrawer = onDrawer, onOpen = { screen = it }, modifier = modifier)
+            SettingsRootScreen(
+                state = state,
+                onDrawer = onDrawer,
+                onSearch = onSearch,
+                onOpen = { screen = it },
+                modifier = modifier,
+            )
         } else {
             LoadingSettings(modifier = modifier)
         }

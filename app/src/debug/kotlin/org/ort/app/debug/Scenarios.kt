@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import org.ort.app.ui.data.DebugLexiconImportOverride
 import org.ort.app.ui.failures.AssetSwapOption
 import org.ort.app.ui.failures.AssetSwapViewState
 import org.ort.app.ui.failures.CalibrationViewState
@@ -48,6 +49,7 @@ import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
+import org.ort.pipeline.reprocess.ReprocessStatus
 import java.io.File
 
 /**
@@ -349,6 +351,11 @@ public object Scenarios {
         InputStatus.reset()
         DebugFailureOverride.clear()
         FailureSignalsPolling.reset()
+        // R-154 (round 5): a rejection from a previous `lexicon-corrupt` load must not leak into
+        // the next scenario's Assets screenshot — the same cross-contamination concern this
+        // function already exists to prevent for every other process-wide facet.
+        DebugLexiconImportOverride.clear()
+        ReprocessStatus.reset()
     }
 
     // ---------------------------------------------------------------------------------------

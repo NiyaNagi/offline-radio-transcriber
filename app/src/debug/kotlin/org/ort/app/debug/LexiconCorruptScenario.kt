@@ -1,6 +1,7 @@
 package org.ort.app.debug
 
 import android.content.Context
+import org.ort.app.ui.data.DebugLexiconImportOverride
 import org.ort.app.ui.data.LexiconImportViewState
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.RoomActiveLexiconStore
@@ -28,10 +29,11 @@ import java.io.File
  * `Fail-Lexicon.dc.html` itself depicts, produced by [org.ort.lexicon.import.LexiconImportValidator]
  * genuinely computing a mismatch, not by this scenario asserting one.
  *
- * **Known gap** (`results/ui-audit/README.md`): no screen renders a [LexiconImportViewState] yet —
- * `Fail-Lexicon.dc.html` has no WP10 build (register R-154 was still open when this scenario was
- * written). [lastResult] is where a future screen, or a test, reads what this scenario produced;
- * until a screen exists this scenario proves the *data* path end to end, not the render.
+ * **Round 5**: `Settings-Assets` now renders a [LexiconImportViewState] (register R-154 closed) —
+ * [run] sets [org.ort.app.ui.data.DebugLexiconImportOverride] (that object's own kdoc explains why
+ * a main-sourceset holder, not a direct read of this `internal object`, is the bridge) in addition
+ * to [lastResult], which stays exactly as it was for `LexiconCorruptScenarioTest.kt`'s own
+ * assertions against the *data* path.
  */
 internal object LexiconCorruptScenario {
 
@@ -68,7 +70,9 @@ internal object LexiconCorruptScenario {
         )
 
         val corruptFile = stageAssetAsFile(context)
-        lastResult = ModelsController.installLexicon(context, corruptFile, RoomActiveLexiconStore(context))
+        val result = ModelsController.installLexicon(context, corruptFile, RoomActiveLexiconStore(context))
+        lastResult = result
+        DebugLexiconImportOverride.show(result)
 
         return Scenarios.LoadResult(transmissionCount = 0, sessionCount = 1, primarySessionId = sessionId)
     }
