@@ -32,6 +32,40 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-005)
+
+### (pending) — audit F-005 · heartbeat now carries the segmenter's real sample position, not a fabricated 0
+
+**Scope:** `:pipeline` — `RealCaptureService.kt` (`onHeartbeat`, the new `buildHeartbeatRecord`
+helper, the new `segmenter` field), `RealCaptureServiceHeartbeatTest.kt`.
+**Requirements/ACs:** FR-RUN-16 (audio sample position is the authoritative timeline); constitution
+VI ("no number without provenance").
+**What changed:** `RealCaptureService.onHeartbeat()` used to write
+`HeartbeatRecord(sessionId, monotonic, wall, 0L)` — the sample-position field was a literal `0L`
+on every single heartbeat, never the real value the parallel `capture-android` `CaptureService`
+threads through. The service now keeps a reference to the session's `Segmenter` (built once, in
+`startCapture()`) and reads `Segmenter.position()` — "absolute sample position of the next sample
+to be fed", already public and unchanged in `:segment` — at the moment each heartbeat is written.
+The heartbeat-record construction itself is pulled out into a small top-level function,
+`buildHeartbeatRecord(sessionId, samplePosition: () -> Long)`, specifically so this could be
+tested without standing up the whole `android.app.Service` under Robolectric (no
+`ServiceController` harness exists for `RealCaptureService` yet — see the still-open F-011). `0L`
+remains the value reported in the one honest case: before the segmenter has been constructed for
+this session (i.e. before any sample has been read at all) — the field defaults to `null` and the
+call site falls back to `0L` only then, never once capture is under way.
+**Verified:** `./gradlew :pipeline:test` (green) after seeing
+`RealCaptureServiceHeartbeatTest.FR_RUN_16_the_heartbeat_carries_the_last_captured_sample_position_not_zero`
+fail first with `error: Unresolved reference 'buildHeartbeatRecord'` (the function did not exist
+yet); it and its sibling test now pass, driving a real `Segmenter` through five frames of audio and
+asserting the built record's `samplePosition` equals the segmenter's own `position()` — not zero.
+Then the full gate: `./gradlew build dependencyRules` (green, after fixing one ktlint
+spacing-between-declarations-with-comments violation the new field comment introduced) and
+`python tools/spec-check/spec_check.py` (`spec-check: OK`, all 8 checks pass).
+**Left open / not done:** `RealCaptureService` as a whole is still never started under Robolectric
+(F-011, unrelated, still OPEN) — this fix is verified at the seam it touches (the segmenter →
+heartbeat wiring), not end-to-end through `onStartCommand`/`onHeartbeat` as methods on a running
+service instance. All verification here is Robolectric/JVM; nothing was run on-device.
+
 ## 2026-09-07 (audit — F-023)
 
 ### (pending) — audit F-023 · coverage matrix treats bare F/D/R/Q ids as cross-references, not orphans

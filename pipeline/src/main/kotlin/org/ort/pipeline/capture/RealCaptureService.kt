@@ -86,6 +86,11 @@ public class RealCaptureService : Service() {
     private var startedAtUtcOffsetMinutes = 0
     private lateinit var heartbeatStore: FileHeartbeatStore
 
+    // audit F-005: the only way onHeartbeat() can report the real sample position instead of a
+    // fabricated 0L -- the segmenter is the one thing in this class that knows how much audio has
+    // actually been fed to it (Segmenter.position(), unchanged in :segment).
+    private var segmenter: Segmenter? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -166,13 +171,14 @@ public class RealCaptureService : Service() {
                 ),
             )
 
-            val segmenter = buildSegmenter(db, queue)
+            val builtSegmenter = buildSegmenter(db, queue)
+            segmenter = builtSegmenter
 
             var lastHeartbeatAt = 0L
             audioSource.start().collect { event ->
                 when (event) {
                     is CaptureEvent.Frames -> {
-                        segmenter.onAudio(shortsToFloats(event.pcm))
+                        builtSegmenter.onAudio(shortsToFloats(event.pcm))
                         val now = SystemClock.wallMillis()
                         if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
                             lastHeartbeatAt = now
@@ -261,9 +267,12 @@ public class RealCaptureService : Service() {
     }
 
     private fun onHeartbeat() {
-        heartbeatStore.write(
-            HeartbeatRecord(sessionId, SystemClock.monotonicNanos(), SystemClock.wallMillis(), 0L),
-        )
+        // audit F-005: samplePosition used to be a fabricated 0L literal. The segmenter is the
+        // one thing here that knows how much audio has actually been fed to it (Segmenter.position(),
+        // "absolute sample position of the next sample to be fed" -- no :segment change needed). 0L
+        // is honest, not fabricated, in the one case there is genuinely no sample yet: before the
+        // segmenter has been built for this session (the field is only assigned once capture starts).
+        heartbeatStore.write(buildHeartbeatRecord(sessionId) { segmenter?.position() ?: 0L })
         updateNotification("Capturing")
     }
 
@@ -276,6 +285,7 @@ public class RealCaptureService : Service() {
     private fun stopCaptureInternal(markClean: Boolean) {
         source?.stop()
         source = null
+        segmenter = null
         CaptureState.idle()
         if (markClean && sessionId.isNotEmpty()) heartbeatStore.markCleanShutdown(sessionId)
     }
@@ -333,6 +343,16 @@ public class RealCaptureService : Service() {
         private const val SHORT_MAX: Float = 32_768f
     }
 }
+
+/**
+ * audit F-005: the exact seam that used to write a fabricated `samplePosition = 0L` into every
+ * heartbeat. Extracted to a small, non-Android function so it is testable without starting the
+ * whole [RealCaptureService] under Robolectric (no `ServiceController` harness exists for it yet
+ * -- see finding F-011). [samplePosition] is read lazily, at write time, from whatever currently
+ * knows the real value (the session's [Segmenter][org.ort.segment.Segmenter]).
+ */
+internal fun buildHeartbeatRecord(sessionId: String, samplePosition: () -> Long): HeartbeatRecord =
+    HeartbeatRecord(sessionId, SystemClock.monotonicNanos(), SystemClock.wallMillis(), samplePosition())
 
 /**
  * A simple RMS-energy voice-activity model — explicitly not Silero (see [RealCaptureService]'s
