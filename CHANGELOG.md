@@ -32,6 +32,32 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (evening, cont. — the Compose reader becomes the app's actual UI)
+
+### (pending) — Switch the app's entry point to P13's Compose navigation host
+
+**Scope:** `app/src/main/kotlin/org/ort/app/MainActivity.kt` (two lines: the import and the
+launch target).
+**Requirements/ACs:** D15 (Compose), FR-UI-7 (the status surface stays reachable, now inside the
+drawer). No new ACs.
+**What changed:** P13 built the Compose theme, drawer and navigation host and deliberately left
+`ReaderActivity` registered-but-not-launched, because P12 owned `MainActivity` at the time and the
+two prompts ran concurrently. Both have now landed and merged, so this is that switchover: after
+permissions are granted and capture starts, `MainActivity` hands off to `ReaderActivity` (the
+Compose nav host) instead of the plain-view `StatusActivity`. The user who reported "I see no UI"
+was looking at the plain `TextView` status readout; this is the commit where the app actually has
+the designed interface behind it.
+`StatusActivity`/`TransmissionListActivity` are deliberately left registered and working —
+P13 ported them to Compose screens *behind* the nav host rather than deleting them, and removing
+the originals belongs to P14, which replaces those screens rather than merely re-hosting them.
+Deleting them now would be churn ahead of a rewrite.
+**Verified:** `./gradlew build dependencyRules` full green (840 tasks). **Not verified on a
+device** — the standing caveat for every UI change this session; this one especially wants a real
+install, since its entire purpose is what the user sees on launch.
+**Left open / not done:** the drawer's other seven destinations are still placeholders (P14–P17),
+and no ASR model is fetched yet, so transcripts will not appear until P18's `:net` acquisition is
+wired to an `:app` call site.
+
 ## 2026-09-08 (evening — P18: `:net` built, so a model can actually reach the device)
 
 ### (pending) — P18 · Model acquisition through `:net`: fetch, resume, checksum-verify, side-load

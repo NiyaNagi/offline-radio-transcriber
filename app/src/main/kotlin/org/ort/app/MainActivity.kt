@@ -14,7 +14,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.ort.app.permissions.PermissionsFlow
 import org.ort.app.permissions.PermissionsState
-import org.ort.app.status.StatusActivity
+import org.ort.app.ui.ReaderActivity
 import org.ort.core.Ulid
 import org.ort.pipeline.capture.RealCaptureService
 
@@ -115,7 +115,12 @@ class MainActivity : Activity() {
             RealCaptureService::class.java,
         ).putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-        startActivity(Intent(this, StatusActivity::class.java).putExtra(StatusActivity.EXTRA_SESSION_ID, sessionId))
+        // P13's Compose navigation host is now the reader (build-plan P13's "done when" switchover,
+        // deliberately deferred out of P13 itself because P12 owned this file at the time).
+        // StatusActivity/TransmissionListActivity remain registered and working — their Compose
+        // ports live behind this nav host, and removing the originals belongs to P14, which
+        // replaces the screens rather than merely re-hosting them.
+        startActivity(Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_SESSION_ID, sessionId))
         finish()
     }
 
