@@ -32,6 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11c/d follow-up: R-182's pipeline half — Pass B transcript spans)
+
+### (pending) — ui-conformance WP11c/d · PassB.resolveFromText builds a text-anchored lattice, so real transcript spans reach the sink
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/passb/PassB.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/passb/PassBTest.kt`. Read-only reliance on the lexicon
+owner's `TextDerivedLatticeBuilder.buildAnchored`/`SlotDetail`/`CallsignCandidate.slotDetails`
+(commit 250dfbb, merged to main at 5aa7d5f) — nothing in `:lexicon` touched. No `:data` change —
+the `:data` agent's schema-v5 persistence of `slotDetails` is a separate, parallel round this
+commit does not depend on or block. `results/coverage-matrix.md` regenerated (191 of 419 covered,
+up from 189, partly from this round's own new coverage and partly from everything else that landed
+on `main` during the wait for 250dfbb — see Verified).
+
+**Requirements/ACs:** R-182 (pipeline half), FR-UI-4; incidentally exercises R-320/FR-UI-8's
+`slotDetails` propagation, established by the lexicon owner's own tests, not re-proven here beyond
+confirming it survives `PassB`'s own pipeline unchanged.
+
+**Constitution check.** Principle I (uncertainty is content, never fabricate): the whole point of
+this round is a real, computed `[charStart, charEnd)` per slot instead of the `null` every real
+Pass B run produced before — and, symmetrically, that an audio-derived (Pass C) lattice's spans
+stay honestly `null`, which holds structurally here since `resolveFromText` is Pass B's own
+text-only path and never touches an acoustic lattice at all (there is no Pass C call site in this
+file to accidentally wire the same way). Principle II (test-backed change):
+`R_182_pass_b_spans` was verified to fail for the right reason before the fix (temporary revert to
+the old `PhoneticLattice.ofUnits` construction, confirmed the non-null-span assertions fail),
+then to pass after.
+
+**What changed:**
+- **`PassB.resolveFromText`**: replaced its manual `text.trim().split(...).mapNotNull { variants.resolve(it) }`
+  → `PhoneticLattice.ofUnits(units, LatticeSource.TEXT_DERIVED)` construction with
+  `TextDerivedLatticeBuilder(resolution.variants).buildAnchored(text)`. `buildAnchored` keeps the
+  exact same "an unrecognised token is silently excluded, never aborts the whole transcript"
+  behaviour the manual code existed to provide (see `PassB`'s own class kdoc, updated to point at
+  `buildAnchored` instead of describing the now-removed manual split) — it additionally records
+  each kept unit's real character offset into the transcript on its `LatticeSlot`. The empty-lattice
+  check moved from `units.isEmpty()` to the equivalent `lattice.isEmpty` (`PhoneticLattice`'s own
+  property).
+- **No further change needed for `slotDetails` to reach the sink.** `CallsignGrammar.parse` is
+  "the only real producer" of `CallsignCandidate.slotDetails` (that class's own kdoc) and already
+  fills it from any lattice's slots, spanned or not; `PriorCombiner.rank`'s `RankedCandidate` wraps
+  the same `CallsignCandidate` instance unchanged (verified by reading `PriorCombiner.kt` — no
+  copy, no field dropped). `PassBResult.ranked` is exactly that list, handed to `sink.record(...)`
+  unchanged. The only wiring this round needed was the lattice-construction switch above.
+- **`LatticeSource`/`PhoneticLattice.ofUnits` imports removed** from `PassB.kt` — no longer
+  referenced now that `buildAnchored` (which tags its own output `TEXT_DERIVED` internally) is the
+  only lattice-construction call site in this file.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.passb.PassBTest"` — 4 tests,
+  all green, including `R_182_pass_b_spans a spelled callsign yields non-null char spans that index
+  into the transcript text` (asserts every `slotDetails` entry's `charStart`/`charEnd` are non-null,
+  in-range and ordered, and that the first slot's exact substring of the transcript reads `"kilo"`
+  — a real index check, not merely non-null).
+- TDD genuineness, by temporary revert: reverting `resolveFromText` to its old `ofUnits`
+  construction reproduced the exact failure the fix closes (`R_182_pass_b_spans` failed asserting
+  `charStart`/`charEnd` non-null) — confirmed, then restored and reconfirmed green.
+- `.\gradlew.bat :pipeline:testDebugUnitTest` (whole module) — green, no regression.
+- `.\gradlew.bat :pipeline:ktlintCheck :pipeline:detekt` — clean, no formatting pass needed.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — 419 requirements, 191
+  covered (up from 189 before this round; some of that increase is this round's own new coverage,
+  some is other work packages' commits that landed on `main` during the roughly 90-minute wait for
+  250dfbb to merge — the coordinator's own message named "within the hour," and `git merge --ff-only
+  main`/re-checking `SlotDetail.kt`'s presence was repeated, per instruction, until it actually
+  landed, never rebasing or stashing in the meantime).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- `:data`'s schema-v5 persistence of `slotDetails` is explicitly out of this round's scope (the
+  coordinator's own instruction: "do not touch `:data`") — `PassBResult.ranked`'s candidates now
+  carry real spans in memory, reaching `DataPassBResultSink` unchanged, but whether/how that sink
+  persists `slotDetails` to a database column is that other agent's round, not this one.
+- No UI change — `Detail-Why.dc.html`/the transcript-highlight rendering that would actually use
+  `charStart`/`charEnd` is unrelated to this package.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: R-340 device diagnosis — not fixed, root cause redirected)
 
 ### (pending) — ui-conformance WP2 · R-340 diagnosis

@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.asrapi.DecodeOptions
 import org.ort.asrapi.PassBOutcome
@@ -22,6 +23,7 @@ import org.ort.data.entity.WorkQueueState
 import org.ort.lexicon.CallsignGrammar
 import org.ort.lexicon.ConfusionCostMatrix
 import org.ort.lexicon.ItuPrefixTable
+import org.ort.lexicon.LatticeSource
 import org.ort.lexicon.PriorCombiner
 import org.ort.lexicon.VariantTable
 
@@ -98,6 +100,35 @@ class PassBTest {
         assertEquals("K7ABC", sink.last!!.attribution.stationId)
         assertEquals(PassId.B_OFFLINE, sink.last!!.fingerprint.passId)
     }
+
+    /**
+     * R-182/FR-UI-4: before this, [PassB.resolveFromText] built its lattice with
+     * `PhoneticLattice.ofUnits`, which never records a transcript character span — every real
+     * Pass B run reached the sink with `slotDetails[*].charStart/charEnd` `null`. Switching to
+     * `TextDerivedLatticeBuilder.buildAnchored` populates them; this proves it end to end, through
+     * the real [sink.last]'s ranked candidates, not just at the lattice-builder unit level
+     * `:lexicon`'s own `TextDerivedLatticeBuilderAnchoredTest` already covers.
+     */
+    @Test
+    fun `R_182_pass_b_spans a spelled callsign yields non-null char spans that index into the transcript text`() =
+        runTest {
+            val text = "kilo seven alpha bravo charlie"
+            val (passB, sink) = passB(engineText = text)
+            passB.run(item())
+
+            assertEquals(LatticeSource.TEXT_DERIVED, sink.last!!.lattice!!.source)
+            val winner = sink.last!!.ranked.first().candidate
+            assertTrue(winner.slotDetails.isNotEmpty())
+            winner.slotDetails.forEach { detail ->
+                assertNotNull(detail.charStart)
+                assertNotNull(detail.charEnd)
+                assertTrue(detail.charStart!! in text.indices)
+                assertTrue(detail.charEnd!! in 0..text.length)
+                assertTrue(detail.charStart!! <= detail.charEnd!!)
+            }
+            val firstDetail = winner.slotDetails.first()
+            assertEquals("kilo", text.substring(firstDetail.charStart!!, firstDetail.charEnd!!).lowercase())
+        }
 
     @Test
     fun `ordinary speech with no callsign resolves to UNKNOWN, never invented`() = runTest {
