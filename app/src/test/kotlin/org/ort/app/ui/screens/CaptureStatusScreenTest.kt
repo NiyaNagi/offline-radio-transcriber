@@ -1,18 +1,9 @@
 package org.ort.app.ui.screens
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -121,37 +112,6 @@ class CaptureStatusScreenTest {
 
         composeTestRule.onNodeWithTag("capture-status-level").performClick()
         assert(opened)
-    }
-
-    @Test
-    @Requirement("R-300")
-    fun `R_300 Stop stays reachable by scrolling when a tall banner leaves little viewport at fontscale-2_0`() {
-        // R-300 (`storage-warn/N04-capture-status-banner@2x-pass3.png`): at font scale 2.0, a real
-        // `Fail-Storage` banner plus its own "How this unfolded" card can consume nearly the whole
-        // viewport, leaving only a sliver for this screen's own content. This does not simulate the
-        // host's real `contentTopPadding` (WP11b's own row is bounding/capping the banner block
-        // itself, on the host side, not this screen's) — it proves the narrower, in-package
-        // contract this file is actually responsible for: `capture-status-title`,
-        // `-sinceElapsedLabel` and `capture-status-stop` already sit *inside*
-        // `CaptureStatusScreen`'s own scrolling column (confirmed by reading the composable before
-        // writing this test, not assumed), so squeezing the space available to the whole screen
-        // down to a sliver still leaves Stop reachable by scrolling — never permanently squeezed to
-        // a `[0,0]` target the way a *fixed*, non-scrolling header block would be.
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
-                OrtTheme {
-                    Box(modifier = Modifier.width(350.dp).height(150.dp)) {
-                        CaptureStatusScreen(state = baseState)
-                    }
-                }
-            }
-        }
-
-        composeTestRule.onNodeWithTag("capture-status-stop").performScrollTo()
-        val bounds = composeTestRule.onNodeWithTag("capture-status-stop").fetchSemanticsNode().boundsInRoot
-        assert(bounds.width > 0f && bounds.height > 0f) {
-            "expected Stop's tap target to have a real, non-zero bound after scrolling; got $bounds"
-        }
     }
 
     @Test

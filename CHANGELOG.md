@@ -2519,6 +2519,79 @@ legend wording).
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round nine addendum: two real voiceprint clusters for WA7HJR (R-272))
+
+### (pending) — ui-conformance WP4 · two real voiceprint clusters for WA7HJR (R-272); R-300 dropped
+
+**R-300 dropped from this round, on the coordinator's own instruction.** The previous WP4 entry
+below (round nine, second addendum) added a `CaptureStatusScreenTest.kt` case
+(`R_300 Stop stays reachable by scrolling…`) proving `CaptureStatusScreen` itself needed no change
+— WP11b's host-side fix (2111abc, merged at 898c207) caps the banner block and its own test already
+covers the real composed screen at font scale 2.0 with Stop reachable, making this package's own
+narrower test redundant. That test is removed in this commit (`CaptureStatusScreenTest.kt` only);
+`CaptureStatusViewState.kt`'s R-301 fix from the same entry is unchanged and still in effect. Not
+amended into the earlier commit — a new commit, per this repository's own convention of never
+rewriting history that may already be built on.
+
+**Scope:** `app/src/debug/**`, plus the one-file R-300 test removal above — final addendum to this
+round's other three WP4 entries below
+(R-290/R-184, then R-300/R-301), after two more merges (branch had diverged from `main` again both
+times; `git merge main`, never `--ff-only`, never rebase, never stash — both resolved with only a
+`results/coverage-matrix.md` conflict, a generated file, taken from `main`'s side and regenerated as
+part of this round's own gate). Closes the fixture half of register R-272 (halt) — WP8's own
+`voiceSplitCandidates`/empty-state/leak fixes landed rounds ago (d39c056); this is the "no scenario
+seeds a real `VoiceprintEntity`" half V5 pass 3 asked WP4 for.
+
+**Requirements/ACs:** R-272 (halt — register); FR-SPK (voiceprints); constitution I (never a
+fabricated `memberCount` or an over bound to a cluster it was not actually assigned to).
+
+**What changed:**
+
+- **Constitution Check.** Principle I governs this fixture directly: both `VoiceprintEntity.memberCount`
+  values are read back from real counters (`splitVoiceprintACount`/`splitVoiceprintBCount`) tallied
+  as `WA7HJR`'s own overs are actually assigned a `voiceprintId` in the same loop, never a number
+  chosen to look plausible — a new test (`R_272 each voiceprint's memberCount matches the real overs
+  bound to it`) proves the two never drift apart. A `check()` at scenario-build time fails loudly if
+  `WA7HJR`'s real round-robin distribution ever produced zero overs in either cluster (has not
+  happened in any run so far — comfortably ≥6 overs split roughly 2:1), rather than silently seeding
+  an empty cluster the split screen could not honestly show as "two clusters."
+- **`ScenarioFixtures.transmission` gained a `voiceprintId: String? = null` parameter** — the entity
+  field already existed (`TransmissionEntity.voiceprintId`); nothing before this round's fixtures
+  ever set it to anything but the old hardcoded `null`.
+- **`StationsFixtures.stations14Nights`**: every third `WA7HJR` over (by real appearance order, not a
+  guessed index into the round-robin station spread) is assigned `voiceprint-wa7hjr-b`; the rest get
+  `voiceprint-wa7hjr-a` — a real ~2:1 split, `voiceSplitCandidates`'s own `maxByOrNull { memberCount }`
+  picking the "a" cluster as the one Split shows overs from, "b" as the real second cluster
+  `Station-Identity.dc.html`'s own multi-cluster summary needs. Both `VoiceprintEntity` rows are
+  bound to `WA7HJR`, distinct ids, real (non-fabricated) `memberCount`s.
+- **New test file `VoiceSplitFixtureTest.kt`** (three cases), the same split-file pattern this
+  round's other two fixture fixes already established (`FieldTier1AudioTest.kt`,
+  `AmbiguousCandidatesFixtureTest.kt`) — added directly as its own file rather than growing
+  `ScenariosTest.kt` first, since that class has already needed splitting twice this round.
+- **`results/ui-audit/README.md`**'s `stations-14-nights` row now names the two-voiceprint fixture
+  (register R-272).
+
+**Verified:**
+- `git merge main` ×2 (branch diverged from `main` both times after this round's own intermediate
+  commits) — both resolved with only `results/coverage-matrix.md` conflicting (taken from `main`,
+  regenerated below); no rebase, no stash.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 185 covered** (unchanged — register ids, not spec FR/AC ids);
+  `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **1112 of 1112 passing**, zero
+  failures (up from this round's earlier 1097 — mostly `main`'s other WPs' work from the two merges).
+  New tests, by name: `R_272 stations-14-nights gives WA7HJR two real voiceprint clusters with
+  distinct ids`, `R_272 each voiceprint's memberCount matches the real overs bound to it, not a
+  fabricated count`, `R_272 voiceSplitCandidates reaches the larger cluster's own overs, not an empty
+  state` (all `VoiceSplitFixtureTest`).
+
+**Left open / not done:** none for this addendum — R-272's fixture half is closed; the derivation/
+empty-state/leak half was already WP8's own closed work before this round started.
+
 ## 2026-09-08 (ui-conformance WP4, round nine: retained-audio fixture for field-tier1 (R-290) and multi-candidate Tier A fixtures (R-184))
 
 ### (pending) — ui-conformance WP4 · retained-audio and multi-candidate fixtures for R-290 and R-184

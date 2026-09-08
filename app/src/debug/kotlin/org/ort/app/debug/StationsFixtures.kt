@@ -5,6 +5,7 @@ import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.StationEntity
+import org.ort.data.entity.VoiceprintEntity
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -29,6 +30,13 @@ internal object StationsFixtures {
      * the R-184 fixture's `samplePosition` never collides with one of them. */
     private const val AMBIGUOUS_SAMPLE_POSITION = 100L
 
+    /** R-272: the one station this scenario gives two voiceprint clusters, so `Station-Identity`'s
+     * Split branch (`StationPolling.voiceSplitCandidates`) has something real to split — see the
+     * loop below for how its overs are actually divided between them. */
+    private const val SPLIT_STATION = "WA7HJR"
+    private const val SPLIT_VOICEPRINT_A = "voiceprint-wa7hjr-a"
+    private const val SPLIT_VOICEPRINT_B = "voiceprint-wa7hjr-b"
+
     suspend fun stations14Nights(db: OrtDatabase): Scenarios.LoadResult {
         val zone = ZoneId.systemDefault()
         val today = LocalDate.now(zone)
@@ -41,6 +49,12 @@ internal object StationsFixtures {
         var transmissionCount = 0
         var primarySessionId: String? = null
         var primarySessionStart: Long? = null
+        // R-272: every third `SPLIT_STATION` over goes to the smaller of two voiceprint clusters,
+        // the rest to the larger — real counts, tallied as they are actually assigned below, not
+        // guessed from the round-robin station spread in advance.
+        var splitStationOverIndex = 0
+        var splitVoiceprintACount = 0
+        var splitVoiceprintBCount = 0
 
         // 1..15 minus the one skipped day yields exactly the fourteen sessions this scenario
         // promises by name, spanning a fifteen-day window - "two weeks and the missed night".
@@ -85,11 +99,25 @@ internal object StationsFixtures {
                 val t = startMillis + spacing * (i + 1)
                 val id = "$sessionId-tx${i + 1}"
                 sample += 1
+                val voiceprintId = if (station == SPLIT_STATION) {
+                    val isMinorityCluster = splitStationOverIndex % 3 == 2
+                    splitStationOverIndex++
+                    if (isMinorityCluster) {
+                        splitVoiceprintBCount++
+                        SPLIT_VOICEPRINT_B
+                    } else {
+                        splitVoiceprintACount++
+                        SPLIT_VOICEPRINT_A
+                    }
+                } else {
+                    null
+                }
                 db.transmissionDao().insert(
                     ScenarioFixtures.transmission(
                         id = id, sessionId = sessionId, startedAtUtc = t, samplePosition = sample,
                         frequencyHz = if (i % 2 == 0) FREQ_A else FREQ_B, signalStrength = (2 + (i % 8)).toDouble(),
                         attributionState = AttributionState.CONFIRMED, stationId = station, attributionConfidence = 0.9,
+                        voiceprintId = voiceprintId,
                     ),
                 )
                 db.transcriptDao().insert(
@@ -178,6 +206,54 @@ internal object StationsFixtures {
             ),
         )
         transmissionCount++
+
+        // R-272: two real voiceprint clusters bound to SPLIT_STATION, each carrying the exact
+        // count of overs actually assigned to it above — never a fabricated member count. WP8's
+        // `voiceSplitCandidates` picks the larger cluster (`maxByOrNull { it.memberCount }`) as the
+        // one Split shows overs from; both are seeded here regardless, so `Station-Identity`'s own
+        // multi-cluster summary (`Fail-Cluster.dc.html`) has two real rows to render.
+        check(splitVoiceprintACount > 0 && splitVoiceprintBCount > 0) {
+            "expected $SPLIT_STATION to have overs in both voiceprint clusters; got " +
+                "A=$splitVoiceprintACount, B=$splitVoiceprintBCount"
+        }
+        db.catalogDao().insert(
+            VoiceprintEntity(
+                id = SPLIT_VOICEPRINT_A,
+                embedding = ByteArray(0),
+                memberCount = splitVoiceprintACount,
+                centroidUpdatedAt = lastHeard[SPLIT_STATION],
+                boundStationId = SPLIT_STATION,
+                bindingConfidence = 0.91,
+                lastConfirmedAt = lastHeard[SPLIT_STATION],
+                isEnrolled = false,
+                enrolmentObservationCount = 0,
+                enrolmentSessionIds = null,
+                enrolledAt = null,
+                lastMatchedAt = lastHeard[SPLIT_STATION],
+                bindingSource = null,
+                embeddingModelId = null,
+                embeddingModelVersion = null,
+            ),
+        )
+        db.catalogDao().insert(
+            VoiceprintEntity(
+                id = SPLIT_VOICEPRINT_B,
+                embedding = ByteArray(0),
+                memberCount = splitVoiceprintBCount,
+                centroidUpdatedAt = lastHeard[SPLIT_STATION],
+                boundStationId = SPLIT_STATION,
+                bindingConfidence = 0.78,
+                lastConfirmedAt = lastHeard[SPLIT_STATION],
+                isEnrolled = false,
+                enrolmentObservationCount = 0,
+                enrolmentSessionIds = null,
+                enrolledAt = null,
+                lastMatchedAt = lastHeard[SPLIT_STATION],
+                bindingSource = null,
+                embeddingModelId = null,
+                embeddingModelVersion = null,
+            ),
+        )
 
         stations.forEach { station ->
             val first = firstHeard[station] ?: return@forEach
