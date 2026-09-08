@@ -32,6 +32,176 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9: guided setup sequence)
+
+### (pending) — ui-conformance WP9 · guided setup sequence: welcome, permissions, input and route verification, level, overnight, radio, ready
+
+**Scope:** new `app/src/main/kotlin/org/ort/app/ui/setup/**` (production and its co-located
+`app/src/test/kotlin/org/ort/app/ui/setup/**` tests) — `SetupActivity`, `SetupStateMachine`,
+`SetupStore`, `RouteCheck`/`LevelCheck`, `InputRouteEnumerator`, one screen composable per board
+(S01–S12), `SetupScaffold` and small shared pieces (`DotPointCard`, `SetupHaltBanner`,
+`NumberedStep`, `NavigationRow`). `app/src/main/kotlin/org/ort/app/MainActivity.kt` and its test
+(WP1 had merged; this rewrites both — MainActivity is now a pure router, its interim permission
+screens and `SetupScreen`/`setupScreenFor` moved into `ui/setup`).
+`app/src/main/AndroidManifest.xml` — registered `SetupActivity` only.
+
+**Requirements/ACs:** R-080 (no setup sequence → thirteen boards, P8), R-081 (setup › input, no
+verified-route step → `Setup-Input`/`Setup-Verify`/`Setup-Route-Mismatch`, FR-CAP-2a/FR-CAP-3,
+AC-2/AC-97/AC-98), R-082 (setup › level, no level step → `Setup-Level`, FR-CAP-3), R-083 (setup ›
+overnight, no rationale/no "the API lies" statement → `Setup-Battery`, fixed by removing the
+automatic intent and gating it behind S08's own explicit action), R-084 (setup › radio, no rig
+setup → `Setup-Rig`/`Setup-Rig-Usb`/`Setup-Rig-Verified`), R-085 (mic-denied — already `fixed` by
+WP1's interim screen; folded in unchanged, still green).
+
+**What changed:**
+
+- **Constitution Check.** Principle IV (capture never blocks, never drops, never lies):
+  `RouteCheck`/`LevelCheck` run the exact same `RouteVerifier`/`AudioIo.routedDevice()` capture
+  itself checks (technical design §5.2) before setup ever lets capture start, and a route mismatch
+  halts with no "continue anyway" (S06). Principle I (uncertainty is content): S07's level meter
+  renders an honest `Unavailable`/failed state rather than fabricated bars when no real signal can
+  be read; S10/S11 render `RigStatus.State.Absent` as an honest "no rig support in this build yet"
+  rather than a fabricated USB-attach checklist, since `:rig`/`:rig-usb` are unbuilt. Principle VII
+  (structural boundaries): `SetupStep.VERIFY`/`ROUTE_MISMATCH` are never resumed into directly —
+  `SetupStateMachine.stepFor` only returns them as live results of S04's "Verify this input", never
+  from cold-start state, so a stale in-flight check can't silently reappear.
+- **`SetupStateMachine`** (`SetupStateMachine.kt`) — the pure decision behind "each step verifiable
+  before proceeding, resumed at the first unverified step" (`Flow-Setup.dc.html`): `stepFor` walks
+  welcome → mic → mic-denied → notifications → input → level → overnight → radio → ready in order,
+  gating each on real state (`SetupSnapshot`, real `PermissionsState`); `isComplete` is
+  `MainActivity`'s fast-path check (`setupComplete && captureIsPermitted`), re-checked on every
+  launch so a permission revoked after setup finished sends the operator back through the sequence
+  rather than silently failing to start capture.
+- **`SetupStore`** (`SetupStore.kt`) — one property per fact a step records, persisted via
+  `SharedPreferencesSetupStore` (same `org.ort.app.setup` prefs file and mic/notifications keys
+  `MainActivity`'s pre-WP9 flow used) with `InMemorySetupStore` as the behavioural fake
+  (constitution II).
+- **`RouteCheck`/`RealRouteCheck`** (`RouteCheck.kt`) — S05/S06's live check, reading raw PCM
+  directly from `:capture-android`'s `AudioIo` (`select`/`open`/`routedDevice`/`read`) rather than
+  wrapping `AudioRecordSource`: **`:capture-api` is not reachable from `:app`'s compile classpath**
+  through any edge this package may add (`:capture-android` and `:pipeline` both depend on it with
+  `implementation`, not `api` — confirmed by actually trying to compile against
+  `org.ort.captureapi.ResamplerIdentity`/`AudioFormat`/`PolyphaseResampler` and watching it fail).
+  The fourth check ("resampler identity recorded") therefore reports
+  `RouteCheckState.Passed.resamplerDescription` — a plain, honest description of whether resampling
+  will occur (native rate vs. a locally-duplicated `OUTPUT_SAMPLE_RATE_HZ = 16_000`, cited back to
+  `capture-api/.../AudioFormat.kt`), not the same coefficient-hashed `ResamplerIdentity` object the
+  pipeline records. Six tests against `FakeAudioIo` (Passed, 48kHz-resamples, Mismatch, no-route
+  Mismatch, OpenFailed, TimedOut).
+- **`LevelCheck`/`RealLevelCheck`** (`LevelCheck.kt`) — S07's 60s meter, same `AudioIo` seam, real
+  measured peak/noise-floor/headroom; the `TOO_QUIET`/`IN_BAND`/`CLIPPING` banding thresholds are a
+  documented policy choice (`spec/functional-spec.md` names no dBFS thresholds — confirmed by
+  search before writing this), never the readings themselves. Six tests against `FakeAudioIo`.
+- **`InputRouteEnumerator`** (`InputRouteEnumerator.kt`) — S04's route list via `AndroidAudioIo`
+  (read-only, on `:app`'s classpath through `:pipeline`'s `api` edge). `AudioDeviceDescriptor`
+  carries no native sample rate, so the subtitle's rate text is read directly from
+  `android.media.AudioDeviceInfo.getSampleRates()` matched back by id — a device reporting no fixed
+  rate is described by type alone, never a fabricated number. Four tests (Robolectric).
+- **Thirteen screen composables**, each a pure function of a view-state, built on `SetupScaffold`
+  (WP2's `StepIndicator`, a 44dp back target via a back-stack `SetupActivity` maintains, a
+  `bottomActions` slot since boards vary from a bare `Not now` text link to `Continue` + a
+  secondary action to a halting primary + retry) and WP2's shared components throughout
+  (`PrimaryButton`, `TextAction`, `RadioRow`, `Banner`, `Sheet`, `FailedState`, `InProgressRing`):
+  `WelcomeScreen` (S01, `Sheet` carrying `Settings-About.dc.html`'s offline-promise copy verbatim),
+  `MicrophoneScreen`/`MicrophoneDeniedScreen` (S02/S02b, re-homed from `MainActivity` unchanged in
+  substance), `NotificationsScreen` (S03), `InputScreen` (S04), `VerifyScreen` (S05),
+  `RouteMismatchScreen` (S06, the one halt — no `Continue` on the board at all), `LevelScreen`
+  (S07), `OvernightScreen` (S08, fixes R-083 — the battery-exemption intent no longer fires
+  automatically from `MainActivity`; it fires only from this screen's own `Open the setting`, after
+  the rationale and "the API lies" caveat are shown), `RadioScreen` (S09), `RadioUsbScreen`/
+  `RadioVerifiedScreen` (S10/S11, see Left open), `ReadyScreen` (S12, `readyRowsFor` a pure,
+  separately-tested mapper from real `SetupStore`/battery/`RigStatus`/`AsrAvailability` state).
+- **`SetupActivity`** — owns every `Context`/coroutine/IO touch point the screens above stay free
+  of: permission requests, `AndroidAudioIo` construction, `LaunchedEffect`-driven `RouteCheck`/
+  `LevelCheck` collection, the battery-exemption intent, and a `backStack: ArrayDeque<SetupStep>`
+  for `onBack` (pushed only on genuine forward actions — `pushCurrent = true` — never on a cold
+  `onCreate`/`onResume` recheck, so a relaunch never fabricates a back-stack entry the operator did
+  not actually navigate through). `onResume` re-checks `MICROPHONE_DENIED` automatically (R-085's
+  pattern). On every gate satisfied, hands back to `MainActivity` (`store.setupComplete = true`,
+  `startActivity(MainActivity)`, `finish()`) rather than starting capture itself, so that logic
+  stays exactly where `MainActivity` already had it.
+- **`MainActivity`** rewritten as a pure router (R-080): `onCreate` computes
+  `SetupStateMachine.isComplete(...)` and either runs the unchanged `startCaptureAndShowStatus()`
+  (F-022's session-routing logic and its doc comments, verbatim) or redirects to `SetupActivity`.
+  No Compose content of its own any more — every interim screen it used to render directly
+  (`MicrophoneSetupScreen`, `MicrophoneDeniedScreen`, `NotificationsSetupScreen`, `SetupScreen`,
+  `setupScreenFor`) is gone from this file, re-homed onto `SetupScaffold` in `ui/setup`.
+  `requestBatteryExemptionBestEffort` is deleted outright (moved to S08, fixing R-083 — the intent
+  used to fire unconditionally on every launch with no operator-facing rationale at all).
+- `AndroidManifest.xml`: `SetupActivity` registered `android:exported="false"` (only `MainActivity`
+  ever launches it), with a doc comment.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.MainActivityTest"` — **86 of 86 passing**, zero failures, after fixing a real
+  cross-test hazard found by actually running the full suite: `SetupActivityTest`'s first version
+  used `Robolectric.buildActivity(...)` + manual lifecycle teardown (the same pattern the pre-WP9
+  `MainActivityTest` used), which — as `ReaderActivityTest`'s own doc comment already documents for
+  exactly this situation — leaves a live `Recomposer` registration behind regardless of how
+  carefully create→start→resume→pause→stop→destroy is driven afterward, hanging
+  `WelcomeScreenTest`/`VerifyScreenTest` with `AppNotIdleException` whenever they ran later in the
+  same suite. Fixed by switching `SetupActivityTest` to `ActivityScenario.launch(...).use { }`
+  (the same disposal path `createAndroidComposeRule`'s `ActivityScenarioRule` calls), which also
+  allows setting up `SharedPreferences`/permission state before the activity launches — timing
+  `createAndroidComposeRule<T>()`'s own eager-launch rule does not allow.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module, every package) — **374 of 374
+  passing**, zero failures.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `detekt` needed a
+  real pass: 45 weighted issues on first run (`LongParameterList` on `readyRowsFor` — fixed by
+  bundling its five `onFix*`/`onInstallModel` callbacks into a new `ReadyActions` data class —
+  and on the test-only `InMemorySetupStore` fake, suppressed as a small fake's constructor;
+  `CyclomaticComplexMethod` on `SetupActivity.RenderStep` — fixed by extracting each multi-line
+  branch into its own small `@Composable` method; `LongMethod` on `WelcomeScreen` — split into
+  `WelcomeHeader`/`WelcomeAsks`/`WelcomeFooter`/`WelcomeSheet`; `MatchingDeclarationName` on
+  `InputScreen.kt`/`VerifyScreen.kt` — their lone view-state data classes moved to a shared
+  `SetupViewStates.kt`; the remaining ~33 were `MaxLineLength`, fixed by wrapping). `ktlintCheck`
+  needed one more real fix after that: a genuinely unmatched closing brace in `ReadyScreen.kt`
+  (from mid-refactor editing, caught only because ktlint's own parser rejected the file — detekt's
+  parser had tolerated it) plus reindentation `.\gradlew.bat :app:ktlintFormat` handled
+  automatically once the brace was fixed.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both **BUILD SUCCESSFUL**; `results/coverage-matrix.md` regenerated and included in this commit.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- **S10/S11 are not reachable with real hardware today, at all.** `:rig` and `:rig-usb` hold only a
+  `package-info.kt` each (register R-084) — there is no real USB-attach signal, permission flow,
+  identification or command-set verification anywhere in the app. `RadioUsbScreen` therefore
+  renders `RigStatus.State.Absent` (the only real producer — `RealCaptureService` calls
+  `RigStatus.absent()` once per session, honestly) as an honest failed state instead of the board's
+  live checklist. A `Connected`/`Stale` reading — which `RadioUsbScreen`/`RadioVerifiedScreen` both
+  render correctly, tested directly by construction — is reachable today only by the debug scenario
+  simulator poking `RigStatus` directly (WP0's `rig-lost` scenario produces `Stale`; nothing
+  currently produces a bare `Connected` outside a test), never by plugging in a radio.
+  Real reachability needs a rig module, which is out of this package's scope entirely.
+- **`RouteCheck`'s fourth check does not carry the pipeline's real `ResamplerIdentity`.** See "What
+  changed" above — needs `capture-android/build.gradle.kts` or `pipeline/build.gradle.kts` to
+  re-export `:capture-api` as `api` (a one-line change outside this package's file ownership;
+  reported, not made).
+- **WP2 ships no dedicated `Notification`-style card component** (checked every file under
+  `ui/components` — none exists), so `NotificationsScreen`'s preview card is built directly from
+  tokens per the brief's own fallback instruction, not a shared component.
+- **WP2's `RadioRow` has no subtitle slot or colour override**, so S04's per-device type/native-rate
+  text and the built-in mic's amber "refused" warning ride in `RadioRow`'s trailing `count` slot
+  (mono, fixed dim colour) rather than the board's two-line icon+title+subtitle row. A validator
+  comparing pixel-for-pixel against `Setup-Input.dc.html` will find this; the underlying data
+  (real routes, real refusal semantics) is correct.
+- **S12's "Install" action has nowhere to navigate to from setup.** The Models destination lives
+  inside `OrtNavHost` (WP3's file), reachable only once `ReaderActivity` exists after capture
+  starts; wiring a real destination is out of this package's ownership.
+- **Back navigation is a package-local simplification**, not a literal per-board back-stack: `S06`
+  (route mismatch) and `S02b` (mic-denied) render no back target at all (both are reached as
+  automatic/halt states, not deliberate forward navigation), and `S05` (verify) has none either
+  since it is a live, auto-running check. Every other step's back target pops a `backStack` pushed
+  only on genuine forward actions.
+- Every register row this package owns (R-080, R-081, R-082, R-083, R-084) is Robolectric-verified
+  only, per this program's own rule ("do not use the emulator" — validators do that after merge);
+  no on-device or emulator confirmation is claimed here.
+
+---
+
 ## 2026-09-08 (ui-conformance WP11c)
 
 ### (pending) — ui-conformance WP11c · LevelStatus and InputStatus holders, capture-path level meter, level and input scenarios
@@ -289,7 +459,6 @@ does not exist).
   `ModalDrawerSheet` default, not `Menu.dc.html`'s 306dp), and the Improve-records count pill
   (`improveRecordsCount`, wired but always `null` — WP10 has not landed a real count) are all
   unchanged/deferred, none named by this package's register rows.
-
 ## 2026-09-08 (ui-conformance WP2: shared components)
 
 ### (pending) — ui-conformance WP2 · legacy marker keeps confidence until callers migrate
