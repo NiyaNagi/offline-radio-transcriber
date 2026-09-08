@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
@@ -77,8 +78,14 @@ class ReaderAccessibilityTest {
 
         composeTestRule.onNodeWithContentDescription("Open navigation drawer").assertIsDisplayed().performClick()
 
+        // build-plan P15 grew the drawer to ten destinations (Search, Threads) — more than fit
+        // in the drawer's fixed height at once, so it scrolls (see ReaderDrawerContent). Each row
+        // must still be reachable and displayed once scrolled to; the drawer is not allowed to
+        // silently clip a destination that overflows it.
         ReaderDestination.entries.forEach { destination ->
-            composeTestRule.onNodeWithContentDescription("Open ${destination.label}").assertIsDisplayed()
+            composeTestRule.onNodeWithContentDescription("Open ${destination.label}")
+                .performScrollTo()
+                .assertIsDisplayed()
         }
     }
 }

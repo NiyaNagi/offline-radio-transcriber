@@ -32,6 +32,112 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (late night — P15: search and threads reach the FTS5 index P5 built and nothing queried)
+
+### (pending) — P15 · Search and threads
+
+**Scope:** `:app` (`ui/screens/SearchScreen.kt`, `ui/screens/ThreadScreen.kt` — new; `ui/data/SearchViewData.kt`,
+`ui/data/ThreadViewData.kt` — new; `ui/data/TransmissionDetail.kt` extended with a `threadId` field and a
+`timeLabelFor` accessor; `ui/data/ReaderPolling.kt` extended with a public `detailFromEntity` reuse point;
+`ui/navigation/ReaderDestination.kt` — new `SEARCH` entry, `THREADS` now `hasScreen = true`;
+`ui/navigation/OrtNavHost.kt` wired to both; `ui/navigation/Drawer.kt` made scrollable), `:data`
+(new `dao/SearchDao.kt` — the prompt's own required "new DAO file, not `TransmissionDao`/`TranscriptDao`", to
+stay conflict-free with the concurrent P17 session; one added abstract accessor line in `OrtDatabase.kt`, no
+schema change). `:pipeline`, `:capture-*`, `:asr-*`, `:lexicon`, `:core`, `:net` and P14's
+`NowScreen`/`TransmissionDetailScreen` were not touched, as the prompt requires.
+**Requirements/ACs:** FR-UI-3 (full-text search over `transcript_fts`, with callsign/frequency/date filters
+— the three the prompt's own write-first line names; FR-UI-3's fuller list also names band, attribution-state
+and rejected/accepted filters, which this session did **not** build — see "Left open" below), FR-UI-2 (a
+thread view groups transmissions and shows why each was attributed — "which transmission confirmed a
+callsign, and which inherited it").
+**What changed:**
+- **`SearchDao`** (`:data`) — `filterOnly` (callsign/frequency/date filters over `transmission` LEFT JOINed
+  to `station`, never touching `transcript_fts`) and `searchText` (adds the FTS5 `MATCH` join, filtered to
+  each transmission's *current* transcript). A default `search(text, ...)` method degrades a blank/null text
+  term to `filterOnly` rather than fabricating a match-everything FTS query. `FtsMatchQuery.build` (same
+  file) turns free text into a safe MATCH expression — every whitespace token individually double-quoted so
+  an FTS5 operator character (`-`, `*`, `:`) in a callsign like `K7ABC-2` is matched literally, not parsed
+  as query syntax.
+- **`ThreadGroupingMapper`** (`:app`, pure, DB-free) — groups `TransmissionDetail` by the real `threadId`
+  column, real threads first and one explicit "Not yet grouped into threads" bucket last (never a fabricated
+  single conversation standing in for absent data), and reasons about each entry's attribution: `CONFIRMED`
+  → "callsign confirmed in this transmission", `INFERRED` → names the source transmission (and its time
+  label, when that transmission is in the same result set) it was carried from, `AMBIGUOUS` → "more than one
+  candidate; the system will not choose", `UNKNOWN` → "no callsign resolved". `ThreadPolling` feeds it real
+  session data through the identical `ReaderPolling.currentTransmissionDetails` read path Now/Log already
+  use, so a transmission cannot show different facts on two screens.
+- **`SearchFilterParser`/`SearchPolling`** (`:app`) — parses the search screen's raw text fields
+  (blank → `null`, an unparseable frequency or date dropped rather than crashing or asserting a filter that
+  can never match) and reads through `SearchDao`. `SearchPolling.search` catches only the specific,
+  empirically-confirmed fts5-missing `SQLiteException` (message containing `fts5` or `transcript_fts`) and
+  degrades to the filter-only path, reporting `SearchResult.textSearchUnavailable = true` rather than
+  silently dropping the user's text term or crashing the screen (constitution I: an unmet part of a query is
+  content) — any other database error still propagates as a real bug.
+- **`SearchScreen`/`ThreadScreen`** — plain Compose screens over the above. `SearchScreen` shows an honest
+  "Enter a search term or filter, then tap Search" before any search runs (never a blank list standing in
+  for "not searched yet"), "No results" for a real empty result, and the full-text-unavailable banner when
+  set. `ThreadScreen` shows "No transmissions yet" when there is nothing at all, otherwise one section per
+  group with each entry's attribution marker (reusing P13's `AttributionMarker`, FR-UI-4) and its reasoning
+  text. Both reuse `ReaderTransmissionViewStateMapper`/`TransmissionListEntryViewState` rather than a second
+  row-rendering scheme.
+- **Drawer/nav wiring**: `ReaderDestination` gained `SEARCH` (a deliberate divergence from
+  `design/canvas/Log.dc.html`, which puts search behind a magnifying-glass icon on the Log screen's own top
+  bar — the prompt's own scope note asks for "drawer wiring for those two destinations", so Search is a
+  drawer row instead) and `THREADS` is now a real screen. `ReaderDrawerContent` gained a `verticalScroll` —
+  ten destinations plus the storage footer no longer fit the drawer's fixed height without it, and this
+  session's own `ReaderAccessibilityTest` (P13) caught the resulting clipped row before it could ship;
+  that test was updated to `performScrollTo()` each destination before asserting it is displayed, which is
+  the correct fix for "reachable via scroll" rather than "all visible at once".
+**FTS5 under Robolectric — genuinely checked, not assumed either way:** `OrtDatabase`'s own comment claims
+"some host-JVM SQLite builds Robolectric uses lack the fts5 module" and the schema creation skips it
+silently rather than failing. This session verified directly, before designing any test, that the fts5
+module is in fact **unavailable** in this repository's pinned Robolectric/AGP versions — confirmed by
+attempting `CREATE VIRTUAL TABLE probe_fts USING fts5(text)` against a fresh in-memory `OrtDatabase`, which
+failed with `no such module: fts5 (code 1 SQLITE_ERROR)`, even with `data/src/test/resources/robolectric.properties`
+already set to `sqliteMode=NATIVE` (the real Android SQLite amalgamation, which the project's own comment
+says *should* carry fts5). A second, non-obvious finding this session hit and fixed: a naive
+`SELECT name FROM sqlite_master WHERE name='transcript_fts'` check is **not** a reliable fts5-availability
+probe — `CREATE VIRTUAL TABLE IF NOT EXISTS ... USING fts5(...)` can leave a `sqlite_master` schema row
+behind even though the module lookup that follows it fails, so a query against the table still throws
+`no such module: fts5` even when that check reports "available". `data/src/test/kotlin/org/ort/data/SearchDaoFullTextTest.kt`
+and `app/src/test/kotlin/org/ort/app/ui/data/SearchPollingTest.kt` both now probe by actually preparing a
+statement against `transcript_fts` (`SELECT count(*) FROM transcript_fts`), not by checking `sqlite_master`.
+Given genuine unavailability, `SearchDaoFullTextTest`'s one full-text assertion uses JUnit4's `Assume.assumeTrue`
+and is reported **SKIPPED**, never a false pass; `SearchDaoFilterTest` proves everything that does not
+require the index (callsign/frequency/date filtering, case-insensitive callsign match, combined filters,
+newest-first ordering, blank-text delegating to the filter-only path) against a real Room database, for
+real. `SearchPollingTest`'s one text-search test branches on the same live-checked fact so it states a real
+assertion either way rather than hard-coding today's environment as a permanent assumption.
+**Verified:** strict TDD throughout — every new test observed to fail for the right reason first
+(`Unresolved reference` compiler errors for `SearchDao`/`FtsMatchQuery`/`SearchScreen`/`ThreadScreen`/etc.,
+then real assertion failures, including two genuine Compose-layout bugs this session found and fixed rather
+than worked around: a `LazyColumn` placed after other `Column` siblings via `fillMaxSize()`/`weight(1f)`
+rendered its rows outside the actual test viewport — `performScrollTo()` on such a node then drove Compose's
+frame loop into an `OutOfMemoryError` rather than simply failing — fixed by using one `verticalScroll`ed
+`Column` instead of a nested `LazyColumn` for a result set small enough to render eagerly). `./gradlew
+:data:testDebugUnitTest` — all `:data` tests green (`FtsMatchQueryTest` ×5, `SearchDaoFilterTest` ×7 real,
+`SearchDaoFullTextTest` ×1 SKIPPED as described above, plus every pre-existing P5 test unchanged).
+`./gradlew :app:testDebugUnitTest` — 82/82 green, including `SearchFilterParserTest` ×6,
+`ThreadGroupingMapperTest` ×7, `SearchPollingTest` ×2 (real DB, both branches), `SearchScreenTest` ×5,
+`ThreadScreenTest` ×4, and every pre-existing P8/P11/P13/P14 test unchanged (including
+`ReaderAccessibilityTest`, updated as described above). `./gradlew build dependencyRules` — full repo green
+(840 actionable tasks); `dependencyRules` output confirms `:app -> :core, :data, :net, :pipeline` and
+`:data -> :core`, exactly the permitted edge sets, no new module edge anywhere in the graph.
+**Left open / not done:** FR-UI-3's fuller filter list (band, attribution state, rejected/accepted) is not
+built — this session followed the prompt's own narrower write-first line ("filters by callsign, frequency
+and date"); a follow-up session extending `SearchDao`/`SearchScreen` with the remaining filters is
+straightforward given the pattern here. `threadId` remains unpopulated in production (threading is M6, per
+build-plan note) — `ThreadScreen` is proven against the real column and both the grouped and ungrouped paths
+via `ThreadGroupingMapperTest`'s fabricated fixtures, but no session has yet exercised a *real* multi-member
+thread against live data, because nothing writes one yet. No device is available to this session — the
+Compose screens are proven only on Robolectric, the same standing caveat as every UI change since P13.
+`spec/build-plan.md` itself carries an unrelated, pre-existing unresolved git merge-conflict marker
+(`>>>>>>> worktree-agent-a7eb9cc6470f58b9c`) at line 124, inside Wave E's own section — this session did not
+introduce it, is not a `:app`/`:data` file, and this prompt's file-ownership rule keeps it untouched; flagged
+here rather than silently left for someone to trip over.
+
+---
+
 ## 2026-09-08 (night — P14: the reader shows real transmissions, not the v0 smoke-test stub)
 
 ### (pending) — P14 · Reader: live view and transmission detail
