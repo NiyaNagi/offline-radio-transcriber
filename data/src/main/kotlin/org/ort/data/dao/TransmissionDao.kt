@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 import org.ort.core.AttributionState
+import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.data.entity.TransmissionEntity
 
@@ -68,4 +69,26 @@ public interface TransmissionDao {
      */
     @Query("UPDATE transmission SET rejectionReason = :reason WHERE id = :id")
     public suspend fun setRejectionReason(id: String, reason: String)
+
+    /**
+     * Register R-204 follow-up (FR-REP-2, FR-REP-9): stamps the tier a just-finished Pass B/C run
+     * for [id] actually processed it at — see
+     * [org.ort.data.entity.TransmissionEntity.processedTier]'s own doc comment for who calls this
+     * and when. Unconditional (no `corrected`-style guard): which tier last processed a record is
+     * a fact about the pipeline run, not an attribution a human correction should ever block.
+     */
+    @Query("UPDATE transmission SET processedTier = :tier WHERE id = :id")
+    public suspend fun setProcessedTier(id: String, tier: Tier)
+
+    /**
+     * Every transmission not yet processed at any tier at or above the caller's target — i.e.
+     * still a genuine reprocessing candidate. Never processed at all
+     * ([org.ort.data.entity.TransmissionEntity.processedTier] `IS NULL`) always qualifies,
+     * alongside any row whose last completed tier is one of [belowTiers]. [belowTiers] is
+     * supplied by the caller (compare [org.ort.core.Tier.ordinal] against the target tier) rather
+     * than computed here: `processedTier` is a `TEXT` column holding the tier's name, so SQLite
+     * itself has no notion of tier *order* to compare against.
+     */
+    @Query("SELECT id FROM transmission WHERE processedTier IS NULL OR processedTier IN (:belowTiers)")
+    public suspend fun idsBelowProcessedTier(belowTiers: List<Tier>): List<String>
 }

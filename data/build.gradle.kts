@@ -26,11 +26,24 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
+    // R-204: the platform/OEM SQLite Room would otherwise open (and Robolectric's shadow SQLite)
+    // cannot be trusted to ship fts5 — the API 34 reference emulator's does not. This bundles a
+    // known-good SQLite build (fts5 included) and is wired in via RoomDatabase.Builder.setDriver
+    // in OrtDatabase.create, so both the shipped app and every JVM/Robolectric test use it.
+    implementation(libs.androidx.sqlite.bundled)
     ksp(libs.room.compiler)
 
     testImplementation(project(":testing"))
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
+    // R-204: `implementation(libs.androidx.sqlite.bundled)` above resolves, for a Robolectric
+    // unit test's runtime classpath, to that library's Android-variant artifact — even though the
+    // test executes on the host JVM, not a device — because AGP does not switch the unit-test
+    // classpath's `org.gradle.jvm.environment` attribute away from `android`. That artifact's
+    // native library is packaged for APK installation (an .so per Android ABI under `lib/<abi>/`),
+    // which the host JVM cannot `System.loadLibrary` from, so the JVM-target artifact is added
+    // explicitly here to give Robolectric a native library it actually can load.
+    testImplementation(libs.androidx.sqlite.bundled.jvm)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.room.testing)

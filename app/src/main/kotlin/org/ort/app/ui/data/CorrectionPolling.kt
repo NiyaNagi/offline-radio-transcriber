@@ -1,7 +1,6 @@
 package org.ort.app.ui.data
 
 import android.content.Context
-import androidx.room.withTransaction
 import org.ort.core.Attribution
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
@@ -16,6 +15,7 @@ import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintBindingSource
 import org.ort.data.entity.VoiceprintEntity
 import org.ort.data.entity.WorkQueueState
+import org.ort.data.inWriteTransaction
 import org.ort.data.requireLegalTransition
 import java.util.Locale
 
@@ -535,10 +535,10 @@ public object CorrectionPolling {
      */
     public suspend fun retryFailedPass(context: Context, transmissionId: String, pass: PassId): Boolean {
         val db = OrtDatabase.create(context.applicationContext)
-        return db.withTransaction {
+        return db.inWriteTransaction {
             val failed = db.workQueueDao().findByTransmissionAndPass(transmissionId, pass.name)
                 .firstOrNull { it.state == WorkQueueState.FAILED }
-                ?: return@withTransaction false
+                ?: return@inWriteTransaction false
             db.workQueueDao().requeueToReady(failed.id)
             if (db.transmissionDao().canTransition(transmissionId, TransmissionState.PROCESSING)) {
                 db.transmissionDao().requireLegalTransition(transmissionId, TransmissionState.PROCESSING)

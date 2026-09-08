@@ -1,6 +1,6 @@
 package org.ort.app.ui.data
 
-import android.database.sqlite.SQLiteException
+import androidx.room.useReaderConnection
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -136,10 +136,16 @@ class SearchPollingTest {
         assertFalse(result.textSearchUnavailable)
     }
 
-    private fun fts5Available(): Boolean = try {
-        db.openHelper.writableDatabase.query("SELECT count(*) FROM transcript_fts").use { it.moveToFirst() }
+    // R-204: fts5 is now always available (BundledSQLiteDriver bundles a SQLite build with fts5
+    // compiled in) — this stays a real probe, not a hardcoded `true`, so a regression back to
+    // "fts5 unavailable" still fails this test loudly instead of the assertion silently agreeing
+    // with whatever `SearchPolling` did.
+    private suspend fun fts5Available(): Boolean = try {
+        db.useReaderConnection { connection ->
+            connection.usePrepared("SELECT count(*) FROM transcript_fts") { it.step() }
+        }
         true
-    } catch (e: SQLiteException) {
+    } catch (e: android.database.SQLException) {
         false
     }
 
