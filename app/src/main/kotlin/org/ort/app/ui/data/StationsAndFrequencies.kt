@@ -48,6 +48,20 @@ public data class StationListEntryViewState(
  */
 public data class UnidentifiedVoicesSummary(val voiceCount: Int?, val overCount: Int)
 
+/**
+ * `StationsListScreen`'s own fetched state (R-070/R-207) — folded into one holder (rather than
+ * four separate parameters) so that screen's own parameter count stays under detekt's
+ * `LongParameterList` limit. [heardAllTimeCount]/[heardTonightCount] are the real, unfiltered
+ * totals — see `StationsContent`'s own doc comment for why they are computed there rather than
+ * derived from [stations] (already filtered to the selected chip).
+ */
+public data class StationsListState(
+    val stations: List<StationListEntryViewState>,
+    val unidentified: UnidentifiedVoicesSummary? = null,
+    val heardAllTimeCount: Int = 0,
+    val heardTonightCount: Int = 0,
+)
+
 // -------------------------------------------------------------------------------------------
 // Station-Pattern (R-072, R-075) — Station-Pattern.dc.html.
 // -------------------------------------------------------------------------------------------

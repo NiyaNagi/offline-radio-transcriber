@@ -409,8 +409,11 @@ public class SetupActivity : ComponentActivity() {
         when (step) {
             SetupStep.WELCOME -> WelcomeScreen(onBegin = ::onBegin)
             SetupStep.MICROPHONE -> MicrophoneScreen(onAllow = ::requestRecordAudio, onBack = ::onBack)
-            SetupStep.MICROPHONE_DENIED ->
-                MicrophoneDeniedScreen(onOpenSettings = ::openAppSettings, onCheckAgain = ::checkMicAgain)
+            SetupStep.MICROPHONE_DENIED -> MicrophoneDeniedScreen(
+                onOpenSettings = ::openAppSettings,
+                onCheckAgain = ::checkMicAgain,
+                onBack = ::onBack,
+            )
             SetupStep.NOTIFICATIONS ->
                 NotificationsScreen(onAllow = ::requestNotifications, onSkip = ::skipNotifications, onBack = ::onBack)
             SetupStep.INPUT -> RenderInput()
@@ -462,13 +465,24 @@ public class SetupActivity : ComponentActivity() {
         )
     }
 
+    /** R-222 (validator pass 2): looks up the chosen device's already-resolved
+     * [InputRouteOption.typeLabel] from S04's own route list, rather than re-deriving it from the
+     * coarser [org.ort.capture.android.AudioDeviceDescriptor.kind] `RouteCheckState.Mismatch`
+     * itself carries — see [RouteMismatchScreen]'s own doc comment for why. Falls back to a plain
+     * `"Unknown"` only when the route list is somehow empty at this point (never reachable through
+     * the ordinary S04 -> S05 -> S06 flow, since [onStartVerify] cannot fire without a selection
+     * already present in that same list) — never a crash, and never a fabricated specific type.
+     */
     @Composable
     private fun RenderRouteMismatch() {
         val mismatch = verifyState as? RouteCheckState.Mismatch ?: return
+        val selectedTypeLabel = inputRoutes.firstOrNull { it.id == mismatch.selected.id }?.typeLabel ?: "Unknown"
         RouteMismatchScreen(
             mismatch = mismatch,
+            selectedTypeLabel = selectedTypeLabel,
             onChooseAnotherInput = ::onChooseAnotherInput,
             onTryAgain = ::onTryVerifyAgain,
+            onBack = ::onChooseAnotherInput,
         )
     }
 

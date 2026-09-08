@@ -117,6 +117,543 @@ behaviour below has a test named for its id, against real state.
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: log row badges wrap at large font scale; column headers never split)
+
+### (pending) — ui-conformance WP2 · log row badges wrap at large font scale; column headers never split
+
+**Scope:** `:app` `ui/components/Rows.kt` and `RowsTest.kt` only. Register findings R-244, R-245,
+and R-240 (`results/ui-audit/register.md`, V3 Reader validator pass 2, `overnight/L01-log@2x.png`
+and `overnight/L01-log.png`). `git merge --ff-only main` first (this branch already an ancestor;
+no rebase, no stash, no `--stop`) — no other package's files touched.
+
+**Requirements/ACs:** R-244 (`LogRow`'s badges must wrap below the callsign at a large font scale,
+never clip to a sliver), R-245 (`ColumnHeaderRow` labels must never wrap mid-word), R-240 (an
+AMBIGUOUS `LogRow` must show the kept candidate's callsign beside `" or <alternate>"`, not just
+the alternate alone).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-240 directly: an
+  AMBIGUOUS row reading only "or KE7QRS" doesn't just look wrong, it silently drops which
+  candidate the system actually kept — a real fact going missing, not a cosmetic gap. Principle
+  VII (Boundaries Are Structural) governs R-244: the fix lives in `LogRowMarkerLine`'s own layout
+  (a `FlowRow`), not by changing `AttributionRow`'s internals, which is shared far too widely for
+  a `LogRow`-scoped finding to touch.
+- **R-244 — `LogRowMarkerLine` (private, `LogRow`'s marker line).** Was a plain `Row`, which never
+  wraps — when a real callsign plus the trailing `Badge` (`NEW`/`REVISED`/`CORRECTED`) no longer
+  fit on one line at a large font scale, the badge had nowhere to go but clip to a sliver or
+  vanish. Now a `FlowRow` (`@OptIn(ExperimentalLayoutApi::class)` — the API detekt itself flagged
+  as experimental when this was first written; opted in deliberately, not suppressed). The
+  attribution (`AttributionRow`: shape + callsign + its own INFERRED score chip, or the AMBIGUOUS
+  `" or <alternate>"`) is passed as one atomic flow item — `AttributionRow` is shared across the
+  whole app and this fix does not touch its own internal layout — and the trailing `Badge` is a
+  second flow item that now wraps to its own line when there isn't room, rather than clipping.
+  Each item carries `Modifier.align(Alignment.CenterVertically)` (`FlowRowScope`'s own alignment,
+  the `RowScope.align` equivalent) so single-line rendering is visually unchanged from before.
+- **R-245 — `ColumnHeaderRow`.** The `TIME`/`FREQ` labels already had `maxLines = 1, softWrap =
+  false` from the R-205 fix (an earlier entry in this file); the `STATION` label (on its flexible
+  `weight(1f)` column) and the `SIG` label did not, and "STATION" wrapping mid-word to
+  "STATIO"/"N" at font scale 2.0 was the register's exact screenshot. Both now carry the same
+  `maxLines = 1, softWrap = false` — there is no second line for a column *header* to wrap onto
+  the way a data row's own content legitimately can, so this is an unconditional fix, not a floor/
+  ceiling tradeoff the way R-205's column widths were.
+- **R-240 — `LogRowViewState` gains `callsign: String? = null`.** `AttributionState.AMBIGUOUS`
+  never carries a `stationId` (`Attribution.ambiguous()` sets it `null` — more than one candidate
+  survived, so the data layer has no single resolved station to name), so before this field
+  existed an AMBIGUOUS row could only ever read "or KE7QRS" — the kept candidate silently missing,
+  both visually and from the description. `null` (every caller before this existed) falls back to
+  `Attribution.stationId` exactly as before — additive, CONFIRMED/INFERRED rows (which do carry
+  one) are unaffected. `LogRowMarkerLine` now passes `callsign = state.callsign ?:
+  attribution.stationId` into `AttributionRow` (previously it passed no `callsign` argument at
+  all, silently relying on `AttributionRow`'s own default — the same default, made explicit here
+  so the override is visible at the call site).
+- **A pre-existing, unrelated semantics-merging gap, found and left alone.** While writing R-240's
+  test, `onNodeWithTag("ambiguous").assert(hasContentDescription(...))` against `LogRow`'s own
+  outer merged node failed to find the callsign/alternate at all, even though the same content
+  renders correctly and is independently reachable via `onNodeWithText`. `AttributionRow` is
+  itself its own `semantics(mergeDescendants = true)` boundary; `LogRow`'s outer `Box` is a
+  *second*, nested boundary around it, and — consistent with this package's own prior finding
+  against `TextField` (an earlier entry in this file) that not every semantics property merges
+  reliably through a nested boundary in this Compose version — `AttributionRow`'s own
+  `contentDescription` does not bubble up into `LogRow`'s merged description here. Pre-existing
+  (no test asserted this before), unrelated to R-240's own scope (which only asked to confirm the
+  *visible* text), and left unfixed — R-240's test was adjusted to check `onNodeWithText` instead
+  of chasing this separate gap.
+- **Detekt findings, precisely scoped.** `.\gradlew.bat build dependencyRules platformGuards`
+  failed with real findings in `:lexicon`, `:pipeline`, and several `:app` files outside this
+  package (`ui/screens/**`, `ui/data/**`, `ui/setup/**`, `ui/navigation/**`,
+  `app/src/debug/**`) — this is the previous entry's own buildSrc fix working exactly as
+  described: real, pre-existing debt across the whole project, invisible while detekt/ktlint saw
+  `NO-SOURCE` everywhere, now surfacing for every builder. Checked precisely which of `:app:
+  detekt`'s 14 findings were in this package: **one** — this commit's own `RowsTest.kt:188`, a
+  test function name long enough to exceed `MaxLineLength` once the real check started running
+  again. Shortened it. The other 13 (`StationScreen.kt`, `StationPatternScreen.kt`,
+  `ModelsViewData.kt`, `FrequencyScreen.kt`, `LevelScreen.kt`, `ScenariosTest.kt`,
+  `ModelsControllerLexiconTest.kt`, `ReaderActivityDestinationSmokeTest.kt`) and every `:lexicon`/
+  `:pipeline` finding are outside `ui/components/**` and were not touched.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **992 of 992 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`; was 923 before this commit — the rise is other packages' concurrent work
+  already merged via `main`, plus this commit's own 5 new tests). New tests, all in `RowsTest`:
+  `R_240_an ambiguous row with a callsign shows it beside the alternate, never just or-alternate`,
+  `R_240_an ambiguous row with no callsign supplied still falls back to Attribution_stationId`,
+  `R_244_a badge that no longer fits beside the attribution wraps below it, never clipping` (at
+  font scale 2.0, a narrow-width `LogRow` — real, non-text-driven minimums do the forcing:
+  `AttributionShape`'s own fixed `Canvas` size, `Badge`'s own padding, neither dependent on font
+  metrics Robolectric can't measure reliably here — proven by a height comparison: the same narrow
+  row with a badge measures taller than without one, meaning the badge wrapped onto a second line
+  rather than clipping), `R_245_column_header_row's STATION label renders whole, never split
+  mid-word, at font scale 2` (Robolectric cannot force or verify a rendered wrap here, a limitation
+  recorded repeatedly elsewhere in this file — what this checks instead is the one thing that *is*
+  host-independently meaningful: the full word survives into the semantics tree, not a
+  hyphen-split substring).
+- **Full gate — passed for everything this package's boundary reaches, precisely scoped where it
+  did not.** `.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest` — **BUILD SUCCESSFUL**
+  (compilation and the whole test suite, both unaffected by the other-package detekt/ktlint
+  findings described above). `.\gradlew.bat dependencyRules platformGuards` (isolated) —
+  `dependencyRules: checked 17 modules ... OK.` `platformGuards: checked 17 modules' external
+  dependencies and 17 manifests ... OK.` `app/build/reports/ktlint/ktlintMainSourceSetCheck/
+  ktlintMainSourceSetCheck.txt` and `.../ktlintTestSourceSetCheck.txt` — both **empty** (zero
+  violations) after the one `RowsTest.kt` line-length fix. `.\gradlew.bat build dependencyRules
+  platformGuards` (the aggregate) — **fails**, but exclusively on findings outside this package
+  (see "What changed" above) — not a regression introduced by this commit.
+  `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`. `.\gradlew.bat coverageMatrix` — `419 requirements, 185 covered` (up from 183 —
+  R_240/R_244/R_245's test names picked up those register-adjacent requirement ids).
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (185 covered of 419)`.
+
+**Left open / not done:**
+- **The 13 other-package `:app:detekt` findings and every `:lexicon`/`:pipeline:detekt` finding
+  are reported here, not fixed** — outside `ui/components/**`. Whoever owns `ui/screens/**`,
+  `ui/data/**`, `ui/setup/**`, `ui/navigation/**`, `app/src/debug/**`, `:lexicon`, and `:pipeline`
+  needs a follow-up round for these now that detekt genuinely sees their files.
+  `app/src/debug/kotlin/org/ort/app/debug/FrequencyChangeFixtures.kt` also fails
+  `ktlintDebugSourceSetCheck` (many `Argument should be on a separate line` findings) — same
+  situation, same "not this package" boundary.
+- **The nested-semantics-merging gap found while testing R-240** (`AttributionRow`'s own
+  `contentDescription` not bubbling into `LogRow`'s outer merged node) is recorded above but not
+  fixed — outside R-240's own scope, and accessibility-completeness work broader than this
+  register finding asked for.
+- **The register is not updated by this commit** — closing out R-244/R-245/R-240 is the
+  validator/coordinator's own bookkeeping, outside this package.
+- **No screenshot/emulator re-capture** of `overnight/L01-log@2x.png`/`L01-log.png` to visually
+  confirm any of the three fixes against the actual artboard — Robolectric assertions only, per
+  the plan (Phase E/Validators own screenshot verification).
+
+
+## 2026-09-08 (ui-conformance WP9 · lint)
+
+### (pending) — ui-conformance WP9 · lint
+
+**Scope:** module-wide `:app:ktlintFormat`/`:app:detekt` (the coordinator's own explicit ask this
+round, not narrowed to `ui/setup/**`), plus a manual fix in `app/src/test/kotlin/org/ort/app/ui/
+navigation/ReaderActivityDestinationSmokeTest.kt` for one violation `ktlintFormat` could not
+auto-correct. `main` fast-forward merged first (`git merge --ff-only main`, this branch already an
+ancestor, at `0e6fded` — "ui-conformance · register: R-220..R-227 fixed (WP9 pass-2 merged)"); no
+rebase, no stash, `gradlew --stop` never used.
+
+**Requirements/ACs:** none new — process/lint only.
+
+**What changed:**
+- **`MainActivity.kt` needed no fix at all.** Checked first, directly: `git diff --stat` against it
+  after this round's full `ktlintFormat` pass is empty, and `git log` shows its last real edit is
+  this row's own `ba68c8f` (round 3). The "15 hits" the coordinator named must have been measured
+  against a different vantage point (a stale ktlint cache, or a snapshot from before some other
+  merge already normalized it) — reported honestly rather than fabricating a fix to a file that had
+  nothing to fix, per the coordinator's own "confirm real file counts" instruction.
+- **The `LevelScreen.kt:123` detekt `MaxLineLength` hit (the coordinator's addendum) is fixed as a
+  direct result of `ktlintFormat`'s own reformatting** — the `LevelFooterFacts` `Column(...)` call
+  it flagged is now wrapped one argument per line, well under 120 columns; confirmed by re-running
+  `:app:detekt` afterward, which no longer names this file at all.
+  `:app:ktlintFormat` (run module-wide, per the coordinator's own instruction, not scoped to `ui/
+  setup/**`) auto-fixed real `standard:argument-list-wrapping`/`standard:max-line-length` violations
+  across nine files the merge brought in from other WPs (`FrequencyChangeFixtures.kt`,
+  `ModelsViewData.kt`, `StationPolling.kt`, `FrequencyScreen.kt`, `StationPatternScreen.kt`,
+  `ScenariosTest.kt`, `ModelsControllerLexiconTest.kt`, plus `LevelScreen.kt` above) — formatting
+  only, confirmed by reading each diff before trusting it (no behavioural line changed).
+- **One violation `ktlintFormat` could not auto-correct**, in a file outside this row's own work
+  (`ReaderActivityDestinationSmokeTest.kt:404`, a private helper's receiver-type declaration: a
+  120+-column function signature on `AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>,
+  ReaderActivity>`, no shorter still-explicit spelling of that exact generic exists). Fixed by hand
+  with a private `typealias ReaderComposeRule = AndroidComposeTestRule<...>` at file scope, used at
+  both this receiver and the one other place the same long generic appeared
+  (`runReaderActivity`'s own `body` parameter) — `ktlintFormat` re-run afterward completed clean.
+- **Left alone, reported rather than fixed:** `:app:detekt` (part of `check`/`build`, run separately
+  to confirm) still names three pre-existing issues in two files this row does not own —
+  `StationScreen.kt:60` (`LongParameterList`, 10 params on `StationsListScreen`, a public composable
+  other WP8 screens call — bundling its params is a real API change, not a mechanical fix, and this
+  round's own worktree merge shows other agents actively touching WP8's own files right now) and
+  `StationPatternScreen.kt:157`/`173` (`ForEachOnRange`, `(0 until 24).forEach { ... }` — a real,
+  if small, behavioural rewrite to a `for` loop). Neither is the `MainActivity.kt`/`LevelScreen.kt`
+  pair this round's brief and addendum named; both predate this merge and are unrelated to any WP9
+  work. Left for WP8 rather than fixed here without that row's own say.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintFormat` — **BUILD SUCCESSFUL** (two runs: the first failed on the one
+  non-auto-correctable violation above, fixed by hand, then a clean re-run completed and reformatted
+  every file named above).
+- `.\gradlew.bat :app:ktlintCheck` — **BUILD SUCCESSFUL**, zero violations anywhere in `:app`.
+- `.\gradlew.bat :app:detekt` — **FAILS**, 3 weighted issues, both named above, in
+  `StationScreen.kt`/`StationPatternScreen.kt` — pre-existing, outside this row's ownership, not the
+  two issues this round's brief/addendum asked for (both of which are otherwise confirmed clean).
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **988 PASSED, 0 failed**, BUILD
+  SUCCESSFUL (up from pass-2's 948 — `main`'s own incoming work from this merge, not this row's).
+- `.\gradlew.bat dependencyRules platformGuards` (run standalone, since `build`'s own `check` step
+  is what `:app:detekt`'s pre-existing failures above block) — **BUILD SUCCESSFUL**, both.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` now 185 of 419 covered (up from 183 —
+  `main`'s own incoming ids from this merge).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- **`./gradlew build` (and therefore a literal, single-command "full gate") does not pass** while
+  `StationScreen.kt`/`StationPatternScreen.kt`'s three pre-existing detekt issues stand — every
+  *other* named gate command above was run and confirmed green individually, but the aggregate
+  `build`/`check` path is genuinely blocked until WP8 (or an agent with that row's ownership) fixes
+  or waives them. Reported to the coordinator rather than fixed unilaterally in another package's
+  files without that row's own say, consistent with this whole program's file-ownership discipline.
+- The `MainActivity.kt` fix this round's brief asked for was not needed — see "What changed" above.
+
+## 2026-09-08 (ui-conformance lexicon · lint)
+
+### (pending) — ui-conformance lexicon · lint
+
+**Scope:** `lexicon/src/main/kotlin/org/ort/lexicon/import/LexiconImportValidator.kt`,
+`lexicon/src/test/kotlin/org/ort/lexicon/import/LexiconImportFixtures.kt`,
+`lexicon/src/test/kotlin/org/ort/lexicon/import/LexiconImportValidatorTest.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerLexiconTest.kt` — this package's own
+follow-up to `3897fac`. Additionally, one line in `app/src/test/kotlin/org/ort/app/ui/navigation/
+ReaderActivityDestinationSmokeTest.kt` (a `:app -> :lexicon` merge's own pre-existing >120-char
+line, blocking `:app:ktlintFormat`'s task-level success even though ktlint itself could not
+auto-correct it), and mechanical `:app:ktlintFormat` reformatting of five files this package does
+not otherwise own (`FrequencyChangeFixtures.kt`, `StationPolling.kt`, `FrequencyScreen.kt`,
+`StationPatternScreen.kt`, `ScenariosTest.kt` — an unused import, a trailing blank line, and
+function-call line wraps; no semantic change to any of them) — both a direct, unavoidable
+consequence of running the coordinator-directed `:app:ktlintFormat` at module scope, not a
+deliberate scope expansion.
+
+**Requirements/ACs:** none new — this is the same FR-LEX-30/FR-AST-2/F12/R-154 surface `3897fac`
+established; this commit is lint/quality only. Constitution VII (structural enforcement): detekt's
+`:app`/`:lexicon` exclusion-rule bug (fixed on `main` — see `ort.common.gradle.kts`'s own doc
+comment) previously made every worktree's `:app:detekt`/`:app:*ktlint*` report clean vacuously
+(`NO-SOURCE`); this commit is the first real detekt/ktlint pass over these files.
+
+**What changed:**
+- **`LexiconImportValidator.validate` split from one 136-line function (detekt `LongMethod`,
+  threshold 80) into orchestration plus five private per-check functions** — `readManifest`
+  (returns a new sealed `ManifestResult`, `Failed` | `Parsed`, replacing three nullable locals
+  threaded through the old function body), `checkChecksum`, `checkRecordShape`,
+  `checkGrammarSample`, `checkDuplicateKeys` — each independently readable, each named for the
+  `CHECK_*` constant it produces. `validate` itself is now ~20 lines of pure orchestration: call
+  `readManifest`, return early via a `when` branch on `ManifestResult.Failed`, otherwise run the
+  two data-integrity checks, short-circuit to the two `NOT_REACHED` checks if either failed
+  (unchanged behaviour — same test suite, unmodified, still green), otherwise run the two
+  content checks and assemble the final `Accepted`/`Rejected` result. No check's logic or its
+  emitted `LexiconCheck` text changed — this is a structural refactor, not a behaviour change.
+- **Three `MaxLineLength` (120) violations wrapped**: `LexiconImportValidator.kt`'s
+  `GRAMMAR_SAMPLE_SIZE` doc comment and the duplicate-keys detail string (also simplified to
+  destructure `duplicates.entries.first()` once instead of calling `.keys.first()`/
+  `.values.first()` separately), and `LexiconImportFixtures.kt`'s `FakeActiveLexiconStore` doc
+  comment reflowed to three lines.
+- **`:lexicon:ktlintFormat`/`:app:ktlintFormat` run**, which mechanically re-wrapped several
+  `LexiconCheck(...)` call sites in `LexiconImportValidator.kt` and reformatted
+  `ModelsViewData.kt`/`ModelsControllerLexiconTest.kt`/`LexiconImportValidatorTest.kt` to this
+  project's ktlint style (trailing commas, argument wrapping) — no logic changes in any of these
+  three files either.
+- **`ReaderActivityDestinationSmokeTest.kt`**: added a private top-level `typealias
+  ReaderComposeTestRule = AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>,
+  ReaderActivity>` and used it at the one extension-function declaration whose original
+  127-character receiver-type signature ktlint could not auto-wrap (generic receiver types are not
+  something ktlint's formatter breaks across lines) — the file's only other use of the same
+  generic (line 335, a lambda parameter type) was left alone, since it was not the line ktlint
+  flagged and editing it was not needed to unblock the task.
+
+**Left open / not done — reported, not fixed (outside this package's file ownership):**
+- **`:app:detekt` fails independently of anything in this package**, on
+  `app/src/main/kotlin/org/ort/app/ui/screens/StationScreen.kt:60` (`LongParameterList` — 10
+  params, threshold 9) and `StationPatternScreen.kt:157`/`173` (`ForEachOnRange` ×2) — both from
+  the same `ui-conformance WP8: stations validator fixes` merge that brought in the detekt
+  exclusion-bug fix. `:app:detekt`'s own report (`app/build/reports/detekt/detekt.md`) confirms
+  real analysis (263 kt files, 2,047 functions) with these as the only 3 findings — none in any
+  file this package owns.
+- **`:pipeline:detekt` also fails independently**, on `pipeline/src/main/kotlin/org/ort/pipeline/
+  reprocess/ReprocessRunner.kt` (`LongParameterList`, one `MaxLineLength`) and
+  `ReprocessRunnerTest.kt`/`ReprocessStatusTest.kt` (six more `MaxLineLength` lines) — a
+  `reprocess` package `:pipeline` gained in the same merge, entirely outside `:lexicon`/`:app`.
+  This is what made `.\gradlew.bat build dependencyRules platformGuards` fail as a single
+  top-level command; the gate below is reported per-task instead, so this package's own scope is
+  verified clean without either unrelated package's debt masking or being conflated with it.
+- Both gaps are new, real detekt findings (not vacuous) surfaced by the same exclusion-bug fix
+  that surfaced this package's own four issues — pre-existing debt in code this package did not
+  write, reported here rather than fixed, per file-ownership discipline (another builder's
+  in-progress work).
+
+**Verified:**
+- `.\gradlew.bat :lexicon:ktlintFormat :app:ktlintFormat` — `BUILD SUCCESSFUL` (after the
+  `ReaderActivityDestinationSmokeTest.kt` fix above; the first attempt failed on that
+  pre-existing, unrelated line, confirming ktlintFormat could not silently skip it).
+- `.\gradlew.bat :lexicon:detekt` — `BUILD SUCCESSFUL`; `lexicon/build/reports/detekt/detekt.md`:
+  **42 kt files**, 175 functions, 117 classes analysed, **0 code smells** (was 4: 1 `LongMethod` +
+  3 `MaxLineLength`) — confirms real, non-vacuous analysis per the coordinator's ask.
+  `:app:detekt` — fails, but only on the two unrelated files above (`app/build/reports/detekt/
+  detekt.md`: **263 kt files**, 2,047 functions analysed, 3 findings, none in this package's
+  files) — real analysis, not vacuous, of files this package does not own.
+  `:app:ktlintCheck`/`:lexicon:ktlintCheck` (run via `:lexicon:build`, see below) — clean.
+- `.\gradlew.bat :lexicon:build :app:testDebugUnitTest --tests "org.ort.lexicon.import.*" --tests "org.ort.app.debug.*" --tests "org.ort.app.ui.data.ModelsController*"`
+  — `BUILD SUCCESSFUL in 1m 16s`; `:lexicon:build` (compile + detekt + ktlintCheck + test) green;
+  every targeted `:app` test still `PASSED` after the `validate()` refactor — 10/10 in
+  `LexiconImportValidatorTest`, 4/4 in `LexiconCorruptScenarioTest`, 4/4 in
+  `ModelsControllerLexiconTest`, all pre-existing `ScenariosTest`/`ModelsControllerTest` cases
+  unchanged and green (`ScenariosTest` also picked up new unrelated cases from the same merge,
+  e.g. `R_230`/`R_231` recovery-announcer tests — not this package's, left as found, all passing).
+- `.\gradlew.bat dependencyRules platformGuards` (standalone, not through `build`) —
+  `BUILD SUCCESSFUL`: `dependencyRules: OK` (17 modules checked, `:app -> :core, :data, :lexicon,
+  :net, :pipeline` confirmed), `platformGuards: OK`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` — `185 covered of 419` (up from 184).
+- `.\gradlew.bat coverageMatrixCheck` — up to date (185/419), `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat build dependencyRules platformGuards` (single top-level command, as originally
+  specified) — **FAILS**, at `:pipeline:detekt` (see "Left open" above) before even reaching
+  `:app:detekt`'s own unrelated failure; not a regression from any file in this commit, per the
+  per-task verification above.
+
+
+
+## 2026-09-08 (ui-conformance WP11d follow-up: lint)
+
+### (pending) — ui-conformance WP11d · lint
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessRunner.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/reprocess/{ReprocessRunnerTest,ReprocessStatusTest}.kt`
+— the same three files WP11d owns, no others. Prompted by the coordinator: WP11d's own worktree
+ran against a build-side lint-exclusion bug that made its gate vacuous (fixed on main
+independently — see that entry, "build: lint exclusion is relative to the project root"); once
+real, main's gate found real debt in these three files. No `:data`/`:app` DI change.
+
+**Requirements/ACs:** none new — a lint-only follow-up to R-091/R-143 (WP11d).
+
+**Constitution check.** Principle II (test-backed change): every fix here is style/structure only
+— no production behaviour changed — verified by re-running WP11d's own 11
+`org.ort.pipeline.reprocess.*` tests unchanged and green after each edit, not just trusting the
+refactor. Principle VII (structural boundaries): folding the tuning knobs into `ReprocessTuning`
+is itself a small instance of the constitution's own preference for a named, structural grouping
+over an ad hoc long parameter list.
+
+**What changed:**
+- **`ReprocessRunner`'s constructor had 11 parameters** (detekt's `LongParameterList`, threshold
+  10). Folded the four pure tuning knobs — `yieldPollIntervalMillis`, `deadlineMillis`,
+  `drainBatchLimit`, `maxDrainIterationsPerItem` — into a new `ReprocessTuning` data class
+  (defaults unchanged, same values as before), leaving the constructor at 8 parameters
+  (`db, filesDir, clock, runId, currentTier, passFor, isCaptureBusy, tuning`). `ReprocessRunnerTest`'s
+  one call site that overrode a tuning value (`FR_REP_6_reprocess_pauses_while_capture_is_busy`)
+  updated to `tuning = ReprocessTuning(yieldPollIntervalMillis = 10L)`.
+- **`MaxLineLength` at `ReprocessRunner.kt:117/177`** — both resolved incidentally by the
+  `ReprocessTuning` refactor reshaping those lines; no separate wrap needed.
+- **`MaxLineLength` at `ReprocessRunnerTest.kt:101/172/178/227/228/254` and `ReprocessStatusTest.kt:8`**
+  — fixed by `:pipeline:ktlintFormat` (auto-wrapped argument lists) plus two manual KDoc
+  reflows (`ktlintFormat` does not rewrap comments) for the two single-line KDoc comments that
+  were themselves the long lines.
+- **Confirmed, not fixed: pre-existing debt in other packages' files.** `:app:ktlintCheck` and the
+  full `./gradlew build` both still fail — `:app:detekt` (12 issues: `StationScreen.kt`,
+  `StationPatternScreen.kt`, `FrequencyScreen.kt`, `ModelsViewData.kt`, `ScenariosTest.kt`,
+  `ModelsControllerLexiconTest.kt`, `ReaderActivityDestinationSmokeTest.kt`) and `:lexicon:detekt`
+  (16 issues: `LexiconImportValidator.kt`, `LexiconImportFixtures.kt`,
+  `LexiconImportValidatorTest.kt`) — all in files `git log -1 --` traces to other, already-merged
+  work packages (WP8 stations, WP10 models, the lexicon-import package, a navigation smoke test),
+  none touched here (ownership is absolute). `:app`'s own `ktlintMainSourceSetCheck`/
+  `ktlintTestSourceSetCheck` reports are empty — confirming `RealImproveRunner.kt`/
+  `RealImproveRunnerTest.kt` carry no debt of their own.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:ktlintFormat` then `.\gradlew.bat :pipeline:detekt` — BUILD SUCCESSFUL,
+  0 findings (`detekt.md`: "74 kt files", "0 number of total code smells", "Findings (0)" — a real,
+  non-vacuous file count, confirming the build-side exclusion bug the coordinator named is
+  genuinely fixed on this worktree now).
+- `.\gradlew.bat :pipeline:ktlintCheck` — BUILD SUCCESSFUL (main + test source sets both clean).
+- `.\gradlew.bat :app:ktlintCheck` — FAILS, but only on `FrequencyChangeFixtures.kt` (WP8, `git log`
+  traced, not this package's file); `RealImproveRunner.kt`/`RealImproveRunnerTest.kt`'s own reports
+  are empty.
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` — 11 tests,
+  all green, unchanged behaviour after the `ReprocessTuning` refactor.
+- `.\gradlew.bat :pipeline:build :app:build dependencyRules platformGuards` — `dependencyRules: OK`,
+  `platformGuards: OK`, every `:pipeline` task (compile, test, detekt, ktlint, lint) green; overall
+  FAILS at `:app:detekt` on the pre-existing debt named above, none of it in this package's files.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 185 covered (unaffected by a lint-only
+  change; the +1 over WP11d's own entry is another package's landed work, not this one's).
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date. `results/coverage-matrix.md`
+  regenerated identically to what was already committed — no diff to stage.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- **The full `./gradlew build` gate is not green** — blocked by `:app:detekt` (12 issues) and
+  `:lexicon:detekt` (16 issues), both entirely in other work packages' files (confirmed via `git
+  log -1 --` on each), not this package's to fix under file-ownership rules. Flagged for the lead
+  to route to the owning packages, the same way this package's own earlier reports have flagged
+  gaps found outside their row rather than silently absorbing them.---
+
+## 2026-09-08 (ui-conformance WP9 · pass-2 fixes: ghost action, route types, InputStatus-driven verify, font-scale footer and rows, setup-verified scenario)
+
+### (pending) — ui-conformance WP9 · pass-2 fixes: ghost action, route types, InputStatus-driven verify, font-scale footer and rows, setup-verified scenario
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**`, their tests, and — new this round, for
+R-227 only — `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` and its test, plus
+`results/ui-audit/README.md` (documenting the new scenario, explicitly permitted this round).
+`main` fast-forward merged first (`git merge --ff-only main`, this branch already an ancestor, at
+`0ffb504` — "ui-conformance · V1 Setup pass 2 at 7293009: R-120..R-127 closed on device;
+R-220..R-227 filed"); no rebase, no stash. The V1 Setup validator's **second pass, on a real
+device** (not Robolectric), confirmed every one of round 3's six fixes (R-120..R-127, including
+R-126/R-127 which this row never touched) and filed eight smaller follow-ups (register.md
+R-220..R-227). Every screenshot cited was read (the `Read` tool, on the PNGs) before any fix —
+`results/ui-audit/setup/S02b-mic-denied.png`, `S06-route-mismatch-pass2.png`, `S04-input-pass2.png`,
+`S07-level-pass2@2x.png`, `S12-ready-pass2@2x.png`, `results/ui-audit/input-verified/
+S05-resampler-check.png`.
+
+**Requirements/ACs:** R-220 (ghost duplicate action), R-081/R-221/R-222 (S04 icon alignment, S06
+type loss), R-223 (S02b/S06 back chevron), FR-CAP-2a/R-113/R-224 (S05 reads `InputStatus`), AC-63/
+R-225 (S07 footer font scale), AC-63/R-226 (S12 rows), R-227 (a `setup-verified` debug scenario).
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) shaped the two hardest fixes
+  this round: R-220's root cause was traced to *this row's own* redundant mechanism, not a shared
+  component (see below) — removed rather than patched around; R-221's generic device icon and
+  R-226's marker-beside-`KeyValueRow` both compose around a WP2 shared component from within this
+  row's own files rather than editing `Controls.kt`/`Rows.kt`. Principle I (Uncertainty Is Content)
+  governs R-222 (the chosen device's real type must not silently degrade to "Unknown" between S04
+  and S06) and R-227's own doc comment (naming exactly what the new scenario does and does not
+  seed — real `SharedPreferences`, never the two OS permissions).
+- **R-220 (design) — the ghost duplicate action, root-caused, not papered over.** Traced to round
+  3's own R-123 "fix": a same-frame state-write-back-into-a-sibling's-measurement pattern
+  (`onGloballyPositioned` measuring the bottom bar's real height into a `mutableIntStateOf`, fed
+  back as a `Spacer` inside the *same* recomposition's scrollable sibling) — exactly the class of
+  bug Compose's own docs warn `onGloballyPositioned` can cause. Verified empirically before
+  concluding this: a scratch Robolectric test counted exactly one "Check again" node in the
+  semantics tree (Robolectric's simplified renderer does not reproduce the visible artifact, but
+  confirmed there is no *structural* duplicate composition either), then the mechanism was removed
+  from both `SetupScaffold.kt` and `WelcomeScreen.kt` and `SetupScaffoldTest`'s/`WelcomeScreenTest`'s
+  own R-123 tests (scroll to the last item, assert displayed) were re-run against the plain
+  `weight(1f)` + `verticalScroll` layout alone — still green, proving `Column`'s own layout
+  algorithm (an unweighted sibling is always measured for its real height *first*; the weighted
+  sibling gets exactly what is left, at any font scale, no extra machinery needed) already solved
+  what R-123 set out to fix, and the removed mechanism was solving nothing but creating R-220.
+- **R-221 (design) — a generic device icon on unrecognised-type rows.** `RadioRow`/`OrtIcons` have
+  no such icon and no slot to add one without editing WP2's files (confirmed by reading both before
+  writing this — `OrtIcons`' own `buildIcon`/`strokePath` helpers are `private`) — a small, local,
+  guide-§7-compliant (24-unit viewBox, round caps/joins, tinted by the caller) `ImageVector` is
+  built directly in `InputRouteEnumerator.kt` (`DeviceTypeNaming.genericDevice`) instead: a plain
+  rounded-rectangle-with-two-lines outline that never implies any one specific device type.
+- **R-222 (design) — the chosen device's type carried from S04 to S06.** `InputRouteOption` gained
+  a `typeLabel: String` field (the same real, resolved name `subtitle` is already built from);
+  `SetupActivity.RenderRouteMismatch` looks it up from S04's own still-held route list by id and
+  passes it into `RouteMismatchScreen` as `selectedTypeLabel`, replacing a *re-derivation* from
+  `RouteCheckState.Mismatch.selected`'s own coarse `AudioDeviceKind` (which is exactly where the
+  richness was lost — a telephony route chosen at S04 re-read as bare `UNKNOWN`, printing
+  "(Unknown)" instead of "(Telephony)", confirmed against the validator's own screenshot). The
+  *routed* device (almost always the already-correctly-typed built-in mic) still resolves through
+  the existing `describeDevice`/`AudioDeviceKind` path — the loss was one-sided.
+- **R-223 (design) — the header chevron on S02b/S06.** Both `Setup-Mic-Denied.dc.html` and
+  `Setup-Route-Mismatch.dc.html` draw it (confirmed by reading both boards before writing this) —
+  **rendered, not exempted in `design/design-intent.md`**, the choice this row was asked to make
+  explicitly. `MicrophoneDeniedScreen` wires it to `SetupActivity`'s ordinary back-stack `onBack`
+  (the same mechanism every non-halted screen already uses); `RouteMismatchScreen` wires it to the
+  existing `onChooseAnotherInput` instead of the generic back-stack pop — the back-stack entry
+  immediately under S06 is `VERIFY` with a still-`Mismatch` `verifyState`, which would redisplay a
+  stale, all-unfilled check list rather than anything useful, so the one action that actually
+  leaves this halt correctly is reused rather than a technically-present but confusing generic back.
+- **R-224 (spec) — `RouteCheck` reads `InputStatus` for checks 3 and 4, not only check 4.** Before:
+  the third check (`SIGNAL`) always ran its own real, up-to-30s raw-audio listening loop even when
+  `InputStatus` already reported the exact chosen device open, route-verified, with a real resampler
+  identity — against the validator's own `input-verified` scenario (a live capture session already
+  has the device open, feeding nothing into this check's own separate raw read loop) that timed out
+  every time despite the pipeline already knowing the route was good, confirmed on
+  `input-verified/S05-resampler-check.png`. `RealRouteCheck.run` now checks a new
+  `publishedVerificationFor(selected)` immediately after the second check passes: a real
+  `InputStatus.State.Opened` for this exact device (matched by id) with `routeVerified = true`
+  short-circuits stages three and four straight to `Passed` with the pipeline's own `resamplerId` —
+  never re-probing a device a live session already has open. `routeVerified` alone gates the
+  short-circuit (proven by a new test: an `Opened`-but-not-yet-`routeVerified` `InputStatus` still
+  runs the real probe) — a device merely open, not yet verified, must never be borrowed as if it
+  were a pass. The fresh-install, first-run path (nothing published yet) is otherwise unchanged.
+- **R-225 (spec) — S07's footer facts wrap at font scale 2.0.** The three facts ("noise −72",
+  "target −18 to −12", "clip 0") used to sit in a `Row(Arrangement.SpaceBetween)`, which never wraps
+  — at font scale 2.0 they collapsed into one concatenated, unreadable run (confirmed on
+  `setup/S07-level-pass2@2x.png`). A new `LevelFooterFacts` switches to a `Column` (each fact its
+  own line) at or above a `1.5f` font-scale threshold (the smallest scale confirmed broken; below it,
+  the original `Row` is unchanged) — chosen over `FlowRow` (available in this project's Compose BOM,
+  but unused anywhere in the codebase so far) to avoid introducing an untested new layout pattern for
+  one row, matching the brief's own "or a `Column` at large scale" alternative.
+- **R-226 (spec) — S12's rows on WP2's `KeyValueRow`.** The hand-rolled row used a *fixed* 82dp
+  label column (`Modifier.size(width = 82.dp, height = 18.dp)`), which at font scale 2.0 both
+  truncated labels ("Input" → "Inout", "Overnight" → "Overni") and collided with the leading marker
+  dot — confirmed on `setup/S12-ready-pass2@2x.png`. `KeyValueRow`'s own label column has no fixed
+  ceiling since its R-152 fix (only a 96dp floor — that component's own doc comment names the
+  identical bug class, "Stations5" colliding at large scale). `KeyValueRow` has no leading-marker
+  slot, so the marker dot is composed as a sibling in front of it, the same pattern this row already
+  used for R-122's device-type icons on `InputScreen` — never editing `Rows.kt` and never
+  hand-rolling a second full row component.
+- **R-227 (process) — a `setup-verified` debug scenario.** Before this, S07/S12 had no sanctioned
+  path on an emulator at all: `SetupStateMachine.stepFor` resumes at `SetupStep.INPUT` until
+  `SetupStore.inputVerified` is real, and that can only become real through S05's own 30 s
+  raw-signal listen actually hearing something — never true on a silent virtual mic — so the
+  validator resorted to editing `SharedPreferences` via `run-as`. The new scenario seeds the real
+  `org.ort.app.setup` preferences file through the real `SharedPreferencesSetupStore` class (never
+  duplicated key names) — input verified, level in band, overnight seen, `RadioChoice.NONE` — so
+  `stepFor` resumes at `SetupStep.READY` (S12) on its own, `setupComplete` deliberately left
+  `false`. S07 is then one real, sanctioned tap away (S12's own `Fix` on the Level row) or directly
+  reachable via `SetupActivity.EXTRA_STEP=LEVEL` (WP9 round 3's own mechanism — `LEVEL`'s ordinal
+  sits before the natural resume point, `READY`, so the ordinal gate honors the request).
+  **Cannot and does not seed the two OS permissions** `stepFor` also requires (`RECORD_AUDIO`/
+  `POST_NOTIFICATIONS` are live `PackageManager` state, confirmed by reading `stepFor` before
+  writing this) — `results/ui-audit/README.md`'s new "Reaching S07/S12" section documents granting
+  both via `adb shell pm grant`, exactly as `install.ps1` already does for every other scenario.
+- **S12's `Level` row change from round 4 is unaffected** by the `KeyValueRow` move — `levelRow`'s
+  own peak-presence-gated `ok` derivation is untouched; only the rendering shell changed.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.debug.ScenariosTest"` — **164 passing**, zero failures. New/updated tests by name:
+  `MicrophoneScreensTest.R_220_exactly_one_Check_again_renders…`/`R_223_the_back_chevron_renders…`,
+  `RouteMismatchScreenTest.R_222_the_chosen_device's_richer_type_label…`/
+  `R_223_the_back_chevron_renders…`, `InputRouteEnumeratorTest.R_221_an_unrecognised_device_type…`/
+  `R_222_typeLabel_carries…`, `RouteCheckTest.R_224_a_route-verified_InputStatus_skips…`/
+  `R_224_an_InputStatus_that_is_open_but_not_yet_route-verified…`, `LevelScreenTest.R_225_at_normal…`/
+  `R_225_at_font_scale_2_0…`, `ReadyScreenTest.R_226_the_full_label_renders…`,
+  `ScenariosTest.R_227_setup-verified_seeds_SetupStore…`/`R_227_setup-verified_does_not_and_cannot…`.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **948 PASSED, 0 failed**, BUILD
+  SUCCESSFUL (up from round 4's 817 — the larger jump is `main`'s own incoming WP10/other-WP work
+  from this merge, not solely this row's own ~20 new tests).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — clean, no fixes needed this round.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` now 183 of 419 covered (up from 181 — R-224/
+  R-227's new named-id tests).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- **R-220's root cause is a reasoned diagnosis, not a device-confirmed one.** The scratch test
+  proved no *structural* semantics-tree duplicate exists either before or after the fix; it cannot
+  prove what a real device's compositor rendered. The fix removes the one mechanism in this row's
+  own code that matches Compose's own documented pitfall for this exact symptom class, and every
+  existing R-123 test still passes without it — the next validator pass on a real device is what
+  actually confirms or refutes this.
+- **`InputRouteEnumerator`'s richer typing remains real-`AudioManager`-only** (round 4's own,
+  unchanged limitation) — `DeviceTypeNaming.genericDevice`'s icon is exercised in unit tests only
+  through the `forKind`/`UNKNOWN` fallback path, never `forAndroidType`'s `else` branch against a
+  real device.
+- **`setup-verified` seeds preferences only** — it does not drive a real capture tick or grant
+  permissions; both limitations are stated in the scenario's own doc comment and in
+  `results/ui-audit/README.md`.
+- Every register row this entry closes (R-220..R-227) remains Robolectric-verified only, per this
+  program's own rule; the next validator pass on the real device is what actually confirms them.
+
 ## 2026-09-08 (ui-conformance WP11d)
 
 ### (pending) — ui-conformance WP11d · reprocessing engine: re-run passes at the current tier, pausable, capture-safe
@@ -679,7 +1216,6 @@ package's files touched.
 - **The register/coordinator's own tracking of this finding is outside this package** — this entry
   records it for this package's own record; flagging it to whoever owns `buildSrc` is the
   coordinator's call.
-
 ---
 
 ## 2026-09-08 (ui-conformance WP10 round 4: System validator fixes across settings, improve, sessions, digest)
@@ -1013,6 +1549,74 @@ legend wording).
   hours the board's own mockup happens to show.
 
 ---
+
+## 2026-09-08 (ui-conformance WP4, round seven: lint)
+
+### (pending) — ui-conformance WP4 · lint
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/ScenariosTest.kt` only — this package's own row.
+Seventh addendum to the WP4 entries below, after merging `main` (`git merge --ff-only main`,
+fast-forwarded cleanly onto `8fde47e`, "ui-conformance · coverage matrix regenerated on main after
+lexicon, WP4 and WP11d merges"; confirmed `HEAD` was an ancestor first; no rebase, no stash).
+
+**Requirements/ACs:** none new — a lint-only fix on round six's own test file.
+
+**What changed:**
+- **`ScenariosTest.kt:467`'s `assertTrue(...)` call, over 120 characters, now wraps** the same way
+  `.\gradlew.bat :app:ktlintFormat` auto-corrects it (confirmed by running the formatter and reading
+  its diff before accepting it — one file, 7 net lines, no logic change, only the call's own argument
+  layout). No other line in the file needs a manual wrap; ktlint's format pass fixed this one
+  automatically (it is auto-correctable, unlike the `ReaderActivityDestinationSmokeTest.kt:404` line
+  the same run reported as "cannot be auto-corrected" — a different package's file, untouched here).
+- **Confirmed real file counts, per the coordinator's ask, rather than trusting the tool's own
+  summary line.** `:app:ktlintFormat` actually reformatted seven files this run, not one:
+  `ScenariosTest.kt` (this package's row) plus `FrequencyChangeFixtures.kt`, `ModelsViewData.kt`,
+  `StationPolling.kt`, `FrequencyScreen.kt`, `StationPatternScreen.kt`, and
+  `ModelsControllerLexiconTest.kt` — all six outside this package's own file ownership, pre-existing
+  formatting drift in files that landed via this round's `main` merge (the "lexicon, WP4 and WP11d
+  merges" the merge commit itself names), not something this round's work touched or caused.
+  `git checkout --` reverted those six; only `ScenariosTest.kt`'s own hunk is in this commit.
+- **`.\gradlew.bat :app:detekt` still fails after this fix — 11 findings remain, none in a file this
+  package owns.** `StationScreen.kt` (`LongParameterList`), `StationPatternScreen.kt` (two
+  `ForEachOnRange`, three `MaxLineLength`), `ModelsViewData.kt`/`FrequencyScreen.kt`/
+  `ModelsControllerLexiconTest.kt`/`ReaderActivityDestinationSmokeTest.kt` (`MaxLineLength`) — all
+  six are, like the ktlint drift above, pre-existing in files this round's `main` merge brought in
+  from other packages' work, confirmed by re-running `detekt` immediately after this file's own fix
+  landed and finding `ScenariosTest.kt` no longer named. The full `.\gradlew.bat build dependencyRules
+  platformGuards` also surfaced `:lexicon:detekt` (16 findings) and `:pipeline:detekt` (10, in the
+  new `reprocess/` files) failing the same way — three different modules' pre-existing lint debt,
+  none of it this package's row (`:app`'s own `ui/**`/`debug/**`), left for their owning packages
+  rather than fixed here (AGENTS.md: touch only the files a prompt names).
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded cleanly onto `8fde47e`, confirmed `HEAD` was an
+  ancestor first; no rebase, no stash.
+- `.\gradlew.bat :app:ktlintFormat` — reformatted seven files (see above); the six outside this
+  package's row reverted with `git checkout --` before anything was staged.
+- `.\gradlew.bat :app:detekt` (`--rerun`) — still **FAILED**, 11 findings, none naming
+  `ScenariosTest.kt` (confirmed: `Select-String "ScenariosTest"` against the run's own output
+  matched nothing) — all 11 are pre-existing, out-of-row findings named above.
+- `.\gradlew.bat build dependencyRules platformGuards` — **FAILED**: `:app:detekt` (11, as above),
+  `:lexicon:detekt` (16), `:pipeline:detekt` (10) — three modules' pre-existing lint debt from this
+  round's merge, none of it in this package's row; everything else in the aggregate `build` that
+  does not depend on `detekt` (compilation, `:app:test`, `:app:lint`) reached green before the
+  `detekt` tasks failed the overall run.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 185 covered** (up from round six's 183 — other packages'
+  `main`-merged work, not this round's own); `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` — **975 of 975 passing**, zero failures (up from round
+  six's 950 — other packages' `main`-merged tests). No test changed shape this round; the fix is
+  formatting-only.
+
+**Left open / not done:**
+- **The 11 `:app:detekt`, 16 `:lexicon:detekt` and 10 `:pipeline:detekt` findings above are real and
+  unfixed** — reported to the coordinator so each owning package can take its own row; none are
+  this package's to fix, and none existed in anything this round's own commit touches.
+- **`.\gradlew.bat build dependencyRules platformGuards` does not reach BUILD SUCCESSFUL** for the
+  reason immediately above — every other gate command this round ran does.
 
 ## 2026-09-08 (ui-conformance WP4, round six: recovery scenarios rig-reconnected and storage-fine; capture status respects banner height)
 
@@ -3685,6 +4289,92 @@ conflicting with the builders who own `:app`.
 
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
+### (pending) — ui-conformance WP8 · station identity discoverable; shared day-of-week grid
+
+**Scope:** `:app` `ui/screens/StationScreen.kt`, `ui/screens/StationPatternScreen.kt`,
+`ui/data/StationsAndFrequencies.kt`; `ui/screens/StationScreenTest.kt`,
+`ui/screens/StationPatternScreenTest.kt`. Also a lint-debt cleanup across this package's own files
+flagged after main's `buildSrc` fix made `:app:detekt`/`:app:ktlintCheck` real again on this
+worktree. Addendum to this package's own WP8 entry directly below, filed against register R-192
+(Detail validator).
+
+**Requirements/ACs:** R-192 (`Station`, `Station-Identity`, design), R-209 (grid orientation,
+superseded by WP2's own fix — see below).
+
+**What changed:**
+
+*Constitution Check.* Principle VII (Boundaries Are Structural) cuts both ways this round: R-192's
+fix is a small, targeted exception to "reuse the shared header" (the shared `DrillInHeader` has no
+way to give its kebab a per-screen description/testTag, so this screen draws its own header rather
+than leave the kebab undiscoverable); the DayOfWeekGrid switch is the opposite move — WP2 has since
+built the real thing, so this package's own look-alike is deleted rather than kept.
+
+- **R-192 (design, register): the header kebab is discoverable.** `Station.dc.html` draws no
+  explicit Identity action, section preview or row anywhere in its body — checked directly against
+  the artboard. The kebab in the header is the *only* affordance, and the shared `DrillInHeader`
+  gives it one hardcoded description ("More") and no `testTag` at all, with no parameter to
+  override either per screen. New `StationDetailHeader` (this screen's own file) matches
+  `DrillInHeader`'s exact layout and back-icon behaviour but gives its kebab a real, specific
+  `contentDescription = "Station identity"` and `testTag("station-identity-open")`. Worth routing
+  to WP2 as a `kebabDescription`/`kebabTestTag` parameter on the shared component if another
+  screen's kebab needs the same treatment — flagged, not built here, since this round's brief
+  scoped the fix to Station detail only.
+- **R-209 superseded — switched back to the shared `DayOfWeekGrid`.** WP2 has since merged
+  `DayOfWeekGrid(orientation = DayOfWeekGridOrientation.DaysAsRows)` with the exact board
+  orientation (days as rows, hour axis along the top) and legend wording ("listened, not heard" /
+  "heard often" / "not listening") this package's own `StationHourByDayGrid` hand-rolled last
+  round. Deleted this package's whole look-alike (`StationHourByDayGrid`, `HourLabelCell`,
+  `HourByDayCell`, `StationHourByDayLegend`, `LegendDot`, `dayAbbreviation`, and their supporting
+  constants) and switched `StationPatternScreen` to the shared component — guide's own rule: never
+  hand-roll a look-alike of a component that exists. **Nothing this package's grid did is missing
+  from the shared one** — same three-state cells, same hatch, same legend wording, same axis
+  labelling; the only difference is `HourByDayActivityCell` (this package's own bucket, local-hour)
+  needing a one-line `toDayHourCells()` mapping into the shared grid's `DayHourCell` shape, which
+  stays.
+- **Lint debt cleanup** (found once `:app:detekt`/`:app:ktlintCheck` started reporting real results
+  again on this worktree — see the entry below's own "Left open" for why they were not before):
+  - `StationsListScreen` had grown to 10 parameters (`LongParameterList`, threshold 9). Folded
+    `stations`/`unidentified`/`heardAllTimeCount`/`heardTonightCount` into a new
+    `StationsListState` holder (`ui/data/StationsAndFrequencies.kt`, alongside this package's other
+    list-row view states — not the screen file itself, which triggered detekt's own
+    `MatchingDeclarationName` the first time this was tried there). `StationsContent`/every test
+    call site updated to build one `StationsListState` rather than pass the four fields loose.
+  - `StationPatternScreen.kt`'s hand-rolled grid (removed above) was itself the source of the
+    `ForEachOnRange`/`MaxLineLength`/argument-wrapping findings main's gate reported — gone with
+    it, not patched.
+  - `FrequencyScreen.kt`/`StationPolling.kt`/`FrequencyChangeFixtures.kt`: `ktlintFormat` re-wrapped
+    the remaining long argument lists and blank-line/import issues; verified by re-running
+    `detekt`/`ktlintCheck` clean afterward, not merely assumed fixed.
+  - `ktlintFormat` also reformatted one file this package does not own
+    (`SearchContentTest.kt`, WP7's) as unrelated collateral from running the module-wide task —
+    reverted with `git checkout --` before committing, so this commit touches only this package's
+    own files.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded to `125ad7a` (WP8's own prior batch, R-206–R-216,
+  merged back in, plus main's `buildSrc` detekt fix and other packages' work).
+- `.\gradlew.bat :app:ktlintFormat :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL, **real**
+  analysis (confirmed: `:app:detekt`/`:app:ktlintMainSourceSetCheck`/`:app:ktlintTestSourceSetCheck`
+  actually executed against real files this time, not `NO-SOURCE` — the report counts are real, not
+  assumed clean). Zero findings after the fixes above.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — BUILD SUCCESSFUL, 962 tests, 0
+  failed, 0 ignored (up from 900; new: `R_192 the header kebab is discoverable as Station identity
+  and opens it`; `R_209`'s own test updated to assert the shared grid's real content description).
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL; `:app:detekt`/every
+  `:app:ktlint*Check` task ran for real inside this gate too (confirmed in the task list, not just
+  the top-level result).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` unchanged.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- The `kebabDescription`/`kebabTestTag` parameter on WP2's shared `DrillInHeader` — flagged above,
+  not built (out of this package's file ownership and not the scope this round's brief gave it).
+- `results/ui-audit/register.md` R-192 marked fixed by this package (see the row itself for the
+  detail).
+
 ### (pending) — ui-conformance WP8 · stations validator fixes: real dominant state, board headers and facts, grid orientation, plurals, frequency facts and change scenario
 
 **Scope:** `:app` `ui/data/StationPolling.kt`, `ui/data/StationsAndFrequencies.kt`,
@@ -6047,6 +6737,260 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
+
+### (pending) — ui-conformance WP3 · destination smoke test runs in its own JVM; Settings single header
+
+**Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`, `ReaderActivityDestinationSmokeTest.kt`),
+`app/build.gradle.kts` (lead-approved, this round only), `results/ui-audit/README.md` (its own gate
+list, as asked), `CHANGELOG.md`. Fifth reconciliation addendum, after `git merge main` — **not**
+`--ff-only`: this branch's own prior commit (`4a8513906a374b11b527bef64b47890391da97c5`, the previous
+round's) had not yet been merged into `main` by the lead when this round started, and `main` had
+independently advanced (WP5's Log fix among it) — `git merge --ff-only main` failed outright
+("Diverging branches can't be fast-forwarded"), confirmed by running it, not assumed. Resolved with
+a real, non-destructive merge commit (`git merge main`, no `--no-ff` needed — a fast-forward was
+never possible either way) rather than a rebase, which the standing rule forbids regardless; the
+merge auto-resolved with no conflicts (`git status` clean, `git log` shows the full combined history).
+`f25b4e515ddda7ce0a6465b3225b1003c8beeee8` is that merge commit.
+
+**Requirements/ACs:** R-129 (Log's `rememberSaveable` crash — now fixed on `main` by WP5; this
+round's own class confirms it live for the first time), R-130 (System validator's Settings
+single-header fix — this round's merge surfaced a real conflict between it and WP3's own earlier,
+now-superseded fix for the identical finding; resolved in this file, see below).
+
+**What changed:**
+
+- **Constitution Check.** Principle I: the merge's real conflict (two independent fixes for the same
+  double-header defect, landed from opposite sides, which combined into zero headers rather than
+  one) was caught by this class's own `recreate()` case timing out — not asserted fixed without
+  re-running the test that would catch it wrong. Principle II: `smokeTestDebugUnitTest` is not a
+  weaker substitute gate — it is the exact same test class, the exact same assertions, run three
+  times over (below) with the same clean result each time, isolated only in *where* it runs.
+
+- **`git merge main` (not `--ff-only`) surfaced a real regression, fixed in this round's own file.**
+  `main`'s System-validator round independently fixed R-130 (`Settings` double-header) by having
+  `SettingsRootScreen.kt` (WP10's file) stop drawing its own `ScreenHeader` and stating outright that
+  `OrtNavHost` now always renders one for `SETTINGS` — the *opposite* direction from this package's
+  own prior-round fix for the identical finding (`OrtNavHost.kt` skipping its header for `SETTINGS`,
+  on the assumption `SettingsRootScreen` drew its own). Merged together, `SETTINGS` had **zero**
+  headers: `R_129_SETTINGS_composes_and_survives_recreation`'s own `recreate()` assertion caught it,
+  timing out waiting for "Open navigation" to ever exist again after `recreate()` rebuilt the
+  `Activity` from a fresh, non-`rememberSaveable` `SettingsContent` root state. Fixed by reverting
+  this package's own now-superseded half of the fix — `OrtNavHost.kt`'s `NavHostBody` renders its
+  header for `SETTINGS` again, unconditionally, like every other non-drill-in destination — leaving
+  `ui/settings/**`'s own, later, more specific fix as the sole source of truth. No edit to
+  `ui/settings/**` made or needed.
+- Two of `ReaderActivityDestinationSmokeTest`'s own `waitForIdle()`-then-`assertIsDisplayed()` call
+  sites (the `SETTINGS` case, before and after `recreate()`) were changed to the same
+  `waitUntilContentDescriptionExists(...)` polling helper every other async case in this class
+  already uses — `SettingsContent`'s own root state is not `rememberSaveable`, so every fresh
+  composition (`recreate()` included) shows `LoadingSettings()` first while its own `LaunchedEffect`
+  reads `SettingsPolling.root` asynchronously; an immediate assertion right after `waitForIdle()` was
+  occasionally too early even before the header regression above, once isolated and re-run enough
+  times to notice.
+
+- **`app/build.gradle.kts` (lead-approved edit to this file, this round only): `ReaderActivityDestinationSmokeTest`
+  now runs as its own Gradle `Test` task, `smokeTestDebugUnitTest`, excluded from `testDebugUnitTest`.**
+  A different `Test` task is always a fresh JVM worker process, never one shared with another task's
+  own run, which is what actually fixes the cross-test `AppNotIdleException` cascade the prior round
+  found and only partially mitigated — not the code-level mitigations that round landed (kept anyway,
+  see below). `smokeTestDebugUnitTest` copies `testDebugUnitTest`'s `classpath`/`testClassesDirs` and,
+  critically, its `jvmArgumentProviders` (confirmed, by inspecting the configured task before writing
+  this, to be exactly how modern AGP wires Robolectric's own resource/manifest paths into a unit-test
+  task) — copied wholesale in an `afterEvaluate` block (AGP does not create `testDebugUnitTest` until
+  its own variant-configuration callbacks run; a plain top-level `tasks.named("testDebugUnitTest")`
+  fails with "Task ... not found" — found by running it, not by inspection), rather than reimplemented,
+  so it is genuinely "the same type/config," not a same-looking task that silently cannot find its own
+  resources. `forkEvery = 1` is an extra guard for if this task ever grows a second class, not what
+  does the isolating — the separate task itself is. Both `check` and `build` depend on it, so
+  `./gradlew build` — this repo's own top-level gate command — still runs every one of this class's
+  cases. `results/ui-audit/README.md` gained a short "The JVM unit-test gate (register R-129)" section
+  naming both tasks, since a reader of that file (the V3 validator's own home) would otherwise have no
+  way to know R-129's regression coverage now lives partly outside `testDebugUnitTest`.
+- **Additional exposure reduction, on top of the task split** (`ReaderActivityDestinationSmokeTest.kt`):
+  `runReaderActivity`'s teardown now sets `rule.mainClock.autoAdvance = false` before driving the
+  `ActivityScenarioRule` through `Lifecycle.State.DESTROYED` — every destination keeps a
+  `LaunchedEffect { while (true) { poll(); delay(2000) } }` alive for as long as its composition
+  exists, each with a live timer armed to wake it and schedule one more frame the instant this test's
+  own assertions are done; freezing the clock first means no such timer can fire during that teardown
+  and hand the disposing composition one more recomposition to perform. This class registers no
+  idling resource of its own to leak — the rule's own `apply()`-driven teardown (`ActivityScenarioRule
+  .after()` → `scenario.close()`, then `AndroidComposeUiTestEnvironment`'s own disposal) is what
+  unregisters whatever Compose itself registered for this composition, and still runs, unchanged,
+  after this class's own `evaluate()` returns.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin --console=plain` →
+  `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` → all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat dependencyRules platformGuards --console=plain` → `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- **`:app:testDebugUnitTest`, three separate, real runs** (`--rerun` on the third, once it came back
+  `UP-TO-DATE` from caching a second time in a row and stopped being a genuine re-execution — the
+  first two forced themselves by their own edits), the smoke test class excluded, as configured:
+  - Run 1: `935 tests completed, 1 failed` — `ScenariosTest > R_110 every declared scenario name
+    loads without throwing`, a pre-existing `SQLiteDatabaseLockedException` (`SQLITE_BUSY`) in
+    `Scenarios.clearPriorScenarioData` (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, WP0's
+    own file, unrelated to this package's own row — seen on earlier full-suite runs too, and gone
+    again on runs 2 and 3 without any change here, confirming it is exactly the flake it looks like).
+  - Runs 2 and 3: `935 tests, 0 failed`, `BUILD SUCCESSFUL`, both — summed from
+    `app/build/test-results/testDebugUnitTest/*.xml` after each run, not read off the console alone.
+  - **No `AppNotIdleException` in any of the three runs** — the cascade this round's own report
+    describes finding is gone from `testDebugUnitTest`.
+- **`:app:smokeTestDebugUnitTest`, three separate, real runs** (`--rerun` on the second and third, for
+  the same reason as above), isolated in its own JVM worker: **`14 tests, 0 failed`, `BUILD
+  SUCCESSFUL`, every run** — `LOG` (WP5's fix, confirmed live for the first time) and `SETTINGS`
+  (this entry's own header-regression fix) both green all three times, not just once.
+- `.\gradlew.bat coverageMatrix --console=plain` → `coverageMatrix: 419 requirements, 183 covered`
+  (up from 181 — R-129's own coverage now counted). `.\gradlew.bat coverageMatrixCheck --console=plain`
+  → `coverageMatrixCheck: up to date (183 covered of 419)`.
+
+**Left open / not done:**
+- `ScenariosTest`'s own `SQLITE_BUSY` flake (WP0's file, not this package's row) — reported, not
+  fixed, matching this file's own standing pattern for flakes outside a package's ownership.
+- The task-split fix addresses the *symptom* (a shared JVM worker); the class's own KDoc still
+  names the underlying, pre-existing Robolectric+Compose limitation (`ReaderActivity.kt`'s own
+  `resolveSessionId` doc comment) as the root cause, since nothing in this round's own row can
+  change that limitation itself — only where this class's real `Activity` launches run relative to
+  everything else.
+- **Note on the coordinator's own standing rule ("never run `gradlew --stop`")**: honoured
+  throughout — `gradlew --stop` itself was never called. One cleanup was needed mid-round: the prior
+  round's own final full-suite verification run had cascaded (per that entry's own report) and was
+  still alive, holding an open file handle on this worktree's own `app/build/.../R.jar` that blocked
+  every later build attempt in this same worktree with a Windows file-lock error. Identified and
+  stopped precisely one OS process — this worktree's own stray `'Gradle Test Executor'` worker
+  (confirmed by its command line's own `worker.tmpdir` and `jniLibs` paths, both naming this
+  worktree specifically), not the daemon and not any other worktree's own worker (several were
+  running concurrently, left untouched) — via a direct `Stop-Process` on that one PID, never
+  `gradlew --stop` or a broadcast daemon signal. Every gradle invocation after that used the shared
+  daemon normally, including runs launched from other worktrees during the same window.
+
+### (pending) — ui-conformance WP3 · real-activity destination smoke test; setup input entry
+
+**Scope:** `:app` `ui/navigation/**` (new `ReaderActivityDestinationSmokeTest.kt`, `OrtNavHost.kt`
+one-line header fix, `ReaderNavigator.kt`'s `openSetupInput()`), `CHANGELOG.md`. Fourth
+reconciliation addendum to the WP3 entry below, after `git merge --ff-only main` (`45ae4a0..e66728b`
+— the V3 Reader validator's own run, register rows R-129/R-160..R-164 filed, and WP9's round-3
+`SetupActivity.EXTRA_STEP`/`MainActivity` destination pass-through; neither touches
+`ui/navigation/**`/`ui/ReaderActivity.kt`, so the merge was clean).
+
+**Requirements/ACs:** R-129 (Log's `rememberSaveable` crash — the smoke test class this round adds
+proves it, live; still `open` in the register, WP5's own fix pending), R-081 (`SetupActivity.EXTRA_STEP`
+— this round wires `ReaderNavigator.openSetupInput()` to actually use it), R-017 (every drill-in's
+`backLabel` — exercised, not reopened, by the new class's `recreate()` assertions).
+
+**What changed:**
+
+- **Constitution Check.** Principle I (Uncertainty Is Content): this entry's own "Left open" section
+  below is not a formality — a genuine, reproduced-three-times environment limitation is named in
+  full rather than a green gate being asserted over it. Principle II (Test-Backed Change): R-129 was
+  found by the validator, not by this package's own tests; the new class is what makes it a real,
+  standing regression test rather than a register row nobody re-checks. Principle VII: no new
+  interface, no new fake — this round only wires an already-typed seam (`SetupActivity.EXTRA_STEP`)
+  and adds a test.
+
+- **`ReaderNavigator.openSetupInput()` now passes `SetupActivity.EXTRA_STEP = SetupStep.INPUT.name`.**
+  WP9's round-3 merge landed the entry point this function's own doc comment had been reporting
+  missing since WP3's first round — confirmed by reading `SetupActivity.kt`'s own doc comment before
+  wiring this, which names this exact call site as the reason `EXTRA_STEP` exists. The step is
+  honored only when every gate before it is already satisfied, so "Choose another input"/"Set the
+  frequency by hand" (both firing *during* a running session, when setup is already complete) now
+  reliably land on `Input` instead of bouncing straight back to `MainActivity`.
+
+- **`ReaderActivityDestinationSmokeTest.kt` (new)** — R-129's own register row: "Robolectric did not
+  catch it because no `SaveableStateRegistry` is installed under `createComposeRule` — add an
+  `ActivityScenario`-hosted smoke test for every destination." For every `ReaderDestination` with
+  `hasScreen` (all ten) and the four drill-ins reachable from a real seeded row (transmission,
+  station, frequency, thread — via `StationDetailContent`'s "recent over" row and
+  `StationScreen`/`ThreadScreen`'s own rows, never through `Log`, which is R-129's own crashing
+  destination), it launches a real `ReaderActivity` — via `ActivityScenarioRule` built with a custom
+  launch `Intent` (`ReaderActivity.EXTRA_DESTINATION`, the `ReaderNavigator` seam this package's
+  prior round built) rather than `ReaderActivityTest`'s own default one, applied manually
+  (`TestRule.apply(...).evaluate()`, documented in `runReaderActivity`'s own comment: a field's
+  intent must be fixed before JUnit knows which destination a given `@Test` method needs) — asserts
+  the destination's own root actually composed (a concrete node displayed, never just "no
+  exception"), then calls `scenario.recreate()` and asserts the same again. `recreate()` is what
+  actually exercises a `rememberSaveable` saver: a real save-then-restore round trip a bare
+  `createComposeRule()` never attempts. `R_129_LOG_composes_and_survives_recreation` is written
+  exactly like every other case — no `assertThrows`, no inversion — and **fails today**, reproducing
+  the validator's exact exception (`IllegalArgumentException: MutableState containing All cannot be
+  saved...`, `LogContent.kt:50`'s unsaved `rememberSaveable<LogQuickFilterId>`) live, in this suite,
+  for the first time; WP5 fixes it concurrently in its own file, and this case passes with no change
+  here once that lands. Every other case is correct and green.
+
+- **A genuine, real second finding, fixed in this round's own file:** the first full run of this new
+  class found `Settings` rendering **two** stacked "Open navigation" headers — `SettingsContent`'s own
+  `SettingsRootScreen` draws its own `ScreenHeader`, and `NavHostBody` was still drawing its generic
+  one on top, the same double-header defect this file's own R-016 finding already fixed once for the
+  four real drill-ins. Fixed the same way: `NavHostBody` now also treats `SETTINGS` as a destination
+  that embeds its own header, skipping the host's generic one — one boolean, no edit to
+  `ui/settings/**`. `R_129_SETTINGS_composes_and_survives_recreation` is what caught it and is what
+  proves it fixed.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin --console=plain` →
+  `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests
+  "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest" --console=plain` → `14 tests
+  completed, 1 failed` — every case passed except `R_129_LOG_composes_and_survives_recreation`
+  (the exact `IllegalArgumentException: MutableState containing All cannot be saved...` reproduced),
+  run this way repeatedly (isolated, and combined with the class's own earlier iterations) with the
+  same clean 13/1 result every time.
+- `.\gradlew.bat :app:testDebugUnitTest --console=plain` (the full, unmodified suite, no test
+  filter): reached this class in its natural run position (after ~900 other tests, all passing:
+  `MainActivityTest`, `ScenariosTest` — one flaky, pre-existing, unrelated `SQLITE_BUSY` on a
+  concurrent-DB-access scenario test, not this package's row — `ReaderAccessibilityTest`,
+  `ReaderActivityTest`, `ActivityPatternChartTest` and every `ui/components`/`ui/data` file in
+  between), ran all fourteen of this class's own cases with the same 13/1 result as the isolated
+  run, then continued into `CaptureStatusScreenTest` (a plain `createComposeRule()` test, this
+  class's own code never touches) where `setContent` began failing with `AppNotIdleException` and
+  every test after it in the same JVM did the same — see "Left open" below for the full account.
+  This run was still in progress, cascading, when this entry was written; not stopped (per the
+  coordinator's standing rule against `gradlew --stop`, which would kill every worktree's shared
+  daemon), its result not otherwise usable as "the gate."
+- `.\gradlew.bat dependencyRules platformGuards --console=plain` → `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test --console=plain` → `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` → all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix --console=plain` → `coverageMatrix: 419 requirements, 181 covered`.
+- `.\gradlew.bat coverageMatrixCheck --console=plain` → `coverageMatrixCheck: up to date (181
+  covered of 419)`.
+
+**Left open / not done:**
+
+- **R-129 itself stays `open`** — `R_129_LOG_composes_and_survives_recreation` fails today, by
+  design, for the reason above; WP5 owns the fix.
+- **A genuine Robolectric+Compose cross-test environment limitation, found and only partially
+  mitigated, not solved:** run as part of the full, unforked `:app:testDebugUnitTest` alongside
+  every other file in the suite, this class can leave the shared JVM's Compose test environment
+  unable to reach idle for whatever *unrelated* test composes next — not one of this class's own
+  fourteen cases failing, a later, untouched one's (`AppNotIdleException`, "Compose did not get idle
+  ... infinite composition loop", observed hitting `ActivityPatternChartTest` on one full run and
+  `CaptureStatusScreenTest` on another, cascading forward from there since every subsequent
+  composition in the same JVM burns a fresh 60-second timeout the same way). This is not a new
+  category of problem: `ReaderActivity.kt`'s own `resolveSessionId` doc comment already names the
+  exact mechanism ("building a real `ReaderActivity` with a non-null session id starts `OrtNavHost`'s
+  ... polling loops ... which a Robolectric-driven test never gets a chance to cleanly cancel") and
+  records that its own author avoided the problem entirely by testing `resolveSessionId` as a pure
+  function rather than building a real activity — the exact constraint R-129 requires crossing anyway,
+  since only a real `Activity`'s real `SaveableStateRegistry` can catch a `rememberSaveable` bug at
+  all. Two real mitigations are landed in `runReaderActivity`/`destinationIntent` (driving every
+  `ActivityScenarioRule` through `Lifecycle.State.DESTROYED` explicitly before its own teardown;
+  handing `ReaderActivity` a non-null session id — the one thing that starts additional, session-gated
+  poll loops on top of the drawer's and `NowContent`'s own unconditional ones — only for the one case
+  that actually needs real seeded row data to reach its drill-in), each confirmed to measurably reduce
+  exposure (more of the suite ran clean before the eventual failure, across repeated isolated reruns),
+  neither confirmed to eliminate it. **This class run alone
+  (`--tests "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"`) is green except the
+  expected `LOG` case, every time it was run this way.** A full, unmodified `:app:testDebugUnitTest`
+  that includes this class alongside the rest of the suite is not guaranteed to come back clean
+  end to end — reported here in full rather than a green gate claimed over it. The gate section of
+  this round's own report gives the exact isolated-run tail and the full-suite run's own tail up to
+  the point this was found, rather than a number without how it was checked.
+- Per the coordinator's own standing note this round: `gradlew --stop` was never run by this package
+  — a shared daemon stopping mid-build (seen twice on unrelated runs while this class's cross-test
+  exposure was being narrowed down) was other activity on the shared daemon, not this worktree's own
+  doing, and is called out here only because it cost real wall-clock time diagnosing before the
+  coordinator's note ruled it out as this package's cause.
 
 ### (pending) — ui-conformance WP3 · round 3: thread routes, Now hooks, true-origin back labels, failure actions, destination intent, improve badge
 

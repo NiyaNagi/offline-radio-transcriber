@@ -63,6 +63,19 @@ class InputRouteEnumeratorTest {
         )
     }
 
+    /** R-221 (validator pass 2): an unrecognised-type row had no leading icon at all, breaking the
+     * icon column's alignment against every other row — a generic device outline now fills it. */
+    @Test
+    fun `R_221 an unrecognised device type still carries a generic device icon, never a blank column`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("weird-0", AudioDeviceKind.UNKNOWN, "sdk_gphone64_x86_64")),
+        )
+
+        val route = InputRouteEnumerator(context, io).list().single()
+
+        assertEquals(DeviceTypeNaming.genericDevice, route.icon)
+    }
+
     @Test
     fun `R_122 a USB device is not refused and carries the USB audio icon`() {
         val io = FakeAudioIo(
@@ -73,6 +86,21 @@ class InputRouteEnumeratorTest {
 
         assertFalse(route.refused)
         assertEquals(org.ort.app.ui.components.OrtIcons.usbAudio, route.icon)
+    }
+
+    /** R-222 (validator pass 2): [InputRouteOption.typeLabel] is the field
+     * `SetupActivity.RenderRouteMismatch` carries forward to S06 so the chosen device's real type
+     * is not lost by the time `RouteCheckState.Mismatch` reaches [RouteMismatchScreen]. */
+    @Test
+    fun `R_222 typeLabel carries the same resolved type name the subtitle is built from`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device")),
+        )
+
+        val route = InputRouteEnumerator(context, io).list().single()
+
+        assertEquals("USB audio", route.typeLabel)
+        assertTrue(route.subtitle.startsWith(route.typeLabel))
     }
 
     @Test

@@ -38,9 +38,15 @@ class ModelsControllerLexiconTest {
     }
 
     private fun sha256Hex(text: String): String =
-        MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") {
+            "%02x".format(it)
+        }
 
-    private fun writeLexiconFile(rows: List<String>, declaredChecksum: String? = null, declaredRecords: Int? = null): File {
+    private fun writeLexiconFile(
+        rows: List<String>,
+        declaredChecksum: String? = null,
+        declaredRecords: Int? = null,
+    ): File {
         val data = rows.joinToString("\n")
         val checksum = declaredChecksum ?: sha256Hex(data)
         val records = declaredRecords ?: rows.size

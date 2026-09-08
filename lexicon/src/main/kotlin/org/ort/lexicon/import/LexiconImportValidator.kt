@@ -25,6 +25,11 @@ import java.util.Locale
  * or a record-count/shape problem), the two content checks that would have to *trust* that data —
  * the callsign-grammar sample and the duplicate-key scan — do not run at all, rather than running
  * against data already known to be corrupt and reporting a second, derivative failure.
+ *
+ * **[validate] itself is only orchestration** — one call per check, in order, each delegated to its
+ * own private function ([readManifest], [checkChecksum], [checkRecordShape], [checkGrammarSample],
+ * [checkDuplicateKeys]) so each check's logic is independently readable (and independently testable
+ * in principle) rather than one long procedure.
  */
 public object LexiconImportValidator {
 
@@ -34,8 +39,9 @@ public object LexiconImportValidator {
     public const val CHECK_GRAMMAR_SAMPLE: String = "Callsign grammar sample"
     public const val CHECK_DUPLICATE_KEYS: String = "No duplicate keys"
 
-    /** How many data rows [validate] samples for [CHECK_GRAMMAR_SAMPLE] — enough to be meaningful, cheap on 1M+ rows. */
+    /** Rows [validate] samples for [CHECK_GRAMMAR_SAMPLE] — enough to be meaningful, cheap on 1M+ rows. */
     private const val GRAMMAR_SAMPLE_SIZE = 500
+    private const val SHA_PREFIX_LEN = 4
 
     private val VERSION_LINE = Regex("""^#\s*version\s+(\S+)""")
     private val RECORDS_LINE = Regex("""^#\s*records\s+(\d+)""")
@@ -54,20 +60,79 @@ public object LexiconImportValidator {
         currentActive: ActiveLexiconRecord? = null,
         itu: ItuPrefixTable = ItuPrefixTable.bundled(),
     ): LexiconImportResult {
-        val checks = mutableListOf<LexiconCheck>()
-
-        val text = readFileOrNull(file)
-        if (text == null) {
-            checks += LexiconCheck(CHECK_MANIFEST, CheckStatus.FAILED, "could not read '${file.name}' — it may not exist or is not a plain file")
-            checks += notReached(CHECK_CHECKSUM, CHECK_RECORD_SHAPE, CHECK_GRAMMAR_SAMPLE, CHECK_DUPLICATE_KEYS)
-            return reject(file, checks, "The file could not be read.", currentActive)
+        val manifest = when (val result = readManifest(file)) {
+            is ManifestResult.Failed -> {
+                val checks = listOf(result.check) + notReached(
+                    CHECK_CHECKSUM,
+                    CHECK_RECORD_SHAPE,
+                    CHECK_GRAMMAR_SAMPLE,
+                    CHECK_DUPLICATE_KEYS,
+                )
+                return reject(file, checks, result.reason, currentActive)
+            }
+            is ManifestResult.Parsed -> result
         }
+
+        val (checksumCheck, computedChecksum) = checkChecksum(manifest.dataLines, manifest.declaredChecksum)
+        val (shapeCheck, rows) = checkRecordShape(manifest.dataLines, manifest.declaredRecords)
+        val dataTrustworthy = checksumCheck.status == CheckStatus.PASSED && shapeCheck.status == CheckStatus.PASSED
+        if (!dataTrustworthy) {
+            val checks = listOf(manifest.check, checksumCheck, shapeCheck) +
+                notReached(CHECK_GRAMMAR_SAMPLE, CHECK_DUPLICATE_KEYS)
+            val reason = rejectionReason(
+                checksumCheck.status == CheckStatus.PASSED,
+                shapeCheck.status == CheckStatus.PASSED,
+            )
+            return reject(file, checks, reason, currentActive)
+        }
+
+        val checks =
+            listOf(manifest.check, checksumCheck, shapeCheck, checkGrammarSample(rows, itu), checkDuplicateKeys(rows))
+        return if (checks.all { it.status == CheckStatus.PASSED }) {
+            LexiconImportResult.Accepted(file.name, checks, assetId, manifest.version, rows.size, computedChecksum)
+        } else {
+            val reason = "The callsign content itself did not pass every check; see the checks below."
+            reject(file, checks, reason, currentActive)
+        }
+    }
+
+    // --- CHECK_MANIFEST: file readable + header parses ---------------------------------------
+
+    /** [readManifest]'s outcome — [Failed] never carries parsed fields; [Parsed] always carries all of them. */
+    private sealed interface ManifestResult {
+        val check: LexiconCheck
+
+        data class Failed(override val check: LexiconCheck, val reason: String) : ManifestResult
+
+        data class Parsed(
+            override val check: LexiconCheck,
+            val version: String,
+            val declaredRecords: Int,
+            val declaredChecksum: String,
+            val dataLines: List<String>,
+        ) : ManifestResult
+    }
+
+    private fun readManifest(file: File): ManifestResult {
+        val text = readFileOrNull(file)
+            ?: return ManifestResult.Failed(
+                LexiconCheck(
+                    CHECK_MANIFEST,
+                    CheckStatus.FAILED,
+                    "could not read '${file.name}' — it may not exist or is not a plain file",
+                ),
+                "The file could not be read.",
+            )
 
         val lines = text.lines()
         val headerLines = lines.takeWhile { it.isBlank() || it.trimStart().startsWith("#") }
         val version = headerLines.firstNotNullOfOrNull { VERSION_LINE.find(it.trim())?.groupValues?.get(1) }
-        val declaredRecords = headerLines.firstNotNullOfOrNull { RECORDS_LINE.find(it.trim())?.groupValues?.get(1)?.toIntOrNull() }
-        val declaredChecksum = headerLines.firstNotNullOfOrNull { SHA256_LINE.find(it.trim())?.groupValues?.get(1)?.lowercase(Locale.ROOT) }
+        val declaredRecords = headerLines.firstNotNullOfOrNull {
+            RECORDS_LINE.find(it.trim())?.groupValues?.get(1)?.toIntOrNull()
+        }
+        val declaredChecksum = headerLines.firstNotNullOfOrNull {
+            SHA256_LINE.find(it.trim())?.groupValues?.get(1)?.lowercase(Locale.ROOT)
+        }
 
         if (version == null || declaredRecords == null || declaredChecksum == null) {
             val missing = listOfNotNull(
@@ -75,86 +140,25 @@ public object LexiconImportValidator {
                 "`# records`".takeIf { declaredRecords == null },
                 "`# sha256`".takeIf { declaredChecksum == null },
             ).joinToString(", ")
-            checks += LexiconCheck(CHECK_MANIFEST, CheckStatus.FAILED, "manifest header is missing or malformed: $missing not found")
-            checks += notReached(CHECK_CHECKSUM, CHECK_RECORD_SHAPE, CHECK_GRAMMAR_SAMPLE, CHECK_DUPLICATE_KEYS)
-            return reject(file, checks, "The file is not a recognisable lexicon import — its manifest header could not be read.", currentActive)
+            return ManifestResult.Failed(
+                LexiconCheck(
+                    CHECK_MANIFEST,
+                    CheckStatus.FAILED,
+                    "manifest header is missing or malformed: $missing not found",
+                ),
+                "The file is not a recognisable lexicon import — its manifest header could not be read.",
+            )
         }
-        checks += LexiconCheck(
-            CHECK_MANIFEST,
-            CheckStatus.PASSED,
-            "version $version · declares ${declaredRecords.grouped()} records · sha256 ${declaredChecksum.take(SHA_PREFIX_LEN)}…",
-        )
 
         val dataLines = lines.drop(headerLines.size).filter { it.isNotBlank() }
-        val dataSection = dataLines.joinToString("\n")
-        val computedChecksum = sha256Hex(dataSection)
-        val checksumOk = computedChecksum == declaredChecksum
-        checks += if (checksumOk) {
-            LexiconCheck(CHECK_CHECKSUM, CheckStatus.PASSED, "computed sha256 ${computedChecksum.take(SHA_PREFIX_LEN)}… · matches")
-        } else {
-            LexiconCheck(CHECK_CHECKSUM, CheckStatus.FAILED, "computed sha256 ${computedChecksum.take(SHA_PREFIX_LEN)}… · does not match")
-        }
-
-        val rows = dataLines.map { it.split('\t') }
-        val expectedWidth = rows.firstOrNull()?.size ?: 0
-        val shapeMismatches = rows.count { it.size != expectedWidth }
-        val countMatches = rows.size == declaredRecords
-        val recordShapeOk = countMatches && shapeMismatches == 0
-        checks += if (recordShapeOk) {
-            LexiconCheck(
-                CHECK_RECORD_SHAPE,
-                CheckStatus.PASSED,
-                "${rows.size.grouped()} records, each with $expectedWidth fields, matches the manifest",
-            )
-        } else if (!countMatches) {
-            LexiconCheck(
-                CHECK_RECORD_SHAPE,
-                CheckStatus.FAILED,
-                "read ${rows.size.grouped()} · declared ${declaredRecords.grouped()} · file ends mid-record",
-            )
-        } else {
-            LexiconCheck(
-                CHECK_RECORD_SHAPE,
-                CheckStatus.FAILED,
-                "$shapeMismatches of ${rows.size.grouped()} records have a different number of fields than the first",
-            )
-        }
-
-        val dataTrustworthy = checksumOk && recordShapeOk
-        if (!dataTrustworthy) {
-            checks += notReached(CHECK_GRAMMAR_SAMPLE, CHECK_DUPLICATE_KEYS)
-            return reject(file, checks, rejectionReason(checksumOk, recordShapeOk), currentActive)
-        }
-
-        val sample = rows.take(GRAMMAR_SAMPLE_SIZE)
-        val invalid = sample.count { row -> row.firstOrNull()?.let { !isStructurallyValidCallsign(it, itu) } ?: true }
-        checks += if (invalid == 0) {
-            LexiconCheck(CHECK_GRAMMAR_SAMPLE, CheckStatus.PASSED, "${sample.size.grouped()} sampled, all structurally valid against the ITU table")
-        } else {
-            LexiconCheck(
-                CHECK_GRAMMAR_SAMPLE,
-                CheckStatus.FAILED,
-                "$invalid of ${sample.size.grouped()} sampled do not parse as a callsign against the ITU table",
-            )
-        }
-
-        val callsigns = rows.mapNotNull { it.firstOrNull()?.trim()?.uppercase(Locale.ROOT) }
-        val duplicates = callsigns.groupingBy { it }.eachCount().filterValues { it > 1 }
-        checks += if (duplicates.isEmpty()) {
-            LexiconCheck(CHECK_DUPLICATE_KEYS, CheckStatus.PASSED, "no duplicate callsigns among ${callsigns.size.grouped()} records")
-        } else {
-            LexiconCheck(
-                CHECK_DUPLICATE_KEYS,
-                CheckStatus.FAILED,
-                "${duplicates.size} callsign(s) repeated, e.g. '${duplicates.keys.first()}' (${duplicates.values.first()}×)",
-            )
-        }
-
-        return if (checks.all { it.status == CheckStatus.PASSED }) {
-            LexiconImportResult.Accepted(file.name, checks, assetId, version, rows.size, computedChecksum)
-        } else {
-            reject(file, checks, "The callsign content itself did not pass every check; see the checks below.", currentActive)
-        }
+        val check = LexiconCheck(
+            CHECK_MANIFEST,
+            CheckStatus.PASSED,
+            "version $version · declares ${declaredRecords.grouped()} records · sha256 ${declaredChecksum.take(
+                SHA_PREFIX_LEN,
+            )}…",
+        )
+        return ManifestResult.Parsed(check, version, declaredRecords, declaredChecksum, dataLines)
     }
 
     private fun readFileOrNull(file: File): String? = try {
@@ -162,6 +166,107 @@ public object LexiconImportValidator {
     } catch (e: java.io.IOException) {
         null
     }
+
+    // --- CHECK_CHECKSUM ------------------------------------------------------------------------
+
+    private fun checkChecksum(dataLines: List<String>, declaredChecksum: String): Pair<LexiconCheck, String> {
+        val computed = sha256Hex(dataLines.joinToString("\n"))
+        val check = if (computed == declaredChecksum) {
+            LexiconCheck(
+                CHECK_CHECKSUM,
+                CheckStatus.PASSED,
+                "computed sha256 ${computed.take(SHA_PREFIX_LEN)}… · matches",
+            )
+        } else {
+            LexiconCheck(
+                CHECK_CHECKSUM,
+                CheckStatus.FAILED,
+                "computed sha256 ${computed.take(SHA_PREFIX_LEN)}… · does not match",
+            )
+        }
+        return check to computed
+    }
+
+    private fun sha256Hex(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    // --- CHECK_RECORD_SHAPE ----------------------------------------------------------------------
+
+    private fun checkRecordShape(
+        dataLines: List<String>,
+        declaredRecords: Int,
+    ): Pair<LexiconCheck, List<List<String>>> {
+        val rows = dataLines.map { it.split('\t') }
+        val expectedWidth = rows.firstOrNull()?.size ?: 0
+        val shapeMismatches = rows.count { it.size != expectedWidth }
+        val countMatches = rows.size == declaredRecords
+        val check = when {
+            countMatches && shapeMismatches == 0 -> LexiconCheck(
+                CHECK_RECORD_SHAPE,
+                CheckStatus.PASSED,
+                "${rows.size.grouped()} records, each with $expectedWidth fields, matches the manifest",
+            )
+            !countMatches -> LexiconCheck(
+                CHECK_RECORD_SHAPE,
+                CheckStatus.FAILED,
+                "read ${rows.size.grouped()} · declared ${declaredRecords.grouped()} · file ends mid-record",
+            )
+            else -> LexiconCheck(
+                CHECK_RECORD_SHAPE,
+                CheckStatus.FAILED,
+                "$shapeMismatches of ${rows.size.grouped()} records have a different field count than the first",
+            )
+        }
+        return check to rows
+    }
+
+    // --- CHECK_GRAMMAR_SAMPLE --------------------------------------------------------------------
+
+    private fun checkGrammarSample(rows: List<List<String>>, itu: ItuPrefixTable): LexiconCheck {
+        val sample = rows.take(GRAMMAR_SAMPLE_SIZE)
+        val invalid = sample.count { row -> row.firstOrNull()?.let { !isStructurallyValidCallsign(it, itu) } ?: true }
+        return if (invalid == 0) {
+            LexiconCheck(
+                CHECK_GRAMMAR_SAMPLE,
+                CheckStatus.PASSED,
+                "${sample.size.grouped()} sampled, all structurally valid against the ITU table",
+            )
+        } else {
+            val detail = "$invalid of ${sample.size.grouped()} sampled do not parse as a callsign against the ITU table"
+            LexiconCheck(CHECK_GRAMMAR_SAMPLE, CheckStatus.FAILED, detail)
+        }
+    }
+
+    private fun isStructurallyValidCallsign(raw: String, itu: ItuPrefixTable): Boolean {
+        val callsign = raw.trim().uppercase(Locale.ROOT).substringBefore('/')
+        if (!CALLSIGN_SHAPE.matches(callsign)) return false
+        return itu.allocationFor(callsign) != null
+    }
+
+    // --- CHECK_DUPLICATE_KEYS --------------------------------------------------------------------
+
+    private fun checkDuplicateKeys(rows: List<List<String>>): LexiconCheck {
+        val callsigns = rows.mapNotNull { it.firstOrNull()?.trim()?.uppercase(Locale.ROOT) }
+        val duplicates = callsigns.groupingBy { it }.eachCount().filterValues { it > 1 }
+        return if (duplicates.isEmpty()) {
+            LexiconCheck(
+                CHECK_DUPLICATE_KEYS,
+                CheckStatus.PASSED,
+                "no duplicate callsigns among ${callsigns.size.grouped()} records",
+            )
+        } else {
+            val (callsign, count) = duplicates.entries.first()
+            LexiconCheck(
+                CHECK_DUPLICATE_KEYS,
+                CheckStatus.FAILED,
+                "${duplicates.size} callsign(s) repeated, e.g. '$callsign' ($count" + "×)",
+            )
+        }
+    }
+
+    // --- shared -----------------------------------------------------------------------------
 
     /** [names], each marked [CheckStatus.NOT_REACHED] — the checks an earlier failure made unreachable. */
     private fun notReached(vararg names: String): List<LexiconCheck> =
@@ -184,18 +289,5 @@ public object LexiconImportValidator {
             "The record count did not match the manifest. Nothing was replaced."
     }
 
-    private fun isStructurallyValidCallsign(raw: String, itu: ItuPrefixTable): Boolean {
-        val callsign = raw.trim().uppercase(Locale.ROOT).substringBefore('/')
-        if (!CALLSIGN_SHAPE.matches(callsign)) return false
-        return itu.allocationFor(callsign) != null
-    }
-
-    private fun sha256Hex(text: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }
-    }
-
     private fun Int.grouped(): String = String.format(Locale.ROOT, "%,d", this)
-
-    private const val SHA_PREFIX_LEN = 4
 }

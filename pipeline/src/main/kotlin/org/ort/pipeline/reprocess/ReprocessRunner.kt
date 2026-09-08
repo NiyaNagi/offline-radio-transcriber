@@ -30,6 +30,23 @@ import java.io.File
 public data class ReprocessProgress(public val done: Int, public val total: Int, public val currentId: String?)
 
 /**
+ * The tuning knobs [ReprocessRunner] itself does not need to reason about, folded out of its own
+ * constructor (detekt's `LongParameterList`) — every default here is the exact value the
+ * constructor used inline before this existed; only the grouping changed.
+ */
+public data class ReprocessTuning(
+    /** How often [ReprocessRunner] re-checks capture priority while yielding. */
+    public val yieldPollIntervalMillis: Long = 500L,
+    /** Per-lease deadline handed to [PassDrainRunner.drainBatch] (FR-RUN-10a). */
+    public val deadlineMillis: Long = CaptureProcessingLoop.DEFAULT_DEADLINE_MILLIS,
+    /** Batch size handed to [PassDrainRunner.drainBatch]. */
+    public val drainBatchLimit: Int = CaptureProcessingLoop.DEFAULT_BATCH_SIZE,
+    /** Defensive bound on how many drain calls one transmission's pass waits through before this
+     * class gives up on it as failed rather than looping forever. */
+    public val maxDrainIterationsPerItem: Int = 1_000,
+)
+
+/**
  * register R-091 (FR-REP-1, FR-REP-5, FR-REP-8, FR-REP-9, FR-REP-11, P12): the reprocessing engine
  * `:pipeline` never had. `org.ort.app.ui.improve.ImproveRunner`'s own kdoc found "no reprocess/
  * Pass B/C scheduling mechanism exists anywhere in `:pipeline`" and shipped [org.ort.app.ui.improve.FakeImproveRunner]
@@ -101,10 +118,7 @@ public class ReprocessRunner(
     private val isCaptureBusy: () -> Boolean = {
         CaptureState.isCapturing && ShedStatus.currentLevel >= BUSY_SHED_LEVEL_THRESHOLD
     },
-    private val yieldPollIntervalMillis: Long = 500L,
-    private val deadlineMillis: Long = CaptureProcessingLoop.DEFAULT_DEADLINE_MILLIS,
-    private val drainBatchLimit: Int = CaptureProcessingLoop.DEFAULT_BATCH_SIZE,
-    private val maxDrainIterationsPerItem: Int = 1_000,
+    private val tuning: ReprocessTuning = ReprocessTuning(),
 ) {
 
     /**
@@ -114,94 +128,98 @@ public class ReprocessRunner(
      * run"), so `RealImproveRunner` can map this directly. [ReprocessStatus] is republished on
      * every state change as a side effect, for a status surface that is not itself the collector.
      */
-    public fun run(transmissionIds: List<String>, passes: Set<PassId> = setOf(PassId.B_OFFLINE)): Flow<ReprocessProgress> =
-        flow {
-            require(passes.isNotEmpty()) { "at least one pass must be requested" }
-            val unsupported = passes - SUPPORTED_PASSES
-            require(unsupported.isEmpty()) {
-                "unsupported pass(es) $unsupported -- only $SUPPORTED_PASSES have a runner in :pipeline today"
+    public fun run(
+        transmissionIds: List<String>,
+        passes: Set<PassId> = setOf(PassId.B_OFFLINE),
+    ): Flow<ReprocessProgress> = flow {
+        require(passes.isNotEmpty()) { "at least one pass must be requested" }
+        val unsupported = passes - SUPPORTED_PASSES
+        require(unsupported.isEmpty()) {
+            "unsupported pass(es) $unsupported -- only $SUPPORTED_PASSES have a runner in :pipeline today"
+        }
+
+        val total = transmissionIds.size
+        if (total == 0) {
+            ReprocessStatus.done(ReprocessStatus.Summary(total = 0))
+            emit(ReprocessProgress(0, 0, null))
+            return@flow
+        }
+
+        val tier = currentTier()
+        val pass = passFor(tier)
+        val queue = WorkQueue(db, clock)
+        val drainRunner = PassDrainRunner(queue, runId)
+
+        var done = 0
+        var transcriptsChanged = 0
+        var attributionsChanged = 0
+        var rejected = 0
+        var failed = 0
+        var correctedCount = 0
+
+        ReprocessStatus.running(done, total, null)
+
+        for (id in transmissionIds) {
+            awaitCaptureNotBusy(done, total)
+            ReprocessStatus.running(done, total, id)
+
+            val transmission = db.transmissionDao().getById(id)
+            if (transmission == null) {
+                done++
+                emit(ReprocessProgress(done, total, id))
+                continue
             }
+            if (transmission.corrected) correctedCount++
 
-            val total = transmissionIds.size
-            if (total == 0) {
-                ReprocessStatus.done(ReprocessStatus.Summary(total = 0))
-                emit(ReprocessProgress(0, 0, null))
-                return@flow
-            }
+            val beforeTranscript = db.transcriptDao().getCurrent(id)?.text
+            val beforeState = transmission.attributionState
+            val beforeStation = transmission.stationId
 
-            val tier = currentTier()
-            val pass = passFor(tier)
-            val queue = WorkQueue(db, clock)
-            val drainRunner = PassDrainRunner(queue, runId)
+            val outcome = runOnePass(queue, drainRunner, pass, id, passes.first(), done, total)
 
-            var done = 0
-            var transcriptsChanged = 0
-            var attributionsChanged = 0
-            var rejected = 0
-            var failed = 0
-            var correctedCount = 0
-
-            ReprocessStatus.running(done, total, null)
-
-            for (id in transmissionIds) {
-                awaitCaptureNotBusy(done, total)
-                ReprocessStatus.running(done, total, id)
-
-                val transmission = db.transmissionDao().getById(id)
-                if (transmission == null) {
-                    done++
-                    emit(ReprocessProgress(done, total, id))
-                    continue
-                }
-                if (transmission.corrected) correctedCount++
-
-                val beforeTranscript = db.transcriptDao().getCurrent(id)?.text
-                val beforeState = transmission.attributionState
-                val beforeStation = transmission.stationId
-
-                val outcome = runOnePass(queue, drainRunner, pass, id, passes.first(), done, total)
-
-                when (outcome) {
-                    PassOutcomeKind.FAILED -> failed++
-                    PassOutcomeKind.COMPLETED, PassOutcomeKind.REJECTED -> {
-                        db.transmissionDao().setReprocessCandidate(id, false)
-                        if (outcome == PassOutcomeKind.REJECTED) {
-                            rejected++
-                        } else {
-                            val after = db.transmissionDao().getById(id)
-                            val afterTranscript = db.transcriptDao().getCurrent(id)?.text
-                            if (afterTranscript != beforeTranscript) transcriptsChanged++
-                            // Never true for a corrected transmission -- TransmissionDao
-                            // .updateAttribution's own "AND corrected = 0" guard means `after`
-                            // is unchanged from `before` here, structurally (see class kdoc).
-                            if (after != null && (after.attributionState != beforeState || after.stationId != beforeStation)) {
-                                attributionsChanged++
-                            }
+            when (outcome) {
+                PassOutcomeKind.FAILED -> failed++
+                PassOutcomeKind.COMPLETED, PassOutcomeKind.REJECTED -> {
+                    db.transmissionDao().setReprocessCandidate(id, false)
+                    if (outcome == PassOutcomeKind.REJECTED) {
+                        rejected++
+                    } else {
+                        val after = db.transmissionDao().getById(id)
+                        val afterTranscript = db.transcriptDao().getCurrent(id)?.text
+                        if (afterTranscript != beforeTranscript) transcriptsChanged++
+                        // Never true for a corrected transmission -- TransmissionDao
+                        // .updateAttribution's own "AND corrected = 0" guard means `after`
+                        // is unchanged from `before` here, structurally (see class kdoc).
+                        if (after != null &&
+                            (after.attributionState != beforeState || after.stationId != beforeStation)
+                        ) {
+                            attributionsChanged++
                         }
                     }
                 }
-
-                done++
-                ReprocessStatus.running(done, total, id)
-                emit(ReprocessProgress(done, total, id))
             }
 
-            val summary = ReprocessStatus.Summary(
-                total = total,
-                transcriptsChanged = transcriptsChanged,
-                attributionsChanged = attributionsChanged,
-                rejected = rejected,
-                failed = failed,
-                correctedCount = correctedCount,
-            )
-            ReprocessStatus.done(summary)
+            done++
+            ReprocessStatus.running(done, total, id)
+            emit(ReprocessProgress(done, total, id))
         }
+
+        val summary = ReprocessStatus.Summary(
+            total = total,
+            transcriptsChanged = transcriptsChanged,
+            attributionsChanged = attributionsChanged,
+            rejected = rejected,
+            failed = failed,
+            correctedCount = correctedCount,
+        )
+        ReprocessStatus.done(summary)
+    }
 
     /** Capture-priority yield (see the class kdoc) -- polls, publishing [ReprocessStatus.Paused], until clear. */
     private suspend fun awaitCaptureNotBusy(done: Int, total: Int) {
         while (isCaptureBusy()) {
             ReprocessStatus.paused(done, total)
-            delay(yieldPollIntervalMillis)
+            delay(tuning.yieldPollIntervalMillis)
         }
     }
 
@@ -237,7 +255,7 @@ public class ReprocessRunner(
     ): PassOutcomeKind {
         val rowId = enqueueOrReuseActive(queue, transmissionId, passId)
         var iterations = 0
-        while (iterations < maxDrainIterationsPerItem) {
+        while (iterations < tuning.maxDrainIterationsPerItem) {
             val row = db.workQueueDao().getById(rowId)
             if (row == null) {
                 val state = db.transmissionDao().getById(transmissionId)?.processingState
@@ -246,7 +264,7 @@ public class ReprocessRunner(
             if (row.state == WorkQueueState.FAILED) return PassOutcomeKind.FAILED
 
             awaitCaptureNotBusy(done, total)
-            drainRunner.drainBatch(limit = drainBatchLimit, deadlineMillis = deadlineMillis, pass = pass)
+            drainRunner.drainBatch(limit = tuning.drainBatchLimit, deadlineMillis = tuning.deadlineMillis, pass = pass)
             iterations++
         }
         // Defensive only -- a queue row that never resolves after this many drain calls would be a

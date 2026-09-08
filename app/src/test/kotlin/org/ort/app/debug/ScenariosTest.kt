@@ -11,10 +11,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
 import org.ort.app.ui.failures.FailureSignals
 import org.ort.app.ui.failures.RecoveryAnnouncer
+import org.ort.app.ui.setup.SetupStateMachine
+import org.ort.app.ui.setup.SetupStep
+import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -82,6 +86,11 @@ class ScenariosTest {
         LevelStatus.reset()
         InputStatus.reset()
         DebugFailureOverride.clear()
+        // setup-verified (register R-227) is the one scenario that writes outside :data and the
+        // process-wide capture facets -- clear it too, or it would leak into every later test in
+        // this same Robolectric process the same way a stray SharedPreferences write always would.
+        context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            .edit().clear().commit()
     }
 
     @Test
@@ -464,7 +473,13 @@ class ScenariosTest {
             val current = signalsFromHolders()
 
             val toasts = RecoveryAnnouncer.diff(previous, current)
-            assertTrue("expected the rig recovery toast", toasts.any { it.id == "rig" && it.message == "Radio reconnected" })
+            assertTrue(
+                "expected the rig recovery toast",
+                toasts.any {
+                    it.id == "rig" &&
+                        it.message == "Radio reconnected"
+                },
+            )
         }
 
     @Test
@@ -564,6 +579,54 @@ class ScenariosTest {
         assertEquals("USB Audio Device", state.expected.label)
         assertEquals("Built-in microphone", state.actual?.label)
         assertFalse("a mismatch must not claim capture is still running", CaptureState.isCapturing)
+    }
+
+    /**
+     * R-227 (validator pass 2): before this, S07/S12 had no sanctioned path on an emulator with a
+     * silent mic -- this proves the scenario actually lands `SetupStateMachine.stepFor` at
+     * `SetupStep.READY` (S12) given fully-granted permissions, the same real decision function
+     * `SetupActivity` itself calls, not merely that some preferences got written.
+     */
+    @Test
+    @Requirement("R-227")
+    fun `R_227_setup-verified seeds SetupStore so stepFor resumes at READY`() = runTest {
+        Scenarios.load(context, "setup-verified")
+
+        val store = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+        )
+        assertTrue(store.inputVerified)
+        assertTrue(store.levelInBand)
+        assertTrue(store.overnightStepSeen)
+        assertFalse("must land the operator on READY, not skip straight past it", store.setupComplete)
+
+        val fullyGranted = PermissionsState(
+            recordAudioGranted = true,
+            notificationsGranted = true,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+        )
+        val step = SetupStateMachine.stepFor(fullyGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
+        assertEquals(SetupStep.READY, step)
+    }
+
+    /** The one thing this scenario cannot seed -- see the scenario's own doc comment and
+     * `results/ui-audit/README.md`'s "Reaching S07/S12" section. Without a granted `RECORD_AUDIO`,
+     * `stepFor` must still resume at `MICROPHONE`, never silently past it. */
+    @Test
+    @Requirement("R-227")
+    fun `R_227_setup-verified does not and cannot grant the two OS permissions itself`() = runTest {
+        Scenarios.load(context, "setup-verified")
+
+        val store = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+        )
+        val micNotGranted = PermissionsState(
+            recordAudioGranted = false,
+            notificationsGranted = true,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+        )
+        val step = SetupStateMachine.stepFor(micNotGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
+        assertEquals(SetupStep.MICROPHONE, step)
     }
 
     // -----------------------------------------------------------------------------------------

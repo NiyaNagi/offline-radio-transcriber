@@ -22,22 +22,43 @@ import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 import org.ort.capture.android.AudioDeviceDescriptor
 
-/** S06 (`Setup-Route-Mismatch.dc.html`, R-081) — the one halt in the whole sequence
+/**
+ * S06 (`Setup-Route-Mismatch.dc.html`, R-081) — the one halt in the whole sequence
  * (`Flow-Setup.dc.html`: "no continue"). No `Continue` exists on this screen at all; the only way
  * forward is [onChooseAnotherInput] (back to S04) or [onTryAgain] (re-run the check on the same
  * selection — the mismatch may have been transient, e.g. USB permission not yet granted).
+ *
+ * [selectedTypeLabel] (R-222, validator pass 2): the real, resolved type name S04 already worked
+ * out for the *chosen* device ([InputRouteOption.typeLabel]), supplied by the caller
+ * ([SetupActivity], which still has S04's route list on hand) rather than re-derived here from
+ * [RouteCheckState.Mismatch.selected]'s own [org.ort.capture.android.AudioDeviceDescriptor.kind] —
+ * confirmed by the validator's own screenshot that re-deriving loses richness the first resolution
+ * already had (a telephony route chosen at S04 re-read here as bare `AudioDeviceKind.UNKNOWN`,
+ * printing "(Unknown)" instead of "(Telephony)"). The *routed* device (whatever Android actually
+ * used instead) still resolves through [describeDevice] below — it is almost always the built-in
+ * mic or another already-correctly-`AudioDeviceKind`-typed device, so the same loss does not apply.
+ *
+ * [onBack] (R-223, validator pass 2): `Setup-Route-Mismatch.dc.html`'s header draws the chevron
+ * like every other step (confirmed by reading the board before writing this), so it is rendered —
+ * [SetupActivity] wires it to the same [onChooseAnotherInput] callback the primary button already
+ * uses, not the generic back-stack `onBack`: the back-stack entry immediately under this screen is
+ * `VERIFY` with a still-`Mismatch` `verifyState`, which would redisplay the stale, all-unfilled
+ * check list rather than anything useful — `onChooseAnotherInput` is the one action that actually
+ * leaves this halt correctly. `null` only so this screen's own tests can render it standalone.
  */
 @Composable
 public fun RouteMismatchScreen(
     mismatch: RouteCheckState.Mismatch,
+    selectedTypeLabel: String,
     onChooseAnotherInput: () -> Unit,
     onTryAgain: () -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
     SetupScaffold(
         step = SetupStep.ROUTE_MISMATCH,
         title = "That is not the radio",
         subtitle = "Capture will not start on this route",
-        onBack = null,
+        onBack = onBack,
         bottomActions = {
             PrimaryButton(
                 text = "Choose another input",
@@ -58,7 +79,7 @@ public fun RouteMismatchScreen(
             body = "You chose ${mismatch.selected.label}, but Android routed the recording to the " +
                 "phone's own mic. Nothing has been recorded.",
         )
-        MismatchChecks(mismatch)
+        MismatchChecks(mismatch, selectedTypeLabel)
         Column {
             Text(text = "Usually one of".uppercase(), style = OrtType.sectionLabel, color = OrtColors.textFaint)
             listOf(
@@ -78,7 +99,7 @@ public fun RouteMismatchScreen(
 }
 
 @Composable
-private fun MismatchChecks(mismatch: RouteCheckState.Mismatch) {
+private fun MismatchChecks(mismatch: RouteCheckState.Mismatch, selectedTypeLabel: String) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -109,7 +130,7 @@ private fun MismatchChecks(mismatch: RouteCheckState.Mismatch) {
         Column(modifier = Modifier.padding(start = 13.dp)) {
             Text(text = "Routed device does not match", style = OrtType.control, color = OrtColors.textHigh)
             Text(
-                text = "chosen ${describeDevice(mismatch.selected)} · " +
+                text = "chosen ${mismatch.selected.label} ($selectedTypeLabel) · " +
                     "routed ${mismatch.routed?.let(::describeDevice) ?: "nothing"}",
                 style = OrtType.timeFreq,
                 color = OrtColors.textDim,

@@ -56,14 +56,23 @@ internal object FrequencyChangeFixtures {
                 val id = "$sessionId-tx${i + 1}"
                 db.transmissionDao().insert(
                     ScenarioFixtures.transmission(
-                        id = id, sessionId = sessionId, startedAtUtc = t, samplePosition = (i + 1).toLong(),
-                        frequencyHz = FREQ_A, attributionState = AttributionState.CONFIRMED,
-                        stationId = station, attributionConfidence = 0.9,
+                        id = id,
+                        sessionId = sessionId,
+                        startedAtUtc = t,
+                        samplePosition = (i + 1).toLong(),
+                        frequencyHz = FREQ_A,
+                        attributionState = AttributionState.CONFIRMED,
+                        stationId = station,
+                        attributionConfidence = 0.9,
                     ),
                 )
                 db.transcriptDao().insert(
                     ScenarioFixtures.transcript(
-                        "$id-t1", id, "this is $station, checking in", isCurrent = true, createdAt = t + 500L,
+                        "$id-t1",
+                        id,
+                        "this is $station, checking in",
+                        isCurrent = true,
+                        createdAt = t + 500L,
                     ),
                 )
                 transmissionCount++
@@ -76,7 +85,11 @@ internal object FrequencyChangeFixtures {
         val tonightStart = today.atTime(22, 0).atZone(zone).toInstant().toEpochMilli()
         val tonightSessionId = ScenarioFixtures.sessionId("freqchange", "tonight")
         db.sessionDao().insert(
-            ScenarioFixtures.session(tonightSessionId, startedAt = tonightStart, endedAt = tonightStart + 2 * 3_600_000L),
+            ScenarioFixtures.session(
+                tonightSessionId,
+                startedAt = tonightStart,
+                endedAt = tonightStart + 2 * 3_600_000L,
+            ),
         )
         sessionCount++
         primarySessionId = tonightSessionId
@@ -87,14 +100,23 @@ internal object FrequencyChangeFixtures {
             val id = "$tonightSessionId-tx${i + 1}"
             db.transmissionDao().insert(
                 ScenarioFixtures.transmission(
-                    id = id, sessionId = tonightSessionId, startedAtUtc = t, samplePosition = (i + 1).toLong(),
-                    frequencyHz = FREQ_A, attributionState = AttributionState.CONFIRMED,
-                    stationId = station, attributionConfidence = 0.9,
+                    id = id,
+                    sessionId = tonightSessionId,
+                    startedAtUtc = t,
+                    samplePosition = (i + 1).toLong(),
+                    frequencyHz = FREQ_A,
+                    attributionState = AttributionState.CONFIRMED,
+                    stationId = station,
+                    attributionConfidence = 0.9,
                 ),
             )
             db.transcriptDao().insert(
                 ScenarioFixtures.transcript(
-                    "$id-t1", id, "this is $station, checking in", isCurrent = true, createdAt = t + 500L,
+                    "$id-t1",
+                    id,
+                    "this is $station, checking in",
+                    isCurrent = true,
+                    createdAt = t + 500L,
                 ),
             )
             transmissionCount++
@@ -107,15 +129,23 @@ internal object FrequencyChangeFixtures {
             val id = "$tonightSessionId-tx-new"
             db.transmissionDao().insert(
                 ScenarioFixtures.transmission(
-                    id = id, sessionId = tonightSessionId, startedAtUtc = t, samplePosition = 18L,
-                    frequencyHz = FREQ_A, attributionState = AttributionState.CONFIRMED,
-                    stationId = NEW_STATION, attributionConfidence = 0.85,
+                    id = id,
+                    sessionId = tonightSessionId,
+                    startedAtUtc = t,
+                    samplePosition = 18L,
+                    frequencyHz = FREQ_A,
+                    attributionState = AttributionState.CONFIRMED,
+                    stationId = NEW_STATION,
+                    attributionConfidence = 0.85,
                 ),
             )
             db.transcriptDao().insert(
                 ScenarioFixtures.transcript(
-                    "$id-t1", id, "this is $NEW_STATION, first time on this repeater",
-                    isCurrent = true, createdAt = t + 500L,
+                    "$id-t1",
+                    id,
+                    "this is $NEW_STATION, first time on this repeater",
+                    isCurrent = true,
+                    createdAt = t + 500L,
                 ),
             )
             transmissionCount++
@@ -128,13 +158,22 @@ internal object FrequencyChangeFixtures {
             val id = "$tonightSessionId-tx-unk${i + 1}"
             db.transmissionDao().insert(
                 ScenarioFixtures.transmission(
-                    id = id, sessionId = tonightSessionId, startedAtUtc = t, samplePosition = (19 + i).toLong(),
-                    frequencyHz = FREQ_A, attributionState = AttributionState.UNKNOWN, signalStrength = 1.5,
+                    id = id,
+                    sessionId = tonightSessionId,
+                    startedAtUtc = t,
+                    samplePosition = (19 + i).toLong(),
+                    frequencyHz = FREQ_A,
+                    attributionState = AttributionState.UNKNOWN,
+                    signalStrength = 1.5,
                 ),
             )
             db.transcriptDao().insert(
                 ScenarioFixtures.transcript(
-                    "$id-t1", id, "[unintelligible]", isCurrent = true, createdAt = t + 500L,
+                    "$id-t1",
+                    id,
+                    "[unintelligible]",
+                    isCurrent = true,
+                    createdAt = t + 500L,
                 ),
             )
             transmissionCount++
@@ -147,9 +186,14 @@ internal object FrequencyChangeFixtures {
             val id = "$tonightSessionId-tx-freqb"
             db.transmissionDao().insert(
                 ScenarioFixtures.transmission(
-                    id = id, sessionId = tonightSessionId, startedAtUtc = t, samplePosition = 25L,
-                    frequencyHz = FREQ_B, attributionState = AttributionState.CONFIRMED,
-                    stationId = regulars[0], attributionConfidence = 0.9,
+                    id = id,
+                    sessionId = tonightSessionId,
+                    startedAtUtc = t,
+                    samplePosition = 25L,
+                    frequencyHz = FREQ_B,
+                    attributionState = AttributionState.CONFIRMED,
+                    stationId = regulars[0],
+                    attributionConfidence = 0.9,
                 ),
             )
             transmissionCount++

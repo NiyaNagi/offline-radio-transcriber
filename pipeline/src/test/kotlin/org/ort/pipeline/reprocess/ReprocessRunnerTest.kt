@@ -98,7 +98,8 @@ class ReprocessRunnerTest {
         )
     }
 
-    /** A real, decodable retained-audio fixture at exactly the path [org.ort.pipeline.passb.FlacSegmentAudioProvider] reads. */
+    /** A real, decodable retained-audio fixture at exactly the path
+     * [org.ort.pipeline.passb.FlacSegmentAudioProvider] reads. */
     private fun writeAudioFixture(transmissionId: String, sessionId: String = "S1") {
         val samples = ShortArray(16_000) { (it % 200 - 100).toShort() } // 1s @16kHz, a real tone, not silence
         val bytes = ByteArray(samples.size * 2)
@@ -169,13 +170,19 @@ class ReprocessRunnerTest {
         seedTransmission(txId, text = "old text")
         writeAudioFixture(txId)
 
-        val engine = FakeAsrEngine(FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "new transcript text")))
+        val engine =
+            FakeAsrEngine(FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "new transcript text")))
         val tierCalls = mutableListOf<Tier>()
         val runner = ReprocessRunner(
             db = db,
             filesDir = filesDir,
-            currentTier = { tierCalls.add(Tier.T2); Tier.T2 },
-            passFor = { tier -> PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"), "cpu", tier = tier) },
+            currentTier = {
+                tierCalls.add(Tier.T2)
+                Tier.T2
+            },
+            passFor = { tier ->
+                PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"), "cpu", tier = tier)
+            },
         )
 
         val progress = runner.run(listOf(txId)).toList()
@@ -203,8 +210,11 @@ class ReprocessRunnerTest {
             filesDir = filesDir,
             currentTier = { Tier.T0 },
             passFor = { InstantCompletingPass() },
-            isCaptureBusy = { busyChecks++; busyChecks <= 3 },
-            yieldPollIntervalMillis = 10L,
+            isCaptureBusy = {
+                busyChecks++
+                busyChecks <= 3
+            },
+            tuning = ReprocessTuning(yieldPollIntervalMillis = 10L),
         )
 
         val progress = runner.run(listOf(txId)).toList()
@@ -224,8 +234,12 @@ class ReprocessRunnerTest {
         seedTransmission(txId)
         val pass = InstantCompletingPass()
 
-        val first = ReprocessRunner(db, filesDir, currentTier = { Tier.T0 }, passFor = { pass }).run(listOf(txId)).toList()
-        val second = ReprocessRunner(db, filesDir, currentTier = { Tier.T0 }, passFor = { pass }).run(listOf(txId)).toList()
+        val first = ReprocessRunner(db, filesDir, currentTier = {
+            Tier.T0
+        }, passFor = { pass }).run(listOf(txId)).toList()
+        val second = ReprocessRunner(db, filesDir, currentTier = {
+            Tier.T0
+        }, passFor = { pass }).run(listOf(txId)).toList()
 
         assertEquals(1, first.last().done)
         assertEquals(1, second.last().done)
@@ -251,7 +265,11 @@ class ReprocessRunnerTest {
                 "TX-CHANGE" -> ScriptedOutcome.Complete("new text", AttributionState.CONFIRMED, "NEW1")
                 "TX-SAME" -> ScriptedOutcome.Complete("old text", AttributionState.UNKNOWN, null)
                 "TX-REJECT" -> ScriptedOutcome.Rejected
-                "TX-CORRECTED" -> ScriptedOutcome.Complete("locked text (better)", AttributionState.CONFIRMED, "SHOULD-NOT-STICK")
+                "TX-CORRECTED" -> ScriptedOutcome.Complete(
+                    "locked text (better)",
+                    AttributionState.CONFIRMED,
+                    "SHOULD-NOT-STICK",
+                )
                 else -> error("unexpected id $id")
             }
         }

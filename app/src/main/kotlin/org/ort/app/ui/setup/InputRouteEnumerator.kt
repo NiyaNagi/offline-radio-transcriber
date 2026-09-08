@@ -4,24 +4,40 @@ import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.AudioIo
 
-/** One row S04's list renders (`Setup-Input.dc.html`). [id] is [AudioDeviceDescriptor.id] verbatim
+/**
+ * One row S04's list renders (`Setup-Input.dc.html`). [id] is [AudioDeviceDescriptor.id] verbatim
  * — the same id [org.ort.capture.android.RouteVerifier] compares against, so selecting a row and
  * later verifying it are guaranteed to mean the same device. [refused] (validator finding, register
  * R-120..R-125: was `isBuiltInMic`) is true for every source that is never a radio, not only the
  * built-in mic — see [DeviceTypeNaming]. [icon] is `null` when no guide §7 icon exists yet for the
  * resolved type (a real, reported gap — see [DeviceTypeNaming]'s doc comment — never a wrong icon
- * standing in for a missing one). */
+ * standing in for a missing one).
+ *
+ * [typeLabel] (R-222, validator pass 2): the same real, resolved type name [subtitle] is built
+ * from, kept as its own field rather than only baked into the subtitle string — [SetupActivity]
+ * carries it forward to S06's mismatch facts when the chosen route is the one that mismatched, so
+ * the richer resolution this class already did at S04 is not lost by the time
+ * `RouteCheckState.Mismatch` (which only carries the raw, coarser
+ * [org.ort.capture.android.AudioDeviceDescriptor.kind]) reaches [RouteMismatchScreen].
+ */
 public data class InputRouteOption(
     public val id: String,
     public val label: String,
     public val subtitle: String,
     public val refused: Boolean,
+    public val typeLabel: String,
     public val icon: ImageVector? = null,
 )
 
@@ -48,6 +64,7 @@ public class InputRouteEnumerator(private val context: Context, private val io: 
                 label = descriptor.label,
                 subtitle = subtitleFor(resolved, nativeRates[descriptor.id]),
                 refused = !resolved.isRadioCapable,
+                typeLabel = resolved.label,
                 icon = resolved.icon,
             )
         }
@@ -112,10 +129,43 @@ internal data class ResolvedDeviceType(val label: String, val icon: ImageVector?
  * `built-in mic` / `telephony` / `USB audio` / `wired headset` / `Bluetooth` per the brief, and
  * refuses every source that is not plausibly an external radio adapter — not only the built-in mic.
  * `WP2`'s [OrtIcons] has no Bluetooth icon yet (confirmed by reading `OrtIcons.kt` before writing
- * this) — [forAndroidType]/[forKind] return `icon = null` for it rather than reusing an unrelated
- * icon, a gap this package's own report names explicitly.
+ * this) — [forAndroidType]/[forKind]'s `Bluetooth` case returns `icon = null` for it rather than
+ * reusing an unrelated icon, a gap this package's own report names explicitly. R-221 (validator
+ * pass 2) is the narrower case: an *unrecognised* type row had no icon at all, breaking the icon
+ * column's alignment against every other row — [genericDevice] fixes that specific case (a real,
+ * generic device outline, not a stand-in for any one type), built locally the same guide §7 way
+ * `OrtIcons`' own private `buildIcon`/`strokePath` do (that object's helpers are `private`,
+ * confirmed by reading `OrtIcons.kt` before writing this, so not reachable from this row's files).
  */
 internal object DeviceTypeNaming {
+
+    /** A plain rounded-rectangle-with-two-lines outline — guide §7's 24-unit viewBox, round
+     * caps/joins, tinted by the caller, same as every `OrtIcons` entry — for a device type this
+     * package genuinely could not identify. Never implies USB, wired, or any other specific kind. */
+    val genericDevice: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "genericDevice",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            addPath(
+                pathData = addPathNodes("M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"),
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.9f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            )
+            addPath(
+                pathData = addPathNodes("M8 9h8M8 13h5"),
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.9f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            )
+        }.build()
+    }
 
     fun forAndroidType(type: Int): ResolvedDeviceType = when (type) {
         AudioDeviceInfo.TYPE_BUILTIN_MIC -> ResolvedDeviceType("Built-in microphone", OrtIcons.builtInMic, false)
@@ -124,7 +174,7 @@ internal object DeviceTypeNaming {
             ResolvedDeviceType("USB audio", OrtIcons.usbAudio, true)
         AudioDeviceInfo.TYPE_WIRED_HEADSET -> ResolvedDeviceType("Wired headset", OrtIcons.headset, true)
         AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> ResolvedDeviceType("Bluetooth", null, true)
-        else -> ResolvedDeviceType("Unrecognised device type $type", null, false)
+        else -> ResolvedDeviceType("Unrecognised device type $type", genericDevice, false)
     }
 
     fun forKind(kind: AudioDeviceKind): ResolvedDeviceType = when (kind) {
@@ -132,6 +182,6 @@ internal object DeviceTypeNaming {
         AudioDeviceKind.USB_DEVICE -> ResolvedDeviceType("USB audio", OrtIcons.usbAudio, true)
         AudioDeviceKind.WIRED_HEADSET -> ResolvedDeviceType("Wired headset", OrtIcons.headset, true)
         AudioDeviceKind.BLUETOOTH -> ResolvedDeviceType("Bluetooth", null, true)
-        AudioDeviceKind.UNKNOWN -> ResolvedDeviceType("Unknown", null, false)
+        AudioDeviceKind.UNKNOWN -> ResolvedDeviceType("Unknown", genericDevice, false)
     }
 }

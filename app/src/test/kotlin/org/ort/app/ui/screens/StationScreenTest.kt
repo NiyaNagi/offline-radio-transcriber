@@ -17,6 +17,7 @@ import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationListBadge
 import org.ort.app.ui.data.StationListEntryViewState
 import org.ort.app.ui.data.StationsFilter
+import org.ort.app.ui.data.StationsListState
 import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.data.UnidentifiedVoicesSummary
 import org.ort.app.ui.theme.OrtTheme
@@ -32,7 +33,9 @@ class StationScreenTest {
 
     @Test
     fun `an empty station list shows an honest empty state, not a fabricated placeholder`() {
-        composeTestRule.setContent { OrtTheme { StationsListScreen(stations = emptyList(), onOpen = {}) } }
+        composeTestRule.setContent {
+            OrtTheme { StationsListScreen(state = StationsListState(stations = emptyList()), onOpen = {}) }
+        }
 
         composeTestRule.onNodeWithContentDescription("No stations heard yet").assertExists()
     }
@@ -42,7 +45,7 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(stations = listOf(fixtureRow())),
                     onOpen = {},
                     selectedFilter = StationsFilter.TONIGHT,
                 )
@@ -61,7 +64,7 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(stations = listOf(fixtureRow())),
                     onOpen = {},
                     onFilterSelected = { selected = it },
                 )
@@ -78,11 +81,13 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(
-                        fixtureRow().copy(
-                            givenName = "Dave",
-                            badge = StationListBadge.NEW,
-                            countContext = "6 overs",
+                    state = StationsListState(
+                        stations = listOf(
+                            fixtureRow().copy(
+                                givenName = "Dave",
+                                badge = StationListBadge.NEW,
+                                countContext = "6 overs",
+                            ),
                         ),
                     ),
                     onOpen = {},
@@ -99,9 +104,11 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(
+                        stations = listOf(fixtureRow()),
+                        unidentified = UnidentifiedVoicesSummary(voiceCount = 4, overCount = 36),
+                    ),
                     onOpen = {},
-                    unidentified = UnidentifiedVoicesSummary(voiceCount = 4, overCount = 36),
                 )
             }
         }
@@ -114,9 +121,11 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(
+                        stations = listOf(fixtureRow()),
+                        unidentified = UnidentifiedVoicesSummary(voiceCount = null, overCount = 12),
+                    ),
                     onOpen = {},
-                    unidentified = UnidentifiedVoicesSummary(voiceCount = null, overCount = 12),
                 )
             }
         }
@@ -129,10 +138,12 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(
+                        stations = listOf(fixtureRow()),
+                        heardAllTimeCount = 12,
+                        heardTonightCount = 3,
+                    ),
                     onOpen = {},
-                    heardAllTimeCount = 12,
-                    heardTonightCount = 3,
                 )
             }
         }
@@ -152,7 +163,7 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow().copy(lastHeardLabel = "02:14")),
+                    state = StationsListState(stations = listOf(fixtureRow().copy(lastHeardLabel = "02:14"))),
                     onOpen = {},
                     onToggleSort = { sorted = true },
                 )
@@ -172,7 +183,9 @@ class StationScreenTest {
     fun `tapping a station row opens that station`() {
         var opened: String? = null
         composeTestRule.setContent {
-            OrtTheme { StationsListScreen(stations = listOf(fixtureRow()), onOpen = { opened = it }) }
+            OrtTheme {
+                StationsListScreen(state = StationsListState(stations = listOf(fixtureRow())), onOpen = { opened = it })
+            }
         }
 
         composeTestRule.onNodeWithText("W7NPC").performClick()
@@ -256,6 +269,30 @@ class StationScreenTest {
         composeTestRule.onNodeWithTag("recent-over-TX1").performClick()
 
         assert(opened == "TX1")
+    }
+
+    @Test
+    fun `R_192 the header kebab is discoverable as Station identity and opens it`() {
+        // `Station.dc.html` draws no explicit Identity action, section preview or row anywhere in
+        // its body — the header kebab is the *only* affordance (V4/V5 register R-192), so it must
+        // carry a real, specific description and testTag rather than the shared header's generic
+        // "More".
+        var openedIdentity = false
+        val state = StationDetailViewState(
+            stationId = "W7NPC",
+            label = "W7NPC",
+            transmissionCount = 0,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { StationDetailScreen(state = state, onBack = {}, onOpenIdentity = { openedIdentity = true }) }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Station identity").assertExists()
+        composeTestRule.onNodeWithTag("station-identity-open").performClick()
+        assert(openedIdentity)
     }
 
     @Test

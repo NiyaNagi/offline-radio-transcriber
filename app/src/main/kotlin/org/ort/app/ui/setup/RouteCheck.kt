@@ -78,6 +78,19 @@ public sealed interface RouteCheckState {
  * code; it becomes secondary only once setup is re-entered while capture is already running (an
  * operator revisiting Settings, or S05 re-verifying after `Setup-Route-Mismatch`, with a capture
  * session still up on the same device).
+ *
+ * **R-224 (validator pass 2) extends that same "secondary path" to the third check too, not only
+ * the fourth.** Before: the third check (`SIGNAL`) always ran its own real, up-to-30s raw-audio
+ * listening loop even when [InputStatus] already reported this exact device open, route-verified,
+ * with a real resampler identity — on the validator's `input-verified` scenario (a live capture
+ * session already has the device open) that raw loop reads nothing, because nothing is feeding it
+ * audio outside the real capture session's own read loop, and the check timed out every time
+ * despite the pipeline already knowing the route is good. Now: once the first two checks pass,
+ * [publishedVerificationFor] is read once — a real, already-verified [InputStatus.State.Opened]
+ * for this exact device short-circuits stages three and four straight to [Passed] with the
+ * pipeline's own `resamplerId`, never re-probing a device a live session already has open. The
+ * fallback (fresh-install, first-run) path — this class's own raw signal-wait loop — is otherwise
+ * unchanged and remains the primary path, exactly as documented above for the fourth check alone.
  */
 public interface RouteCheck {
     public fun run(io: AudioIo, selected: AudioDeviceDescriptor): Flow<RouteCheckState>
@@ -107,6 +120,13 @@ public class RealRouteCheck(
         passed = passed + RouteCheckStage.ROUTE_MATCH
         emit(RouteCheckState.InProgress(passed, nativeRate, 0L))
 
+        val published = publishedVerificationFor(selected)
+        if (published != null) {
+            io.close()
+            emit(RouteCheckState.Passed(published.nativeRateHz, published.resamplerId))
+            return@flow
+        }
+
         var elapsed = 0L
         var heard = false
         val buffer = ShortArray(READ_BUFFER_FRAMES)
@@ -130,23 +150,34 @@ public class RealRouteCheck(
         passed = passed + RouteCheckStage.SIGNAL
         emit(RouteCheckState.InProgress(passed, nativeRate, elapsed))
 
-        val resamplerDescription = resamplerDescriptionFor(nativeRate, selected)
+        val resamplerDescription = resamplerDescriptionFor(nativeRate)
         io.close()
         emit(RouteCheckState.Passed(nativeRate, resamplerDescription))
     }
 
-    /** [InputStatus.state] when it is a real [InputStatus.State.Opened] for this exact device
-     * (matched by id — never borrowing a different device's identity) is the pipeline's own,
-     * already-honest string; otherwise a locally-computed description — see this class's own doc
-     * comment for exactly when each path applies. */
-    private fun resamplerDescriptionFor(nativeRate: Int, selected: AudioDeviceDescriptor): String? {
-        val fromPipeline = (InputStatus.state as? InputStatus.State.Opened)
-            ?.takeIf { it.descriptor.id == selected.id }
-            ?.resamplerId
-        if (fromPipeline != null) return fromPipeline
+    /**
+     * The raw signal-wait loop's own, locally-computed resampler description — reached only when
+     * [publishedVerificationFor] found nothing (this is the fresh-install, first-run path;
+     * `InputStatus` holds no real value for this device yet, or has not yet been verified). A real
+     * pipeline value is never available here without also satisfying the short-circuit above — see
+     * this class's own doc comment for the R-224 split between the two paths.
+     */
+    private fun resamplerDescriptionFor(nativeRate: Int): String? {
         if (nativeRate == OUTPUT_SAMPLE_RATE_HZ) return null
         return "$nativeRate Hz -> $OUTPUT_SAMPLE_RATE_HZ Hz, resampled"
     }
+
+    /** R-224 (validator pass 2): the one place both the short-circuit above and (indirectly, by
+     * its absence) [resamplerDescriptionFor] key off [InputStatus] — a real
+     * [InputStatus.State.Opened] for this exact device (matched by id, never borrowed from a
+     * different one), *and* [InputStatus.State.Opened.routeVerified] true. `routeVerified` alone
+     * is the gate: a device [InputStatus] merely has open but not yet verified (the moment after
+     * selection, before `AudioRecordSource`'s own first-read check — see that class's kdoc) must
+     * still run this class's own real checks, never borrow an unverified pipeline state as if it
+     * were a pass. */
+    private fun publishedVerificationFor(selected: AudioDeviceDescriptor): InputStatus.State.Opened? =
+        (InputStatus.state as? InputStatus.State.Opened)
+            ?.takeIf { it.descriptor.id == selected.id && it.routeVerified }
 
     private fun peakDbfs(buffer: ShortArray, n: Int): Double {
         var peak = 0
