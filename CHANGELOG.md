@@ -6967,6 +6967,101 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 8 · R-323 prior-row reflow; R-321 (halt) investigated and reported, not fixed
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Inspection.kt` and its test
+(`InspectionTest.kt`) — **disclosed, out-of-scope files** (`ui/components/**` is not this package's
+row), touched at the coordinator's own explicit, line-level instruction ("label
+`softWrap = false`/`maxLines = 1`... a `FlowRow` or a two-line layout at ≥1.3 scale"), the same
+precedent this WP6 engagement's own history already uses for a small, disclosed, coordinator-
+directed fix outside its normal file list. R-321 itself: **investigated, not touched** — see below.
+
+**Requirements/ACs:** R-323 (fixed); R-321 (halt — investigated, reported, left open); R-320 (halt,
+explicitly deferred by the coordinator's own instruction — no per-slot lattice data exists yet,
+`:lexicon`+`:data` are still adding it; not built against a guess).
+
+**Constitution Check.** Principle I governs R-321's entire outcome: restoring an `Undo` to the
+*exact* pre-correction attribution (state, callsign, confidence, source-over id) needs that
+snapshot to have been recorded at correction time — nothing in `:data` today captures it, and
+constitution I forbids guessing or reconstructing it from adjacent-but-different signals (see
+below). Principle VII (no look-alike of a component that exists) is why R-323's fix lives inside
+`PriorBar` itself, reused by both the inline preview and `DetailWhyScreen`'s own exhaustive list,
+rather than a parallel D05-only prior row.
+
+**What changed:**
+
+1. **R-323, fixed.** `PriorBar`'s label sat in a fixed 118–122dp column with no `softWrap`/`maxLines`
+   guard; at 2.0× font scale a longer prior name wrapped mid-word, with the bar centred beside the
+   now-taller, still-clipped fragment. Split into three small private composables
+   (`PriorBarLabel`/`PriorBarMeter`/`PriorBarValue`), shared by both layouts: below
+   `LARGE_FONT_SCALE_THRESHOLD` (`1.3f` — the same constant `FailStorageWarningBanner.kt`/
+   `LevelScreen.kt`/`ActivityPatternChart.kt` already use for "stack instead of cram"), the original
+   one-row layout is unchanged; at or above it, the label takes the row's own full width on its own
+   line and the bar+value reflow onto a second line beneath it. The label (and the value/`cold
+   start` text) now carry `softWrap = false, maxLines = 1` unconditionally — a prior's name and its
+   value never wrap mid-word at *any* scale, only the surrounding layout reflows. Tests, named
+   `R_323` in `InspectionTest.kt`: the label's rendered height stays one-line-tall at 2.0× scale; the
+   bar/value share the label's own row below the threshold (equal `top`, proven on the *unmerged*
+   semantics tree — `PriorBar`'s outer container merges its descendants into one `contentDescription`
+   node, so the default merged-tree query returns that single node's own bounds for every text
+   query inside it, not each child's real position, the same subtlety `ActivityPatternChartTest`'s
+   own `R_271` axis tests already work around); the bar/value sit below the label at 2.0× scale.
+2. **R-321 (halt), investigated and reported — no code change.** The coordinator's own repro (`Undo
+   all` after a Tier-A pick on an AMBIGUOUS over, or after a typed correction on a CONFIRMED over,
+   leaves the Log row "Unknown … corrected" and the detail with a hollow ring, a leftover `CORRECTED`
+   badge, and "Not heard in this over. Matched by voice.") traces to a real, confirmed root cause,
+   read directly rather than guessed: `CorrectionDao.applyCorrectedAttribution` (the *only* write
+   `CorrectionDao.recordCorrection` ever makes) unconditionally writes `attributionState = 'INFERRED'`,
+   `attributionConfidence = NULL`, `attributionSourceTransmissionId = NULL`, `corrected = 1` — by
+   design, for a genuine new human correction (`Attribution.withCorrection`'s own contract). But
+   `CorrectionPolling.undoAll` reverts by calling that *same* write (`recordCorrection` with
+   `newValue = ` the pre-correction callsign) — so an undo is written as *another* "a human said so"
+   correction, not a restoration of whatever the over's attribution genuinely was before any
+   correction touched it (AMBIGUOUS with no callsign at all, or CONFIRMED with a real confidence and
+   `corrected = false`). Read `CorrectionEntity`'s real schema directly
+   (`data/src/main/kotlin/org/ort/data/entity/CatalogEntities.kt`): it stores only `field`,
+   `previousValue: String?` (a bare callsign string) and `newValue: String` — none of
+   `TransmissionEntity`'s other four attribution columns (`attributionState`,
+   `attributionConfidence`, `attributionSourceTransmissionId`, `corrected`) are captured anywhere at
+   correction time. Also checked `StationIdentityDao`'s schema-v3 "prior history" additions the round
+   named (`VoiceprintBindingHistoryEntity`, `PriorAdjustmentEntity`, `station_identity_history`) —
+   confirmed these are scoped to a *voiceprint's* station binding and a *named prior's* weight,
+   never to a transmission's own attribution snapshot; no existing table anywhere in `:data` records
+   it. Constitution I forbids reconstructing the missing snapshot from an adjacent signal instead
+   (e.g. `CallsignCandidateEntity`'s `selected` flag hints at what the resolver originally chose, but
+   carries no `attributionConfidence`/`attributionSourceTransmissionId`/original-`AttributionState`
+   at all — a partial reconstruction would misrepresent a real recorded fact as a guess). Stopped
+   here, per the round's own instruction, rather than building a workaround or a code change against
+   a schema that cannot back it. **Exact columns/DAO surface needed, for `:data`:**
+   - `CorrectionEntity` needs four new nullable columns, captured at `recordCorrection` time, before
+     the write, mirroring `TransmissionEntity`'s own attribution columns exactly:
+     `previousAttributionState: AttributionState?`, `previousAttributionConfidence: Double?`,
+     `previousAttributionSourceTransmissionId: String?`, `previousCorrected: Boolean` (whether the
+     row was already `corrected` before *this* correction — so an undo of a correction-of-a-
+     correction knows it is restoring to a still-corrected state, not a fresh resolver one).
+   - A new `CorrectionDao` write, alongside (not replacing) `applyCorrectedAttribution` — e.g.
+     `restoreAttribution(transmissionId, state, stationId, confidence, sourceTransmissionId,
+     corrected)` — that writes back an *arbitrary* captured attribution rather than hardcoding
+     `INFERRED`/`NULL`/`corrected = 1`, for `CorrectionPolling.undoAll` to call with the values read
+     from the correction record being undone.
+   - Tests `R_321_undo_restores_ambiguous`/`R_321_undo_restores_confirmed` (the round's own names)
+     are not written this round — they would need the schema above to have anything real to assert
+     against; writing them now would either fail the gate or assert against a fabricated shape.
+     Deferred to the round `:data` delivers this in.
+3. **R-320 (halt), untouched — no action taken.** The round's own instruction: D05's per-slot lattice
+   grid has no data yet (`:lexicon` + `:data` are adding unit/score/kept-alternate/char-span); not
+   built against a guess.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards` (clean), `.\gradlew.bat -p
+buildSrc test` (clean), `python tools\spec-check\spec_check.py` (`spec-check: OK`), `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate, both clean), `.\gradlew.bat
+:app:assembleDebug` (clean). Full `:app:testDebugUnitTest` suite clean.
+
+**Left open:** R-321 (halt, exact schema/DAO gap named above — routed to the `:data` agent per the
+coordinator's own instruction); R-320 (halt, explicitly deferred); R-181's own left-open items
+(none — round 7 closed it); round 6's R-182 and the voice-match/thread-context gaps (unchanged,
+named there).
+
 ### (pending) — ui-conformance WP6 round 7 · R-181: a real WaveformSummary from decoded retained audio
 
 **Scope:** `:app`, this package's own files — `ui/audio/TransmissionAudioPlayer.kt`,
