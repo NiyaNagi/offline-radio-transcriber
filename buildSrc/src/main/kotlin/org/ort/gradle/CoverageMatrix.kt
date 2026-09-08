@@ -135,4 +135,16 @@ object CoverageMatrix {
     }
 
     private fun normalise(raw: String): String = raw.trim().uppercase().replace("--", "-")
+
+    /**
+     * F-014: `coverageMatrixCheck` compares freshly generated content against the committed
+     * `results/coverage-matrix.md` and must fail on any real drift, but line-ending
+     * (CRLF/LF) and trailing-newline differences are not drift — they are an artefact of the
+     * checkout/editor, not a stale matrix — so they are normalised away before comparing.
+     */
+    fun contentMatches(generated: String, committed: String): Boolean =
+        normaliseLineEndings(generated) == normaliseLineEndings(committed)
+
+    private fun normaliseLineEndings(text: String): String =
+        text.replace("\r\n", "\n").replace("\r", "\n").trimEnd('\n')
 }
