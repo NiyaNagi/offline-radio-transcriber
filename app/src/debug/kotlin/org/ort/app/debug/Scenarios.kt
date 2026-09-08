@@ -1,6 +1,9 @@
 package org.ort.app.debug
 
 import android.content.Context
+import androidx.room.withTransaction
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import org.ort.app.ui.failures.AssetSwapOption
 import org.ort.app.ui.failures.AssetSwapViewState
 import org.ort.app.ui.failures.CalibrationViewState
@@ -127,6 +130,14 @@ public object Scenarios {
         val db = OrtDatabase.create(context.applicationContext)
         clearPriorScenarioData(context, db)
         resetProcessWideFacets()
+        // Every scenario builder below is a single, sequential suspend chain of awaited DAO calls
+        // (confirmed: no `.launch`/`CoroutineScope`/`async` anywhere in this package's scenario
+        // builders — `ScenarioReceiver`'s own `CoroutineScope(Dispatchers.IO)` is a different,
+        // broadcast-only entry point this function never goes through). `load` itself is a plain
+        // suspend function with no `launch` of its own, so its caller (this object's own contract,
+        // and `ScenariosTest`'s `runTest`) genuinely does not return until every write below has
+        // completed — see `clearPriorScenarioData`'s own doc comment for the half of this that
+        // *was* broken.
         return when (name) {
             "empty" -> empty(db)
             "first-session" -> firstSession(context, db)
@@ -167,49 +178,129 @@ public object Scenarios {
     // Clearing
     // ---------------------------------------------------------------------------------------
 
-    private fun clearPriorScenarioData(context: Context, db: OrtDatabase) {
-        val sql = db.openHelper.writableDatabase
-        val likeScenario = arrayOf<Any>("${ScenarioFixtures.SESSION_PREFIX}%")
-        sql.execSQL(
-            "DELETE FROM correction WHERE transmissionId IN " +
-                "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
-            likeScenario,
-        )
-        sql.execSQL(
-            "DELETE FROM callsign_candidate WHERE transmissionId IN " +
-                "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
-            likeScenario,
-        )
-        sql.execSQL(
-            "DELETE FROM phonetic_lattice WHERE transmissionId IN " +
-                "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
-            likeScenario,
-        )
-        sql.execSQL(
-            "DELETE FROM transcript WHERE transmissionId IN " +
-                "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
-            likeScenario,
-        )
-        // R-153: `pass-failed` is the first scenario to write a work_queue_item row — cleared by
-        // the same transmissionId-through-sessionId join every other per-transmission table uses.
-        sql.execSQL(
-            "DELETE FROM work_queue_item WHERE transmissionId IN " +
-                "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
-            likeScenario,
-        )
-        sql.execSQL("DELETE FROM thread WHERE sessionId LIKE ?", likeScenario)
-        sql.execSQL("DELETE FROM capture_gap WHERE sessionId LIKE ?", likeScenario)
-        sql.execSQL("DELETE FROM transmission WHERE sessionId LIKE ?", likeScenario)
-        sql.execSQL("DELETE FROM session WHERE id LIKE ?", likeScenario)
-        // Unconditional — see this object's own doc comment for why station/voiceprint rows
-        // cannot be tagged by the same session-id-prefix convention.
-        sql.execSQL("DELETE FROM station")
-        sql.execSQL("DELETE FROM voiceprint")
+    /**
+     * **Root cause of the intermittent `SQLiteBusyException` this function used to throw**
+     * (register R-110, `ScenariosTest :: R_110 every declared scenario name loads without
+     * throwing`, flaky on main's gate): this ran as nine-plus separate `execSQL` calls against
+     * [OrtDatabase.openHelper]'s raw `writableDatabase` — each its own implicit transaction,
+     * *outside* Room's own transaction/connection bookkeeping — so two writers this database's own
+     * bookkeeping did not know about each other could race for the single-writer lock. Checked
+     * directly and ruled out first: no scenario builder (nor [Scenarios.load] itself) launches a
+     * writer of its own — no `.launch`, `CoroutineScope(`, or `async` anywhere in this package
+     * other than [ScenarioReceiver]'s own broadcast-only entry point, which [Scenarios.load] never
+     * goes through. Every scenario's own writes are a single, sequential, awaited suspend chain
+     * already; the "writer left alive across the clear step" was this function's own un-transacted
+     * `execSQL` sequence, not a stray coroutine.
+     *
+     * **Fixed in three layers, verified by repeatedly running `ScenariosTest` with
+     * `--rerun-tasks`** (this package's report to the lead has the exact run counts and failure
+     * rates at each stage):
+     *
+     * 1. **One Room-coordinated transaction**, not nine separate ones —
+     *    [androidx.room.RoomDatabase.withTransaction] runs the whole clear on Room's *own*
+     *    transaction dispatcher against Room's *own* connection, atomic besides (every `DELETE`
+     *    below commits together or not at all). This alone cut the failure rate roughly in half
+     *    but did not eliminate it.
+     * 2. **`ScenariosTest` now closes its own [OrtDatabase] in `@After`** — previously every test
+     *    method opened a fresh `RoomDatabase` (its own connection pool, its own
+     *    `InvalidationTracker`) against the *same* on-disk `ort.db` and never closed the previous
+     *    one, so a three-dozen-test run ended with dozens of still-warm, never-released instances
+     *    all pointed at one file. This narrowed the failure further but a locked-database error
+     *    still reproduced *within a single test method* driving many back-to-back loads against
+     *    *one* already-open `OrtDatabase` instance (this file's own regression test, below,
+     *    reproduced it directly) — meaning something below the application layer (most likely
+     *    Room's `InvalidationTracker` background version-refresh, which Robolectric's `sqlite4java`
+     *    driver is known to occasionally still be settling when the next writer arrives — compounded
+     *    by, but distinct from, the `no such module: fts5` noise Robolectric's SQLite build logs for
+     *    this project's FTS5 tables, itself expected and harmless) can still transiently hold the
+     *    single-writer lock for a moment even with everything above fixed.
+     * 3. **A bounded, backed-off retry on a transient lock**, entirely within this function — the
+     *    standard, SQLite-documented response to `SQLITE_BUSY` ("the application should... retry
+     *    after a short delay"), scoped narrowly to messages that actually say "busy"/"locked" so a
+     *    genuine, non-transient failure still surfaces immediately rather than retrying blindly.
+     *    [OrtDatabase]'s own builder (`:data`, outside this file's ownership) is where a
+     *    `PRAGMA busy_timeout` would ideally live instead; noted as left open in this package's
+     *    report rather than reached by editing a file this package does not own.
+     */
+    private suspend fun clearPriorScenarioData(context: Context, db: OrtDatabase) {
+        var attempt = 0
+        while (true) {
+            try {
+                clearScenarioRowsInOneTransaction(db)
+                break
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                attempt++
+                if (attempt >= MAX_CLEAR_ATTEMPTS || !isTransientlyLocked(e)) throw e
+                delay(CLEAR_RETRY_BACKOFF_MILLIS * attempt)
+            }
+        }
 
+        // Filesystem side effects, deliberately outside the DB transaction above (a rollback of
+        // the SQL has nothing to do with these, and `File` I/O does not participate in SQLite's
+        // locking at all — keeping them separate keeps the transaction itself minimal).
         File(context.filesDir, "audio").listFiles { f -> f.name.startsWith(ScenarioFixtures.SESSION_PREFIX) }
             ?.forEach { it.deleteRecursively() }
         File(context.filesDir, "heartbeat.txt").delete()
     }
+
+    private suspend fun clearScenarioRowsInOneTransaction(db: OrtDatabase) {
+        db.withTransaction {
+            val sql = db.openHelper.writableDatabase
+            val likeScenario = arrayOf<Any>("${ScenarioFixtures.SESSION_PREFIX}%")
+            sql.execSQL(
+                "DELETE FROM correction WHERE transmissionId IN " +
+                    "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
+                likeScenario,
+            )
+            sql.execSQL(
+                "DELETE FROM callsign_candidate WHERE transmissionId IN " +
+                    "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
+                likeScenario,
+            )
+            sql.execSQL(
+                "DELETE FROM phonetic_lattice WHERE transmissionId IN " +
+                    "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
+                likeScenario,
+            )
+            sql.execSQL(
+                "DELETE FROM transcript WHERE transmissionId IN " +
+                    "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
+                likeScenario,
+            )
+            // R-153: `pass-failed` is the first scenario to write a work_queue_item row — cleared
+            // by the same transmissionId-through-sessionId join every other per-transmission table
+            // uses.
+            sql.execSQL(
+                "DELETE FROM work_queue_item WHERE transmissionId IN " +
+                    "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
+                likeScenario,
+            )
+            sql.execSQL("DELETE FROM thread WHERE sessionId LIKE ?", likeScenario)
+            sql.execSQL("DELETE FROM capture_gap WHERE sessionId LIKE ?", likeScenario)
+            sql.execSQL("DELETE FROM transmission WHERE sessionId LIKE ?", likeScenario)
+            sql.execSQL("DELETE FROM session WHERE id LIKE ?", likeScenario)
+            // Unconditional — see this object's own doc comment for why station/voiceprint rows
+            // cannot be tagged by the same session-id-prefix convention.
+            sql.execSQL("DELETE FROM station")
+            sql.execSQL("DELETE FROM voiceprint")
+        }
+    }
+
+    /** True if [e], or anything in its cause chain, is SQLite's own transient "busy"/"locked" — never a blind retry. */
+    private fun isTransientlyLocked(e: Throwable): Boolean {
+        var cause: Throwable? = e
+        while (cause != null) {
+            val message = cause.message?.lowercase(java.util.Locale.ROOT).orEmpty()
+            if (message.contains("locked") || message.contains("busy")) return true
+            cause = cause.cause
+        }
+        return false
+    }
+
+    private const val MAX_CLEAR_ATTEMPTS = 5
+    private const val CLEAR_RETRY_BACKOFF_MILLIS = 25L
 
     /**
      * Every process-wide capture-facet singleton [org.ort.app.ui.data.ReaderPolling] reads
