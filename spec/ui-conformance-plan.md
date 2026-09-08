@@ -78,14 +78,14 @@ create or edit; anything else is off limits.
 | **WP0** | Debug state simulator + audit tooling | `app/src/debug/**` (new `ScenarioReceiver`, `Scenarios.kt`, fixtures), `tools/ui-audit/**` (boot, install, scenario, screenshot scripts), `results/ui-audit/README.md` | — |
 | **WP1** | Theme, manifest, activity scaffold | `AndroidManifest.xml`, `res/values/**`, `ui/theme/**`, `ui/ReaderActivity.kt`, `MainActivity.kt` (remove TextView smoke UI, route into setup) | — |
 | **WP2** | Shared components | `ui/components/**` — `AttributionMarker`, `ActivityPatternChart`, new `LiveBar`, `FilterChip`, `Banner`, `Toast`, `LogRow`, `ScoreChip`, `Badge`, `SectionLabel`, `OrtIcons`, `EmptyState`, `FailedState` | WP1 |
-| **WP3** | Drawer + nav host | `ui/navigation/**` | WP1, WP2 |
+| **WP3** | Drawer + nav host | `ui/navigation/**`. Also **moves** F-008's `ModelsContent`/`messageFor`/`copyPickedFileToCache` out of `OrtNavHost.kt` into a new `ui/settings/ModelsContent.kt` unchanged, so `OrtNavHost` dispatches `SETTINGS` to a `ui/settings` entry point WP10 then owns — WP3 may create that one file and nothing else under `ui/settings/` | WP1, WP2 |
 | **WP4** | Now + capture status | `ui/screens/NowScreen.kt`, `ui/screens/StatusScreen.kt` → `CaptureStatusScreen.kt`, `status/**`, `ui/data/ReaderPolling.kt` (status half), new `ui/data/CaptureStatusViewState.kt` | WP2 |
 | **WP5** | Log + threads | `ui/screens/LogScreen.kt`, `ui/screens/ThreadScreen.kt`, `ui/data/ThreadViewData.kt`, `ui/data/TransmissionDetail.kt` (list-entry half), new `ui/screens/LogFilterSheet.kt` | WP2 |
 | **WP6** | Detail, inspection, correction, playback | `ui/screens/TransmissionDetailScreen.kt`, `ui/data/CorrectionFlow.kt`, `ui/data/InspectionSurface.kt`, `ui/audio/**`, new `ui/screens/DetailWhyScreen.kt`, `ui/screens/CorrectionSheet.kt` | WP2 |
 | **WP7** | Search | `ui/screens/SearchScreen.kt`, `ui/data/SearchViewData.kt`, new `ui/screens/SearchFiltersSheet.kt` | WP2 |
 | **WP8** | Stations + frequencies | `ui/screens/StationScreen.kt`, `ui/screens/FrequencyScreen.kt`, `ui/data/StationsAndFrequencies.kt`, `ui/data/ActivityPattern.kt` | WP2 |
 | **WP9** | Setup sequence | new `ui/setup/**`, `permissions/**` | WP1, WP2 |
-| **WP10** | Settings, improve, digest, sessions | new `ui/settings/**`, `ui/improve/**`, `ui/digest/**` | WP2, WP3 |
+| **WP10** | Settings, improve, digest, sessions | `ui/settings/**` (including `ModelsContent.kt` once WP3 has moved it), `ui/screens/ModelsScreen.kt`, `ui/data/ModelsViewData.kt`, new `ui/improve/**`, `ui/digest/**` | WP2, WP3 |
 | **WP11** | Failure states wiring | new `ui/failures/**` (one composable per F-id, fed by a `FailureEvent` flow), `pipeline/**` only where an event must be *emitted* (list per file in the brief) | WP2, WP4 |
 
 Rules every builder follows, restated because they are the ones most often skipped:
@@ -97,7 +97,14 @@ Rules every builder follows, restated because they are the ones most often skipp
 - **Every artboard element becomes something the test can find** — a `testTag` or content
   description matching the intent file's interaction name.
 - **Changelog entry** in the format at the top of `CHANGELOG.md`, before the commit.
-- **`./gradlew check` and `dependencyRules` green.** Report the output, not "it passed".
+- **The gate is green**, with the output in the report, not "it passed": `./gradlew build
+  dependencyRules platformGuards`, then `./gradlew -p buildSrc test` (a plain `build` does not
+  run buildSrc's tests), then `python tools/spec_check.py`, then `./gradlew coverageMatrix` and
+  `./gradlew coverageMatrixCheck` as **separate** invocations (together they trip Gradle's
+  implicit-dependency validation).
+- **Never `git stash`.** The stash is shared across every worktree of this repo; one agent's
+  `stash pop` has pulled in another agent's uncommitted work. Fast-forward onto `main` before
+  starting; never rebase after.
 - **Report** = constitution check, files touched, tests added, what was verified, what is open.
   Never "done" without the output that shows it.
 
