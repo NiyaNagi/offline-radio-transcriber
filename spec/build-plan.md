@@ -221,9 +221,17 @@ are individually green.*
   mint `NetCapability.UserInitiated` and drive `ModelAcquisition` for all four required files
   (three `AsrModelLocator` files, one `SileroVadLocator` file), writing to the exact paths P12's
   providers read, and requeue F-016's `FAILED` items on a successful install. **Still not done:**
-  `ModelCatalog`'s checksums are placeholders, not the real published SHA-256 (no network egress
+  `ModelCatalog`'s checksums were placeholders, not the real published SHA-256 (no network egress
   available to compute one) — a real fetch today verifies the *mechanism* correctly but will
-  correctly refuse to install real bytes until a real digest is pinned. See CHANGELOG.md.
+  correctly refuse to install real bytes until a real digest is pinned. **Update 2026-09-08 (audit
+  F-008 follow-up):** those checksums are no longer placeholders — the encoder, decoder and VAD
+  entries carry real sha256 values read from published metadata (HuggingFace's Git-LFS pointer
+  text; sherpa-onnx's own release `checksum.txt`), cited in KDoc and `asr-sherpa/README.md`.
+  `tiny.en-tokens.txt` has no published sha256 anywhere found and is now explicitly
+  `ChecksumState.UnknownSideloadOnly` rather than a placeholder: Download is refused for it with no
+  network call, and Side-load installs it via a trust-on-first-use digest computed from the user's
+  own file, never claimed as "checksum verified". See CHANGELOG.md. No real download or on-device
+  install has been run against any of these URLs in any session.
 
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not
