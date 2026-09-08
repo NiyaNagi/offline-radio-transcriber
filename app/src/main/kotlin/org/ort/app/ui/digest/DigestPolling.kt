@@ -30,14 +30,29 @@ import java.util.Locale
  *
  * Digest items this reads real data for: stations first heard this session, a frequency departing
  * from its usual pattern (reusing [NightlyDeparture], WP8's public function — no edit to
- * `ui/data/ActivityPattern.kt`), and the AMBIGUOUS/UNKNOWN counts. **Long-thread and "regular
- * absent" items are not computed** — no query lists a session's threads or a station's day-of-week
- * regularity yet (see this package's report); a digest with fewer item *kinds* than the artboard,
- * each one real, is the honest choice over inventing the missing ones.
+ * `ui/data/ActivityPattern.kt`), the AMBIGUOUS/UNKNOWN counts, an unusually long thread (round 3 —
+ * see [longThreadItems]), and a regular station's first absence on its usual weekday (round 3 —
+ * see [regularAbsentItems]). Both round-3 additions are bounded, real Kotlin computations over
+ * [org.ort.data.dao.TransmissionDao]/[org.ort.data.dao.SessionDao] rows — no new query was added to
+ * `:data` for either; grouping by `threadId` and by session weekday is done in this file, the same
+ * way [org.ort.app.ui.data.ThreadListMapper] already groups by `threadId` for the Threads
+ * destination (confirmed by reading that file first) and [firstHeardItems] already walks per-station
+ * history via `ActivityDao.transmissionsForStation`.
  */
 public object DigestPolling {
 
     private const val MAX_TIER_ORDINAL = 3
+
+    /** [longThreadItems]: a thread must be at least this multiple of the historical average
+     * thread length, and at least [MIN_LONG_THREAD_OVERS] overs regardless, to be flagged. */
+    private const val LONG_THREAD_MULTIPLIER = 2.0
+    private const val MIN_LONG_THREAD_OVERS = 5
+
+    /** [regularAbsentItems]: how many past same-weekday sessions are considered, and the minimum
+     * that must exist before anyone can be called "a regular" at all. */
+    private const val SAME_WEEKDAY_WINDOW = 4
+    private const val MIN_SAME_WEEKDAY_HISTORY = 3
+
     private val CLOCK_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneOffset.UTC)
     private val DAY_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM").withZone(ZoneOffset.UTC)
 
@@ -134,6 +149,8 @@ public object DigestPolling {
         val items = mutableListOf<DigestItemViewState>()
         items += firstHeardItems(db, sessionId, transmissions)
         items += busierThanUsualItems(db, allWindows, transmissions)
+        items += longThreadItems(db, transmissions)
+        items += regularAbsentItems(db, session, allSessions, transmissions)
         ambiguousItem(transmissions)?.let { items += it }
 
         val notKnown = mutableListOf<DigestNotKnownItemViewState>()
@@ -209,6 +226,81 @@ public object DigestPolling {
                 reason = "departure from usual pattern",
                 ambiguousTone = true,
                 transmissionIds = transmissions.filter { it.frequencyHz == frequencyHz }.map { it.id },
+            )
+        }
+    }
+
+    /**
+     * FR-DIG-2a "unusually long threads": groups this session's transmissions by
+     * [TransmissionEntity.threadId] (a real, populated column since M6 — confirmed non-null on
+     * real rows by reading [org.ort.app.ui.data.ThreadListMapper] before writing this, the same
+     * grouping key that object already uses for the `Threads` destination) and flags a thread
+     * whose over count clears both a fixed floor and a multiple of the *historical* average thread
+     * length across every session ever recorded — never a threshold invented from tonight's data
+     * alone, which would flag every night's longest thread regardless of whether any thread that
+     * night was actually unusual.
+     */
+    private suspend fun longThreadItems(
+        db: OrtDatabase,
+        transmissions: List<TransmissionEntity>,
+    ): List<DigestItemViewState> {
+        val threadsTonight = transmissions.filter { it.threadId != null }.groupBy { it.threadId!! }
+        if (threadsTonight.isEmpty()) return emptyList()
+        val allThreads = db.transmissionDao().listAll().filter { it.threadId != null }.groupBy { it.threadId!! }
+        val averageLength = allThreads.values.map { it.size }.average()
+        if (averageLength.isNaN()) return emptyList()
+        val threshold = (averageLength * LONG_THREAD_MULTIPLIER).coerceAtLeast(MIN_LONG_THREAD_OVERS.toDouble())
+        return threadsTonight.mapNotNull { (threadId, group) ->
+            if (group.size < threshold) return@mapNotNull null
+            val participants = group.mapNotNull { it.stationId }.distinct().size
+            val participantsNote = if (participants > 0) " with $participants participant(s)" else ""
+            DigestItemViewState(
+                id = "thread-$threadId",
+                headline = "A thread ran ${group.size} over(s)$participantsNote",
+                subLine = "unusually long · usual is %.0f over(s)".format(Locale.ROOT, averageLength),
+                reason = "unusually long thread",
+                ambiguousTone = false,
+                transmissionIds = group.map { it.id },
+            )
+        }
+    }
+
+    /**
+     * FR-DIG-2a "a regular... absent": a station qualifies as a regular for tonight's day of week
+     * when it was heard in every one of the last [SAME_WEEKDAY_WINDOW] sessions that started on
+     * that same UTC weekday (excluding tonight) — real session/transmission rows only, requiring at
+     * least [MIN_SAME_WEEKDAY_HISTORY] of them to exist before calling anyone "a regular" at all, so
+     * a small or new log never produces a false "absent" claim. A qualifying regular not heard
+     * tonight is reported as absent for the first time in that window.
+     */
+    private suspend fun regularAbsentItems(
+        db: OrtDatabase,
+        session: SessionEntity,
+        allSessions: List<SessionEntity>,
+        transmissionsTonight: List<TransmissionEntity>,
+    ): List<DigestItemViewState> {
+        val tonightDayOfWeek = Instant.ofEpochMilli(session.startedAt).atZone(ZoneOffset.UTC).dayOfWeek
+        val heardTonight = transmissionsTonight.mapNotNull { it.stationId }.toSet()
+        val sameWeekdaySessions = allSessions
+            .filter { it.id != session.id }
+            .filter { Instant.ofEpochMilli(it.startedAt).atZone(ZoneOffset.UTC).dayOfWeek == tonightDayOfWeek }
+            .sortedByDescending { it.startedAt }
+            .take(SAME_WEEKDAY_WINDOW)
+        if (sameWeekdaySessions.size < MIN_SAME_WEEKDAY_HISTORY) return emptyList()
+
+        val stationsPerWeek = sameWeekdaySessions.map { s ->
+            db.transmissionDao().listBySession(s.id).mapNotNull { it.stationId }.toSet()
+        }
+        val everyWeekStationIds = stationsPerWeek.reduce { a, b -> a intersect b }
+        val dayName = tonightDayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }
+        return everyWeekStationIds.filter { it !in heardTonight }.map { stationId ->
+            DigestItemViewState(
+                id = "absent-$stationId",
+                headline = "$stationId was absent for the first time in ${sameWeekdaySessions.size} weeks",
+                subLine = "a regular · heard every $dayName for the last ${sameWeekdaySessions.size} weeks",
+                reason = "a regular station absent",
+                ambiguousTone = false,
+                transmissionIds = emptyList(),
             )
         }
     }

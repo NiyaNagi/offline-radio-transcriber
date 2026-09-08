@@ -1,0 +1,174 @@
+package org.ort.app.ui.digest
+
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.ort.app.ui.theme.OrtTheme
+import org.ort.core.AttributionState
+import org.ort.core.TransmissionState
+import org.ort.data.OrtDatabase
+import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.CaptureState
+import org.ort.testing.Requirement
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * R-092 round 3 (WP3's host find): [SessionsContent.onOpenTransmission] hands a real transmission
+ * id up through the embedded `Log`'s row taps and `Digest-Item`'s "The N over(s)" action — this
+ * package's own drill-in surface (a `Log` page rendered inline) is not where that detail can be
+ * shown, so the id must reach whatever hosts this composable.
+ *
+ * Every tap below on a target that can sit below the fold scrolls it into view first
+ * (`performScrollToNode`, the same idiom `FrequencyScreenTest` already uses) — `Session`'s
+ * `Digest`/`Log` action row sits past the coverage chart and session facts, outside the
+ * un-scrolled viewport, and a plain `performClick()` on an off-screen node is silently a no-op
+ * under Robolectric (confirmed by printing the semantics tree at the point of failure before this
+ * fix existed: the click landed, threw nothing, and the screen never advanced).
+ */
+@RunWith(RobolectricTestRunner::class)
+class SessionsContentTest {
+
+    @get:Rule
+    val composeTestRule = createComposeRule()
+
+    private lateinit var db: OrtDatabase
+    private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    @Before
+    fun setUp() {
+        db = OrtDatabase.create(context)
+        CaptureState.idle(clearSession = true)
+    }
+
+    @After
+    fun tearDown() {
+        CaptureState.idle(clearSession = true)
+    }
+
+    private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 5_000) {
+        waitUntil(timeoutMillis) {
+            runCatching { onNodeWithText(text, substring = true).assertExists() }.isSuccess
+        }
+    }
+
+    private fun session() = SessionEntity(
+        id = "S1",
+        startedAt = 0L,
+        endedAt = 3_600_000L,
+        profileId = null,
+        deviceTier = null,
+        appVersion = "test",
+        terminationReason = null,
+        sourceId = null,
+        schemaVersion = OrtDatabase.SCHEMA_VERSION,
+    )
+
+    private fun transmission(id: String, stationId: String? = null) = TransmissionEntity(
+        id = id,
+        sessionId = "S1",
+        threadId = null,
+        startedAtUtc = 0L,
+        endedAtUtc = 1_000L,
+        durationMs = 4_200L,
+        audioFormat = "flac/16k/mono",
+        preRollMs = 200,
+        postRollMs = 200,
+        frequencyHz = 146_960_000L,
+        frequencyProvenance = "measured",
+        mode = null,
+        signalStrength = 7.0,
+        channelName = null,
+        voiceprintId = null,
+        attributionState = if (stationId != null) AttributionState.CONFIRMED else AttributionState.UNKNOWN,
+        stationId = stationId,
+        attributionConfidence = null,
+        attributionSourceTransmissionId = null,
+        processingState = TransmissionState.COMPLETE,
+        rejectionReason = null,
+        samplePosition = 0L,
+        monotonicStartNanos = 0L,
+        utcOffsetMinutes = 0,
+        calibrationId = null,
+        executionProvider = null,
+    )
+
+    @Test
+    @Requirement("FR-UI-1")
+    fun `FR_UI_1 Session's Log action reaches the embedded Log, wired with onOpen equal to onOpenTransmission`() {
+        // `SessionsContent`'s `SessionsPage.Log` branch renders `LogContent(..., onOpen =
+        // onOpenTransmission, ...)` — a direct, one-line pass-through (see that file). This proves
+        // the real navigation hop (session → its embedded Log, header and columns for real).
+        // Driving an actual row tap through `LogContent`'s own DB-backed poll was tried and
+        // dropped: `TransmissionDetail`'s `buildDetail` reads `transcriptDao().getAllVersions(...)`
+        // for every row, and Robolectric's bundled SQLite has no fts5 module — `transcript_fts`
+        // (an fts5 virtual table) fails to attach at database-open time for *every* test database
+        // here (confirmed by the `[sqlite] ... no such module: fts5` warning this test throws
+        // regardless of whether a transcript row is ever inserted), which leaves `LogContent`'s
+        // poll loop's first iteration throwing and its list permanently empty under this runner —
+        // confirmed by waiting 15 real seconds with the semantics tree printed on timeout, not
+        // assumed. `LogContent`'s own row-tap behaviour is WP5's `LogScreenTest`'s to prove against
+        // a hand-built view-state (no DB); this package's own row is the wiring above it.
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1"))
+        }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent {
+            OrtTheme { SessionsContent(context = context, onDrawer = {}, onOpenTransmission = {}) }
+        }
+
+        composeTestRule.waitUntilTextExists("Tonight")
+        composeTestRule.onNodeWithText("Tonight", substring = true).performClick()
+
+        composeTestRule.waitUntilTextExists("Log")
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Log"))
+        composeTestRule.onNodeWithText("Log").performClick()
+
+        composeTestRule.waitUntilTextExists("TIME")
+        composeTestRule.onNodeWithText("TIME").assertExists()
+        composeTestRule.onNodeWithText("STATION").assertExists()
+    }
+
+    @Test
+    @Requirement("FR-DIG-9")
+    fun `FR_DIG_9 Digest-Item's The N overs hands the real transmission id up via onOpenTransmission`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "W7NEW"))
+        }
+        CaptureState.capturing("S1")
+        var tapped: String? = null
+
+        composeTestRule.setContent {
+            OrtTheme { SessionsContent(context = context, onDrawer = {}, onOpenTransmission = { tapped = it }) }
+        }
+
+        composeTestRule.waitUntilTextExists("Tonight")
+        composeTestRule.onNodeWithText("Tonight", substring = true).performClick()
+
+        composeTestRule.waitUntilTextExists("Digest")
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Digest"))
+        composeTestRule.onNodeWithText("Digest").performClick()
+
+        composeTestRule.waitUntilTextExists("W7NEW heard for the first time")
+        composeTestRule.onNodeWithText("W7NEW heard for the first time").performClick()
+
+        composeTestRule.waitUntilTextExists("The 1 over(s)")
+        composeTestRule.onNodeWithText("The 1 over(s)").performClick()
+
+        assert(tapped == "TX1") { "expected onOpenTransmission(\"TX1\"), got $tapped" }
+    }
+}
