@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -16,7 +17,11 @@ import org.ort.app.ui.data.SearchFacetCounts
 import org.ort.app.ui.data.SearchFilterInput
 import org.ort.app.ui.data.SearchResult
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.core.AttributionState
+import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.TransmissionEntity
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -104,4 +109,50 @@ class SearchContentTest {
         }
         composeTestRule.onNodeWithText("is doing the narrowing.", substring = true).assertExists()
     }
+
+    private fun session() = SessionEntity(
+        id = "S1", startedAt = 0L, endedAt = null, profileId = null, deviceTier = null,
+        appVersion = "test", terminationReason = null, sourceId = null, schemaVersion = OrtDatabase.SCHEMA_VERSION,
+    )
+
+    private fun transmission(id: String, samplePosition: Long) = TransmissionEntity(
+        id = id, sessionId = "S1", threadId = null, startedAtUtc = samplePosition, endedAtUtc = samplePosition + 1000L,
+        durationMs = 1000L, audioFormat = "flac/16k/mono", preRollMs = 200, postRollMs = 200,
+        frequencyHz = 145_230_000L, frequencyProvenance = "measured", mode = null, signalStrength = null,
+        channelName = null, voiceprintId = null, attributionState = AttributionState.CONFIRMED, stationId = null,
+        attributionConfidence = null, attributionSourceTransmissionId = null,
+        processingState = TransmissionState.COMPLETE, rejectionReason = null, samplePosition = samplePosition,
+        monotonicStartNanos = 0L, utcOffsetMinutes = 0, calibrationId = null, executionProvider = null,
+    )
+
+    @Test
+    fun `R_202 opening the filter sheet with a real, non-empty corpus shows real counts, never 0`(): Unit =
+        runTest {
+            val db = OrtDatabase.create(context)
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", 1L))
+            db.transmissionDao().insert(transmission("TX2", 2L))
+            db.transmissionDao().insert(transmission("TX3", 3L))
+
+            composeTestRule.setContent {
+                OrtTheme {
+                    SearchContent(
+                        input = SearchFilterInput(),
+                        result = null,
+                        onInputChange = {},
+                        onSearch = {},
+                        onOpen = {},
+                    )
+                }
+            }
+
+            composeTestRule.onNodeWithTag("search-filters-chip").performScrollTo().performClick()
+
+            // Same real-background-thread-I/O reasoning as the widen-suggestions test above:
+            // `SearchPolling.facetCounts` is a genuine Room query, not tracked by `waitForIdle()`.
+            composeTestRule.waitUntil(timeoutMillis = 5_000) {
+                composeTestRule.onAllNodesWithText("Show 3 overs").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText("Show 3 overs").assertExists()
+        }
 }

@@ -1,5 +1,7 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -60,11 +62,14 @@ class SearchScreenTest {
         recent: List<RecentSearchEntry> = emptyList(),
         widenSuggestions: SearchWidenViewState? = null,
         filtersSheetOpen: Boolean = false,
+        filterFacetCounts: SearchFacetCounts = SearchFacetCounts.EMPTY,
+        heardFrequenciesHz: List<Long> = emptyList(),
         onInputChange: (SearchFilterInput) -> Unit = {},
         onSearch: () -> Unit = {},
         onOpen: (String) -> Unit = {},
         onOpenFilters: () -> Unit = {},
         onDismissFilters: () -> Unit = {},
+        onBack: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             OrtTheme {
@@ -74,11 +79,14 @@ class SearchScreenTest {
                     recent = recent,
                     widenSuggestions = widenSuggestions,
                     filtersSheetOpen = filtersSheetOpen,
+                    filterFacetCounts = filterFacetCounts,
+                    heardFrequenciesHz = heardFrequenciesHz,
                     onOpenFilters = onOpenFilters,
                     onDismissFilters = onDismissFilters,
                     onInputChange = onInputChange,
                     onSearch = onSearch,
                     onOpen = onOpen,
+                    onBack = onBack,
                 )
             }
         }
@@ -147,6 +155,63 @@ class SearchScreenTest {
         screen(input = SearchFilterInput(text = "mayday"), result = result)
 
         composeTestRule.onNodeWithText("Not applied").assertDoesNotExist()
+    }
+
+    // --- R-200: focused on entry, back chevron ---
+
+    @Test
+    fun `R_200 the query field is focused on entry to the untouched initial screen`() {
+        screen(input = SearchFilterInput(), result = null)
+
+        composeTestRule.onNodeWithContentDescription("Search text").assertIsFocused()
+    }
+
+    @Test
+    fun `R_200 the query field is not stolen back into focus once a result exists`() {
+        val result = SearchResult(
+            details = listOf(detail("TX1", "mayday mayday", Attribution.confirmed("W7NPC", 0.9))),
+            textSearchUnavailable = false,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+        screen(input = SearchFilterInput(text = "mayday"), result = result)
+
+        composeTestRule.onNodeWithContentDescription("Search text").assertIsNotFocused()
+    }
+
+    @Test
+    fun `R_200 the back chevron invokes onBack`() {
+        var backed = false
+        screen(onBack = { backed = true })
+
+        composeTestRule.onNodeWithTag("search-back-chevron").performClick()
+
+        assert(backed) { "expected the back chevron to invoke onBack" }
+    }
+
+    // --- R-202/R-203: the filter sheet's live counts and heard-frequency chips flow through ---
+
+    @Test
+    fun `R_202 the filter sheet's counts come from filterFacetCounts, live from the caller`() {
+        val counts = SearchFacetCounts(
+            listOf(
+                SearchFacetRow(AttributionState.CONFIRMED, false, false),
+                SearchFacetRow(AttributionState.CONFIRMED, false, false),
+                SearchFacetRow(AttributionState.UNKNOWN, false, false),
+            ),
+        )
+        screen(filtersSheetOpen = true, filterFacetCounts = counts)
+
+        // Real counts on a plain, untouched (default) filter input — never the 0 the register
+        // caught when this sourced `result?.facetCounts` (`EMPTY` before any search had run).
+        composeTestRule.onNodeWithText("Show 3 overs").assertExists()
+    }
+
+    @Test
+    fun `R_203 heardFrequenciesHz reaches the filter sheet's chip row`() {
+        screen(filtersSheetOpen = true, heardFrequenciesHz = listOf(145_230_000L))
+
+        composeTestRule.onNodeWithText("145.230").assertExists()
+        composeTestRule.onNodeWithText("2M").assertExists()
     }
 
     // --- Initial state (R-063) ---

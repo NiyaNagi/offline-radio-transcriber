@@ -248,6 +248,29 @@ public object SearchPolling {
         }
     }
 
+    /**
+     * R-202: the same facet breakdown [search] computes, for a caller (the filters sheet) that
+     * only needs live counts for the current text/callsign/band/time filters — not the results
+     * themselves. Runs the identical base query and the identical fts5-unavailable degrade path
+     * as [search], just without building the full `TransmissionDetail` list. The filter sheet
+     * calls this itself, on open and whenever the non-facet filters change, rather than relying on
+     * whatever `SearchResult.facetCounts` a *previous* `onSearch` happened to have produced (which
+     * is `SearchFacetCounts.EMPTY` before any search has ever run, at default filters, on a
+     * non-empty corpus — the exact "every count reads 0" bug this fixes).
+     */
+    public suspend fun facetCounts(context: Context, params: SearchQueryParams): SearchFacetCounts {
+        val db = OrtDatabase.create(context.applicationContext)
+        val entities = try {
+            rawSearch(db, params, params.text)
+        } catch (e: SQLiteException) {
+            val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
+                e.message?.contains("transcript_fts", ignoreCase = true) == true
+            if (!fts5Missing || params.text == null) throw e
+            rawSearch(db, params, text = null)
+        }
+        return SearchFacetCounts(entities.map { it.toFacetRow() })
+    }
+
     private suspend fun rawSearch(db: OrtDatabase, params: SearchQueryParams, text: String?): List<TransmissionEntity> =
         db.searchDao().search(
             text = text,
@@ -264,18 +287,26 @@ public object SearchPolling {
         facetFilter: SearchFacetFilter,
         textSearchUnavailable: Boolean,
     ): SearchResult {
-        val facetCounts = SearchFacetCounts(
-            entities.map { entity ->
-                SearchFacetRow(
-                    attributionState = entity.attributionState,
-                    rejected = entity.processingState == TransmissionState.REJECTED,
-                    corrected = entity.corrected,
-                )
-            },
-        )
+        val facetCounts = SearchFacetCounts(entities.map { it.toFacetRow() })
         val filtered = entities.filter { facetFilter.matches(it) }
         val details = filtered.map { ReaderPolling.detailFromEntity(context, it) }
         return SearchResult(details, textSearchUnavailable, facetCounts)
+    }
+
+    private fun TransmissionEntity.toFacetRow(): SearchFacetRow = SearchFacetRow(
+        attributionState = attributionState,
+        rejected = processingState == TransmissionState.REJECTED,
+        corrected = corrected,
+    )
+}
+
+/** R-203: the exact frequencies actually heard in this corpus — the choices
+ * `SearchFiltersSheet`'s frequency/band chips offer, never a generic fixed band table
+ * (`Search-Filters.dc.html`'s "145.230 / 146.960" chips, derived from real data). */
+public object HeardFrequencies {
+    public suspend fun list(context: Context): List<Long> {
+        val db = OrtDatabase.create(context.applicationContext)
+        return db.activityDao().listDistinctFrequencies()
     }
 }
 
