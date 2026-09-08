@@ -7,9 +7,12 @@ import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
+import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
+import org.ort.core.TransmissionState
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -99,6 +102,30 @@ class LogScreenTest {
         composeTestRule.onNodeWithText("roger that").performClick()
 
         assert(opened == "TX1") { "expected TX1 to be opened but was $opened" }
+    }
+
+    @Test
+    fun `FR_RUN_9 a transmission the work queue moved to FAILED shows a failure label, not the pending state`() {
+        val failedDetail = TransmissionDetail(
+            id = "TX-failed",
+            startedAtUtcMillis = 1_000L,
+            frequencyHz = 146_960_000L,
+            durationMs = 4_200L,
+            signalStrength = 7.0,
+            attribution = Attribution.unknown(),
+            currentTranscriptText = null,
+            supersededTranscriptTexts = emptyList(),
+            hasAudio = false,
+            processingState = TransmissionState.FAILED,
+        )
+
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(entries = listOf(ReaderTransmissionViewStateMapper.listEntry(failedDetail)), onOpen = {})
+            }
+        }
+
+        composeTestRule.onNodeWithText("(captured, not yet transcribed)").assertDoesNotExist()
     }
 
     @Test

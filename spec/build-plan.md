@@ -105,6 +105,9 @@ are individually green.*
   `RealTransmissionAudioPlayer` plays retained audio through `:pipeline`'s existing
   `FlacSegmentAudioProvider`. FR-UI-1/4/5 and FR-A11Y-1..4 hold; the digest, thread grouping and
   FR-UI-8 lattice/prior panel are named divergences left to P15-P17. See CHANGELOG.md.
+  **2026-09-07 (audit F-003):** the read path never surfaced `TransmissionEntity.processingState`,
+  so `FAILED`/`REJECTED` transmissions rendered identically to still-pending ones; fixed (FR-RUN-9)
+  — see CHANGELOG 2026-09-07 entry. The `FAILED` label still lacks the queue's `lastError` text.
 - [x] **P15 · Search and threads** *(`:app`, `:data`)* — done 2026-09-08. `SearchDao` (a new DAO
   file, per the prompt, to stay conflict-free with concurrent P17) queries the FTS5 index P5 built
   and nothing queried until now, with callsign/frequency/date filters; `SearchScreen`/`ThreadScreen`
