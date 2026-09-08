@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  R-001/R-006 (ui-conformance-plan WP1): `Theme.Ort` is what fixed R-001 — before this file
+  existed, neither Activity declared `android:theme`, so both rendered under the platform's
+  `Theme.DeviceDefault`, which carries an ActionBar. `Theme.Material.NoActionBar` has none, and
+  is applied to `<application>` in `AndroidManifest.xml` so every Activity gets it. There is no
+  AppCompat dependency in `:app` (Compose only, `MainActivity`/`ReaderActivity` are a plain
+  `Activity`/`ComponentActivity`), so this descends from the platform `Theme.Material` directly —
+  API 21+, well under this module's minSdk 26.
+
+  `windowLightStatusBar`/`windowLightNavigationBar` = false: guide §12 has no light theme, so the
+  status/navigation bar icons are always the light-on-dark variant. `windowLightNavigationBar`
+  is API 27+; declaring it here (rather than a `values-v27` overlay) is safe at minSdk 26 because
+  an unrecognised style attribute is ignored at runtime, not a crash — `tools:targetApi` only
+  silences the lint warning that would otherwise flag it.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.Ort" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg_screen</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    </style>
+</resources>

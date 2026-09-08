@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  R-001/R-006 (ui-conformance-plan WP1): `bg_screen` is the platform-XML mirror of
+  `OrtColors.bgScreen` (oklch(0.155 0.008 250)) — it is what `Theme.Ort`'s `windowBackground` and
+  system-bar colours use for the instant before Compose's own `OrtTheme` Surface takes over, so
+  the window is never briefly the platform's own light/DeviceDefault ground. Keep this in sync
+  with `OrtColors.kt`'s `bgScreen` by hand; there is no shared source between resource XML and
+  Kotlin in this module.
+-->
+<resources>
+    <color name="bg_screen">#FF0A0D10</color>
+</resources>

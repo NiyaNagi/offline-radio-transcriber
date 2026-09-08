@@ -3,6 +3,7 @@ package org.ort.app.ui
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.CaptureState
@@ -22,15 +23,24 @@ import org.ort.pipeline.capture.CaptureState
  * moment capture actually starts -- is preferred over the intent extra whenever the two differ and
  * capture is genuinely live. This activity is not only reached through `MainActivity`'s own fix for
  * the same finding: without this, any other path back here (a saved/restored task, a future deep
- * link) could still poll a stale or phantom session while a real one is running.
+ * link) could still poll a stale or phantom session while a real one is running — see
+ * [resolveSessionId] below, which is what actually computes this now (ui-conformance-plan R-007,
+ * pulled out to a pure function for testability).
+ *
+ * ui-conformance-plan R-001: [enableEdgeToEdge] draws content behind a transparent status/
+ * navigation bar rather than under an opaque platform one — see `res/values/themes.xml`'s
+ * `Theme.Ort` and [OrtTheme]'s own doc comment for the rest of R-001/R-006.
  */
 public class ReaderActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val intentSessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
-        val liveSessionId = CaptureState.sessionId.takeIf { CaptureState.isCapturing }
-        val sessionId = liveSessionId ?: intentSessionId
+        enableEdgeToEdge()
+        val sessionId = resolveSessionId(
+            intentSessionId = intent?.getStringExtra(EXTRA_SESSION_ID),
+            liveSessionId = CaptureState.sessionId,
+            isCapturing = CaptureState.isCapturing,
+        )
         setContent {
             OrtTheme {
                 OrtNavHost(sessionId = sessionId)
@@ -41,4 +51,19 @@ public class ReaderActivity : ComponentActivity() {
     public companion object {
         public const val EXTRA_SESSION_ID: String = "session_id"
     }
+}
+
+/**
+ * R-007's routing decision, pulled out as a pure function (no `Activity`, no `Context`) so it is
+ * directly unit-testable without composing [OrtNavHost] — building a real [ReaderActivity] with a
+ * non-null session id starts `OrtNavHost`'s `Now`/`Log` polling `LaunchedEffect(sessionId) {
+ * while (true) { ...; delay(2000) } }` loops (`OrtNavHost.kt`), which a Robolectric-driven test
+ * never gets a chance to cleanly cancel; that is what was poisoning `ActivityPatternChartTest`'s
+ * Compose idle-check when the full `:app` suite ran, even after the activity was destroyed
+ * end-to-end. [resolveSessionId] is exactly what [ReaderActivity.onCreate] computes, so
+ * `ReaderActivityTest`'s `R_007` cases assert it directly and never build the activity at all.
+ */
+internal fun resolveSessionId(intentSessionId: String?, liveSessionId: String?, isCapturing: Boolean): String? {
+    val effectiveLiveSessionId = liveSessionId.takeIf { isCapturing }
+    return effectiveLiveSessionId ?: intentSessionId
 }
