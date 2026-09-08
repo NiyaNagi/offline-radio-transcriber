@@ -32,6 +32,111 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11d follow-up: R-290)
+
+### (pending) — ui-conformance WP11d · R-290: a missing retained-audio file fails that item, never crashes the run
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/{ReprocessRunner,ReprocessStatus}.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/reprocess/ReprocessRunnerTest.kt` — the files this
+package owns, plus the read-only reliance on `org.ort.pipeline.passb.FlacSegmentAudioProvider`'s
+existing (unchanged) exception shape named in the coordinator's grant. `FlacSegmentAudioProvider.kt`
+itself was **not** edited — the fix is entirely in how `ReprocessRunner` calls a `Pass`, not in what
+the audio provider throws. No `:data`/`:app` change. `results/coverage-matrix.md` regenerated.
+
+**Requirements/ACs:** register R-290 (halt); FR-RUN-9, FR-REP-11; cf. R-143.
+
+**Constitution check.** Principle IV (capture/processing never blocks or lies) bears directly: a
+missing retained-audio file crashing the whole app is exactly the kind of silent, catastrophic
+failure the constitution exists to prevent — the fix makes it a loud, typed, per-item failure
+instead. Principle I (uncertainty is content): `ReprocessStatus.Summary.failureReasons` states
+*why* an item could not be improved, not just a bare count. Principle III (audio is the source of
+truth) bears on **not** touching `FlacSegmentAudioProvider`'s own `check()` — that exception is the
+honest, correct signal that a pass's required input is gone; the bug was that nothing downstream
+caught it, not that raising it was wrong. Principle II (test-backed change): the regression test
+was verified to reproduce the exact crash *before* the fix (`SafePass` temporarily removed, test
+failed with the real `IllegalStateException` from `FlacSegmentAudioProvider.forItem`), then to pass
+after — not merely written after the fact to match already-working code.
+
+**What changed:**
+- **`SafePass`** (new, private, `ReprocessRunner.kt`): wraps whatever `Pass` `passFor(tier)` returns.
+  Any exception a leased pass throws — `FlacSegmentAudioProvider`'s `IllegalStateException` when a
+  transmission's `audioPath()` file is gone being the reproduced case, but the wrapper is general,
+  not special-cased to that one class — is caught and converted to `PassRunOutcome.Errored(message)`
+  *before* it can escape `WorkQueue.runLeased`'s `withTimeoutOrNull` (which only catches its own
+  timeout, never an ordinary exception) and reach the collecting coroutine — the app's main thread,
+  via `RealImproveRunner` — uncaught. `CancellationException` is explicitly re-thrown, never
+  swallowed: catching it would silently break `run`'s own documented "a collector that stops
+  collecting stops the run" contract. Once converted, `WorkQueue.failPass`'s existing, already-tested
+  bounded-retry path (FR-RUN-9) takes over unchanged: the item retries, then reaches terminal
+  `FAILED` with the real message recorded as `WorkQueueItemEntity.lastError` — the same shape the
+  `pass-failed` scenario (register R-153) already renders, so R03/R04 and any future failure UI
+  read a familiar, already-understood state, not a new one.
+- **`runOnePass` now returns a reason alongside the outcome**: `PassOutcomeKind` (a plain enum)
+  became `PassAttemptOutcome` (a sealed interface), `Failed(reason: String?)` reading the terminally-
+  failed row's own `lastError` back rather than duplicating it. `run()`'s loop collects every
+  distinct reason (first-seen order, a `LinkedHashSet`) into the final summary.
+- **`ReprocessStatus.Summary` gained `failureReasons: List<String> = emptyList()`** — a new field
+  with a default, so this stays source- and binary-compatible with `RealImproveRunner` (unedited,
+  per the coordinator's instruction — it only ever reads `done`/`total` off the mapped
+  `ImproveRunProgress`, never `Summary` directly). `failed: Int` (already existed, register R-143)
+  is still the count; `failureReasons` is now the *why*, satisfying "the run's final state must say
+  how many items could not be improved and why" without a caller needing a separate `:data` query.
+  A missing-audio item's *previous* transcript/attribution are untouched either way (FR-REP-11) —
+  `DataPassBResultSink` only ever writes on `PassBOutcome.Accepted`, unchanged by this fix.
+
+**Verified:**
+- **TDD, not after-the-fact**: temporarily removed the `SafePass` wrap and re-ran the new test —
+  it failed with the real, uncaught `IllegalStateException: expected retained audio at
+  .../audio/S1/TX-NO-AUDIO.flac for TX-NO-AUDIO at FlacSegmentAudioProvider.forItem` (the exact
+  R-290 crash, reproduced), confirming the test exercises the real bug before restoring the fix
+  and re-running to green.
+- New test `R_290_a_missing_retained_audio_file_fails_that_item_without_crashing_the_run` (real
+  `PassBFactory` composition + `FakeAsrEngine`, matching production wiring exactly except the ASR
+  model): two transmissions, one with no retained-audio file and one with a real one — the run does
+  not throw, `done == total == 2`, the missing-audio item ends `TransmissionState.FAILED` with its
+  *previous* transcript untouched, `summary.failed == 1`, `summary.failureReasons` contains the
+  real "expected retained audio at …" message, and the other item still completes and its
+  transcript still changes.
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*" --rerun` — 12
+  tests (the existing 11 plus this one), all green, forced re-run (not cache-trusted).
+- `.\gradlew.bat :pipeline:ktlintFormat` then `:pipeline:ktlintCheck :pipeline:detekt` — BUILD
+  SUCCESSFUL, both clean.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules: OK`, `platformGuards: OK`;
+  every `:pipeline` task (build/test/check/detekt) green. Overall FAILS at `:app:testDebugUnitTest`
+  — `org.ort.app.ui.setup.ReadyScreenTest`, 2 of 7 cases, a Compose semantics-node-duplication
+  assertion failure ("found 2 nodes" where 1 was expected) — `git log -1 --` traces this file to
+  WP9 (`56d92ed`), not this package; re-ran in isolation (`--rerun`) and it fails deterministically
+  the same way both times, so not flakiness this run introduced. Not touched (ownership is
+  absolute); flagged for the lead to route.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 185 covered (unchanged — FR-RUN-9/FR-REP-11
+  were already covered by other tests; R-290 is a register finding, not a spec requirement id).
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL (proves the whole app, including this fix,
+  still compiles and packages end to end).
+
+**Left open / not done:**
+- **`:app:testDebugUnitTest`'s `ReadyScreenTest` failure is pre-existing on main, in a WP9 file,
+  and not fixed here** — see Verified above for the exact traceback and how it was confirmed
+  not to be something this merge introduced.
+- **The other half of R-290 — the `field-tier1` fixture writing real retained-audio FLAC files so
+  `Improve-Done`/R04 is actually reachable end to end — is WP4's (`app/src/debug`), not this
+  package's**, per the coordinator's own split. Without it, `field-tier1`'s scenario still has no
+  real audio for its transmissions, so this fix is verified by a dedicated unit test rather than by
+  re-running the `field-tier1` scenario on an emulator (which this package's brief also says not to
+  use — Robolectric is the builder's gate; validators exercise the emulator after merge).
+- **The live capture path has the same latent gap** (`RealCaptureService.startProcessingLoop`
+  constructs a real `PassB` and hands it to `CaptureProcessingLoop`/`PassDrainRunner` unwrapped —
+  a `Pass.run()` exception there would propagate the same way `SafePass` now prevents for
+  reprocessing) — out of scope here (`RealCaptureService.kt`/`CaptureProcessingLoop.kt` are not in
+  this package's ownership, and this brief scoped the fix to the reprocess engine specifically);
+  flagged for the lead, not silently left unmentioned.
+- Register row R-290 is left for the lead to mark — this package does not edit
+  `results/ui-audit/register.md`.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: ktlint)
 
 ### (pending) — ui-conformance WP2 · ktlint
