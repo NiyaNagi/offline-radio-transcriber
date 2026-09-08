@@ -217,4 +217,31 @@ class AttributionMarkerTest {
                     hasContentDescription("confidence 0.82", substring = true),
             )
     }
+
+    @Test
+    fun `R_050_TitleAttributionRow renders a 27sp mono callsign beside an 11dp marker per Detail_dc_html`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    TitleAttributionRow(
+                        attribution = Attribution.inferred("K7LWH", 0.82),
+                        modifier = Modifier.testTag("title"),
+                    )
+                    TitleAttributionRow(
+                        attribution = Attribution.unknown(),
+                        modifier = Modifier.testTag("title-unknown"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("K7LWH").assertExists()
+        composeTestRule.onNodeWithText("unknown station").assertExists()
+        composeTestRule
+            .onNodeWithTag("title")
+            .assert(
+                hasContentDescription("outlined circle", substring = true) and
+                    hasContentDescription("K7LWH", substring = true),
+            )
+    }
 }

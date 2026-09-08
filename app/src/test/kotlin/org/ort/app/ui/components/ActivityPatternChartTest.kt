@@ -124,6 +124,26 @@ class ActivityPatternChartTest {
     }
 
     @Test
+    fun `R_072_a null title draws no title row rather than requiring callers to pass an empty string`() {
+        val pattern = (0..23).map { hour -> bucket(hour, HourActivityState.SILENT_WHILE_LISTENING) }
+
+        composeTestRule.setContent {
+            OrtTheme { ActivityPatternChart(pattern = pattern, title = null) }
+        }
+
+        composeTestRule.onNodeWithText("ACTIVITY BY HOUR (UTC)").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the default title is unchanged for callers that do not pass one`() {
+        val pattern = (0..23).map { hour -> bucket(hour, HourActivityState.SILENT_WHILE_LISTENING) }
+
+        composeTestRule.setContent { OrtTheme { ActivityPatternChart(pattern = pattern) } }
+
+        composeTestRule.onNodeWithText("ACTIVITY BY HOUR (UTC)").assertIsDisplayed()
+    }
+
+    @Test
     fun `a sparkline reports how many of its nights were not-listening rather than quiet`() {
         val nights = listOf(
             HourActivityState.HEARD,

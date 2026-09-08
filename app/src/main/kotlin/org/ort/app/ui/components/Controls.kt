@@ -24,6 +24,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,10 +33,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.theme.OrtColors
@@ -151,6 +155,9 @@ public fun FilterChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onDismiss: (() -> Unit)? = null,
+    // R-061 (WP7's `Filters` chip, `Search-Filters.dc.html`): an optional leading glyph before
+    // the label, tinted to match the label. Null by default — no existing chip gains an icon.
+    leadingIcon: ImageVector? = null,
 ) {
     Box(
         modifier = modifier
@@ -177,10 +184,19 @@ public fun FilterChip(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            val labelColor = if (selected) OrtColors.textHigh else OrtColors.textMuted
+            if (leadingIcon != null) {
+                Icon(
+                    imageVector = leadingIcon,
+                    contentDescription = null,
+                    tint = labelColor,
+                    modifier = Modifier.size(11.dp),
+                )
+            }
             Text(
                 text = label,
                 style = OrtType.chip.copy(fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal),
-                color = if (selected) OrtColors.textHigh else OrtColors.textMuted,
+                color = labelColor,
             )
             if (onDismiss != null) {
                 Icon(
@@ -297,6 +313,11 @@ public fun StepIndicator(steps: Int, currentStep: Int, modifier: Modifier = Modi
 // 6.11 Selection controls
 // ---------------------------------------------------------------------------------------------
 
+/** R-081: [RadioRow]'s tone — `Warning` is `Setup-Input.dc.html`'s refused built-in-mic row (an
+ * amber [RadioRow.subtitle], never colour alone since the row is also the *last*, dimmest option
+ * in the list and its subtitle states the refusal in words). */
+public enum class RowTone { Neutral, Warning }
+
 /** guide §6.11: a closed set is always a visible list with counts — never a tap-to-cycle label. */
 @Composable
 public fun RadioRow(
@@ -305,6 +326,11 @@ public fun RadioRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     count: String? = null,
+    // R-081 (`Setup-Input.dc.html`): an explanatory line under the label — device kind/sample
+    // rate normally, the refusal reason ("Not a radio — capture will refuse this route") when
+    // [tone] is [RowTone.Warning]. Both null/Neutral by default, so existing rows are unchanged.
+    subtitle: String? = null,
+    tone: RowTone = RowTone.Neutral,
 ) {
     Row(
         modifier = modifier
@@ -315,12 +341,21 @@ public fun RadioRow(
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         RadioDot(selected = selected)
-        Text(
-            text = label,
-            style = OrtType.control,
-            color = if (selected) OrtColors.textHigh else OrtColors.textBody,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = OrtType.control,
+                color = if (selected) OrtColors.textHigh else OrtColors.textBody,
+            )
+            subtitle?.let {
+                Text(
+                    text = it,
+                    style = OrtType.chip,
+                    color = if (tone == RowTone.Warning) OrtColors.accentAmberText else OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
         count?.let { Text(text = it, style = OrtType.signal, color = OrtColors.textFigure) }
     }
 }
@@ -423,6 +458,82 @@ public fun ToggleRow(
             subLine?.let { Text(text = it, style = OrtType.subLine, color = OrtColors.textDim) }
         }
         ToggleKnob(checked = checked)
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fields — Controls.dc.html's "Fields" panel.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `Controls.dc.html`'s field: 44dp, `bg/current` ground, `line/strong` border (`accent/green`
+ * focused or non-empty), placeholder in `text/signal`, mono when [mono] (a callsign or
+ * frequency field). [errorText], when given, renders below in `halt/text`. WP7 and WP9 each
+ * hand-rolled their own text field before this existed; this is the shared one they migrate to.
+ */
+@Suppress("LongParameterList") // every parameter is an independent, optional field concern.
+@Composable
+public fun TextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    placeholder: String? = null,
+    mono: Boolean = false,
+    errorText: String? = null,
+    contentDescriptionText: String? = null,
+    singleLine: Boolean = true,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        label?.let {
+            Text(
+                text = it,
+                style = OrtType.sectionLabel,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(bottom = OrtSpacing.xs),
+            )
+        }
+        val borderColor = when {
+            errorText != null -> OrtColors.haltBorder
+            value.isNotEmpty() -> OrtColors.accentGreen
+            else -> OrtColors.lineStrong
+        }
+        val textStyle = (if (mono) OrtType.control.copy(fontFamily = FontFamily.Monospace) else OrtType.control)
+            .copy(color = OrtColors.textHigh)
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = singleLine,
+            textStyle = textStyle,
+            cursorBrush = SolidColor(OrtColors.accentGreen),
+            // `modifier` lands here (not on the outer Column) so a caller's testTag/semantics
+            // target the actual text-input node — the one `performTextInput`/a11y services need.
+            modifier = modifier
+                .fillMaxWidth()
+                .heightIn(min = 44.dp)
+                .background(OrtColors.bgCurrent, RoundedCornerShape(8.dp))
+                .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+                .padding(horizontal = 13.dp)
+                .semantics {
+                    contentDescription = contentDescriptionText ?: label ?: placeholder.orEmpty()
+                },
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.fillMaxWidth()) {
+                    if (value.isEmpty() && placeholder != null) {
+                        Text(text = placeholder, style = OrtType.control, color = OrtColors.textSignal)
+                    }
+                    innerTextField()
+                }
+            },
+        )
+        errorText?.let {
+            Text(
+                text = it,
+                style = OrtType.subLine,
+                color = OrtColors.haltText,
+                modifier = Modifier.padding(top = OrtSpacing.xs),
+            )
+        }
     }
 }
 

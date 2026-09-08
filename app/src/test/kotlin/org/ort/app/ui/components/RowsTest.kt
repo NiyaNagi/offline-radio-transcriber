@@ -5,6 +5,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
@@ -16,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
@@ -32,6 +35,7 @@ class RowsTest {
         partial: LogRowPartial? = null,
         badge: LogRowBadge? = null,
         transcript: String = "this is whiskey seven november papa charlie, monitoring",
+        highlightRanges: List<IntRange> = emptyList(),
     ) = LogRowViewState(
         id = "TX1",
         timeLabel = "02:14:07",
@@ -41,6 +45,7 @@ class RowsTest {
         attribution = attribution,
         signalLabel = "S7",
         badge = badge,
+        highlightRanges = highlightRanges,
     )
 
     @Test
@@ -178,5 +183,115 @@ class RowsTest {
         composeTestRule.onNodeWithTag("kv").assertHeightIsAtLeast(44.dp)
         composeTestRule.onNodeWithText("Confirm").assertIsDisplayed()
         composeTestRule.onNodeWithText("Not right?").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_065_highlightRanges paints the matched words in highlightGreen, per Search-Results_dc_html`() {
+        val transcript = "park activation of the state park"
+        composeTestRule.setContent {
+            OrtTheme {
+                LogRow(
+                    // "park" (0..3) and "activation" (5..14).
+                    state = row(transcript = transcript, highlightRanges = listOf(0..3, 5..14)),
+                    onClick = {},
+                    modifier = Modifier.testTag("hit"),
+                )
+            }
+        }
+
+        val node = composeTestRule.onNodeWithTag("hit").fetchSemanticsNode()
+        val texts = node.config.getOrNull(SemanticsProperties.Text).orEmpty()
+        val annotated = texts.firstOrNull { it.text == transcript }
+        assert(annotated != null) { "expected the transcript text to be present in the row's semantics" }
+        assert(annotated!!.spanStyles.any { it.item.background == OrtColors.highlightGreen }) {
+            "expected at least one span styled with highlightGreen, got ${annotated.spanStyles}"
+        }
+    }
+
+    @Test
+    fun `an empty highlightRanges list renders the transcript with no highlight spans`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogRow(state = row(transcript = "no matches here"), onClick = {}, modifier = Modifier.testTag("plain"))
+            }
+        }
+
+        val node = composeTestRule.onNodeWithTag("plain").fetchSemanticsNode()
+        val texts = node.config.getOrNull(SemanticsProperties.Text).orEmpty()
+        val annotated = texts.firstOrNull { it.text == "no matches here" }
+        assert(annotated != null && annotated.spanStyles.isEmpty()) {
+            "expected no highlight spans on a row with no highlightRanges"
+        }
+    }
+
+    @Test
+    fun `R_043_a rejected row's optional why line explains the reason in prose`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RejectedRow(
+                    timeLabel = "02:16:40",
+                    frequencyLabel = "146.960",
+                    reason = "squelch tail",
+                    why = "0.4 s of noise after the carrier dropped. No speech energy.",
+                    modifier = Modifier.testTag("rejected-why"),
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText("0.4 s of noise after the carrier dropped. No speech energy.")
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `a rejected row with no why still renders exactly as before`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RejectedRow(
+                    timeLabel = "02:16:40",
+                    frequencyLabel = "146.960",
+                    reason = "squelch tail",
+                    modifier = Modifier.testTag("rejected-no-why"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("REJECTED · SQUELCH TAIL").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a notification card renders collapsed by default and shows expanded rows and actions when supplied`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    NotificationCard(
+                        icon = OrtIcons.frequencies,
+                        title = "Capturing",
+                        elapsedLabel = "6:42",
+                        countLabel = "412 overs",
+                        secondLine = "145.230 and 146.960 · tier 3",
+                        modifier = Modifier.testTag("collapsed"),
+                    )
+                    NotificationCard(
+                        icon = OrtIcons.frequencies,
+                        title = "Capturing",
+                        elapsedLabel = "7:10",
+                        countLabel = "440 overs",
+                        secondLine = "Running warm — tier 2",
+                        degraded = true,
+                        expandedRows = listOf(NotificationCardRow("Last over", "W7NPC · 02:14 · 145.230")),
+                        primaryActionLabel = "Open",
+                        secondaryActionLabel = "Stop",
+                        modifier = Modifier.testTag("expanded"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("collapsed").assertIsDisplayed()
+        composeTestRule.onNodeWithText("W7NPC · 02:14 · 145.230").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Open").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Stop").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Running warm — tier 2").assertIsDisplayed()
     }
 }

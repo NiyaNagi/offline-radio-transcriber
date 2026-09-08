@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -144,6 +145,49 @@ public fun AttributionRow(
     }
 }
 
+/**
+ * R-050: `Detail.dc.html`'s drill-in header — the callsign standing in as the screen title, 27sp
+ * mono ([OrtType.callsignTitle]) beside an 11dp marker (the guide's ring weight goes to 2px at
+ * this size, same rule as the 12dp card variant). A dedicated composable rather than a new `size`
+ * branch on [AttributionRow]'s existing callsign styling, so this is purely additive — no existing
+ * [AttributionRow] call site changes shape. UNKNOWN reads "unknown station" in the same 27sp size,
+ * italic, sans (there is no mono form of "unknown" — it is prose, not a callsign).
+ */
+@Composable
+public fun TitleAttributionRow(
+    attribution: Attribution,
+    callsign: String? = attribution.stationId,
+    modifier: Modifier = Modifier,
+) {
+    val state = attribution.state
+    val description = attributionRowDescription(attribution, callsign, null)
+
+    Row(
+        modifier = modifier.semantics(mergeDescendants = true) { contentDescription = description },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AttributionShape(state = state, size = MARKER_TITLE_SIZE)
+        Spacer(modifier = Modifier.width(OrtSpacing.sm))
+        when (state) {
+            AttributionState.CONFIRMED ->
+                Text(text = callsign.orEmpty(), style = OrtType.callsignTitle, color = OrtColors.textHigh)
+
+            AttributionState.INFERRED ->
+                Text(text = callsign.orEmpty(), style = OrtType.callsignTitle, color = OrtColors.textBody)
+
+            AttributionState.AMBIGUOUS ->
+                Text(text = callsign.orEmpty(), style = OrtType.callsignTitle, color = OrtColors.textAmbiguous)
+
+            AttributionState.UNKNOWN ->
+                Text(
+                    text = "unknown station",
+                    style = OrtType.screenTitle.copy(fontStyle = FontStyle.Italic),
+                    color = OrtColors.textLow,
+                )
+        }
+    }
+}
+
 /** guide §6.2: mono 10.5px on `bg/score`, 3px radius, `1px 5px` padding — only ever beside an
  * INFERRED callsign or a candidate, never on CONFIRMED. */
 @Composable
@@ -163,9 +207,14 @@ public val MARKER_ROW_SIZE: Dp = 9.dp
 /** `States.dc.html`'s card size, where the ring weight goes to 2px. */
 public val MARKER_CARD_SIZE: Dp = 12.dp
 
+/** `Detail.dc.html`'s drill-in header size — [TitleAttributionRow]'s marker. */
+public val MARKER_TITLE_SIZE: Dp = 11.dp
+
 @Composable
 private fun AttributionShape(state: AttributionState, size: Dp, modifier: Modifier = Modifier) {
-    val ringWidth = if (size >= MARKER_CARD_SIZE) 2.dp else 1.5.dp
+    // The ring goes to 2px at the title size (11dp) too, not only the 12dp card — both are
+    // "large" variants per Detail.dc.html/States.dc.html.
+    val ringWidth = if (size >= MARKER_TITLE_SIZE) 2.dp else 1.5.dp
     Canvas(modifier = modifier.width(size).height(size)) {
         val d = size.toPx()
         when (state) {
