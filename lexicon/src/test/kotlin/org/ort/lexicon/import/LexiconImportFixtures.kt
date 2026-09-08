@@ -36,7 +36,10 @@ internal fun writeLexiconFile(
     return file
 }
 
-/** An in-memory [ActiveLexiconStore] — no [org.ort.lexicon.import.LexiconImportInstaller] test needs a real database. */
+/**
+ * An in-memory [ActiveLexiconStore] — no [org.ort.lexicon.import.LexiconImportInstaller] test needs
+ * a real database.
+ */
 internal class FakeActiveLexiconStore(initial: ActiveLexiconRecord? = null) : ActiveLexiconStore {
     var activated: MutableList<ActiveLexiconRecord> = mutableListOf()
         private set

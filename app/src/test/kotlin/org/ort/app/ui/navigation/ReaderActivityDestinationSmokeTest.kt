@@ -29,6 +29,10 @@ import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TransmissionEntity
 import org.robolectric.RobolectricTestRunner
 
+/** Shorthand for this file's one specific [AndroidComposeTestRule] instantiation — keeps later
+ * receiver-type usages under ktlint's line-length limit without wrapping generics awkwardly. */
+private typealias ReaderComposeTestRule = AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>, ReaderActivity>
+
 /**
  * R-129 (V3 Reader validation @3e2d4ee, `results/ui-audit/register.md`): the drawer's own report
  * — "Robolectric did not catch it because no `SaveableStateRegistry` is installed under
@@ -401,7 +405,7 @@ class ReaderActivityDestinationSmokeTest {
      * allowance `OrtNavHostDestinationDispatchTest.waitUntilTextExists` already makes for the same
      * reason.
      */
-    private fun AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>, ReaderActivity>.waitUntilContentDescriptionExists(
+    private fun ReaderComposeTestRule.waitUntilContentDescriptionExists(
         substring: String,
         timeoutMillis: Long = 15_000,
     ) {
