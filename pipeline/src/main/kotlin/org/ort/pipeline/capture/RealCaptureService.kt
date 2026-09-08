@@ -51,6 +51,7 @@ import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
 import org.ort.pipeline.passb.RealAsrEngineProvider
 import org.ort.pipeline.passb.UnavailableAsrEngine
+import org.ort.pipeline.reprocess.SafePass
 import org.ort.pipeline.shed.AndroidShedSignals
 import org.ort.pipeline.shed.ShedController
 import org.ort.pipeline.shed.ShedEventPersister
@@ -494,7 +495,17 @@ public class RealCaptureService : Service() {
         // wrapping the pass RealCaptureService already constructs, rather than inside
         // CaptureProcessingLoop/PassDrainRunner: neither of those two files is in this package's
         // ownership (see this package's report for why this is deliberate, not an oversight).
-        val pass = ThermalTrackingPass(PassBFactory.create(filesDir, db, engine, modelRef, provider), db)
+        //
+        // register R-290 (live-capture round): SafePass is the OUTERMOST wrapper, around
+        // ThermalTrackingPass rather than only inside it, so a pass's own exception -- a missing
+        // retained-audio file being the reproduced case -- is converted to PassRunOutcome.Errored
+        // before it ever reaches CaptureProcessingLoop/WorkQueue.runLeased. This scope is a plain
+        // CoroutineScope(Dispatchers.IO + Job()), not a SupervisorJob: an exception left uncaught
+        // here would cancel this Job and, with it, the sibling runCaptureFlow coroutine actually
+        // recording audio -- exactly the "capture must never block on or die from inference"
+        // failure the constitution names. The item still ends FAILED with lastError set; capture
+        // itself must never even notice a Pass B item failed.
+        val pass = SafePass(ThermalTrackingPass(PassBFactory.create(filesDir, db, engine, modelRef, provider), db))
         CaptureProcessingLoop(PassDrainRunner(queue, runId = sessionId), pass).runForever()
     }
 
@@ -658,6 +669,12 @@ public class RealCaptureService : Service() {
         // leaves it in place so a Failed/Idle read still names the session that was running. See
         // CaptureState.idle()'s kdoc.
         CaptureState.idle(clearSession = markClean)
+        // R-302: LevelStatus/InputStatus are live-session facts, same as CaptureState -- left at
+        // their last live value here, a stale "too quiet" or "input mismatch" reading survives a
+        // stop and is misread as current on the post-stop Capture-Status/Now-Idle boards. Reset on
+        // every path that ends a session, clean or unclean, same as CaptureState.idle() above.
+        LevelStatus.reset()
+        InputStatus.reset()
         if (markClean && sessionId.isNotEmpty()) heartbeatStore.markCleanShutdown(sessionId)
         source?.stop()
         source = null
