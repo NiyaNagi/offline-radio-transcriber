@@ -32,6 +32,70 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-007)
+
+### (pending) — audit F-007 · RealCaptureService now ticks a real ShedController, persists shed events, and stops loudly at a storage floor
+
+**Scope:** `:pipeline` only — new `AndroidShedSignals.kt` and `ShedEventPersister.kt`
+(`org.ort.pipeline.shed`), new `ShedStatus.kt` (`org.ort.pipeline.capture`),
+`RealCaptureService.kt` (`startCapture`'s wiring, the new `runShedMonitor`/
+`stopForStorageExhaustion` methods, the new top-level `ShedEventRelay` class and
+`storageFloorBreached` function), plus new tests `AndroidShedSignalsTest.kt`,
+`ShedEventPersisterTest.kt`, `RealCaptureServiceShedTest.kt`.
+**Requirements/ACs:** FR-RUN-3, FR-RUN-5, FR-RUN-6, FR-STO-4; constitution IV ("overload sheds
+work in a documented order … only storage exhaustion stops capture, loudly").
+**What changed:** `ShedController` was never constructed in the running capture service — it
+existed only in `:app`'s status display, fed a `FakeShedSignals` purely for something to show
+(F-002), and no production `ShedSignals` implementation existed at all. So FR-RUN-3's shed order
+could never actually trigger and a full disk was discovered only when a write threw. This adds:
+(1) `AndroidShedSignals`, the first real `ShedSignals` — battery percent and charging state from
+`BatteryManager`, free storage from `StatFs(filesDir)`, queue backlog from
+`WorkQueueDao.count()` (cached via a `refreshBacklog()` suspend call, since `ShedSignals` is a
+plain synchronous interface and `ShedController.sample()` runs from a hot loop). Every signal that
+cannot be read returns a documented sentinel on the *conservative* side — `-1` for an unreadable
+battery percent (reads as "critical" to the controller), `false` for unreadable charging state,
+`0L` for unreadable free storage (reads as certainly below any floor) — never a fabricated healthy
+value. (2) `RealCaptureService.startCapture()` now constructs one `ShedController` per session and
+ticks it every 10 s (`runShedMonitor`), refreshing the backlog, sampling the controller, draining
+any new level transitions through the new `ShedEventRelay`/`ShedEventPersister` pair into F-021's
+`shed_event` table (with the real sample position from `Segmenter.position()`, the F-005 pattern),
+and republishing `currentLevel`/backlog through the new `ShedStatus` process-wide holder (the same
+pattern as `CaptureState`/`AsrAvailability`/`VadAvailability`) for `:app`'s status surface to read
+in place of its own fake-fed controller (a follow-up on F-002, not done here — see Left open).
+(3) A free-storage floor (`STORAGE_FLOOR_BYTES`, 100 MiB, a named constant with its own KDoc
+justification — deliberately not the full FR-STO-3 budget system) checked every tick:
+`storageFloorBreached` breaches it, `stopForStorageExhaustion` sets `CaptureState.failed(...)`
+with the real reason, updates the notification, and stops the audio source — the same loud-failure
+route a route mismatch already uses, never a silent write failure. `ShedController` itself was not
+changed; level 5 ("storage exhaustion") is handled as this separate stop path, not as a level the
+controller's own hysteresis machinery reaches, since its `sample()` has no branch that reads
+`freeStorageBytes()` at all.
+**Verified:** New tests, all written first and confirmed failing on `Unresolved reference` compile
+errors for `AndroidShedSignals`/`ShedEventPersister`/`ShedEventRelay`/`storageFloorBreached` before
+being implemented. `AndroidShedSignalsTest` (`FR_RUN_3_...`, `FR_STO_4_...`, `FR_RUN_5_...`,
+Robolectric — battery/charging via `ShadowBatteryManager`, free storage via
+`ShadowStatFs.registerStats`, backlog via a real in-memory `WorkQueue`) asserts real reads and the
+conservative sentinels. `ShedEventPersisterTest` (`FR_RUN_3_...`, Robolectric, in-memory `OrtDatabase`)
+asserts a persisted `shed_event` row's fields and trigger classification. `RealCaptureServiceShedTest`
+(`FR_RUN_3_...`, `FR_STO_4_...`) exercises `ShedEventRelay` against a real `ShedController` +
+`FakeShedSignals` (two successive transitions each get their own `levelBefore`, not both `0`) and
+`storageFloorBreached`'s boundary directly — no `ServiceController` harness exists yet to start
+`RealCaptureService` itself (F-011, still open), so this follows the same extracted-seam approach
+F-005/F-028 used. `./gradlew :pipeline:test` — 79 tests, 0 failures, `ShedControllerTest` (pre-
+existing) unchanged and green. Full gate: `./gradlew build dependencyRules` (exit 0) and
+`python tools/spec-check/spec_check.py` (all 8 checks PASS). All JVM/Robolectric only — nothing
+here is device-verified.
+**Left open / not done:** `:app`'s status surface (`ReaderPolling.kt`, `StatusActivity.kt`) still
+constructs its own `ShedController` against `FakeShedSignals` for display — that is F-002's finding
+and `:app` is explicitly out of scope for this change. `ShedStatus` (level + backlog, two plain
+`Int`s, no new module edge) is what a follow-up on F-002 should read instead. The full FR-STO-3
+storage-budget/warning system (per-category footer, configurable thresholds, export-and-prune) is
+still unbuilt — only the FR-STO-4 stop-before-exhaustion floor is added here, deliberately not that
+larger system (see F-020). `AndroidShedSignals.refreshBacklog()`'s one honest gap: a failed read
+leaves the cached backlog unchanged, so an unread value and a genuinely-empty queue are both `0`
+and indistinguishable from each other — documented in its KDoc, not fixed, since a `Int` cannot
+carry a third "unread" state without changing the `ShedSignals` interface's contract.
+
 ## 2026-09-07 (audit — F-028)
 
 ### (pending) — audit F-028 · RealCaptureService now joins GapTracker to GapPersister, so a capture gap is actually a row
