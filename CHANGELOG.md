@@ -32,6 +32,197 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: nameable drill-in kebab; log row description carries the attribution; rejected-row duration; provisional italics; sheet focus trap; key-value traversal stop)
+
+### (pending) — ui-conformance WP2 · nameable drill-in kebab; log row description carries the attribution
+
+**Scope:** `:app` `ui/components/Rows.kt`, `ui/components/AttributionMarker.kt`, `ui/components/
+Feedback.kt` and their tests (`RowsTest.kt`, new `NavRowTest.kt`, `FeedbackTest.kt`) only. `git
+merge --ff-only main` run first (already an ancestor — this branch was already fast-forwardable);
+no rebase, no stash, no `--stop`. Register findings R-192, R-242, R-246, R-261, R-265, plus the
+side finding from the coordinator's own message ("`AttributionRow`'s content description does not
+bubble through `LogRow`'s outer merge").
+
+**Requirements/ACs:** R-192 (`DrillInHeader`'s kebab must be nameable per-screen, so WP8 does not
+need its own clone of the header just to say "Station identity"), R-242 (`RejectedRow` needs a
+duration render slot for the DUR column, `Log-Rejected.dc.html`), R-246 (`LogRow`'s transcript
+must render in the italic `transcript` variant while the row is provisional, `Log-Partial.dc.html`
+— "Provisional must look provisional"), R-261 (a `Sheet`'s scrim must block accessibility
+traversal and focus to the content beneath it), R-265 (`KeyValueRow` must be one merged, focusable
+semantics node so TalkBack hears every fact row as a whole), and the un-numbered merge-boundary
+finding (a validator reads `LogRow`'s own merged description to judge attribution state — "filled
+circle, Confirmed, W7NPC" — and today that state does not reach it).
+
+**What changed:**
+- **Constitution Check.** Principle IV (An attribution without its confidence state is a bug, at
+  the data layer, not just the UI) is the direct driver for the `LogRow` merge fix below — the
+  state was already correct in the view state and rendered correctly on screen; what was missing
+  was that the same fact did not reach the *accessibility* tree, which for an operator who cannot
+  read the screen is the only place the fact exists at all. Principle VII (Boundaries Are
+  Structural) governed the `Sheet`/R-261 decision: rather than rearchitect `Sheet` into a `Dialog`
+  (which nine callers outside this package assemble a scrim *around*, not through a system
+  dialog), the fix is an additive helper (`clearedWhileOverlaid`) each host screen opts into,
+  leaving `Sheet`'s own documented boundary — "dismissal/scrim/focus-trapping is the host screen's
+  job" — intact. Principle III (never delete quietly) is why `clearedWhileOverlaid` clears
+  semantics only, never removes the composable or its state — the control reappears exactly as
+  before the moment its host's `contentHidden` flips back to `false`.
+- **R-192 — `DrillInHeader` gains `kebabDescription: String = "More"` and `kebabTestTag: String? =
+  null`.** The kebab `Icon`'s `contentDescription`/`onClickLabel` now read `kebabDescription`
+  instead of a hardcoded `"More"`; when `kebabTestTag` is supplied it is applied via
+  `Modifier.testTag(...)` before `.clickable(...)`. Both default to the prior behaviour, so every
+  existing caller is unaffected. **WP8 can now delete its own `StationDetailHeader` clone** — it
+  existed solely to relabel the kebab "Station identity"; `DrillInHeader(kebabDescription =
+  "Station identity")` now does the same job through the shared component.
+- **The merge-boundary fix — `LogRow`'s own merged description now carries the attribution's
+  words.** `LogRow`'s outer `Box` went from a bare `.semantics(mergeDescendants = true) {}` (which
+  relies entirely on merging its descendants' own semantics up — and, per this package's
+  repeatedly-confirmed finding that a *nested* `semantics(mergeDescendants = true)` boundary
+  inside an ancestor's own merge does not bubble its properties up in this Compose version, that
+  reliance silently failed for `AttributionRow`'s `contentDescription`) to
+  `.semantics(mergeDescendants = true) { contentDescription = logRowDescription(state) }` — the
+  description is now composed explicitly rather than hoped for. New `internal fun
+  logRowDescription(state: LogRowViewState): String` in `Rows.kt` assembles, in order: time label,
+  frequency label; then either the provisional word ("hearing…"/"resolving…") or — for a resolved
+  row — the attribution's state in prose plus callsign/alternate; then the transcript; then the
+  signal label and badge word, if present.
+  - **A real downstream break, found and fixed before this landed.** The first version of
+    `logRowDescription` used the *full* `attributionRowDescription` (shape word + state + callsign
+    + alternate) — the same string `AttributionRow`'s own separate, still-independently-queryable
+    node already carries. That made `LogRow`'s new outer description and `AttributionRow`'s own
+    node both contain the exact substring `ui/screens/LogScreenTest.kt` (outside this package)
+    searches for — `"filled circle, Confirmed, W7NPC"` — turning its one-match query into two and
+    breaking that test. Fixed by splitting `attributionRowDescription`
+    (`AttributionMarker.kt`) into two: `attributionRowDescription` (unchanged — shape + state +
+    callsign + alternate, still used by `AttributionRow`/`TitleAttributionRow`) and a new,
+    shape-less `attributionStateDescription` (state + callsign + alternate, no shape word).
+    `logRowDescription` uses only the shape-less half, so `LogRow`'s own description never
+    contains the exact "filled circle, Confirmed, W7NPC" phrase — that phrase still finds exactly
+    `AttributionRow`'s own node, one match, unaffected. Verified by running `RowsTest` and
+    `LogScreenTest` together after the fix: both fully pass.
+- **R-242 — `RejectedRow` gains `durationLabel: String? = null`.** Rendered as a trailing `Text`
+  (signal-weight style, `textLow`, one line, no wrap) after the existing reason column, and folded
+  into the row's merged `contentDescription` when present. `null` (every caller before this
+  existed) renders and describes exactly as before.
+- **R-246 — `LogRow`'s transcript renders italic while provisional.** New, deliberately pure
+  `internal fun logRowTranscriptStyle(partial: LogRowPartial?): TextStyle` in `Rows.kt` — returns
+  `OrtType.transcript.copy(fontStyle = FontStyle.Italic)` when `partial` is non-null (`HEARING` or
+  `RESOLVING`), `OrtType.transcript` otherwise; `LogRow`'s transcript `Text` now calls it instead
+  of inlining the conditional. No new field was added to `LogRowViewState` — the coordinator's
+  message offered `provisional: Boolean` or deriving from existing state as alternatives, and
+  `LogRowViewState` already carries `partial: LogRowPartial?` (from an earlier round), which is a
+  strictly richer signal (distinguishes "hearing" from "resolving", `null` meaning resolved) than
+  a bare boolean would be — deriving from it avoids a second, potentially-inconsistent field.
+  Written as a standalone pure function (not inlined into the `Text` call) specifically so it is
+  unit-testable directly, by plain `TextStyle`/`FontStyle` equality, without depending on Compose
+  rendering — this package's established workaround for Robolectric's degenerate font-metric
+  measurement on this codebase's custom `fontFamily`s (recorded repeatedly elsewhere in this
+  file for `scrubFraction`/`meterColorFor` and others).
+- **R-261 — `Modifier.clearedWhileOverlaid(contentHidden: Boolean): Modifier`, new in
+  `Feedback.kt`.** `contentHidden = true` applies `Modifier.clearAndSetSemantics {}` to the
+  receiver, removing its entire subtree from the semantics/accessibility tree (so TalkBack cannot
+  reach it and Compose's own semantics-based focus cannot land on it); `false` (every screen
+  before this exists) is a complete no-op, `this` unchanged. Deliberately **not** a conversion of
+  `Sheet` into a `Dialog`/`Popup` — `Sheet`'s own KDoc already states that dismissal, the scrim,
+  and focus-trapping are the host screen's job, precisely so each screen keeps control of its own
+  scrim's exact tap geometry (`TransmissionDetailContent.kt`'s `CorrectingOverlay`,
+  `SearchScreen.kt`'s `FiltersSheetOverlay`, both outside this package, assemble the scrim as a
+  sibling to the sheet in a `Column`, not through a system dialog); rearchitecting `Sheet` itself
+  risked breaking any of the nine files that call it. `clearedWhileOverlaid` is the one general,
+  reusable half of the job this package can respons­ibly hand every such screen — each host
+  applies it to its own main-content root, keyed to whatever local state already means "a sheet is
+  open" there. WP6/WP7/etc. still need to wire this into their own overlay hosts; this commit only
+  adds the mechanism and proves it works.
+- **R-265 — `KeyValueRow` restructured into one merged, focusable semantics node.** Was a single
+  `Row` carrying layout, padding and no focus/semantics of its own; now an outer `Box` (carrying
+  `.fillMaxWidth().heightIn(min = 44.dp).focusable().semantics(mergeDescendants = true) {
+  contentDescription = "$key, $value[, $subLine]" }`) wraps an inner `Row` (carrying
+  `.fillMaxWidth().padding(vertical = OrtSpacing.xs)` plus the original alignment/arrangement and
+  content). `Modifier.focusable()` registers a real `SemanticsActions.RequestFocus` action, the
+  correct testable proxy for "is a TalkBack traversal stop" (`SemanticsProperties.Focused` reflects
+  only *current* focus, not focusability).
+  - **A real height regression, found and fixed before this landed.** The first attempt appended
+    `.focusable().semantics(...)` after `.padding(vertical = OrtSpacing.xs)` in a single modifier
+    chain on the existing `Row` — this reproduced, exactly, this package's own repeatedly-confirmed
+    Compose/Robolectric measurement bug (`heightIn(min = 44.dp)` measuring short once more
+    modifiers are appended after `padding()` in the same chain): the pre-existing test asserting a
+    44dp target failed with "Actual height is 36.0.dp" (`44dp − 8dp` padding, exactly). Fixed with
+    this package's own established pattern — an outer `Box` for size/focus/semantics wrapping an
+    inner `Row` for padding/layout, already used by `LogRow`/`GapRow`/`RejectedRow`/
+    `LogGroupHeader`/`DrillInHeader`/`ScreenHeader`. Re-ran `RowsTest` after the fix: both the new
+    `R_265` test and the pre-existing 44dp test pass.
+  - **A known, accepted, out-of-boundary side effect — disclosed, not silently absorbed.**
+    Merging `KeyValueRow`'s children into one node changes what `onNodeWithText(...)` on the
+    *default* (merged) tree resolves to for text inside it: two independent text queries that used
+    to hit two independent nodes now both resolve to the same merged `KeyValueRow` node.
+    `ui/setup/**`'s `ReadyScreenTest.kt` (outside this package) has exactly this pattern — a test
+    named `R_226 the full label renders and never collides with the value at font scale 2_0` does
+    `onNodeWithText("Overnight").fetchSemanticsNode().boundsInRoot` and
+    `onNodeWithText("Battery exemption skipped").fetchSemanticsNode().boundsInRoot` and asserts the
+    value's bounds sit to the right of the label's — after this commit both calls return the
+    *identical* `Rect` (the merged `KeyValueRow` node's own bounds), so the assertion that was
+    previously true by construction is now vacuously comparing a rect to itself and the test fails.
+    This was investigated directly and confirmed: the underlying **pixels have not moved** — this
+    is a semantics-tree query technique breaking, not a layout regression, and it is a correct,
+    unavoidable consequence of implementing R-265 exactly as the coordinator specified
+    (`mergeDescendants = true` on `KeyValueRow`'s outer node is the literal request). The
+    well-precedented fix on the other side is a one-line addition of `useUnmergedTree = true` to
+    `ReadyScreenTest.kt`'s two `onNodeWithText` calls (a pattern already used elsewhere in this
+    codebase for exactly this situation) — but that file is in `ui/setup/**`, outside this
+    package's boundary, and this round makes no exception to "never touch files outside
+    `ui/components/**`" beyond the one already-disclosed, lead-approved `buildSrc` exception from
+    an earlier round. Reported here, honestly, rather than silently forced: **999 of 1000 tests
+    pass**, the one failure is `ReadyScreenTest`'s `R_226` test, for the reason above, with the fix
+    it needs spelled out for whoever owns `ui/setup/**`.
+- **`RowsTest.kt` split — detekt's `LargeClass` finding.** Adding this round's tests grew
+  `RowsTest.kt` past detekt's size threshold. Rather than suppress, the five self-contained
+  `NavRow` tests (`R_131_*`, not entangled with `LogRow`/`KeyValueRow`/the rest `RowsTest.kt` still
+  owns) were moved verbatim into a new file, `NavRowTest.kt`. `RowsTest.kt` is now 778 lines (was
+  896). Re-ran `:app:detekt --rerun-tasks` after the split — clean, `BUILD SUCCESSFUL`.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **999 of 1000 passing, 1 failed**
+  (`ReadyScreenTest`'s `R_226 the full label renders and never collides with the value at font
+  scale 2_0`, explained above — the one disclosed, out-of-boundary, unavoidable consequence of
+  R-265 as specified). New tests, all passing: `R_192_drill_in_header_kebab_can_be_named`
+  (`RowsTest`), a `LogRow` merged-description test proving both that the attribution's own words
+  ("Confirmed, W7NPC") now reach `LogRow`'s outer node and that the full "filled circle, Confirmed,
+  W7NPC" phrase still finds only `AttributionRow`'s own separate node (`RowsTest`),
+  `R_242_a rejected row's optional duration renders in the DUR column and reaches the description`
+  (`RowsTest`), `R_246_a provisional log row's transcript style is italic, a resolved row's is not`
+  and a companion test proving the real transcript text still renders unchanged (`RowsTest`),
+  `R_261_a control behind an open sheet is unreachable once its host applies clearedWhileOverlaid`
+  (`FeedbackTest`), `R_265_key_value_row_is_a_traversal_stop` (`RowsTest`) — asserts the merged
+  description, a real `SemanticsActions.RequestFocus` action, and that "Input"/"USB Audio Device"
+  each resolve to exactly one node on the default tree (one traversal stop, not three). The five
+  `R_131_nav_row*` tests moved to `NavRowTest.kt` re-verified passing in their new file.
+- `.\gradlew.bat dependencyRules platformGuards` (isolated) — both **OK** (17 modules).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 185 covered` → `results/coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (185 covered of 419)`.
+- `:app:detekt --rerun-tasks` — clean after the `RowsTest.kt`/`NavRowTest.kt` split.
+
+**Left open / not done:**
+- **`ReadyScreenTest`'s `R_226` test fails (999/1000), for the reason detailed above** — a correct,
+  disclosed, unavoidable-within-this-boundary consequence of implementing R-265 exactly as
+  specified. Needs a one-line `useUnmergedTree = true` fix on its two `onNodeWithText` calls, owned
+  by whoever holds `ui/setup/**`.
+- **WP6/WP7/etc. still need to wire `clearedWhileOverlaid` into their own overlay hosts.** This
+  commit adds and proves the mechanism only; no caller outside this package was touched.
+- **WP5 still needs to wire `RejectedRow.durationLabel` and the provisional-italics behaviour**
+  (already automatic via `LogRowViewState.partial`, no caller change needed there) into real
+  screens — per the coordinator's own addendum, WP5 owns that once this is merged.
+- **WP8 can delete its own `StationDetailHeader` clone** now that `DrillInHeader(kebabDescription
+  = "Station identity")` does the same job — not done here, outside this package.
+- **The register is not updated by this commit** — closing out R-192/R-242/R-246/R-261/R-265 is
+  the validator/coordinator's own bookkeeping.
+- **No screenshot/emulator re-capture** to visually confirm any of these fixes against the actual
+  artboards — Robolectric assertions only, per the plan (Phase E/Validators own screenshot
+  verification).
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: log row badges wrap at large font scale; column headers never split)
 
 ### (pending) — ui-conformance WP2 · log row badges wrap at large font scale; column headers never split
