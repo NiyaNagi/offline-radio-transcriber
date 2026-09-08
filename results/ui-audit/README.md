@@ -96,6 +96,43 @@ second process, no serialization boundary, and no cache to go stale — the writ
 the same JVM heap. `-NoRestart` only changes whether Android delivers the broadcast to a fresh
 process or the one already on screen; it does not change how the receiver updates state.
 
+### Recovery toast recipes (register R-103, R-230, R-231)
+
+`RecoveryAnnouncer.diff` (`app/src/main/kotlin/org/ort/app/ui/failures/RecoveryAnnouncer.kt`, WP11b's
+file) fires a toast only on a real transition *into* the recovered state — the two-scenario,
+`-NoRestart` recipe above is what makes that transition observable at all, but two of the toasts
+had no scenario that ever reached the recovered half of the pair before register R-230/R-231:
+
+- **"Radio reconnected"** needs `RigStatus.State.Stale` → `RigStatus.State.Connected`. `rig-lost` →
+  `empty` never fires it (`empty` publishes no `RigStatus` at all, so the holder just resets to
+  `Absent` and stays there — not the transition the toast is watching for). Use `rig-reconnected`
+  instead — same descriptor and bands `rig-lost` itself uses, so the "same radio came back" story is
+  honest:
+  ```powershell
+  .\tools\ui-audit\scenario.ps1 -Port 5554 -Name rig-lost
+  $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start `
+      -n org.ort.app/.debug.ScenarioReaderActivity --es session_id scenario-rig-lost
+  .\tools\ui-audit\nav.ps1 -Port 5554 -Screen now
+  .\tools\ui-audit\scenario.ps1 -Port 5554 -Name rig-reconnected -NoRestart
+  # watch for "Radio reconnected", or shoot.ps1 a few seconds later.
+  ```
+- **"Storage back above the floor"** needs `StorageForecast.State.ThreeNightsLeft`/`OneNightLeft`/
+  `AtFloor` → `StorageForecast.State.Fine`. No scenario published `Fine` at all before `storage-fine`
+  existed, so this toast was unreachable no matter what preceded it:
+  ```powershell
+  .\tools\ui-audit\scenario.ps1 -Port 5554 -Name storage-warn
+  $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start `
+      -n org.ort.app/.debug.ScenarioReaderActivity --es session_id scenario-storage-warn
+  .\tools\ui-audit\nav.ps1 -Port 5554 -Screen now
+  .\tools\ui-audit\scenario.ps1 -Port 5554 -Name storage-fine -NoRestart
+  # watch for "Storage back above the floor", or shoot.ps1 a few seconds later.
+  ```
+
+Both recipes are also proved directly (no emulator needed) in `ScenariosTest.kt`, by reading
+`RigStatus.state`/`StorageForecast.state` off the real holders after two consecutive `Scenarios.load`
+calls and feeding both snapshots straight into `RecoveryAnnouncer.diff` — the exact function
+`FailureHost`'s own poll loop calls.
+
 Or, for a whole phase-E set at once:
 
 ```powershell
@@ -147,8 +184,10 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `backlog` | `ShedStatus` set to level 3 / backlog 112 (F8), capture marked running. |
 | `model-missing` | `AsrAvailability.unavailable(...)` (F13); captured but untranscribed transmissions. |
 | `storage-warn` | `StorageForecast.ThreeNightsLeft` (FR-STO-3, register R-105), capture genuinely still running — replaces this scenario's earlier misuse of F6's exhaustion failure string. |
+| `storage-fine` | `StorageForecast.Fine` (register R-231) — the recovery half of `storage-warn`'s transition; see "Recovery toast recipes" below. |
 | `thermal` | `ThermalStatus.Warm`, measured RTF 0.9 (F7, register R-104), the same shed level/backlog `backlog` sets. |
 | `rig-lost` | `RigStatus.Stale` since 30 minutes ago, last known on 145.230/146.960 (F9, register R-104). |
+| `rig-reconnected` | `RigStatus.Connected` (register R-230), the same descriptor/bands `rig-lost` uses — the recovery half of `rig-lost`'s transition; see "Recovery toast recipes" below. |
 | `level-low` | `LevelStatus.Measured` peak −38 dBFS, floor −60 dBFS, no clip (F3, register R-112), capture genuinely still running. |
 | `level-clip` | `LevelStatus.Measured` peak 0 dBFS, clipped, 12 clips in the last second (F3, register R-112). |
 | `input-verified` | `InputStatus.Opened` with a USB descriptor, native 48 kHz, a recorded resampler identity, `routeVerified`/`routedDeviceMatches` both true (register R-113). |

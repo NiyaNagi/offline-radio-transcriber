@@ -111,8 +111,10 @@ public object Scenarios {
         "backlog",
         "model-missing",
         "storage-warn",
+        "storage-fine",
         "thermal",
         "rig-lost",
+        "rig-reconnected",
         "level-low",
         "level-clip",
         "input-verified",
@@ -163,8 +165,10 @@ public object Scenarios {
             "backlog" -> backlog(context, db)
             "model-missing" -> modelMissing(context, db)
             "storage-warn" -> storageWarn(context, db)
+            "storage-fine" -> storageFine(context, db)
             "thermal" -> thermal(context, db)
             "rig-lost" -> rigLost(context, db)
+            "rig-reconnected" -> rigReconnected(context, db)
             "level-low" -> levelLow(context, db)
             "level-clip" -> levelClip(context, db)
             "input-verified" -> inputVerified(context, db)
@@ -832,6 +836,31 @@ public object Scenarios {
     }
 
     /**
+     * `storage-fine` — register R-231. `RecoveryAnnouncer.announce`'s own "Storage back above the
+     * floor" toast fires only on a transition *into* [StorageForecast.State.Fine] from
+     * [StorageForecast.State.ThreeNightsLeft]/`OneNightLeft`/`AtFloor` — no scenario published
+     * `Fine` at all before this one, so that toast was unreachable no matter what preceded it. Load
+     * with `-NoRestart` (`tools/ui-audit/scenario.ps1`) straight after `storage-warn` so
+     * `RecoveryAnnouncer`'s own poll tick observes the real transition, the same recipe `rig-lost` →
+     * `rig-reconnected` uses for R-230.
+     */
+    private suspend fun storageFine(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("storage-fine")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 95 * 60_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        StorageForecast.set(
+            StorageForecast.State.Fine(
+                freeBytes = 40L * 1024 * 1024 * 1024, // ~40 GB free, well clear of the warning stage
+                audioDirectoryBytes = 12L * 1024 * 1024 * 1024,
+                nightsLeft = 9.0,
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
      * `thermal` — F7, register R-104. [ThermalStatus] warm with a measured RTF of 0.9
      * (`Fail-Thermal.dc.html`'s own figure), the same shed level/backlog `backlog` already sets
      * (F8's board and this one show the same degraded tier together in practice).
@@ -875,6 +904,34 @@ public object Scenarios {
             ),
         )
         RigStatus.stale(lastKnown, sinceMillis = SystemClock.wallMillis() - 30 * 60_000L)
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `rig-reconnected` — register R-230. `RecoveryAnnouncer.announce`'s own "Radio reconnected"
+     * toast fires only on a transition from [RigStatus.State.Stale] to
+     * [RigStatus.State.Connected] — `rig-lost` → `empty` never reaches it (`empty` never publishes
+     * a `RigStatus` at all, so the process-wide holder just resets to
+     * [RigStatus.State.Absent] and stays there), so this scenario exists specifically to be the
+     * *second half* of that transition. Same descriptor and bands `rig-lost` itself uses
+     * (`TH-D75A`, 145.230/146.960), reconnected rather than stale, so the "same radio came back"
+     * story is honest, not a different device appearing. Load with `-NoRestart`
+     * (`tools/ui-audit/scenario.ps1`) straight after `rig-lost` so `RecoveryAnnouncer`'s own poll
+     * tick observes the real transition.
+     */
+    private suspend fun rigReconnected(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("rig-reconnected")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 5 * 3_600_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        RigStatus.connected(
+            descriptor = "TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+        )
         return LoadResult(0, 1, sessionId)
     }
 

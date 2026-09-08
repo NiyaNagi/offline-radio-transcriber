@@ -13,6 +13,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
+import org.ort.app.ui.failures.FailureSignals
+import org.ort.app.ui.failures.RecoveryAnnouncer
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -434,6 +436,81 @@ class ScenariosTest {
 
     private fun isAtLeastThirtyMinutesAgo(sinceMillis: Long): Boolean =
         sinceMillis <= System.currentTimeMillis() - 29 * 60_000L
+
+    @Test
+    @Requirement("R-230")
+    fun `R_230_rig-reconnected sets RigStatus Connected on the same descriptor and bands rig-lost uses`() = runTest {
+        Scenarios.load(context, "rig-lost")
+        val stale = RigStatus.state as RigStatus.State.Stale
+
+        Scenarios.load(context, "rig-reconnected")
+
+        val state = RigStatus.state
+        assertTrue(state is RigStatus.State.Connected)
+        state as RigStatus.State.Connected
+        assertEquals(stale.lastKnown.descriptor, state.descriptor)
+        assertEquals(stale.lastKnown.bands.map { it.frequencyHz }, state.bands.map { it.frequencyHz })
+        assertTrue(CaptureState.isCapturing)
+    }
+
+    @Test
+    @Requirement("R-230")
+    fun `R_230 rig-lost then rig-reconnected is a real Stale to Connected transition RecoveryAnnouncer fires on`() =
+        runTest {
+            Scenarios.load(context, "rig-lost")
+            val previous = signalsFromHolders()
+
+            Scenarios.load(context, "rig-reconnected")
+            val current = signalsFromHolders()
+
+            val toasts = RecoveryAnnouncer.diff(previous, current)
+            assertTrue("expected the rig recovery toast", toasts.any { it.id == "rig" && it.message == "Radio reconnected" })
+        }
+
+    @Test
+    @Requirement("R-231")
+    fun `R_231_storage-fine sets StorageForecast Fine with capture still genuinely running`() = runTest {
+        Scenarios.load(context, "storage-fine")
+
+        assertTrue(StorageForecast.state is StorageForecast.State.Fine)
+        assertTrue(CaptureState.isCapturing)
+    }
+
+    @Test
+    @Requirement("R-231")
+    fun `R_231 storage-warn then storage-fine is a real transition RecoveryAnnouncer fires the storage toast on`() =
+        runTest {
+            Scenarios.load(context, "storage-warn")
+            val previous = signalsFromHolders()
+
+            Scenarios.load(context, "storage-fine")
+            val current = signalsFromHolders()
+
+            val toasts = RecoveryAnnouncer.diff(previous, current)
+            assertTrue(
+                "expected the storage recovery toast",
+                toasts.any { it.id == "storage" && it.message == "Storage back above the floor" },
+            )
+        }
+
+    /** The same shape [RecoveryAnnouncer.diff] itself takes — read directly off the process-wide
+     * holders a scenario just set, the same way [org.ort.app.ui.failures.FailureHost]'s own poll
+     * loop would (never a fixture double: these two tests exist to prove the real recipe two
+     * consecutive [Scenarios.load] calls produce actually reaches [RecoveryAnnouncer], not just
+     * that each scenario's own state looks right in isolation). */
+    private fun signalsFromHolders() = FailureSignals(
+        captureState = CaptureState.state,
+        inputStatus = InputStatus.state,
+        levelStatus = LevelStatus.state,
+        thermalStatus = ThermalStatus.state,
+        rigStatus = RigStatus.state,
+        storageForecast = StorageForecast.state,
+        shedLevel = ShedStatus.currentLevel,
+        shedBacklog = ShedStatus.backlog,
+        newestGap = null,
+        nowMillis = 0L,
+        debugOverride = DebugFailureOverride.current,
+    )
 
     @Test
     @Requirement("R-112")
