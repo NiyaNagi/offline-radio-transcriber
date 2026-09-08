@@ -32,6 +32,82 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11d follow-up: lint)
+
+### (pending) — ui-conformance WP11d · lint
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessRunner.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/reprocess/{ReprocessRunnerTest,ReprocessStatusTest}.kt`
+— the same three files WP11d owns, no others. Prompted by the coordinator: WP11d's own worktree
+ran against a build-side lint-exclusion bug that made its gate vacuous (fixed on main
+independently — see that entry, "build: lint exclusion is relative to the project root"); once
+real, main's gate found real debt in these three files. No `:data`/`:app` DI change.
+
+**Requirements/ACs:** none new — a lint-only follow-up to R-091/R-143 (WP11d).
+
+**Constitution check.** Principle II (test-backed change): every fix here is style/structure only
+— no production behaviour changed — verified by re-running WP11d's own 11
+`org.ort.pipeline.reprocess.*` tests unchanged and green after each edit, not just trusting the
+refactor. Principle VII (structural boundaries): folding the tuning knobs into `ReprocessTuning`
+is itself a small instance of the constitution's own preference for a named, structural grouping
+over an ad hoc long parameter list.
+
+**What changed:**
+- **`ReprocessRunner`'s constructor had 11 parameters** (detekt's `LongParameterList`, threshold
+  10). Folded the four pure tuning knobs — `yieldPollIntervalMillis`, `deadlineMillis`,
+  `drainBatchLimit`, `maxDrainIterationsPerItem` — into a new `ReprocessTuning` data class
+  (defaults unchanged, same values as before), leaving the constructor at 8 parameters
+  (`db, filesDir, clock, runId, currentTier, passFor, isCaptureBusy, tuning`). `ReprocessRunnerTest`'s
+  one call site that overrode a tuning value (`FR_REP_6_reprocess_pauses_while_capture_is_busy`)
+  updated to `tuning = ReprocessTuning(yieldPollIntervalMillis = 10L)`.
+- **`MaxLineLength` at `ReprocessRunner.kt:117/177`** — both resolved incidentally by the
+  `ReprocessTuning` refactor reshaping those lines; no separate wrap needed.
+- **`MaxLineLength` at `ReprocessRunnerTest.kt:101/172/178/227/228/254` and `ReprocessStatusTest.kt:8`**
+  — fixed by `:pipeline:ktlintFormat` (auto-wrapped argument lists) plus two manual KDoc
+  reflows (`ktlintFormat` does not rewrap comments) for the two single-line KDoc comments that
+  were themselves the long lines.
+- **Confirmed, not fixed: pre-existing debt in other packages' files.** `:app:ktlintCheck` and the
+  full `./gradlew build` both still fail — `:app:detekt` (12 issues: `StationScreen.kt`,
+  `StationPatternScreen.kt`, `FrequencyScreen.kt`, `ModelsViewData.kt`, `ScenariosTest.kt`,
+  `ModelsControllerLexiconTest.kt`, `ReaderActivityDestinationSmokeTest.kt`) and `:lexicon:detekt`
+  (16 issues: `LexiconImportValidator.kt`, `LexiconImportFixtures.kt`,
+  `LexiconImportValidatorTest.kt`) — all in files `git log -1 --` traces to other, already-merged
+  work packages (WP8 stations, WP10 models, the lexicon-import package, a navigation smoke test),
+  none touched here (ownership is absolute). `:app`'s own `ktlintMainSourceSetCheck`/
+  `ktlintTestSourceSetCheck` reports are empty — confirming `RealImproveRunner.kt`/
+  `RealImproveRunnerTest.kt` carry no debt of their own.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:ktlintFormat` then `.\gradlew.bat :pipeline:detekt` — BUILD SUCCESSFUL,
+  0 findings (`detekt.md`: "74 kt files", "0 number of total code smells", "Findings (0)" — a real,
+  non-vacuous file count, confirming the build-side exclusion bug the coordinator named is
+  genuinely fixed on this worktree now).
+- `.\gradlew.bat :pipeline:ktlintCheck` — BUILD SUCCESSFUL (main + test source sets both clean).
+- `.\gradlew.bat :app:ktlintCheck` — FAILS, but only on `FrequencyChangeFixtures.kt` (WP8, `git log`
+  traced, not this package's file); `RealImproveRunner.kt`/`RealImproveRunnerTest.kt`'s own reports
+  are empty.
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` — 11 tests,
+  all green, unchanged behaviour after the `ReprocessTuning` refactor.
+- `.\gradlew.bat :pipeline:build :app:build dependencyRules platformGuards` — `dependencyRules: OK`,
+  `platformGuards: OK`, every `:pipeline` task (compile, test, detekt, ktlint, lint) green; overall
+  FAILS at `:app:detekt` on the pre-existing debt named above, none of it in this package's files.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 185 covered (unaffected by a lint-only
+  change; the +1 over WP11d's own entry is another package's landed work, not this one's).
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date. `results/coverage-matrix.md`
+  regenerated identically to what was already committed — no diff to stage.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- **The full `./gradlew build` gate is not green** — blocked by `:app:detekt` (12 issues) and
+  `:lexicon:detekt` (16 issues), both entirely in other work packages' files (confirmed via `git
+  log -1 --` on each), not this package's to fix under file-ownership rules. Flagged for the lead
+  to route to the owning packages, the same way this package's own earlier reports have flagged
+  gaps found outside their row rather than silently absorbing them.
+
+---
+
 ## 2026-09-08 (ui-conformance WP11d)
 
 ### (pending) — ui-conformance WP11d · reprocessing engine: re-run passes at the current tier, pausable, capture-safe
