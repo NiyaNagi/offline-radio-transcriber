@@ -122,4 +122,63 @@ class LiveBarPollingTest {
         val state = LiveBarPolling.current(context, null)
         assertEquals("Tier 2", state.label)
     }
+
+    @Test
+    @Requirement("R-022")
+    fun `R_022_live_bar_level_bars_follow_LevelStatus`() = runTest {
+        CaptureState.capturing("s1")
+        LevelStatus.update(
+            // -60 dBFS is the chart floor (fraction 0), -30 dBFS is exactly its midpoint (fraction
+            // 0.5) — round numbers chosen so the normalised fraction is exact, not just close.
+            LevelStatus.State.Measured(
+                peakDbfs = -30f,
+                rmsDbfs = -60f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            peakHistoryDbfs = emptyList(),
+        )
+
+        val state = LiveBarPolling.current(context, null)
+
+        // rms, peak, rms, peak — never a fabricated 4-band spectrum from one meter tick's two real
+        // numbers (see LiveBarPolling.levelBars()'s own kdoc).
+        assertEquals(listOf(0f, 0.5f, 0f, 0.5f), state.level)
+    }
+
+    @Test
+    @Requirement("R-022")
+    fun `R_022 NotMeasured keeps the honest floor-height placeholder, never a fabricated waveform`() = runTest {
+        CaptureState.capturing("s1")
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(listOf(0f, 0f, 0f, 0f), state.level)
+    }
+
+    @Test
+    @Requirement("R-022")
+    fun `R_022 a clipped tick still reports its real peak and RMS bars, colour comes from tone alone`() = runTest {
+        CaptureState.capturing("s1")
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = 0f,
+                rmsDbfs = -30f,
+                noiseFloorDbfs = -55f,
+                clipped = true,
+                clipCountLastSecond = 12,
+                sampleRateHz = 48_000,
+                updatedAtMillis = 0L,
+            ),
+            peakHistoryDbfs = emptyList(),
+        )
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(LiveBarTone.DEGRADED, state.tone)
+        assertEquals(listOf(0.5f, 1f, 0.5f, 1f), state.level)
+    }
 }
