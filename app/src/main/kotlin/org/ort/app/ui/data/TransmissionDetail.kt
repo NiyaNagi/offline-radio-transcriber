@@ -2,6 +2,7 @@ package org.ort.app.ui.data
 
 import org.ort.core.Attribution
 import org.ort.core.TransmissionState
+import org.ort.data.entity.TranscriptPass
 import java.util.Locale
 
 /**
@@ -59,6 +60,20 @@ public data class TransmissionDetail(
      * therefore a state label without the underlying error text; see CHANGELOG for this date.
      */
     val rejectionReason: String? = null,
+    /**
+     * R-041 (ui-conformance WP5): which pass produced [currentTranscriptText], `null` exactly
+     * when [currentTranscriptText] is `null` (no transcript row exists yet at all). This is the
+     * structural signal [org.ort.app.ui.data.LogViewData] uses to tell a still-streaming Pass A
+     * partial ("hearing…") from a Pass B/reprocess text still waiting on attribution
+     * ("resolving…") from a genuinely finished row — never guessed from timing.
+     */
+    val currentTranscriptPass: TranscriptPass? = null,
+    /**
+     * R-040 (ui-conformance WP5): the real `transmission.corrected` column (FR-SPK-7). A human
+     * override always outranks the `REVISED`/`NEW` badges a row could otherwise carry — see
+     * [LogViewData]'s badge precedence.
+     */
+    val corrected: Boolean = false,
 )
 
 /** One row of the live/log view — everything [org.ort.app.ui.screens.LogScreen] renders. */
@@ -116,8 +131,12 @@ public object ReaderTransmissionViewStateMapper {
      * FR-RUN-9 (audit F-003): a transcript exists, or it doesn't for one of three genuinely
      * different reasons — still pending, permanently failed, or correctly rejected — and each
      * MUST read differently (constitution I, VII's text-not-colour accessibility floor).
+     *
+     * Public (R-041, ui-conformance WP5): [org.ort.app.ui.data.LogViewData] reuses this exact
+     * mapping for its own `:data`-direct read path rather than re-deriving the same three-way
+     * distinction a second time.
      */
-    private fun transcriptLabel(detail: TransmissionDetail): String {
+    public fun transcriptLabel(detail: TransmissionDetail): String {
         detail.currentTranscriptText?.let { return it }
         return when (detail.processingState) {
             TransmissionState.FAILED -> TRANSCRIPTION_FAILED
@@ -151,18 +170,29 @@ public object ReaderTransmissionViewStateMapper {
      */
     public fun timeLabelFor(detail: TransmissionDetail): String = timeLabel(detail.startedAtUtcMillis)
 
+    /** `"23:32"` — the empty state's "Listening since HH:MM" (R-045) and the filter sheet's from/to fields. */
+    public fun hourMinuteLabel(utcMillis: Long): String {
+        val totalMinutes = utcMillis / 60_000
+        val hours = (totalMinutes / 60) % 24
+        val minutes = totalMinutes % 60
+        return "%02d:%02d".format(Locale.ROOT, hours, minutes)
+    }
+
     private fun revisionNote(supersededCount: Int): String? = when {
         supersededCount <= 0 -> null
         supersededCount == 1 -> "revised · 1 earlier version"
         else -> "revised · $supersededCount earlier versions"
     }
 
-    private fun frequencyLabel(frequencyHz: Long?): String =
+    /** Public (R-041/R-042, ui-conformance WP5): reused by [org.ort.app.ui.data.LogViewData]'s own read path. */
+    public fun frequencyLabel(frequencyHz: Long?): String =
         frequencyHz?.let { "%.3f".format(Locale.ROOT, it / 1_000_000.0) } ?: "—"
 
-    private fun signalLabel(signalStrength: Double?): String? = signalStrength?.let { "S%.0f".format(Locale.ROOT, it) }
+    /** Public (R-041, ui-conformance WP5): reused by [org.ort.app.ui.data.LogViewData]'s own read path. */
+    public fun signalLabel(signalStrength: Double?): String? = signalStrength?.let { "S%.0f".format(Locale.ROOT, it) }
 
-    private fun timeLabel(startedAtUtcMillis: Long): String {
+    /** Public (R-040/R-041, ui-conformance WP5): reused by [org.ort.app.ui.data.LogViewData]'s own read path. */
+    public fun timeLabel(startedAtUtcMillis: Long): String {
         val totalSeconds = startedAtUtcMillis / 1000
         val hours = (totalSeconds / 3600) % 24
         val minutes = (totalSeconds / 60) % 60

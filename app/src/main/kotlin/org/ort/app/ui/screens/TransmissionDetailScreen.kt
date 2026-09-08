@@ -1,17 +1,18 @@
 package org.ort.app.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,323 +21,465 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.PlaybackOutcome
+import org.ort.app.ui.audio.PlaybackRate
 import org.ort.app.ui.audio.TransmissionAudioPlayer
-import org.ort.app.ui.components.AttributionMarker
+import org.ort.app.ui.components.ActionBar
+import org.ort.app.ui.components.AttributionRow
+import org.ort.app.ui.components.Badge
+import org.ort.app.ui.components.BadgeKind
+import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.MARKER_CARD_SIZE
+import org.ort.app.ui.components.PrimaryButton
+import org.ort.app.ui.components.PriorBar
+import org.ort.app.ui.components.RadioRow
+import org.ort.app.ui.components.SecondaryButton
+import org.ort.app.ui.components.SectionHeader
+import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.WaveformCard
+import org.ort.app.ui.components.WaveformViewState
+import org.ort.app.ui.data.AmbiguousCandidateViewState
 import org.ort.app.ui.data.CorrectionRequest
-import org.ort.app.ui.data.CorrectionTier
+import org.ort.app.ui.data.DetailBodyViewState
+import org.ort.app.ui.data.DetailViewState
+import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.LabelCertainty
 import org.ort.app.ui.data.LabelOutcome
 import org.ort.app.ui.data.LabelledSample
 import org.ort.app.ui.data.TransmissionDetailViewState
+import org.ort.app.ui.data.TriedStepViewState
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
-import org.ort.core.SystemClock
+import org.ort.core.AttributionState
 import org.ort.pipeline.passb.LexiconMatch
 
 /**
- * The transmission detail drill-in (build-plan P14, extended by P16, `design/canvas/Detail.dc.html`):
- * the "why this callsign" header, audio playback, full transcript, the inspection surface
- * (FR-UI-8), one-tap correction (FR-UI-6) and labelled-sample capture (FR-OBS-4) for one
- * transmission.
+ * The transmission detail drill-in (ui-conformance WP6, R-050/R-051/R-053/R-054/R-055/R-056/R-057;
+ * originally build-plan P14/P16). Four states, one layout (`Detail.dc.html` = INFERRED,
+ * `Detail-Confirmed.dc.html`, `Detail-Ambiguous.dc.html`, `Detail-Unknown.dc.html`): marker +
+ * title-size callsign, a one-sentence explanation that always states any confidence the
+ * attribution carries in prose (the rewritten FR-UI-4 rule — see [org.ort.app.ui.data.DetailViewStateMapper]'s
+ * class doc), a mono meta row, playback, the transcript, an inline "why this callsign" preview
+ * with a link to the exhaustive [DetailWhyScreen], and a state-dependent bottom action bar.
  *
- * FR-UI-5 (audio playback): [player] is the seam — [org.ort.app.ui.audio.RealTransmissionAudioPlayer]
- * on a device, [org.ort.app.ui.audio.FakeTransmissionAudioPlayer] under test.
+ * This screen no longer draws its own "‹ Back" row — the host (`ui-conformance-plan` §D's
+ * nav-host rule) renders [org.ort.app.ui.components.DrillInHeader] around whichever content
+ * composable is current; [TransmissionDetailContent] renders it for this screen today.
  *
- * [onCorrect], [onSearchLexicon] and [onRecordLabel] are the I/O seams for the three build-plan
- * P16 features — real implementations go through [org.ort.app.ui.data.ReaderPolling]; every
- * Compose test here drives a fake in-memory lambda, matching [player]'s own pattern. Default no-op
- * implementations mean existing call sites (P14's own tests) compile unchanged.
+ * **Component gap (report this):** `design/design-guide.md` §4 calls for the header callsign at
+ * 27sp mono ("title size"), but [AttributionRow] (`ui/components/AttributionMarker.kt`, WP2) has
+ * no size parameter for its callsign text — only [org.ort.app.ui.components.MARKER_CARD_SIZE] for
+ * the marker shape itself. Per this package's own instruction ("never hand-roll a look-alike of a
+ * component that exists"), this screen uses [AttributionRow] as-is at [MARKER_CARD_SIZE] rather
+ * than reimplementing its shape/colour/chip logic at a larger text size.
  */
+@Suppress("LongParameterList") // one callback per distinct, independently-testable interaction the
+// four states need (`Detail-Ambiguous.dc.html`'s chooser and `Detail-Unknown.dc.html`'s "I know
+// who this is" are genuinely different actions, not variations of one) — same precedent as
+// `:data`'s `SearchDao` (see its own doc comment) for a wide, semantically-flat parameter list.
+@Composable
+public fun TransmissionDetailScreen(
+    state: DetailViewState,
+    player: TransmissionAudioPlayer,
+    onOpenTransmission: (String) -> Unit = {},
+    onNotRight: () -> Unit = {},
+    onConfirm: () -> Unit = {},
+    onChooseCandidate: (String) -> Unit = {},
+    onNeither: () -> Unit = {},
+    onLeaveAmbiguous: () -> Unit = {},
+    onIKnowWhoThisIs: () -> Unit = {},
+    onOpenWhy: () -> Unit = {},
+    onOpenRevisions: () -> Unit = {},
+    onRecordLabel: suspend (LabelledSample) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    var labelExpanded by remember(state.detail.id) { mutableStateOf(false) }
+    Column(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            HeaderSection(state, onOpenTransmission)
+            PlaybackSection(state.detail, player)
+            TranscriptSection(state.detail)
+            AmbiguousChooserSection(state.body, onChooseCandidate, onNeither)
+            UnknownTriedSection(state.body)
+            WhySection(state, onOpenWhy)
+            RevisionsLinkSection(state.detail, onOpenRevisions)
+            LabelSampleSection(
+                detail = state.detail,
+                expanded = labelExpanded,
+                onToggle = { labelExpanded = !labelExpanded },
+                onRecordLabel = onRecordLabel,
+            )
+        }
+        BottomActionBar(
+            state = state,
+            onNotRight = onNotRight,
+            onConfirm = onConfirm,
+            onLeaveAmbiguous = onLeaveAmbiguous,
+            onIKnowWhoThisIs = onIKnowWhoThisIs,
+            onRecordLabel = { labelExpanded = true },
+        )
+    }
+}
+
+/**
+ * **Compile-compat shim, not a second implementation.** `OrtNavHost.kt` (WP3's file — not edited
+ * here, per this package's file-ownership boundary) still has its own pre-WP6 inline
+ * `TransmissionDetailContent` calling this screen's *old* P14/P16 signature; deleting that inline
+ * copy and switching to the real [org.ort.app.ui.screens.TransmissionDetailContent] this package
+ * now ships is explicitly WP3's job (`ui-conformance-plan.md` §D's nav-host rule: "WP3 deletes the
+ * inline copies from the host and calls those"). Removing the old signature outright would leave
+ * `main` red for every worktree until WP3's change merges — this overload keeps it green in the
+ * meantime by adapting straight into the real screen; [onCorrect] and [onSearchLexicon] have no
+ * equivalent in the new correction-sheet flow and are intentionally unused (the sheet needs a
+ * scope choice and an affected-over count no synchronous lambda here can supply) — WP3's merge
+ * deletes this overload's only caller, and it should be deleted in the same change.
+ */
+@Deprecated("Compile-compat only until WP3 deletes its pre-WP6 inline TransmissionDetailContent.")
 @Composable
 public fun TransmissionDetailScreen(
     state: TransmissionDetailViewState,
     player: TransmissionAudioPlayer,
     onBack: () -> Unit,
-    onCorrect: suspend (CorrectionRequest) -> Unit = {},
-    onSearchLexicon: suspend (String) -> List<LexiconMatch> = { emptyList() },
+    @Suppress("UNUSED_PARAMETER") onCorrect: suspend (CorrectionRequest) -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onSearchLexicon: suspend (String) -> List<LexiconMatch> = { emptyList() },
     onRecordLabel: suspend (LabelledSample) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        BackRow(onBack)
-        HeaderSection(state)
-        PlaybackSection(state, player)
-        TranscriptSection(state)
-        RevisionHistorySection(state)
-        InspectionSection(state)
-        CorrectionSection(state, onCorrect, onSearchLexicon)
-        LabelSampleSection(state, onRecordLabel)
-    }
-}
-
-@Composable
-private fun BackRow(onBack: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(OrtSpacing.lg)) {
-        Text(
-            text = "‹ Back",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.clickable(onClick = onBack).semantics { contentDescription = "Back" },
+    Column(modifier = modifier.fillMaxSize()) {
+        DrillInHeader(parentLabel = "Log", onBack = onBack)
+        TransmissionDetailScreen(
+            state = DetailViewStateMapper.from(state),
+            player = player,
+            onRecordLabel = onRecordLabel,
+            modifier = Modifier.weight(1f),
         )
     }
 }
 
 @Composable
-private fun HeaderSection(state: TransmissionDetailViewState) {
+private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -> Unit) {
+    val detail = state.detail
+    val alternate = (state.body as? DetailBodyViewState.Ambiguous)?.alternateCallsign
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
-        Row {
-            AttributionMarker(attribution = state.attribution)
-            Text(text = "  " + (state.attribution.stationId ?: "Unidentified station"), style = OrtType.titleLarge)
+        AttributionRow(
+            attribution = detail.attribution,
+            callsign = detail.attribution.stationId,
+            alternate = alternate,
+            size = MARKER_CARD_SIZE,
+        )
+        if (detail.attribution.corrected) {
+            Badge(text = "corrected", kind = BadgeKind.CORRECTED, modifier = Modifier.padding(top = OrtSpacing.xs))
         }
         Text(
-            text = "${state.timeLabel} · ${state.frequencyLabel} · ${state.durationLabel}" +
-                (state.signalLabel?.let { " · $it" } ?: ""),
-            style = OrtType.caption,
-            modifier = Modifier.padding(top = OrtSpacing.xs),
+            text = state.body.explanation,
+            style = OrtType.subtitle,
+            color = OrtColors.textMuted,
+            modifier = Modifier.padding(top = OrtSpacing.sm),
         )
-        if (state.attribution.corrected) {
-            Text(
-                text = "Corrected by operator",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = OrtSpacing.xs),
+        val inferred = state.body as? DetailBodyViewState.Inferred
+        if (inferred?.sourceTransmissionId != null) {
+            TextAction(
+                text = "Open the source over",
+                onClick = { onOpenTransmission(inferred.sourceTransmissionId) },
             )
         }
+        Row(modifier = Modifier.padding(top = OrtSpacing.xs)) {
+            Text(text = detail.timeLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
+            Spacer(modifier = Modifier.width(OrtSpacing.md))
+            Text(text = detail.frequencyLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
+            Spacer(modifier = Modifier.width(OrtSpacing.md))
+            Text(text = detail.durationLabel, style = OrtType.timeFreq, color = OrtColors.textFaint)
+            detail.signalLabel?.let {
+                Spacer(modifier = Modifier.width(OrtSpacing.md))
+                Text(text = it, style = OrtType.timeFreq, color = OrtColors.textFaint)
+            }
+        }
     }
 }
 
+/**
+ * R-054, `Detail-Playback.dc.html`: idle / playing (position, scrub, speed) / no-audio /
+ * unavailable, via [WaveformCard]. No amplitude data exists anywhere in the schema for a real
+ * waveform shape (`TransmissionDetailViewState` carries none), so [WaveformBar] lists are always
+ * empty here — an honest flat card with a working play control and duration, not a fabricated
+ * shape (constitution I). The scrub gesture itself (`WaveformCard`'s Canvas has no drag handler
+ * today) and the spoken-word outline (no word-timing data exists either) are both named as gaps in
+ * this package's CHANGELOG rather than faked.
+ */
 @Composable
-private fun PlaybackSection(state: TransmissionDetailViewState, player: TransmissionAudioPlayer) {
+private fun PlaybackSection(detail: TransmissionDetailViewState, player: TransmissionAudioPlayer) {
     val scope = rememberCoroutineScope()
-    var playbackNote by remember(state.id) { mutableStateOf<String?>(null) }
+    var unavailableReason by remember(detail.id) { mutableStateOf<String?>(null) }
+    var playing by remember(detail.id) { mutableStateOf(false) }
+    var positionFraction by remember(detail.id) { mutableStateOf(0f) }
+    var rate by remember(detail.id) { mutableStateOf(PlaybackRate.NORMAL) }
+
+    LaunchedEffect(detail.id, playing) {
+        while (playing) {
+            positionFraction = player.positionFraction()
+            playing = player.isPlaying()
+            delay(POSITION_POLL_MILLIS)
+        }
+    }
+
+    val durationSeconds = detail.durationLabel.removeSuffix("s").toDoubleOrNull() ?: 0.0
+    val waveformState = when {
+        unavailableReason != null -> WaveformViewState.Unavailable(unavailableReason.orEmpty())
+        !detail.hasAudio -> WaveformViewState.NoAudio
+        playing -> WaveformViewState.Playing(
+            bars = emptyList(),
+            cursorFraction = positionFraction,
+            positionLabel = "%.1f".format(positionFraction * durationSeconds),
+            durationLabel = detail.durationLabel,
+            speedLabel = rate.label,
+        )
+
+        else -> WaveformViewState.Idle(bars = emptyList(), durationLabel = detail.durationLabel)
+    }
 
     Column(modifier = Modifier.padding(OrtSpacing.lg)) {
-        if (!state.hasAudio) {
-            Text(text = "No retained audio for this transmission", style = MaterialTheme.typography.bodyMedium)
-            return@Column
-        }
-        Text(
-            text = "▶ Play",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier
-                .clickable {
+        WaveformCard(
+            state = waveformState,
+            onPlayPause = if (detail.hasAudio) {
+                {
                     scope.launch {
-                        playbackNote = when (val outcome = player.play(state.id)) {
-                            PlaybackOutcome.Played -> null
-                            is PlaybackOutcome.Unavailable -> outcome.reason
+                        if (playing) {
+                            player.pause()
+                            playing = false
+                        } else {
+                            when (val outcome = player.play(detail.id)) {
+                                PlaybackOutcome.Played -> {
+                                    unavailableReason = null
+                                    playing = true
+                                }
+
+                                is PlaybackOutcome.Unavailable -> {
+                                    unavailableReason = outcome.reason
+                                    playing = false
+                                }
+                            }
                         }
                     }
                 }
-                .semantics { contentDescription = "Play retained audio" },
+            } else {
+                null
+            },
         )
-        playbackNote?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.semantics { contentDescription = "Playback unavailable: $it" },
-            )
-        }
-    }
-}
-
-@Composable
-private fun TranscriptSection(state: TransmissionDetailViewState) {
-    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
-        Text(text = "Transcript", style = OrtType.sectionLabel)
-        Text(
-            text = state.transcriptText,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.md),
-        )
-    }
-}
-
-@Composable
-private fun RevisionHistorySection(state: TransmissionDetailViewState) {
-    if (state.revisionHistory.isEmpty()) return
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg)) {
-        Text(text = "Earlier versions (superseded)", style = OrtType.sectionLabel)
-        // A plain Column, not a LazyColumn: the whole screen is now one `verticalScroll` container
-        // (build-plan P16 added enough content below the fold that the screen needed scrolling at
-        // all), and a vertically-scrolling LazyColumn nested in another vertical scroll container
-        // measures with an infinite height constraint and crashes — this list is never long enough
-        // to need lazy layout anyway.
-        state.revisionHistory.forEach { earlier ->
-            Text(
-                text = earlier,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(vertical = OrtSpacing.xs),
-            )
+        if (playing) {
+            Row(modifier = Modifier.padding(top = OrtSpacing.sm)) {
+                PlaybackRate.entries.forEach { candidate ->
+                    TextAction(
+                        text = candidate.label,
+                        onClick = {
+                            rate = candidate
+                            player.setRate(candidate)
+                        },
+                    )
+                }
+            }
         }
     }
 }
 
 /**
- * FR-UI-8, the inspection surface: the phonetic lattice, the candidate list and the per-prior
- * breakdown `:lexicon`'s `PriorCombiner` (P7) produces — read here through the lexicon-free
- * `:data` entities [org.ort.app.ui.data.InspectionViewStateMapper] maps (see that file's own doc
- * comment for why `:app` cannot reach `PriorContribution`/`RankedCandidate` directly). A prior
- * that abstained (cold start, exactly zero — FR-LEX-31) is labelled distinctly from one that
- * argued against (a negative contribution) — the two are different facts and must not read alike
- * (constitution I).
+ * The transcript, with the callsign highlighted when it appears verbatim in the text (a literal,
+ * honest substring check — never a phonetic-word guess: no data anywhere maps a transcript's
+ * spoken words back to the callsign that produced them, so this never claims a highlight it cannot
+ * back). CONFIRMED highlights `highlightGreen`; every other carrying state highlights `highlightAmber`.
  */
 @Composable
-private fun InspectionSection(state: TransmissionDetailViewState) {
+private fun TranscriptSection(detail: TransmissionDetailViewState) {
+    val stationId = detail.attribution.stationId
+    val highlight = if (detail.attribution.state == AttributionState.CONFIRMED) {
+        OrtColors.highlightGreen
+    } else {
+        OrtColors.highlightAmber
+    }
+    val text = if (stationId != null) {
+        val index = detail.transcriptText.indexOf(stationId, ignoreCase = true)
+        if (index >= 0) {
+            buildAnnotatedString {
+                append(detail.transcriptText.substring(0, index))
+                withStyle(SpanStyle(background = highlight)) {
+                    append(detail.transcriptText.substring(index, index + stationId.length))
+                }
+                append(detail.transcriptText.substring(index + stationId.length))
+            }
+        } else {
+            buildAnnotatedString { append(detail.transcriptText) }
+        }
+    } else {
+        buildAnnotatedString { append(detail.transcriptText) }
+    }
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
-        Text(text = "Why this callsign", style = OrtType.sectionLabel)
-        if (state.inspection.isEmpty) {
+        Text(text = text, style = OrtType.bodyProse, color = OrtColors.textSecondary)
+    }
+}
+
+/** R-057: `Detail-Ambiguous.dc.html`'s chooser — both real candidates with their evidence, `Neither`. */
+@Composable
+private fun AmbiguousChooserSection(
+    body: DetailBodyViewState,
+    onChooseCandidate: (String) -> Unit,
+    onNeither: () -> Unit,
+) {
+    if (body !is DetailBodyViewState.Ambiguous) return
+    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        SectionHeader(label = "Choose, if you heard it")
+        body.candidates.forEach { candidate: AmbiguousCandidateViewState ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = OrtSpacing.sm)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription =
+                            "${candidate.callsign}, ${candidate.evidence}, score ${candidate.scoreLabel}"
+                    },
+            ) {
+                Text(text = candidate.callsign, style = OrtType.callsignRow, color = OrtColors.textHigh)
+                Spacer(modifier = Modifier.width(OrtSpacing.md))
+                Text(text = candidate.evidence, style = OrtType.cardBody, color = OrtColors.textDim)
+            }
+            TextAction(text = "Choose ${candidate.callsign}", onClick = { onChooseCandidate(candidate.callsign) })
+        }
+        TextAction(text = "Neither — it was something else", onClick = onNeither)
+    }
+}
+
+/** R-057: `Detail-Unknown.dc.html`'s "what was tried" — only real, non-fabricated steps. */
+@Composable
+private fun UnknownTriedSection(body: DetailBodyViewState) {
+    if (body !is DetailBodyViewState.Unknown) return
+    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        SectionHeader(label = "What was tried")
+        body.tried.forEach { step: TriedStepViewState ->
+            Column(modifier = Modifier.padding(vertical = OrtSpacing.xs)) {
+                Text(text = step.title, style = OrtType.control, color = OrtColors.textBody)
+                step.detail?.let {
+                    Text(
+                        text = it,
+                        style = OrtType.cardBody,
+                        color = OrtColors.textFaint,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** R-051, FR-UI-8: the inline "why this callsign" preview + a link to the exhaustive [DetailWhyScreen]. */
+@Composable
+private fun WhySection(state: DetailViewState, onOpenWhy: () -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        SectionHeader(label = "Why this callsign", trailingActionLabel = "Full lattice", onTrailingAction = onOpenWhy)
+        val why = state.why
+        if (!why.hasData) {
             Text(
                 text = "No resolver output recorded for this transmission yet.",
-                style = MaterialTheme.typography.bodyMedium,
+                style = OrtType.cardBody,
+                color = OrtColors.textMuted,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
             )
-            return@Column
+            return
         }
-        state.inspection.lattice?.let { lattice ->
+        why.latticeSummary?.let {
             Text(
-                text = "Lattice: ${lattice.source} (model ${lattice.modelId ?: "unrecorded"})",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = OrtSpacing.xs),
+                text = "Lattice: $it",
+                style = OrtType.cardBody,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
             )
         }
-        state.inspection.candidates.forEach { candidate ->
+        why.candidates.forEach { candidate ->
             Text(
-                text = "${candidate.callsign} — score %.2f".format(candidate.score),
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = OrtSpacing.xs),
+                text = "${candidate.callsign} — ${candidate.scoreLabel}${if (candidate.chosen) " · chosen" else ""}",
+                style = OrtType.control,
+                color = if (candidate.chosen) OrtColors.textHigh else OrtColors.textDim,
             )
-            candidate.priorContributions.forEach { prior ->
-                val descriptor = when {
-                    prior.isColdStart -> "cold start — no prior data"
-                    prior.logOdds < 0.0 -> "argued against"
-                    else -> "supported"
-                }
-                Text(
-                    text = "  ${prior.priorName}: %+.2f (%s)".format(prior.logOdds, descriptor),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
         }
-    }
-}
-
-/**
- * FR-UI-6 + FR-SPK-7, Q8's tiered correction. Tier A (pick a resolved candidate) and Tier B
- * (search the lexicon) both name an already-known, ITU-allocated identity; Tier C (free text) is
- * recorded unverified. See [org.ort.app.ui.data.CorrectionTier]'s doc comment for audit F-018 —
- * Tier B now searches the real lexicon ([org.ort.pipeline.passb.LexiconLookup]), not a substitute
- * over known stations.
- */
-@Composable
-private fun CorrectionSection(
-    state: TransmissionDetailViewState,
-    onCorrect: suspend (CorrectionRequest) -> Unit,
-    onSearchLexicon: suspend (String) -> List<LexiconMatch>,
-) {
-    val scope = rememberCoroutineScope()
-    var expanded by remember(state.id) { mutableStateOf(false) }
-    var query by remember(state.id) { mutableStateOf("") }
-    var searchResults by remember(state.id) { mutableStateOf(emptyList<LexiconMatch>()) }
-    var freeText by remember(state.id) { mutableStateOf("") }
-
-    fun apply(newStationId: String, tier: CorrectionTier) {
-        scope.launch {
-            onCorrect(
-                CorrectionRequest(
-                    transmissionId = state.id,
-                    previousStationId = state.attribution.stationId,
-                    newStationId = newStationId,
-                    tier = tier,
-                    correctedAtMillis = SystemClock.wallMillis(),
-                ),
-            )
-            expanded = false
-            query = ""
-            searchResults = emptyList()
-            freeText = ""
-        }
-    }
-
-    Column(modifier = Modifier.padding(OrtSpacing.lg)) {
-        Text(
-            text = if (expanded) "▾ Correct attribution" else "▸ Correct attribution",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier
-                .clickable { expanded = !expanded }
-                .semantics { contentDescription = "Correct attribution" },
-        )
-        if (!expanded) return@Column
-
-        if (state.inspection.candidates.isNotEmpty()) {
+        why.priors.forEach { prior -> PriorBar(state = prior, modifier = Modifier.padding(top = OrtSpacing.xs)) }
+        why.runnerUp?.let {
             Text(
-                text = "Pick a resolved candidate",
-                style = OrtType.sectionLabel,
+                text = "Runner-up · ${it.callsign} (${it.scoreLabel})",
+                style = OrtType.cardBody,
+                color = OrtColors.textFaint,
                 modifier = Modifier.padding(top = OrtSpacing.sm),
             )
-            state.inspection.candidates.forEach { candidate ->
-                Text(
-                    text = candidate.callsign,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier
-                        .clickable { apply(candidate.callsign, CorrectionTier.PICK_CANDIDATE) }
-                        .semantics { contentDescription = "Correct to ${candidate.callsign}" }
-                        .padding(vertical = OrtSpacing.xs),
-                )
-            }
         }
+    }
+}
 
-        Text(
-            text = "Search the lexicon",
-            style = OrtType.sectionLabel,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
-        TextField(
-            value = query,
-            onValueChange = { text ->
-                query = text
-                scope.launch { searchResults = onSearchLexicon(text) }
-            },
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Search the lexicon" },
-        )
-        searchResults.forEach { found ->
-            Text(
-                text = "${found.callsign} — ${found.ituCountry} (${found.ituPrefix})",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier
-                    .clickable { apply(found.callsign, CorrectionTier.SEARCH_LEXICON) }
-                    .semantics { contentDescription = "Correct to ${found.callsign}" }
-                    .padding(vertical = OrtSpacing.xs),
-            )
-        }
-
-        Text(
-            text = "Free text (unverified — will not feed the priors)",
-            style = OrtType.sectionLabel,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
-        TextField(
-            value = freeText,
-            onValueChange = { freeText = it },
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Free-text station (unverified)" },
-        )
-        Text(
-            text = "Save unverified correction",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier
-                .clickable(enabled = freeText.isNotBlank()) { apply(freeText, CorrectionTier.FREE_TEXT) }
-                .semantics { contentDescription = "Save unverified correction" }
-                .padding(top = OrtSpacing.xs),
+/** R-055: the list moved to [DetailRevisionsScreen] — this is only the entry point, still one tap away
+ * (constitution III: nothing deleted quietly, but the exhaustive list is no longer inlined here). */
+@Composable
+private fun RevisionsLinkSection(detail: TransmissionDetailViewState, onOpenRevisions: () -> Unit) {
+    if (detail.revisionHistory.isEmpty()) return
+    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        val count = detail.revisionHistory.size
+        TextAction(
+            text = if (count == 1) "1 earlier version" else "$count earlier versions",
+            onClick = onOpenRevisions,
         )
     }
 }
 
+@Composable
+private fun BottomActionBar(
+    state: DetailViewState,
+    onNotRight: () -> Unit,
+    onConfirm: () -> Unit,
+    onLeaveAmbiguous: () -> Unit,
+    onIKnowWhoThisIs: () -> Unit,
+    onRecordLabel: () -> Unit,
+) {
+    when (state.body) {
+        is DetailBodyViewState.Confirmed ->
+            ActionBar(
+                secondaryLabel = "Not right?",
+                onSecondary = onNotRight,
+                primaryLabel = "Record a label",
+                onPrimary = onRecordLabel,
+            )
+
+        is DetailBodyViewState.Inferred ->
+            ActionBar(
+                secondaryLabel = "Not right?",
+                onSecondary = onNotRight,
+                primaryLabel = "Confirm",
+                onPrimary = onConfirm,
+            )
+
+        is DetailBodyViewState.Ambiguous ->
+            SecondaryButton(
+                text = "Leave ambiguous",
+                onClick = onLeaveAmbiguous,
+                modifier = Modifier.fillMaxWidth().padding(OrtSpacing.lg),
+            )
+
+        is DetailBodyViewState.Unknown ->
+            PrimaryButton(
+                text = "I know who this is",
+                onClick = onIKnowWhoThisIs,
+                modifier = Modifier.fillMaxWidth().padding(OrtSpacing.lg),
+            )
+    }
+}
+
+private const val POSITION_POLL_MILLIS = 150L
+
 /**
- * FR-OBS-4: record a labelled sample from a live session into the format `corpus/`'s harness
- * already reads, per `docs/reference/labelling-protocol.md`. Defaults [LabelledSample.sessionId],
- * [LabelledSample.startSample] and [LabelledSample.endSample] from the real transmission this
- * screen is showing, since those facts are already known and re-typing them would invite error.
+ * R-056, `Controls.dc.html`: the labelled-sample form — closed sets as visible [RadioRow] lists,
+ * free-text fields with a real Material [TextField] label (not only a content description).
  */
-private class LabelSampleFormState(id: String) {
+private class LabelSampleFormState {
     var callsign by mutableStateOf("")
     var certainty by mutableStateOf(LabelCertainty.CERTAIN)
     var outcome by mutableStateOf(LabelOutcome.SPEECH)
@@ -366,86 +509,76 @@ private class LabelSampleFormState(id: String) {
 }
 
 @Composable
-private fun LabelSampleSection(state: TransmissionDetailViewState, onRecordLabel: suspend (LabelledSample) -> Unit) {
+private fun LabelSampleSection(
+    detail: TransmissionDetailViewState,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onRecordLabel: suspend (LabelledSample) -> Unit,
+) {
     val scope = rememberCoroutineScope()
-    var expanded by remember(state.id) { mutableStateOf(false) }
-    val form = remember(state.id) { LabelSampleFormState(state.id) }
+    val form = remember(detail.id) { LabelSampleFormState() }
 
     Column(modifier = Modifier.padding(OrtSpacing.lg)) {
-        Text(
-            text = if (expanded) "▾ Record labelled sample" else "▸ Record labelled sample",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier
-                .clickable { expanded = !expanded }
-                .semantics { contentDescription = "Record labelled sample" },
+        TextAction(
+            text = if (expanded) "Hide labelled sample" else "Record labelled sample",
+            onClick = onToggle,
+            modifier = Modifier.semantics { contentDescription = "Record labelled sample" },
         )
         if (!expanded) return@Column
 
-        LabelSampleFields(form)
-        Text(
+        SectionHeader(label = "Outcome", modifier = Modifier.padding(top = OrtSpacing.sm))
+        LabelOutcome.entries.forEach { candidate ->
+            RadioRow(
+                label = candidate.wire,
+                selected = form.outcome == candidate,
+                onClick = { form.outcome = candidate },
+            )
+        }
+
+        TextField(
+            value = form.callsign,
+            onValueChange = { form.callsign = it },
+            label = { Text("Labelled callsign") },
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Labelled callsign" },
+        )
+        if (form.callsign.isNotBlank()) {
+            SectionHeader(label = "Certainty", modifier = Modifier.padding(top = OrtSpacing.sm))
+            LabelCertainty.entries.forEach { candidate ->
+                RadioRow(
+                    label = candidate.wire,
+                    selected = form.certainty == candidate,
+                    onClick = { form.certainty = candidate },
+                )
+            }
+        }
+        TextField(
+            value = form.tactical,
+            onValueChange = { form.tactical = it },
+            label = { Text("Tactical callsign") },
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Tactical callsign" },
+        )
+        TextField(
+            value = form.threadId,
+            onValueChange = { form.threadId = it },
+            label = { Text("Thread id") },
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Thread id" },
+        )
+        TextField(
+            value = form.note,
+            onValueChange = { form.note = it },
+            label = { Text("Note") },
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Note" },
+        )
+        TextAction(
             text = "Save",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier
-                .clickable {
-                    scope.launch {
-                        onRecordLabel(form.toSample(state))
-                        expanded = false
-                        form.clear()
-                    }
+            onClick = {
+                scope.launch {
+                    onRecordLabel(form.toSample(detail))
+                    form.clear()
+                    onToggle()
                 }
-                .semantics { contentDescription = "Save labelled sample" }
-                .padding(top = OrtSpacing.sm),
+            },
+            modifier = Modifier.padding(top = OrtSpacing.sm).semantics { contentDescription = "Save labelled sample" },
         )
     }
-}
-
-@Composable
-private fun LabelSampleFields(form: LabelSampleFormState) {
-    Text(
-        text = "Outcome: ${form.outcome.wire}",
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier
-            .clickable { form.outcome = cycleOutcome(form.outcome) }
-            .semantics { contentDescription = "Cycle outcome, currently ${form.outcome.wire}" }
-            .padding(top = OrtSpacing.sm),
-    )
-    TextField(
-        value = form.callsign,
-        onValueChange = { form.callsign = it },
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Labelled callsign" },
-    )
-    if (form.callsign.isNotBlank()) {
-        Text(
-            text = "Certainty: ${form.certainty.wire}",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier
-                .clickable { form.certainty = cycleCertainty(form.certainty) }
-                .semantics { contentDescription = "Cycle certainty, currently ${form.certainty.wire}" },
-        )
-    }
-    TextField(
-        value = form.tactical,
-        onValueChange = { form.tactical = it },
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Tactical callsign" },
-    )
-    TextField(
-        value = form.threadId,
-        onValueChange = { form.threadId = it },
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Thread id" },
-    )
-    TextField(
-        value = form.note,
-        onValueChange = { form.note = it },
-        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Note" },
-    )
-}
-
-private fun cycleOutcome(current: LabelOutcome): LabelOutcome {
-    val values = LabelOutcome.entries
-    return values[(values.indexOf(current) + 1) % values.size]
-}
-
-private fun cycleCertainty(current: LabelCertainty): LabelCertainty {
-    val values = LabelCertainty.entries
-    return values[(values.indexOf(current) + 1) % values.size]
 }

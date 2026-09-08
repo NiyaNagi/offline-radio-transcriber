@@ -1,5 +1,6 @@
 package org.ort.app.ui.data
 
+import org.ort.core.Attribution
 import org.ort.data.entity.StationEntity
 import java.time.Instant
 import java.time.ZoneOffset
@@ -7,48 +8,209 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
+// -------------------------------------------------------------------------------------------
+// Stations list (R-070, FR-UI-9) — Stations.dc.html.
+// -------------------------------------------------------------------------------------------
+
+/** The four chips atop `Stations.dc.html` (R-070). */
+public enum class StationsFilter { TONIGHT, ALL_TIME, NAMED, UNIDENTIFIED }
+
+/** A `NEW`/`CORRECTED` badge on a stations-list row (R-070, guide §6.14) — never the only copy of the fact. */
+public enum class StationListBadge { NEW, CORRECTED }
+
 /**
- * One row of the "Stations" list (FR-UI-9) — `ReaderPolling.listStationSummaries` supplies real
- * [org.ort.data.entity.StationEntity] rows.
+ * One row of the "Stations" list (R-070) — the station's **dominant attribution state tonight**
+ * (the most recent session; [org.ort.app.ui.components.AttributionRow] draws it at 9dp), an
+ * honest count context built only from what the split of confirmed/inferred overs actually shows
+ * ("12 by voice match · 3 heard") — never a fabricated "net control" this data cannot support —
+ * plus any badge and the operator-given name shown beside the callsign.
  */
 public data class StationListEntryViewState(
     val stationId: String,
     val label: String,
     val transmissionCount: Int,
     val lastHeardLabel: String?,
+    val attribution: Attribution = Attribution.unknown(),
+    /** "48 overs · net control" or "12 by voice match · 3 heard" — see this file's mapper doc comment. */
+    val countContext: String = "",
+    val badge: StationListBadge? = null,
+    val givenName: String? = null,
+    /** Whether this station was heard at all in the most recent session — the "Tonight" chip's filter. */
+    val heardTonight: Boolean = false,
 )
 
-/** One row of the "Frequencies" list (FR-UI-10). */
-public data class FrequencyListEntryViewState(val frequencyHz: Long, val label: String, val transmissionCount: Int)
+/**
+ * The trailing "N unidentified voices · M overs" row (R-070) — a real aggregate, never a station
+ * row. [voiceCount] is `null` — never `overCount`'s fallback stand-in — when the voice-clustering
+ * pipeline (M4) has not written any `transmission.voiceprintId` for these overs yet: an unknown
+ * over count is real without it, but a distinct-voice count is not (constitution I).
+ */
+public data class UnidentifiedVoicesSummary(val voiceCount: Int?, val overCount: Int)
+
+// -------------------------------------------------------------------------------------------
+// Station-Pattern (R-072, R-075) — Station-Pattern.dc.html.
+// -------------------------------------------------------------------------------------------
+
+/** The `By hour` / `Hour × day` / `Change over time` toggle on `Station-Pattern.dc.html` (R-072). */
+public enum class PatternMode { BY_HOUR, HOUR_BY_DAY, CHANGE_OVER_TIME }
+
+/** `Station-Pattern.dc.html`'s whole state (R-072, R-075) — every bucketing here is in local time. */
+public data class StationPatternViewState(
+    val subjectId: String,
+    val label: String,
+    val hourPattern: List<HourActivityBucket>,
+    val hourByDay: List<HourByDayActivityCell>,
+    val weekOverWeekSummary: List<String>,
+    val whatThisSays: List<String>,
+)
+
+// -------------------------------------------------------------------------------------------
+// Station detail (R-071, FR-UI-9) — Station.dc.html.
+// -------------------------------------------------------------------------------------------
 
 /**
  * Everything heard from one station, across every session (FR-UI-9), plus its activity pattern
- * (FR-UI-11, [activityPattern] — see [ActivityPatternMapper] for FR-UI-12's not-heard/not-
- * listening distinction, which this view state renders rather than re-derives).
+ * (FR-UI-11 — see [ActivityPatternMapper] for FR-UI-12's not-heard/not-listening distinction,
+ * which this view state renders rather than re-derives) and the facts-table figures R-071 asks
+ * for: the confirmed/inferred/corrected split, which frequencies this station uses and how often,
+ * and first/last heard.
  */
 public data class StationDetailViewState(
     val stationId: String,
     val label: String,
+    val givenName: String? = null,
     val transmissionCount: Int,
+    val transmissionCountTonight: Int = 0,
+    val confirmedCount: Int = 0,
+    val inferredCount: Int = 0,
+    val correctedCount: Int = 0,
+    /** "145.230 almost always · 146.960 twice" — see [StationViewMapper.frequencySummary]. */
+    val frequenciesSummary: String = "",
+    val firstHeardLabel: String? = null,
+    val lastHeardLabel: String? = null,
+    val lastHeardSignalLabel: String? = null,
     val activityPattern: List<HourActivityBucket>,
     /** FR-UI-11's "by day of week" half (audit F-019). */
     val dayOfWeekPattern: List<DayOfWeekActivityBucket> = emptyList(),
     /** FR-UI-11's "and how that has changed" half (audit F-019) — one line per weekday, honest text only. */
     val weekOverWeekSummary: List<String> = emptyList(),
+    /** R-071's one-sentence pattern summary ("Peaks 21:00–23:00.") — [PatternInsights]'s first line. */
+    val patternSummarySentence: String = "",
     val transmissions: List<TransmissionListEntryViewState>,
+)
+
+// -------------------------------------------------------------------------------------------
+// Frequencies list (R-074, FR-UI-10) — Frequencies.dc.html.
+// -------------------------------------------------------------------------------------------
+
+/**
+ * One row of the "Frequencies" list (R-074). [whatItIs] is band/mode **where known, never
+ * guessed** — repeater-vs-simplex has no supporting column anywhere in `:data` today (this
+ * package's report names the gap), so it is omitted rather than asserted.
+ */
+public data class FrequencyListEntryViewState(
+    val frequencyHz: Long,
+    val label: String,
+    val transmissionCount: Int,
+    val whatItIs: String = "",
+    val tonightCount: Int = 0,
+    val tonightStationCount: Int = 0,
+    /** `Frequencies.dc.html`'s 14-night sparkline (R-074) — [org.ort.app.ui.components.Sparkline]. */
+    val nights: List<HourActivityState> = emptyList(),
+    /** The same test [FrequencyChangeViewState] uses to decide whether tonight gets its own screen. */
+    val busierThanUsual: Boolean = false,
+)
+
+// -------------------------------------------------------------------------------------------
+// Frequency detail (R-074, FR-UI-10) — Frequency.dc.html.
+// -------------------------------------------------------------------------------------------
+
+/** One `REGULARS` row on `Frequency.dc.html` (R-074). */
+public data class FrequencyRegularViewState(
+    val stationId: String,
+    val label: String,
+    val attribution: Attribution,
+    /** "612 overs · 14 of 14 nights" or "201 overs · Tuesdays only". */
+    val countContext: String,
+    val lastHeardLabel: String?,
 )
 
 /** Everything heard on one frequency, across every session (FR-UI-10), plus its activity pattern (FR-UI-11). */
 public data class FrequencyDetailViewState(
     val frequencyHz: Long,
     val label: String,
+    val whatItIs: String = "",
     val transmissionCount: Int,
+    val transmissionCountTonight: Int = 0,
+    val stationCountAllTime: Int = 0,
+    val stationCountTonight: Int = 0,
     val activityPattern: List<HourActivityBucket>,
     /** FR-UI-11's "by day of week" half (audit F-019). */
     val dayOfWeekPattern: List<DayOfWeekActivityBucket> = emptyList(),
     /** FR-UI-11's "and how that has changed" half (audit F-019) — one line per weekday, honest text only. */
     val weekOverWeekSummary: List<String> = emptyList(),
+    /** R-074's typical-night one-sentence summary — [PatternInsights]'s first line. */
+    val patternSummarySentence: String = "",
+    val regulars: List<FrequencyRegularViewState> = emptyList(),
     val transmissions: List<TransmissionListEntryViewState>,
+    val nights: List<HourActivityState> = emptyList(),
+    val busierThanUsual: Boolean = false,
+)
+
+// -------------------------------------------------------------------------------------------
+// Frequency-Change (R-074) — Frequency-Change.dc.html.
+// -------------------------------------------------------------------------------------------
+
+/** One `WHAT MADE IT BUSY` line on `Frequency-Change.dc.html` (R-074) — honestly derived only. */
+public data class FrequencyChangeCause(val label: String, val isUnidentified: Boolean = false)
+
+/**
+ * `Frequency-Change.dc.html`'s state (R-074): tonight's per-hour counts plotted as bars over the
+ * usual per-hour average as a line, and the causes this package can honestly derive — a first-time
+ * station heard tonight on this frequency, and any weak/unidentified activity. Cross-frequency
+ * migration ("5 regulars moved here from 145.230") needs a thread/session-wide correlation this
+ * package's read path does not build; left out rather than guessed (see this package's report).
+ */
+public data class FrequencyChangeViewState(
+    val frequencyHz: Long,
+    val label: String,
+    val subtitleLabel: String,
+    val tonightHourly: List<Int>,
+    val usualHourly: List<Double>,
+    val causes: List<FrequencyChangeCause>,
+    val overCount: Int,
+    val explanationSentence: String,
+)
+
+// -------------------------------------------------------------------------------------------
+// Station-Identity (R-073) — Station-Identity.dc.html.
+// -------------------------------------------------------------------------------------------
+
+/** `Station-Identity.dc.html`'s "Voice" section (R-073) — real where the identity pipeline writes data. */
+public data class StationVoiceViewState(
+    val clusterOverCount: Int,
+    val confirmedCount: Int,
+    val inferredCount: Int,
+    /**
+     * Null when no cross-station voice-distance comparison exists — the identity/voiceprint
+     * pipeline does not yet compute or store one (M4, not built); rendered as "not computed" per
+     * this file's own mapper, never a fabricated number (constitution I).
+     */
+    val nearestOtherStationId: String? = null,
+    val nearestOtherDistance: Double? = null,
+)
+
+/** `Station-Identity.dc.html`'s "Given by you" section (R-073) — `StationEntity.userName`/`notes`. */
+public data class StationGivenByYouViewState(val name: String?, val note: String?)
+
+/** `Station-Identity.dc.html`'s whole state (R-073, FR-SPK-10, constitution III). */
+public data class StationIdentityViewState(
+    val stationId: String,
+    val callsign: String,
+    val heardOverCount: Int,
+    val lexiconLabel: String?,
+    val voice: StationVoiceViewState,
+    val givenByYou: StationGivenByYouViewState,
 )
 
 public object StationViewMapper {
@@ -58,6 +220,7 @@ public object StationViewMapper {
         label = station.callsign ?: station.id,
         transmissionCount = station.transmissionCount,
         lastHeardLabel = dateTimeLabel(station.lastHeardAt),
+        givenName = station.userName,
     )
 
     public fun detail(
@@ -74,8 +237,44 @@ public object StationViewMapper {
         activityPattern = activityPattern,
         dayOfWeekPattern = dayOfWeekPattern,
         weekOverWeekSummary = weekOverWeekSummaryText(weekOverWeekComparison),
+        patternSummarySentence = PatternInsights.build(activityPattern, dayOfWeekPattern).firstOrNull().orEmpty(),
         transmissions = transmissions.map { ReaderTransmissionViewStateMapper.listEntry(it) },
     )
+
+    /**
+     * "12 by voice match · 3 heard" (`Stations.dc.html`'s own worked example, R-070) from a real
+     * confirmed/inferred split — never "net control", which has no supporting data anywhere in
+     * `:data` (this package's report names the gap; the brief itself only asks for it "if data
+     * supports it"). A confirmed-only count reads as plain overs ("48 overs"); once the split is
+     * mixed, the confirmed share is phrased as "heard" — CONFIRMED means literally heard in that
+     * transmission, which is exactly the distinction this sentence exists to carry.
+     */
+    public fun countContext(confirmedCount: Int, inferredCount: Int): String = when {
+        confirmedCount == 0 && inferredCount == 0 -> "0 overs"
+        inferredCount == 0 -> pluralOvers(confirmedCount)
+        confirmedCount == 0 -> "$inferredCount by voice match"
+        else -> "$inferredCount by voice match · $confirmedCount heard"
+    }
+
+    private fun pluralOvers(count: Int): String = if (count == 1) "1 over" else "$count overs"
+
+    /** "145.230 almost always · 146.960 twice" — [frequencyCounts] most-used first. */
+    public fun frequencySummary(frequencyCounts: List<Pair<Long, Int>>): String {
+        if (frequencyCounts.isEmpty()) return ""
+        val total = frequencyCounts.sumOf { it.second }
+        val sorted = frequencyCounts.sortedByDescending { it.second }
+        return sorted.joinToString(" · ") { (hz, count) ->
+            val label = "%.3f".format(Locale.ROOT, hz / 1_000_000.0)
+            val share = if (total > 0) count.toDouble() / total else 0.0
+            val qualifier = when {
+                share >= 0.85 -> "almost always"
+                count == 1 -> "once"
+                count == 2 -> "twice"
+                else -> "$count times"
+            }
+            "$label $qualifier"
+        }
+    }
 }
 
 public object FrequencyViewMapper {
@@ -100,13 +299,49 @@ public object FrequencyViewMapper {
         activityPattern = activityPattern,
         dayOfWeekPattern = dayOfWeekPattern,
         weekOverWeekSummary = weekOverWeekSummaryText(weekOverWeekComparison),
+        patternSummarySentence = PatternInsights.build(activityPattern, dayOfWeekPattern).firstOrNull().orEmpty(),
         transmissions = transmissions.map { ReaderTransmissionViewStateMapper.listEntry(it) },
     )
+
+    /**
+     * "Repeater · 2 m · FM" where `:data` supports each part, and only that part — R-074's own
+     * "never guessed" rule. Band comes from [org.ort.data.Band.of]; mode from the most common
+     * non-null `transmission.mode` on this frequency; repeater-vs-simplex has no column anywhere
+     * in `:data` today and is never asserted (this package's report names the gap).
+     */
+    public fun whatItIs(frequencyHz: Long, modes: List<String>): String {
+        val band = org.ort.data.Band.of(frequencyHz)
+        val bandLabel = band?.let { bandShortLabel(it) }
+        val modeLabel = modes.filter { it.isNotBlank() }
+            .groupingBy { it }.eachCount().entries
+            .maxByOrNull { it.value }?.key
+        return listOfNotNull(bandLabel, modeLabel).joinToString(" · ")
+    }
+
+    private fun bandShortLabel(band: org.ort.data.Band): String = when (band) {
+        org.ort.data.Band.HF_160M -> "160 m"
+        org.ort.data.Band.HF_80M -> "80 m"
+        org.ort.data.Band.HF_60M -> "60 m"
+        org.ort.data.Band.HF_40M -> "40 m"
+        org.ort.data.Band.HF_30M -> "30 m"
+        org.ort.data.Band.HF_20M -> "20 m"
+        org.ort.data.Band.HF_17M -> "17 m"
+        org.ort.data.Band.HF_15M -> "15 m"
+        org.ort.data.Band.HF_12M -> "12 m"
+        org.ort.data.Band.HF_10M -> "10 m"
+        org.ort.data.Band.VHF_6M -> "6 m"
+        org.ort.data.Band.VHF_2M -> "2 m"
+        org.ort.data.Band.VHF_1_25M -> "1.25 m"
+        org.ort.data.Band.UHF_70CM -> "70 cm"
+        org.ort.data.Band.UHF_33CM -> "33 cm"
+        org.ort.data.Band.UHF_23CM -> "23 cm"
+    }
 
     private fun frequencyLabel(frequencyHz: Long): String = "%.3f MHz".format(Locale.ROOT, frequencyHz / 1_000_000.0)
 }
 
-private val LABEL_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'", Locale.ROOT)
+/** Internal (not private) so [StationPolling]/[FrequencyPolling], in their own file, can format the same way. */
+internal val LABEL_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'", Locale.ROOT)
     .withZone(ZoneOffset.UTC)
 
 private fun dateTimeLabel(utcMillis: Long?): String? = utcMillis?.let { LABEL_FORMAT.format(Instant.ofEpochMilli(it)) }

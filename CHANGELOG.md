@@ -32,6 +32,420 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP8: stations and frequencies)
+
+### (pending) — ui-conformance WP8 · stations and frequencies: lists, detail, hour-by-day pattern, identity, departure
+
+**Scope:** `:app` `ui/screens/StationScreen.kt`, `FrequencyScreen.kt`, new `StationPatternScreen.kt`,
+`StationIdentityScreen.kt`, `FrequencyChangeScreen.kt`, new `StationsContent.kt`,
+`FrequenciesContent.kt`, `StationDetailContent.kt`, `FrequencyDetailContent.kt`; `ui/data/StationsAndFrequencies.kt`,
+`ui/data/ActivityPattern.kt`, new `ui/data/StationPolling.kt`; tests beside each.
+
+**Requirements/ACs:** R-070 (Stations list), R-071 (Station detail), R-072 (Station-Pattern hour x
+day grid), R-073 (Station-Identity), R-074 (Frequencies list/detail/Frequency-Change), R-075
+(local-time bucketing), FR-UI-9, FR-UI-10, FR-UI-11, FR-UI-12, FR-SPK-10, constitution I/III.
+
+**What changed:**
+
+*Constitution Check.* Principle I (Uncertainty Is Content): every station-list row carries its
+real dominant attribution through `AttributionRow` — never a bare count; the trailing "N
+unidentified voices" figure is `null`, never a fabricated count, when no `voiceprintId` clustering
+data exists yet. Principle III (Audio Is The Source Of Truth) and constitution V: the
+Station-Identity "nearest other station" distance is rendered honestly absent (`StationVoiceViewState.nearestOtherStationId
+= null`) rather than computed from an undocumented voiceprint-embedding byte layout — the identity
+pipeline (M4) has not shipped one. Principle VII: every new read path lives in this package's own
+`StationPolling.kt`/`FrequencyPolling`, never in `ReaderPolling.kt` (WP4's file).
+
+- **R-070 Stations list** (`StationsListScreen`): the four chips (Tonight/All time/Named/Unidentified,
+  filtered client-side by `StationsContent`), a `ColumnHeaderRow`, `AttributionRow` at 9dp showing
+  the station's *dominant tonight* attribution (real confirmed/inferred/ambiguous/unknown split
+  from the most recent session's transmissions), an honest count context
+  (`StationViewMapper.countContext`: "12 by voice match · 3 heard", never a fabricated "net
+  control" — no `:data` column supports it), `NEW` (first heard within tonight's session) and
+  `CORRECTED` badges, the given name beside the callsign (`StationEntity.userName`), and the
+  trailing "N unidentified voices · M overs" row as a real aggregate (`StationPolling.unidentifiedSummary`,
+  counting distinct `transmission.voiceprintId` values among `UNKNOWN` overs).
+- **R-071 Station detail** (`StationDetailScreen`): a facts table via `KeyValueRow` (overs with a
+  `Log` action, confirmed/inferred/corrected split, frequency-usage summary, first/last heard with
+  signal), the "When they are around" chart with a one-sentence summary derived from the real
+  buckets (`PatternInsights`), and `RECENT OVERS` with `All N` and tappable rows that open the over.
+- **R-072/R-075 Station-Pattern** (new `StationPatternScreen`): `By hour`/`Hour × day`/`Change over
+  time` `FilterChip`s, WP2's `DayOfWeekGrid` for the hour x day grid, the week-over-week lines
+  under "Change over time", and a "What this says" list (`PatternInsights.build`) that names
+  unknown days and unknown hour ranges explicitly rather than folding them into "quiet". Every
+  bucket is local time: `ActivityPatternMapper.buildPattern` gained a `zone` parameter (new
+  `buildHourByDayPattern`, `buildNightlySequence` too) — the *default* stays UTC only because
+  `ReaderPolling` (WP4's file, out of this package's ownership) still calls the old three-arg
+  overload and its own `ReaderPollingTest` asserts UTC bucketing byte-for-byte; `StationPolling`'s
+  real read path always passes `zone = ZoneId.systemDefault()`. The hour chart's title carries no
+  `(UTC)` at any of this package's call sites.
+- **R-073 Station-Identity** (new `StationIdentityScreen`): Heard (callsign, lexicon allocation
+  from `StationEntity.ituRegionFromPrefix`), Voice (real cluster-over count from
+  `CatalogDao.voiceprintsForStation`, confirmed/inferred split, `Split` action), Given by you
+  (`userName`/`notes`, `Rename`/`Add` actions), and the never-leaves-the-device card. `Rename`/`Add
+  note`/`Split` fire their callbacks (the affordance is reachable and tested) but do not persist —
+  `CatalogDao` has no update query for `StationEntity`, and adding one is a `:data` change outside
+  this package's ownership (see Left open).
+- **R-074 Frequencies** (`FrequenciesListScreen`/`FrequencyDetailScreen`/new
+  `FrequencyChangeScreen`): list rows show what it is (band from `Band.of`, mode from the most
+  common real `transmission.mode` — **never** a guessed repeater/simplex claim, since no `:data`
+  column carries one), tonight's count/stations, WP2's `Sparkline` over a real 14-night sequence
+  (`ActivityPatternMapper.buildNightlySequence`) with hatched not-listening nights, "busier than
+  usual" in amber text (never colour alone) using the shared `NightlyDeparture.isBusierThanUsual`
+  test (tonight's count more than double the mean of the other real listened nights — never a
+  fabricated departure with no comparison data). `Frequency` detail adds the facts table, the
+  typical-night chart, and `REGULARS` (real per-station over/session counts). `Frequency-Change`
+  plots tonight's real per-hour counts as bars over the prior sessions' per-hour average as a line,
+  and lists the causes this package can honestly derive (a station heard for the first time
+  tonight; unidentified/weak activity) — cross-frequency migration ("5 regulars moved here from
+  145.230") needs a thread/session correlation this package's read path does not build, left out
+  rather than guessed.
+- New `ui/data/StationPolling.kt`: `StationPolling`/`FrequencyPolling`, this package's own read
+  path, lifted from `ReaderPolling.stationDetail`/`frequencyDetail`/`listStationSummaries`/`listFrequencySummaries`
+  (left untouched in `ReaderPolling.kt` per the brief — WP4 deletes its copies once `OrtNavHost` is
+  wired to this package's new `*Content.kt` composables) plus every new aggregation above.
+  `ReaderPolling.detailFromEntity` is reused for transmission-detail mapping (the same pattern
+  `SearchPolling`/`ThreadPolling` already use).
+- New `StationsContent.kt`/`FrequenciesContent.kt`/`StationDetailContent.kt`/`FrequencyDetailContent.kt`:
+  the polling wrappers `OrtNavHost` (WP3) will dispatch to once it deletes its inline copies.
+  `StationDetailContent`/`FrequencyDetailContent` own the local "which sub-screen" state for
+  `Station-Pattern`/`Station-Identity`/`Frequency-Change`, reached as full-screen presentations
+  over the same subject rather than separate drawer destinations.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — BUILD SUCCESSFUL, no failures.
+  New/changed tests: `ActivityPatternMapperTest` (+10, R-075/R-072/R-074), `StationsAndFrequenciesTest`
+  (+6, R-070/R-071/R-074 mappers), `StationPollingTest` (new, 7 tests against a real file-backed
+  `:data` DB), `StationScreenTest` (+6), `FrequencyScreenTest` (rewritten, 8 tests),
+  `StationPatternScreenTest` (new, 5), `StationIdentityScreenTest` (new, 4), `FrequencyChangeScreenTest`
+  (new, 4).
+
+**Left open / not done:**
+- `Rename`/`Add note`/`Split` on Station-Identity are reachable, tested affordances that do not
+  persist — `CatalogDao` (`:data`) has no update query for `StationEntity` and no write path for
+  reassigning a voiceprint's members; adding either is outside this package's ownership.
+- `StationVoiceViewState.nearestOtherStationId`/`nearestOtherDistance` are always `null` — no
+  cross-station voice-distance comparison exists in `:data`/`:pipeline` today (M4 not built); this
+  package will not compute one from `VoiceprintEntity.embedding`'s undocumented byte layout.
+- `Frequency-Change`'s "What made it busy" list covers a first-time station and unidentified
+  activity only; cross-frequency migration causes ("5 regulars moved here from 145.230") are not
+  derived — no thread/session correlation exists for it yet.
+- `OrtNavHost` (WP3's file) still calls `ReaderPolling`'s inline `Stations`/`Frequencies` content
+  directly; this package's new `*Content.kt` composables are unwired until WP3 merges and swaps
+  the dispatch, per the brief's ownership split.
+- `ActivityPatternChart`'s `title` parameter has no way to render blank without leaving an empty
+  `Text` row in the layout — every call site in this package that wants its own `SectionHeader`
+  instead passes `title = ""`, a minor WP2 component gap reported, not worked around by a
+  look-alike.
+- Emulator/scenario validation (phase E) not run — out of a builder's scope per the plan.
+
+---
+
+## 2026-09-08 (ui-conformance WP2: shared components)
+
+## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
+
+### (pending) — ui-conformance WP6 · detail states, inspection surface, correction sheet and propagation, playback, revisions
+
+**Scope:** `:app` `ui/screens/TransmissionDetailScreen.kt`, new `DetailWhyScreen.kt`,
+`DetailRevisionsScreen.kt`, `CorrectionSheet.kt`, `PropagatedScreen.kt`,
+`TransmissionDetailContent.kt`; `ui/data/CorrectionFlow.kt`, `InspectionSurface.kt` (unchanged —
+read only), `LabelledSample.kt` (unchanged — read only), new `DetailViewState.kt`,
+`CorrectionPolling.kt`; `ui/audio/**`; and every test beside each. Register rows R-050–R-058.
+
+**Constitution Check.** Principle I (Uncertainty Is Content) is the whole package: every state's
+explanation sentence states its confidence in prose rather than omitting it or fabricating one
+(the FR-UI-4 rewrite below), a cold-start prior never gets a fabricated bar, AMBIGUOUS/UNKNOWN
+copy is built only from real `InspectionViewState` data. Principle III (Audio Is The Source Of
+Truth / nothing deleted quietly) governs `CorrectionPolling`: propagation writes one
+`CorrectionEntity` per affected over, never a bulk mutation; `Undo all` is itself a further kept
+correction; `Restore` installs a new current transcript row, never deletes the superseded one.
+Principle II (Test-Backed Change): every file below has a failing-first test; the two behavioural
+fakes this package's interface change touches (`FakeTransmissionAudioPlayer`) shipped in the same
+commit. Principle VII (structural, not conventional): `Confirm` cannot silently become a
+re-attribution because it is routed through `CorrectionDao.insert` alone, never `recordCorrection`
+— a type-level choice in `CorrectionPolling.confirm`, not a caller discipline.
+
+**Requirements/ACs:** R-050, R-051, R-053, R-054, R-055, R-056, R-057, R-058 (closed — see "What
+changed" per row below); R-052 (partial — see "Left open"); FR-UI-4 (rewritten, see below),
+FR-UI-5, FR-UI-6, FR-UI-8, FR-SPK-7, FR-OBS-4.
+
+**What changed:**
+
+- **R-050/R-057, four states one layout.** `TransmissionDetailScreen` rebuilt against
+  `Detail.dc.html` (= INFERRED)/`Detail-Confirmed.dc.html`/`Detail-Ambiguous.dc.html`/
+  `Detail-Unknown.dc.html`: `AttributionRow` (WP2) at `MARKER_CARD_SIZE` for the header marker +
+  callsign, a one-sentence explanation, a mono meta row, `WaveformCard`, a transcript with the
+  callsign span highlighted when it appears verbatim, an inline "why this callsign" preview with a
+  `Full lattice` link, and a state-dependent bottom bar (`ActionBar` for CONFIRMED/INFERRED,
+  `SecondaryButton`/`PrimaryButton` for the single-action AMBIGUOUS/UNKNOWN bars). AMBIGUOUS renders
+  the real top-two candidates with evidence built from `databaseHit` (never a fabricated "heard N
+  times") plus `Neither`/`Leave ambiguous`; UNKNOWN renders "what was tried" from real inspection
+  data (grammar best-partial or "no sequence parsed", "kept as an unidentified voice") plus
+  `I know who this is`.
+- **R-053, the INFERRED source link.** `DetailBodyViewState.Inferred.sourceTransmissionId` carries
+  `Attribution.sourceTransmissionId` through; the header renders `Open the source over` calling
+  `onOpenTransmission` when non-null, absent (not a dead link) when the source was never recorded.
+- **FR-UI-4, rewritten.** The old assertion (`TransmissionDetailScreenTest`'s
+  `` `FR_UI_4 the confidence value is shown as visible text in the header...` ``) established a bare
+  confidence number on every state, including CONFIRMED — `States.dc.html`/guide §6.2 show the
+  `ScoreChip` only on INFERRED. Renamed to
+  `` `FR_UI_4_confidence_is_present_in_the_header_sentence_and_the_chip_only_on_INFERRED` ``: it now
+  proves the confidence is never omitted (it is in the explanation sentence — "Resolved from the
+  phonetics at 0.94" for CONFIRMED, "...Confidence 0.82." for INFERRED) and that the chip's own
+  content description (`confidence 0.NN`) exists only for INFERRED. `DetailViewStateMapper.bodyFor`
+  builds that sentence.
+- **R-051/FR-UI-8, the inspection surface.** `DetailWhyViewState` (new, `DetailViewState.kt`) builds
+  real ranked candidates, real `PriorBar`s (WP2) from the chosen candidate's `priorContributions` —
+  cold start gets `fillFraction = null` (renders "cold start", no fabricated zero-length bar), a
+  negative contribution fills leftward in amber — and a runner-up, from `InspectionViewState`
+  alone. `DetailWhyScreen` (new) is the exhaustive version `Detail-Why.dc.html` specifies, reached
+  via `Full lattice`.
+- **R-052/R-058, correction.** `CorrectionSheet` (new): tier A (the resolver's other candidates,
+  one clickable row each — not a display row plus a separate button, which an early draft had and
+  which broke click routing under test), tier B (`Search the lexicon`, calling the existing
+  `ReaderPolling.searchLexicon` — not edited — with prefix-match highlighting), tier C (typed
+  callsign, the *unverified* warning, and the `this over only` / `every over matched to this voice
+  (N)` scope choice `Detail-Correct-C.dc.html` is the only board that shows). Tier A/B propagate by
+  default (`Flow-Correct.dc.html`'s own example: picking a candidate reads "6 overs re-attributed");
+  tier C defaults to `this over only`. `CorrectionPolling.applyCorrection` (new,
+  `ui/data/CorrectionPolling.kt`) selects affected transmissions by shared `voiceprintId`, falling
+  back to `stationId` when there is none, and records one `CorrectionEntity` per affected over —
+  never a bulk write. `PropagatedScreen` (new) renders the real counts, `Undo all` (a further, kept
+  correction reverting each affected over — nothing deleted), and every affected row with its old
+  callsign struck through.
+- **R-058, `Confirm`.** `CorrectionTier.CONFIRM` and `FIELD_STATION_CONFIRMED` (new, in
+  `CorrectionFlow.kt`, not `:data`'s `CorrectionDao` — `:data` is out of this package's ownership):
+  a `CorrectionRequest` whose new value equals the previous one. `CorrectionPolling.confirm` inserts
+  that audit row via `CorrectionDao.insert` alone — never `recordCorrection`, which would force
+  `attributionState = INFERRED` and set the `corrected` lock, silently turning "I agree" into a
+  re-attribution. Proven directly: confirming a CONFIRMED transmission leaves its attribution state
+  and `corrected` flag untouched. Documented as not a fifth `AttributionState` — the closed set is
+  unchanged.
+- **R-054, playback.** `TransmissionAudioPlayer` extended with `pause`/`resume`/`seekToFraction`/
+  `setRate`/`positionFraction`/`isPlaying` (`PlaybackRate.NORMAL`/`THREE_QUARTER`/`HALF`, each
+  preserving pitch via `AudioTrack.setPlaybackParams`). `FakeTransmissionAudioPlayer` extended in
+  the same commit (constitution II). `WaveformCard` drives idle/playing (a 150ms poll loop while
+  playing)/no-audio/unavailable from real player state.
+- **R-055, revisions.** `CorrectionPolling.revisions`/`.restore` (new): every `TranscriptEntity`
+  version, current first then newest-superseded, labelled with real pass/model/time and "corrected"
+  only when a `CorrectionEntity` actually exists for the transmission. `DetailRevisionsScreen`
+  (new) renders version cards and a word-level LCS diff (`WordDiff`, new, pure/tested independent
+  of Compose) of each superseded version against current. `Restore` installs a **new** current
+  transcript row via `TranscriptDao.supersede` — proven: the version count grows by one, nothing is
+  removed.
+- **R-056, labelled sample.** Outcome/certainty are now `RadioRow` (WP2) visible lists, not
+  tap-to-cycle text; every free-text `TextField` carries a real Material `label`, not only a content
+  description.
+- **A compile-compat shim, not a redesign.** `OrtNavHost.kt` (WP3's file, not edited here) still
+  calls this screen's pre-WP6 signature from its own inline `TransmissionDetailContent`; deleting
+  that inline copy is explicitly WP3's job (`ui-conformance-plan.md` §D). Removing the old signature
+  outright would leave `main` red for every worktree until that merge lands, so a `@Deprecated`
+  overload matching the old signature adapts straight into the real screen. WP3's merge should
+  delete this overload along with its only caller.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.*" --tests
+  "org.ort.app.ui.screens.*" --tests "org.ort.app.ui.audio.*"` — **BUILD SUCCESSFUL**, all tests
+  green (`DetailViewStateMapperTest`, `CorrectionPollingTest`, `CorrectionFlowTest`,
+  `FakeTransmissionAudioPlayerTest`, `WordDiffTest`, `CorrectionSheetTest`,
+  `TransmissionDetailContentTest`, `TransmissionDetailScreenTest`,
+  `TransmissionDetailScreenCorrectionTest`, `RealTransmissionAudioPlayerTest`, plus every
+  pre-existing test in those packages, unmodified where not called out above).
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole module, no filter) — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** (`:app:ktlintFormat`
+  run once to fix continuation-indent violations `DetailViewState.kt`/
+  `DetailViewStateMapperTest.kt`/an import ordering violation left by hand-editing, then the full
+  gate re-run clean).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged; this package's tests
+  are named for `R-*`/`FR-UI-*` ids the coverage matrix's `@Requirement` annotation convention does
+  not track, matching this package's existing test style) and `.\gradlew.bat coverageMatrixCheck`
+  (separate invocation, up to date) — both **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- **R-052 is partial, not closed.** `PropagationOutcome.voiceprintReassigned` is always `false` and
+  `.priorsUpdatedCount` is always `0`: `:data`'s `CatalogDao` (the only entry point to
+  `VoiceprintEntity`) offers `insert` and a read by `boundStationId`, no update path for
+  `VoiceprintEntity.boundStationId`, and no `:app`-reachable write path updates a prior's stored
+  weight at all. Both are real zeros (nothing was done), not fabricated — but `Detail-Propagated.dc.html`
+  shows these lines with real counts, and this package cannot add the needed `:data` DAO methods
+  without touching a file outside its ownership. Flagging for the lead to re-partition: a small
+  `CatalogDao` addition (`updateVoiceprintBinding`) would close this.
+- **The phonetic-lattice per-slot render (part of R-051/`Detail-Why.dc.html`'s step 1) is not
+  built.** `PhoneticLatticeEntity.unitsBlob` is an opaque blob with no defined per-unit (score,
+  alternate, threshold) shape yet — nothing in the codebase parses it. `DetailWhyScreen` shows the
+  lattice's real source and model and says plainly that per-slot detail is not recorded, rather
+  than inventing a blob format no writer produces.
+- **UNKNOWN's "what was tried"** (R-057) omits the "nearest voice match" and "thread context" steps
+  `Detail-Unknown.dc.html` shows — no data source for either reaches `TransmissionDetailViewState`
+  today. Only the grammar step and the always-true "kept as an unidentified voice" step are real.
+- **The spoken-word outline during playback** (R-054) is never drawn — no word-timing data exists
+  anywhere in the schema, so this is always the honest "no outline" case, never faked. **Scrubbing
+  by dragging the waveform** is not wired — `seekToFraction` exists on the player and is exercised
+  by `FakeTransmissionAudioPlayerTest`/`RealTransmissionAudioPlayer`, but `WaveformCard` (WP2) has
+  no drag handler to call it from; a future WP2 change adding one would close this without touching
+  this package's files again.
+- **The transcript's callsign highlight** (part of R-050) is a literal, case-insensitive substring
+  match against the attributed callsign — real when it fires, but a real ASR transcript almost
+  never contains the bare callsign string (it says "kilo seven lima whiskey hotel", not "K7LWH"),
+  since no data anywhere maps spoken phonetic words back to the callsign they spell. Not fabricated,
+  but rarely visible on real data.
+- **Component gap for WP2:** guide §4 calls for the header callsign at 27sp mono ("title size"),
+  but `AttributionRow` (`ui/components/AttributionMarker.kt`) has no parameter for its callsign
+  text size — only `MARKER_CARD_SIZE` for the marker shape. Per this program's own instruction
+  ("never hand-roll a look-alike of a component that exists"), the header uses `AttributionRow`
+  as-is at its existing sizes rather than reimplementing its shape/colour/chip logic at a larger
+  text size; the callsign renders at `AttributionRow`'s built-in row-callsign size, not 27sp.
+- **The correction sheet renders as a full replacement screen, not a true bottom sheet over a
+  dimmed detail screen.** `Sheet` (WP2) is the sheet surface only — the drag/scrim/22%-dim
+  choreography around it is the caller's job, and `TransmissionDetailContent` shows it as its own
+  destination rather than an overlay for simplicity. Visually adequate (matches the artboard's
+  content) but not the exact interaction model `Detail-Correct-A/B/C.dc.html`'s dimmed-background
+  presentation shows.
+
+---
+
+
+## 2026-09-08 (ui-conformance WP5: Log rows and variants, partials, filter sheet, threads)
+
+### (pending) — ui-conformance WP5 · Log rows and variants, partials, filter sheet, threads
+
+**Scope:** `ui/screens/LogScreen.kt`, `ui/screens/ThreadScreen.kt`, new `ui/screens/ThreadDetailScreen.kt`,
+new `ui/screens/LogFilterSheet.kt`, new `ui/screens/LogContent.kt`, new `ui/screens/ThreadContent.kt`,
+`ui/data/ThreadViewData.kt`, all of `ui/data/TransmissionDetail.kt`, new `ui/data/LogViewData.kt`, and
+their tests. Also `results/coverage-matrix.md` (regenerated by `coverageMatrix`, not hand-edited).
+
+**Requirements/ACs:** R-040, R-041, R-042, R-043, R-044, R-045 (register); FR-UI-1, FR-UI-2, FR-UI-3,
+FR-UI-4, FR-UI-12, FR-RUN-12, P5, P7, P9; audit F-012 (superseded by this entry — see below).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content): every Log/Thread row still renders
+  through the closed-set attribution marker; the AMBIGUOUS "or QRF" alternate and the `NEW`/`REVISED`/
+  `CORRECTED` badges are read from real columns, never guessed — kind (QSO/Net/Activation/Activity) on
+  a `ThreadCardViewState` is `null` until a real classification exists, per guide §9. Principle II
+  (Test-Backed Change): every rule below has a failing-first pure test in `LogViewDataTest`/
+  `ThreadViewDataTest` plus a Robolectric compose test proving the screen renders it. Principle IV
+  (Capture Never Blocks/Lies): the gap row's cause text comes from the real `CaptureGapCause` enum
+  (now carrying `CALL`/`INPUT_LOST`/`OS_STOPPED`/`ROUTE_LOST`, R-106), never a generic "gap". Principle
+  VII (Boundaries Are Structural): `LogViewData.kt` reads `:data` directly through `OrtDatabase`, never
+  through `ui/data/ReaderPolling.kt` (WP4's file, per this package's own plan row).
+- **R-040 (Log rows).** New `ui/data/LogViewData.kt`: `LogItemsMapper` builds the interleaved,
+  chronological `LogListItem` list (`Group`/`Row`/`Gap`/`RejectedItem`) from real `TransmissionDetail`s
+  and `CaptureGapEntity` rows — QSO group headers ("QSO · N overs · M stations") for consecutive
+  same-`threadId` runs, gap rows with a real cause/duration, the `NEW` badge computed from the true
+  first-ever `startedAtUtc` for a station across *every* session (not just the current one), `REVISED`
+  from `supersededTranscriptTexts`, `CORRECTED` from the real `transmission.corrected` column, and the
+  AMBIGUOUS "or QRF" alternate from the best-ranked non-selected `CallsignCandidateEntity`. Badge
+  precedence: corrected > revised > new, never more than one. `LogScreen.kt` rewritten to a pure
+  function of `LogScreenViewState`, laying out WP2's `ColumnHeaderRow`/`LogRow`/`LogGroupHeader`/
+  `GapRow`/`RejectedRow`/`FilterChip` — the old two-free-width-column layout is gone.
+- **R-041 (partials, FR-UI-1/P5).** `TransmissionDetail` gains `currentTranscriptPass: TranscriptPass?`
+  (which pass produced the current transcript) and `corrected: Boolean`. `LogItemsMapper.partialFor`
+  derives `HEARING` (Pass A, still capturing/processing) vs `RESOLVING` (Pass B/reprocess text, still
+  processing) vs a finished row structurally from `processingState` + the transcript's real `pass`
+  column — never guessed from timing. A partial row never carries a marker or a badge.
+- **R-042 (filter sheet, FR-UI-3).** New `ui/screens/LogFilterSheet.kt` on WP2's `Sheet`/`FilterChip`/
+  `CheckboxRow`/`PrimaryButton`: frequency chips with real counts, the four attribution checkboxes each
+  with its shape (via `AttributionMarker(showConfidence = false)`) and count, "Also show" toggles for
+  rejected segments and not-listening gaps, a from/to time pair, and `Show N overs`. Default selection:
+  every attribution state visible, gaps shown, rejected segments **not** interleaved (R-043's "default
+  off"). The top quick-filter row (All/each real frequency/Named/Rejected) is a separate, always-visible
+  shortcut — `Named` narrows to CONFIRMED+INFERRED; `Rejected` switches to a dedicated view (below),
+  distinct from the sheet's own "also show" toggle, which interleaves instead of replacing.
+- **R-043 (rejected reachable, P9).** `Rejected` quick filter renders every rejected transmission in
+  the session regardless of the sheet's own filter — nothing rejected is ever hidden further — with its
+  own explanatory line and `reason`/`dur` column headers (`ColumnHeaderRow`'s existing `stationLabel`/
+  `signalLabel` params, no new component needed). The sheet's "Also show → Rejected segments" toggle
+  interleaves rejected rows (dimmed) into the normal chronological list instead.
+- **R-045 (empty state).** `Log-Empty.dc.html`: the header, quick-filter chips and column headers stay
+  visible; the empty body distinguishes "no overs at all this session" ("Listening since HH:MM...", the
+  real session start) from "filters matched nothing" (different copy) — never the same bare sentence
+  for both. `ThreadScreen`'s empty state is the analogous honest "no overs yet" text.
+- **R-044 (threads).** New `ui/data/ThreadViewData.kt` additions: `ThreadListViewState` (`Empty` /
+  `Ungrouped` — the real state today, since nothing populates `threadId` before M6 — / `Grouped`),
+  `ThreadCardViewState` (kind/frequency/count, participants, meta, ambiguous tint, `NEW`), and
+  `ThreadDetailViewState` with a "how these were attributed" line per station (CONFIRMED overs named
+  by position, INFERRED voice matches naming their source over and confidence) plus a per-over
+  reasoning list. New `ui/screens/ThreadDetailScreen.kt`: the "How these were attributed" card
+  (constitution I/P2) and a source-over link that opens the over an inherited attribution came from —
+  built as two independently-tappable regions (the over itself, and the source-over link) rather than
+  nesting a second clickable inside one merged-semantics row. `ThreadScreen.kt` rewritten to render
+  `Threads.dc.html` cards or `Threads-Ungrouped.dc.html`'s honest explanation + "by frequency,
+  meanwhile" list. **Kind is never guessed**: no `:data` column ties a real classification to a
+  `threadId` today (`ThreadEntity.kind` exists in the schema but nothing writes it, and its
+  `{QSO,NET,SCANNER,UNKNOWN}` set doesn't map cleanly onto the artboard's `{QSO,Net,Activation,
+  Activity}` four — flagged for the lead rather than inventing a mapping), so `kindLabel` stays `null`
+  everywhere and the card/detail layouts render correctly without it.
+- **F-012 / FR-UI-4, the changed test.** `LogScreenTest`'s
+  `FR_UI_4 the confidence value is shown as visible text…` asserted a confidence *number* on every
+  attribution, including CONFIRMED. The design's source of truth (`States.dc.html`, guide §6.2) shows
+  the score chip **only** on INFERRED — a CONFIRMED callsign was heard, and a number would imply doubt
+  the data does not have. Renamed to
+  `FR_UI_4_state_marker_is_never_omitted_and_the_score_chip_appears_only_on_INFERRED`: it now asserts
+  the closed-set *state* (the marker shape) is never omitted on any of the four states, and that the
+  visible "0.82" score chip appears beside INFERRED only — `"0.95"` (CONFIRMED's confidence) must not
+  exist as visible text. `LogScreen`/`ThreadScreen` now render through `AttributionRow`, not the
+  deprecated `AttributionMarker(showConfidence = true)` shim WP2 left for pre-migration callers.
+- **Compile-compatibility bridge.** `OrtNavHost.kt` (WP3's file — this package does not edit it) still
+  has its own inline `LogContent`/`ThreadContent` calling the old `LogScreen(entries=...)`/
+  `ThreadScreen(groups=...)` 3-argument shapes. Rather than break that build, `LogScreen.kt`/
+  `ThreadScreen.kt` keep those exact overloads — rendering through the *new* row family (`LogRow`,
+  `AttributionRow`) rather than the old ad hoc layout, so today's still-wired nav host already renders
+  correctly — alongside the new primary `LogScreenViewState`/`ThreadListViewState` overloads this
+  package's own `LogContent.kt`/`ThreadContent.kt` use. WP3 removes the legacy overloads' only callers
+  when it wires the nav host to this package's content composables.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (841 actionable tasks, 34
+  executed, 807 up-to-date); `dependencyRules: checked 17 modules ... OK`; `platformGuards: checked 17
+  modules' external dependencies and 17 manifests ... OK`. 357 `:app` unit/Robolectric tests passed.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 181 covered -> results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (181
+  covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- New tests by name: `LogViewDataTest` (18 tests — partial detection, badge precedence, the AMBIGUOUS
+  alternate, gap labelling, QSO grouping, filtering, empty-state wording), `LogPollingTest` (7 tests —
+  the real `:data`-direct read path: cross-session `NEW`, Pass A partial, rejected reachability, gap
+  interleaving, `CORRECTED` from `CorrectionDao`, the empty-session message), `ThreadViewDataTest` (8
+  tests — `Ungrouped`/`Grouped`/card fields/how-attributed lines), `LogScreenTest` (14 tests, rewritten),
+  `LogFilterSheetTest` (3 tests), `ThreadScreenTest` (6 tests, rewritten + 2 legacy-overload smoke
+  tests), `ThreadDetailScreenTest` (5 tests).
+
+**Left open:**
+- The live bar (guide §6.6) is not rendered on Log/Threads — every artboard shows it, but its polling
+  (`LiveBarPolling.kt`) is WP4's file and does not exist on `main` yet at time of writing; noted for
+  whichever package lands it to wire in here too.
+- `LogGroupHeader`'s tap-to-open-thread (`Rows.dc.html`: "Tapping opens the thread") is not wired — it
+  would need a callback threaded through `OrtNavHost.kt`, which this package does not own.
+- `ThreadDetailScreen` is built and tested but not reachable from `ThreadScreen` — opening a card needs
+  a new route/callback in `OrtNavHost.kt`, outside this package's ownership; `ThreadPolling.threadDetail`
+  is ready for whichever package adds that wiring.
+- `Log-Rejected.dc.html`'s per-row "why" explanatory second line (e.g. "0.4 s of noise after the
+  carrier dropped") is not rendered — WP2's `RejectedRow` has no slot for it; only the short reason and
+  the session-level explanatory sentence are shown. A gap to flag for WP2, not invented here.
+- The Threads-Ungrouped explanation's tier number ("tier 1") is rendered generically ("the tier it is
+  currently running") rather than the real tier — no tier-state type is in this package's ownership to
+  read from; the two `TextAction`s ("What tier 1 can and cannot do", "Improve at home") are present and
+  tappable but wired to no-ops pending a real destination.
+- Ambiguous-thread card titles use a generic "Ambiguous stations" rather than naming the specific
+  candidate + "or QRF" the way `Threads.dc.html` shows, to avoid asserting a candidate identity the
+  simplified mapper does not carry per-thread; the Log row itself (which does have per-transmission
+  inspection data) shows the real "or QRF" alternate correctly.
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
 
 ### (pending) — ui-conformance WP4 · Now home, capture status surface, level meter, live-bar feed
@@ -681,6 +1095,143 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · host dispatches to WP5, WP6 and WP8 content; thread, pattern, identity and frequency-change routes
+
+**Scope:** `:app` `ui/navigation/**` only (`OrtNavHost.kt` — `ReaderDestination.kt`/`Drawer.kt`
+untouched this round; `ReaderDestination.CAPTURE.hasScreen` was already flipped in the WP4/WP7
+addendum below) and its test (`OrtNavHostDestinationDispatchTest.kt`, new). Second reconciliation
+addendum to the WP3 entry two below, after merging `integrate-2` (WP5 + WP6 + WP8, HEAD `285e0d0`,
+a descendant of the WP4/WP7 addendum's `47d5a7e`).
+
+**Requirements/ACs:** R-016, R-017 (both refined by this addendum, not reopened — see "What
+changed" for the R-016 architectural finding this round surfaced), R-013, FR-UI-2.
+
+**What changed:**
+- **Constitution Check.** Principle I: every drill-in reachable now reads real `:data` state
+  through the package that owns it (WP5/WP6/WP8's own `*Polling` objects), never this package's
+  own guess at the shape. Principle VII: `ui/screens/**`, `ui/data/LogViewData.kt`/
+  `ThreadViewData.kt`/`StationPolling.kt`/`DetailViewState.kt` (WP5/WP6/WP8's files) are
+  untouched — every change is `OrtNavHost.kt`'s own dispatch.
+- **`git merge --ff-only integrate-2`** — fast-forward, `47d5a7e..285e0d0`, clean.
+- **LOG → WP5's real `LogContent(context, sessionId, onOpen, modifier)`.** THREADS → WP5's real
+  `ThreadContent(context, sessionId, onOpen, modifier)`. Both replace this package's own inline
+  copies, which called the now-superseded 3-arg `LogScreen(entries, onOpen, modifier)`/
+  `ThreadScreen(groups, onOpen, modifier)` overloads directly against `ReaderPolling`.
+  **`LogContent` exposes no group-header callback** (confirmed by reading the file: `LogGroupHeader`
+  is called with no `onClick` at all) — the brief's conditional "wire the Log group header tap to
+  it if `LogContent` exposes such a callback" therefore could not be wired; reported here rather
+  than edited into WP5's file.
+- **Thread-detail drill-in (R-017):** a new `ThreadDetailContent` poll-and-render wrapper (this
+  package's own file, `OrtNavHost.kt`) feeds WP5's pure `ThreadDetailScreen` from
+  `ThreadPolling.threadDetail(context, sessionId, threadId)`, wired the same way every other
+  drill-in is (`openThreadId`, `onOpenThread`, remembers `openedFrom` on open, cleared by
+  `closeDrillIns`). **Currently unreachable from any user action** — confirmed by reading both
+  `LogContent.kt` (no group-header callback, above) and `ThreadContent.kt` (its own doc comment:
+  "not yet wired into navigation... intentionally unused until a route exists" — `ThreadScreen`'s
+  real `onOpenThread: (String) -> Unit` per-card callback is hard-wired to `{}` inside
+  `ThreadContent`, with no parameter exposed to override it). The route exists and is ready; the
+  lead or WP5 needs to add a callback parameter to `LogContent`/`ThreadContent` before it is
+  reachable.
+- **Transmission drill-in → WP6's real `TransmissionDetailContent(context, transmissionId, player,
+  onBack, onOpenTransmission, modifier)`**, replacing the call into the `@Deprecated`
+  `TransmissionDetailScreen(state: TransmissionDetailViewState, ...)` overload this package used
+  before (its own deprecation notice: "Compile-compat only until WP3 deletes its pre-WP6 inline
+  `TransmissionDetailContent`" — done).
+- **STATIONS/FREQUENCIES → WP8's real `StationsContent`/`FrequenciesContent`**; their drill-ins →
+  WP8's real `StationDetailContent`/`FrequencyDetailContent`, both wired with the cross-navigation
+  callbacks they expose (`onOpenTransmission` on the station side, `onOpenStation` on the frequency
+  side) so a related entity opened from within one drill-in still remembers the original
+  `openedFrom` (R-017) — it replaces which single drill-in id is set, so `onBack` from a nested
+  open returns to the *original* list destination, not to the intermediate drill-in; a real,
+  documented simplification of this host's single-level drill-in model, not a full navigation
+  stack (see "Left open").
+- **R-016, revised by an architectural finding this round, not by new design:** the coordinator's
+  brief asked for routes to `StationPatternScreen`, `StationIdentityScreen` and
+  `FrequencyChangeScreen`, each with "the right `DrillInHeader` parent label". Reading
+  `StationDetailContent.kt`/`FrequencyDetailContent.kt` first found that WP8 already built these as
+  **internal sub-navigation** inside those two content composables (`StationDetailContent`'s own
+  `sub: StationSubScreen` state opens `StationPatternScreen`/`StationIdentityScreen`;
+  `FrequencyDetailContent`'s own `sub: FrequencySubScreen` state opens `FrequencyChangeScreen`;
+  `StationDetailScreen`'s kebab icon is `onOpenIdentity`) — so no separate host-level route is
+  needed or possible without duplicating WP8's own state machine. The same reading found that
+  **every** real drill-in screen this round dispatches to (`TransmissionDetailContent`,
+  `StationDetailScreen`, `FrequencyDetailScreen`, `StationPatternScreen`, `StationIdentityScreen`,
+  `ThreadDetailScreen`) already renders its own WP2 `DrillInHeader` internally, each with its own
+  hardcoded parent label ("Log"/"Stations"/"Frequencies"/"Threads") — none accepts this host's real
+  `ids.openedFrom.label`. `NavHostBody` therefore **no longer renders a generic host-level
+  `DrillInHeader` at all** for these four drill-in kinds — doing so would stack two, the same
+  double-render class the WP4/WP7 addendum already found and fixed once for the live bar. R-017's
+  origin-tracking (`openedFrom`, back returning to the true origin) still works correctly — only
+  the header's *displayed text* does not always name the true origin, since it is now WP5/6/8's
+  own hardcoded string; noted for the lead, not fixed here (outside this package's ownership row).
+- New `OrtNavHostDestinationDispatchTest.kt`: proves `LOG` reaches WP5's real `LogContent`
+  (`LogScreen`'s own title renders with `sessionId = null`, since `LogContent`'s poll — and its
+  real "No transmissions yet" empty state — only runs for a real session). Deeper click-through
+  tests for `THREADS`/`STATIONS`/`FREQUENCIES`/`CAPTURE`/a station drill-in were attempted and
+  removed — see "Left open" for the full, honest account of why.
+
+**Verified:**
+- `git log --oneline -1` — `285e0d0` after the fast-forward merge, before this addendum's own
+  commit.
+- `.\gradlew.bat :app:compileDebugKotlin` / `:app:compileDebugUnitTestKotlin` — both **BUILD
+  SUCCESSFUL**.
+- `.\gradlew.bat :app:detekt`, `:app:ktlintMainSourceSetCheck`, `:app:ktlintTestSourceSetCheck` —
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules`/`platformGuards`
+  **OK** (17 modules, every edge permitted; no analytics/telemetry, `INTERNET` only in `:net`).
+  `build` itself **fails** — `:app:testDebugUnitTest` reports **542 tests, 6 failed, 536 passing**.
+  Every failure is the same pre-existing `SearchContentTest`/`SearchFiltersSheetTest` pair named
+  in the WP4/WP7 addendum below, confirmed unchanged (WP7's agent is fixing those concurrently, in
+  its own files, per the lead's own note this round — not touched here).
+  `.\gradlew.bat :app:assembleDebug` run standalone — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`; `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — `up to date (181 covered of 419)`.
+
+**Left open / not done:**
+- The thread-detail drill-in this round adds is **not reachable from any user action** — see "What
+  changed" for the exact two gaps (`LogContent`'s group header, `ThreadContent`'s hard-wired
+  `onOpenThread = {}`), both in `ui/screens/**`, outside this package's ownership row. Flagged for
+  the lead to route to WP5, or to add the missing callback parameters directly.
+- Every drill-in header's displayed parent-label text is WP5/6/8's own hardcoded string, not this
+  host's real `ids.openedFrom.label` — R-017's back-navigation *behaviour* is unaffected (it still
+  returns to the true origin, including Search with its filters intact), but a transmission opened
+  from Search, for example, shows "Log" in its header rather than "Search". Fixing this would need
+  each of those five screens to accept a `parentLabel: String` parameter instead of a hardcoded
+  one — a `ui/screens/**` change, outside this package's row.
+- Opening a related entity from within a drill-in (a station from a frequency, a transmission from
+  a station or thread) replaces the single drill-in id this host tracks rather than pushing a real
+  navigation stack — `onBack` from that nested drill-in returns to the *original* list destination,
+  skipping the intermediate one. A known, documented simplification of the existing single-level
+  model, not a new gap this round introduced.
+- `OrtNavHostDestinationDispatchTest`'s deeper tests (`THREADS`/`STATIONS`/`FREQUENCIES`/`CAPTURE`
+  dispatch, a station drill-in's single-header proof) were attempted and removed after an
+  unresolved Robolectric+Compose issue: `performScrollTo()` then `performClick()` on a drawer row
+  past the second position timed out waiting for that destination's own content, with no thrown
+  exception, while the identical pattern works for the second row (`Log`) and while
+  `ReaderAccessibilityTest`'s own drawer test (scroll-to-and-assert-displayed, never click) passes
+  for all nine rows. Not diagnosed further within this round's budget; correctness for the
+  untested destinations rests on the exact signatures read from each real file (cited in
+  `OrtNavHost.kt`'s own comments) and on WP5/WP6/WP8's own test suites, which exercise
+  `LogContent`/`ThreadContent`/`StationsContent`/`FrequenciesContent`/`StationDetailContent`/
+  `FrequencyDetailContent`/`CaptureStatusContent` directly and all pass in the 542-test run above.
+- The legacy overloads/functions this round's rewiring leaves unreferenced from the host, named
+  here so their owners can delete them (not deleted by this package, per the coordinator's own
+  instruction):
+  - WP5's 3-arg `LogScreen(entries, onOpen, modifier)` and `ThreadScreen(groups, onOpen, modifier)`
+    overloads (`ui/screens/LogScreen.kt`, `ui/screens/ThreadScreen.kt`), and
+    `ThreadPolling.currentThreadGroups`/`ThreadGroupViewState` (`ui/data/ThreadViewData.kt`) — this
+    host's own last caller of all three is gone.
+  - WP6's `@Deprecated TransmissionDetailScreen(state: TransmissionDetailViewState, ...)` overload
+    (`ui/screens/TransmissionDetailScreen.kt`) — its own doc comment already named this host as its
+    only caller.
+  - WP4's `ReaderPolling.stationDetail`, `ReaderPolling.frequencyDetail`,
+    `ReaderPolling.listStationSummaries`, `ReaderPolling.listFrequencySummaries`
+    (`ui/data/ReaderPolling.kt`) — this host now reads `StationPolling`/`FrequencyPolling` (WP8's
+    own file) instead; `ReaderPolling.currentTransmissionDetails` remains referenced (`NowContent`,
+    WP4's own file, still calls it) so it is not in this list.
+
 ### (pending) — ui-conformance WP3 · host dispatches to WP4 and WP7 content; live bar fed by LiveBarPolling
 
 **Scope:** `:app` `ui/navigation/**` only (`OrtNavHost.kt`, `ReaderDestination.kt`,
@@ -904,9 +1455,10 @@ does not exist).
 - `ReaderDestination.trailingGroup`'s divider placement, the drawer sheet's own width (M3's
   `ModalDrawerSheet` default, not `Menu.dc.html`'s 306dp), and the Improve-records count pill
   (`improveRecordsCount`, wired but always `null` — WP10 has not landed a real count) are all
+  unchanged/deferred, none named by this package's register rows.## 2026-09-08 (ui-conformance WP2: shared components)
+
   unchanged/deferred, none named by this package's register rows.
 ## 2026-09-08 (ui-conformance WP2: shared components)
-
 ### (pending) — ui-conformance WP2 · legacy marker keeps confidence until callers migrate
 
 **Scope:** `:app` `ui/components/**` only (`AttributionMarker.kt`, `AttributionMarkerTest.kt`).

@@ -6,18 +6,20 @@ import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.data.FrequencyMeanwhileEntry
+import org.ort.app.ui.data.ThreadCardViewState
 import org.ort.app.ui.data.ThreadEntryViewState
 import org.ort.app.ui.data.ThreadGroupViewState
+import org.ort.app.ui.data.ThreadListViewState
 import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
 
 /**
- * FR-UI-2 — a thread view groups transmissions into conversations and shows why each was
- * attributed. [org.ort.app.ui.data.ThreadGroupingMapperTest] covers the grouping/reasoning logic;
- * this proves the screen renders it, including the honest "not yet grouped" state build-plan P15
- * requires (threading is M6; nothing populates `threadId` today).
+ * The "Threads" destination (R-044, ui-conformance WP5; `design/canvas/Threads.dc.html`,
+ * `Threads-Ungrouped.dc.html`, FR-UI-2). [org.ort.app.ui.data.ThreadViewDataTest] covers the
+ * grouping/reasoning/card logic; this proves the screen renders each of the three honest states.
  */
 @RunWith(RobolectricTestRunner::class)
 class ThreadScreenTest {
@@ -25,22 +27,96 @@ class ThreadScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun entry(id: String, reasoning: String, attribution: Attribution = Attribution.unknown()) =
-        ThreadEntryViewState(
-            listEntry = TransmissionListEntryViewState(
-                id = id,
-                timeLabel = "02:14:07",
-                frequencyLabel = "145.230",
-                transcriptText = "roger that",
-                attribution = attribution,
-                revisionNote = null,
-                signalLabel = null,
-            ),
-            reasoning = reasoning,
-        )
+    private fun card(
+        threadId: String = "T1",
+        title: String = "W7NPC and K7LWH",
+        isNew: Boolean = false,
+        ambiguous: Boolean = false,
+    ) = ThreadCardViewState(
+        threadId = threadId,
+        timeLabel = "02:14",
+        kindLabel = null,
+        frequencyLabel = "145.230",
+        overCount = 4,
+        titleText = title,
+        metaText = "3 confirmed · 1 inferred · 02:14 – 02:16",
+        ambiguous = ambiguous,
+        isNew = isNew,
+    )
 
     @Test
     fun `no transmissions at all shows an honest empty state`() {
+        composeTestRule.setContent {
+            OrtTheme { ThreadScreen(state = ThreadListViewState.Empty, onOpenThread = {}) }
+        }
+
+        composeTestRule.onNodeWithText("No overs yet.").assertExists()
+    }
+
+    @Test
+    fun `FR_UI_2 the ungrouped state names why, never a fabricated conversation, and lists by frequency`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ThreadScreen(
+                    state = ThreadListViewState.Ungrouped(
+                        totalOvers = 412,
+                        byFrequency = listOf(FrequencyMeanwhileEntry(145_230_000L, "145.230", 318, 12)),
+                    ),
+                    onOpenThread = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Conversations are not built on this phone yet").assertExists()
+        composeTestRule.onNodeWithText("145.230").assertExists()
+        composeTestRule.onNodeWithText("318 overs · 12 stations heard").assertExists()
+    }
+
+    @Test
+    fun `R_044 a grouped card shows its title, meta and the NEW badge when first heard`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ThreadScreen(
+                    state = ThreadListViewState.Grouped(
+                        summary = "1 conversation · 4 overs · newest first",
+                        cards = listOf(card(isNew = true)),
+                        ungroupedOvers = 0,
+                    ),
+                    onOpenThread = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("W7NPC and K7LWH").assertExists()
+        composeTestRule.onNodeWithText("3 confirmed · 1 inferred · 02:14 – 02:16").assertExists()
+        composeTestRule.onNodeWithText("NEW").assertExists()
+    }
+
+    @Test
+    fun `R_044 tapping a card opens its thread`() {
+        var opened: String? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                ThreadScreen(
+                    state = ThreadListViewState.Grouped(
+                        summary = "1 conversation",
+                        cards = listOf(card(threadId = "T1")),
+                        ungroupedOvers = 0,
+                    ),
+                    onOpenThread = { opened = it },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("W7NPC and K7LWH").performClick()
+
+        assert(opened == "T1") { "expected T1 to be opened but was $opened" }
+    }
+
+    // -- legacy 3-arg overload — compile-compatibility bridge for OrtNavHost.kt (see ThreadScreen.kt) --
+
+    @Test
+    fun `legacy overload -- no transmissions at all shows an honest empty state`() {
         composeTestRule.setContent {
             OrtTheme { ThreadScreen(groups = emptyList(), onOpen = {}) }
         }
@@ -49,53 +125,7 @@ class ThreadScreenTest {
     }
 
     @Test
-    fun `FR_UI_2 the ungrouped bucket is labelled honestly, not as a fabricated conversation`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                ThreadScreen(
-                    groups = listOf(
-                        ThreadGroupViewState(
-                            threadId = null,
-                            label = "Not yet grouped into threads",
-                            entries = listOf(entry("TX1", "no callsign resolved")),
-                        ),
-                    ),
-                    onOpen = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("Not yet grouped into threads").assertExists()
-    }
-
-    @Test
-    fun `FR_UI_2 each entry shows the reasoning behind its attribution`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                ThreadScreen(
-                    groups = listOf(
-                        ThreadGroupViewState(
-                            threadId = "THREAD-A",
-                            label = "Thread · 1 over(s)",
-                            entries = listOf(
-                                entry(
-                                    "TX1",
-                                    "callsign confirmed in this transmission",
-                                    Attribution.confirmed("W7NPC", 0.95),
-                                ),
-                            ),
-                        ),
-                    ),
-                    onOpen = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("callsign confirmed in this transmission").assertExists()
-    }
-
-    @Test
-    fun `tapping an entry opens that transmission`() {
+    fun `legacy overload -- tapping an entry opens that transmission`() {
         var opened: String? = null
         composeTestRule.setContent {
             OrtTheme {
@@ -104,7 +134,20 @@ class ThreadScreenTest {
                         ThreadGroupViewState(
                             threadId = null,
                             label = "Not yet grouped into threads",
-                            entries = listOf(entry("TX1", "no callsign resolved")),
+                            entries = listOf(
+                                ThreadEntryViewState(
+                                    listEntry = TransmissionListEntryViewState(
+                                        id = "TX1",
+                                        timeLabel = "02:14:07",
+                                        frequencyLabel = "145.230",
+                                        transcriptText = "roger that",
+                                        attribution = Attribution.unknown(),
+                                        revisionNote = null,
+                                        signalLabel = null,
+                                    ),
+                                    reasoning = "no callsign resolved",
+                                ),
+                            ),
                         ),
                     ),
                     onOpen = { opened = it },
