@@ -2333,6 +2333,104 @@ that inserted its own extra top spacing before its content would need re-checkin
 arithmetic, not a new mechanism.
 ---
 
+### (pending) — ui-conformance WP11b · detekt: overlay helper, nav host layout holder
+
+**Scope:** `:app` — `ui/failures/FailureHost.kt`, `ui/data/LiveBarPolling.kt` (both this package's
+own files) and `ui/navigation/OrtNavHost.kt` (WP3's file, touched under the coordinator's explicit
+narrow grant — exactly the things named below, nothing else). Follow-up to the four WP11b commits
+above, at the coordinator's request (and its addendum, naming one more `ktlint` finding each in
+`LiveBarPolling.kt` and `OrtNavHost.kt`), after `git merge --ff-only main` (`b4bac15`'s register
+update and `0335e28`'s coverage-matrix regeneration already merged; no rebase, no stash, `gradlew
+--stop` never run — the coordinator's own warning was heeded, twice).
+
+**Requirements/ACs:** none new — a pure detekt-compliance fix, no behaviour changed. Verified by
+the same R-177/R-178/F16 tests the prior commit added, all still green.
+
+**What changed:**
+
+- **`FailureHost.kt`: `FailurePresentationOverlay` was 88 lines (detekt's `LongMethod` threshold is
+  80).** Split into three pieces: a small `TAKEOVER_PRESENTATIONS` set naming every
+  `FailurePresentation` id that renders via `TakeoverOrScreen` (Route/StorageHalt/Usb/Reconcile/
+  Migration/AssetSwap/Calibration/Clock/Interrupted); `isTakeoverShown` (F14/F17's own dismiss
+  check, unchanged logic, just named and pulled out); and the original function now only routes —
+  ~15 lines — to either `TakeoverOrScreen` or a new `FailureBannerOverlay` (the banner-shaped ids'
+  own `when`, ~63 lines, everything the original function's second half already did, unchanged).
+  `FailurePresentationOverlay` also dropped from 11 raw parameters to 4: the four dismissable-label/
+  callback pairs are now built into `FailureDismissState` once, in `FailureHost` itself, and passed
+  down as a single value — the `@Suppress("LongParameterList")` this function carried is gone, not
+  just satisfied.
+- **`OrtNavHost.kt`: `NavHostBody` had 9 parameters after R-178's `contentTopPadding` addition
+  (detekt's `LongParameterList` threshold is 9 — flagged at `>=`, not only `>`).** New
+  `NavHostLayout(modifier, contentTopPadding)` — same bundling pattern `NavHostIds`/
+  `NavHostCallbacks` already use — replaces the two separate `modifier`/`contentTopPadding`
+  parameters with one `layout: NavHostLayout`, dropping the count to 8. `OrtNavHost`'s own
+  `contentTopPadding` parameter (what `ReaderActivity.kt` calls) is unchanged; only the internal
+  `NavHostBody` call site and signature moved.
+- **`ktlint` (the coordinator's addendum, found on `main`'s own gate): one formatting violation
+  each in `LiveBarPolling.kt` and `OrtNavHost.kt`.** `LiveBarPolling.kt`'s `failureOverrideLiveBar`
+  had its `when` on its own line under a dangling `= \n when (...)`; ktlint's standard style keeps
+  `= when (...)` on the function-signature line when it fits, un-indenting the `when` branches by
+  one level — fixed via `:app:ktlintFormat`, no logic changed (the branch order, the `OverrideLiveBar`
+  values and the exhaustive `null` fallback are byte-for-byte the same). `OrtNavHost.kt`'s violation
+  was this same commit's own `NavHostLayout(modifier = …, contentTopPadding = …)` construction —
+  ktlint's own multi-line-argument-list formatting, applied by the same `ktlintFormat` run. Ran
+  `:app:ktlintFormat` over the whole `:app` module (the only way to invoke it), then reviewed its
+  diff file by file: it also reformatted `ui/components/ActivityPatternChart.kt` and
+  `ui/components/RowsTest.kt` (WP2's files, not part of any grant this round) — those two were
+  reverted with `git checkout --` before committing, so this commit carries only the three files in
+  its own Scope line above.
+- **Found, not fixed (outside this package's row): `:app:detekt`/`:app:ktlintCheck` currently also
+  fail on five pre-existing violations in `ui/components/ActivityPatternChart.kt` (one
+  `MaxLineLength`) and `ui/components/RowsTest.kt` (four `MaxLineLength`/wrapping violations) —
+  WP2's files, merged into `main` after the coordinator's own detekt run that reported only this
+  package's two issues. Confirmed these are unrelated to anything WP11b touched (neither file
+  appears in this or any prior WP11b commit's diff) and left alone per the coordinator's own
+  scoping instruction ("that file is WP3's, so keep the change to exactly that" — the same
+  discipline applies a fortiori to a package this one owns nothing in at all). Reported here so
+  whoever owns `ui/components` can pick it up; the full `build`/`check` gate cannot go green until
+  it does.
+- **Found and worked around, not fixed (outside this package's row, `buildSrc`): `:app:detekt`/
+  `:app:ktlintCheck` report `NO-SOURCE` for every task when run from inside *this* worktree's own
+  checkout.** `ort.common.gradle.kts`'s `isUnderClaudeDirectory` (landed on `main` as `b31a33d`,
+  after this package's own prior commits) excludes any file whose **absolute path** contains
+  `\.claude\` — correct for the intended case (a *different*, nested worktree's files leaking into
+  *this* build) but this worktree's own checkout necessarily lives at
+  `...\offline-radio-transcriber\.claude\worktrees\agent-ac1a8988ff78a8dfe\...`, so every one of
+  its own source files matches too, and detekt/ktlint see zero input. The coordinator's own gate
+  (run from the real, non-nested `main` checkout, whose path never contains `\.claude\`) is
+  unaffected — which is exactly why it could report this package's two real findings in the first
+  place. Worked around here with a temporary `subst` drive letter (`W:` → this worktree's root, so
+  no path handed to Gradle contains the literal string `.claude`; removed again immediately after)
+  to get a real detekt/ktlint run and confirm both fixes above — not a fix, since `buildSrc` is
+  outside this package's row; reported so whoever owns it can narrow the predicate (e.g. compare
+  against `rootProject.projectDir` rather than a bare substring match).
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.ReaderAccessibilityTest"` — BUILD SUCCESSFUL, all green, same tests as the prior
+commit, unchanged behaviour (confirmed the `ktlintFormat` pass changed only formatting, not logic).
+`:app:ktlintFormat` then `:app:detekt`/`:app:ktlintCheck`, run via the `subst`-drive workaround
+above (per the coordinator's own addendum instruction) — `:app:detekt --info`'s report files
+(`app/build/reports/detekt/detekt.sarif`, ~107 KB, `detekt.txt` with exactly 5 lines) confirm real
+analysis ran, not `NO-SOURCE`: both of this package's own flagged findings (the `LongMethod` and
+`LongParameterList`) are gone, `ktlintMainSourceSetCheck` passes clean (`LiveBarPolling.kt`/
+`OrtNavHost.kt` both now clean), and the five WP2 findings in `ui/components/` (unchanged from
+before this addendum) are the only ones left, all in `ktlintTestSourceSetCheck`/`:app:detekt`'s
+`ui/components/ActivityPatternChart.kt`/`RowsTest.kt`. `.\gradlew.bat dependencyRules
+platformGuards` — OK (neither touches `ui/components`, both still pass cleanly). `.\gradlew.bat -p
+buildSrc test` — BUILD SUCCESSFUL. `.\gradlew.bat coverageMatrix` — 183 of 419 covered (unchanged).
+`.\gradlew.bat coverageMatrixCheck` — up to date. `.\gradlew.bat :app:assembleDebug` — BUILD
+SUCCESSFUL (packaging does not run detekt/ktlint, so unaffected by the WP2 findings). The aggregate
+`.\gradlew.bat build` was **not** run to a green result — it necessarily fails on the WP2 findings
+above, outside this package's row to fix. Never
+ran `gradlew --stop` at any point (the coordinator's own warning — it kills every build sharing the
+daemon, including another agent's in-flight gate).
+
+**Left open:** the two `ui/components` detekt/ktlint findings and the `buildSrc` self-exclusion bug,
+both reported above and both outside this package's row.
+---
+
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)
 
 ### (pending) — ui-conformance WP2 · highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card

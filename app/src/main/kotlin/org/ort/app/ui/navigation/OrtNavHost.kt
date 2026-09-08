@@ -21,10 +21,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
@@ -209,8 +209,10 @@ public fun OrtNavHost(
     ) {
         Scaffold { padding ->
             NavHostBody(
-                modifier = Modifier.padding(padding).fillMaxSize(),
-                contentTopPadding = contentTopPadding,
+                layout = NavHostLayout(
+                    modifier = Modifier.padding(padding).fillMaxSize(),
+                    contentTopPadding = contentTopPadding,
+                ),
                 ids = NavHostIds(current, openedFrom, openTransmissionId, openStationId, openFrequencyHz, openThreadId),
                 callbacks = NavHostCallbacks(
                     onOpenDrawer = { scope.launch { drawerState.open() } },
@@ -252,6 +254,12 @@ public fun OrtNavHost(
         }
     }
 }
+
+/** [NavHostBody]'s own `modifier` (from [OrtNavHost]'s `Scaffold` inner padding) and, register
+ * R-178, the banner-height top padding [org.ort.app.ui.failures.FailureHost] reports — bundled,
+ * same reason as [NavHostIds]/[NavHostCallbacks], so [NavHostBody] stays under detekt's
+ * `LongParameterList` rather than growing a parameter for the R-178 addition. */
+private data class NavHostLayout(val modifier: Modifier, val contentTopPadding: Dp = 0.dp)
 
 /** [NavHostBody]'s destination/drill-in identity, bundled to keep that composable's own parameter count down. */
 private data class NavHostIds(
@@ -297,7 +305,7 @@ private data class SearchHostState(
  */
 @Composable
 private fun NavHostBody(
-    modifier: Modifier,
+    layout: NavHostLayout,
     ids: NavHostIds,
     callbacks: NavHostCallbacks,
     sessionId: String?,
@@ -305,9 +313,8 @@ private fun NavHostBody(
     drawerLive: DrawerLiveState,
     audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
     search: SearchHostState,
-    contentTopPadding: Dp = 0.dp,
 ) {
-    Column(modifier = modifier) {
+    Column(modifier = layout.modifier) {
         val drillInIds = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId)
         val isDrillIn = drillInIds.any { it != null }
         if (!isDrillIn) {
@@ -330,7 +337,7 @@ private fun NavHostBody(
         // passes `ids.openedFrom.label`, so the header names the true origin (R-017), e.g. "Back to
         // Search" for a transmission opened from a search result.
 
-        Box(modifier = Modifier.weight(1f).padding(top = contentTopPadding)) {
+        Box(modifier = Modifier.weight(1f).padding(top = layout.contentTopPadding)) {
             when {
                 ids.transmissionId != null -> TransmissionDetailContent(
                     context = context,

@@ -91,20 +91,24 @@ public fun FailureHost(
         }
     }
 
+    val dismiss = FailureDismissState(
+        killedLabel = dismissedKilledLabel,
+        onDismissKilled = { dismissedKilledLabel = it },
+        callLabel = dismissedCallLabel,
+        onDismissCall = { dismissedCallLabel = it },
+        clockLabel = dismissedClockLabel,
+        onDismissClock = { dismissedClockLabel = it },
+        interruptedLabel = dismissedInterruptedLabel,
+        onDismissInterrupted = { dismissedInterruptedLabel = it },
+    )
+
     Box(modifier = modifier.fillMaxSize()) {
         content(bannerHeight)
 
         FailurePresentationOverlay(
             presentation = presentation,
             actions = actions,
-            dismissedKilledLabel = dismissedKilledLabel,
-            onDismissKilled = { dismissedKilledLabel = it },
-            dismissedCallLabel = dismissedCallLabel,
-            onDismissCall = { dismissedCallLabel = it },
-            dismissedClockLabel = dismissedClockLabel,
-            onDismissClock = { dismissedClockLabel = it },
-            dismissedInterruptedLabel = dismissedInterruptedLabel,
-            onDismissInterrupted = { dismissedInterruptedLabel = it },
+            dismiss = dismiss,
             onBannerHeightChanged = { bannerHeight = it },
         )
 
@@ -213,49 +217,66 @@ private data class FailureDismissState(
     val onDismissInterrupted: (String) -> Unit,
 )
 
-@Suppress("LongParameterList")
+/** Every [FailurePresentation] id that renders via [TakeoverOrScreen] — a full-screen takeover or
+ * standalone screen, never a [BannerOverlay]. Pulled out into its own `Set` so both
+ * [FailurePresentationOverlay]'s routing `when` and [isTakeoverShown]'s dismiss check read the
+ * same membership rather than two `when` clauses that could drift apart. */
+private val TAKEOVER_PRESENTATIONS: Set<Class<out FailurePresentation>> = setOf(
+    FailurePresentation.Route::class.java,
+    FailurePresentation.StorageHalt::class.java,
+    FailurePresentation.Usb::class.java,
+    FailurePresentation.Reconcile::class.java,
+    FailurePresentation.Migration::class.java,
+    FailurePresentation.AssetSwap::class.java,
+    FailurePresentation.Calibration::class.java,
+    FailurePresentation.Clock::class.java,
+    FailurePresentation.Interrupted::class.java,
+)
+
+/** Register R-147: F14/F17 ([FailurePresentation.Clock]/[FailurePresentation.Interrupted]) are
+ * takeovers that are also dismissable, keyed by their own distinguishing label (so a *new* clock
+ * jump or interruption re-shows after a prior one was dismissed) — every other takeover id always
+ * shows. */
+private fun isTakeoverShown(presentation: FailurePresentation, dismiss: FailureDismissState): Boolean =
+    when (presentation) {
+        is FailurePresentation.Clock -> presentation.state.windowLabel != dismiss.clockLabel
+        is FailurePresentation.Interrupted -> presentation.state.gapLabel != dismiss.interruptedLabel
+        else -> true
+    }
+
+/** The one place every real failure signal becomes what the operator sees, split from
+ * [FailureBannerOverlay] purely to keep both functions under detekt's `LongMethod` — routing
+ * decides *which* of the two shapes (full-screen takeover, or a [BannerOverlay] near the top) a
+ * presentation renders as; [FailureBannerOverlay] draws every banner id's own board copy. */
 @Composable
 private fun BoxScope.FailurePresentationOverlay(
     presentation: FailurePresentation,
     actions: FailureHostActions,
-    dismissedKilledLabel: String?,
-    onDismissKilled: (String) -> Unit,
-    dismissedCallLabel: String?,
-    onDismissCall: (String) -> Unit,
-    dismissedClockLabel: String?,
-    onDismissClock: (String) -> Unit,
-    dismissedInterruptedLabel: String?,
-    onDismissInterrupted: (String) -> Unit,
+    dismiss: FailureDismissState,
     onBannerHeightChanged: (Dp) -> Unit,
 ) {
-    val dismiss = FailureDismissState(
-        killedLabel = dismissedKilledLabel,
-        onDismissKilled = onDismissKilled,
-        callLabel = dismissedCallLabel,
-        onDismissCall = onDismissCall,
-        clockLabel = dismissedClockLabel,
-        onDismissClock = onDismissClock,
-        interruptedLabel = dismissedInterruptedLabel,
-        onDismissInterrupted = onDismissInterrupted,
-    )
+    if (TAKEOVER_PRESENTATIONS.contains(presentation::class.java)) {
+        if (isTakeoverShown(presentation, dismiss)) {
+            onBannerHeightChanged(0.dp)
+            TakeoverOrScreen(presentation, actions, dismiss)
+        }
+        return
+    }
+    FailureBannerOverlay(presentation, actions, dismiss, onBannerHeightChanged)
+}
+
+/** Every banner-shaped [FailurePresentation] id — anything [FailurePresentationOverlay] did not
+ * already route to [TakeoverOrScreen]. Deliberately not exhaustive over the full sealed interface
+ * ([TAKEOVER_PRESENTATIONS]'s ids fall to `else`, unreachable in practice — the caller never routes
+ * them here) — see [FailurePresentationOverlay]'s own kdoc for why the split exists. */
+@Composable
+private fun BoxScope.FailureBannerOverlay(
+    presentation: FailurePresentation,
+    actions: FailureHostActions,
+    dismiss: FailureDismissState,
+    onBannerHeightChanged: (Dp) -> Unit,
+) {
     when (presentation) {
-        is FailurePresentation.Route, is FailurePresentation.StorageHalt, is FailurePresentation.Usb,
-        is FailurePresentation.Reconcile, is FailurePresentation.Migration, is FailurePresentation.AssetSwap,
-        is FailurePresentation.Calibration,
-        -> {
-            onBannerHeightChanged(0.dp)
-            TakeoverOrScreen(presentation, actions, dismiss)
-        }
-
-        is FailurePresentation.Clock -> if (presentation.state.windowLabel != dismiss.clockLabel) {
-            onBannerHeightChanged(0.dp)
-            TakeoverOrScreen(presentation, actions, dismiss)
-        }
-        is FailurePresentation.Interrupted -> if (presentation.state.gapLabel != dismiss.interruptedLabel) {
-            onBannerHeightChanged(0.dp)
-            TakeoverOrScreen(presentation, actions, dismiss)
-        }
-
         is FailurePresentation.Disconnect -> BannerOverlay(onBannerHeightChanged) {
             FailDisconnectBanner(
                 state = presentation.state,
@@ -271,7 +292,7 @@ private fun BoxScope.FailurePresentationOverlay(
                 FailKilledBanner(
                     state = presentation.state,
                     onOpenBatterySettings = actions.onOpenBatteryExemptionSettings,
-                    onDismiss = { onDismissKilled(presentation.state.stoppedAtLabel) },
+                    onDismiss = { dismiss.onDismissKilled(presentation.state.stoppedAtLabel) },
                 )
             }
         } else {
@@ -308,13 +329,14 @@ private fun BoxScope.FailurePresentationOverlay(
             BannerOverlay(onBannerHeightChanged) {
                 FailCallBanner(
                     state = presentation.state,
-                    onDismiss = { onDismissCall(presentation.state.durationLabel) },
+                    onDismiss = { dismiss.onDismissCall(presentation.state.durationLabel) },
                 )
             }
         } else {
             onBannerHeightChanged(0.dp)
         }
         FailurePresentation.None -> onBannerHeightChanged(0.dp)
+        else -> Unit // TAKEOVER_PRESENTATIONS's ids — unreachable, see this function's own kdoc.
     }
 }
 
