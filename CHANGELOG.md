@@ -7734,6 +7734,228 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 9 · R-331: the rejected detail's title reads REJECTED, never the raw rule record
+
+**Scope:** `:app`, this package's own files — `ui/screens/TransmissionDetailScreen.kt` and its
+tests (`TransmissionDetailScreenTest.kt`, `TransmissionDetailContentTest.kt`). Main `fa0a0a4`
+(no merge needed — this worktree was already at or past it).
+
+**Requirements/ACs:** R-331, F04 `Fail-Hallucination.dc.html`, FR-ASR-5.
+
+**Constitution Check.** Principle I: the title's own real fix is "never print the enum" — the raw
+`"$rule: $detail"` record (`org.ort.pipeline.passb.DataPassBResultSink`'s own write shape) is
+machine-internal, not operator prose, and printing it verbatim ("REJECTED · VAD_NO_SPEECH: SQUELCH
+TAIL, 0.4 S") was itself a small honesty defect — showing the *storage* fact rather than
+translating it. Principle VII (no look-alike of a component/mapping that exists): the fix reuses
+`LogItemsMapper.whyFor` — the identical translation `Log-Rejected.dc.html`'s own why-line already
+uses for the same raw record — rather than building a second, drifting translation of the same six
+rejection-rule tokens in this file.
+
+**What changed:**
+
+1. **`RejectedHeaderSection`'s title is now "REJECTED" alone**, matching
+   `Fail-Hallucination.dc.html` exactly — never `"rejected · $reason".uppercase()` (the raw record,
+   uppercased, that the validator's own screenshot named:
+   `overnight/F04-rejected-detail-pass3.png`).
+2. **The explanatory line beneath it now reuses `LogItemsMapper.whyFor(rejected.reason)`** — the
+   same mapping WP5's `Log-Rejected.dc.html` why-line already uses for the identical raw
+   `"$rule: $detail"` record, confirmed shared rather than reimplemented (per the round's own ask:
+   "reuse it if it is shared, otherwise say so" — it is shared, and is reused as-is, `import`ed from
+   `ui/data/LogViewData.kt`'s `LogItemsMapper` object, not copied). `whyFor` returns `null` for a
+   `null` reason or an unrecognised rule token (never a guessed category) — both cases now fall back
+   to reason-free honest prose ("No reason was recorded." / a bare "kept, marked, never attributed"
+   sentence), never the raw enum in any form, closing the gap for an unparseable record too, not
+   only the common one the validator's own screenshot showed.
+3. **Tests, named `R_331_detail_title` per the round's own ask**, plus fixes to the two now-stale
+   pre-existing assertions in `TransmissionDetailScreenTest`/`TransmissionDetailContentTest` that
+   had asserted the *old*, raw-enum title text (both now assert the real operator prose,
+   `"No speech detected, squelch tail, 0.4 s"`, and explicitly assert `"VAD_NO_SPEECH"` never
+   appears anywhere on screen).
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards` (clean), `.\gradlew.bat -p
+buildSrc test` (clean), `python tools\spec-check\spec_check.py` (`spec-check: OK`), `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate, both clean), `.\gradlew.bat
+:app:assembleDebug` (clean). Full `:app:testDebugUnitTest` suite clean.
+
+**Left open:** none new this round. R-321/R-320's own halts (round 8) are unchanged.
+
+### (pending) — ui-conformance WP6 round 8 · R-323 prior-row reflow; R-321 (halt) investigated and reported, not fixed
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Inspection.kt` and its test
+(`InspectionTest.kt`) — **disclosed, out-of-scope files** (`ui/components/**` is not this package's
+row), touched at the coordinator's own explicit, line-level instruction ("label
+`softWrap = false`/`maxLines = 1`... a `FlowRow` or a two-line layout at ≥1.3 scale"), the same
+precedent this WP6 engagement's own history already uses for a small, disclosed, coordinator-
+directed fix outside its normal file list. R-321 itself: **investigated, not touched** — see below.
+
+**Requirements/ACs:** R-323 (fixed); R-321 (halt — investigated, reported, left open); R-320 (halt,
+explicitly deferred by the coordinator's own instruction — no per-slot lattice data exists yet,
+`:lexicon`+`:data` are still adding it; not built against a guess).
+
+**Constitution Check.** Principle I governs R-321's entire outcome: restoring an `Undo` to the
+*exact* pre-correction attribution (state, callsign, confidence, source-over id) needs that
+snapshot to have been recorded at correction time — nothing in `:data` today captures it, and
+constitution I forbids guessing or reconstructing it from adjacent-but-different signals (see
+below). Principle VII (no look-alike of a component that exists) is why R-323's fix lives inside
+`PriorBar` itself, reused by both the inline preview and `DetailWhyScreen`'s own exhaustive list,
+rather than a parallel D05-only prior row.
+
+**What changed:**
+
+1. **R-323, fixed.** `PriorBar`'s label sat in a fixed 118–122dp column with no `softWrap`/`maxLines`
+   guard; at 2.0× font scale a longer prior name wrapped mid-word, with the bar centred beside the
+   now-taller, still-clipped fragment. Split into three small private composables
+   (`PriorBarLabel`/`PriorBarMeter`/`PriorBarValue`), shared by both layouts: below
+   `LARGE_FONT_SCALE_THRESHOLD` (`1.3f` — the same constant `FailStorageWarningBanner.kt`/
+   `LevelScreen.kt`/`ActivityPatternChart.kt` already use for "stack instead of cram"), the original
+   one-row layout is unchanged; at or above it, the label takes the row's own full width on its own
+   line and the bar+value reflow onto a second line beneath it. The label (and the value/`cold
+   start` text) now carry `softWrap = false, maxLines = 1` unconditionally — a prior's name and its
+   value never wrap mid-word at *any* scale, only the surrounding layout reflows. Tests, named
+   `R_323` in `InspectionTest.kt`: the label's rendered height stays one-line-tall at 2.0× scale; the
+   bar/value share the label's own row below the threshold (equal `top`, proven on the *unmerged*
+   semantics tree — `PriorBar`'s outer container merges its descendants into one `contentDescription`
+   node, so the default merged-tree query returns that single node's own bounds for every text
+   query inside it, not each child's real position, the same subtlety `ActivityPatternChartTest`'s
+   own `R_271` axis tests already work around); the bar/value sit below the label at 2.0× scale.
+2. **R-321 (halt), investigated and reported — no code change.** The coordinator's own repro (`Undo
+   all` after a Tier-A pick on an AMBIGUOUS over, or after a typed correction on a CONFIRMED over,
+   leaves the Log row "Unknown … corrected" and the detail with a hollow ring, a leftover `CORRECTED`
+   badge, and "Not heard in this over. Matched by voice.") traces to a real, confirmed root cause,
+   read directly rather than guessed: `CorrectionDao.applyCorrectedAttribution` (the *only* write
+   `CorrectionDao.recordCorrection` ever makes) unconditionally writes `attributionState = 'INFERRED'`,
+   `attributionConfidence = NULL`, `attributionSourceTransmissionId = NULL`, `corrected = 1` — by
+   design, for a genuine new human correction (`Attribution.withCorrection`'s own contract). But
+   `CorrectionPolling.undoAll` reverts by calling that *same* write (`recordCorrection` with
+   `newValue = ` the pre-correction callsign) — so an undo is written as *another* "a human said so"
+   correction, not a restoration of whatever the over's attribution genuinely was before any
+   correction touched it (AMBIGUOUS with no callsign at all, or CONFIRMED with a real confidence and
+   `corrected = false`). Read `CorrectionEntity`'s real schema directly
+   (`data/src/main/kotlin/org/ort/data/entity/CatalogEntities.kt`): it stores only `field`,
+   `previousValue: String?` (a bare callsign string) and `newValue: String` — none of
+   `TransmissionEntity`'s other four attribution columns (`attributionState`,
+   `attributionConfidence`, `attributionSourceTransmissionId`, `corrected`) are captured anywhere at
+   correction time. Also checked `StationIdentityDao`'s schema-v3 "prior history" additions the round
+   named (`VoiceprintBindingHistoryEntity`, `PriorAdjustmentEntity`, `station_identity_history`) —
+   confirmed these are scoped to a *voiceprint's* station binding and a *named prior's* weight,
+   never to a transmission's own attribution snapshot; no existing table anywhere in `:data` records
+   it. Constitution I forbids reconstructing the missing snapshot from an adjacent signal instead
+   (e.g. `CallsignCandidateEntity`'s `selected` flag hints at what the resolver originally chose, but
+   carries no `attributionConfidence`/`attributionSourceTransmissionId`/original-`AttributionState`
+   at all — a partial reconstruction would misrepresent a real recorded fact as a guess). Stopped
+   here, per the round's own instruction, rather than building a workaround or a code change against
+   a schema that cannot back it. **Exact columns/DAO surface needed, for `:data`:**
+   - `CorrectionEntity` needs four new nullable columns, captured at `recordCorrection` time, before
+     the write, mirroring `TransmissionEntity`'s own attribution columns exactly:
+     `previousAttributionState: AttributionState?`, `previousAttributionConfidence: Double?`,
+     `previousAttributionSourceTransmissionId: String?`, `previousCorrected: Boolean` (whether the
+     row was already `corrected` before *this* correction — so an undo of a correction-of-a-
+     correction knows it is restoring to a still-corrected state, not a fresh resolver one).
+   - A new `CorrectionDao` write, alongside (not replacing) `applyCorrectedAttribution` — e.g.
+     `restoreAttribution(transmissionId, state, stationId, confidence, sourceTransmissionId,
+     corrected)` — that writes back an *arbitrary* captured attribution rather than hardcoding
+     `INFERRED`/`NULL`/`corrected = 1`, for `CorrectionPolling.undoAll` to call with the values read
+     from the correction record being undone.
+   - Tests `R_321_undo_restores_ambiguous`/`R_321_undo_restores_confirmed` (the round's own names)
+     are not written this round — they would need the schema above to have anything real to assert
+     against; writing them now would either fail the gate or assert against a fabricated shape.
+     Deferred to the round `:data` delivers this in.
+3. **R-320 (halt), untouched — no action taken.** The round's own instruction: D05's per-slot lattice
+   grid has no data yet (`:lexicon` + `:data` are adding unit/score/kept-alternate/char-span); not
+   built against a guess.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards` (clean), `.\gradlew.bat -p
+buildSrc test` (clean), `python tools\spec-check\spec_check.py` (`spec-check: OK`), `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate, both clean), `.\gradlew.bat
+:app:assembleDebug` (clean). Full `:app:testDebugUnitTest` suite clean.
+
+**Left open:** R-321 (halt, exact schema/DAO gap named above — routed to the `:data` agent per the
+coordinator's own instruction); R-320 (halt, explicitly deferred); R-181's own left-open items
+(none — round 7 closed it); round 6's R-182 and the voice-match/thread-context gaps (unchanged,
+named there).
+
+### (pending) — ui-conformance WP6 round 7 · R-181: a real WaveformSummary from decoded retained audio
+
+**Scope:** `:app`, this package's own files — `ui/audio/TransmissionAudioPlayer.kt`,
+`ui/audio/RealTransmissionAudioPlayer.kt`, `ui/audio/FakeTransmissionAudioPlayer.kt`, a new
+`ui/audio/WaveformSummary.kt`, `ui/screens/TransmissionDetailScreen.kt`, and their tests (a new
+`WaveformSummaryComputerTest.kt`, extending `RealTransmissionAudioPlayerTest.kt`). `git merge
+--ff-only main` (clean fast-forward `79e4afd` → `93fdce0`, no stash, no rebase) — confirmed WP4's
+`0cb715f` (real, decodable `ScenarioFixtures.writeAudioFixture` retained audio) is an ancestor of
+`main` before merging, per the round's own instruction.
+
+**Requirements/ACs:** R-181, `Detail-Playback.dc.html`; constitution I (never fabricate), III
+(retained audio stays sufficient to re-run every pass — a playback-only decoder that disagreed with
+the ASR decoder would violate that quietly).
+
+**Constitution Check.** Principle III governs the whole approach: [WaveformSummary] is computed
+through the exact same [FlacSegmentAudioProvider] decode `RealTransmissionAudioPlayer.play` already
+uses (itself `:pipeline`'s own already-public class, the same one Pass B reads audio back through
+for ASR) — never a second decode path that could silently disagree with it. Principle I is why a
+transmission with no retained audio, or one whose audio fails to decode, yields `null` (an empty bar
+list), never a fabricated flat shape; and why `WaveformBar.isSpeech` is a real, computed
+energy-threshold read rather than an invented VAD result (disclosed as exactly that in
+`WaveformSummaryComputer`'s own doc comment).
+
+**What changed:**
+
+1. **New `WaveformSummary`/`WaveformSummaryComputer`** (`ui/audio/WaveformSummary.kt`).
+   `WaveformSummaryComputer.summarize(samples: FloatArray, bucketCount: Int = 96):
+   WaveformSummary?` is the pure bucketing arithmetic — no Robolectric, no database, no codec — kept
+   separate from the real decode/`:data` read so it is directly unit-testable against a synthetic
+   PCM buffer. Each bucket's value is the **peak absolute amplitude** of the samples in it (the
+   conventional waveform-display statistic — survives a mostly-quiet segment with one loud syllable
+   without smoothing it away), normalised against the single loudest bucket in the segment so the
+   tallest bar always renders at full height. 96 buckets is a data-resolution choice, not something
+   `Detail-Playback.dc.html` itself specifies a fixed count for —
+   `WaveformCardContent`'s own `Canvas` (WP2's file, unedited) already sizes bars to fit whatever
+   list it is given. `null` only for a genuinely empty sample buffer.
+2. **`TransmissionAudioPlayer.waveformSummary(transmissionId): WaveformSummary?`** — new interface
+   method (constitution II: the behavioural fake ships in the same change — see item 4).
+   `RealTransmissionAudioPlayer`'s implementation reuses `FlacSegmentAudioProvider` exactly as `play`
+   already does, off the calling thread (`withContext(Dispatchers.IO)`), and caches the result per
+   transmission id in a `ConcurrentHashMap` (wrapped in a small `CacheEntry` since the map cannot
+   hold a bare `null` value) so revisiting an over's detail screen never re-decodes it — the player
+   itself is `remember`ed once at `OrtNavHost`'s own level (unedited), so the cache persists across
+   navigation within one app session, not just one composition. `null` for no retained audio file, or
+   a decode failure — never thrown, matching `play`'s own honesty contract.
+3. **`PlaybackSection` now feeds `WaveformCard` real bars.** A second `LaunchedEffect(detail.id,
+   detail.hasAudio)` fetches `player.waveformSummary(detail.id)` (only when `detail.hasAudio`) into
+   new `var waveform` state, and both `Idle`/`Playing` `WaveformViewState`s now pass `waveform?.bars
+   ?: emptyList()` instead of the always-empty list before this round. Scrub position needed no new
+   mapping: `WaveformCard`'s own `onScrub` already reports a continuous `0f..1f` fraction of the bar
+   row's width, which lands on whichever bucket that x-offset falls under — the bucket count simply
+   went from a de facto 0 to 96. The no-audio path is unchanged (`NoAudioNotice`, R-193's own fix).
+4. **`FakeTransmissionAudioPlayer` gained a `waveformScript: Map<String, WaveformSummary?>`
+   constructor parameter**, mirroring `script`'s own honest-by-default shape (an id with no entry
+   answers `null`) — shipped in the same commit as the interface change, per constitution II.
+
+**Tests, named `R_181` per the round's own ask:**
+- `WaveformSummaryComputerTest` (pure, no Robolectric): a synthetic 440 Hz tone (the identical shape
+  `ScenarioFixtures.writeAudioFixture` writes, at float amplitude) yields non-uniform bucket heights
+  and the loudest bucket at exactly `1f`; every bar height stays in `0f..1f`; total silence yields a
+  real, honest flat shape (not `null`, not a crash); an empty sample buffer yields `null`.
+- `RealTransmissionAudioPlayerTest`, four new: a missing retained-audio file returns `null` without
+  throwing; a transmission id with no row at all returns `null` without throwing; real retained audio
+  (a tone fixture written through the exact same `DeflatePredictiveCodec` pairing this file's own
+  pre-existing third test already uses) decodes and yields 96 real, non-uniform bars; and a caching
+  proof — deleting the retained file *after* the first `waveformSummary` call and confirming the
+  second call still returns the identical (non-null) summary, proving the cache rather than a
+  fortunate re-read answered it.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards` (clean — confirms no new
+`:pipeline`/`:capture-android` dependency edge was added; `RealTransmissionAudioPlayer` reuses
+`:pipeline`'s already-public `FlacSegmentAudioProvider`, the identical import `play` already had),
+`.\gradlew.bat -p buildSrc test` (clean), `python tools\spec-check\spec_check.py` (`spec-check: OK`),
+`.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations, both
+clean — `results/coverage-matrix.md` unchanged, already current from the merge), `.\gradlew.bat
+:app:assembleDebug` (clean). The full `:app:testDebugUnitTest` suite is clean on the merged tree;
+this round's own new/changed tests were re-run twice (once alone, once alongside every other WP6
+round's test classes) to confirm no flake.
+
+**Left open:** none new this round. R-182 (highlight spans) and the voice-match/thread-context gaps
+from round 6 remain as named there — untouched this round, per the coordinator's own scoping.
+
 ### (pending) — ui-conformance WP6 round 6 · no-audio copy variants, revisions closing note, Fail-Pass partial/retry copy, rejected detail state, transcript confidence
 
 **Scope:** `:app`, this package's own files — `ui/data/DetailViewState.kt`, `ui/data/CorrectionPolling.kt`,

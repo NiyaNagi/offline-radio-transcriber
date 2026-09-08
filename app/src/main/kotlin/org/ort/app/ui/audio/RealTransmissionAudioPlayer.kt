@@ -5,11 +5,14 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.PlaybackParams
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.ort.core.PassId
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
 import org.ort.pipeline.passb.FlacSegmentAudioProvider
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The real [TransmissionAudioPlayer] (build-plan P14, FR-UI-5). Decodes a transmission's retained
@@ -112,6 +115,43 @@ public class RealTransmissionAudioPlayer(private val context: Context) : Transmi
     }
 
     override fun isPlaying(): Boolean = track?.playState == AudioTrack.PLAYSTATE_PLAYING
+
+    /** Wraps a cached result so `null` (no audio / decode failure) is itself a real, storable
+     * cache entry — [ConcurrentHashMap] cannot hold a `null` value directly. */
+    private class CacheEntry(val summary: WaveformSummary?)
+    private val waveformCache = ConcurrentHashMap<String, CacheEntry>()
+
+    override suspend fun waveformSummary(transmissionId: String): WaveformSummary? {
+        waveformCache[transmissionId]?.let { return it.summary }
+        val computed = withContext(Dispatchers.IO) { computeWaveformSummary(transmissionId) }
+        waveformCache[transmissionId] = CacheEntry(computed)
+        return computed
+    }
+
+    /** The exact same decode [play] uses ([FlacSegmentAudioProvider], the codec [play] itself
+     * reuses) — never a second decode path that could silently disagree with it (constitution III,
+     * this file's own class doc). */
+    private suspend fun computeWaveformSummary(transmissionId: String): WaveformSummary? {
+        val db = OrtDatabase.create(context.applicationContext)
+        val entity = db.transmissionDao().getById(transmissionId) ?: return null
+        val audioFile = java.io.File(context.filesDir, entity.audioPath())
+        if (!audioFile.isFile) return null
+        val provider = FlacSegmentAudioProvider(context.filesDir, db)
+        val decoded = try {
+            provider.forItem(
+                WorkQueueItemEntity(
+                    transmissionId = transmissionId,
+                    pass = PassId.B_OFFLINE,
+                    state = WorkQueueState.READY,
+                    priority = 0,
+                    enqueuedAt = 0L,
+                ),
+            )
+        } catch (e: Exception) {
+            return null
+        }
+        return WaveformSummaryComputer.summarize(decoded.samples)
+    }
 
     private fun playPcm(pcm: ShortArray, sampleRateHz: Int) {
         val minBufferBytes = AudioTrack.getMinBufferSize(

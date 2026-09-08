@@ -1,7 +1,9 @@
 package org.ort.app.ui.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
@@ -9,6 +11,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -135,5 +140,64 @@ class InspectionTest {
         composeTestRule.onNodeWithText("+3.1").assertIsDisplayed()
         composeTestRule.onNodeWithText("cold start").assertIsDisplayed()
         composeTestRule.onNodeWithText("0.00").assertDoesNotExist()
+    }
+
+    // ---- R-323: D05's prior rows never wrap mid-word; the bar/value reflow beneath a long label ----
+
+    private val longPriorName = "Heard acoustically on this exact repeater before"
+
+    private fun setPriorBarAtScale(fontScale: Float) {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                OrtTheme {
+                    PriorBar(PriorBarViewState(name = longPriorName, fillFraction = 0.84f, valueLabel = "+3.1"))
+                }
+            }
+        }
+    }
+
+    /** `PriorBar`'s own outer container merges its descendants into one semantics node (its real
+     * `contentDescription`) — reading each text's *individual* rendered position needs the
+     * unmerged tree, the same way `ActivityPatternChartTest`'s own `R_271` axis tests do. */
+    private fun unmergedBounds(text: String) =
+        composeTestRule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+
+    @Test
+    fun `R_323_the_label_never_wraps_mid_word_at_a_large_font_scale`() {
+        setPriorBarAtScale(2.0f)
+
+        // A wrapped label reports a taller-than-one-line box; `assertIsDisplayed` alone would pass
+        // either way, so this reads the real rendered height instead — the same proof
+        // `R_271`'s own hour-axis test (`ActivityPatternChartTest.kt`) already established for
+        // exactly this class of defect.
+        composeTestRule.onNodeWithText(longPriorName, useUnmergedTree = true).assertIsDisplayed()
+        val labelHeight = unmergedBounds(longPriorName).height
+        val oneLineHeight = unmergedBounds("+3.1").height
+        assertTrue(
+            "label height $labelHeight looks wrapped past one line (single line is ~$oneLineHeight)",
+            labelHeight <= oneLineHeight * 1.5f,
+        )
+    }
+
+    @Test
+    fun `R_323_below_the_threshold_the_bar_and_value_share_the_labels_own_row`() {
+        setPriorBarAtScale(1.0f)
+
+        val labelTop = unmergedBounds(longPriorName).top
+        val valueTop = unmergedBounds("+3.1").top
+        assertEquals("expected the value beside the label below the large-scale threshold", labelTop, valueTop)
+    }
+
+    @Test
+    fun `R_323_at_a_large_font_scale_the_bar_and_value_reflow_beneath_the_label_instead_of_beside_it`() {
+        setPriorBarAtScale(2.0f)
+
+        val labelBottom = unmergedBounds(longPriorName).bottom
+        val valueTop = unmergedBounds("+3.1").top
+        assertTrue(
+            "expected the value below the label at a large font scale, label bottom=$labelBottom, " +
+                "value top=$valueTop",
+            valueTop >= labelBottom,
+        )
     }
 }

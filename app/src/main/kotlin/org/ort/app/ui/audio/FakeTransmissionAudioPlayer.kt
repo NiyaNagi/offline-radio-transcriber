@@ -11,9 +11,15 @@ package org.ort.app.ui.audio
  * playing/scrub/speed states without a real `AudioTrack`. [seekCalls] records every
  * [seekToFraction] call, the same pattern [playCalls] already established, so a Compose test that
  * dispatches a real scrub gesture can assert the fraction actually reached this fake.
+ *
+ * ui-conformance WP6 (R-181) extended this fake once more: [waveformScript] scripts
+ * [waveformSummary] per transmission id, defaulting (an id with no entry) to `null` — the same
+ * honest-by-default shape [script] already uses for [play].
  */
-public class FakeTransmissionAudioPlayer(private val script: Map<String, PlaybackOutcome> = emptyMap()) :
-    TransmissionAudioPlayer {
+public class FakeTransmissionAudioPlayer(
+    private val script: Map<String, PlaybackOutcome> = emptyMap(),
+    private val waveformScript: Map<String, WaveformSummary?> = emptyMap(),
+) : TransmissionAudioPlayer {
 
     public val playCalls: MutableList<String> = mutableListOf()
     public val seekCalls: MutableList<Float> = mutableListOf()
@@ -62,4 +68,6 @@ public class FakeTransmissionAudioPlayer(private val script: Map<String, Playbac
     override fun positionFraction(): Float = position
 
     override fun isPlaying(): Boolean = playing
+
+    override suspend fun waveformSummary(transmissionId: String): WaveformSummary? = waveformScript[transmissionId]
 }
