@@ -6967,6 +6967,88 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 7 · R-181: a real WaveformSummary from decoded retained audio
+
+**Scope:** `:app`, this package's own files — `ui/audio/TransmissionAudioPlayer.kt`,
+`ui/audio/RealTransmissionAudioPlayer.kt`, `ui/audio/FakeTransmissionAudioPlayer.kt`, a new
+`ui/audio/WaveformSummary.kt`, `ui/screens/TransmissionDetailScreen.kt`, and their tests (a new
+`WaveformSummaryComputerTest.kt`, extending `RealTransmissionAudioPlayerTest.kt`). `git merge
+--ff-only main` (clean fast-forward `79e4afd` → `93fdce0`, no stash, no rebase) — confirmed WP4's
+`0cb715f` (real, decodable `ScenarioFixtures.writeAudioFixture` retained audio) is an ancestor of
+`main` before merging, per the round's own instruction.
+
+**Requirements/ACs:** R-181, `Detail-Playback.dc.html`; constitution I (never fabricate), III
+(retained audio stays sufficient to re-run every pass — a playback-only decoder that disagreed with
+the ASR decoder would violate that quietly).
+
+**Constitution Check.** Principle III governs the whole approach: [WaveformSummary] is computed
+through the exact same [FlacSegmentAudioProvider] decode `RealTransmissionAudioPlayer.play` already
+uses (itself `:pipeline`'s own already-public class, the same one Pass B reads audio back through
+for ASR) — never a second decode path that could silently disagree with it. Principle I is why a
+transmission with no retained audio, or one whose audio fails to decode, yields `null` (an empty bar
+list), never a fabricated flat shape; and why `WaveformBar.isSpeech` is a real, computed
+energy-threshold read rather than an invented VAD result (disclosed as exactly that in
+`WaveformSummaryComputer`'s own doc comment).
+
+**What changed:**
+
+1. **New `WaveformSummary`/`WaveformSummaryComputer`** (`ui/audio/WaveformSummary.kt`).
+   `WaveformSummaryComputer.summarize(samples: FloatArray, bucketCount: Int = 96):
+   WaveformSummary?` is the pure bucketing arithmetic — no Robolectric, no database, no codec — kept
+   separate from the real decode/`:data` read so it is directly unit-testable against a synthetic
+   PCM buffer. Each bucket's value is the **peak absolute amplitude** of the samples in it (the
+   conventional waveform-display statistic — survives a mostly-quiet segment with one loud syllable
+   without smoothing it away), normalised against the single loudest bucket in the segment so the
+   tallest bar always renders at full height. 96 buckets is a data-resolution choice, not something
+   `Detail-Playback.dc.html` itself specifies a fixed count for —
+   `WaveformCardContent`'s own `Canvas` (WP2's file, unedited) already sizes bars to fit whatever
+   list it is given. `null` only for a genuinely empty sample buffer.
+2. **`TransmissionAudioPlayer.waveformSummary(transmissionId): WaveformSummary?`** — new interface
+   method (constitution II: the behavioural fake ships in the same change — see item 4).
+   `RealTransmissionAudioPlayer`'s implementation reuses `FlacSegmentAudioProvider` exactly as `play`
+   already does, off the calling thread (`withContext(Dispatchers.IO)`), and caches the result per
+   transmission id in a `ConcurrentHashMap` (wrapped in a small `CacheEntry` since the map cannot
+   hold a bare `null` value) so revisiting an over's detail screen never re-decodes it — the player
+   itself is `remember`ed once at `OrtNavHost`'s own level (unedited), so the cache persists across
+   navigation within one app session, not just one composition. `null` for no retained audio file, or
+   a decode failure — never thrown, matching `play`'s own honesty contract.
+3. **`PlaybackSection` now feeds `WaveformCard` real bars.** A second `LaunchedEffect(detail.id,
+   detail.hasAudio)` fetches `player.waveformSummary(detail.id)` (only when `detail.hasAudio`) into
+   new `var waveform` state, and both `Idle`/`Playing` `WaveformViewState`s now pass `waveform?.bars
+   ?: emptyList()` instead of the always-empty list before this round. Scrub position needed no new
+   mapping: `WaveformCard`'s own `onScrub` already reports a continuous `0f..1f` fraction of the bar
+   row's width, which lands on whichever bucket that x-offset falls under — the bucket count simply
+   went from a de facto 0 to 96. The no-audio path is unchanged (`NoAudioNotice`, R-193's own fix).
+4. **`FakeTransmissionAudioPlayer` gained a `waveformScript: Map<String, WaveformSummary?>`
+   constructor parameter**, mirroring `script`'s own honest-by-default shape (an id with no entry
+   answers `null`) — shipped in the same commit as the interface change, per constitution II.
+
+**Tests, named `R_181` per the round's own ask:**
+- `WaveformSummaryComputerTest` (pure, no Robolectric): a synthetic 440 Hz tone (the identical shape
+  `ScenarioFixtures.writeAudioFixture` writes, at float amplitude) yields non-uniform bucket heights
+  and the loudest bucket at exactly `1f`; every bar height stays in `0f..1f`; total silence yields a
+  real, honest flat shape (not `null`, not a crash); an empty sample buffer yields `null`.
+- `RealTransmissionAudioPlayerTest`, four new: a missing retained-audio file returns `null` without
+  throwing; a transmission id with no row at all returns `null` without throwing; real retained audio
+  (a tone fixture written through the exact same `DeflatePredictiveCodec` pairing this file's own
+  pre-existing third test already uses) decodes and yields 96 real, non-uniform bars; and a caching
+  proof — deleting the retained file *after* the first `waveformSummary` call and confirming the
+  second call still returns the identical (non-null) summary, proving the cache rather than a
+  fortunate re-read answered it.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards` (clean — confirms no new
+`:pipeline`/`:capture-android` dependency edge was added; `RealTransmissionAudioPlayer` reuses
+`:pipeline`'s already-public `FlacSegmentAudioProvider`, the identical import `play` already had),
+`.\gradlew.bat -p buildSrc test` (clean), `python tools\spec-check\spec_check.py` (`spec-check: OK`),
+`.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations, both
+clean — `results/coverage-matrix.md` unchanged, already current from the merge), `.\gradlew.bat
+:app:assembleDebug` (clean). The full `:app:testDebugUnitTest` suite is clean on the merged tree;
+this round's own new/changed tests were re-run twice (once alone, once alongside every other WP6
+round's test classes) to confirm no flake.
+
+**Left open:** none new this round. R-182 (highlight spans) and the voice-match/thread-context gaps
+from round 6 remain as named there — untouched this round, per the coordinator's own scoping.
+
 ### (pending) — ui-conformance WP6 round 6 · no-audio copy variants, revisions closing note, Fail-Pass partial/retry copy, rejected detail state, transcript confidence
 
 **Scope:** `:app`, this package's own files — `ui/data/DetailViewState.kt`, `ui/data/CorrectionPolling.kt`,

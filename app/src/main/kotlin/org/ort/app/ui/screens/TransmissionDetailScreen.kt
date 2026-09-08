@@ -42,6 +42,7 @@ import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.PlaybackOutcome
 import org.ort.app.ui.audio.PlaybackRate
 import org.ort.app.ui.audio.TransmissionAudioPlayer
+import org.ort.app.ui.audio.WaveformSummary
 import org.ort.app.ui.components.ActionBar
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
@@ -403,14 +404,18 @@ private fun RejectedTranscriptSection(detail: TransmissionDetailViewState) {
 }
 
 /**
- * R-054, `Detail-Playback.dc.html`: idle / playing (position, scrub, speed) / no-audio /
- * unavailable, via [WaveformCard]. No amplitude data exists anywhere in the schema for a real
- * waveform shape (`TransmissionDetailViewState` carries none), so [WaveformBar] lists are always
- * empty here — an honest flat card with a working play control and duration, not a fabricated
- * shape (constitution I). Scrubbing (WP2's `onScrub`) seeks the real player directly —
- * `positionFraction` is then read back from it on the next poll tick, the same as any other
- * player-driven position change. The spoken-word outline (no word-timing data exists anywhere)
- * stays a named gap in this package's CHANGELOG rather than faked.
+ * R-054/R-181, `Detail-Playback.dc.html`: idle / playing (position, scrub, speed) / no-audio /
+ * unavailable, via [WaveformCard]. [WaveformBar] bars are now [player]'s own real
+ * [TransmissionAudioPlayer.waveformSummary] — [WaveformSummaryComputer]'s own doc comment names
+ * exactly what "real" means (peak amplitude per bucket, normalised to the segment's own peak); a
+ * `null` result (no retained audio, or a decode failure) renders an empty bar list, never a
+ * fabricated flat shape standing in for one (constitution I). Scrubbing (WP2's `onScrub`) seeks the
+ * real player directly — `positionFraction` is then read back from it on the next poll tick, the
+ * same as any other player-driven position change; the cursor position is a continuous `0f..1f`
+ * fraction of the bar row, which lands on whichever bucket that fraction's x-offset falls under —
+ * no separate "bucket index" mapping is needed beyond the fraction [WaveformCard] already computes.
+ * The spoken-word outline (no word-timing data exists anywhere) stays a named gap in this package's
+ * CHANGELOG rather than faked.
  */
 @Composable
 private fun PlaybackSection(detail: TransmissionDetailViewState, player: TransmissionAudioPlayer) {
@@ -419,6 +424,7 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
     var playing by remember(detail.id) { mutableStateOf(false) }
     var positionFraction by remember(detail.id) { mutableStateOf(0f) }
     var rate by remember(detail.id) { mutableStateOf(PlaybackRate.NORMAL) }
+    var waveform by remember(detail.id) { mutableStateOf<WaveformSummary?>(null) }
 
     LaunchedEffect(detail.id, playing) {
         while (playing) {
@@ -428,19 +434,28 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
         }
     }
 
+    // R-181: a real decode+bucket pass, off the composition's own dispatch by way of
+    // `TransmissionAudioPlayer.waveformSummary`'s own `Dispatchers.IO` — only attempted when audio
+    // is actually retained, and cached by the player per transmission id so revisiting an over
+    // never re-decodes it.
+    LaunchedEffect(detail.id, detail.hasAudio) {
+        waveform = if (detail.hasAudio) player.waveformSummary(detail.id) else null
+    }
+
     val durationSeconds = detail.durationLabel.removeSuffix("s").toDoubleOrNull() ?: 0.0
+    val bars = waveform?.bars.orEmpty()
     val waveformState = when {
         unavailableReason != null -> WaveformViewState.Unavailable(unavailableReason.orEmpty())
         !detail.hasAudio -> WaveformViewState.NoAudio
         playing -> WaveformViewState.Playing(
-            bars = emptyList(),
+            bars = bars,
             cursorFraction = positionFraction,
             positionLabel = "%.1f".format(positionFraction * durationSeconds),
             durationLabel = detail.durationLabel,
             speedLabel = rate.label,
         )
 
-        else -> WaveformViewState.Idle(bars = emptyList(), durationLabel = detail.durationLabel)
+        else -> WaveformViewState.Idle(bars = bars, durationLabel = detail.durationLabel)
     }
 
     Column(modifier = Modifier.padding(OrtSpacing.lg)) {

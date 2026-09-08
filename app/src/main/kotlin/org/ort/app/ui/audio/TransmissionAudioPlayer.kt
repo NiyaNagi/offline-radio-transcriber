@@ -55,4 +55,13 @@ public interface TransmissionAudioPlayer {
 
     /** True exactly while audio is actively playing (not paused, not stopped, not merely loaded). */
     public fun isPlaying(): Boolean
+
+    /**
+     * R-181, `Detail-Playback.dc.html`: a real [WaveformSummary] of [transmissionId]'s retained
+     * audio, computed off the calling thread over the same decoded PCM [play] uses, and cached per
+     * transmission id so revisiting an over never re-decodes it. `null` for a transmission with no
+     * retained audio, or one whose retained audio fails to decode — never a fabricated shape
+     * ([WaveformSummaryComputer]'s own doc comment names exactly what "real" means here).
+     */
+    public suspend fun waveformSummary(transmissionId: String): WaveformSummary?
 }
