@@ -23,6 +23,12 @@ import org.robolectric.RobolectricTestRunner
  * FR-UI-3, over the real DAOs — no fake stands in for `:data` here, matching
  * [org.ort.app.ui.data.ReaderPollingTest]'s own reasoning.
  *
+ * R-061: [SearchDao] takes one nullable attribution state and one nullable rejected flag, but the
+ * filter sheet needs a *set* of states and two independent include toggles — so [SearchPolling]
+ * queries with those unset (getting the widest base result) and applies [SearchFacetFilter]
+ * client-side; [SearchResult.facetCounts] carries the pre-facet-filter breakdown so the filter
+ * sheet can show real per-state counts.
+ *
  * This project's own `:data` test suite
  * (`data/src/test/kotlin/org/ort/data/SearchDaoFullTextTest.kt`) empirically confirms the fts5
  * module is unavailable under this Robolectric host's SQLite build — so the full-text path
@@ -37,17 +43,13 @@ class SearchPollingTest {
 
     private lateinit var db: OrtDatabase
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    private val includeEverything =
+        SearchFacetFilter(AttributionState.entries.toSet(), includeRejected = true, includeCorrected = true)
 
     @Before
     fun openDatabase() {
         // Not in-memory, for the same reason ReaderPollingTest isn't: SearchPolling opens its own
         // OrtDatabase.create(context) internally, and this test needs to see what that call sees.
-        // Deleted first: Robolectric's file-backed "ort.db" can otherwise persist a schema created
-        // by an earlier test class in this module (its `onCreate` runs exactly once per physical
-        // file) — including a `transcript_fts` `sqlite_master` row from a run where fts5 happened
-        // to be loadable, which would then report as "available" here even though the *current*
-        // native SQLite build cannot actually execute an fts5 query against it. Starting from a
-        // clean file makes `fts5Available()` reflect this run's real environment.
         context.deleteDatabase(OrtDatabase.DATABASE_NAME)
         db = OrtDatabase.create(context)
     }
@@ -86,6 +88,7 @@ class SearchPollingTest {
         frequencyHz: Long?,
         attributionState: AttributionState = AttributionState.UNKNOWN,
         processingState: TransmissionState = TransmissionState.CAPTURED,
+        corrected: Boolean = false,
     ) = TransmissionEntity(
         id = id,
         sessionId = "S1",
@@ -106,6 +109,7 @@ class SearchPollingTest {
         stationId = stationId,
         attributionConfidence = null,
         attributionSourceTransmissionId = null,
+        corrected = corrected,
         processingState = processingState,
         rejectionReason = null,
         samplePosition = samplePosition,
@@ -122,21 +126,16 @@ class SearchPollingTest {
         db.transmissionDao().insert(transmission("TX1", 1L, "ST1", 145_230_000L))
         db.transmissionDao().insert(transmission("TX2", 2L, null, 146_520_000L))
 
-        val result = SearchPolling.search(context, SearchQueryParams(text = null, callsign = "W7NPC"))
+        val result = SearchPolling.search(
+            context,
+            SearchQueryParams(text = null, callsign = "W7NPC"),
+            includeEverything,
+        )
 
         assertEquals(listOf("TX1"), result.details.map { it.id })
         assertFalse(result.textSearchUnavailable)
     }
 
-    /**
-     * A `sqlite_master` row for `transcript_fts` can exist even when fts5 is genuinely
-     * unavailable — SQLite's `CREATE VIRTUAL TABLE IF NOT EXISTS ... USING fts5(...)` can leave a
-     * schema entry behind even though the module lookup that follows it fails with
-     * `no such module: fts5` (confirmed empirically in this build-plan P15 session: checking
-     * `sqlite_master` alone reported "available" while every real query against the table then
-     * threw exactly that error). Actually preparing a statement against the table is the only
-     * reliable check.
-     */
     private fun fts5Available(): Boolean = try {
         db.openHelper.writableDatabase.query("SELECT count(*) FROM transcript_fts").use { it.moveToFirst() }
         true
@@ -144,14 +143,6 @@ class SearchPollingTest {
         false
     }
 
-    /**
-     * Branches on the same fts5-availability fact `:data`'s own
-     * `SearchDaoFullTextTest` establishes, so this test states a real assertion either way rather
-     * than hard-coding an assumption about the host that could go stale: if fts5 genuinely is
-     * unavailable (the case empirically confirmed for this build-plan P15 session), a text search
-     * must degrade to the filter-only path and say so; if a future host does carry fts5, the same
-     * call must actually search text and say so.
-     */
     @Test
     fun `FR_UI_3 a text search either runs for real or degrades to filters and reports which happened`(): Unit =
         runTest {
@@ -178,7 +169,11 @@ class SearchPollingTest {
                 )
             }
 
-            val result = SearchPolling.search(context, SearchQueryParams(text = "mayday", callsign = "W7NPC"))
+            val result = SearchPolling.search(
+                context,
+                SearchQueryParams(text = "mayday", callsign = "W7NPC"),
+                includeEverything,
+            )
 
             assertEquals(listOf("TX1"), result.details.map { it.id })
             assertEquals(!fts5Available(), result.textSearchUnavailable)
@@ -191,14 +186,18 @@ class SearchPollingTest {
         db.transmissionDao().insert(transmission("TX1", 1L, null, 145_230_000L))
         db.transmissionDao().insert(transmission("TX2", 2L, null, 440_000_000L))
 
-        val result = SearchPolling.search(context, SearchQueryParams(text = null, band = Band.VHF_2M))
+        val result = SearchPolling.search(
+            context,
+            SearchQueryParams(text = null, band = Band.VHF_2M),
+            includeEverything,
+        )
 
         assertEquals(listOf("TX1"), result.details.map { it.id })
         assertFalse(result.textSearchUnavailable)
     }
 
     @Test
-    fun `FR_UI_3 the attribution-state filter narrows results to one state`(): Unit = runTest {
+    fun `R_061 the facet filter narrows displayed results to the selected attribution states`(): Unit = runTest {
         db.sessionDao().insert(session())
         db.transmissionDao().insert(
             transmission("TX1", 1L, null, 145_230_000L, attributionState = AttributionState.CONFIRMED),
@@ -207,31 +206,62 @@ class SearchPollingTest {
             transmission("TX2", 2L, null, 146_520_000L, attributionState = AttributionState.UNKNOWN),
         )
 
-        val result = SearchPolling.search(
-            context,
-            SearchQueryParams(text = null, attributionState = AttributionState.CONFIRMED),
-        )
+        val facet =
+            SearchFacetFilter(setOf(AttributionState.CONFIRMED), includeRejected = true, includeCorrected = true)
+        val result = SearchPolling.search(context, SearchQueryParams(text = null), facet)
 
         assertEquals(listOf("TX1"), result.details.map { it.id })
-        assertFalse(result.textSearchUnavailable)
     }
 
     @Test
-    fun `FR_UI_3 the rejected filter narrows results to only-rejected or only-accepted`(): Unit = runTest {
+    fun `R_061 the facet filter narrows rejected and corrected independently of attribution state`(): Unit = runTest {
         db.sessionDao().insert(session())
         db.transmissionDao().insert(
             transmission("TX1", 1L, null, 145_230_000L, processingState = TransmissionState.REJECTED),
         )
+        db.transmissionDao().insert(transmission("TX2", 2L, null, 146_520_000L, corrected = true))
+        db.transmissionDao().insert(transmission("TX3", 3L, null, 147_000_000L))
+
+        val excludeBoth =
+            SearchFacetFilter(AttributionState.entries.toSet(), includeRejected = false, includeCorrected = false)
+        val result = SearchPolling.search(context, SearchQueryParams(text = null), excludeBoth)
+
+        assertEquals(listOf("TX3"), result.details.map { it.id })
+    }
+
+    @Test
+    fun `R_061 facetCounts reflects every match before the facet filter, never fabricated`(): Unit = runTest {
+        db.sessionDao().insert(session())
         db.transmissionDao().insert(
-            transmission("TX2", 2L, null, 146_520_000L, processingState = TransmissionState.COMPLETE),
+            transmission("TX1", 1L, null, 145_230_000L, attributionState = AttributionState.CONFIRMED),
+        )
+        db.transmissionDao().insert(
+            transmission("TX2", 2L, null, 146_520_000L, attributionState = AttributionState.CONFIRMED),
+        )
+        db.transmissionDao().insert(
+            transmission("TX3", 3L, null, 147_000_000L, attributionState = AttributionState.UNKNOWN),
+        )
+        db.transmissionDao().insert(
+            transmission(
+                "TX4",
+                4L,
+                null,
+                148_000_000L,
+                attributionState = AttributionState.UNKNOWN,
+                processingState = TransmissionState.REJECTED,
+            ),
         )
 
-        val rejectedOnly = SearchPolling.search(context, SearchQueryParams(text = null, rejected = true))
-        val acceptedOnly = SearchPolling.search(context, SearchQueryParams(text = null, rejected = false))
-        val all = SearchPolling.search(context, SearchQueryParams(text = null, rejected = null))
+        // A facet filter that hides most rows must not affect facetCounts, which describes the
+        // *whole* base match — the sheet needs that to compute "how many if I include this too".
+        val onlyConfirmed =
+            SearchFacetFilter(setOf(AttributionState.CONFIRMED), includeRejected = false, includeCorrected = true)
+        val result = SearchPolling.search(context, SearchQueryParams(text = null), onlyConfirmed)
 
-        assertEquals(listOf("TX1"), rejectedOnly.details.map { it.id })
-        assertEquals(listOf("TX2"), acceptedOnly.details.map { it.id })
-        assertEquals(setOf("TX1", "TX2"), all.details.map { it.id }.toSet())
+        assertEquals(4, result.facetCounts.total)
+        assertEquals(2, result.facetCounts.confirmed)
+        assertEquals(2, result.facetCounts.unknown)
+        assertEquals(1, result.facetCounts.rejectedCount)
+        assertEquals(2, result.details.size) // only the two CONFIRMED, non-rejected rows shown
     }
 }

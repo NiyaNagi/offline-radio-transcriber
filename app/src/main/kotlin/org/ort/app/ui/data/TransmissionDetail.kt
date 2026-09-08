@@ -171,19 +171,6 @@ public object ReaderTransmissionViewStateMapper {
     }
 }
 
-/** The "Now" home's header counts (`Main.dc.html`: "412 overs · 19 stations · 2 bands"). */
-public data class NowSummaryViewState(val overCount: Int, val stationCount: Int)
-
-public object NowSummaryMapper {
-
-    /**
-     * Only the two counts computable honestly from what `:data` records today. Band counting
-     * needs a frequency-to-band table no prompt has wired to the reader yet — left out rather
-     * than guessed. [stationCount] counts **distinct attributed stations only**: an `UNKNOWN` or
-     * `AMBIGUOUS` over contributes to [overCount] but never fabricates a station.
-     */
-    public fun from(details: List<TransmissionDetail>): NowSummaryViewState = NowSummaryViewState(
-        overCount = details.size,
-        stationCount = details.mapNotNull { it.attribution.stationId }.toSet().size,
-    )
-}
+// NowSummaryViewState/NowSummaryMapper moved to ui/data/NowSummaryMapper.kt — WP4's own file per
+// ui-conformance-plan.md §D's WP4 row, which names "the NowSummaryMapper file" as a file distinct
+// from this one even though this one (WP5's, in full otherwise) is where they used to live.

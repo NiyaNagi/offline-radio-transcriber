@@ -3,46 +3,89 @@ package org.ort.app.ui.data
 import android.content.Context
 import android.database.sqlite.SQLiteException
 import org.ort.core.AttributionState
+import org.ort.core.TransmissionState
 import org.ort.data.Band
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.TransmissionEntity
+import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 
 /**
- * The rejected/accepted tri-state search control (FR-UI-3). `ALL` means "don't filter" — kept as
- * its own closed set, rather than a nullable [Boolean], so the screen has a third, explicit
- * option to render and cycle through; [toDaoValue] maps it onto
- * [org.ort.data.dao.SearchDao]'s own tri-state `Boolean?` bind parameter.
+ * The Search destination's data model (ui-conformance-plan WP7, R-060..R-065; build-plan P15,
+ * FR-UI-3). This is a full replacement of the pre-audit version: [SearchFilterInput]'s band,
+ * attribution and rejected/corrected controls were tap-to-cycle text (R-061, a `halt` finding —
+ * "the operator cannot see the options, cannot go back, and cannot tell it is interactive") and
+ * its only time control was a single `Date (YYYY-MM-DD)` field where FR-UI-3 requires a range
+ * (R-062). Every closed set here is now a value the *screen* renders as a visible list (chips or
+ * checkboxes) — this file only carries the values and the query logic, never a "current option"
+ * cycling scheme (guide §6.11).
  */
-public enum class RejectedFilter {
-    ALL,
-    ACCEPTED,
-    REJECTED,
-    ;
 
-    public fun toDaoValue(): Boolean? = when (this) {
-        ALL -> null
-        ACCEPTED -> false
-        REJECTED -> true
-    }
+// -------------------------------------------------------------------------------------------
+// FR-UI-3's time filter — a closed set of four options (R-062), never a single raw date field.
+// -------------------------------------------------------------------------------------------
+
+/** `Search-Filters.dc.html`'s four time chips. [RANGE] is the only one that reads the two range fields. */
+public enum class SearchTimeFilter { TONIGHT, LAST_7_NIGHTS, RANGE, ALL }
+
+/** Prose for [SearchTimeFilter] (guide §9: enum values are prose, never surfaced raw — R-064). */
+public fun SearchTimeFilter.label(): String = when (this) {
+    SearchTimeFilter.TONIGHT -> "Tonight"
+    SearchTimeFilter.LAST_7_NIGHTS -> "Last 7 nights"
+    SearchTimeFilter.RANGE -> "Range"
+    SearchTimeFilter.ALL -> "All"
 }
 
-/** The search screen's raw, unvalidated text fields (FR-UI-3). */
+/** Prose for [AttributionState] (guide §9 — R-064: never `CONFIRMED`, always `Confirmed`). */
+public fun AttributionState.prose(): String = when (this) {
+    AttributionState.CONFIRMED -> "Confirmed"
+    AttributionState.INFERRED -> "Inferred"
+    AttributionState.AMBIGUOUS -> "Ambiguous"
+    AttributionState.UNKNOWN -> "Unknown"
+}
+
+/** A human label for [band]: `HF_160M` -> `"160M"`, `VHF_1_25M` -> `"1.25M"`. */
+public fun Band.prose(): String = name.substringAfter('_').replace('_', '.')
+
+// -------------------------------------------------------------------------------------------
+// Raw screen state.
+// -------------------------------------------------------------------------------------------
+
+/**
+ * The search screen's raw, unvalidated fields (FR-UI-3). Every closed-set field ([band],
+ * [timeFilter], [attributionStates]) already carries a typed value chosen from a visible list —
+ * never free text standing in for a selection (R-061).
+ */
 public data class SearchFilterInput(
     val text: String = "",
     val callsign: String = "",
     val frequencyMhz: String = "",
-    /** ISO-8601 `yyyy-MM-dd`, interpreted as one UTC day. */
-    val dateUtc: String = "",
     /** `null` means "all bands" — no band filter. */
     val band: Band? = null,
-    /** `null` means "all attribution states" — no attribution-state filter. */
-    val attributionState: AttributionState? = null,
-    val rejectedFilter: RejectedFilter = RejectedFilter.ALL,
-)
+    val timeFilter: SearchTimeFilter = SearchTimeFilter.ALL,
+    /** Free text, `yyyy-MM-dd'T'HH:mm`, read only when [timeFilter] is [SearchTimeFilter.RANGE]. */
+    val rangeFromLocal: String = "",
+    val rangeToLocal: String = "",
+    /** The attribution states to include. All four is "no attribution filter". */
+    val attributionStates: Set<AttributionState> = AttributionState.entries.toSet(),
+    val includeRejected: Boolean = false,
+    val includeCorrected: Boolean = true,
+) {
+    /** Whether every closed-set field is at its default — nothing to show as a dismissable chip. */
+    public fun hasNoActiveFilters(): Boolean = band == null &&
+        timeFilter == SearchTimeFilter.ALL &&
+        attributionStates == AttributionState.entries.toSet() &&
+        !includeRejected &&
+        includeCorrected &&
+        callsign.isBlank() &&
+        frequencyMhz.isBlank()
+}
 
-/** Parsed, validated filter values — `null` fields mean "no filter", never a value that matches nothing. */
+/** Parsed, validated filter values sent to `:data`'s `SearchDao` — `null` means "no filter". */
 public data class SearchQueryParams(
     val text: String? = null,
     val callsign: String? = null,
@@ -50,22 +93,46 @@ public data class SearchQueryParams(
     val fromUtcMillis: Long? = null,
     val toUtcMillis: Long? = null,
     val band: Band? = null,
-    val attributionState: AttributionState? = null,
-    val rejected: Boolean? = null,
 )
 
 /**
- * Turns [SearchFilterInput]'s raw text into [SearchQueryParams] (FR-UI-3). Every field is
- * independently optional and a field that fails to parse is dropped rather than crashing the
- * screen or silently asserting a filter that can never match — the user sees no results for a
- * different, honest reason (their text/callsign filters, if any, still apply) rather than the
- * screen breaking outright. [SearchFilterInput.band]/[SearchFilterInput.attributionState] are
- * already typed (selected from a closed set on the screen, never free text) so they pass through
- * unparsed; [SearchFilterInput.rejectedFilter] is resolved to the DAO's `Boolean?` here.
+ * The closed-set facets [SearchQueryParams] cannot express as a DAO bind parameter (`SearchDao`
+ * takes one nullable [AttributionState] and one nullable rejected flag — R-061 needs a *set* of
+ * states and two independent include toggles), applied client-side after the base query runs.
+ */
+public data class SearchFacetFilter(
+    val attributionStates: Set<AttributionState>,
+    val includeRejected: Boolean,
+    val includeCorrected: Boolean,
+) {
+    public fun matches(entity: TransmissionEntity): Boolean {
+        if (entity.attributionState !in attributionStates) return false
+        if (!includeRejected && entity.processingState == TransmissionState.REJECTED) return false
+        if (!includeCorrected && entity.corrected) return false
+        return true
+    }
+
+    public companion object {
+        public fun from(input: SearchFilterInput): SearchFacetFilter = SearchFacetFilter(
+            attributionStates = input.attributionStates,
+            includeRejected = input.includeRejected,
+            includeCorrected = input.includeCorrected,
+        )
+    }
+}
+
+/**
+ * Turns [SearchFilterInput] into [SearchQueryParams] (FR-UI-3). Every field is independently
+ * optional and a field that fails to parse is dropped rather than crashing the screen or silently
+ * asserting a filter that can never match. [nowUtcMillis] anchors [SearchTimeFilter.TONIGHT]/
+ * [SearchTimeFilter.LAST_7_NIGHTS] — passed in rather than read from a clock so this stays a pure
+ * function (constitution II — no hidden clock read inside `:app`'s only pure-parsing seam).
  */
 public object SearchFilterParser {
-    public fun parse(input: SearchFilterInput): SearchQueryParams {
-        val (from, to) = parseDateRange(input.dateUtc)
+    private val RANGE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
+
+    public fun parse(input: SearchFilterInput, nowUtcMillis: Long): SearchQueryParams {
+        val (from, to) = timeRange(input, nowUtcMillis)
         return SearchQueryParams(
             text = input.text.trim().ifBlank { null },
             callsign = input.callsign.trim().ifBlank { null },
@@ -73,8 +140,6 @@ public object SearchFilterParser {
             fromUtcMillis = from,
             toUtcMillis = to,
             band = input.band,
-            attributionState = input.attributionState,
-            rejected = input.rejectedFilter.toDaoValue(),
         )
     }
 
@@ -85,21 +150,63 @@ public object SearchFilterParser {
         return Math.round(mhz * 1_000_000.0)
     }
 
-    private fun parseDateRange(raw: String): Pair<Long?, Long?> {
+    private fun timeRange(input: SearchFilterInput, nowUtcMillis: Long): Pair<Long?, Long?> {
+        val today = Instant.ofEpochMilli(nowUtcMillis).atZone(ZoneOffset.UTC).toLocalDate()
+        return when (input.timeFilter) {
+            SearchTimeFilter.ALL -> null to null
+            SearchTimeFilter.TONIGHT -> startOfUtcDay(today) to startOfUtcDay(today.plusDays(1))
+            SearchTimeFilter.LAST_7_NIGHTS -> startOfUtcDay(today.minusDays(6)) to startOfUtcDay(today.plusDays(1))
+            SearchTimeFilter.RANGE -> parseRangeInstant(input.rangeFromLocal) to parseRangeInstant(input.rangeToLocal)
+        }
+    }
+
+    private fun startOfUtcDay(date: LocalDate): Long = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+    private fun parseRangeInstant(raw: String): Long? {
         val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return null to null
+        if (trimmed.isEmpty()) return null
         return try {
-            val day = LocalDate.parse(trimmed)
-            val from = day.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
-            val to = day.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
-            from to to
+            LocalDateTime.parse(trimmed, RANGE_FORMAT).toInstant(ZoneOffset.UTC).toEpochMilli()
         } catch (e: DateTimeParseException) {
-            null to null
+            null
         }
     }
 }
 
-/** The result of one search: the matches, and whether the free-text term was actually applied. */
+// -------------------------------------------------------------------------------------------
+// Results.
+// -------------------------------------------------------------------------------------------
+
+/** One (state, rejected, corrected) fact — enough to count every facet without re-querying. */
+public data class SearchFacetRow(val attributionState: AttributionState, val rejected: Boolean, val corrected: Boolean)
+
+/**
+ * Counts over every transmission [SearchQueryParams] matched — **before** [SearchFacetFilter] is
+ * applied, so the filter sheet can show "how many if I include this too" (R-061's "checkboxes
+ * with counts") without a second query per checkbox tap.
+ */
+public data class SearchFacetCounts(val rows: List<SearchFacetRow>) {
+    public val total: Int get() = rows.size
+    public val confirmed: Int get() = rows.count { it.attributionState == AttributionState.CONFIRMED }
+    public val inferred: Int get() = rows.count { it.attributionState == AttributionState.INFERRED }
+    public val ambiguous: Int get() = rows.count { it.attributionState == AttributionState.AMBIGUOUS }
+    public val unknown: Int get() = rows.count { it.attributionState == AttributionState.UNKNOWN }
+    public val rejectedCount: Int get() = rows.count { it.rejected }
+    public val correctedCount: Int get() = rows.count { it.corrected }
+
+    /** The exact count [filter] would leave — what `Show N overs` reports (never a fabricated number). */
+    public fun countMatching(filter: SearchFacetFilter): Int = rows.count { row ->
+        row.attributionState in filter.attributionStates &&
+            (filter.includeRejected || !row.rejected) &&
+            (filter.includeCorrected || !row.corrected)
+    }
+
+    public companion object {
+        public val EMPTY: SearchFacetCounts = SearchFacetCounts(emptyList())
+    }
+}
+
+/** The result of one search: the matches, whether free text was actually applied, and the facet breakdown. */
 public data class SearchResult(
     val details: List<TransmissionDetail>,
     /**
@@ -108,27 +215,26 @@ public data class SearchResult(
      * I: an unmet part of a query is content, never silently dropped.
      */
     val textSearchUnavailable: Boolean,
+    val facetCounts: SearchFacetCounts,
 )
 
 /**
  * The real read path for the Search destination (build-plan P15, FR-UI-3) — over
- * [org.ort.data.dao.SearchDao], the FTS5 index build-plan P5 built and nothing queried until now.
+ * [org.ort.data.dao.SearchDao], reads through [OrtDatabase] directly (never through
+ * [org.ort.app.ui.data.ReaderPolling]'s own query wrappers — those are WP4's; only the shared
+ * entity->[TransmissionDetail] mapper [ReaderPolling.detailFromEntity] is reused, exactly as its
+ * own doc comment says it exists for).
  */
 public object SearchPolling {
-    public suspend fun search(context: Context, params: SearchQueryParams): SearchResult {
+    public suspend fun search(
+        context: Context,
+        params: SearchQueryParams,
+        facetFilter: SearchFacetFilter,
+    ): SearchResult {
         val db = OrtDatabase.create(context.applicationContext)
         return try {
-            val entities = db.searchDao().search(
-                text = params.text,
-                callsign = params.callsign,
-                frequencyHz = params.frequencyHz,
-                fromUtc = params.fromUtcMillis,
-                toUtc = params.toUtcMillis,
-                band = params.band,
-                attributionState = params.attributionState,
-                rejected = params.rejected,
-            )
-            SearchResult(entities.map { ReaderPolling.detailFromEntity(context, it) }, textSearchUnavailable = false)
+            val entities = rawSearch(db, params, params.text)
+            buildResult(context, entities, facetFilter, textSearchUnavailable = false)
         } catch (e: SQLiteException) {
             // Only degrade for the specific, known fts5-missing case (this project's own
             // Robolectric host — see data/src/test/kotlin/org/ort/data/SearchDaoFullTextTest.kt);
@@ -137,17 +243,197 @@ public object SearchPolling {
             val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
                 e.message?.contains("transcript_fts", ignoreCase = true) == true
             if (!fts5Missing || params.text == null) throw e
-            val entities = db.searchDao().search(
+            val entities = rawSearch(db, params, text = null)
+            buildResult(context, entities, facetFilter, textSearchUnavailable = true)
+        }
+    }
+
+    private suspend fun rawSearch(db: OrtDatabase, params: SearchQueryParams, text: String?): List<TransmissionEntity> =
+        db.searchDao().search(
+            text = text,
+            callsign = params.callsign,
+            frequencyHz = params.frequencyHz,
+            fromUtc = params.fromUtcMillis,
+            toUtc = params.toUtcMillis,
+            band = params.band,
+        )
+
+    private suspend fun buildResult(
+        context: Context,
+        entities: List<TransmissionEntity>,
+        facetFilter: SearchFacetFilter,
+        textSearchUnavailable: Boolean,
+    ): SearchResult {
+        val facetCounts = SearchFacetCounts(
+            entities.map { entity ->
+                SearchFacetRow(
+                    attributionState = entity.attributionState,
+                    rejected = entity.processingState == TransmissionState.REJECTED,
+                    corrected = entity.corrected,
+                )
+            },
+        )
+        val filtered = entities.filter { facetFilter.matches(it) }
+        val details = filtered.map { ReaderPolling.detailFromEntity(context, it) }
+        return SearchResult(details, textSearchUnavailable, facetCounts)
+    }
+}
+
+// -------------------------------------------------------------------------------------------
+// No-results widening (Search-Empty.dc.html, R-063) — every count here is real, never fabricated
+// (guide §9: "never fabricate a number").
+// -------------------------------------------------------------------------------------------
+
+/** One "loosen this filter" suggestion, with the real count it would give. */
+public data class SearchWidenOption(val id: String, val label: String, val detail: String)
+
+/** `Search-Empty.dc.html`'s state: why nothing matched, what would widen it, and near-miss callsigns. */
+public data class SearchWidenViewState(
+    val narrowingSummary: String,
+    val options: List<SearchWidenOption>,
+    val similarCallsigns: List<String>,
+)
+
+public object SearchWidenSuggestions {
+
+    public suspend fun build(
+        context: Context,
+        input: SearchFilterInput,
+        params: SearchQueryParams,
+        facetFilter: SearchFacetFilter,
+        facetCounts: SearchFacetCounts,
+    ): SearchWidenViewState {
+        val options = mutableListOf<SearchWidenOption>()
+
+        if (input.timeFilter != SearchTimeFilter.ALL) {
+            val widerParams = params.copy(fromUtcMillis = null, toUtcMillis = null)
+            val count = countMatching(context, widerParams, facetFilter)
+            if (count > 0) {
+                options += SearchWidenOption(
+                    id = "all_nights",
+                    label = "All nights",
+                    detail = "would show $count ${overWord(count)}",
+                )
+            }
+        }
+
+        val everyState = SearchFacetFilter(
+            attributionStates = AttributionState.entries.toSet(),
+            includeRejected = true,
+            includeCorrected = true,
+        )
+        val widerFacetCount = facetCounts.countMatching(everyState)
+        val currentFacetCount = facetCounts.countMatching(facetFilter)
+        if (widerFacetCount > currentFacetCount) {
+            options += SearchWidenOption(
+                id = "include_all_states",
+                label = "Include every attribution state, rejected and corrected",
+                detail = "would show $widerFacetCount ${overWord(widerFacetCount)}",
+            )
+        }
+
+        val similar = if (input.callsign.isNotBlank()) {
+            SimilarCallsigns.near(context, input.callsign)
+        } else {
+            emptyList()
+        }
+
+        return SearchWidenViewState(
+            narrowingSummary = narrowingSummary(input),
+            options = options,
+            similarCallsigns = similar,
+        )
+    }
+
+    private suspend fun countMatching(
+        context: Context,
+        params: SearchQueryParams,
+        facetFilter: SearchFacetFilter,
+    ): Int {
+        val db = OrtDatabase.create(context.applicationContext)
+        val entities = try {
+            db.searchDao().search(
+                text = params.text,
+                callsign = params.callsign,
+                frequencyHz = params.frequencyHz,
+                fromUtc = params.fromUtcMillis,
+                toUtc = params.toUtcMillis,
+                band = params.band,
+            )
+        } catch (e: SQLiteException) {
+            val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
+                e.message?.contains("transcript_fts", ignoreCase = true) == true
+            if (!fts5Missing || params.text == null) throw e
+            db.searchDao().search(
                 text = null,
                 callsign = params.callsign,
                 frequencyHz = params.frequencyHz,
                 fromUtc = params.fromUtcMillis,
                 toUtc = params.toUtcMillis,
                 band = params.band,
-                attributionState = params.attributionState,
-                rejected = params.rejected,
             )
-            SearchResult(entities.map { ReaderPolling.detailFromEntity(context, it) }, textSearchUnavailable = true)
         }
+        return entities.count { facetFilter.matches(it) }
+    }
+
+    private fun overWord(count: Int): String = if (count == 1) "over" else "overs"
+
+    /** `Search-Empty.dc.html`'s "The two filters above are doing the narrowing" line. */
+    private fun narrowingSummary(input: SearchFilterInput): String {
+        val narrowing = mutableListOf<String>()
+        if (input.callsign.isNotBlank()) narrowing += "the callsign filter"
+        if (input.text.isNotBlank()) narrowing += "the text search"
+        if (input.band != null) narrowing += "the band filter"
+        if (input.frequencyMhz.isNotBlank()) narrowing += "the frequency filter"
+        if (input.timeFilter != SearchTimeFilter.ALL) narrowing += "the time filter"
+        if (input.attributionStates != AttributionState.entries.toSet()) narrowing += "the attribution filter"
+        return when (narrowing.size) {
+            0 -> "Nothing narrowed this — there is genuinely nothing recorded yet."
+            1 -> "${narrowing[0].replaceFirstChar { it.uppercase() }} is doing the narrowing."
+            else -> "${narrowing.dropLast(1).joinToString(", ")} and ${narrowing.last()} are doing the narrowing."
+        }
+    }
+}
+
+/** Callsigns one edit away from a searched callsign that found nothing (`Search-Empty.dc.html`). */
+public object SimilarCallsigns {
+    public suspend fun near(context: Context, callsign: String, maxResults: Int = 3): List<String> {
+        val target = callsign.trim().uppercase()
+        if (target.isEmpty()) return emptyList()
+        val db = OrtDatabase.create(context.applicationContext)
+        return db.activityDao().listStations()
+            .mapNotNull { it.callsign?.uppercase() }
+            .distinct()
+            .filter { it != target && editDistanceAtMost1(target, it) }
+            .sorted()
+            .take(maxResults)
+    }
+
+    /** True when [a] and [b] differ by at most one insertion, deletion or substitution. */
+    private fun editDistanceAtMost1(a: String, b: String): Boolean {
+        if (a == b) return false
+        val lengthDiff = a.length - b.length
+        if (lengthDiff !in -1..1) return false
+        if (a.length == b.length) {
+            // Same length: exactly one substitution allowed.
+            return a.indices.count { a[it] != b[it] } == 1
+        }
+        // One insertion/deletion apart: walk both, allow exactly one skip on the longer string.
+        val (shorter, longer) = if (a.length < b.length) a to b else b to a
+        var i = 0
+        var j = 0
+        var skipped = false
+        while (i < shorter.length && j < longer.length) {
+            if (shorter[i] == longer[j]) {
+                i++
+                j++
+            } else if (!skipped) {
+                skipped = true
+                j++
+            } else {
+                return false
+            }
+        }
+        return true
     }
 }

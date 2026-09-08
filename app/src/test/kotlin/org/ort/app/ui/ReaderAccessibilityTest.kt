@@ -12,10 +12,12 @@ import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.ort.app.status.StatusViewState
+import org.ort.app.ui.data.CaptureStateTone
+import org.ort.app.ui.data.CaptureStatusViewState
+import org.ort.app.ui.data.KeyValueFacts
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.navigation.ReaderDestination
-import org.ort.app.ui.screens.StatusScreen
+import org.ort.app.ui.screens.CaptureStatusScreen
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -46,35 +48,56 @@ class ReaderAccessibilityTest {
     private val maxFontScale = 2f
 
     @Test
-    fun `AC_63_FR_A11Y_3_FR_PLT_6 the status screen renders every field without clipping at maximum font scale`() {
+    fun `AC_63_FR_A11Y_3_FR_PLT_6 capture status renders every field without clipping at maximum font scale`() {
+        // ui-conformance-plan WP4 (R-031/R-033): StatusScreen/StatusViewState were replaced by
+        // CaptureStatusScreen/CaptureStatusViewState — this test's own file is outside WP4's row
+        // (it lives at `ui/ReaderAccessibilityTest.kt`, not `ui/screens/`), but deleting
+        // `StatusScreen.kt` (this package's brief's own instruction) would otherwise leave it
+        // referencing a file that no longer exists. Updated to the minimum needed to keep proving
+        // the same fact (AC-63/FR-A11Y-3) against the surface that carries it now.
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
                 OrtTheme {
-                    StatusScreen(
-                        state = StatusViewState(
+                    CaptureStatusScreen(
+                        state = CaptureStatusViewState(
                             stateLabel = "Capturing",
-                            elapsedLabel = "00:05:00",
-                            transmissionCount = 3,
-                            gapCount = 1,
-                            shedLevel = 2,
-                            shedLevelLabel = "Level 2 — speaker identity paused",
-                            livenessLabel = "Alive (heartbeat current)",
-                            uncleanEndBanner = "The previous session ended unexpectedly.",
+                            stateTone = CaptureStateTone.NOMINAL,
+                            sinceElapsedLabel = "Since 23:32 · 00:05:00 · alive, heartbeat 4s ago",
+                            haltActionLabel = "Stop",
+                            haltConfirmTitle = "Stop capture?",
+                            haltConfirmBody = "Audio already captured is kept.",
+                            input = KeyValueFacts(value = "Not measured"),
+                            level = KeyValueFacts(value = "Not measured"),
+                            radio = KeyValueFacts(value = "No rig configured"),
+                            overs = KeyValueFacts(value = "3 captured", subLine = "0 rejected · 0 failed · 1 gaps"),
+                            backlog = KeyValueFacts(value = "0 overs waiting"),
+                            tier = KeyValueFacts(
+                                value = "2 of 3",
+                                subLine = "no model — see Models · energy VAD (not Silero)",
+                            ),
+                            thermal = KeyValueFacts(value = "Nominal", subLine = "RTF not yet measured"),
+                            storage = KeyValueFacts(value = "0.0 GB", subLine = "not yet measured this session"),
+                            battery = KeyValueFacts(
+                                value = "Not measured",
+                                subLine = "exemption reports off — not trusted",
+                            ),
                         ),
                     )
                 }
             }
         }
 
-        // Every field must still be laid out and visible — a clipped or overlapping node fails
-        // assertIsDisplayed (zero size, or entirely outside its parent's bounds).
+        // Every field must still be laid out and reachable — a clipped node fails assertIsDisplayed
+        // (zero size, or entirely outside its parent's bounds) even after scrolling to it. This
+        // screen scrolls by design (guide §5's page-margin rule applies to a dense, multi-section
+        // surface), so a field further down is reached the same way `AC_63_FR_A11Y_2` below reaches
+        // an overflowing drawer row: scroll to it, then assert.
         composeTestRule.onNodeWithText("Capturing").assertIsDisplayed()
-        composeTestRule.onNodeWithText("The previous session ended unexpectedly.").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Elapsed: 00:05:00").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Transmissions: 3").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Gaps: 1").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Shed level: Level 2 — speaker identity paused").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Liveness: Alive (heartbeat current)").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Since 23:32 · 00:05:00 · alive, heartbeat 4s ago").assertIsDisplayed()
+        composeTestRule.onNodeWithText("3 captured").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("2 of 3").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Nominal").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("No rig configured").performScrollTo().assertIsDisplayed()
     }
 
     @Test

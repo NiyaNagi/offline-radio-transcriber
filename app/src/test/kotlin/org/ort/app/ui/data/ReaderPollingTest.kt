@@ -12,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
+import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
@@ -23,7 +24,10 @@ import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.capture.StorageForecast
+import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -59,8 +63,11 @@ class ReaderPollingTest {
         // never leak into another test.
         AsrAvailability.reset()
         VadAvailability.reset()
-        CaptureState.idle()
+        CaptureState.idle(clearSession = true)
         ShedStatus.reset()
+        ThermalStatus.reset()
+        RigStatus.reset()
+        StorageForecast.reset()
     }
 
     @Test
@@ -428,5 +435,121 @@ class ReaderPollingTest {
 
         assertEquals(listOf("W7NPC"), stations.map { it.stationId })
         assertEquals(listOf(146_960_000L), frequencies.map { it.frequencyHz })
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Capture status (ui-conformance-plan WP4, R-031/R-032/R-034/R-035/R-038).
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `R_032 captureStatus reads every real process-wide signal at once`(): Unit = runTest {
+        db.sessionDao().insert(session("S1").copy(startedAt = 0L))
+        db.transmissionDao().insert(transmission("TX1", samplePosition = 1L))
+        CaptureState.capturing("S1")
+        ShedStatus.update(level = 1, backlog = 3)
+        ThermalStatus.update(osThermalStatus = ThermalStatus.THERMAL_STATUS_MODERATE, realTimeFactor = 0.5)
+        RigStatus.connected("TH-D75A", emptyList())
+        AsrAvailability.available("whisper-small")
+        VadAvailability.real()
+
+        val view = ReaderPolling.captureStatus(context, "S1")
+
+        assertEquals("Capturing, warm", view.stateLabel)
+        assertEquals("2 of 3", view.tier.value)
+        assertEquals("TH-D75A", view.radio.value)
+        assertEquals("1 captured", view.overs.value)
+    }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `R_032 captureStatus reports not measured before any shed reading, never a fabricated zero`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+
+        val view = ReaderPolling.captureStatus(context, "S1")
+
+        assertEquals("Not measured", view.backlog.value)
+        assertEquals("Not measured", view.tier.value)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Now home (ui-conformance-plan WP4, R-030/R-033/R-036/R-037).
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("FR-UI-9")
+    fun `R_030 nowViewState is Idle when the session id is not the one CaptureState says is live`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+
+        val state = ReaderPolling.nowViewState(context, "S1")
+
+        assertTrue(state is NowViewState.Idle)
+    }
+
+    @Test
+    @Requirement("FR-UI-9")
+    fun `R_030 nowViewState is Active with the real session's own facts once CaptureState confirms it is live`(): Unit =
+        runTest {
+            db.sessionDao().insert(session("S1").copy(startedAt = 0L))
+            db.transmissionDao().insert(
+                transmission(
+                    "TX1",
+                    samplePosition = 1L,
+                    attribution = FixtureAttribution(AttributionState.CONFIRMED, "W7NPC", 0.9),
+                ),
+            )
+            CaptureState.capturing("S1")
+
+            val state = ReaderPolling.nowViewState(context, "S1")
+
+            assertTrue(state is NowViewState.Active)
+            assertEquals("Overnight", (state as NowViewState.Active).sessionTitle)
+            assertEquals(1, state.stations.rows.size)
+        }
+
+    @Test
+    @Requirement("R-036")
+    fun `R_036 idleNowViewState lists earlier nights and the last session summary`(): Unit = runTest {
+        db.sessionDao().insert(session("S1").copy(startedAt = 0L, endedAt = 3_661_000L))
+        db.transmissionDao().insert(transmission("TX1", sessionId = "S1", samplePosition = 1L))
+
+        val state = ReaderPolling.nowViewState(context, null)
+
+        assertTrue(state is NowViewState.Idle)
+        val idle = state as NowViewState.Idle
+        assertEquals(1, idle.earlierNights.size)
+        assertTrue(idle.lastSessionSummaryLabel!!.contains("1 overs"))
+    }
+
+    @Test
+    @Requirement("R-036")
+    fun `R_036 a session with a real deviceTier makes Can get better appear, one without does not`(): Unit = runTest {
+        db.sessionDao().insert(session("S1").copy(deviceTier = Tier.T1.name))
+        db.transmissionDao().insert(transmission("TX1", sessionId = "S1", samplePosition = 1L))
+
+        val state = ReaderPolling.nowViewState(context, null) as NowViewState.Idle
+
+        assertTrue(state.canGetBetter != null)
+        assertTrue(state.canGetBetter!!.headline.contains("1 overs"))
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Starting capture (ui-conformance-plan WP4, R-036).
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_036 startCapture returns the already-live session id rather than minting a second one`() {
+        CaptureState.capturing("S1")
+
+        val id = ReaderPolling.startCapture(context)
+
+        assertEquals("S1", id)
+    }
+
+    @Test
+    fun `R_036 startCapture mints a fresh session id when nothing is capturing`() {
+        val id = ReaderPolling.startCapture(context)
+
+        assertTrue(id.isNotBlank())
     }
 }

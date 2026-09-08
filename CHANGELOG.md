@@ -32,6 +32,350 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
+
+### (pending) — ui-conformance WP4 · Now home, capture status surface, level meter, live-bar feed
+
+**Scope:** `:app` — `ui/screens/NowScreen.kt`, `ui/screens/StatusScreen.kt` (deleted, renamed to)
+`ui/screens/CaptureStatusScreen.kt`, new `ui/screens/LevelMeterScreen.kt`, new
+`ui/screens/NowContent.kt`, new `ui/screens/CaptureStatusContent.kt`, `status/StatusViewState.kt`
+(mapper prefix fix only), all of `ui/data/ReaderPolling.kt`, new `ui/data/NowSummaryMapper.kt`
+(extracted from `ui/data/TransmissionDetail.kt`), new `ui/data/CaptureStatusViewState.kt`, new
+`ui/data/NowViewState.kt`, new `ui/data/LiveBarPolling.kt`, and every test alongside these. Two
+files outside this package's formal row were touched, both documented at the point of change:
+`ui/data/TransmissionDetail.kt` (WP5's file — the two-declaration extraction the master plan
+itself names as WP4's) and `ui/ReaderAccessibilityTest.kt` (no clear owner — updated to reference
+`CaptureStatusScreen` instead of the `StatusScreen` this package's brief required deleting).
+
+**Requirements/ACs:** R-030, R-031, R-032, R-033, R-034, R-035 (partial — see Left open), R-036,
+R-037, R-038, R-039; FR-UI-7, FR-UI-9, FR-UI-11, FR-UI-12, FR-CAP-3, F3, FR-RUN-5, FR-A11Y-1,
+FR-A11Y-2, FR-A11Y-3; constitution I (never fabricate — Input/Level/tier-Pass-C/band-count are all
+rendered "not measured" or omitted rather than invented) and IV (liveness from heartbeat, never
+`isIgnoringBatteryOptimizations()`).
+
+**What changed:**
+
+- **Constitution Check.** Principle I bears on almost every mapper here: `CaptureStatusMapper`
+  and `NowViewStateMapper` both render "Not measured" / omit a field rather than invent one for
+  every fact this session cannot honestly compute (Input device, Level dBFS, band count, Pass C
+  state, device-tier "current" baseline). Principle IV bears on the live bar and capture-status
+  title: liveness reads from `CaptureState`/heartbeat data only. Principle VII (structural
+  boundaries) bears on the file-ownership exceptions below, each justified in place, not silently
+  taken.
+- **R-031/R-034 (doubled "ASR: ASR:" / raw file paths on Now/status).** Fixed at the source:
+  `StatusViewStateMapper.asrLabel`/`vadLabel` no longer prepend their own `"ASR: "`/`"VAD: "`
+  prefix (a caller's own label was doubling it). The raw sentences themselves no longer reach any
+  operator surface at all: `CaptureStatusMapper.tierFacts` builds the Tier row's sub-line
+  ("whisper-small · Silero VAD" / "no model — see Models · energy VAD (not Silero)") directly from
+  `AsrAvailability`/`VadAvailability`, never touching the old prefixed strings, and never printing
+  a file path — an `Unavailable` reason string (which can contain a path) is reduced to "no model
+  — see Models" instead of surfaced verbatim.
+- **R-038 (no more "Shed level: N").** `CaptureStatusMapper` maps `ShedStatus.currentLevel` onto
+  Tier's headline number by the *exact* formula `RealCaptureService.tierFromShedLevel()` already
+  uses in production (`(3 - shedLevel).coerceIn(0, 3)`, reused rather than re-derived so the
+  notification and this screen can never disagree), and onto Thermal/Backlog's own rows — no row
+  named "shed level" exists anywhere on the new screen.
+- **R-032/R-035 (`Capture-Status.dc.html`, FR-UI-7's nine facts).** New `CaptureStatusScreen.kt`
+  replaces the deleted `StatusScreen.kt` field dump: title + state dot (Capturing / Capturing,
+  warm / Halted / Not capturing — see Left open for "Capturing, text only"), since/elapsed/
+  heartbeat line, a `Stop` action behind a confirm dialog (`Feedback.dc.html`'s pattern), and three
+  `KeyValueRow` sections (Audio: Input/Level/Radio; Processing: Overs/Backlog/Tier/Thermal; Device:
+  Storage/Battery). `CaptureStatusContent.kt` polls it every 2 s from `ReaderPolling.captureStatus`
+  and `LiveBarPolling`. Reachable only once WP3 wires the drawer's Capture row to it — see Left
+  open.
+- **R-030/R-033/R-036/R-037 (`Main`/`Now-Idle`/`Now-First.dc.html`).** `NowScreen.kt` rewritten
+  from scratch as a scrolling home over `NowViewState` (sealed `Idle`/`Active`): session title
+  ("Tonight" while `overCount == 0`, "Overnight" once it isn't — `SessionEntity` carries no
+  name/label column, so this is the most honest signal available, documented in
+  `NowViewStateMapper.active`'s kdoc), the session's own hour activity chart (WP2's
+  `ActivityPatternChart` fed by WP8's `ActivityPatternMapper.buildPattern`, called with a
+  single-session `SessionWindow`, not the "every session" aggregate the station/frequency screens
+  use), a `WORTH KNOWING` section built only from what tonight's real data supports (first-time-
+  heard stations via `StationEntity.firstHeardAt` falling inside this session, "N overs could not
+  be attributed with confidence" from AMBIGUOUS+UNKNOWN counts, the longest real gap), the honest
+  `Now-First` "Nothing yet." empty state (the old hardcoded "see spec/build-plan.md" developer note
+  is gone), `STATIONS HEARD` rows (marker + mono callsign + "N overs"/"N by voice match" + last
+  time), and the `Feedback.dc.html` failed block when `AsrAvailability` is not `Available`. Idle:
+  "Not capturing" + last-session summary, a real `Start capture` `PrimaryButton` wired to
+  `ReaderPolling.startCapture` (mirrors `MainActivity.startCaptureAndShowStatus` exactly — same
+  same-process liveness guard, same `RealCaptureService.EXTRA_SESSION_ID` extra, same
+  `startForegroundService`/`startService` SDK split), input/rig/tier line, `Earlier nights` (top 3
+  from `sessionDao().listAll()`), and `Can get better` when any session carries a real, parseable
+  `deviceTier` (R-107's write path already exists via the `field-tier1` scenario; this is the
+  first read of it — WP10 still owns the Improve destination itself).
+- **R-039 (`Level-Meter.dc.html`).** No level (dBFS) signal exists anywhere in `:pipeline` —
+  confirmed by search (`ShedStatus`/`ThermalStatus`/`RigStatus`/`StorageForecast` are WP11a's four
+  holders; none is a level reading). New `LevelViewState`/`LevelMeterScreen.kt` render guide
+  §6.8's *failed* treatment (not empty) naming the missing signal, never fabricated bars.
+- **Live bar (guide §6.6).** New `LiveBarPolling.current` builds `LiveBarViewState` from
+  `CaptureState`/`ShedStatus`/`ThermalStatus`/`RigStatus`/`StorageForecast`, `Flow-Degrade.dc.html`'s
+  priority order (halted > storage-at-floor > shed-level tier drop > thermal warm > stale rig >
+  nominal "Live"), level bars at their floor height (no level signal — see R-039), and the newest
+  Pass A transcript across the session's last few transmissions as the partial text (reusing
+  `TransmissionDao.listBySession` + `TranscriptDao.getAllVersions`, not a new `:data` query).
+  `NowScreen`/`CaptureStatusScreen` both pin it via WP2's `LiveBar`.
+- **Deliberate divergences from the artboards' literal copy, each constitution-I-driven and
+  documented in code:** no "· N bands" in Now's summary (no frequency-to-band table exists —
+  `NowSummaryMapper`'s own pre-existing rule, carried forward); no "Pass C on/off" in the Tier
+  sub-line (no Pass C flag exists anywhere in `:pipeline` — M4's fork is unbuilt); "N unidentified
+  overs", not "N unidentified voices" (nothing here clusters voiceprints into distinct voices);
+  "Capturing, text only" is not reachable (no audio-retention-pause signal exists yet).
+- **Compatibility shim so the build stays green mid-wave:** `NowScreen`'s old
+  `(status: StatusViewState, summary: NowSummaryViewState)` signature is kept as a `@Deprecated`
+  overload (`NowViewStateMapper.legacyFrom`) — `OrtNavHost.kt`'s inline `NowContent` (WP3's file,
+  explicitly off limits to this package) still calls it today and would not otherwise compile.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** (one transient
+  `mergeDexRelease` Windows file-lock failure on the first attempt, unrelated to any source change
+  here; green on immediate retry).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (all 8 checks PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 181 covered**; `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` — **344 of 344 passing**, 0 failed (full `:app` suite,
+  not just this package's own tests). New tests added by name: `CaptureStatusMapperTest` (15
+  cases, e.g. `R_032 title reads Capturing warm when thermal is not nominal`, `R_038 tier is
+  derived from the shed level by the exact RealCaptureService formula`, `R_034 the tier sub-line
+  states real ASR VAD facts without a doubled prefix or a fabricated Pass C claim`),
+  `NowViewStateMapperTest` (9 cases, e.g. `R_030 the session title reads Tonight while nothing has
+  been heard yet, Overnight once it has`, `R_033 the summary never fabricates a band count`,
+  `R_037 worth knowing is an honest empty list, never a hardcoded developer note`),
+  `CaptureStatusScreenTest` (6 cases), `NowScreenTest` (rewritten, 7 cases),
+  `LevelMeterScreenTest` (2 cases), plus 6 new cases appended to `ReaderPollingTest`
+  (`R_032 captureStatus reads every real process-wide signal at once`, `R_030 nowViewState is
+  Active with the real session's own facts once CaptureState confirms it is live`, `R_036 a
+  session with a real deviceTier makes Can get better appear...`, etc.) and one regression test in
+  `StatusViewStateMapperTest` (`R_031 asrStatusLabel and vadStatusLabel never carry their own
+  doubled ASR VAD prefix`).
+
+**Left open / not done:**
+- **R-035 is partial.** The Capture destination is reachable only once WP3 (owner of
+  `ui/navigation/**`) flips `ReaderDestination.CAPTURE.hasScreen` to `true` and dispatches it to
+  `CaptureStatusContent` — both are WP3's file, out of this package's row. `CaptureStatusContent`
+  itself is built, tested via `CaptureStatusScreen`'s own suite, and ready to be called.
+- **Input device (name/verified/resampler id) and the Level signal (dBFS) are honestly "not
+  measured" on every build, not a bug this package can fix.** `RealCaptureService` (WP11a's file)
+  knows the selected `AudioDeviceDescriptor` and `AudioRecordSource.resamplerIdentity` but
+  republishes neither to a process-wide holder the way `CaptureState`/`ThermalStatus`/`RigStatus`/
+  `StorageForecast` are; no level (dBFS) signal exists in `:pipeline` at all. Both are named,
+  in-code, as gaps for whichever package next owns `RealCaptureService.kt`'s wiring.
+- **Two UI affordances are inert, both documented in code as intentional gaps:** Now's "Stations
+  heard · All N" trailing action (no "view all stations from Now" navigation hook exists) and the
+  missing-model failed block's "Install a model" action (`onOpenModels`, wired to `{}` in
+  `NowContent` — the Models destination is WP3/WP10's).
+- **"Capturing, text only" is not reachable from real data** — no signal for a paused audio-
+  retention state exists in `:pipeline` yet (see What changed).
+- Deliberate copy divergences from the literal artboard text (band count, Pass C, "voices" →
+  "overs") are listed above, each with its constitution-I reasoning in code and here.
+
+---
+
+## 2026-09-08 (ui-conformance WP7: search)
+
+### (pending) — ui-conformance WP7 · search tests green on the rewired host
+
+**Scope:** `:app` only — `ui/screens/SearchFiltersSheet.kt`, `ui/screens/SearchScreen.kt`,
+`ui/screens/SearchContentTest.kt`. Addendum to the WP7 entry directly below, same package, after
+the coordinator integrated this package's `596b958` with WP4 and WP3's host rewire (branch
+`worktree-agent-ade7be2062e7805e7`, `HEAD 47d5a7e`) and ran the full suite for the first time:
+408 tests, 402 passing, 6 failing, all in `SearchContentTest`/`SearchFiltersSheetTest`. Merged in
+with `git merge --ff-only` (this branch was an ancestor; no stash, no rebase) before fixing.
+
+**Requirements/ACs:** R-061 (filter sheet, refined by the fixes below), R-063 (search flows,
+refined), guide §6.9 (sheet/scrim contract — one of the two real bugs found here).
+
+**What changed — six failures, two were real product bugs, four were test bugs:**
+1. **Code fix (real bug).** `SearchFiltersSheet`'s six sections plus `Sheet`'s own title/`Clear
+   all` row had no scrollable ancestor at all — on real content (16 band chips wrapped over
+   several lines, four attribution rows, two include rows, the action button) this is taller than
+   a phone screen, so `Clear all`, every checkbox, the callsign field and `Show N overs` were
+   already unreachable *on a device*, not just in the test harness; the tests correctly caught it
+   (`Semantic Node has no parent layout with a Scroll SemanticsAction`). Fixed by wrapping the
+   `Sheet(...)` call (title row included, not just this package's own content below it) in a
+   `Column(Modifier.fillMaxHeight(0.85f).verticalScroll(...))` — the 0.85 fraction is guide §6.9's
+   "never taller than the screen minus ~120px" rule in fraction form.
+2. **Code fix (real bug, found by fixing #1).** Capping the sheet at 85% height and making it
+   scrollable is what exposed a second, latent bug: `FiltersSheetOverlay`'s scrim and the sheet
+   were two independent `fillMaxSize()` siblings in a `Box`. Once the sheet was properly sized
+   (previously its unbounded, unscrollable `Column` had been overflowing past the scrim's own
+   click point in a way that happened not to matter), the scrim's full-screen clickable region and
+   the sheet's own 85%-height region overlapped at the point Compose's `performClick()` targets,
+   and the topmost element (the sheet) always won the tap regardless of intent — `tapping the
+   scrim dismisses the filters sheet` (`SearchScreenTest`) started failing too the moment the sheet
+   was properly sized, confirming this was a real, previously-masked bug, not a test artifact.
+   Restructured `FiltersSheetOverlay` as a `Column` (scrim `weight(1f)`, sheet `fillMaxHeight(0.85f)`)
+   so each owns a **distinct, non-overlapping** region — the scrim is only ever tappable in the
+   strip actually exposed above the sheet, which is also the only place a real operator could tap
+   it. Re-ran `SearchScreenTest` in full after this fix: all 16 tests pass.
+3. **Code fix (real bug, found by the same fix).** `SearchFiltersSheet`'s `MonoField` put its
+   `contentDescription` on the wrapping `Row` instead of the `BasicTextField` itself — a `Row` has
+   no `RequestFocus`/text-input semantics action to inherit one from, so `performTextInput` could
+   never reach the callsign/frequency/range fields by their content description (`Failed to assert
+   the following: (RequestFocus is defined)`), which was never exercised before since this
+   package's tests never ran under Gradle until this integration. Moved the content description
+   onto the `BasicTextField` itself, matching the pattern `SearchScreen.kt`'s own query field
+   already uses correctly.
+4. **Test fix, test was wrong.** `SearchContentTest`'s empty-result test asserted the
+   `SearchWidenSuggestions` narrowing-summary text existed immediately after `setContent` (later,
+   after adding one `waitForIdle()`, still immediately). That suggestion is computed inside a
+   `LaunchedEffect` that makes a real Room query (`SimilarCallsigns.near`); Room's own executor
+   runs on a genuine background thread `waitForIdle()`'s composition-clock idling does not track,
+   so the assertion could observe the screen before that query's result had landed — the standard
+   failure mode for Compose UI test content whose state depends on I/O outside the composition
+   clock, and this package's own report had already flagged the risk before this test ever ran.
+   Fixed by polling with `composeTestRule.waitUntil(timeoutMillis = 5_000) { ... }` before the
+   assertion, the idiomatic pattern for exactly this class of race — not a fabricated wait, a real
+   bound on how long a background Room query is allowed to take.
+5. **Test fix, test was missing setup (same underlying cause as #4, no code change).**
+   `SearchContentTest` had no `@Before` deleting/recreating the Room database, unlike this
+   package's other Robolectric+Room test files (`SearchPollingTest`, `SearchWidenSuggestionsTest`,
+   `SimilarCallsignsTest`), which explicitly guard against a stale `ort.db` left by an earlier test
+   class in the same Robolectric process. Added the same `@Before` for consistency and defense in
+   depth, though the actual fix for the reported failure was #4 above (this alone did not resolve
+   it — confirmed empirically before adding #4's `waitUntil`).
+
+**Verified:**
+- `git merge --ff-only worktree-agent-ade7be2062e7805e7` — fast-forward, `596b958..47d5a7e`;
+  `git log --oneline -1` confirmed `47d5a7e`.
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL, 408 tests, 0 failed, 0 skipped**
+  (counted from every `app/build/test-results/testDebugUnitTest/*.xml`'s `tests`/`failures`
+  attributes, 59 files) — the six named failures above and no others.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+  `dependencyRules: OK`, `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered (unchanged — this addendum fixes
+  existing tests, adds none).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 181 of 419.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- The sheet's drag-to-dismiss (guide §6.9) is still not implemented — dismiss is scrim-tap only,
+  unchanged by this addendum.
+- Every other gap the WP7 entry below already lists (R-065 highlighted-match spans, `FilterChip`'s
+  missing leading-icon slot, the recently-heard-frequency chips, `RecentSearches`' single-term
+  label) is unchanged by this addendum.
+
+### (pending) — ui-conformance WP7 · search: initial, filters sheet, grouped results, empty and unavailable states
+
+**Scope:** `:app` only — `ui/screens/SearchScreen.kt` (rewritten), new `ui/screens/SearchFiltersSheet.kt`,
+new `ui/screens/SearchContent.kt`, `ui/data/SearchViewData.kt` (rewritten), new
+`ui/data/RecentSearches.kt`, and their tests. No file outside this list touched.
+
+**Requirements/ACs:** R-060 (halt, fixed), R-061 (halt, fixed), R-062 (spec, fixed), R-063
+(design, fixed), R-064 (design, fixed), R-065 (design, fixed — with one gap noted below).
+FR-UI-3.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content): every attribution in a search
+  result still renders through the shared `AttributionMarker`/`LogRow` machinery — nothing here
+  re-derives a state. Principle II (Test-Backed Change): every new/changed function has a test
+  named for the id it establishes; `SearchFilterParser`'s new time-range math, `SearchFacetCounts`,
+  `SimilarCallsigns`'s edit-distance and `RecentSearches`'s persistence are each covered on their
+  own before the screens that use them. Principle VII (Boundaries Are Structural): the filter
+  sheet's `Show N overs` and every count shown is computed from already-fetched rows
+  (`SearchFacetCounts`) rather than invented — guide §9's "never fabricate a number" is a type-level
+  property of `SearchFacetCounts.countMatching`, not a copy-review rule.
+- **R-060 (halt).** `SearchScreen` no longer renders a screen title (the destination header already
+  says "Search") and no longer has a second, unstyled `Search` action text. The run action is the
+  keyboard's own IME search action; a `PrimaryButton`-styled `Search` appears only once the query
+  field is non-blank.
+- **R-061 (halt).** Band, attribution state and rejected/corrected are no longer tap-to-cycle text.
+  `SearchFiltersSheet` (new file, WP2's `Sheet`) renders: a callsign-prefix field; band as a
+  `FilterChip` row (`All` + every `Band` entry) plus an exact-frequency field; time as four
+  `FilterChip`s (`Tonight` / `Last 7 nights` / `Range` / `All`); attribution as four `CheckboxRow`s
+  with real counts and the shared `AttributionMarker` shape as each row's leading icon; `Rejected
+  segments` / `Corrected by you` as two more `CheckboxRow`s with counts. `SearchFilterInput.band`/
+  `.timeFilter`/`.attributionStates` are now typed, closed-set fields — no `Band?`/`AttributionState?`
+  single-value tap-to-cycle field remains.
+- **R-062 (spec).** `SearchTimeFilter` (`TONIGHT`/`LAST_7_NIGHTS`/`RANGE`/`ALL`) replaces the single
+  `Date (YYYY-MM-DD)` field. `RANGE` reveals two mono fields (`yyyy-MM-dd'T'HH:mm`) that
+  `SearchFilterParser.parse(input, nowUtcMillis)` turns into a real `[fromUtcMillis, toUtcMillis)`
+  pair; `TONIGHT`/`LAST_7_NIGHTS` are computed from `nowUtcMillis` (passed in, not read from a
+  clock, so the parser stays a pure function under test).
+- **R-063 (design).** Five states, all in the rebuilt `SearchScreen`: **initial** (focused query
+  field, `Filters`/`Tonight`/`All nights` chips, `RECENT` rows with counts from the new
+  `RecentSearches` app-private store, `TRY` hints, the "nothing is sent anywhere" footer); **results**
+  (grouped by night with a `bg/group` day header, the shared `LogRow` — time/frequency columns
+  included — applied filters as dismissable chips, a "N overs · M nights · K stations" count line,
+  `Newest first`); **empty** (names which filters narrowed it via `SearchWidenSuggestions`, offers
+  to widen each with its *real, queried* count, and near-miss callsigns one edit away via the new
+  `SimilarCallsigns`); **unavailable** (WP2's amber `Banner` naming what did and did not apply,
+  `Retry`, and the results the filters that *did* apply produced, beneath).
+- **R-064 (design).** `AttributionState.prose()`/`SearchTimeFilter.label()`/`Band.prose()` (new
+  extension functions in `SearchViewData.kt`) are the only place these enums become UI text —
+  `Confirmed`, not `CONFIRMED`; `160M`/`1.25M`, not `HF_160M`/`VHF_1_25M`.
+- **R-065 (design).** Search results render through `org.ort.app.ui.components.LogRow` (WP2's
+  component) via a new `TransmissionListEntryViewState.toLogRowViewState()` mapper — the same
+  time/frequency columns, marker and badge treatment as the Log. **Gap:** `LogRowViewState.transcript`
+  is a plain `String`; WP2's `LogRow` has no way to carry highlighted spans, so matched-word
+  `highlightGreen` emphasis (part of R-065/`Search-Results.dc.html`) is not rendered. Not built as
+  a local look-alike per this package's own ownership rule — noted here and in the report instead.
+  `LogRow`'s transcript parameter would need to accept an `AnnotatedString` (or a list of highlight
+  ranges) for a future WP2 change to close this.
+- `SearchPolling.search` now takes a `SearchFacetFilter` alongside `SearchQueryParams`: the DAO
+  only accepts one nullable `AttributionState` and one nullable rejected flag, so the base query
+  runs with neither set and the *set* of attribution states plus the two independent include
+  toggles are applied client-side; `SearchResult.facetCounts` carries the pre-facet-filter
+  breakdown so the sheet's checkboxes and `Show N overs` are exact, not re-queried per tap.
+- New `ui/screens/SearchContent.kt`: the content composable `OrtNavHost` (WP3) dispatches `SEARCH`
+  to, per this package's row in the plan (`SearchContent(input, result, onInputChange, onSearch,
+  onOpen, modifier)`). It owns the pieces `SearchScreen` needs beyond `input`/`result` — `recent`
+  (loaded/recorded via `RecentSearches`), the no-results `widenSuggestions` (computed via
+  `SearchWidenSuggestions.build` only once a search comes back empty) and the filters-sheet
+  open/closed state — so `SearchScreen` itself stays a pure function of view-state with no
+  `Context`. `OrtNavHost.kt` itself is untouched (WP3's file) — see "Left open" below.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintFormat` then `:app:ktlintCheck` — **BUILD SUCCESSFUL** (main + test
+  source sets).
+- `.\gradlew.bat :app:detekt` — **BUILD SUCCESSFUL**, zero findings (`SearchScreen`'s ten-parameter
+  view-state/callback signature and its test helper are `@Suppress("LongParameterList")`, matching
+  the precedent already in `:data`'s `SearchDao.kt`; `SearchFiltersSheet` was split into six
+  section-composables to clear `LongMethod` genuinely rather than suppressed).
+- `.\gradlew.bat dependencyRules` — OK, 17 modules, every edge permitted.
+- `.\gradlew.bat platformGuards` — OK, no analytics/telemetry, `INTERNET` only in `:net`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered (`results/coverage-matrix.md`
+  regenerated by the mandated gate command, not hand-edited).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 181 of 419.
+- `.\gradlew.bat :app:compileDebugKotlin` — **fails**, entirely inside `OrtNavHost.kt` (WP3's file,
+  outside this package's ownership), at its stale inline `SearchContent`/calls to
+  `SearchFilterParser.parse(input)` and the old five-parameter `SearchScreen`. Every compiler error
+  is at `OrtNavHost.kt:276-280`; zero errors in any file this package owns. See "Left open" below —
+  this is the coordination point the plan's own WP7 row names ("WP3 deletes the inline copies from
+  the host and calls those"), not a defect introduced here. Consequently `.\gradlew.bat build
+  dependencyRules platformGuards` and `.\gradlew.bat :app:assembleDebug` also fail at the same
+  single step (confirmed by running both; every other module — `:data`, `:pipeline`, `:net`,
+  `:capture-android`, `:rig-usb`, `:core` — built/tested/linted clean first). `:app:testDebugUnitTest`
+  could not be run for the same reason, so the new tests below are verified by careful manual
+  review and by the arithmetic in `SearchFilterParserTest` being independently re-derived and
+  checked, not by a green Gradle test run — flagged explicitly rather than claimed.
+
+**Left open / not done:**
+- `OrtNavHost.kt`'s inline `SearchContent`/`SearchFilterParser.parse(input)`/five-parameter
+  `SearchScreen(...)` call sites are stale and need WP3 to delete them and call this package's new
+  `SearchContent(input, result, onInputChange, onSearch, onOpen, modifier)` instead, per the plan's
+  own WP7 row. Until that lands, `:app` does not compile and none of this package's tests have run
+  under Gradle.
+- R-065's highlighted-match spans are not rendered (see "Gap" above) — needs a WP2 change to
+  `LogRowViewState`/`LogRow` to carry highlight ranges.
+- `FilterChip` (WP2) has no leading-icon slot, so the `Filters` chip is text-only where the artboard
+  shows a filter glyph.
+- The artboard's `Search-Filters.dc.html` shows a handful of *recently-heard* exact frequencies as
+  chips (e.g. `145.230`, `146.960`) alongside the band chips; that would need a new distinct-frequency
+  query this package did not add. Implemented instead as an always-available exact-frequency text
+  field (mono, matching the callsign-prefix field's style) plus the full closed set of `Band` chips.
+- `RecentSearches.record`'s label is the single primary term (`callsign` > `text` > `frequencyMhz`);
+  a filters-only search (band/time/attribution only, no callsign/text/frequency) has no term to
+  record — matches `Search.dc.html`'s single-term rows but not its "ambiguous on 146.960"-style
+  composite label, which would need its own copy-generation rule.
+- The filters sheet is a full-screen scrim + bottom-aligned `Sheet`, not a true draggable bottom
+  sheet — guide §6.9's drag-to-dismiss is not implemented; dismiss is scrim-tap only.
+
 ## 2026-09-08 (ui-conformance WP9: guided setup sequence)
 
 ### (pending) — ui-conformance WP9 · guided setup sequence: welcome, permissions, input and route verification, level, overnight, radio, ready
@@ -335,8 +679,110 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
   `results/ui-audit/register.md`.
 
 ---
-
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
+
+### (pending) — ui-conformance WP3 · host dispatches to WP4 and WP7 content; live bar fed by LiveBarPolling
+
+**Scope:** `:app` `ui/navigation/**` only (`OrtNavHost.kt`, `ReaderDestination.kt`,
+`Drawer.kt` untouched) and `ui/data/DrawerCounts.kt` (its `liveBar` fallback and matching tests
+removed, station/frequency counts kept). Reconciliation addendum to the WP3 entry directly below,
+after merging `integrate-wp7` (WP4 + WP7, HEAD `11affed`) — main must not receive WP4/WP7 until
+this host rewiring lands, per the lead's own note.
+
+**Requirements/ACs:** R-017, R-022 (both refined, not reopened, by this addendum), FR-UI-7.
+
+**What changed:**
+- **Constitution Check.** Principle I: the drawer's live bar is now WP4's real
+  `LiveBarPolling.current` (an actually-measured tone/label, gated on this exact session actively
+  capturing) rather than this package's own approximation. Principle VII: `ui/screens/**` and
+  `ui/data/SearchViewData.kt`/`LiveBarPolling.kt` (WP4/WP7's files) are untouched — every change
+  here is `OrtNavHost.kt`'s dispatch, `ReaderDestination.CAPTURE.hasScreen`, and this package's own
+  `DrawerCounts.kt`.
+- **`git merge --ff-only integrate-wp7`** — fast-forward, `329e7d4..11affed`, clean (WP3 is an
+  ancestor of `integrate-wp7`; nothing to resolve).
+- **SEARCH** (R-017): the inline `SearchContent`/`SearchScreen` call and the old
+  `SearchFilterInput`/`SearchFilterParser`/`SearchPolling` shapes are gone from `OrtNavHost.kt` —
+  WP7 replaced all three with a materially different model (`SearchTimeFilter`, a
+  `Set<AttributionState>`, `SearchFacetFilter`, `SearchPolling.search(context, params,
+  facetFilter)`, `SearchFilterParser.parse(input, nowUtcMillis)`). The host now dispatches to WP7's
+  `org.ort.app.ui.screens.SearchContent(input, result, onInputChange, onSearch, onOpen, modifier)`
+  — note its `onSearch: () -> Unit` is a trigger, not a result setter, so the host's own `onSearch`
+  lambda runs `SearchFilterParser.parse` + `SearchPolling.search` and writes `searchResult` itself.
+  `searchInput` is now `rememberSaveable` via a new `SearchFilterInputSaver` (built entirely in this
+  file — every field is a `String`/`Boolean`/enum-by-name, joined into one delimited `String`, no
+  edit to WP7's types); `searchResult` stays plain `remember` — `SearchResult` nests
+  `TransmissionDetail` (`Attribution`, `InspectionViewState`), and hand-rolling a faithful Saver for
+  that graph is out of proportion to this package's row. R-017 itself (back from a drill-in restores
+  Search's state) is unchanged in substance — this is the same lifted-to-the-host state as before,
+  now shaped to match WP7's real API instead of this package's placeholder guess at it.
+- **CAPTURE:** dispatches to WP4's `org.ort.app.ui.screens.CaptureStatusContent(context, sessionId,
+  modifier)`; `ReaderDestination.CAPTURE.hasScreen` flips to `true` (was `false`) — the drawer row's
+  "not built" sub-line and disabled-text colour, both computed from `hasScreen`, update themselves
+  with no other change.
+- **NOW:** dispatches to WP4's `org.ort.app.ui.screens.NowContent(context, sessionId,
+  onOpenTransmission, onOpenStation, modifier)` — its real signature (confirmed by reading the file)
+  takes no `onOpenModels`; the coordinator's speculative alternative did not apply.
+- **Live bar (R-022):** `DrawerCounts.liveBar` (this package's `CaptureState`/`ThermalStatus`/
+  `StorageForecast` fallback) is deleted, along with its six tests. `OrtNavHost`'s
+  `rememberDrawerLiveState` now calls WP4's real `LiveBarPolling.current(context, sessionId)`,
+  gated the same way WP4's own callers (`NowContent`, `CaptureStatusContent`) gate it — only while
+  `CaptureState.isCapturing && CaptureState.sessionId == sessionId`, never for an ended or
+  never-started session. **New, found only by reading `NowScreen.kt`/`CaptureStatusScreen.kt`
+  before wiring this:** both already pin their *own* `LiveBar` internally (WP4's own doc comments
+  on `NowContent`/`CaptureStatusContent` say so). `NavHostBody` now skips the host-level bar
+  exactly when the current destination is `NOW` or `CAPTURE` and no drill-in is open, so the two
+  are never stacked — every other destination and every drill-in still gets the host's bar, as
+  R-022 requires.
+- `DrawerCounts.kt`/`DrawerCountsTest.kt`: station/frequency counts (`R-010`) kept unchanged; only
+  the live-bar half removed, with a doc-comment pointer to this addendum for why.
+
+**Verified:**
+- `git log --oneline -1` — `11affed` after the fast-forward merge, before this addendum's own
+  commit.
+- `.\gradlew.bat :app:compileDebugKotlin` / `:app:compileDebugUnitTestKotlin` — both **BUILD
+  SUCCESSFUL** (first attempt after the merge failed to compile — WP7's rewritten
+  `SearchFilterInput`/`SearchQueryParams`/`SearchPolling` shapes; fixed by rewriring
+  `OrtNavHost.kt` as described above).
+- `.\gradlew.bat :app:detekt`, `:app:ktlintMainSourceSetCheck`, `:app:ktlintTestSourceSetCheck` —
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules`/`platformGuards`
+  **OK** (17 modules, every edge permitted; no analytics/telemetry, `INTERNET` only in `:net`).
+  `build` itself **fails** — `:app:testDebugUnitTest` reports **408 tests, 6 failed, 402 passing**.
+  Every failure is in `SearchContentTest`/`SearchFiltersSheetTest` (WP7's own files, `ui/screens/**`,
+  outside this package's ownership row) — confirmed pre-existing, not caused by this reconciliation:
+  run in isolation (`--tests "org.ort.app.ui.screens.SearchContentTest" --tests
+  "org.ort.app.ui.screens.SearchFiltersSheetTest"`) the same 6 fail the same way, and WP7's own
+  CHANGELOG entry states its tests were "verified by careful manual review... not by a green Gradle
+  test run" because `:app` could not compile at all when WP7 landed. This reconciliation is the
+  first time these tests have actually run — the 6 failures (1 `assertExists` on "is doing the
+  narrowing." text, 5 `performScrollTo` "Semantic Node has no parent layout with a Scroll
+  SemanticsAction") are genuine, pre-existing defects in `ui/screens/SearchContent.kt`/
+  `SearchFiltersSheet.kt` this package's ownership row does not cover — not touched, per the
+  reconciliation's own "editing only `ui/navigation/**` and `CHANGELOG.md`" instruction. Every one
+  of this package's own tests (`DrawerContentTest` 14/14, `DrawerCountsTest` 2/2,
+  `DrawerSessionHeaderViewStateTest` 7/7) passes, as does `ReaderAccessibilityTest` (now WP4's
+  `CaptureStatusScreen`-based first test plus this package's two, all three green).
+  `.\gradlew.bat :app:assembleDebug` run standalone — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`; `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — `up to date (181 covered of 419)`.
+
+**Left open / not done:**
+- The 6 pre-existing `SearchContentTest`/`SearchFiltersSheetTest` failures above are **not fixed**
+  — `ui/screens/**` is outside this package's ownership row, and the reconciliation instruction was
+  explicit: "editing only `ui/navigation/**` and `CHANGELOG.md`". Flagged for the lead to route to
+  WP7 (or whoever owns the next pass on those files). `:app:testDebugUnitTest`/`build` will not be
+  green until they are fixed.
+- `searchInput`'s `rememberSaveable` Saver is new and untested against an actual process-death
+  restore (only exercised via normal composition in this package's own tests) — Robolectric alone
+  cannot prove a real `Bundle` round trip; a device/emulator check is out of this package's reach
+  (the plan tells builders not to touch the emulator).
+- The live-bar suppression on `NOW`/`CAPTURE` is a two-destination `==` check, not a general
+  "does this screen embed its own bar" flag — if a future destination adds its own embedded
+  `LiveBar`, whoever adds it needs to extend this same `embedsOwnLiveBar` condition in
+  `OrtNavHost.kt`'s `NavHostBody` (or the two packages agree on a shared signal); nothing enforces
+  it structurally.
 
 ### (pending) — ui-conformance WP3 · drawer, header, live bar, drill-in header, navigation origin
 
