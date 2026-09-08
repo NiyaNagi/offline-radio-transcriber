@@ -225,7 +225,11 @@ private fun FrequencyHeaderSection(
 
         Column(modifier = Modifier.padding(top = OrtSpacing.md)) {
             val hasNotListeningHours = state.activityPattern.any { it.state == HourActivityState.NOT_LISTENING }
-            SectionHeader(label = "Typical night, by hour", trailingActionLabel = "More", onTrailingAction = onOpenChange)
+            SectionHeader(
+                label = "Typical night, by hour",
+                trailingActionLabel = "More",
+                onTrailingAction = onOpenChange,
+            )
             ActivityPatternChart(
                 pattern = state.activityPattern,
                 title = "",

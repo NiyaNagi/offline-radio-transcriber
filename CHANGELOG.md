@@ -3755,6 +3755,92 @@ conflicting with the builders who own `:app`.
 
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
+### (pending) — ui-conformance WP8 · station identity discoverable; shared day-of-week grid
+
+**Scope:** `:app` `ui/screens/StationScreen.kt`, `ui/screens/StationPatternScreen.kt`,
+`ui/data/StationsAndFrequencies.kt`; `ui/screens/StationScreenTest.kt`,
+`ui/screens/StationPatternScreenTest.kt`. Also a lint-debt cleanup across this package's own files
+flagged after main's `buildSrc` fix made `:app:detekt`/`:app:ktlintCheck` real again on this
+worktree. Addendum to this package's own WP8 entry directly below, filed against register R-192
+(Detail validator).
+
+**Requirements/ACs:** R-192 (`Station`, `Station-Identity`, design), R-209 (grid orientation,
+superseded by WP2's own fix — see below).
+
+**What changed:**
+
+*Constitution Check.* Principle VII (Boundaries Are Structural) cuts both ways this round: R-192's
+fix is a small, targeted exception to "reuse the shared header" (the shared `DrillInHeader` has no
+way to give its kebab a per-screen description/testTag, so this screen draws its own header rather
+than leave the kebab undiscoverable); the DayOfWeekGrid switch is the opposite move — WP2 has since
+built the real thing, so this package's own look-alike is deleted rather than kept.
+
+- **R-192 (design, register): the header kebab is discoverable.** `Station.dc.html` draws no
+  explicit Identity action, section preview or row anywhere in its body — checked directly against
+  the artboard. The kebab in the header is the *only* affordance, and the shared `DrillInHeader`
+  gives it one hardcoded description ("More") and no `testTag` at all, with no parameter to
+  override either per screen. New `StationDetailHeader` (this screen's own file) matches
+  `DrillInHeader`'s exact layout and back-icon behaviour but gives its kebab a real, specific
+  `contentDescription = "Station identity"` and `testTag("station-identity-open")`. Worth routing
+  to WP2 as a `kebabDescription`/`kebabTestTag` parameter on the shared component if another
+  screen's kebab needs the same treatment — flagged, not built here, since this round's brief
+  scoped the fix to Station detail only.
+- **R-209 superseded — switched back to the shared `DayOfWeekGrid`.** WP2 has since merged
+  `DayOfWeekGrid(orientation = DayOfWeekGridOrientation.DaysAsRows)` with the exact board
+  orientation (days as rows, hour axis along the top) and legend wording ("listened, not heard" /
+  "heard often" / "not listening") this package's own `StationHourByDayGrid` hand-rolled last
+  round. Deleted this package's whole look-alike (`StationHourByDayGrid`, `HourLabelCell`,
+  `HourByDayCell`, `StationHourByDayLegend`, `LegendDot`, `dayAbbreviation`, and their supporting
+  constants) and switched `StationPatternScreen` to the shared component — guide's own rule: never
+  hand-roll a look-alike of a component that exists. **Nothing this package's grid did is missing
+  from the shared one** — same three-state cells, same hatch, same legend wording, same axis
+  labelling; the only difference is `HourByDayActivityCell` (this package's own bucket, local-hour)
+  needing a one-line `toDayHourCells()` mapping into the shared grid's `DayHourCell` shape, which
+  stays.
+- **Lint debt cleanup** (found once `:app:detekt`/`:app:ktlintCheck` started reporting real results
+  again on this worktree — see the entry below's own "Left open" for why they were not before):
+  - `StationsListScreen` had grown to 10 parameters (`LongParameterList`, threshold 9). Folded
+    `stations`/`unidentified`/`heardAllTimeCount`/`heardTonightCount` into a new
+    `StationsListState` holder (`ui/data/StationsAndFrequencies.kt`, alongside this package's other
+    list-row view states — not the screen file itself, which triggered detekt's own
+    `MatchingDeclarationName` the first time this was tried there). `StationsContent`/every test
+    call site updated to build one `StationsListState` rather than pass the four fields loose.
+  - `StationPatternScreen.kt`'s hand-rolled grid (removed above) was itself the source of the
+    `ForEachOnRange`/`MaxLineLength`/argument-wrapping findings main's gate reported — gone with
+    it, not patched.
+  - `FrequencyScreen.kt`/`StationPolling.kt`/`FrequencyChangeFixtures.kt`: `ktlintFormat` re-wrapped
+    the remaining long argument lists and blank-line/import issues; verified by re-running
+    `detekt`/`ktlintCheck` clean afterward, not merely assumed fixed.
+  - `ktlintFormat` also reformatted one file this package does not own
+    (`SearchContentTest.kt`, WP7's) as unrelated collateral from running the module-wide task —
+    reverted with `git checkout --` before committing, so this commit touches only this package's
+    own files.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded to `125ad7a` (WP8's own prior batch, R-206–R-216,
+  merged back in, plus main's `buildSrc` detekt fix and other packages' work).
+- `.\gradlew.bat :app:ktlintFormat :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL, **real**
+  analysis (confirmed: `:app:detekt`/`:app:ktlintMainSourceSetCheck`/`:app:ktlintTestSourceSetCheck`
+  actually executed against real files this time, not `NO-SOURCE` — the report counts are real, not
+  assumed clean). Zero findings after the fixes above.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — BUILD SUCCESSFUL, 962 tests, 0
+  failed, 0 ignored (up from 900; new: `R_192 the header kebab is discoverable as Station identity
+  and opens it`; `R_209`'s own test updated to assert the shared grid's real content description).
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL; `:app:detekt`/every
+  `:app:ktlint*Check` task ran for real inside this gate too (confirmed in the task list, not just
+  the top-level result).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` unchanged.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- The `kebabDescription`/`kebabTestTag` parameter on WP2's shared `DrillInHeader` — flagged above,
+  not built (out of this package's file ownership and not the scope this round's brief gave it).
+- `results/ui-audit/register.md` R-192 marked fixed by this package (see the row itself for the
+  detail).
+
 ### (pending) — ui-conformance WP8 · stations validator fixes: real dominant state, board headers and facts, grid orientation, plurals, frequency facts and change scenario
 
 **Scope:** `:app` `ui/data/StationPolling.kt`, `ui/data/StationsAndFrequencies.kt`,
