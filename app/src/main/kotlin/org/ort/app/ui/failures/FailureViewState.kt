@@ -136,8 +136,18 @@ public data class ThermalViewState(
 public data class BacklogViewState(
     public val waitingCount: Int,
     public val queueHistory: List<Float> = emptyList(),
+    /** Register R-254: the real clock time of the oldest/newest sample [queueHistory] actually
+     * holds — `null` alongside an empty [queueHistory] (fewer than two samples observed yet). */
+    public val queueHistoryOldestLabel: String? = null,
+    public val queueHistoryNewestLabel: String? = null,
     public val oldestOverLabel: String? = null,
+    /** Register R-254: `"Band N.N overs/min · Pass B M.M/min"` — `null` (rendered "Not measured")
+     * with fewer than two [FailureMapper.backlogRateLabel] samples. See that function's own kdoc
+     * for exactly how both halves are derived without fabricating either one. */
     public val growthRateLabel: String? = null,
+    /** Register R-254: `"tier N, RTF X.XX while the net runs"` alongside [growthRateLabel] — `null`
+     * when either the tier or the real-time factor is not currently known. */
+    public val rateSubLabel: String? = null,
     public val captureLabel: String = "Nominal",
 )
 

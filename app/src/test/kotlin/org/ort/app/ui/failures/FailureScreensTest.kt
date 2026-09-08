@@ -296,6 +296,40 @@ class FailureScreensTest {
     }
 
     @Test
+    fun `R_254 F8 the Rate row and chart read Not measured with fewer than two backlog samples`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailBacklogBanner(state = BacklogViewState(waitingCount = 41))
+            }
+        }
+        composeTestRule.onNodeWithText("Not measured").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-backlog-chart-not-measured").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_254 F8 the Rate row shows the Band Pass B split and sub-line, and the chart's real axis times`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailBacklogBanner(
+                    state = BacklogViewState(
+                        waitingCount = 112,
+                        queueHistory = listOf(0.3f, 0.6f, 1f),
+                        queueHistoryOldestLabel = "18:50",
+                        queueHistoryNewestLabel = "19:20",
+                        growthRateLabel = "Band 2.4 overs/min · Pass B 1.6/min",
+                        rateSubLabel = "tier 2, RTF 0.62 while the net runs",
+                    ),
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("Band 2.4 overs/min · Pass B 1.6/min").assertIsDisplayed()
+        composeTestRule.onNodeWithText("tier 2, RTF 0.62 while the net runs").assertIsDisplayed()
+        composeTestRule.onNodeWithText("18:50").assertIsDisplayed()
+        composeTestRule.onNodeWithText("19:20").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-backlog-chart").assertIsDisplayed()
+    }
+
+    @Test
     fun `F15_call the acknowledgement banner dismisses`() {
         var dismissed = false
         composeTestRule.setContent {
