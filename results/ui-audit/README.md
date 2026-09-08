@@ -193,6 +193,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `input-verified` | `InputStatus.Opened` with a USB descriptor, native 48 kHz, a recorded resampler identity, `routeVerified`/`routedDeviceMatches` both true (register R-113). |
 | `input-mismatch` | `InputStatus.Mismatch` — built-in mic routed instead of the chosen USB device (F1, register R-113). Capture is **not** marked running — see "Known gaps" below. |
 | `setup-verified` | Seeds `org.ort.app.setup`'s real `SharedPreferences` (through `SharedPreferencesSetupStore`, not a duplicated key set) so `SetupStateMachine.stepFor` lands at `SetupStep.READY` (S12) directly, its Level row already green (register R-227) — see "Reaching S07/S12" below. |
+| `setup-level` | The same verified-input base as `setup-verified`, but `levelInBand`/`levelPeakDbfs` are left honestly unset so `stepFor` lands at `SetupStep.LEVEL` (S07) directly, from a cold launch (register R-264) — see "Reaching S07/S12" below. |
 | `clock-dst` | F14 (`Fail-Clock.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Clock`. No runtime signal exists; see "Known gaps" below. |
 | `usb-permission` | F16 (`Fail-Usb.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Usb`. No runtime signal exists. |
 | `interrupted-pass` | F17 (`Fail-Interrupted.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Interrupted`. No runtime signal exists. |
@@ -202,34 +203,53 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `calibration` | F22 (`Fail-Calibration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Calibration`, a five-point reliability scatter. No runtime signal exists. |
 | `lexicon-corrupt` | R-154, F12 (`Fail-Lexicon.dc.html`), FR-LEX-12/FR-LEX-30/FR-AST-2 — unlike every scenario above, this one is **not** a `DebugFailureOverride` stand-in: it seeds a real "previous" `lexicon_version` row (2026.08 · 1,104,208 records), then calls the *real* `org.ort.app.ui.data.ModelsController.installLexicon` against a genuinely corrupt bundled asset (`app/src/debug/assets/lexicon-corrupt/lexicon-2026.09.tsv` — a manifest declaring 1,122,410 records whose checksum matches neither the 2 data rows actually present nor their count), through the new `:lexicon` package `org.ort.lexicon.import` (`LexiconImportValidator`/`LexiconImportInstaller`). The genuine `LexiconImportResult.Rejected` this produces is stored in `org.ort.app.debug.LexiconCorruptScenario.lastResult` — see "Known gaps" below for why nothing renders it yet. |
 
-### Reaching S07/S12 (register R-227)
+### Reaching S07/S12 (register R-227, R-264)
 
 Before `setup-verified`, S07 (`Setup-Level.dc.html`) and S12 (`Setup-Done.dc.html`) were
 unreachable on this AVD at all: `SetupStateMachine.stepFor` resumes at `SetupStep.INPUT` until
 `SetupStore.inputVerified` is real, and the only way that becomes real is S05's own 30 s
 raw-signal listen (`RealRouteCheck`) actually hearing something — which the AVD's silent virtual
-mic never does. `setup-verified` seeds the real `SetupStore` preferences (not a fake) so setup's
-own state machine resumes at S12 on its own, no `run-as`/manual `SharedPreferences` edit needed:
+mic never does. `setup-verified`/`setup-level` seed the real `SetupStore` preferences (not a fake)
+so setup's own state machine resumes at S12/S07 respectively, no `run-as`/manual `SharedPreferences`
+edit needed.
+
+**R-264 (V7 accessibility pass) found the recipe below this line used to launch — `adb shell am
+start -n org.ort.app/org.ort.app.ui.setup.SetupActivity` — throws a `SecurityException` on a real
+device.** `SetupActivity` is `android:exported="false"` (`app/src/main/AndroidManifest.xml`; only
+`MainActivity` may launch it, the same restriction `ReaderActivity` has and
+`ScenarioReaderActivity.kt` exists to work around for the reader — see "Why a debug-only reader
+launch alias exists" above). `MainActivity` **is** exported (it is the app's own launcher
+activity) — launch that instead, and let its own real routing decision
+(`SetupStateMachine.isComplete`/`stepFor`, the exact function `SetupActivity` itself calls) carry
+you the rest of the way, exactly as a real cold launch would:
 
 ```powershell
 $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell pm grant org.ort.app android.permission.RECORD_AUDIO
 $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell pm grant org.ort.app android.permission.POST_NOTIFICATIONS
+
+# S12 (Ready), Level row already green:
 .\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-verified
-$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/org.ort.app.ui.setup.SetupActivity
-# lands on S12 (Ready) directly.
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/.MainActivity
+
+# S07 (Level), reached directly rather than via S12's own Fix row:
+.\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-level
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/.MainActivity
 ```
 
-S07 is then one real, sanctioned tap away — S12's own `Fix` action on the Level row — or reachable
-directly, since `setup-verified` leaves `setupComplete` false (the natural resume point stays
-`READY`, and `LEVEL`'s ordinal sits before it, so `SetupActivity.EXTRA_STEP`'s ordinal gate honors
-the request — see that constant's own doc comment):
+**Why `setup-level` exists as its own scenario rather than an `EXTRA_STEP` recipe.**
+`SetupActivity.EXTRA_STEP` (WP9 round 3) is real and still does exactly what its own doc comment
+says — but only for a caller that can actually reach `SetupActivity` directly (WP3's
+`ReaderNavigator`, an in-process caller, not an adb command), and **only when the store's own gate
+allows it**: a requested step is honored only if its ordinal sits at or before
+`SetupStateMachine.stepFor`'s own natural resume point — never a way to skip a verification the
+guide requires (see `SetupActivity.kt`'s own doc comment for the exact rule). `MainActivity` itself
+does not read or forward any `step` extra to `SetupActivity` today (confirmed by reading
+`MainActivity.kt` before writing this — its own `route()` starts `SetupActivity` with no extras at
+all), so there is no adb-reachable path to `EXTRA_STEP` at all right now; `setup-level` reaches S07
+the honest way instead — by seeding a `SetupStore` snapshot whose own natural resume point already
+*is* `LEVEL`, no override needed.
 
-```powershell
-$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start `
-    -n org.ort.app/org.ort.app.ui.setup.SetupActivity --es step LEVEL
-```
-
-**The two OS permissions above are not part of what this scenario seeds** — `RECORD_AUDIO`/
+**The two OS permissions above are not part of what either scenario seeds** — `RECORD_AUDIO`/
 `POST_NOTIFICATIONS` are live `PackageManager` state, not a `SetupStore` preference
 (`SetupStateMachine.stepFor` reads both from a live `PermissionsState`, confirmed by reading it
 before writing this) — grant them the same way `install.ps1` already does for every other scenario

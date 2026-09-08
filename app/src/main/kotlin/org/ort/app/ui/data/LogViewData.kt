@@ -687,12 +687,11 @@ public object LogPolling {
      * fact (`RigStatus.State.Stale`/`Absent` never fabricate a frequency the rig is not presently
      * reporting, so only `Connected` counts here, matching that call site exactly).
      */
-    private fun connectedFrequencies(): List<Long> =
-        (RigStatus.state as? RigStatus.State.Connected)?.bands
-            ?.mapNotNull { it.frequencyHz }
-            ?.distinct()
-            ?.sorted()
-            ?: emptyList()
+    private fun connectedFrequencies(): List<Long> = (RigStatus.state as? RigStatus.State.Connected)?.bands
+        ?.mapNotNull { it.frequencyHz }
+        ?.distinct()
+        ?.sorted()
+        ?: emptyList()
 
     /** R-040's `NEW` badge: the first-ever over heard from a station, across every session, not just this one. */
     private suspend fun firstHeardTransmissionIds(db: OrtDatabase): Set<String> {
