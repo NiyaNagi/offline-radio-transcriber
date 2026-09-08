@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -162,6 +164,8 @@ private fun NotListeningLegend(notListeningLabel: String?, modifier: Modifier = 
             text = if (notListeningLabel != null) "not listening · $notListeningLabel" else "not listening",
             style = OrtType.subLine,
             color = OrtColors.accentAmberText,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
@@ -396,10 +400,25 @@ private fun GridCell(state: HourActivityState?, modifier: Modifier = Modifier) {
  * not heard" (was "quiet" — a word the board never uses here), and the green swatch reads "heard
  * often" (was "heard" — this grid's green is the *frequent*-contact end of the ramp
  * [ActivityPatternChart] itself draws with several steps, not a plain yes/no). The hatch stays
- * "not listening", unchanged — that wording was already right. */
+ * "not listening", unchanged — that wording was already right.
+ *
+ * R-310 (`stations-14-nights/ST03-hourxday-pass3@2x.png`): at a large font scale a plain `Row` of
+ * three unweighted swatches has no room left for the last one, which does not overflow cleanly —
+ * with no `softWrap = false` of its own, its `Text` instead gets measured into a sliver of
+ * remaining width and wraps one letter per line down the right edge. `ActivityPatternChart`'s own
+ * axis-row legend (`By hour` mode, unaffected) never hit this because it only ever lays out that
+ * one item, centred in its own `Box(weight(1f))` — this grid's is the one legend with three items
+ * competing for the same row. A `FlowRow` (the same fix `LogRowMarkerLine` already uses elsewhere
+ * in this package for an equivalent "the last item has nowhere to go" defect) wraps a whole swatch
+ * — its dot and its label together — onto its own line instead, never splitting one mid-label. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DayOfWeekGridLegend(modifier: Modifier = Modifier) {
-    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md)) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(OrtSpacing.xs),
+    ) {
         LegendSwatch(color = OrtColors.chartNeutralListenedSilent, label = "listened, not heard")
         LegendSwatch(color = OrtColors.chartGreenRamp[0], label = "heard often")
         NotListeningLegend(notListeningLabel = null)
@@ -416,7 +435,7 @@ private fun LegendSwatch(color: Color, label: String, modifier: Modifier = Modif
         Canvas(modifier = Modifier.size(7.dp)) {
             drawRoundRect(color = color, cornerRadius = CornerRadius(1.5.dp.toPx()))
         }
-        Text(text = label, style = OrtType.subLine, color = OrtColors.textDim)
+        Text(text = label, style = OrtType.subLine, color = OrtColors.textDim, maxLines = 1, softWrap = false)
     }
 }
 
