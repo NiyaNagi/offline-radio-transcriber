@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -27,10 +29,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
+import org.ort.app.ui.components.FieldTone
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.LogRow
@@ -95,7 +99,7 @@ public fun SearchScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = OrtSpacing.lg),
         ) {
-            SearchHeaderRow(input = input, onInputChange = onInputChange, onSearch = onSearch)
+            SearchHeaderRow(input = input, result = result, onInputChange = onInputChange, onSearch = onSearch)
             QuickFilterChipsRow(
                 input = input,
                 onInputChange = onInputChange,
@@ -145,6 +149,7 @@ public fun SearchScreen(
 @Composable
 private fun SearchHeaderRow(
     input: SearchFilterInput,
+    result: SearchResult?,
     onInputChange: (SearchFilterInput) -> Unit,
     onSearch: () -> Unit,
 ) {
@@ -157,50 +162,44 @@ private fun SearchHeaderRow(
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
         val mono = isCallsignLike(input.text) || isFrequencyLike(input.text)
-        // R-063/R-060 (WP2 follow-up): the shared `TextField` — no leading-icon slot of its own,
-        // so the search glyph and the clear (x) sit either side of it rather than inset inside its
-        // own bordered box as the earlier hand-rolled field drew them, and it has no
-        // `keyboardOptions`/`keyboardActions` params, so the keyboard's own "search" IME action
-        // (this screen's run action, per R-060) is lost — the visible `PrimaryButton` below is the
-        // only run action now once the field is non-blank. Its `errorText` styles in `halt/text`
-        // (capture-stopped red, constitution: "red is for one thing"), which is the wrong colour
-        // for "the text term was not applied" (a `DEGRADED` fact, not a halt), so this state no
-        // longer draws its own struck-through cue on the field either — the amber `Banner` in
-        // `UnavailableState` right below it is what actually says so, in words, either way.
-        Icon(
-            imageVector = OrtIcons.search,
-            contentDescription = null,
-            tint = OrtColors.textFaint,
-            modifier = Modifier.width(15.dp).height(15.dp),
+        val notApplied = result?.textSearchUnavailable == true
+        // R-060/R-063 (WP2 follow-up, round two): the shared `TextField` now takes the search
+        // glyph and the clear (×) inside its own bordered box (`leadingIcon`/`trailingAction`, per
+        // `Search.dc.html`), the keyboard's own "search" IME action
+        // (`keyboardOptions`/`keyboardActions`), and its `modifier` lands on the field's own root
+        // node — `Modifier.weight(1f)` below works directly, no `Box` wrapper needed. `errorTone =
+        // FieldTone.Degraded` keeps "the text term was not applied" amber, never the `halt/text`
+        // red constitution reserves for capture actually having stopped.
+        TextField(
+            value = input.text,
+            onValueChange = { onInputChange(input.copy(text = it)) },
+            mono = mono,
+            placeholder = "Search transcripts, callsigns, frequencies",
+            contentDescriptionText = "Search text",
+            leadingIcon = OrtIcons.search,
+            trailingAction = if (input.text.isNotEmpty()) {
+                {
+                    Icon(
+                        imageVector = OrtIcons.dismiss,
+                        contentDescription = "Clear search text",
+                        tint = OrtColors.textFaint,
+                        modifier = Modifier
+                            .width(14.dp)
+                            .height(14.dp)
+                            .clickable(role = Role.Button, onClickLabel = "Clear search text") {
+                                onInputChange(input.copy(text = ""))
+                            },
+                    )
+                }
+            } else {
+                null
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+            errorText = if (notApplied) "Not applied" else null,
+            errorTone = FieldTone.Degraded,
+            modifier = Modifier.weight(1f),
         )
-        // `TextField`'s own outer wrapper always `fillMaxWidth()`s itself regardless of the
-        // modifier passed in (that modifier lands on the inner field only, by its own design —
-        // see its KDoc); `weight(1f)` given directly to it has no direct-child-of-Row to apply to
-        // and is silently dropped, so the field would otherwise claim the Row's full width and
-        // push the clear icon/`PrimaryButton` out past it. Wrapping in a `Box(Modifier.weight(1f))`
-        // gives `TextField` a properly-weighted box to fill instead.
-        Box(modifier = Modifier.weight(1f)) {
-            TextField(
-                value = input.text,
-                onValueChange = { onInputChange(input.copy(text = it)) },
-                mono = mono,
-                placeholder = "Search transcripts, callsigns, frequencies",
-                contentDescriptionText = "Search text",
-            )
-        }
-        if (input.text.isNotEmpty()) {
-            Icon(
-                imageVector = OrtIcons.dismiss,
-                contentDescription = "Clear search text",
-                tint = OrtColors.textFaint,
-                modifier = Modifier
-                    .width(14.dp)
-                    .height(14.dp)
-                    .clickable(role = Role.Button, onClickLabel = "Clear search text") {
-                        onInputChange(input.copy(text = ""))
-                    },
-            )
-        }
         if (input.text.isNotBlank()) {
             PrimaryButton(
                 text = "Search",

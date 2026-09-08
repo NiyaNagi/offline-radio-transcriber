@@ -5,6 +5,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import org.junit.Rule
@@ -111,6 +112,41 @@ class SearchScreenTest {
         assert(current.text.contains("mayday")) {
             "expected the query field edit to reach onInputChange, got ${current.text}"
         }
+    }
+
+    @Test
+    fun R_060_the_keyboard_search_action_runs_the_search() {
+        var searched = false
+        screen(input = SearchFilterInput(text = "mayday"), onSearch = { searched = true })
+
+        composeTestRule.onNodeWithContentDescription("Search text").performImeAction()
+
+        assert(searched) { "expected the keyboard's search IME action to invoke onSearch" }
+    }
+
+    @Test
+    fun `R_063 the unavailable field shows a degraded not-applied cue, never a halt one`() {
+        val result =
+            SearchResult(details = emptyList(), textSearchUnavailable = true, facetCounts = SearchFacetCounts.EMPTY)
+        screen(input = SearchFilterInput(text = "mayday"), result = result)
+
+        // A textual, description-based check (guide §9: never colour alone) — `errorTone =
+        // FieldTone.Degraded` is what keeps this amber rather than `halt/text` red at the
+        // component level; asserting the specific "Not applied" cue (not, say, an "Error" or
+        // "Invalid" halt-style message) is the part observable from outside `TextField` itself.
+        composeTestRule.onNodeWithText("Not applied").assertExists()
+    }
+
+    @Test
+    fun `no not-applied cue shows once the search actually ran`() {
+        val result = SearchResult(
+            details = listOf(detail("TX1", "mayday mayday", Attribution.confirmed("W7NPC", 0.9))),
+            textSearchUnavailable = false,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+        screen(input = SearchFilterInput(text = "mayday"), result = result)
+
+        composeTestRule.onNodeWithText("Not applied").assertDoesNotExist()
     }
 
     // --- Initial state (R-063) ---
