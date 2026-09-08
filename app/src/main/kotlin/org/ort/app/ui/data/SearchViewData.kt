@@ -2,10 +2,31 @@ package org.ort.app.ui.data
 
 import android.content.Context
 import android.database.sqlite.SQLiteException
+import org.ort.core.AttributionState
+import org.ort.data.Band
 import org.ort.data.OrtDatabase
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeParseException
+
+/**
+ * The rejected/accepted tri-state search control (FR-UI-3). `ALL` means "don't filter" — kept as
+ * its own closed set, rather than a nullable [Boolean], so the screen has a third, explicit
+ * option to render and cycle through; [toDaoValue] maps it onto
+ * [org.ort.data.dao.SearchDao]'s own tri-state `Boolean?` bind parameter.
+ */
+public enum class RejectedFilter {
+    ALL,
+    ACCEPTED,
+    REJECTED,
+    ;
+
+    public fun toDaoValue(): Boolean? = when (this) {
+        ALL -> null
+        ACCEPTED -> false
+        REJECTED -> true
+    }
+}
 
 /** The search screen's raw, unvalidated text fields (FR-UI-3). */
 public data class SearchFilterInput(
@@ -14,6 +35,11 @@ public data class SearchFilterInput(
     val frequencyMhz: String = "",
     /** ISO-8601 `yyyy-MM-dd`, interpreted as one UTC day. */
     val dateUtc: String = "",
+    /** `null` means "all bands" — no band filter. */
+    val band: Band? = null,
+    /** `null` means "all attribution states" — no attribution-state filter. */
+    val attributionState: AttributionState? = null,
+    val rejectedFilter: RejectedFilter = RejectedFilter.ALL,
 )
 
 /** Parsed, validated filter values — `null` fields mean "no filter", never a value that matches nothing. */
@@ -23,6 +49,9 @@ public data class SearchQueryParams(
     val frequencyHz: Long? = null,
     val fromUtcMillis: Long? = null,
     val toUtcMillis: Long? = null,
+    val band: Band? = null,
+    val attributionState: AttributionState? = null,
+    val rejected: Boolean? = null,
 )
 
 /**
@@ -30,7 +59,9 @@ public data class SearchQueryParams(
  * independently optional and a field that fails to parse is dropped rather than crashing the
  * screen or silently asserting a filter that can never match — the user sees no results for a
  * different, honest reason (their text/callsign filters, if any, still apply) rather than the
- * screen breaking outright.
+ * screen breaking outright. [SearchFilterInput.band]/[SearchFilterInput.attributionState] are
+ * already typed (selected from a closed set on the screen, never free text) so they pass through
+ * unparsed; [SearchFilterInput.rejectedFilter] is resolved to the DAO's `Boolean?` here.
  */
 public object SearchFilterParser {
     public fun parse(input: SearchFilterInput): SearchQueryParams {
@@ -41,6 +72,9 @@ public object SearchFilterParser {
             frequencyHz = parseFrequencyHz(input.frequencyMhz),
             fromUtcMillis = from,
             toUtcMillis = to,
+            band = input.band,
+            attributionState = input.attributionState,
+            rejected = input.rejectedFilter.toDaoValue(),
         )
     }
 
@@ -90,6 +124,9 @@ public object SearchPolling {
                 frequencyHz = params.frequencyHz,
                 fromUtc = params.fromUtcMillis,
                 toUtc = params.toUtcMillis,
+                band = params.band,
+                attributionState = params.attributionState,
+                rejected = params.rejected,
             )
             SearchResult(entities.map { ReaderPolling.detailFromEntity(context, it) }, textSearchUnavailable = false)
         } catch (e: SQLiteException) {
@@ -106,6 +143,9 @@ public object SearchPolling {
                 frequencyHz = params.frequencyHz,
                 fromUtc = params.fromUtcMillis,
                 toUtc = params.toUtcMillis,
+                band = params.band,
+                attributionState = params.attributionState,
+                rejected = params.rejected,
             )
             SearchResult(entities.map { ReaderPolling.detailFromEntity(context, it) }, textSearchUnavailable = true)
         }
