@@ -929,6 +929,74 @@ legend wording).
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round seven: lint)
+
+### (pending) — ui-conformance WP4 · lint
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/ScenariosTest.kt` only — this package's own row.
+Seventh addendum to the WP4 entries below, after merging `main` (`git merge --ff-only main`,
+fast-forwarded cleanly onto `8fde47e`, "ui-conformance · coverage matrix regenerated on main after
+lexicon, WP4 and WP11d merges"; confirmed `HEAD` was an ancestor first; no rebase, no stash).
+
+**Requirements/ACs:** none new — a lint-only fix on round six's own test file.
+
+**What changed:**
+- **`ScenariosTest.kt:467`'s `assertTrue(...)` call, over 120 characters, now wraps** the same way
+  `.\gradlew.bat :app:ktlintFormat` auto-corrects it (confirmed by running the formatter and reading
+  its diff before accepting it — one file, 7 net lines, no logic change, only the call's own argument
+  layout). No other line in the file needs a manual wrap; ktlint's format pass fixed this one
+  automatically (it is auto-correctable, unlike the `ReaderActivityDestinationSmokeTest.kt:404` line
+  the same run reported as "cannot be auto-corrected" — a different package's file, untouched here).
+- **Confirmed real file counts, per the coordinator's ask, rather than trusting the tool's own
+  summary line.** `:app:ktlintFormat` actually reformatted seven files this run, not one:
+  `ScenariosTest.kt` (this package's row) plus `FrequencyChangeFixtures.kt`, `ModelsViewData.kt`,
+  `StationPolling.kt`, `FrequencyScreen.kt`, `StationPatternScreen.kt`, and
+  `ModelsControllerLexiconTest.kt` — all six outside this package's own file ownership, pre-existing
+  formatting drift in files that landed via this round's `main` merge (the "lexicon, WP4 and WP11d
+  merges" the merge commit itself names), not something this round's work touched or caused.
+  `git checkout --` reverted those six; only `ScenariosTest.kt`'s own hunk is in this commit.
+- **`.\gradlew.bat :app:detekt` still fails after this fix — 11 findings remain, none in a file this
+  package owns.** `StationScreen.kt` (`LongParameterList`), `StationPatternScreen.kt` (two
+  `ForEachOnRange`, three `MaxLineLength`), `ModelsViewData.kt`/`FrequencyScreen.kt`/
+  `ModelsControllerLexiconTest.kt`/`ReaderActivityDestinationSmokeTest.kt` (`MaxLineLength`) — all
+  six are, like the ktlint drift above, pre-existing in files this round's `main` merge brought in
+  from other packages' work, confirmed by re-running `detekt` immediately after this file's own fix
+  landed and finding `ScenariosTest.kt` no longer named. The full `.\gradlew.bat build dependencyRules
+  platformGuards` also surfaced `:lexicon:detekt` (16 findings) and `:pipeline:detekt` (10, in the
+  new `reprocess/` files) failing the same way — three different modules' pre-existing lint debt,
+  none of it this package's row (`:app`'s own `ui/**`/`debug/**`), left for their owning packages
+  rather than fixed here (AGENTS.md: touch only the files a prompt names).
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded cleanly onto `8fde47e`, confirmed `HEAD` was an
+  ancestor first; no rebase, no stash.
+- `.\gradlew.bat :app:ktlintFormat` — reformatted seven files (see above); the six outside this
+  package's row reverted with `git checkout --` before anything was staged.
+- `.\gradlew.bat :app:detekt` (`--rerun`) — still **FAILED**, 11 findings, none naming
+  `ScenariosTest.kt` (confirmed: `Select-String "ScenariosTest"` against the run's own output
+  matched nothing) — all 11 are pre-existing, out-of-row findings named above.
+- `.\gradlew.bat build dependencyRules platformGuards` — **FAILED**: `:app:detekt` (11, as above),
+  `:lexicon:detekt` (16), `:pipeline:detekt` (10) — three modules' pre-existing lint debt from this
+  round's merge, none of it in this package's row; everything else in the aggregate `build` that
+  does not depend on `detekt` (compilation, `:app:test`, `:app:lint`) reached green before the
+  `detekt` tasks failed the overall run.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 185 covered** (up from round six's 183 — other packages'
+  `main`-merged work, not this round's own); `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` — **975 of 975 passing**, zero failures (up from round
+  six's 950 — other packages' `main`-merged tests). No test changed shape this round; the fix is
+  formatting-only.
+
+**Left open / not done:**
+- **The 11 `:app:detekt`, 16 `:lexicon:detekt` and 10 `:pipeline:detekt` findings above are real and
+  unfixed** — reported to the coordinator so each owning package can take its own row; none are
+  this package's to fix, and none existed in anything this round's own commit touches.
+- **`.\gradlew.bat build dependencyRules platformGuards` does not reach BUILD SUCCESSFUL** for the
+  reason immediately above — every other gate command this round ran does.
+
 ## 2026-09-08 (ui-conformance WP4, round six: recovery scenarios rig-reconnected and storage-fine; capture status respects banner height)
 
 ### (pending) — ui-conformance WP4 · recovery scenarios rig-reconnected and storage-fine; capture status respects banner height

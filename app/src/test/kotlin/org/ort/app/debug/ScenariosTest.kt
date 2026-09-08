@@ -464,7 +464,13 @@ class ScenariosTest {
             val current = signalsFromHolders()
 
             val toasts = RecoveryAnnouncer.diff(previous, current)
-            assertTrue("expected the rig recovery toast", toasts.any { it.id == "rig" && it.message == "Radio reconnected" })
+            assertTrue(
+                "expected the rig recovery toast",
+                toasts.any {
+                    it.id == "rig" &&
+                        it.message == "Radio reconnected"
+                },
+            )
         }
 
     @Test
