@@ -32,6 +32,8 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 round 9: R-137 Preview/Save bundle wired to WP11e's real DiagnosticsBundleBuilder)
+
 ## 2026-09-08 (ui-conformance WP11c follow-up: FR-OBS-1 diagnostics log writers)
 
 ### (pending) — ui-conformance WP11c · the diagnostics log writer: real lifecycle/capture/pipeline/rig lines, structurally private
@@ -163,93 +165,196 @@ been a new capture-blocking bug introduced while fixing an unrelated one.
 
 
 ## 2026-09-08 (ui-conformance WP2: DayOfWeekGrid's legend wraps whole swatches instead of squeezing the last one to a sliver)
+### (pending) — ui-conformance WP10 · Settings-Diagnostics wired to the real diagnostics-bundle producer (R-137)
 
-### (pending) — ui-conformance WP2 · R-310
+**Scope:** `ui/settings/{SettingsDiagnosticsScreen,SettingsPolling,SettingsContent,
+SettingsViewData}.kt`, and tests beside each. `git merge main` (local `main`) — landed WP11e's
+`243bc79`-era `app/src/main/kotlin/org/ort/app/diagnostics/**` (confirmed
+`DiagnosticsBundleBuilder.kt` on disk before starting, per the coordinator's own instruction); one
+conflict, `CHANGELOG.md` (my pending round-8 entry vs. WP11e's own new entry, both added at the
+file's same insertion point) plus a trivial `results/coverage-matrix.md` conflict (regenerated
+fresh instead of hand-merged, the correct resolution for a generated file) — resolved by keeping
+both entries, mine first (chronologically the older of the two), no content dropped from either
+side; merge commit `909b036`.
 
-**Scope:** `:app` `ui/components/ActivityPatternChart.kt` and `ActivityPatternChartTest.kt` only.
-`git merge --ff-only main` run first (fast-forward `ba12e71..a038128` — WP5/WP8/WP9/pipeline pass-3
-work and screenshots; none of this package's files touched by the merge). No rebase, no stash, no
-`gradlew --stop`.
-
-**Requirements/ACs:** R-310 (spec/polish) — V5 pass-3's inspection finding on
-`stations-14-nights/ST03-hourxday-pass3@2x.png`: `DayOfWeekGrid`'s own three-item legend collapses
-its last ("not listening") item into a one-letter-per-line column at font scale 2.0; the same
-screen's `By hour` mode legend (`ST03-byhour-pass3@2x.png`) is unaffected.
+**Requirements/ACs:** R-137 (spec → design, closing this round), FR-OBS-1/3/5, AC-109/AC-120
+(unchanged, structurally enforced in WP11e's own package, not this one). Constitution I, V.
 
 **What changed:**
-- **Constitution Check.** Principle VII (Boundaries Are Structural) again: the fix stays inside
-  `DayOfWeekGridLegend`'s own private layout, the one place this defect actually lives —
-  `ActivityPatternChart`'s own axis-row legend (`By hour` mode) was never broken because it only
-  ever lays out a single item, centred in its own `Box(weight(1f))`; `DayOfWeekGrid`'s is the one
-  legend with three items genuinely competing for room on the same row.
-- **Root cause.** `DayOfWeekGridLegend` was a plain `Row` of three unweighted `LegendSwatch`/
-  `NotListeningLegend` items, none of whose labels had `softWrap`/`maxLines` set. At font scale
-  2.0 the row runs out of horizontal room; a plain `Row` does not reflow a child it cannot fit —
-  the last item is instead handed whatever width remains, and with no `softWrap = false` its own
-  `Text` wraps within that remainder rather than moving to a new line, producing the register's
-  screenshot (a "not listening" swatch reading down the right edge, one letter per line).
-- **The fix.** `DayOfWeekGridLegend`'s `Row` is now a `FlowRow` (`@OptIn(ExperimentalLayoutApi::
-  class)`, the same fix `LogRowMarkerLine` already applies elsewhere in this package —
-  `Rows.kt`, an earlier entry in this file — for an equivalent "the last item has nowhere to go"
-  defect): an item with no room left on the current line now moves to its own new line as a whole
-  unit (dot + label together), never split mid-label. Both `LegendSwatch`'s label `Text` and
-  `NotListeningLegend`'s label `Text` (shared by both the grid legend and the unaffected `By hour`
-  legend — the fix is additive and safe for both) now carry `maxLines = 1, softWrap = false`, so
-  even a swatch on its own new line can never itself wrap onto a second.
-- **A real environmental limit, hit and worked around while writing the test.** This host's
-  Robolectric cannot force or verify a rendered *wrap* from real glyph metrics — a limitation
-  recorded repeatedly elsewhere in this package's own history, now confirmed to extend beyond
-  custom `fontFamily`s: `rememberTextMeasurer()` against `OrtType.subLine` (`FontFamily.
-  SansSerif`, a platform default, not a custom face) measured `"listened, not heard"` — 19
-  characters — at a width of exactly **19.0px**, one pixel per character, for every string tried;
-  this host's font fallback returns a fixed, degenerate per-glyph advance regardless of the real
-  font's actual metrics. A companion, deliberate attempt to force the historical bug by
-  constraining `DayOfWeekGrid` to `Modifier.width(15.dp)` (well under any real label's own natural
-  extent) inside `OrtTheme` also failed to reproduce it — investigated directly: `OrtTheme`'s own
-  `Surface` (`Theme.kt`) is `Modifier.fillMaxSize()`, and Material3's `Surface` propagates its own
-  resolved *minimum* constraints into its content, so `DayOfWeekGrid`'s own smaller `width()`
-  request is clamped back up to the full test-root size (confirmed via a semantics-node bounds
-  probe: `DayOfWeekGrid`'s own node measured at the root's full 320×470px regardless of a 15dp,
-  60dp or 340dp request). Neither limitation is specific to this fix; both are logged here because
-  the test below had to be designed around them rather than the pixel-collision test R-271's own
-  entry (an earlier entry in this file) used for a *different*, host-measurable class of defect.
-  What the test below checks instead — the one thing genuinely host-independent here — is that
-  every legend label's own rendered width is never narrower than what the identical style/text
-  independently measures to (`rememberTextMeasurer`), and that every label renders at one uniform,
-  single-line height. `FlowRow` itself (moving a whole overflowing item to a new line, as opposed
-  to only keeping each label's own text unsquashed) is reasoned about directly against
-  `LogRowMarkerLine`'s own already-established, identical precedent rather than independently
-  pixel-proven here, for the same reason.
+
+*Constitution Check.* Principle I: the header total and every per-file size are
+`DiagnosticsBundleBuilder.preview`'s own real, computed bytes — never the board's illustrative
+"2.1 MB". Principle V (module boundaries): this package still queries nothing sensitive itself: it
+calls `preview()`/`write()` and renders exactly what they return, the same structural non-access
+WP11e's own package proved for AC-109/AC-120.
+
+- **The `IN THE BUNDLE` list is real now.** `SettingsPolling.diagnostics` became `suspend` (real
+  file/database/asset I/O through WP11e's `DiagnosticsBundleBuilder.preview(context)`) — the
+  header now reads the board's own "In the bundle · N files · X.X MB" shape with a real total, and
+  every row carries its real, current size (rendered through the exact same producer `write` uses,
+  so a preview number can never drift from what a save actually writes — the property
+  `DiagnosticsBundleBuilder`'s own doc comment names as the reason it renders both the same way).
+- **The amber "Preview and Save bundle are not available in this build" `FailedState` is gone** —
+  both are real actions now. `Save bundle` writes through the Storage Access Framework
+  (`ActivityResultContracts.CreateDocument("application/zip")`, wired in the new
+  `SettingsDiagnosticsSubScreen`), on `Dispatchers.IO`, through `DiagnosticsBundleBuilder.write`;
+  the confirmation line names the *real* file the system created (its own `DISPLAY_NAME` column —
+  a user can rename the suggested `diagnostics-<date>.zip` in the picker, so this never assumes
+  the suggestion was kept). `includeAudio` stays `false` — confirmed again this round
+  (`Settings-Diagnostics.dc.html` has no such toggle) — matching FR-OBS-3's "excluded unless
+  explicitly included" and `DiagnosticsBundleBuilder`'s own default.
+- **`Preview` is real, but not the board's own literal shape — reported, not silently
+  substituted.** `Settings-Diagnostics.dc.html`'s own prose ("Preview opens every file in a reader
+  before you save") reads as launching a *per-file external* viewer — a `FileProvider`, a manifest
+  change, one `ACTION_VIEW` intent per file, genuinely a larger platform feature than a single
+  Compose screen can add on its own. This round's `Preview` instead opens a new, real, in-app
+  `DiagnosticsPreviewScreen` — the exact same entries/total `Save bundle` would write, shown before
+  committing to it. **Reported for a decision**: keep the in-app listing, or file the external-
+  reader shape as its own follow-up unit (a `FileProvider` touches the manifest, outside this
+  package's ownership regardless).
+- **The scrubbing example is no longer hypothetical.** "The logs above would be scrubbed" →
+  "are scrubbed" — WP11e's `CallsignScrubber` genuinely runs on every log entry
+  `DiagnosticsBundleBuilder` renders now, so the board's own example line
+  (`resolved [callsign] at 0.94`) states a real behaviour, not a future one.
 
 **Verified:**
-- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.ActivityPatternChartTest"`
-  — **17 of 17 passing** (was 16). New: `R_310_legend labels are one line and never narrower than
-  their own intrinsic width, at font scale 2_0`.
-- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **1103 of 1103 passing, 0 failed** (the
-  two `ReadyScreenTest` failures disclosed in this file's own previous entry are gone — resolved
-  upstream by `ui/setup/**`'s own owner, confirmed by summing every
-  `app/build/test-results/testDebugUnitTest/*.xml` report's `tests`/`failures` attributes).
-- `.\gradlew.bat dependencyRules platformGuards` (isolated) — both **OK** (17 modules).
-- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck :app:detekt --rerun-tasks` — **BUILD
-  SUCCESSFUL**; `app/build/reports/ktlint/ktlintMainSourceSetCheck/ktlintMainSourceSetCheck.txt`,
-  `.../ktlintTestSourceSetCheck.txt` and `app/build/reports/detekt/detekt.txt` all confirmed **0
-  bytes** (a first `detekt` run flagged this commit's own new test name for `MaxLineLength` —
-  shortened it, then reran clean).
-- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
-- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
-- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
-- `.\gradlew.bat coverageMatrix` — `419 requirements, 185 covered` (unchanged — R-310 is a
-  polish/spec finding, not yet a spec-registered id the matrix's generator counts against).
-- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (185 covered of 419)`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.*"` — `BUILD SUCCESSFUL in
+  42s`, 56 tests, all `PASSED`, including `SettingsDiagnosticsScreenTest`'s four (the never-included
+  prose, `R_137_list_from_preview`, `Preview` open/dismiss, `R_137_save_writes_zip`'s screen-level
+  click/confirmation) and `SettingsPollingTest`'s own `R_137_list_from_preview` (real seven files,
+  real non-blank sizes/total) and `R_137_save_writes_zip` (calls the exact same
+  `DiagnosticsBundleBuilder.write` `SettingsContent` calls, against a real `ByteArrayOutputStream`,
+  asserts the real ZIP magic bytes `PK` — a genuine, non-empty zip, not a stub).
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 2m 47s`, 846 tasks
+  (full `:app` unit test suite, `dependencyRules`, `platformGuards`, `:app:assembleDebug`/
+  `:app:assembleRelease`/`:app:lint`/`:app:check`), no failures this round (the two `ReadyScreenTest`
+  failures noted two rounds ago were already gone last round and remain gone).
+- `.\gradlew.bat :app:ktlintFormat` — one line-length violation this round introduced, fixed
+  (shortened a test name); `git status --porcelain` afterward showed only files this round
+  legitimately touched, no foreign-file pollution.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, no findings (the `SettingsDiagnosticsSubScreen`
+  extraction — mirroring `SettingsStorageSubScreen`'s own round-8 precedent — kept
+  `SettingsSubScreen` and the new function both under detekt's `LongParameterList`/`LongMethod`
+  thresholds from the first run, no round-trip needed this time).
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`, 8/8 `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations —
+  the pre-existing combined-invocation Gradle task-graph gap, unchanged) — `coverageMatrix: 419
+  requirements, 190 covered` (unchanged from the post-merge count — R-137 was already counted once
+  WP11e's own tests landed; this round adds screen-level coverage for ids already counted, not new
+  ones).
 
 **Left open / not done:**
-- **The register is not updated by this commit** — closing out R-310 is the validator/coordinator's
-  own bookkeeping.
-- **No screenshot/emulator re-capture** of `stations-14-nights/ST03-hourxday-pass3@2x.png` to
-  visually confirm the fix against the actual artboard — Robolectric assertions only, per the plan
-  (Phase E/Validators own screenshot verification), and per this entry's own "What changed" note,
-  the specific pixel-collision claim is not independently verifiable on this host at all — a real
-  device/emulator capture is the only way to see the swatches actually wrap.
+- `Preview`'s in-app listing vs. the board's own per-file external-reader wording — reported above
+  for a decision; not silently resolved either way.
+- `OrtNavHost.kt` must still wire the real `onReviewSession` (R-133, previous round) — unrelated to
+  this round's own work, restated here only because it remains the one open cross-package hand-off
+  this package cannot close on its own.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
+## 2026-09-08 (ui-conformance WP10 round 8: R-133 board rendering from WP11c's real StorageAccounting)
+
+### (pending) — ui-conformance WP10 · Settings-Storage's real usage bar and Next-deletion row (R-133)
+
+**Scope:** `ui/settings/{SettingsStorageScreen,SettingsPolling,SettingsContent,SettingsViewData}.kt`,
+and tests beside each. `git merge main` (local `main`) twice — once landed WP11b's R-300 fix, a
+second time (after a ~45s wait) landed WP11c's `10cb2d1` (`StorageAccounting.kt`) the coordinator's
+message named; both fast-forwards, no conflicts.
+
+**Requirements/ACs:** R-133 (spec → design, remaining halves), FR-STO-5, FR-STO-3/3a/D26 (unchanged
+stance from round 7 — still spec-mandated, not board-matched). Constitution I.
+
+**What changed:**
+
+*Constitution Check.* Principle I governs the whole round: every new number on this screen
+(Lexicon's real `0`, the Next-deletion session/over-count/size, the "Nothing scheduled" headroom)
+is either `:pipeline`'s real `StorageAccounting`/`NextDeletion` or arithmetic on fields already
+real — never invented to fill the board's shape. The one piece of *copy* this round adds that the
+board never drew (the "Nothing scheduled" fallback wording) is named as this package's own honest
+addition in both the code comment and this entry, not presented as board-verbatim.
+
+- **The four-segment usage bar now has a real fourth segment.** `SettingsPolling.storage` (now
+  `suspend` — every one of the three calls below is real file/database I/O) sources
+  Audio/Models/Records/Lexicon from `:pipeline`'s new `measureStorageAccounting(filesDir,
+  databaseFiles)` (WP11c) instead of this package's own ad-hoc directory sums; `databaseFiles`
+  passes the main db path plus `-wal`/`-shm` (Room's real WAL journal mode splits one logical
+  database across three files — `measureStorageAccounting` itself filters to whichever exist).
+  `Lexicon` reads `0` today, honestly — `StorageAccounting`'s own doc comment: the validated
+  lexicon TSV is never copied anywhere durable, only an `ActiveLexiconRecord` (version, count,
+  checksum) persists — the segment is drawn and labelled regardless, never omitted as if the
+  category did not exist. `StorageCategoryBreakdown`'s bar/legend already iterated `categories`
+  generically, so the fourth segment needed no new rendering code, only its own real swatch colour
+  (a neutral grey, distinct from `Records`' amber, matching the board's own four distinct swatches
+  — `Records` and `Lexicon` previously shared one `else` bucket).
+- **The round-7 amber "what will be deleted" `Banner` is gone, replaced by the board's own "Next
+  deletion: <date>" row.** `:pipeline`'s new `collectSessionStorageSummaries(db, filesDir)` (every
+  session oldest-first, real over counts and bytes) and `computeNextDeletion(sessions,
+  audioBytesUsed, budgetBytes, floorBytes, freeBytes, nowMillis)` (WP11c) together answer honestly
+  whether automatic oldest-first pruning would delete anything *right now* — real whether or not
+  the auto-prune toggle is on (that toggle only controls whether pruning runs *automatically*, not
+  whether the preview is honest). The row (a new `NextDeletionRow`/`NextDeletionMarker`, half-
+  filled amber circle matching the board) names the real session date, its real over count and
+  size, and a `Review` link. `state.nextDeletion == null` reads this package's own honest fallback
+  — **the board draws no such state at all** (checked `Settings-Storage.dc.html` again before
+  writing this; it shows only the populated row), so this is not board-verbatim copy: "Nothing
+  scheduled — N GB below the budget" (the real headroom) when a budget is set, "Nothing scheduled
+  — no budget set" when there is none to be below.
+- **`Review` needs a destination this package cannot resolve on its own.** `SettingsContent` gains
+  `onReviewSession: (sessionId: String) -> Unit = {}` (R-133, following R-132's `onOpenLevelMeter`
+  precedent exactly) — DG04 (`Session`) detail is outside `ui/settings`'s reach, and `OrtNavHost.kt`
+  is outside this round's file ownership. `SettingsContent`'s own *public* signature keeps
+  `onOpenLevelMeter`/`onReviewSession` as two separate defaulted params (so `OrtNavHost.kt`'s
+  existing named-argument call site keeps compiling unchanged); internally both are bundled into a
+  new `internal SettingsCrossPackageActions` purely to keep the private `SettingsSubScreen`
+  dispatcher under detekt's `LongParameterList` threshold (which fires at 9 params, confirmed
+  again this round) — the same reason `SettingsCaptureToggleActions` exists.
+- **`STORAGE`'s dispatch extracted to its own `SettingsStorageSubScreen`**, mirroring
+  `SettingsCaptureSubScreen`'s existing pattern — `SettingsSubScreen` grew past detekt's
+  `LongMethod` (80-line) threshold once the `LaunchedEffect`-backed async load (the same shape
+  `EXPORT`'s own branch already uses, keyed on `storeVersion` this time so a budget/auto-prune
+  write re-measures) landed inline.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.*"` — `BUILD SUCCESSFUL in
+  17s`, 47 tests, all `PASSED`, including the new `R_133_bar` (legend names all four categories,
+  real bytes each) and three `R_133_next_deletion_row` tests (real session/Review-opens-it; the two
+  "Nothing scheduled" fallbacks) named exactly as asked, plus `SettingsPollingTest`'s own
+  `R_133_bar`/`R_133_next_deletion_row` data-level pair against the real `SettingsPolling.storage`.
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, unfiltered) — `BUILD SUCCESSFUL in 1m 11s`,
+  every test `PASSED` (the two `ReadyScreenTest` failures noted in the previous round's entry are
+  gone — resolved upstream by commits this round's `git merge main` pulled in, not by this round's
+  own work).
+- `.\gradlew.bat :app:ktlintFormat` — clean both runs (no auto-correctable violations this round);
+  `git status --porcelain` showed only files this round legitimately touched, no foreign-file
+  pollution.
+- `.\gradlew.bat :app:detekt` — first run found `LongParameterList`/`LongMethod` on the inlined
+  `STORAGE` branch (see "What changed"); both fixed by the `SettingsStorageSubScreen` extraction +
+  `SettingsCrossPackageActions` bundle; second run `BUILD SUCCESSFUL`, no findings.
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 1m 35s`, 846 tasks,
+  includes `:app:assembleDebug`/`:app:assembleRelease`/`:app:lint`/`:app:check` and the
+  `smokeTestDebugUnitTest`/`ReaderActivityDestinationSmokeTest` suite, all green.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`, 8/8 `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations —
+  the pre-existing combined-invocation Gradle task-graph gap, unchanged, noted in prior rounds) —
+  `coverageMatrix: 419 requirements, 186 covered` (up from 185); `coverageMatrixCheck: up to date
+  (186 covered of 419)`.
+
+**Left open / not done:**
+- `OrtNavHost.kt` must wire the real `onReviewSession` (DG04's `Session` destination for a
+  specific `sessionId`) — outside this round's file ownership, same shape as R-132's still-open
+  `onOpenLevelMeter` hand-off before WP3 wired it.
+- FR-STO-7 (pinning a thread/transmission so retention never deletes it) has no schema field yet —
+  `computeNextDeletion` (WP11c, `:pipeline`) does not exclude pinned sessions because there is
+  nothing to exclude by; flagged, not worked around, per that function's own doc comment.
+- The "Nothing scheduled" fallback wording is this package's own addition, not board-verbatim (the
+  board draws no such state) — named explicitly here and in-code so a reviewer does not mistake it
+  for a board quote.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
 
 ## 2026-09-08 (ui-conformance WP11e: diagnostics bundle producer)
 
@@ -366,7 +471,229 @@ list something could quietly append to.
 
 ---
 
-## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
+## 2026-09-08 (ui-conformance WP2: DayOfWeekGrid's legend wraps whole swatches instead of squeezing the last one to a sliver)
+
+### (pending) — ui-conformance WP2 · R-310
+
+**Scope:** `:app` `ui/components/ActivityPatternChart.kt` and `ActivityPatternChartTest.kt` only.
+`git merge --ff-only main` run first (fast-forward `ba12e71..a038128` — WP5/WP8/WP9/pipeline pass-3
+work and screenshots; none of this package's files touched by the merge). No rebase, no stash, no
+`gradlew --stop`.
+
+**Requirements/ACs:** R-310 (spec/polish) — V5 pass-3's inspection finding on
+`stations-14-nights/ST03-hourxday-pass3@2x.png`: `DayOfWeekGrid`'s own three-item legend collapses
+its last ("not listening") item into a one-letter-per-line column at font scale 2.0; the same
+screen's `By hour` mode legend (`ST03-byhour-pass3@2x.png`) is unaffected.
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) again: the fix stays inside
+  `DayOfWeekGridLegend`'s own private layout, the one place this defect actually lives —
+  `ActivityPatternChart`'s own axis-row legend (`By hour` mode) was never broken because it only
+  ever lays out a single item, centred in its own `Box(weight(1f))`; `DayOfWeekGrid`'s is the one
+  legend with three items genuinely competing for room on the same row.
+- **Root cause.** `DayOfWeekGridLegend` was a plain `Row` of three unweighted `LegendSwatch`/
+  `NotListeningLegend` items, none of whose labels had `softWrap`/`maxLines` set. At font scale
+  2.0 the row runs out of horizontal room; a plain `Row` does not reflow a child it cannot fit —
+  the last item is instead handed whatever width remains, and with no `softWrap = false` its own
+  `Text` wraps within that remainder rather than moving to a new line, producing the register's
+  screenshot (a "not listening" swatch reading down the right edge, one letter per line).
+- **The fix.** `DayOfWeekGridLegend`'s `Row` is now a `FlowRow` (`@OptIn(ExperimentalLayoutApi::
+  class)`, the same fix `LogRowMarkerLine` already applies elsewhere in this package —
+  `Rows.kt`, an earlier entry in this file — for an equivalent "the last item has nowhere to go"
+  defect): an item with no room left on the current line now moves to its own new line as a whole
+  unit (dot + label together), never split mid-label. Both `LegendSwatch`'s label `Text` and
+  `NotListeningLegend`'s label `Text` (shared by both the grid legend and the unaffected `By hour`
+  legend — the fix is additive and safe for both) now carry `maxLines = 1, softWrap = false`, so
+  even a swatch on its own new line can never itself wrap onto a second.
+- **A real environmental limit, hit and worked around while writing the test.** This host's
+  Robolectric cannot force or verify a rendered *wrap* from real glyph metrics — a limitation
+  recorded repeatedly elsewhere in this package's own history, now confirmed to extend beyond
+  custom `fontFamily`s: `rememberTextMeasurer()` against `OrtType.subLine` (`FontFamily.
+  SansSerif`, a platform default, not a custom face) measured `"listened, not heard"` — 19
+  characters — at a width of exactly **19.0px**, one pixel per character, for every string tried;
+  this host's font fallback returns a fixed, degenerate per-glyph advance regardless of the real
+  font's actual metrics. A companion, deliberate attempt to force the historical bug by
+  constraining `DayOfWeekGrid` to `Modifier.width(15.dp)` (well under any real label's own natural
+  extent) inside `OrtTheme` also failed to reproduce it — investigated directly: `OrtTheme`'s own
+  `Surface` (`Theme.kt`) is `Modifier.fillMaxSize()`, and Material3's `Surface` propagates its own
+  resolved *minimum* constraints into its content, so `DayOfWeekGrid`'s own smaller `width()`
+  request is clamped back up to the full test-root size (confirmed via a semantics-node bounds
+  probe: `DayOfWeekGrid`'s own node measured at the root's full 320×470px regardless of a 15dp,
+  60dp or 340dp request). Neither limitation is specific to this fix; both are logged here because
+  the test below had to be designed around them rather than the pixel-collision test R-271's own
+  entry (an earlier entry in this file) used for a *different*, host-measurable class of defect.
+  What the test below checks instead — the one thing genuinely host-independent here — is that
+  every legend label's own rendered width is never narrower than what the identical style/text
+  independently measures to (`rememberTextMeasurer`), and that every label renders at one uniform,
+  single-line height. `FlowRow` itself (moving a whole overflowing item to a new line, as opposed
+  to only keeping each label's own text unsquashed) is reasoned about directly against
+  `LogRowMarkerLine`'s own already-established, identical precedent rather than independently
+  pixel-proven here, for the same reason.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.ActivityPatternChartTest"`
+  — **17 of 17 passing** (was 16). New: `R_310_legend labels are one line and never narrower than
+  their own intrinsic width, at font scale 2_0`.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **1103 of 1103 passing, 0 failed** (the
+  two `ReadyScreenTest` failures disclosed in this file's own previous entry are gone — resolved
+  upstream by `ui/setup/**`'s own owner, confirmed by summing every
+  `app/build/test-results/testDebugUnitTest/*.xml` report's `tests`/`failures` attributes).
+- `.\gradlew.bat dependencyRules platformGuards` (isolated) — both **OK** (17 modules).
+- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck :app:detekt --rerun-tasks` — **BUILD
+  SUCCESSFUL**; `app/build/reports/ktlint/ktlintMainSourceSetCheck/ktlintMainSourceSetCheck.txt`,
+  `.../ktlintTestSourceSetCheck.txt` and `app/build/reports/detekt/detekt.txt` all confirmed **0
+  bytes** (a first `detekt` run flagged this commit's own new test name for `MaxLineLength` —
+  shortened it, then reran clean).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 185 covered` (unchanged — R-310 is a
+  polish/spec finding, not yet a spec-registered id the matrix's generator counts against).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (185 covered of 419)`.
+
+**Left open / not done:**
+- **The register is not updated by this commit** — closing out R-310 is the validator/coordinator's
+  own bookkeeping.
+- **No screenshot/emulator re-capture** of `stations-14-nights/ST03-hourxday-pass3@2x.png` to
+  visually confirm the fix against the actual artboard — Robolectric assertions only, per the plan
+  (Phase E/Validators own screenshot verification), and per this entry's own "What changed" note,
+  the specific pixel-collision claim is not independently verifiable on this host at all — a real
+  device/emulator capture is the only way to see the swatches actually wrap.
+
+---
+
+
+## 2026-09-08 (ui-conformance WP11c follow-up: FR-OBS-1 diagnostics log writers)
+
+### (pending) — ui-conformance WP11c · the diagnostics log writer: real lifecycle/capture/pipeline/rig lines, structurally private
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt` (new),
+`pipeline/src/test/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLogTest.kt` (new). Real-source
+hooks touch four existing `:pipeline` files: `capture/RealCaptureService.kt` (this package's own
+file — `onCreate`, `startCapture`, `persistUncleanEndGapIfAny`, `stopCaptureInternal`,
+`refreshInputStatusFromRoute`, `publishLevelStatus`, the `CaptureEvent.Interrupted` branch,
+`runShedMonitor`, and `ThermalTrackingPass.run`), `reprocess/ReprocessRunner.kt`'s `SafePass` (a
+one-line hook in the catch block already reused across two earlier rounds), and, disclosed as an
+exception to this package's usual file-ownership discipline, `passb/PassB.kt` (P11/audit-authored,
+not previously WP11c's) for the one two-line hook needed to log a rejection's real
+`RejectionRuleId` rather than a generic "rejected" tag. No `:data`/`:app` change; no edit to
+WP11e's `DiagnosticsBundleBuilder`/`DiagnosticsLogPaths`/`LogFileProducer`
+(`:app/diagnostics`) — read once, on `main`, not touched. `results/coverage-matrix.md`
+regenerated (189 of 419 covered, up from 186).
+
+**Requirements/ACs:** FR-OBS-1 (M); AC-109, FR-OBS-3 (structural privacy, proven again from the
+writer side — WP11e already proved it from the bundle-producer side).
+
+**Constitution check.** Principle V (nothing private leaves the device, and nothing private is
+even *written* in the first place) is this round's whole point: `DiagnosticsLog`'s public API has
+no free-text parameter anywhere — every function takes only `Int`/`Long`/`Double`/`Boolean`, a
+closed project enum (`PassId`, `Tier`, `TerminationReason`, `RejectionRuleId`, `AudioDeviceKind`),
+or a ULID id — so a callsign, transcript fragment, user-supplied name/note, location or voiceprint
+cannot reach a log line no matter what a caller has in scope, not merely "the current call sites
+happen not to pass one." Principle VII (module boundaries are structural):
+`dependencyRules` confirms `:pipeline` still has no edge to `:app` after this round (see
+Verified) — `DiagnosticsLog.configure` takes a plain `filesDir: File` and independently derives
+`filesDir/diagnostics-logs/<fileName>`, the same relative path `:app`'s `DiagnosticsLogPaths`
+computes, by convention rather than a shared type (disclosed as the one thing to watch if that
+convention ever drifts — see "Left open"). Principle IV (capture never blocks): every `log*` call
+is a synchronous, non-blocking channel offer; one `Dispatchers.IO` consumer coroutine does all
+file I/O, including rotation, off the caller's thread — several real call sites
+(`publishLevelStatus`) are on the audio frame path, where blocking on disk I/O would itself have
+been a new capture-blocking bug introduced while fixing an unrelated one.
+
+**What changed:**
+- **`DiagnosticsLog`** (new object, `pipeline/diagnostics`): four categories
+  (`lifecycle.log`/`capture.log`/`pipeline.log`/`rig.log`), append-only lines shaped
+  `<ISO-8601 UTC> <LEVEL> <event> key=value key=value...`, rotating each category file at 2 MiB to
+  one `.1` backup generation (`ROTATE_AT_BYTES`, two generations total, exactly the coordinator's
+  brief). `configure(filesDir, clock)` starts a single consumer coroutine reading an unbounded
+  `Channel`; `flush()` (test-only) sends a barrier message and awaits it, so a test can assert on
+  file contents deterministically without polling; `shutdown()` (test-only) cancels the consumer.
+- **The path-contract mismatch, disclosed as asked**: WP11e's `DiagnosticsLogPaths.logFile`
+  (`:app/diagnostics`) is the documented convention `LogFileProducer` reads back from, but it is an
+  `:app`-owned type and `:pipeline` cannot import it — the dependency graph is `:app -> :pipeline`
+  only. `DiagnosticsLog.configure` independently computes the identical relative path
+  (`filesDir/diagnostics-logs/<fileName>`) rather than adding the forbidden edge. The two sides
+  agree today because both were read/written against the same convention in the same round; there
+  is no shared type enforcing that they keep agreeing if either changes later.
+- **Sixteen typed logging functions**, one call site each, wired to real production data (not the
+  scenario simulator) everywhere real production data exists:
+  - *lifecycle.log*: `logServiceStarted`/`logServiceStopped` (`RealCaptureService.startCapture`/
+    `stopCaptureInternal` — every session-ending path, clean or unclean, same as R-173/R-302's own
+    holder resets), `logUncleanRestart` (`persistUncleanEndGapIfAny`, the F5 "OS_STOPPED" gap
+    detection), `logHeartbeatGap`.
+  - *capture.log*: `logRouteVerified`/`logRouteMismatch` (`refreshInputStatusFromRoute`, beside
+    every real `InputStatus.opened`/`mismatch` call), `logInputLost` (the `CaptureEvent.Interrupted`
+    branch, beside `InputStatus.lost`), `logLevelClip` (`publishLevelStatus`, **only** when
+    `snapshot.clipped` — logging every ~10 Hz tick unconditionally would rotate capture.log
+    constantly on an ordinary healthy session), `logOverrun` (the same `Interrupted` branch,
+    decoding F-010's dropped-span duration via a small regex duplicated from `GapPersister.kt`'s own
+    — `:pipeline` cannot reference `:capture-android`'s `internal DroppedSpanCause`, the identical
+    cross-module constraint `GapPersister.causeFor`'s own kdoc already documents).
+  - *pipeline.log*: `logPassLatency` (`ThermalTrackingPass.run`, beside the existing
+    `ThermalStatus.recordPassTiming` measurement — every real pass this loop drives, tagged with the
+    tier it ran at), `logRejection` (`PassB.run`'s `Rejected` branch — the real `RejectionRuleId`,
+    never `outcome.detail`), `logTierChange` (`runShedMonitor`'s existing tick, reusing
+    `ReprocessRunner.currentTierFromShedLevel()` so live capture and reprocessing can never disagree
+    about what a shed level means), `logSafePassFailure` (`SafePass`'s catch block — the exception's
+    class name only, **never** `Throwable.message`, which is free text a failing library chose).
+  - *rig.log*: `logRigAbsent` (`RealCaptureService.startCapture`, beside the one real `RigStatus.absent()`
+    call — the rig module, FR-RIG, is unbuilt; `logRigConnected`/`logRigStale`/`logRigBand` exist,
+    fully tested, but have no real production caller yet for the same reason `RigStatus.connected`/
+    `stale` do not — disclosed, not hidden).
+- **`AC_109_no_private_field_ever_logged`**: rather than smuggling a callsign into an id parameter
+  (an artificial, non-representative test — production code never populates a session/transmission
+  id from a callsign; they are `Ulid` values), this seeds a callsign inside a simulated exception's
+  *message* — the one place a careless caller really could leak free text — and proves
+  `logSafePassFailure` never receives it, matching exactly what `SafePass`'s real catch block does
+  (`e::class.simpleName`, never `e.message`). All sixteen functions are driven in the same test;
+  the four written files are scanned together.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.diagnostics.DiagnosticsLogTest"` —
+  6 tests, all green: `FR_OBS_1_lifecycle …`, `FR_OBS_1_capture …`, `FR_OBS_1_pipeline …`,
+  `FR_OBS_1_rig …`, `FR_OBS_1_rotation keeps at most two generations per category file`,
+  `AC_109_no_private_field_ever_logged`.
+- `.\gradlew.bat :pipeline:testDebugUnitTest` (whole module) — green, no regression across the
+  four touched production files (`RealCaptureService.kt`, `ReprocessRunner.kt`, `PassB.kt`, the new
+  `DiagnosticsLog.kt`).
+- `.\gradlew.bat :pipeline:ktlintCheck :pipeline:detekt` — clean (one `ktlintFormat` pass, plus one
+  manual test-name shortening detekt's `MaxLineLength` could not auto-wrap).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK; `:pipeline`'s dependency row is
+  unchanged (`:asr-api, :asr-sherpa, :capture-android, :capture-api, :core, :data, :identity,
+  :lexicon, :onnx, :rig, :rig-usb, :segment` — no `:app`), confirming the path-contract disclosure
+  above did not quietly add the forbidden edge.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — 419 requirements, 189
+  covered (up from 186); check reports up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `:app:testDebugUnitTest`'s pre-existing, unrelated `ReadyScreenTest` failure (WP9's file,
+  disclosed in this file's earlier entries) is unaffected — this round touches no `:app` file at
+  all, so it was not re-verified a second time.
+
+**Left open / not done:**
+- The path-contract duplication between `DiagnosticsLog` (`:pipeline`) and `DiagnosticsLogPaths`
+  (`:app`) is convention, not a shared type — flagged above as the one thing to watch if either
+  side's directory/file-name literals ever change without the other.
+- `logRigConnected`/`logRigStale`/`logRigBand` have no real production caller — the rig module
+  (FR-RIG, register R-084) is unbuilt, matching `RigStatus.connected`/`stale`'s own pre-existing
+  disclosure. They will start receiving real data with no further change to this file once FR-RIG
+  lands, exactly like `logRigAbsent` already does today.
+- "VAD statistics," named in FR-OBS-1's board clause, has no real, already-computed source
+  anywhere in `:pipeline`/`:capture-android` to log honestly — not fabricated, not wired.
+- `pipeline.log`'s "queue depth over time" (the board's own clause for that file) is not logged —
+  `ShedStatus`/`WorkQueue`'s backlog count is already covered by `shed_event` rows in `:data`; adding
+  a redundant periodic log line for the same figure was judged lower value than the ten events
+  actually wired, and was left out rather than added un-asked-for.
+- `PassB.kt`'s two-line hook is the one file this round touched outside the file-ownership pattern
+  the rest of this session has followed — disclosed above, not silently absorbed into "this
+  package's files."
+
+---
+
+
+## 2026-09-08 (ui-conformance WP2: DayOfWeekGrid's legend wraps whole swatches instead of squeezing the last one to a sliver)## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
 
 ### (pending) — ui-conformance WP11c · storage accounting and the next automatic-prune candidate, exposed for Settings-Storage
 

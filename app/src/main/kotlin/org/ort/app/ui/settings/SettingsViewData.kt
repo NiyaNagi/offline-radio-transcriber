@@ -19,6 +19,18 @@ public data class SettingsRootViewState(val sections: List<SettingsSectionViewSt
  * screen) rather than in `SettingsCaptureScreen.kt` because detekt's `MatchingDeclarationName` rule
  * wants a file's one top-level class to share the file's name; that file's own top-level
  * declaration is the `SettingsCaptureScreen` function. */
+/** R-133 (round 8): [SettingsContent]'s two cross-package drill-in callbacks (R-132's
+ * `onOpenLevelMeter`, this round's `onReviewSession`) bundled purely so the private
+ * `SettingsSubScreen` it hands them to stays under detekt's `LongParameterList` threshold —
+ * `SettingsContent`'s own *public* signature is unchanged (unbundled, two separate defaulted
+ * params) so `OrtNavHost.kt`'s existing named-argument call site keeps compiling untouched; this
+ * bundle exists only internal to this package's own dispatch, the same reason
+ * [SettingsCaptureToggleActions] does. */
+internal data class SettingsCrossPackageActions(
+    val onOpenLevelMeter: () -> Unit,
+    val onReviewSession: (sessionId: String) -> Unit,
+)
+
 public data class SettingsCaptureToggleActions(
     val onToggleLevelWarn: (Boolean) -> Unit,
     val onToggleNoiseReduction: (Boolean) -> Unit,
@@ -61,6 +73,23 @@ public data class SettingsTierViewState(
 
 public data class SettingsStorageCategoryViewState(val label: String, val bytes: Long)
 
+/**
+ * R-133 (register, round 8): `Settings-Storage.dc.html`'s "Next deletion: <date>" row —
+ * [org.ort.pipeline.capture.NextDeletion] (WP11c, `:pipeline`) reshaped for the screen, `null`
+ * exactly when [org.ort.pipeline.capture.computeNextDeletion] itself returns `null` (nothing would
+ * be pruned right now — never an empty placeholder standing in for that fact).
+ */
+public data class SettingsNextDeletionViewState(
+    val sessionId: String,
+    /** [org.ort.pipeline.capture.NextDeletion.predictedAtMillis] formatted — "would happen now",
+     * per that field's own doc comment, not a future forecast. */
+    val predictedDateLabel: String,
+    /** The session's own start — "audio from <this date>" — [org.ort.pipeline.capture.NextDeletion.startedAtMillis]. */
+    val sessionDateLabel: String,
+    val overCount: Int,
+    val sizeLabel: String,
+)
+
 public data class SettingsStorageViewState(
     val usedBytes: Long,
     val budgetGb: Int?,
@@ -76,6 +105,9 @@ public data class SettingsStorageViewState(
      * importable here, so this repeats the literal already shipped elsewhere for the same fact
      * rather than inventing a new one. */
     val hardFloorLabel: String = "100 MB",
+    /** R-133 (round 8): real, from `:pipeline`'s `computeNextDeletion` — see
+     * [SettingsNextDeletionViewState]'s own doc comment. */
+    val nextDeletion: SettingsNextDeletionViewState? = null,
 )
 
 public data class SettingsExportViewState(
@@ -95,7 +127,10 @@ public data class SettingsContributeViewState(
     val neverIncluded: List<NeverLeavesDeviceItem>,
 )
 
-public data class SettingsDiagnosticsFileViewState(val name: String, val description: String)
+/** R-137 (round 9): [sizeLabel] is now real — WP11e's `DiagnosticsBundleBuilder.preview` renders
+ * this exact file's real bytes (the same render `write` uses, never a separate stat — see that
+ * object's own doc comment for why that equality matters for a scrubbed log). */
+public data class SettingsDiagnosticsFileViewState(val name: String, val description: String, val sizeLabel: String)
 
 public data class SettingsDiagnosticsViewState(
     val aliveLabel: String,
@@ -103,6 +138,10 @@ public data class SettingsDiagnosticsViewState(
     /** `null` — no aggregate failed-pass-count query exists yet; never a fabricated number. */
     val failedPassCount: Int?,
     val files: List<SettingsDiagnosticsFileViewState>,
+    /** R-137 (round 9): the board's own "In the bundle · N files · X.X MB" header total — real,
+     * `DiagnosticsBundleBuilder.preview`'s own `BundlePreview.totalBytes`, never the board's
+     * illustrative "2.1 MB". */
+    val totalSizeLabel: String,
 )
 
 public data class SettingsAboutViewState(

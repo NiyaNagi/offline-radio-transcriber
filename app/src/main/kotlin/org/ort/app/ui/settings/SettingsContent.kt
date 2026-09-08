@@ -2,6 +2,10 @@ package org.ort.app.ui.settings
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -10,13 +14,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.ort.app.diagnostics.DiagnosticsBundleBuilder
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.theme.OrtSpacing
+import java.time.LocalDate
 
 /**
  * WP10 (register R-090): the stateful entry point `OrtNavHost` dispatches `SETTINGS` to — owns the
@@ -64,6 +74,13 @@ public fun SettingsContent(
     initialScreen: SettingsScreenId? = null,
     onOpenLevelMeter: () -> Unit = {},
     onSearch: () -> Unit = {},
+    // R-133 (round 8): `Settings-Storage`'s "Next deletion" row `Review` link needs the digest's
+    // `Session` (DG04) destination for a specific `sessionId`, which this package cannot reach on
+    // its own (no drill-in of that shape exists inside `ui/settings`, and `OrtNavHost.kt` is
+    // outside this round's file ownership) — the same reason [onOpenLevelMeter] (R-132) exists.
+    // Defaults to a no-op so every existing caller (`OrtNavHost.kt`) keeps compiling unchanged; the
+    // host is expected to wire it the same way it wires every other cross-package drill-in.
+    onReviewSession: (sessionId: String) -> Unit = {},
 ) {
     val store = remember {
         SharedPreferencesSettingsStore(
@@ -102,14 +119,19 @@ public fun SettingsContent(
             onStoreChanged = { storeVersion++ },
             onBack = { screen = null },
             modifier = modifier,
-            onOpenLevelMeter = onOpenLevelMeter,
+            crossPackage = SettingsCrossPackageActions(
+                onOpenLevelMeter = onOpenLevelMeter,
+                onReviewSession = onReviewSession,
+            ),
         )
     }
 }
 
 /** The nine sub-screens, split out of [SettingsContent] purely to keep that function under
  * detekt's length/complexity limits — the same reason `OrtNavHost`'s own `DestinationContent` was
- * extracted before this package existed. */
+ * extracted before this package existed. [crossPackage] bundles the two cross-package drill-in
+ * callbacks (see [SettingsCrossPackageActions]'s own doc comment) purely to keep this function's
+ * own parameter list under the same threshold. */
 @Composable
 private fun SettingsSubScreen(
     context: Context,
@@ -119,7 +141,7 @@ private fun SettingsSubScreen(
     onStoreChanged: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier,
-    onOpenLevelMeter: () -> Unit,
+    crossPackage: SettingsCrossPackageActions,
 ) {
     when (screen) {
         SettingsScreenId.CAPTURE -> SettingsCaptureSubScreen(
@@ -129,7 +151,7 @@ private fun SettingsSubScreen(
             onStoreChanged = onStoreChanged,
             onBack = onBack,
             modifier = modifier,
-            onOpenLevelMeter = onOpenLevelMeter,
+            onOpenLevelMeter = crossPackage.onOpenLevelMeter,
         )
 
         SettingsScreenId.RIG -> SettingsRigScreen(
@@ -148,18 +170,14 @@ private fun SettingsSubScreen(
             modifier = modifier,
         )
 
-        SettingsScreenId.STORAGE -> SettingsStorageScreen(
-            state = remember(storeVersion) { SettingsPolling.storage(context, store) },
+        SettingsScreenId.STORAGE -> SettingsStorageSubScreen(
+            context = context,
+            store = store,
+            storeVersion = storeVersion,
+            onStoreChanged = onStoreChanged,
             onBack = onBack,
-            onSetBudgetGb = {
-                store.audioBudgetGb = it
-                onStoreChanged()
-            },
-            onToggleAutoPrune = {
-                store.autoPruneEnabled = it
-                onStoreChanged()
-            },
             modifier = modifier,
+            onReviewSession = crossPackage.onReviewSession,
         )
 
         SettingsScreenId.ASSETS -> ModelsContent(context = context, modifier = modifier, onBack = onBack)
@@ -185,8 +203,8 @@ private fun SettingsSubScreen(
             modifier = modifier,
         )
 
-        SettingsScreenId.DIAGNOSTICS -> SettingsDiagnosticsScreen(
-            state = remember { SettingsPolling.diagnostics() },
+        SettingsScreenId.DIAGNOSTICS -> SettingsDiagnosticsSubScreen(
+            context = context,
             onBack = onBack,
             modifier = modifier,
         )
@@ -243,6 +261,110 @@ private fun SettingsCaptureSubScreen(
         },
         modifier = modifier,
     )
+}
+
+/** The `STORAGE` branch of [SettingsSubScreen], split out purely to keep that function's own
+ * length/parameter-count under detekt's limits — the same reason [SettingsCaptureSubScreen] was.
+ *
+ * R-133 (round 8): `SettingsPolling.storage` became `suspend` once it started calling
+ * `:pipeline`'s real `measureStorageAccounting`/`collectSessionStorageSummaries`/
+ * `computeNextDeletion` (real file/database I/O) — the same `LaunchedEffect`-backed async-load
+ * shape `EXPORT`'s own branch above uses, keyed on `storeVersion` (unlike `EXPORT`'s own `Unit`
+ * key) so a budget/auto-prune write re-measures, matching every other `remember(storeVersion)`
+ * sub-screen's own reload contract.
+ */
+@Composable
+private fun SettingsStorageSubScreen(
+    context: Context,
+    store: SettingsStore,
+    storeVersion: Int,
+    onStoreChanged: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier,
+    onReviewSession: (sessionId: String) -> Unit,
+) {
+    var storageState by remember { mutableStateOf<SettingsStorageViewState?>(null) }
+    LaunchedEffect(storeVersion) { storageState = SettingsPolling.storage(context, store) }
+    val state = storageState
+    if (state != null) {
+        SettingsStorageScreen(
+            state = state,
+            onBack = onBack,
+            onSetBudgetGb = {
+                store.audioBudgetGb = it
+                onStoreChanged()
+            },
+            onToggleAutoPrune = {
+                store.autoPruneEnabled = it
+                onStoreChanged()
+            },
+            onReviewSession = onReviewSession,
+            modifier = modifier,
+        )
+    } else {
+        LoadingSettings(modifier = modifier)
+    }
+}
+
+/** The `DIAGNOSTICS` branch of [SettingsSubScreen], split out purely to keep that function's own
+ * length/parameter-count under detekt's limits — the same reason [SettingsStorageSubScreen] was.
+ *
+ * R-137 (round 9, register): `SettingsPolling.diagnostics` became `suspend` once it started
+ * calling WP11e's real `DiagnosticsBundleBuilder.preview` — the same async-load shape every other
+ * real-I/O sub-screen here uses. `Save bundle` writes through the Storage Access Framework
+ * ([ActivityResultContracts.CreateDocument]) on [Dispatchers.IO], then names the *real* file the
+ * system actually created (its own `DISPLAY_NAME` column — a user can rename the suggested name in
+ * the picker, so this never assumes the suggestion was kept). `Preview` is a local `previewOpen`
+ * toggle — see [SettingsDiagnosticsScreen]'s own doc comment for why it is an in-app listing
+ * rather than the board's own per-file external-reader wording.
+ */
+@Composable
+private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    var diagnosticsState by remember { mutableStateOf<SettingsDiagnosticsViewState?>(null) }
+    LaunchedEffect(Unit) { diagnosticsState = SettingsPolling.diagnostics(context) }
+    var previewOpen by remember { mutableStateOf(false) }
+    var saveConfirmationLabel by remember { mutableStateOf<String?>(null) }
+
+    val saveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    DiagnosticsBundleBuilder.write(context, out)
+                }
+            }
+            saveConfirmationLabel = "Saved ${realFileName(context, uri)}"
+        }
+    }
+
+    val state = diagnosticsState
+    if (state != null) {
+        SettingsDiagnosticsScreen(
+            state = state,
+            onBack = onBack,
+            onPreview = { previewOpen = true },
+            onSaveBundle = { saveLauncher.launch("diagnostics-${LocalDate.now()}.zip") },
+            previewOpen = previewOpen,
+            onDismissPreview = { previewOpen = false },
+            saveConfirmationLabel = saveConfirmationLabel,
+            modifier = modifier,
+        )
+    } else {
+        LoadingSettings(modifier = modifier)
+    }
+}
+
+/** The real name of the document the Storage Access Framework picker actually created — never the
+ * suggested name assumed unchanged, since a user can rename it in the picker itself. */
+private fun realFileName(context: Context, uri: Uri): String {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (nameIndex >= 0 && cursor.moveToFirst()) return cursor.getString(nameIndex)
+    }
+    return uri.lastPathSegment ?: "the diagnostics bundle"
 }
 
 private fun applyContributeToggle(store: SettingsStore, index: Int, value: Boolean) {

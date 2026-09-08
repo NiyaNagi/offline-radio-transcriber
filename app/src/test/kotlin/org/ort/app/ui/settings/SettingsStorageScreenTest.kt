@@ -2,6 +2,9 @@ package org.ort.app.ui.settings
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
@@ -9,12 +12,15 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -43,6 +49,7 @@ class SettingsStorageScreenTest {
             SettingsStorageCategoryViewState("Audio", 800_000_000L),
             SettingsStorageCategoryViewState("Models", 200_000_000L),
             SettingsStorageCategoryViewState("Records", 10_000_000L),
+            SettingsStorageCategoryViewState("Lexicon", 0L),
         ),
         nightsLeftLabel = null,
         autoPruneEnabled = false,
@@ -51,38 +58,86 @@ class SettingsStorageScreenTest {
     )
 
     @Test
-    fun `R_133 the what-will-be-deleted banner is absent with no budget set, never a standing Nothing yet notice`() {
+    @Requirement("R-133")
+    fun `R_133_bar the four-segment usage bar's legend names Audio, Models, Records and Lexicon, real bytes each`() {
         composeTestRule.setContent {
             OrtTheme { SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {}) }
         }
 
-        composeTestRule.onNodeWithText("What will be deleted, now that the budget is reached", substring = true)
-            .assertDoesNotExist()
+        composeTestRule.onNodeWithText("Audio 0.8 GB").assertExists()
+        composeTestRule.onNodeWithText("Models 0.2 GB").assertExists()
+        composeTestRule.onNodeWithText("Records 0.0 GB").assertExists()
+        // R-133 (round 8): Lexicon is real — `StorageAccounting.lexiconBytes` (`:pipeline`, WP11c)
+        // — and honestly `0` today (no on-disk lexicon asset exists yet to measure, see that
+        // type's own doc comment), never omitted as if the category itself did not exist.
+        composeTestRule.onNodeWithText("Lexicon 0.0 GB").assertExists()
     }
 
     @Test
-    fun `R_133 the what-will-be-deleted banner appears only once the real used bytes reach the real budget`() {
-        val reached = state().copy(budgetGb = 1, usedBytes = 1_000_000_000L)
-        composeTestRule.setContent {
-            OrtTheme { SettingsStorageScreen(state = reached, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {}) }
-        }
-
-        composeTestRule.onNodeWithText("What will be deleted, now that the budget is reached", substring = true)
-            .assertExists()
-    }
-
-    @Test
-    fun `R_133 the what-will-be-deleted banner stays absent while auto-prune is on, even at budget`() {
-        val reachedAutoPruned = state().copy(budgetGb = 1, usedBytes = 1_000_000_000L, autoPruneEnabled = true)
+    @Requirement("R-133")
+    fun `R_133_next_deletion_row names the real session, over count and size, and Review opens it`() {
+        var reviewed: String? = null
+        val withNextDeletion = state().copy(
+            nextDeletion = SettingsNextDeletionViewState(
+                sessionId = "S-OLDEST",
+                predictedDateLabel = "Thu 10 Sep",
+                sessionDateLabel = "Mon 10 Aug",
+                overCount = 2_140,
+                sizeLabel = "1.2 GB",
+            ),
+        )
         composeTestRule.setContent {
             OrtTheme {
-                SettingsStorageScreen(state = reachedAutoPruned, onBack = {
-                }, onSetBudgetGb = {}, onToggleAutoPrune = {})
+                SettingsStorageScreen(
+                    state = withNextDeletion,
+                    onBack = {},
+                    onSetBudgetGb = {},
+                    onToggleAutoPrune = {},
+                    onReviewSession = { reviewed = it },
+                )
             }
         }
 
-        composeTestRule.onNodeWithText("What will be deleted, now that the budget is reached", substring = true)
-            .assertDoesNotExist()
+        composeTestRule.onNodeWithText("Next deletion: Thu 10 Sep").assertExists()
+        composeTestRule.onNodeWithText("audio from Mon 10 Aug, 2140 overs, 1.2 GB · transcripts and attributions stay")
+            .assertExists()
+        // Below the fold on a real-height screen — the established scroll-before-click idiom this
+        // suite's other below-the-fold action tests already use. Two scrollable nodes exist here
+        // (this screen's own vertical scroll, and the budget-chip row's horizontal one) — matched
+        // on the vertical axis specifically so the right one scrolls.
+        val verticalScroll = SemanticsMatcher("has vertical scroll axis") {
+            it.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange) != null
+        }
+        composeTestRule.onNode(hasScrollAction().and(verticalScroll)).performScrollToNode(hasText("Review"))
+        composeTestRule.onNodeWithText("Review").performClick()
+
+        assert(reviewed == "S-OLDEST") { "expected Review to open the real session id, got $reviewed" }
+    }
+
+    @Test
+    @Requirement("R-133")
+    fun `R_133_next_deletion_row reads Nothing scheduled with the real headroom when a budget is set`() {
+        val underBudget = state().copy(budgetGb = 10, usedBytes = 2_000_000_000L, nextDeletion = null)
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsStorageScreen(state = underBudget, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+            }
+        }
+
+        composeTestRule.onNodeWithText("Nothing scheduled — 8.0 GB below the budget").assertExists()
+    }
+
+    @Test
+    @Requirement("R-133")
+    fun `R_133_next_deletion_row reads Nothing scheduled, no budget set, when none is set at all`() {
+        val noBudget = state().copy(budgetGb = null, nextDeletion = null)
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsStorageScreen(state = noBudget, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+            }
+        }
+
+        composeTestRule.onNodeWithText("Nothing scheduled — no budget set").assertExists()
     }
 
     @Test
