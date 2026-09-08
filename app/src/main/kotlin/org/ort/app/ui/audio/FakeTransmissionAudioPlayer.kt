@@ -5,6 +5,10 @@ package org.ort.app.ui.audio
  * model/device-bearing interface ships its fake in the same change). Scriptable per transmission
  * id so a test can prove both the happy path and an honestly-reported failure, and it records
  * every call so a Compose test can assert *which* transmission was asked to play.
+ *
+ * ui-conformance WP6 (R-054) extended this fake alongside the interface: [rate]/[positionFraction]/
+ * [isPlaying] are plain in-memory state, so a Compose test can drive `Detail-Playback.dc.html`'s
+ * playing/scrub/speed states without a real `AudioTrack`.
  */
 public class FakeTransmissionAudioPlayer(private val script: Map<String, PlaybackOutcome> = emptyMap()) :
     TransmissionAudioPlayer {
@@ -13,12 +17,45 @@ public class FakeTransmissionAudioPlayer(private val script: Map<String, Playbac
     public var stopCallCount: Int = 0
         private set
 
+    public var rate: PlaybackRate = PlaybackRate.NORMAL
+        private set
+
+    private var playing = false
+    private var position = 0f
+
     override suspend fun play(transmissionId: String): PlaybackOutcome {
         playCalls += transmissionId
-        return script[transmissionId] ?: PlaybackOutcome.Played
+        val outcome = script[transmissionId] ?: PlaybackOutcome.Played
+        if (outcome is PlaybackOutcome.Played) {
+            playing = true
+            position = 0f
+        }
+        return outcome
     }
 
     override fun stop() {
         stopCallCount++
+        playing = false
+        position = 0f
     }
+
+    override fun pause() {
+        playing = false
+    }
+
+    override fun resume() {
+        playing = true
+    }
+
+    override fun seekToFraction(fraction: Float) {
+        position = fraction.coerceIn(0f, 1f)
+    }
+
+    override fun setRate(rate: PlaybackRate) {
+        this.rate = rate
+    }
+
+    override fun positionFraction(): Float = position
+
+    override fun isPlaying(): Boolean = playing
 }

@@ -24,8 +24,21 @@ import org.ort.data.entity.CorrectionEntity
  * eligible, in principle, to feed a future prior. [FREE_TEXT] is recorded as
  * [CorrectionDao.FIELD_STATION_UNVERIFIED] so it can never be silently treated as ground truth by
  * code that has not been told to check the field.
+ *
+ * **[CONFIRM] (ui-conformance R-058, `Flow-Correct.dc.html`).** Not a fourth *correction* in the
+ * Q8 sense — it is the `Confirm` action on the detail screen, which records that a human agreed
+ * with what the machine already shows. Its [CorrectionRequest.newStationId] always equals
+ * [CorrectionRequest.previousStationId] (nothing is changing) and it is recorded under the
+ * distinct field [FIELD_STATION_CONFIRMED] so nothing reading the correction log for an actual
+ * re-attribution mistakes it for one. Precisely because it changes nothing, [CorrectionPolling]
+ * never runs it through [CorrectionDao.recordCorrection] (which would force the attribution to
+ * `INFERRED` and set the `corrected` lock) — it inserts the audit row alone. This is *not* a fifth
+ * [org.ort.core.AttributionState]; the closed set (constitution I) is unchanged.
  */
-public enum class CorrectionTier { PICK_CANDIDATE, SEARCH_LEXICON, FREE_TEXT }
+public enum class CorrectionTier { PICK_CANDIDATE, SEARCH_LEXICON, FREE_TEXT, CONFIRM }
+
+/** R-058: the field a `Confirm` action's audit row is recorded under. See [CorrectionTier.CONFIRM]. */
+public const val FIELD_STATION_CONFIRMED: String = "station_confirmed"
 
 public data class CorrectionRequest(
     val transmissionId: String,
@@ -35,10 +48,10 @@ public data class CorrectionRequest(
     val correctedAtMillis: Long,
 ) {
     public fun toEntity(idGenerator: () -> String = { Ulid.generate().toString() }): CorrectionEntity {
-        val field = if (tier == CorrectionTier.FREE_TEXT) {
-            CorrectionDao.FIELD_STATION_UNVERIFIED
-        } else {
-            CorrectionDao.FIELD_STATION
+        val field = when (tier) {
+            CorrectionTier.FREE_TEXT -> CorrectionDao.FIELD_STATION_UNVERIFIED
+            CorrectionTier.CONFIRM -> FIELD_STATION_CONFIRMED
+            CorrectionTier.PICK_CANDIDATE, CorrectionTier.SEARCH_LEXICON -> CorrectionDao.FIELD_STATION
         }
         return CorrectionEntity(
             id = idGenerator(),

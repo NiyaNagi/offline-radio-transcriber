@@ -12,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
 import org.ort.app.ui.data.CandidateInspectionViewState
+import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.InspectionViewState
 import org.ort.app.ui.data.LatticeInspectionViewState
 import org.ort.app.ui.data.PriorContributionViewState
@@ -21,17 +22,10 @@ import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
 
 /**
- * The transmission detail drill-in (build-plan P14, `design/canvas/Detail.dc.html`). FR-UI-4:
- * the attribution state and confidence render through [org.ort.app.ui.components.AttributionMarker].
- * FR-UI-5: a play control drives a [org.ort.app.ui.audio.TransmissionAudioPlayer] with this
- * transmission's id. FR-UI-1's revision half: every superseded version stays visible here, not
- * just noted in the log row.
- *
- * One deliberate divergence from `Detail.dc.html`, called out in the build-plan prompt itself:
- * the artboard's "why this callsign" lattice and per-prior breakdown is FR-UI-8, explicitly P16's
- * ("the inspection surface") — `PriorCombiner`'s per-prior contributions have nowhere to reach
- * this screen from yet. This screen shows the plain attribution/confidence/transcript/audio the
- * prompt's "write first" section actually asks for.
+ * The transmission detail drill-in (ui-conformance WP6, R-050/R-051/R-057; originally build-plan
+ * P14, `design/canvas/Detail.dc.html` = INFERRED, `Detail-Confirmed.dc.html`). Four states, one
+ * layout — see [org.ort.app.ui.data.DetailViewStateMapper]'s class doc for the state → explanation
+ * mapping this test exercises.
  */
 @RunWith(RobolectricTestRunner::class)
 class TransmissionDetailScreenTest {
@@ -39,11 +33,12 @@ class TransmissionDetailScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun state(
+    private fun detail(
         attribution: Attribution = Attribution.inferred("K7LWH", 0.82),
         transcriptText: String = "roger that, good copy on the repeater this morning",
         revisionHistory: List<String> = emptyList(),
         hasAudio: Boolean = true,
+        inspection: InspectionViewState = InspectionViewState.EMPTY,
     ) = TransmissionDetailViewState(
         id = "TX1",
         timeLabel = "02:14:22",
@@ -54,20 +49,20 @@ class TransmissionDetailScreenTest {
         transcriptText = transcriptText,
         revisionHistory = revisionHistory,
         hasAudio = hasAudio,
+        inspection = inspection,
     )
+
+    private fun state(detail: TransmissionDetailViewState = detail()) = DetailViewStateMapper.from(detail)
 
     @Test
     fun `FR_UI_5 the play control asks the player for this transmission's audio`() {
         val player = FakeTransmissionAudioPlayer()
         composeTestRule.setContent {
-            OrtTheme {
-                TransmissionDetailScreen(state = state(), player = player, onBack = {})
-            }
+            OrtTheme { TransmissionDetailScreen(state = state(), player = player) }
         }
 
         composeTestRule.onNodeWithContentDescription("Play retained audio").performClick()
 
-        // The click launches a coroutine on the composition scope; give it a moment to run.
         composeTestRule.waitForIdle()
         assert(player.playCalls == listOf("TX1")) { "expected play(\"TX1\") but calls were ${player.playCalls}" }
     }
@@ -77,9 +72,8 @@ class TransmissionDetailScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state(hasAudio = false),
+                    state = state(detail(hasAudio = false)),
                     player = FakeTransmissionAudioPlayer(),
-                    onBack = {},
                 )
             }
         }
@@ -88,36 +82,57 @@ class TransmissionDetailScreenTest {
     }
 
     @Test
-    fun `the transcript, attribution and confidence are all shown`() {
+    fun `the transcript and attribution are both shown`() {
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state(attribution = Attribution.confirmed("W7NPC", 0.95)),
+                    state = state(detail(attribution = Attribution.confirmed("W7NPC", 0.95))),
                     player = FakeTransmissionAudioPlayer(),
-                    onBack = {},
                 )
             }
         }
 
         composeTestRule.onNodeWithText("roger that, good copy on the repeater this morning").assertExists()
-        composeTestRule
-            .onNodeWithContentDescription("filled circle, ✓ CONFIRMED, confidence 0.95", substring = true)
-            .assertExists()
+        composeTestRule.onNodeWithContentDescription("filled circle, Confirmed, W7NPC", substring = true).assertExists()
     }
 
+    /**
+     * FR-UI-4, rewritten by this package's audit of the old assertion here (`States.dc.html`,
+     * design-guide.md §6.2): the score chip is reserved for INFERRED alone — never a bare number
+     * on CONFIRMED — but a confidence value is never *omitted* either. It renders as prose in the
+     * header's explanation sentence for every state that carries one.
+     */
     @Test
-    fun `FR_UI_4 the confidence value is shown as visible text in the header, not only in the content description`() {
+    fun `FR_UI_4_confidence_is_present_in_the_header_sentence_and_the_chip_only_on_INFERRED`() {
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state(attribution = Attribution.confirmed("W7NPC", 0.95)),
+                    state = state(detail(attribution = Attribution.confirmed("W7NPC", 0.94))),
                     player = FakeTransmissionAudioPlayer(),
-                    onBack = {},
+                )
+            }
+        }
+        // CONFIRMED: the confidence is in the explanation sentence...
+        composeTestRule.onNodeWithText("0.94", substring = true).assertExists()
+        // ...but never as a score-chip content description (that phrase only ever appears for INFERRED).
+        composeTestRule.onNodeWithContentDescription("confidence 0.94", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `FR_UI_4 INFERRED carries its confidence in prose and a score chip beside the callsign`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.inferred("K7LWH", 0.82))),
+                    player = FakeTransmissionAudioPlayer(),
                 )
             }
         }
 
-        composeTestRule.onNodeWithText("0.95").assertExists()
+        // "0.82" alone is ambiguous — it is both the score chip and the prose sentence; "Confidence
+        // 0.82" (the prose wording) is unique to the sentence.
+        composeTestRule.onNodeWithText("Confidence 0.82", substring = true).assertExists()
+        composeTestRule.onNodeWithContentDescription("confidence 0.82", substring = true).assertExists()
     }
 
     @Test
@@ -125,9 +140,8 @@ class TransmissionDetailScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state(attribution = Attribution.unknown()),
+                    state = state(detail(attribution = Attribution.unknown())),
                     player = FakeTransmissionAudioPlayer(),
-                    onBack = {},
                 )
             }
         }
@@ -136,22 +150,24 @@ class TransmissionDetailScreenTest {
     }
 
     @Test
-    fun `FR_UI_1 a superseded transcript's earlier versions are visible, not hidden`() {
+    fun `R_055 a superseded transcript's earlier versions stay reachable, one tap away`() {
+        var opened = false
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state(revisionHistory = listOf("first partial")),
+                    state = state(detail(revisionHistory = listOf("first partial"))),
                     player = FakeTransmissionAudioPlayer(),
-                    onBack = {},
+                    onOpenRevisions = { opened = true },
                 )
             }
         }
 
-        composeTestRule.onNodeWithText("first partial").assertExists()
+        composeTestRule.onNodeWithText("1 earlier version").performClick()
+        assert(opened)
     }
 
     @Test
-    fun `AC_14 the candidate list and phonetic lattice are viewable on the detail screen`() {
+    fun `AC_14 the candidate list is viewable inline, with a link to the full lattice`() {
         val inspection = InspectionViewState(
             lattice = LatticeInspectionViewState(
                 source = "TEXT_DERIVED",
@@ -172,39 +188,37 @@ class TransmissionDetailScreenTest {
                 ),
             ),
         )
+        var openedWhy = false
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state().copy(inspection = inspection),
+                    state = state(detail(inspection = inspection)),
                     player = FakeTransmissionAudioPlayer(),
-                    onBack = {},
+                    onOpenWhy = { openedWhy = true },
                 )
             }
         }
 
-        // AC-14 / FR-UI-8: a resolved callsign's candidate list and phonetic lattice must actually
-        // be viewable on this screen, not merely computable by the mapper (InspectionViewStateMapperTest
-        // already proves the mapping; this proves the render).
-        composeTestRule.onNodeWithText("Lattice: TEXT_DERIVED (model text-derived-v1)").assertExists()
-        composeTestRule.onNodeWithText("K7ABC — score 1.50").assertExists()
-        composeTestRule.onNodeWithText("  database: +0.80 (supported)").assertExists()
+        composeTestRule.onNodeWithText("K7ABC", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Full lattice").performClick()
+        assert(openedWhy)
     }
 
     @Test
-    fun `back is reachable and carries a content description`() {
-        var backCalled = false
+    fun `not right opens the correction flow`() {
+        var notRightCalled = false
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state(),
+                    state = state(detail(attribution = Attribution.confirmed("W7NPC", 0.95))),
                     player = FakeTransmissionAudioPlayer(),
-                    onBack = { backCalled = true },
+                    onNotRight = { notRightCalled = true },
                 )
             }
         }
 
-        composeTestRule.onNodeWithContentDescription("Back").performClick()
-        assert(backCalled)
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        assert(notRightCalled)
     }
 
     /** Matches any node whose visible text looks like a two-decimal confidence value (e.g. "0.82"). */

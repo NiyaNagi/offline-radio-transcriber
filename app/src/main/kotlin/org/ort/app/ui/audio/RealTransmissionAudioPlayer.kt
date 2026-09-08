@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.media.PlaybackParams
 import org.ort.core.PassId
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.WorkQueueItemEntity
@@ -27,6 +28,9 @@ import org.ort.pipeline.passb.FlacSegmentAudioProvider
 public class RealTransmissionAudioPlayer(private val context: Context) : TransmissionAudioPlayer {
 
     private var track: AudioTrack? = null
+
+    /** Total frames written to [track] by the current [play] call — [positionFraction]'s denominator. */
+    private var totalFrames: Int = 0
 
     override suspend fun play(transmissionId: String): PlaybackOutcome {
         stop()
@@ -65,7 +69,49 @@ public class RealTransmissionAudioPlayer(private val context: Context) : Transmi
             runCatching { it.release() }
         }
         track = null
+        totalFrames = 0
     }
+
+    /** R-054: pauses without releasing — [resume] continues from the same [AudioTrack.getPlaybackHeadPosition]. */
+    override fun pause() {
+        track?.let { runCatching { it.pause() } }
+    }
+
+    override fun resume() {
+        track?.let { runCatching { it.play() } }
+    }
+
+    /**
+     * `Detail-Playback.dc.html`: "drag anywhere on the waveform to scrub". [AudioTrack] only
+     * accepts [AudioTrack.setPlaybackHeadPosition] while stopped or paused, so this pauses first
+     * when playing and resumes afterward — a caller sees no state change beyond the new position.
+     */
+    override fun seekToFraction(fraction: Float) {
+        val current = track ?: return
+        val frame = (fraction.coerceIn(0f, 1f) * totalFrames).toInt()
+        val wasPlaying = current.playState == AudioTrack.PLAYSTATE_PLAYING
+        runCatching {
+            if (wasPlaying) current.pause()
+            current.setPlaybackHeadPosition(frame)
+            if (wasPlaying) current.play()
+        }
+    }
+
+    /** `1x`/`0.75x`/`0.5x` — [PlaybackParams.setPitch] at `1f` keeps pitch constant while speed changes. */
+    override fun setRate(rate: PlaybackRate) {
+        val current = track ?: return
+        runCatching {
+            current.playbackParams = PlaybackParams().setSpeed(rate.multiplier).setPitch(1f)
+        }
+    }
+
+    override fun positionFraction(): Float {
+        val current = track ?: return 0f
+        if (totalFrames <= 0) return 0f
+        return (current.playbackHeadPosition.toFloat() / totalFrames).coerceIn(0f, 1f)
+    }
+
+    override fun isPlaying(): Boolean = track?.playState == AudioTrack.PLAYSTATE_PLAYING
 
     private fun playPcm(pcm: ShortArray, sampleRateHz: Int) {
         val minBufferBytes = AudioTrack.getMinBufferSize(
@@ -90,6 +136,7 @@ public class RealTransmissionAudioPlayer(private val context: Context) : Transmi
         )
         newTrack.write(pcm, 0, pcm.size)
         track = newTrack
+        totalFrames = pcm.size
         newTrack.play()
     }
 

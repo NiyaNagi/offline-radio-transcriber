@@ -61,4 +61,25 @@ class CorrectionFlowTest {
 
         assertEquals(CorrectionDao.FIELD_STATION_UNVERIFIED, entity.field)
     }
+
+    /**
+     * R-058, `Flow-Correct.dc.html`: "Confirm on a detail records that a human agreed — it counts
+     * toward calibration, and it is not a fifth state." A confirmation's new value equals the
+     * previous one (nothing is being changed) and it is recorded under its own field so it can
+     * never be mistaken for an actual re-attribution by code reading the correction log.
+     */
+    @Test
+    fun `R_058 confirming records agreement with the field station_confirmed and an unchanged value`() {
+        val entity = CorrectionRequest(
+            transmissionId = "TX1",
+            previousStationId = "W7NPC",
+            newStationId = "W7NPC",
+            tier = CorrectionTier.CONFIRM,
+            correctedAtMillis = 5L,
+        ).toEntity(idGenerator = { "CORR4" })
+
+        assertEquals(FIELD_STATION_CONFIRMED, entity.field)
+        assertEquals("W7NPC", entity.previousValue)
+        assertEquals("W7NPC", entity.newValue)
+    }
 }
