@@ -92,15 +92,17 @@ Fired by `adb shell am broadcast -a org.ort.app.debug.SCENARIO --es name <scenar
 `scenario.ps1`, which does exactly that plus the force-stop and log wait). Every scenario clears
 every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment for exactly what
 "clear" means) and resets the process-wide capture-facet singletons
-(`CaptureState`/`AsrAvailability`/`VadAvailability`/`ShedStatus`) before applying its own.
+(`CaptureState`/`AsrAvailability`/`VadAvailability`/`ShedStatus`/`ThermalStatus`/`RigStatus`/
+`StorageForecast` — the last three added by WP11a, register R-104/R-105) before applying its own.
 
 | Scenario | What it seeds |
 |---|---|
 | `empty` | No sessions at all. |
 | `first-session` | One session started 3 minutes ago, no transmissions, capture marked running. |
 | `overnight` | A real 6h42m, two-frequency session with ~42 overs exercising every `Rows.dc.html` variant: CONFIRMED, INFERRED (linked to its confirming over), AMBIGUOUS, UNKNOWN, a corrected row, a revised row (two transcript versions), a rejected row (retained), a first-heard station, a QSO thread (4 overs, shared `threadId`), a 38s capture gap, mixed signal strength, mixed retained audio, and lattice/candidate rows for the confirmed/inferred/ambiguous overs — including one cold-start and one negative prior, for `Detail-Why`. |
-| `gap-call` | `overnight` plus a second capture gap (see "Known gaps" below — there is no CALL-specific cause in `:data`'s schema). |
+| `gap-call` | `overnight` plus a second capture gap, cause `CALL` (register R-106 — `CaptureGapCause.CALL` added by WP11a). |
 | `unclean-end` | A heartbeat file that reads as an unclean end (never marked clean shutdown) for a prior session; this process is not capturing. |
+| `os-stopped` | The same unclean-end heartbeat as `unclean-end`, plus the `CaptureGapCause.OS_STOPPED` gap `RealCaptureService` itself now persists on relaunch, from the last heartbeat to the moment of detection (F5, register R-106). Does not "reopen" the previous session — a policy the lead has not decided. |
 | `pass-a-partial` | A transmission whose only transcript row is a current Pass A partial, `processingState = PROCESSING`. |
 | `corrected` | A single transmission carrying the exact shape a one-tap correction produces, plus its `CorrectionEntity` audit row. |
 | `no-audio` | A confirmed transmission with no retained-audio file at all. |
@@ -110,24 +112,12 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `search-corpus` | Fourteen transcripts mentioning "park activation" across three sessions ("nights"). |
 | `backlog` | `ShedStatus` set to level 3 / backlog 112 (F8), capture marked running. |
 | `model-missing` | `AsrAvailability.unavailable(...)` (F13); captured but untranscribed transmissions. |
-| `storage-warn` | `CaptureState.failed(...)` with the exact reason string `RealCaptureService.stopForStorageExhaustion()` itself uses (F6). |
+| `storage-warn` | `StorageForecast.ThreeNightsLeft` (FR-STO-3, register R-105), capture genuinely still running — replaces this scenario's earlier misuse of F6's exhaustion failure string. |
+| `thermal` | `ThermalStatus.Warm`, measured RTF 0.9 (F7, register R-104), the same shed level/backlog `backlog` sets. |
+| `rig-lost` | `RigStatus.Stale` since 30 minutes ago, last known on 145.230/146.960 (F9, register R-104). |
 
 ### Known gaps (report to the lead, not fixed here)
 
-- **`thermal` and `rig-lost` are not simulable from `:app` today.** There is no thermal signal
-  anywhere in `:pipeline` (`ShedSignals` carries battery/backlog/storage only), and no rig
-  connection-state singleton exists at all (the rig module, FR-RIG, is not built — register
-  R-084). Simulating either needs a new process-wide holder in `:pipeline`, the same pattern as
-  `ShedStatus`/`AsrAvailability` — that is a `:pipeline` change, out of WP0's file ownership; the
-  lead's brief already anticipated this and said to report it for WP11.
-- **`storage-warn` reuses F6's exhaustion reason, not a distinct earlier warning.** `:pipeline`
-  has one storage signal (`RealCaptureService.stopForStorageExhaustion()`, the loud stop at the
-  floor) and nothing between "fine" and "stopped" — there is no separate "getting low" state to
-  simulate.
-- **`gap-call`'s second gap uses `CaptureGapCause.INTERRUPTION`.** `CaptureGapEntity` has a closed
-  `cause` enum with no CALL-specific value and no free-text reason field at all, so "incoming
-  call" (the artboard's own wording) is not representable exactly — `INTERRUPTION` is the nearest
-  concept the schema has.
 - **`pass-a-partial` is representable in data, not yet rendered.** `TranscriptEntity.pass = A`
   with no `pass = B` row is exactly what a real in-flight Pass A produces, but the Log screen
   (register R-041) does not yet render a partial state at all — this scenario proves the data

@@ -267,16 +267,15 @@ internal object OvernightScenario {
             ),
         )
         if (extraGap) {
-            // `gap-call` per this package's brief. CaptureGapEntity carries no free-text reason and
-            // no CALL-specific CaptureGapCause value — INTERRUPTION is the nearest concept `:data`'s
-            // schema has (see this package's report).
+            // `gap-call` — WP11a (register R-106) added CaptureGapCause.CALL for exactly this:
+            // "not listening · 38 s · incoming call" (Fail-Call.dc.html's own wording).
             db.captureGapDao().insert(
                 CaptureGapEntity(
                     id = "$sessionId-gap2",
                     sessionId = sessionId,
                     startedAt = offset(45.0),
                     endedAt = offset(45.0) + 52_000L,
-                    cause = CaptureGapCause.INTERRUPTION,
+                    cause = CaptureGapCause.CALL,
                     recoveredAutomatically = true,
                 ),
             )

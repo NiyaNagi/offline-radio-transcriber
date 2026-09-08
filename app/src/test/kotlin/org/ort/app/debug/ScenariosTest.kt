@@ -14,10 +14,14 @@ import org.junit.runner.RunWith
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.capture.StorageForecast
+import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -48,6 +52,9 @@ class ScenariosTest {
         VadAvailability.reset()
         CaptureState.idle(clearSession = true)
         ShedStatus.reset()
+        ThermalStatus.reset()
+        RigStatus.reset()
+        StorageForecast.reset()
     }
 
     @Test
@@ -200,6 +207,15 @@ class ScenariosTest {
     }
 
     @Test
+    @Requirement("F-015", "R-106")
+    fun `F15_gap-call's second gap carries cause CALL`() = runTest {
+        val gapCall = Scenarios.load(context, "gap-call")
+        val gaps = db.captureGapDao().listBySession(requireNotNull(gapCall.primarySessionId))
+
+        assertTrue("expected a CALL-caused gap", gaps.any { it.cause == CaptureGapCause.CALL })
+    }
+
+    @Test
     @Requirement("R-110")
     fun `R_110 unclean-end writes a heartbeat that reads as an unclean end, never as capturing`() = runTest {
         Scenarios.load(context, "unclean-end")
@@ -311,12 +327,52 @@ class ScenariosTest {
     }
 
     @Test
-    @Requirement("R-110")
-    fun `R_110 storage-warn fails capture with the same reason RealCaptureService itself uses`() = runTest {
+    @Requirement("FR-STO-3", "R-105")
+    fun `FR_STO_3_storage-warn reports ThreeNightsLeft with capture still genuinely running`() = runTest {
         Scenarios.load(context, "storage-warn")
 
-        assertFalse(CaptureState.isCapturing)
-        assertTrue(CaptureState.failureReason!!.contains("storage exhausted"))
-        assertTrue(CaptureState.failureReason!!.contains("100 MiB"))
+        assertTrue("storage-warn must not reuse F6's exhaustion failure", CaptureState.isCapturing)
+        assertTrue(StorageForecast.state is StorageForecast.State.ThreeNightsLeft)
     }
+
+    @Test
+    @Requirement("F-005", "R-106")
+    fun `F5_os-stopped seeds the unclean-end heartbeat and an OS_STOPPED gap on the previous session`() = runTest {
+        val result = Scenarios.load(context, "os-stopped")
+        val sessionId = requireNotNull(result.primarySessionId)
+
+        val heartbeat = File(context.filesDir, "heartbeat.txt")
+        assertTrue(heartbeat.isFile)
+        assertEquals("false", heartbeat.readLines()[4])
+
+        val gaps = db.captureGapDao().listBySession(sessionId)
+        assertEquals(1, gaps.size)
+        assertEquals(CaptureGapCause.OS_STOPPED, gaps.single().cause)
+    }
+
+    @Test
+    @Requirement("F-007", "R-104")
+    fun `F7_thermal sets ThermalStatus Warm with a measured RTF of 0_9`() = runTest {
+        Scenarios.load(context, "thermal")
+
+        val state = ThermalStatus.state
+        assertTrue(state is ThermalStatus.State.Warm)
+        assertEquals(0.9, state.realTimeFactor)
+        assertTrue(CaptureState.isCapturing)
+    }
+
+    @Test
+    @Requirement("F-009", "R-104")
+    fun `F9_rig-lost sets RigStatus Stale since thirty minutes ago, last known 145_230`() = runTest {
+        Scenarios.load(context, "rig-lost")
+
+        val state = RigStatus.state
+        assertTrue(state is RigStatus.State.Stale)
+        state as RigStatus.State.Stale
+        assertEquals(145_230_000L, state.lastKnown.bands.first().frequencyHz)
+        assertTrue(isAtLeastThirtyMinutesAgo(state.sinceMillis))
+    }
+
+    private fun isAtLeastThirtyMinutesAgo(sinceMillis: Long): Boolean =
+        sinceMillis <= System.currentTimeMillis() - 29 * 60_000L
 }
