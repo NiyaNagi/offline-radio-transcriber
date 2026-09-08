@@ -32,6 +32,68 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · `:data` half: eight built-but-untested requirement ids get named tests
+
+**Scope:** `:data` (`data/src/test/**` only — no production change), `results/coverage-matrix.md`.
+
+**Requirements/ACs:** FR-ASR-7, FR-AST-5, FR-AST-6, FR-AST-8, FR-RUN-2, FR-STO-1, NFR-4b, FR-LEX-12
+established. FR-STO-2, FR-STO-2a, CON-STO-1 investigated and left uncovered — see below.
+
+**What changed:** F-027 flagged eleven `:data`-owned ids as built but unnamed by any test.
+Rebased this branch onto `main` first (it had drifted 38 commits behind, missing F-021's
+`ShedEventEntity`/`MIGRATION_1_2` and F-017's `SearchDao` filters). Per id:
+- **FR-AST-5, FR-AST-6** — `MigrationTest`'s two existing tests already exercise exactly this
+  (schema-versioned forward migration preserving audio and superseded transcripts, tested against
+  the committed v1 fixture); added both ids to their `@Requirement` annotations alongside AC-53.
+- **FR-AST-8** — same for `ReconciliationTest`'s existing orphan/dangling-row test, alongside
+  AC-54.
+- **FR-STO-1** — `SearchDaoFullTextTest`'s real FTS5 MATCH test already establishes "persist in
+  SQLite with FTS5 over transcripts"; added the id alongside FR-UI-3, keeping its honest
+  `assumeTrue` skip for the Robolectric host-SQLite fts5 gap untouched.
+- **FR-ASR-7** — no existing test asserted the model identity/version/quantization/decode-params
+  columns round-trip; added a new test to `TranscriptVersioningTest` with five distinct,
+  non-default field values, checked through both `getCurrent` and `getAllVersions`.
+- **FR-LEX-12** — no test exercised `CatalogDao`'s phonetic-lattice/candidate-list persistence at
+  all. Added `data/src/test/kotlin/org/ort/data/dao/CatalogDaoTest.kt`: one test proves the full
+  ranked candidate list (not just the selected one) persists with its prior breakdown intact, one
+  proves a raw lattice persists and round-trips its source/model/units blob.
+- **FR-RUN-2** — every existing `WorkQueueTest` uses an in-memory database, which cannot show a
+  queued item survives the database closing. Added `data/src/test/kotlin/org/ort/data/DurabilityTest.kt`:
+  enqueues an item against a real on-disk file, closes that `OrtDatabase` instance, opens a second
+  independent instance against the same file, and asserts the item is still `READY` there — the
+  strongest claim actually checkable without an OS-level process kill.
+- **NFR-4b** — "survives process kill mid-write" cannot be proven on Robolectric/JVM (no way to
+  induce an unclean kill mid-transaction and observe recovery — needs the device matrix). What is
+  checkable and is the actual durability primitive the requirement rests on: `OrtDatabase.create`
+  configures WAL journal mode for every non-in-memory database. Added a test in the same
+  `DurabilityTest.kt` asserting `PRAGMA journal_mode` reports `wal` on a file-backed instance. The
+  test's doc comment says explicitly that this is configuration verified, not a survived kill.
+- **FR-STO-2, FR-STO-2a, CON-STO-1 — left uncovered, honestly.** `TransmissionEntity.audioFormat`
+  is a free-text `String` column with no validation or codec-selection logic anywhere in `:data`;
+  the actual codec choice (currently FLAC, per FR-STO-2a/CON-STO-1's "lossless until Pass C is
+  measured") is made outside this module. A test that only asserted a hardcoded fixture string
+  round-tripped would be exactly the "checks a type exists" test the brief forbids, so none was
+  written. These three remain in coverage-matrix's "Not yet covered" and belong to whichever
+  module actually chooses/enforces the retention codec.
+
+**Verified:** `./gradlew :data:test --console=plain -q` — green, all 8 renamed/new tests included
+(`DurabilityTest` 2/2, `CatalogDaoTest` 2/2, `TranscriptVersioningTest` 3/3, plus the renamed
+`MigrationTest`/`ReconciliationTest`/`SearchDaoFullTextTest` assertions unchanged). `./gradlew
+coverageMatrix` then `./gradlew coverageMatrixCheck` (run as two separate invocations, per the
+task's known implicit-dependency Gradle validation issue) — both green; the regenerated
+`results/coverage-matrix.md` shows "Covered by at least one test" rising 120 → 128 and all eight
+ids now listed by name under `## Covered` rather than `## Not yet covered`. `./gradlew build
+dependencyRules --console=plain -q` — green (one ktlint import-ordering/function-signature
+violation caught and fixed via `:data:ktlintFormat` before this run). `python
+tools/spec-check/spec_check.py` — all 8 checks PASS.
+
+**Left open / not done:** No production code was changed — every id closed here was already
+implemented; only test naming/coverage changed. FR-STO-2, FR-STO-2a and CON-STO-1 are reported
+as not established in `:data` for the reason above, not fixed. Never claimed on-device
+verification — everything here is Robolectric/JVM only.
+
 ## 2026-09-07 (audit — F-005)
 
 ### (pending) — audit F-005 · heartbeat now carries the segmenter's real sample position, not a fabricated 0

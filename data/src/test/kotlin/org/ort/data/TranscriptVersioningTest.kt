@@ -77,4 +77,50 @@ public class TranscriptVersioningTest {
         }
         assertTrue("a second isCurrent=1 row for the same transmission must violate idx_transcript_one_current", threw)
     }
+
+    /**
+     * FR-ASR-7 — the model identity, version, quantization and decode parameters that produced a
+     * transcript are stored alongside it, not just its text, so a result can be traced back to
+     * exactly what produced it (constitution VI: "no number without its provenance"). Every field
+     * here is distinct from every other transcript fixture in this file to rule out an accidental
+     * pass from a hardcoded default.
+     */
+    @Test
+    @Requirement("FR-ASR-7")
+    public fun FR_ASR_7_model_identity_version_quantization_and_decode_params_survive_alongside_the_transcript(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+            val dao = db.transcriptDao()
+
+            dao.supersede(
+                TranscriptEntity(
+                    id = "T1",
+                    transmissionId = "TX1",
+                    pass = TranscriptPass.B,
+                    text = "whiskey seven november",
+                    modelId = "distil-small.en-int8",
+                    modelVersion = "2024.11.3",
+                    quantization = "int8",
+                    decodeParams = """{"beam_size":5,"temperature":0.0}""",
+                    noSpeechProb = 0.02f,
+                    confidence = 0.87,
+                    isCurrent = true,
+                    createdAt = 1L,
+                ),
+            )
+
+            val stored = dao.getCurrent("TX1")!!
+            assertEquals("distil-small.en-int8", stored.modelId)
+            assertEquals("2024.11.3", stored.modelVersion)
+            assertEquals("int8", stored.quantization)
+            assertEquals("""{"beam_size":5,"temperature":0.0}""", stored.decodeParams)
+
+            // And it survives retrieval through getAllVersions too, not just getCurrent.
+            val versioned = dao.getAllVersions("TX1").single { it.id == "T1" }
+            assertEquals("distil-small.en-int8", versioned.modelId)
+            assertEquals("2024.11.3", versioned.modelVersion)
+            assertEquals("int8", versioned.quantization)
+            assertEquals("""{"beam_size":5,"temperature":0.0}""", versioned.decodeParams)
+        }
 }
