@@ -150,5 +150,5 @@ in the row).
 
 | id | screen | artboard | what is wrong | sev | status |
 |---|---|---|---|---|---|
-| R-110 | — | plan §E | There is no way to put the app into a named state for validation. Every phase-E scenario needs `adb shell am broadcast -a org.ort.app.debug.SCENARIO --es name <x>` to load synthetic rows and set status flags, in the debug build only. | process | building |
-| R-111 | — | plan §E | No script boots a named AVD on a given port, installs, fires a scenario, and screenshots every screen to `results/ui-audit/<scenario>/<screen>.png`. | process | building |
+| R-110 | — | plan §E | There is no way to put the app into a named state for validation. Every phase-E scenario needs `adb shell am broadcast -a org.ort.app.debug.SCENARIO --es name <x>` to load synthetic rows and set status flags, in the debug build only. | process | fixed |
+| R-111 | — | plan §E | No script boots a named AVD on a given port, installs, fires a scenario, and screenshots every screen to `results/ui-audit/<scenario>/<screen>.png`. | process | fixed |

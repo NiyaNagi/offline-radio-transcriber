@@ -39,7 +39,7 @@ D and E overlap once WP0 lands: validation of early packages runs while later pa
 ### Phase A — draw
 
 Every `planned` row in `design-intent.md` becomes `drawn`. Order: setup (S), now/capture (N),
-log (L), threads (T), detail (D), search (Q), stations/frequencies (ST/FQ), digest (DG),
+log (L), threads (T), detail (D), search, stations/frequencies (ST/FQ), digest (DG),
 improve (R), settings (CF), failures (F), flows (FL), remaining foundations (Grid, Icons).
 Canvas republished after each group. Done when the intent file has no `planned` row.
 
@@ -119,7 +119,7 @@ state reachable by broadcast: `adb shell am broadcast -a org.ort.app.debug.SCENA
 | **V2 Capture** | idle, first-session, overnight, unclean-end, gap-call, storage-warn, thermal, backlog, rig-lost | N01–N06, F02, F05–F09, F15 | 5556 |
 | **V3 Reader** | overnight (rows of every variant), pass-a-partial, rejected-shown, filters, threads, ungrouped | L01–L05, T01–T03 | 5554 |
 | **V4 Detail** | confirmed, inferred, ambiguous, unknown, corrected, no-audio, revisions, correction A/B/C, propagated | D01–D11, F10, F11 | 5556 |
-| **V5 Search + views** | search states, stations, station-pattern, frequency-change | Q01–Q05, ST01–ST04, FQ01–FQ03 | 5554 |
+| **V5 Search + views** | search states, stations, station-pattern, frequency-change | the five `Search*` boards, ST01–ST04, FQ01–FQ03 | 5554 |
 | **V6 System** | settings, assets-missing, tier, storage-full, export, contribute, diagnostics, improve-flow, migration-failed, reconcile, lexicon-corrupt, asset-swap, calibration | CF01–CF10, R01–R04, DG01–DG04, F12–F14, F17–F22 | 5556 |
 | **V7 Accessibility** | every screen at font scale 1.0 and 2.0; TalkBack tree dump per screen; greyscale | all | 5554 |
 
