@@ -2,6 +2,7 @@ package org.ort.app.ui.setup
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +23,7 @@ import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
+import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.RigStatus
@@ -122,18 +124,27 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
                     value = row.value,
                     modifier = Modifier.weight(1f).padding(start = 12.dp),
                     trailingMarker = {
-                        when {
-                            row.statusText != null ->
+                        // R-285: the radio row's Connected branch is the one case where both are
+                        // set together ([radioRow]'s own doc comment) -- a Row wraps both rather
+                        // than picking only one, the same "R-265's status text merges in, the
+                        // action stays its own separate button stop" split below, just side by side
+                        // instead of alone.
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            row.statusText?.let { statusText ->
                                 Text(
-                                    text = row.statusText,
+                                    text = statusText,
                                     style = OrtType.signal,
                                     color = OrtColors.accentGreenDim,
                                     // R-265: a lone, non-merging content description -- swallowed
                                     // into KeyValueRow's own merge as one further list entry, not a
                                     // second merge boundary (this screen's class doc explains why).
-                                    modifier = Modifier.semantics { contentDescription = row.statusText },
+                                    modifier = Modifier.semantics { contentDescription = statusText },
                                 )
-                            row.actionLabel != null ->
+                            }
+                            row.actionLabel?.let { actionLabel ->
                                 // R-265: deliberately NOT given the same lone-contentDescription
                                 // treatment as statusText above -- TextAction's own clickable is a
                                 // genuine separate merge boundary (`Rows.kt`, `Modifier.clickable`
@@ -141,10 +152,11 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
                                 // running it: it stays its own child semantics node even nested
                                 // inside KeyValueRow's merge, not absorbed. That is the *correct*
                                 // shape for an actionable element, not a bug to route around: the
-                                // row reads its facts as one stop, "Fix" is reached and activated as
-                                // its own real button stop straight after, exactly as this file's
-                                // class doc now explains.
-                                TextAction(text = row.actionLabel, onClick = { row.onAction?.invoke() })
+                                // row reads its facts as one stop, "Fix"/"Change" is reached and
+                                // activated as its own real button stop straight after, exactly as
+                                // this file's class doc now explains.
+                                TextAction(text = actionLabel, onClick = { row.onAction?.invoke() })
+                            }
                         }
                     },
                 )
@@ -191,13 +203,19 @@ private fun AmberHalfMarker() {
     }
 }
 
-/** The five "Fix"/"Install" callbacks S12's rows can carry, bundled so [readyRowsFor] stays under
- * detekt's parameter-count threshold. */
+/** The "Fix"/"Install"/"Change" callbacks S12's rows can carry, bundled so [readyRowsFor] stays
+ * under detekt's parameter-count threshold. */
 public data class ReadyActions(
     val onFixInput: () -> Unit,
     val onFixLevel: () -> Unit,
     val onFixOvernight: () -> Unit,
     val onFixRadio: () -> Unit,
+    /** R-285 (validator pass 3): distinct from [onFixRadio] — [SetupActivity.onChangeRadio]'s own
+     * clear-then-navigate, the same callback S11's own "Change radio" ([RadioVerifiedScreen])
+     * already wires, not merely the bare step jump [onFixRadio] is for the two already-broken
+     * (`Stale`/`Absent`) rig readings. Used on a row that is already `ok` — see [radioRow]'s own
+     * doc comment for why this row needed a target at all before this. */
+    val onChangeRadio: () -> Unit,
     /** Opens `ReaderActivity` at its `SETTINGS` destination (WP9 round 3) — see
      * [SetupActivity.onInstallModel]'s own doc comment for exactly where it lands and why (Settings'
      * root, not its `Assets` sub-screen directly — no entry point for that exists yet). */
@@ -233,7 +251,7 @@ public fun readyRowsFor(
         actionLabel = "Fix".takeIf { !batteryExempt },
         onAction = actions.onFixOvernight,
     ),
-    radioRow(store, rigStatus, actions.onFixRadio),
+    radioRow(store, rigStatus, actions.onFixRadio, actions.onChangeRadio),
     modelRow(asrState, actions.onInstallModel),
 )
 
@@ -259,20 +277,40 @@ private fun levelRow(store: SetupStore, onFixLevel: () -> Unit): ReadyRow {
     )
 }
 
-private fun radioRow(store: SetupStore, rigStatus: RigStatus.State, onFixRadio: () -> Unit): ReadyRow =
-    when (store.radioChoice) {
-        RadioChoice.NONE, null -> ReadyRow(
-            label = "Radio",
-            value = store.manualFrequencyHz?.let { "No radio · %.3f MHz by hand".format(it / 1_000_000.0) }
-                ?: "No radio · frequency by hand",
-            ok = true,
-            statusText = null,
-            actionLabel = null,
-        )
-        RadioChoice.TH_D75A, RadioChoice.OTHER_CAT_RIG -> radioRowForCatRig(rigStatus, onFixRadio)
-    }
+/**
+ * R-285 (validator pass 3, register): S09..S11 (`Setup-Rig*.dc.html`) had no way back in from S12
+ * once a radio was already chosen — an `ok` reading (a deliberate "no radio" choice, or a genuinely
+ * `Connected` rig) rendered with no action at all, so the only route was uninstalling/resetting
+ * setup entirely. Both `ok` branches below now also carry [ReadyRow.actionLabel] `"Change"`, wired
+ * to [ReadyActions.onChangeRadio] — the `Connected` branch is the one case in this whole screen
+ * where [ReadyRow.statusText] ("verified") and [ReadyRow.actionLabel] ("Change") are both present
+ * together (this row's own [ReadyScreen] `trailingMarker` rendering handles that pairing
+ * explicitly; every other row here still only ever sets one or neither, per [readyRowDescription]'s
+ * own doc comment).
+ */
+private fun radioRow(
+    store: SetupStore,
+    rigStatus: RigStatus.State,
+    onFixRadio: () -> Unit,
+    onChangeRadio: () -> Unit,
+): ReadyRow = when (store.radioChoice) {
+    RadioChoice.NONE, null -> ReadyRow(
+        label = "Radio",
+        value = store.manualFrequencyHz?.let { "No radio · %.3f MHz by hand".format(it / 1_000_000.0) }
+            ?: "No radio · frequency by hand",
+        ok = true,
+        statusText = null,
+        actionLabel = "Change",
+        onAction = onChangeRadio,
+    )
+    RadioChoice.TH_D75A, RadioChoice.OTHER_CAT_RIG -> radioRowForCatRig(rigStatus, onFixRadio, onChangeRadio)
+}
 
-private fun radioRowForCatRig(rigStatus: RigStatus.State, onFixRadio: () -> Unit): ReadyRow = when (rigStatus) {
+private fun radioRowForCatRig(
+    rigStatus: RigStatus.State,
+    onFixRadio: () -> Unit,
+    onChangeRadio: () -> Unit,
+): ReadyRow = when (rigStatus) {
     is RigStatus.State.Connected -> {
         val bandCount = rigStatus.bands.size
         ReadyRow(
@@ -280,7 +318,8 @@ private fun radioRowForCatRig(rigStatus: RigStatus.State, onFixRadio: () -> Unit
             value = "${rigStatus.descriptor} · $bandCount band${if (bandCount == 1) "" else "s"}",
             ok = true,
             statusText = "verified",
-            actionLabel = null,
+            actionLabel = "Change",
+            onAction = onChangeRadio,
         )
     }
     is RigStatus.State.Stale -> ReadyRow(

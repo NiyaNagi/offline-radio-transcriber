@@ -32,6 +32,109 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9: pass-3 fixes)
+
+### (pending) — ui-conformance WP9 · pass-3 fixes: ghost action, universal scaffold padding, listening escape, radio reachability
+
+**Scope:** `:app` `ui/setup/**` (`ReadyScreen.kt`, `VerifyScreen.kt`, `SetupActivity.kt` and their
+tests), `debug/**` (`Scenarios.kt`, `ScenariosTest.kt`, new `FailureOverrideScenariosTest.kt`),
+`results/ui-audit/README.md`, `results/coverage-matrix.md`. Builds directly on the previous commit
+(`ui-conformance WP9 · ready rows on the native focusable KeyValueRow`) in this same worktree — no
+merge needed between the two.
+
+**Requirements/ACs:** R-280, R-281, R-282, R-283, R-284, R-285 (V1 pass-3 register findings,
+`results/ui-audit/register.md`) — R-220 reopened as R-280, R-281..R-285 newly filed.
+
+**What changed:**
+- **R-280 (ghost action, halt).** Investigated the reported semi-transparent duplicate of the
+  bottom bar's secondary action rendering near the status bar on `setup/S02b-mic-denied-pass3-
+  recheck.png` (`Check again`, faint, top of screen). Read every candidate composable —
+  `SetupScaffold.kt` (only one `bottomActions()` call; the R-220 measurement-feedback loop is
+  already gone per its own doc comment), `MicrophoneDeniedScreen`, `NotificationsScreen`,
+  `RouteMismatchScreen`, `VerifyScreen` — none compose a secondary action's text more than once.
+  `MicrophoneScreensTest`'s own existing `R_220 exactly one Check again renders, never a ghost
+  duplicate` test already proves this for S02b and passes; three matching tests added for the other
+  affected screens (`R_280 exactly one Skip renders...` — `NotificationsScreenTest`, `R_280 exactly
+  one Try this one again renders...` — `RouteMismatchScreenTest`, `R_280 exactly one Choose another
+  input renders on a timeout...` — `VerifyScreenTest`), all passing: the composable/semantics tree
+  contains each action's text exactly once on every screen R-280 names. The screenshot ghost is
+  reported, not fabricated as fixed: given it reproduces specifically on the "recheck" screenshot
+  (S02b, reached by returning from System Settings) and is absent from a plain forward-navigation
+  capture of S03, it is most consistent with an Android window/task-snapshot transition artifact
+  from backgrounding into Settings and back — not an app-owned composition bug — and is left as a
+  reported observation for the validator to recapture after the transition settles, rather than
+  claimed fixed without evidence.
+- **R-281/R-282/R-283 (universal scaffold padding).** `SetupScaffold`'s own shared `weight(1f)` +
+  `verticalScroll` mechanism (its own R-123 doc comment) already applies to every screen built on
+  it, S03/S06/S08 included — confirmed by adding the same per-screen font-scale-2.0 regression test
+  `WelcomeScreenTest`/`InputScreenTest` already carry for S01/S04, which `SetupScaffoldTest`'s own
+  generic version cannot stand in for: `NotificationsScreenTest`'s `R_281 the closing footer scrolls
+  clear...`, `RouteMismatchScreenTest`'s `R_282 the mono descriptor line scrolls clear...`,
+  `OvernightScreenTest`'s `R_283 the last content item scrolls clear...` — all pass on the current
+  scaffold with no production code change needed; the gap was in test coverage, not the scaffold.
+- **R-284 (listening-check escape).** `Setup-Verify.dc.html` draws a `Choose a different input` link
+  under the disabled `Continue` for the whole time a check is in progress (up to the 30 s signal
+  wait), not only after `RouteCheckState.TimedOut` — `VerifyScreen.kt` only showed it once timed
+  out. Added `ChooseADifferentInputLink`, a small clickable `Text` (not `TextAction`, WP2's
+  `Controls.kt` — the board's own colour for this link, `oklch(0.66 0.008 250)`, is
+  `OrtColors.textMuted`, distinct from `TextAction`'s fixed `accent/green`) shown whenever
+  `!allPassed` during the non-timed-out branch, wired to the same `onChooseAnotherInput` callback
+  the timed-out state already uses. Two new tests in `VerifyScreenTest`.
+- **R-285 (radio reachability).** Two independent gaps, both closed:
+  - **No sanctioned emulator path to S09..S11.** `setup-verified` itself resolves `radioChoice` up
+    front, so `stepFor` never stopped at `RADIO`. Added scenario `setup-radio` (`Scenarios.kt`) —
+    the same verified-input/level/overnight base `setup-verified` seeds, but `radioChoice`/
+    `manualFrequencyHz` explicitly cleared to `null` (not merely left untouched —
+    `SharedPreferences` persist across scenario loads unlike `:data`, so a prior `setup-verified`
+    load would otherwise leave a stale `radioChoice` behind and defeat the scenario's own purpose,
+    confirmed and tested). `SetupStateMachine.stepFor` now resumes at `SetupStep.RADIO` from a cold
+    `MainActivity` launch. Two new tests in `ScenariosTest`; `results/ui-audit/README.md`'s "Reaching
+    S07/S12" section renamed to "Reaching S07/S09/S12" with the new scenario documented and its own
+    launch recipe added.
+  - **S12's Radio row had no way back once a choice already existed.** `readyRowsFor`'s `radioRow`
+    now also gives `ReadyRow.actionLabel = "Change"` (wired to a new `ReadyActions.onChangeRadio` —
+    `SetupActivity.onChangeRadio`'s existing clear-then-navigate, the same callback S11's own
+    "Change radio" already uses, not the bare step jump `onFixRadio` is for the two already-broken
+    `Stale`/`Absent` readings) to both previously-actionless `ok` branches: "no radio chosen" and a
+    genuinely `Connected` rig. The `Connected` branch is the one row in this whole screen where
+    `ReadyRow.statusText` ("verified") and `ReadyRow.actionLabel` ("Change") are both set together —
+    `ReadyScreen`'s `trailingMarker` rendering now wraps both in a `Row` rather than picking only
+    one (each keeps its own R-265 accessibility treatment: `statusText`'s lone contentDescription,
+    `actionLabel`'s separate real button stop). Four new tests across `ReadyRowsForTest` and
+    `ReadyScreenTest`.
+- **`ScenariosTest.kt` split — detekt's `LargeClass` finding**, the same fix `RowsTest.kt`'s own
+  `NavRowTest.kt` split already established as house style (`CHANGELOG.md`, 2026-09-08 WP2 entries):
+  the R-285 tests above pushed this class past detekt's size threshold. WP11b's seven
+  `DebugFailureOverride`-only scenarios (register R-100, no `:data`/process-wide-facet involvement)
+  moved verbatim into a new file, `FailureOverrideScenariosTest.kt` — same assertions, same test
+  names, same `@Requirement` tags, nothing suppressed.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL**, **1058 tests, 0 failures, 0
+  errors** (aggregated from `app/build/test-results/testDebugUnitTest/TEST-*.xml`).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean (the `ScenariosTest.kt`
+  `LargeClass` and one `VerifyScreenTest.kt` `MaxLineLength` violation this round introduced were
+  both fixed, not suppressed).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, 185 of 419
+  requirements covered, matrix up to date.
+- `.\gradlew.bat :app:assembleDebug` (via the `build` task above) — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- **R-280's ghost is reported, not proven fixed** — see above. No composable in this codebase
+  duplicates a secondary action's text (proven by five passing "exactly once" tests across the
+  affected screens); the observed device screenshot artifact is most consistent with a platform
+  window-transition effect this session has no tool to reproduce or capture directly. Flagged for
+  the validator to recapture after the Settings-return transition settles, or with animations
+  disabled, before this is closed in the register.
+- R-284's link intentionally reuses `onChooseAnotherInput` rather than a new, separate callback —
+  both the in-progress link and the timed-out state's own button lead to the identical S04
+  destination, so a distinct callback would only duplicate the wiring for no behavioural difference.
+
+---
+
 ## 2026-09-08 (ui-conformance WP9: ready rows on the native focusable KeyValueRow)
 
 ### (pending) — ui-conformance WP9 · ready rows on the native focusable KeyValueRow

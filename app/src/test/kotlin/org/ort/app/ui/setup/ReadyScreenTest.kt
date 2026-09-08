@@ -191,4 +191,27 @@ class ReadyScreenTest {
         )
         assert(readyRowDescription(neither) == "Radio, No radio · frequency by hand")
     }
+
+    // --- R-285 (validator pass 3): the Radio row is the one place status and action coexist ------
+
+    @Test
+    fun `R_285 a verified radio row shows both verified and Change, and Change invokes onAction`() {
+        var changed = false
+        val row = ReadyRow(
+            "Radio",
+            "TH-D75A · 2 bands",
+            ok = true,
+            statusText = "verified",
+            actionLabel = "Change",
+            onAction = { changed = true },
+        )
+        composeTestRule.setContent {
+            OrtTheme { ReadyScreen(state = ReadyViewState(listOf(row)), onStartCapture = {}) }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Radio", substring = true)
+            .assertContentDescriptionEquals("${row.label}, ${row.value}", row.statusText!!)
+        composeTestRule.onNodeWithText("Change").assertHasClickAction().performClick()
+        assert(changed)
+    }
 }
