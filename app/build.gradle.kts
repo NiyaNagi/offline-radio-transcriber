@@ -4,6 +4,19 @@ plugins {
     id("ort.android-app")
 }
 
+// R-138 (register, ui-conformance WP10): `Settings-About`'s version line ("<version> · build <n>
+// · <short commit>") and its Models row (the real sherpa-onnx version this build depends on) both
+// need values `ort.android-app.gradle.kts` (buildSrc) cannot supply — that file's own doc comment
+// explains `libs` (the version catalog) is not visible to a buildSrc precompiled script plugin,
+// only to a normal project script like this one, and a real git process is likewise only sensible
+// to invoke from here. Read via the Provider API (`providers.exec`), not `Runtime.exec` at
+// configuration time, and falls back to the honest literal "unknown" — never a fabricated hash —
+// if this checkout has no `git` on its `PATH` or is not a git checkout at all.
+val gitShortCommitProvider = providers.exec {
+    commandLine("git", "rev-parse", "--short=7", "HEAD")
+    isIgnoreExitValue = true
+}.standardOutput.asText.map { it.trim() }.orElse("unknown")
+
 extensions.configure<BaseAppModuleExtension> {
     testOptions { unitTests.isIncludeAndroidResources = true }
 
@@ -12,6 +25,13 @@ extensions.configure<BaseAppModuleExtension> {
     // to gate its read on a real build-type check (a release build must never consult a debug-only
     // override, even if nothing in it happened to call `show()`), which needs this turned on.
     buildFeatures { buildConfig = true }
+
+    // R-138: both fields are real, sourced facts about *this* build — never board literals. See
+    // this file's own top comment for why they are read here rather than in the buildSrc plugin.
+    defaultConfig {
+        buildConfigField("String", "GIT_SHORT_COMMIT", "\"${gitShortCommitProvider.get()}\"")
+        buildConfigField("String", "SHERPA_ONNX_VERSION", "\"${libs.versions.sherpaOnnx.get()}\"")
+    }
 
     // build-plan P9 / M2.21a: the on-device harness runner and its JVM-side verification must
     // call the exact same code, or "same report format as the JVM harness" is only asserted, not

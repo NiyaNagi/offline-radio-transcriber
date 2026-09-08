@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
@@ -67,14 +68,17 @@ public fun SettingsStorageScreen(
                 value = state.budgetGb?.let { "$it GB" } ?: "not set",
                 subLine = state.nightsLeftLabel ?: "not enough data to project nights left",
             )
-            // R-150/R-251 (register, rounds 4 and 6 System validator): at font scale 2.0 a
-            // fixed-width `Row` squeezed each chip's `Text` below its own intrinsic width,
+            // R-150/R-251/R-291 (register, rounds 4, 6 and 7 System validator): at font scale 2.0
+            // a fixed-width `Row` squeezed each chip's `Text` below its own intrinsic width,
             // wrapping "Unlimited" one letter per line. A hand-rolled `Modifier.horizontalScroll`
-            // fix (round 4) then clipped at the right edge on the real device with no way to swipe
-            // to it — R-251 asked for WP2's own `FilterChipRow`, already proven to scroll
-            // correctly on-device elsewhere in this app, instead of a second, independent
-            // implementation of the same idea.
-            FilterChipRow {
+            // fix (round 4) then clipped at the right edge with no way to swipe to it (R-251); the
+            // round-6 fix moved to WP2's own `FilterChipRow` but, per `StationScreen.kt`'s own
+            // R-277 precedent comment, left off the `fillMaxWidth()` a scrollable row needs to
+            // report its *real* available width to scroll within rather than whatever width its
+            // own unconstrained content measurement happens to settle on — without it the row
+            // never registered there was more to scroll to, so "Unli…" kept clipping and a swipe
+            // did nothing (R-291's exact report). Same fix as R-277's, applied here too.
+            FilterChipRow(modifier = Modifier.fillMaxWidth().testTag(BUDGET_CHIP_ROW_TEST_TAG)) {
                 listOf(10, 20, 30, 60).forEach { gb ->
                     TextAction(text = "$gb GB", onClick = { onSetBudgetGb(gb) })
                 }
@@ -94,12 +98,22 @@ public fun SettingsStorageScreen(
                 onCheckedChange = onToggleAutoPrune,
                 subLine = "opt-in (FR-STO-3a) · off means you review and choose before anything is deleted",
             )
-            if (!state.autoPruneEnabled) {
+            // R-133 (register, round 7 System validator pass 3): FR-STO-3a's own trigger is "on
+            // reaching a budget", not "at every visit to this screen regardless of state" — this
+            // banner used to show unconditionally whenever auto-prune was off, including with no
+            // budget set at all (nothing that could ever be "reached"), which the board's own
+            // mockup does not draw. Gating on the real budget-vs-used comparison is not a cosmetic
+            // match to the board so much as a correction toward what FR-STO-3a actually says; a
+            // `Review` action is not added here since no real prune-candidate computation exists
+            // yet to review (see this file's own doc comment on `SettingsStorageScreen`).
+            val budgetBytes = state.budgetGb?.let { it * 1_000_000_000L }
+            val budgetReached = budgetBytes != null && state.usedBytes >= budgetBytes
+            if (!state.autoPruneEnabled && budgetReached) {
                 Banner(
-                    title = "What will be deleted, when a budget is reached",
-                    body = "Nothing yet — no budget has been reached. When one is, this bulk export-and-" +
-                        "prune preview names the exact sessions and over count before anything is removed " +
-                        "(FR-STO-3a/3b). Transcripts, attributions and corrections are never deleted.",
+                    title = "What will be deleted, now that the budget is reached",
+                    body = "This bulk export-and-prune preview names the exact sessions and over count " +
+                        "before anything is removed (FR-STO-3a/3b). Transcripts, attributions and " +
+                        "corrections are never deleted.",
                     tone = BannerTone.DEGRADED,
                     modifier = Modifier.padding(top = OrtSpacing.sm),
                 )
@@ -184,6 +198,11 @@ private fun StorageCategoryBreakdown(
         }
     }
 }
+
+/** R-291 (register): a stable handle onto the budget-chip `FilterChipRow` so a test can measure
+ * its actual width against the root's, proving `fillMaxWidth()` reaches it — the fix for the row
+ * clipping/not-scrolling at font scale 2.0. */
+internal const val BUDGET_CHIP_ROW_TEST_TAG: String = "settings-storage-budget-chip-row"
 
 private fun categoryColor(label: String): androidx.compose.ui.graphics.Color = when (label) {
     "Audio" -> OrtColors.meterIdle

@@ -76,14 +76,18 @@ public fun SettingsAboutScreen(state: SettingsAboutViewState, onBack: () -> Unit
             )
 
             SectionHeader(label = "Build", modifier = Modifier.padding(top = OrtSpacing.lg))
-            KeyValueRow(key = "Android", value = state.androidVersionLabel, subLine = "min ${state.minSdkLabel}")
-            KeyValueRow(key = "Models", value = "sherpa-onnx · whisper · Silero")
-            // R-138: the `Runtime` row `Settings-About.dc.html` draws — the linked ONNX Runtime's
-            // own version string is not queryable through `:onnx`'s public API (checked before
-            // writing this), so this states the real architecture fact (which inference runtime,
-            // that NNAPI is used when the device offers it) without a fabricated version number.
+            // R-138 (round 7, register): board row order is Models, Runtime, Radio, Android,
+            // Licences — `Android` used to lead. `Models` now carries the real sherpa-onnx version
+            // (`gradle/libs.versions.toml`'s `sherpaOnnx` entry, via `BuildConfig` — see
+            // `SettingsPolling.about`'s own comment); `Runtime`/`Radio` stay the honest, version-free
+            // statements they already were — neither ONNX Runtime nor usb-serial-for-android is an
+            // actual Gradle dependency of this build yet (checked `gradle/libs.versions.toml` again
+            // before writing this), so there is no real version to read for either without
+            // fabricating one.
+            KeyValueRow(key = "Models", value = "sherpa-onnx ${state.sherpaOnnxVersionLabel} · whisper · Silero")
             KeyValueRow(key = "Runtime", value = "ONNX Runtime · NNAPI where this device offers it")
             KeyValueRow(key = "Radio", value = "usb-serial-for-android")
+            KeyValueRow(key = "Android", value = state.androidVersionLabel, subLine = "min ${state.minSdkLabel}")
             KeyValueRow(key = "Licences", value = "Apache 2.0 · third-party notices")
 
             SectionHeader(label = "Source and spec", modifier = Modifier.padding(top = OrtSpacing.lg))

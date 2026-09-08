@@ -32,6 +32,161 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 round 7: R-291 ANR-adjacent chip clipping, R-133/137/138/140 board conformance)
+
+### (pending) — ui-conformance WP10 · R-291 chip-row fillMaxWidth; R-133/137/138/140 board conformance
+
+**Scope:** `ui/screens/ModelsScreen.kt`, `ui/settings/{SettingsStorageScreen,SettingsPolling,
+SettingsAboutScreen,SettingsDiagnosticsScreen,SettingsViewData}.kt`, `app/build.gradle.kts`
+(narrow, deliberate exception — see R-138 below), and tests beside each. `git merge --ff-only
+main` (local `main`, at `9c3cd7d` — origin's own `origin/main` is stale at `979addc` in this
+worktree's remote config and was not the branch meant) — fast-forwarded cleanly, no conflict.
+
+**Requirements/ACs:** R-291 (spec, new — `Settings-Storage`'s GB-budget chip row), R-133
+(partial, `Settings-Storage` vs the board), R-137 (partial, `Settings-Diagnostics` vs the board),
+R-138 (partial, `Settings-About` vs the board), R-140 (partial, `Settings-Assets` grouped rows +
+failed-download body). FR-STO-3/3a/D26, FR-OBS-3/5, constitution I (never fabricate a number).
+
+**What changed:**
+
+*Constitution Check.* Principle I governs every row below: R-291 is a real layout bug (a
+scrollable row measuring its own unconstrained width instead of the viewport's), not a copy
+change; R-133/137/138/140 each hit at least one point where the board's own mockup shows a
+number, a version, or a preview this build has no real source for — every one of those is left
+absent (or the honest architecture fact, not a number) rather than invented, and is named below.
+
+- **R-291 (chip row not scrolling, effectively an ANR-adjacent dead-end at font scale 2.0).**
+  Root cause: `SettingsStorageScreen`'s round-6 fix moved the GB-budget row to WP2's
+  `FilterChipRow` but never called `fillMaxWidth()` on it — the exact bug `StationScreen.kt`'s own
+  R-277 fix already named and fixed once (`FilterChipRow`'s `horizontalScroll` needs the *real*
+  available width to know there is anything to scroll to; without it, the row's own unconstrained
+  content measurement never overflows anything, so nothing scrolls and "Unli…" stays clipped on a
+  real device — confirmed via the register's own `overnight/CF03-storage-pass3-2x.png`/
+  `-afterswipe.png`, identical before and after the recorded swipe). Fixed with the same one-line
+  `fillMaxWidth()` R-277 used; test asserts the row's real measured width equals the screen's
+  padded content width (Robolectric cannot reproduce the on-device clip/swipe directly, same
+  limitation R-251 already documented).
+- **R-133 (`Settings-Storage` vs the board).** The board's four-segment usage bar
+  (Audio/Models/Records/Lexicon) is only partly buildable: Audio/Models/Records already have real
+  byte counts; **Lexicon does not** — the imported lexicon's rows live in the same Room database
+  file the "Records" category already sizes wholesale (`OrtDatabase`'s own file size), and no
+  per-table byte accounting exists (`dbstat`, uninvestigated — a real, separately-scoped
+  instrumentation change, not a same-round fix) to split it out honestly. Left as the existing
+  three categories; not fabricated as a fourth guessed number. The board's nights-based "Keep
+  audio for N nights · Change" is **not** adopted — **FR-STO-3 (M)/D26 explicitly mandate a
+  storage *budget*, not a time limit**, so the existing GB-budget chips are the spec-compliant
+  behaviour and the board's own mockup is the one out of step here; likewise the "prune oldest
+  first" toggle the register called out as board-absent is FR-STO-3a's own opt-in control
+  (AC-124) and stays. The "Next deletion: <date>" preview row is **not** added: FR-STO-3b's real
+  export-and-prune candidate computation (which session, how many overs, how many bytes, on what
+  projected date) does not exist anywhere in `:pipeline` to compute honestly — inventing a session
+  name and a date would be exactly constitution I's forbidden move. What *did* change: the
+  "what will be deleted" banner (FR-STO-3a's real trigger is "on reaching a budget", not "every
+  visit to this screen regardless of state") now shows only once `usedBytes` real-reaches the real
+  `budgetGb`, and stays absent with auto-prune on or no budget set at all — closer to the board's
+  own clean default *and* a more faithful reading of FR-STO-3a than the previous always-on notice.
+- **R-137 (`Settings-Diagnostics` vs the board).** Every file's trailing clause
+  (`lifecycle.log`/`capture.log`/`pipeline.log`/`rig.log`/`device.json`/`counts.json`) is now
+  `Settings-Diagnostics.dc.html` verbatim — round 4 had dropped each one's second half. The
+  "Not in the bundle" prose now carries the board's own scrubbing example,
+  `resolved [callsign] at 0.94`, inside the same illustrative sentence the board uses it in. **Not
+  done, and not fabricable:** the header's "· 2.1 MB" running total and each file's own KB size —
+  no diagnostics-bundle producer exists in `:app` or `:pipeline` (checked again this round) to
+  write a real file whose size could be reported; the board's figures are illustrative, not a fact
+  this build could compute. Preview/Save-bundle stays the honest amber `FailedState` it already
+  was for the same reason. **Reported per the coordinator's own steer, for a decision:** building
+  a real diagnostics-bundle producer (`:net`/new `:diagnostics`-shaped module) is its own unit of
+  work, the same shape WP11d's `RealReprocessRunner` was for R-143 — not something this round's
+  file ownership can add.
+- **R-138 (`Settings-About` vs the board).** The version line is now
+  `<versionName> · build <versionCode> · <git short commit>` — the commit hash is real,
+  `BuildConfig.GIT_SHORT_COMMIT`, injected by `app/build.gradle.kts` from an actual
+  `git rev-parse --short=7 HEAD` at build time (a `providers.exec` Provider, not `Runtime.exec` at
+  configuration time; falls back to the honest literal `"unknown"` — never a fabricated hash — if
+  this checkout has no `git` on `PATH`), appended only when it resolves to a real hash. The
+  `Build` section's row order is now Models, Runtime, Radio, Android, Licences (the board's own
+  order; `Android` used to lead). The Models row now carries the real sherpa-onnx version,
+  `BuildConfig.SHERPA_ONNX_VERSION`, read from `gradle/libs.versions.toml`'s own `sherpaOnnx`
+  entry — both fields read in `app/build.gradle.kts` specifically because that file's own doc
+  comment (already there before this round) says `libs` and a real git process are visible only
+  to a normal project script, never to `ort.android-app.gradle.kts` (buildSrc's own precompiled
+  script plugin has a separate classpath). **Not done, and not fabricable:** ONNX Runtime and
+  usb-serial-for-android have **no version-catalog entry at all** — neither is an actual Gradle
+  dependency of this build yet (checked `gradle/libs.versions.toml` fresh this round, not assumed
+  from the prior round's note) — so their rows keep the honest, version-free architecture
+  statements a prior round already gave them rather than inventing a number for either.
+- **R-140 (`Settings-Assets` vs the board).** The Whisper tiny.en encoder/decoder/tokens split
+  now renders as **one** row (a new `GroupedAssetRow`, this file's own addition) — the board's own
+  `whisper-small-int8`/`whisper-tiny-en-int8` one-row-per-model shape — instead of three full
+  `AssetRow`s. The row's marker/`active` tag reflect every part together (never claiming
+  installed while a part is missing — constitution I); a still-missing part keeps its own real
+  `Download`/`Install from a file` action nested beneath the family row, so nothing reachable
+  before is now hidden. VAD (a single-file family) is unaffected. The failed-download body is now
+  operator language only — "The download did not complete. Check the connection and retry."
+  (deliberately not the coordinator's literal suggested "Could not reach the model server…": that
+  phrase asserts a *specific* cause — a network failure — that would be false for, say, a
+  checksum-mismatch failure carried by the same `ModelDownloadFailureViewState`, and constitution
+  I forbids a specific-sounding claim this state cannot actually guarantee) — with the real,
+  unedited raw cause (`:net`'s own exception text) behind a new "Details"/"Hide details" toggle,
+  never deleted, never the *only* thing shown, and never the *first* thing shown either.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.*" --tests
+  "org.ort.app.ui.screens.ModelsScreenTest" --tests "org.ort.app.ui.digest.*"` — `BUILD SUCCESSFUL
+  in 28s`, 60 tests, all `PASSED`, including the new `R_291`, `R_133` (×3, banner gating),
+  `R_137` (×2, one `SettingsPollingTest` + the new `SettingsDiagnosticsScreenTest`), `R_138` (×3,
+  one `SettingsPollingTest` + the new `SettingsAboutScreenTest` ×2), `R_140` (×2, grouped-row
+  not-installed and fully-installed shapes).
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, unfiltered) — `1061 tests completed, 2
+  failed` — **the 2 failures are pre-existing and out of this round's scope**:
+  `ReadyScreenTest > R_265 an amber row with a Fix action announces label, value and the action`
+  and `R_265 a verified row announces label, value and status as one merged node` (both
+  `ui/setup`, `git log` confirms last touched by WP9's own commits `56d92ed`/`02195bd`, already on
+  `main` before this round's first edit — a duplicate-semantics-node bug this package never
+  touches and cannot fix under its own file ownership). Every other test in the module passed.
+- `.\gradlew.bat :app:ktlintFormat` — reformatted one line-length violation this round introduced
+  (`ModelsScreen.kt`); `git status --porcelain` afterward showed only files this round
+  legitimately touched (`app/build.gradle.kts` included, deliberately, for R-138) — no foreign-file
+  pollution to revert.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, no findings.
+- `.\gradlew.bat build dependencyRules platformGuards` as one invocation failed only on the same 2
+  pre-existing `ReadyScreenTest` failures above; re-run as
+  `.\gradlew.bat dependencyRules platformGuards :app:assembleDebug :app:assembleRelease
+  :app:lint` (excluding the already-covered `testDebugUnitTest`) — `BUILD SUCCESSFUL in 19s`, 493
+  tasks.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`, 8/8 `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations —
+  combined, `coverageMatrixCheck` hits a pre-existing Gradle task-output-without-declared-
+  dependency validation gap against `coverageMatrix`, unrelated to this round, same as last round)
+  — `coverageMatrix: 419 requirements, 185 covered`; `coverageMatrixCheck: up to date (185 covered
+  of 419)`.
+- Confirmed the generated `BuildConfig` (R-138): `app/build/generated/source/buildConfig/debug/
+  org/ort/app/BuildConfig.java` carries `GIT_SHORT_COMMIT = "9c3cd7d"` (this round's real HEAD at
+  the time) and `SHERPA_ONNX_VERSION = "1.13.7"` (`gradle/libs.versions.toml`'s real value) —
+  neither hand-typed into that generated file or anywhere else.
+
+**Left open / not done:**
+- R-133: no Lexicon usage-bar category (no per-table byte accounting exists); no "Keep audio for N
+  nights" (FR-STO-3/D26 mandate a budget, not a time limit — the board itself is the outlier
+  here); no "Next deletion" preview row (FR-STO-3b's real prune-candidate computation does not
+  exist in `:pipeline`).
+- R-137: no bundle byte total or per-file size (no diagnostics-bundle producer exists anywhere in
+  this build) — reported for a decision on commissioning one, the same shape WP11d's
+  `RealReprocessRunner` was for R-143.
+- R-138: no ONNX Runtime or usb-serial-for-android version (neither is an actual Gradle dependency
+  of this build — no version-catalog entry to read for either).
+- R-291's real on-device clip/swipe is not reproducible on Robolectric — verified structurally
+  (the row's measured width, the direct cause of the bug) rather than by simulating the gesture.
+- The pre-existing `ReadyScreenTest` (`ui/setup`, WP9's own files) failures named above — not this
+  round's file ownership to fix.
+- The pre-existing `coverageMatrix`+`coverageMatrixCheck` combined-invocation Gradle task-graph
+  gap (worked around by running them separately, same as last round).
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP9: pass-3 fixes)
 
 ### (pending) — ui-conformance WP9 · pass-3 fixes: ghost action, universal scaffold padding, listening escape, radio reachability
@@ -399,7 +554,6 @@ and screenshots; none of this package's files touched by the merge). No rebase, 
 - **No screenshot/emulator re-capture** of `stations-14-nights/ST03-hourxday-pass2.png` to visually
   confirm the fix against the actual artboard — Robolectric assertions only, per the plan (Phase
   E/Validators own screenshot verification).---
-
 ## 2026-09-08 (ui-conformance WP2: ktlint)
 
 ### (pending) — ui-conformance WP2 · ktlint
@@ -7552,6 +7706,83 @@ honestly (`keptCandidateFor`, `RejectedItem.durationLabel`) in the prior commit;
 - **The `ReadyScreenTest` regression** (WP9/WP2 interaction, `ui/setup/ReadyScreen.kt`): flagged above, not
   fixed — outside this package's row.
 - The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+
+### (pending) — ui-conformance WP5 · seed Log's filter from outside (R-276)
+
+**Scope:** `ui/screens/LogContent.kt`, `ui/data/LogViewData.kt`, and their tests
+(`LogScreenTest`, `LogPollingTest`) — a small round unblocking WP3's host route for R-276
+(`Frequency.dc.html`'s "The N overs" stat → Log filtered to that frequency and window).
+
+**Requirements/ACs:** R-276 (register.md).
+
+**Constitution Check.** Principle I (Uncertainty Is Content): the filter-sheet's "Show N overs"
+count must never claim more than what actually renders once tapped — the bug this round also
+fixes (see below) is exactly a case of a displayed number silently disagreeing with the real
+data. Principle II (Test-Backed Change): `LogScreenTest`'s new `R_276` test exercises the real
+production `LogItemsMapper.selectionFor`/`buildItems`/`quickFilters` call chain (the same one
+`LogPolling.screenState` makes), not a hand-fabricated already-filtered state; `LogPollingTest`'s
+new `R_276` test is a real Room-backed regression guard for the count-honesty fix.
+
+**What changed:**
+- **`LogContent(..., initialFilter: LogFilterSelection? = null)`** — new, defaulted param; every
+  existing caller (`OrtNavHost.kt` passes every argument by name) compiles unchanged. Seeds
+  `selection`'s initial `rememberSaveable` value from `initialFilter ?: LogFilterSelection()`, per
+  the coordinator's exact snippet — `LogFilterSelectionSaver` already existed (added in the R-129
+  halt fix), so nothing new needed there.
+- **`quickFilter` is also seeded**, not just `selection` — a seeded `frequencyHz` alone would have
+  been silently discarded on the very first poll: `LogPolling.screenState` always runs the
+  selection through `LogItemsMapper.selectionFor(activeQuickFilter, selection)`, which forces
+  `frequencyHz` back to `null` whenever the active quick filter is `All` (the quick chip and the
+  sheet are one filter, not two independent ones — `Frequency`/`Named`/`All` each override part of
+  the sheet's own selection). Seeding `quickFilter` to `LogQuickFilterId.Frequency(hz)` when
+  `initialFilter.frequencyHz != null` keeps the frequency alive through that pass *and* satisfies
+  "renders as an active filter chip" for free, since the chip list's `selected` flag is driven by
+  the same `quickFilter` value.
+- **`fromMillis`/`toMillis` needed no extra wiring** — every branch of `selectionFor` passes the
+  sheet selection's time bounds through unchanged, and `LogItemsMapper.buildItems`'s `matchesTime`
+  already respects them; a seeded window narrows the rendered rows and the filter sheet's own
+  `fromLabel`/`toLabel` (`LogItemsMapper.filterSheetState`) the moment `selection` carries them.
+- **Fixed a real count-honesty gap found while verifying this**: `LogItemsMapper.filterSheetState`'s
+  `matchingCount` ("Show N overs") counted every transmission matching frequency and attribution
+  but silently ignored `fromMillis`/`toMillis` entirely — a window-seeded filter would have shown a
+  number larger than what `buildItems` (the actual rendered list) produces. Added the same
+  `matchesTime` check the row-list path already uses.
+- **"Clear all"/chip dismissal**: needed no change — both already operate on `selection`/`quickFilter`
+  state generically (`onClearAll = { selection = LogFilterSelection() }` in `LogContent.kt`,
+  unchanged), so they work on a seeded selection exactly as they do on any other.
+
+**Verified:**
+- `git merge --ff-only main` — `Updating <prior>..dec6c0b, Fast-forward`; `git merge-base
+  --is-ancestor HEAD main` exit 0 before merging (no divergence this round).
+- `.\gradlew.bat :app:ktlintFormat :app:detekt` — BUILD SUCCESSFUL, ktlint clean, detekt clean (0
+  issues in `:app`).
+- `.\gradlew.bat build dependencyRules platformGuards` — `:app:testDebugUnitTest`: 1078 tests, 2
+  failed, both still `org.ort.app.ui.setup.ReadyScreenTest` (the WP9/WP2 regression this package
+  flagged and left open in the prior entry, untouched by this round's diff — `git status` confirms
+  only `LogContent.kt`/`LogViewData.kt`/their tests changed). Every other `:app` test `PASSED`
+  (1076/1078). Ran `dependencyRules`/`platformGuards` standalone instead — both `OK` — and
+  `:app:assembleDebug` standalone — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 185 covered ->
+  results\coverage-matrix.md` (unchanged — no new requirement ids added to the matrix's own
+  tracking this round).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (185
+  covered of 419)`.
+- New/changed tests, all `PASSED`: `LogScreenTest` (+1 new: `R_276 a seeded frequency and time
+  window narrows rows and the frequency chip renders active` — real `LogItemsMapper` calls, three
+  fixture transmissions where only one matches both frequency and window, plus a `Role.Checkbox`
+  semantics-matcher assertion that the frequency chip itself renders selected) · `LogPollingTest`
+  (+1 new: `R_276 the sheet's matching count respects a seeded time window, not just frequency` —
+  proves the `matchingCount` fix against a real Room database, two transmissions where only one is
+  inside the seeded window).
+
+**Left open:**
+- **The `ReadyScreenTest` regression** (WP9/WP2 interaction): still unfixed, still outside this
+  package's row — unchanged from the prior entry.
+- The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- WP3 wires `OrtNavHost.kt`'s host route to pass a real `initialFilter` the moment this lands on
+  main — not this package's file, per the coordinator's own message.
 
 ---
 
