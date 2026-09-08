@@ -12,6 +12,11 @@ public data class ImproveGroupViewState(
     val subLine: String,
     val overCount: Int,
     val transmissionIds: List<String>,
+    /** R-142 (register): the real tier this group's sessions were captured at
+     * ([org.ort.data.entity.SessionEntity.deviceTier]'s ordinal) — the one fact `Improve-Select`'s
+     * per-pass sub-lines can honestly report about the group, without a tier-to-model-name table
+     * this build does not have. */
+    val tierOrdinal: Int,
 )
 
 public data class ImproveRootViewState(

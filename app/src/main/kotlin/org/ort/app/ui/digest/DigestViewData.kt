@@ -18,6 +18,10 @@ public data class SessionRowViewState(
     val tierChipLabel: String?,
     val canBeImproved: Boolean,
     val live: Boolean,
+    /** R-144 (register, round 4 System validator): the real fact `Sessions.dc.html`'s month group
+     * headers ("September", "August") are computed from — never a display-only label the row would
+     * otherwise have no reason to carry. */
+    val startedAtUtc: Long,
 )
 
 public data class SessionsViewState(val headline: String, val sessions: List<SessionRowViewState>)

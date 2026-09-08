@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.launch
 import org.ort.app.ui.data.ModelActionResult
+import org.ort.app.ui.data.ModelDownloadFailureViewState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.screens.ModelsScreen
@@ -35,6 +36,12 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
     var state by remember { mutableStateOf(ModelsController.currentState(context)) }
     var busy by remember { mutableStateOf(emptySet<ModelId>()) }
     var lastMessage by remember { mutableStateOf<String?>(null) }
+    // R-140 (round 4, System validator): a failed download used to fall into the same plain-text
+    // `lastMessage` a success did, showing `:net`'s raw exception text ("Unable to resolve
+    // host…") with no retry — split out so `ModelsScreen` can render it as the amber `FailedState`
+    // guide §9 gives every other operator-facing failure, with a real `Retry` that re-runs the
+    // exact same download.
+    var lastDownloadFailure by remember { mutableStateOf<ModelDownloadFailureViewState?>(null) }
     var pendingSideloadId by remember { mutableStateOf<ModelId?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -55,19 +62,31 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
         }
     }
 
+    fun runDownload(id: ModelId) {
+        busy = busy + id
+        scope.launch {
+            val result = ModelsController.download(context, id)
+            busy = busy - id
+            when (result) {
+                is ModelActionResult.Success -> {
+                    lastDownloadFailure = null
+                    lastMessage = messageFor(id, result)
+                }
+                is ModelActionResult.Failure -> {
+                    lastMessage = null
+                    lastDownloadFailure = ModelDownloadFailureViewState(id, result.reason)
+                }
+            }
+            state = ModelsController.currentState(context)
+        }
+    }
+
     ModelsScreen(
         state = state,
         busy = busy,
         lastMessage = lastMessage,
-        onDownload = { id ->
-            busy = busy + id
-            scope.launch {
-                val result = ModelsController.download(context, id)
-                busy = busy - id
-                lastMessage = messageFor(id, result)
-                state = ModelsController.currentState(context)
-            }
-        },
+        downloadFailure = lastDownloadFailure,
+        onDownload = ::runDownload,
         onSideload = { id ->
             pendingSideloadId = id
             filePicker.launch(arrayOf("*/*"))

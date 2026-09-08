@@ -1,6 +1,7 @@
 package org.ort.app.ui.settings
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -13,6 +14,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import org.ort.app.ui.setup.SetupActivity
+import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.theme.OrtSpacing
 
 /**
@@ -33,6 +36,12 @@ import org.ort.app.ui.theme.OrtSpacing
  * existing caller keeps compiling unchanged) opens the root, exactly as before this parameter
  * existed. `Back` from that sub-screen still returns to the root, not out of this composable —
  * this only changes where the screen starts, not the navigation shape.
+ *
+ * [onOpenLevelMeter] (round 4, System validator, R-132): `Settings-Capture`'s `Meter` action needs
+ * WP4's `Level-Meter` destination, which this package cannot reach on its own (no drill-in of that
+ * shape exists inside `ui/settings`, and `OrtNavHost.kt` is outside this round's file ownership).
+ * Defaults to a no-op so every existing caller (`OrtNavHost.kt`) keeps compiling unchanged; the
+ * host is expected to wire it the same way it wires every other cross-package drill-in.
  */
 @Composable
 public fun SettingsContent(
@@ -40,6 +49,7 @@ public fun SettingsContent(
     onDrawer: () -> Unit,
     modifier: Modifier = Modifier,
     initialScreen: SettingsScreenId? = null,
+    onOpenLevelMeter: () -> Unit = {},
 ) {
     val store = remember {
         SharedPreferencesSettingsStore(
@@ -72,6 +82,7 @@ public fun SettingsContent(
             onStoreChanged = { storeVersion++ },
             onBack = { screen = null },
             modifier = modifier,
+            onOpenLevelMeter = onOpenLevelMeter,
         )
     }
 }
@@ -88,24 +99,17 @@ private fun SettingsSubScreen(
     onStoreChanged: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier,
+    onOpenLevelMeter: () -> Unit,
 ) {
     when (screen) {
-        SettingsScreenId.CAPTURE -> SettingsCaptureScreen(
-            state = remember(storeVersion) { SettingsPolling.capture(store) },
+        SettingsScreenId.CAPTURE -> SettingsCaptureSubScreen(
+            context = context,
+            store = store,
+            storeVersion = storeVersion,
+            onStoreChanged = onStoreChanged,
             onBack = onBack,
-            onToggleLevelWarn = {
-                store.levelWarnEnabled = it
-                onStoreChanged()
-            },
-            onToggleNoiseReduction = {
-                store.noiseReductionEnabled = it
-                onStoreChanged()
-            },
-            onToggleBandPass = {
-                store.bandPassFilterEnabled = it
-                onStoreChanged()
-            },
             modifier = modifier,
+            onOpenLevelMeter = onOpenLevelMeter,
         )
 
         SettingsScreenId.RIG -> SettingsRigScreen(
@@ -173,6 +177,52 @@ private fun SettingsSubScreen(
             modifier = modifier,
         )
     }
+}
+
+/** The `CAPTURE` branch of [SettingsSubScreen], split out purely to keep that function's own
+ * length under detekt's limit — the same reason [SettingsSubScreen] itself was split out of
+ * [SettingsContent]. */
+@Composable
+private fun SettingsCaptureSubScreen(
+    context: Context,
+    store: SettingsStore,
+    storeVersion: Int,
+    onStoreChanged: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier,
+    onOpenLevelMeter: () -> Unit,
+) {
+    SettingsCaptureScreen(
+        state = remember(storeVersion) { SettingsPolling.capture(store) },
+        onBack = onBack,
+        toggles = SettingsCaptureToggleActions(
+            onToggleLevelWarn = {
+                store.levelWarnEnabled = it
+                onStoreChanged()
+            },
+            onToggleNoiseReduction = {
+                store.noiseReductionEnabled = it
+                onStoreChanged()
+            },
+            onToggleBandPass = {
+                store.bandPassFilterEnabled = it
+                onStoreChanged()
+            },
+        ),
+        // R-132: both real actions land on the same place — see `SettingsCaptureScreen`'s own doc
+        // comment for why there is no narrower "re-verify only" entry point yet.
+        onOpenInputSetup = {
+            val intent = Intent(context, SetupActivity::class.java)
+            intent.putExtra(SetupActivity.EXTRA_STEP, SetupStep.INPUT.name)
+            context.startActivity(intent)
+        },
+        onOpenLevelMeter = onOpenLevelMeter,
+        onEditManualFrequency = {
+            store.manualFrequencyMhz = it
+            onStoreChanged()
+        },
+        modifier = modifier,
+    )
 }
 
 private fun applyContributeToggle(store: SettingsStore, index: Int, value: Boolean) {

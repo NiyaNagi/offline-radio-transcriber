@@ -40,10 +40,15 @@ public object ImprovePolling {
                 }
                 ImproveGroupViewState(
                     id = "tier-${tier.name}",
-                    headline = "Captured at ${tier.name}",
-                    subLine = "${entries.size} session(s) · ${txIds.size} overs",
+                    // R-141: the board's "Captured at tier 1 on the field phone" names a specific
+                    // device this build has no field for (`SessionEntity` carries no device-name
+                    // column) — inventing one would fabricate a fact (constitution I), so this
+                    // states the one real thing the row has: the tier number itself.
+                    headline = "Captured at tier ${tier.ordinal}",
+                    subLine = "${Plurals.count(entries.size, "session")} · ${Plurals.count(txIds.size, "over")}",
                     overCount = txIds.size,
                     transmissionIds = txIds,
+                    tierOrdinal = tier.ordinal,
                 )
             }
         val allQualifyingIds = groups.flatMap { it.transmissionIds }.distinct()
