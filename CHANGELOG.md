@@ -32,6 +32,121 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11e: diagnostics bundle producer)
+
+### (pending) — ui-conformance WP11e · real DiagnosticsBundleBuilder for Settings-Diagnostics (R-137, FR-OBS-1/3)
+
+**Scope:** new package `app/src/main/kotlin/org/ort/app/diagnostics/**` and its tests under
+`app/src/test/kotlin/org/ort/app/diagnostics/**`; `CHANGELOG.md`; `results/coverage-matrix.md`
+(regenerated). No other file touched — `ui/settings/**` (WP10's `SettingsDiagnosticsScreen`/
+`SettingsPolling.kt`, still built against a fake) is left for WP10 to wire to this producer.
+
+**Requirements/ACs:** FR-OBS-1 (diagnostics log coverage), FR-OBS-3 (bundle export, audio excluded
+unless explicit), AC-109 (no voiceprint/embedding in a diagnostic bundle), AC-120 (no station
+knowledge in a diagnostic bundle), register R-137 (`Settings-Diagnostics.dc.html` conformance —
+WP10 dec5c01 had landed every static-copy fix that round could reach and named "no
+diagnostics-bundle producer exists" as the remaining blocker; this change is that producer).
+
+**What changed:**
+
+*Constitution Check.* Principle V governs the whole package — nothing here is a stored convention,
+it is a structural absence: no producer queries `VoiceprintEntity.embedding`,
+`StationEntity.userName`/`notes`, `OperatorLocationEntity` or `ContributionItemEntity` at all, so
+AC-109/AC-120 hold because the code path to leak them does not exist, not because it was told not
+to (proven with seeded rows in `DiagnosticsBundleBuilderTest`, not just asserted by omission).
+Principle I governs every field: `device.json`'s RAM/thermal fields report `"unknown"` rather than
+a fabricated zero when no real reading is available; `assets.json`'s "install date" is a model's
+real on-disk file mtime, never invented; every log with no real writer yet states that honestly
+("no entries recorded by this build") rather than fabricating content. Principle VII: the seven
+allowed files are a closed Kotlin `enum class` plus a `List` built once from it, not a runtime
+list something could quietly append to.
+
+- **`DiagnosticsFileId` / `DiagnosticsFileSpec` / `DiagnosticsBundleSpec`**
+  (`DiagnosticsBundleSpec.kt`): the closed, board-verbatim list of seven files
+  (`lifecycle.log`, `capture.log`, `pipeline.log`, `rig.log`, `assets.json`, `device.json`,
+  `counts.json`), each with its id, file name, the board's own trailing clause, and a
+  `DiagnosticsFileProducer` (`suspend fun produce(Context): ByteArray`).
+- **`CallsignScrubber`** (`CallsignScrubber.kt`): a pure, conservative regex scrubber —
+  `:lexicon`'s `CallsignGrammar` parses a phonetic lattice, not plain text, so it has no
+  string-scrubbing entry point to reuse (checked before writing this). Matches the board's own
+  example verbatim (`resolved K7ABC at 0.94` → `resolved [callsign] at 0.94`), handles portable
+  modifiers (`K7ABC/P`) and reciprocal secondary prefixes (`VE7/K7ABC`) as one token, and never
+  mistakes a rule code with no digit (`VAD_NO_SPEECH`) for a callsign.
+- **`DiagnosticsLogPaths` / `LogFileProducer`**: the documented convention
+  (`filesDir/diagnostics-logs/<name>`) a future log writer should follow. Grepped before writing
+  this (`lifecycle\.log|capture\.log|pipeline\.log|rig\.log`, whole tree) — no writer exists yet
+  for any of the four board-listed logs, so every one ships today as the honest placeholder, run
+  through `CallsignScrubber` regardless (defence in depth for whenever a real writer lands).
+- **`DeviceJsonProducer`**: model, manufacturer, Android version/SDK int, ABI, real app
+  version, `BuildConfig.GIT_SHORT_COMMIT`, a coarse `ramClass` (nearest-GB bucket, "unknown" at
+  0/negative — never a raw byte count), and `thermalHeadroomClass` from `:pipeline`'s
+  `ThermalStatus.state` (nominal/warm/hot). The closed nine-key field set is asserted directly —
+  never a serial, IMEI, advertising id or account, because none of those Android APIs is ever
+  called.
+- **`CountsJsonProducer`**: sessions/overs totals, an `attributionStateCounts` map (all four
+  `AttributionState` values, always present, zero when absent), `rejectionReasonCounts` grouped by
+  a rejection's leading rule code only (never the free-text detail half), and
+  `correctedOversCount`. The board's own clause says "corrections by tier" — no per-transmission
+  tier field exists on `TransmissionEntity` or `CorrectionEntity` (checked both before writing
+  this), so `correctedOversCount` (a real total, not by tier) is reported instead; a tier-grouped
+  count is left open for whichever change adds that field.
+- **`AssetsJsonProducer`**: every `ModelCatalog` model through `ModelsController.currentState`
+  (audit F-008's real install-state read — never a second definition of "installed"), plus the
+  active lexicon through `CatalogDao.versionsFor` (the same source `RoomActiveLexiconStore`
+  reads). A model's "install date" is its destination file's real OS mtime (no install-timestamp
+  column exists for a model in this schema); "version" is the shared `SHERPA_ONNX_VERSION` (this
+  catalog pins models by checksum, not a per-model version number).
+- **`DiagnosticsBundleBuilder`**: `preview(context, includeAudio = false): BundlePreview` (a
+  `DiagnosticsBundleEntry` per file — id, name, clause, real size — plus a real total) and
+  `write(context, target: OutputStream, includeAudio = false)` (a real zip). Both call the exact
+  same `producer.produce()` per file — a deliberate departure from the brief's "stat real files"
+  suggestion for the four logs specifically, because `CallsignScrubber` changes byte length, so a
+  raw-file stat would not equal the written, scrubbed entry's size (this is what makes R-137's
+  "preview sizes match written entry sizes" hold exactly, not approximately). `includeAudio`
+  (FR-OBS-3) defaults `false`; the retained-audio code path
+  (`File(context.filesDir, entity.audioPath())`, the same layout every other real reader of
+  retained audio in this module uses) is only ever reached when a caller passes `true` explicitly,
+  and only attaches files that actually exist on disk.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.diagnostics.*"` — 34 tests, all
+  passing (`CallsignScrubberTest` x9, `DiagnosticsBundleSpecTest` x4, `DeviceJsonProducerTest` x5,
+  `CountsJsonProducerTest` x3, `AssetsJsonProducerTest` x3, `LogFileProducerTest` x2,
+  `DiagnosticsBundleBuilderTest` x8), Robolectric, JVM (this worktree's own machine, JDK 17.0.20).
+  Each test was first run against no production code and failed at compile time on the missing
+  symbols (`Unresolved reference`), confirmed before any producer/builder file was written.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (846 tasks; includes the
+  full `:app` unit test suite, ktlint, detekt/lint, `dependencyRules`, `platformGuards`, and
+  `assembleRelease`). One ktlint round-trip: two `standard:class-signature`/
+  `standard:function-signature` violations in this package's own new files, fixed, re-verified
+  green with `:app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck` before the full gate.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 189 covered ->
+  results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (189 covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- No board-listed log writer exists in this build (`lifecycle.log`/`capture.log`/`pipeline.log`/
+  `rig.log`) — every one of the four ships as the honest "no entries recorded by this build"
+  placeholder until a real writer lands and writes to `DiagnosticsLogPaths.logFile`; not this
+  package's scope to add (no writer exists to wire — see this entry's own "What changed").
+- `counts.json`'s "corrections by tier" (board clause) is not produced — no tier field on
+  `TransmissionEntity`/`CorrectionEntity` to group by; `correctedOversCount` substitutes.
+- WP10's `ui/settings/SettingsDiagnosticsScreen.kt`/`SettingsPolling.kt` still render the fake
+  file list with no real sizes and disabled `Preview`/`Save bundle` buttons — out of this
+  package's file ownership by brief. Public API for WP10 to wire: `DiagnosticsBundleBuilder.
+  preview(context, includeAudio = false): BundlePreview` and `DiagnosticsBundleBuilder.write
+  (context, target: OutputStream, includeAudio = false)`, `DiagnosticsBundleSpec.files` for the
+  file list (id/fileName/clause), `DiagnosticsBundleEntry`/`BundlePreview` for the sizes/total.
+- Device-only facts (a real `PowerManager.getThermalStatus()` reading, a real `ActivityManager`
+  total-RAM value) are untested beyond Robolectric's defaults (which report 0/none) — the
+  `ramClassLabel`/`thermalHeadroomClass` pure functions are tested directly against real inputs
+  instead; a device run is not part of this gate.
+
+---
+
 ## 2026-09-08 (ui-conformance WP10 round 7: R-291 ANR-adjacent chip clipping, R-133/137/138/140 board conformance)
 
 ### (pending) — ui-conformance WP10 · R-291 chip-row fillMaxWidth; R-133/137/138/140 board conformance
