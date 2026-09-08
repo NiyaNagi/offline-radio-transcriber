@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.data.LevelViewState
@@ -34,10 +35,23 @@ import org.ort.app.ui.theme.OrtType
  * case this renders [org.ort.app.ui.components.FailedState] instead of the meter — guide §6.8's
  * rule that a screen with nothing to show because a *capability is missing* is failed, not empty;
  * that case is genuinely rare now (only before the first frame of a session has been measured).
+ *
+ * design-intent N06: reached only as a drill-in from `Capture-Status.dc.html`'s Level row
+ * (never a standalone drawer destination), so this always carries [DrillInHeader]'s own back
+ * affordance — [onBack] defaults to a no-op only so a caller that has not wired real navigation
+ * yet (this screen's own tests) keeps compiling.
  */
 @Composable
-public fun LevelMeterScreen(state: LevelViewState, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxSize().padding(OrtSpacing.lg)) {
+public fun LevelMeterScreen(state: LevelViewState, modifier: Modifier = Modifier, onBack: () -> Unit = {}) {
+    Column(modifier = modifier.fillMaxSize()) {
+        DrillInHeader(parentLabel = "Capture", onBack = onBack, modifier = Modifier.testTag("level-meter-back"))
+        LevelMeterBody(state = state, modifier = Modifier.padding(OrtSpacing.lg))
+    }
+}
+
+@Composable
+private fun LevelMeterBody(state: LevelViewState, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
         Text(text = "Level", style = OrtType.screenTitle, color = OrtColors.textHigh)
         Text(text = state.inputLabel, style = OrtType.subtitle, color = OrtColors.textDim)
 
