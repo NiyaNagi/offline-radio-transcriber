@@ -18,18 +18,9 @@ import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.data.LogFilterSheetViewState
 import org.ort.app.ui.data.LogPolling
 import org.ort.app.ui.data.LogQuickFilterId
-import org.ort.app.ui.data.LogScreenViewState
 import org.ort.core.AttributionState
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
-
-private val EMPTY_LOG_SCREEN_STATE = LogScreenViewState(
-    items = emptyList(),
-    quickFilters = emptyList(),
-    rejectedFocus = false,
-    rejectedExplanation = null,
-    emptyState = null,
-)
 
 /**
  * R-129 (halt — audit V3 @3e2d4ee): [LogQuickFilterId] is a plain `sealed interface`, which
@@ -119,7 +110,11 @@ public fun LogContent(
     modifier: Modifier = Modifier,
     onOpenThread: (String) -> Unit = {},
 ) {
-    var screenState by remember { mutableStateOf(EMPTY_LOG_SCREEN_STATE) }
+    // R-247: `sessionId == null` (no session has ever started) never polls below, so this initial
+    // value is the screen's actual, final state for that case — a real, fully-drawn empty Log
+    // (headline, sentence, quick-filter chips), not the blank body a `null` placeholder left
+    // behind. Once a session exists the first poll below replaces it immediately.
+    var screenState by remember(sessionId) { mutableStateOf(LogPolling.noSessionState()) }
     var quickFilter by rememberSaveable(stateSaver = LogQuickFilterIdSaver) {
         mutableStateOf<LogQuickFilterId>(LogQuickFilterId.All)
     }

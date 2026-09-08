@@ -229,13 +229,13 @@ public object ThreadListMapper {
     /** R-161: the first mode any transmission in the thread actually recorded — `null` when none did. */
     private fun deriveMode(sorted: List<TransmissionDetail>): String? = sorted.firstNotNullOfOrNull { it.mode }
 
-    /** R-161: "1 m 55 s" / "38 s" — `Thread-Detail.dc.html`'s span line, first over start to last over start. */
-    private fun spanDurationLabel(firstStartMillis: Long, lastStartMillis: Long): String {
-        val totalSeconds = ((lastStartMillis - firstStartMillis) / 1000).coerceAtLeast(0)
-        val minutes = totalSeconds / 60
-        val seconds = totalSeconds % 60
-        return if (minutes > 0) "$minutes m $seconds s" else "$seconds s"
-    }
+    /**
+     * R-161/R-249: "1 m 55 s" / "38 s" — `Thread-Detail.dc.html`'s span line, first over start to
+     * last over start, through the one shared duration formatter (`ReaderTransmissionViewStateMapper.durationLabel`)
+     * every "how long" label in the reader now uses.
+     */
+    private fun spanDurationLabel(firstStartMillis: Long, lastStartMillis: Long): String =
+        ReaderTransmissionViewStateMapper.durationLabel(lastStartMillis - firstStartMillis)
 
     public fun detailState(threadId: String, details: List<TransmissionDetail>): ThreadDetailViewState? {
         val group = details.filter { it.threadId == threadId }

@@ -3,6 +3,7 @@ package org.ort.app.debug
 import android.content.Context
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
+import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.dao.CorrectionDao
@@ -74,7 +75,15 @@ internal object OvernightScenario {
         fun offset(minutes: Double): Long = start + (minutes * 60_000L).toLong()
 
         // -- 1. CONFIRMED, the QSO's opener, audio retained, positive priors only. ------------------
-        val tx1 = "$sessionId-tx01"
+        // R-241 (V3 pass 2 @de56368): a real ULID, not the readable "$sessionId-tx01" every other
+        // id in this file uses — `attributionSourceTransmissionId` is round-tripped through
+        // `TransmissionId.parse` (`ReaderPolling.sourceId`) before an INFERRED reasoning line can
+        // link to its source, and a non-ULID string fails that parse silently (caught by
+        // `runCatching`), which is exactly why the several INFERRED overs below that cite `tx1` as
+        // their source rendered "source transmission not recorded" with no link. Every other id in
+        // this scenario stays the readable form — only the ids actually used as a source need to
+        // survive `TransmissionId.parse`.
+        val tx1 = TransmissionId.new().toString()
         val t1 = offset(0.2)
         insertTx(
             db,
@@ -259,6 +268,10 @@ internal object OvernightScenario {
         )
 
         // -- 8. Rejected: retained, not hidden (P9). ------------------------------------------------
+        // R-242 (V3 pass 2): the real write path (`DataPassBResultSink`) always writes
+        // `"$rule: $detail"` — a bare "squelch tail" has no `": "` separator, so
+        // `LogItemsMapper.whyFor` (honestly) never invents a why-line for it. Real rule token, so
+        // the dedicated Rejected view's second line actually renders.
         val tx8 = "$sessionId-tx08"
         val t8 = offset(6.6)
         insertTx(
@@ -266,8 +279,10 @@ internal object OvernightScenario {
             context,
             ScenarioFixtures.transmission(
                 id = tx8, sessionId = sessionId, startedAtUtc = t8, samplePosition = nextSample(),
+                durationMs = 400L,
                 frequencyHz = FREQ_B, signalStrength = null, attributionState = AttributionState.UNKNOWN,
-                processingState = TransmissionState.REJECTED, rejectionReason = "squelch tail",
+                processingState = TransmissionState.REJECTED,
+                rejectionReason = "VAD_NO_SPEECH: squelch tail, 0.4 s",
             ),
             text = null,
             writeAudio = true,

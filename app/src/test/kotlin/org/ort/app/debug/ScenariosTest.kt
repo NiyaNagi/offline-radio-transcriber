@@ -20,6 +20,7 @@ import org.ort.app.ui.setup.SetupStateMachine
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.core.AttributionState
+import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
@@ -187,8 +188,13 @@ class ScenariosTest {
         assertTrue(rows.any { it.attributionState == AttributionState.UNKNOWN })
         assertTrue("expected a corrected row", rows.any { it.corrected })
         assertTrue(
+            // R-242 (V3 pass 2): a real "$rule: $detail" token, not a bare short reason, so
+            // `LogItemsMapper.whyFor` has something to build the Rejected view's why-line from.
             "expected a rejected row with its reason retained",
-            rows.any { it.processingState == TransmissionState.REJECTED && it.rejectionReason == "squelch tail" },
+            rows.any {
+                it.processingState == TransmissionState.REJECTED &&
+                    it.rejectionReason == "VAD_NO_SPEECH: squelch tail, 0.4 s"
+            },
         )
         assertTrue("expected a shared threadId across a QSO", rows.any { it.threadId != null })
         assertTrue("expected mixed signal strengths", rows.mapNotNull { it.signalStrength }.toSet().size > 3)
@@ -249,6 +255,33 @@ class ScenariosTest {
                     }
                 AttributionState.AMBIGUOUS, AttributionState.UNKNOWN -> Unit
             }
+        }
+    }
+
+    @Test
+    @Requirement("R-241")
+    fun `R_241 overnight's QSO thread carries an INFERRED over whose source really resolves`() = runTest {
+        // V3 pass 2 @de56368: every INFERRED reasoning line on Thread-Detail read "source
+        // transmission not recorded" because `attributionSourceTransmissionId` pointed at a
+        // readable-but-not-ULID id (`TransmissionId.parse` throws, silently swallowed by
+        // `ReaderPolling.sourceId`'s `runCatching`) — this proves the fixture's source id is a
+        // real, parseable ULID, so the reasoning line can actually link to it.
+        val result = Scenarios.load(context, "overnight")
+        val sessionId = requireNotNull(result.primarySessionId)
+
+        val rows = db.transmissionDao().listBySession(sessionId)
+        val inferredWithSource = rows.filter {
+            it.attributionState == AttributionState.INFERRED && it.attributionSourceTransmissionId != null
+        }
+        assertTrue("expected at least one INFERRED over with a source", inferredWithSource.isNotEmpty())
+        inferredWithSource.forEach { row ->
+            val sourceId = row.attributionSourceTransmissionId!!
+            val parsed = runCatching { TransmissionId.parse(sourceId) }.getOrNull()
+            assertNotNull("${row.id}'s source '$sourceId' must be a parseable ULID", parsed)
+            assertTrue(
+                "${row.id}'s source '$sourceId' must be a real transmission in this session",
+                rows.any { it.id == sourceId },
+            )
         }
     }
 

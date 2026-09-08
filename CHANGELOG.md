@@ -5691,6 +5691,141 @@ boundary, `deriveMode`, the span-duration formatter, and `pluralize` itself.
   the auditor's ledger, not this package's file — not edited here; the next validator pass reads this
   CHANGELOG entry and the diff to close them out.
 
+### (pending) — ui-conformance WP5 · pass-2 Log fixes: ambiguous callsign, source links, rejected rows, filter bounds, provisional italics, empty states, durations
+
+**Scope:** `ui/data/LogViewData.kt`, `ui/data/ThreadViewData.kt`, `ui/data/TransmissionDetail.kt`,
+`ui/screens/LogContent.kt`, `app/src/debug/kotlin/org/ort/app/debug/OvernightScenario.kt` (fixture), and
+their tests (`LogViewDataTest`, `LogPollingTest`, `ScenariosTest`) — the Reader validator's second pass
+(V3 pass 2 @de56368), which confirmed R-129/R-160..R-164/R-205 closed and filed eight new findings.
+Merged `main` fast-forward (`e66728b..b94bb5e`, 289 files) before starting.
+
+**Requirements/ACs:** R-240, R-241, R-242, R-243, R-246, R-247, R-248, R-249 (register.md, read in full
+before starting, alongside the cited screenshots and `Rows.dc.html`/`Log*.dc.html`/`Thread-Detail.dc.html`).
+
+**Constitution Check.** Principle I (Uncertainty Is Content): `LogItemsMapper.keptCandidateFor` reads the
+resolver's own `selected` candidate rather than guessing one, and returns `null` when the resolver
+recorded none; the "listening on ..." clause only ever names frequencies `RigStatus` (or the actual data)
+really reports, never a fabricated one. Principle III (never delete quietly / never fabricate): R-241's
+fixture fix makes a real, already-written fact (`attributionSourceTransmissionId`) actually reachable,
+rather than inventing a new one. Principle II (Test-Backed Change): every fix below ships with a failing-
+first test named for its row; `R_241`'s fixture fix is proven at the fixture-integration level
+(`ScenariosTest`), since the bug was in how the fixture writes data, not in a pure mapper.
+
+**What changed, by row:**
+
+- **R-240 (AMBIGUOUS row's kept callsign) — WP5 half done, WP2 half blocked.** Added
+  `LogItemsMapper.keptCandidateFor(detail): String?` — the resolver's own `selected` candidate for an
+  AMBIGUOUS attribution (the counterpart to the existing `alternateFor`'s non-selected runner-up).
+  **Investigated and confirmed the render-side gap the register named**: `ui/components/Rows.kt`'s
+  `LogRowViewState` has no `callsign` field, and `LogRow` never passes one to `AttributionRow` (only
+  `alternate`) — `Attribution.ambiguous()` itself deliberately carries no `stationId` (`:core`'s own
+  invariant), so there is no way to surface a kept candidate on the rendered row without a
+  `ui/components` change. `ui/components` is WP2's package, outside this row — not edited. WP5's half
+  (the derivation, tested) is ready; wiring it onto the row needs WP2 to add
+  `LogRowViewState.callsign: String?` and pass it to `AttributionRow`'s own `callsign` param.
+- **R-241 (INFERRED source links).** Root cause: `ReaderPolling.sourceId` round-trips
+  `attributionSourceTransmissionId` through `TransmissionId.parse`, which requires a real 26-char ULID —
+  every id `OvernightScenario.kt` writes is the readable `"$sessionId-txNN"` form, so the parse silently
+  threw and was swallowed by `runCatching`, and every INFERRED reasoning line read "source transmission
+  not recorded" with no link. Fixed at the fixture: `tx1` (the QSO thread's source for its two INFERRED
+  overs, and several others) is now a real `TransmissionId.new()` ULID; every other id in the scenario
+  keeps its readable form — only an id actually used as a *source* needs to survive the parse.
+- **R-242 (rejected row's why-line, duration, tap-through).**
+  - Fixture: `tx8`'s `rejectionReason` changed from the bare `"squelch tail"` (no `": "` separator, so
+    R-043's `whyFor` honestly never invented a why-line for it) to the real write-path shape
+    `"VAD_NO_SPEECH: squelch tail, 0.4 s"`, plus a real `durationMs = 400L` (was the 4200ms default,
+    inconsistent with "0.4 s" in the reason text).
+  - `LogListItem.RejectedItem` gains `durationLabel: String?`, populated in both `buildRejectedFocus` and
+    `rejectedAsTimed` via the shared duration formatter. **Not yet rendered**: `RejectedRow`
+    (`ui/components/Rows.kt`, WP2's) has no duration slot at all — the DUR column header
+    (`LogScreen`'s own `ColumnHeaderRow(signalLabel = "dur")`) has never had a value to show. Carried on
+    the model, ready for a WP2 change, rather than dropped.
+  - Tap-through: confirmed `LogScreen.kt`'s `RejectedRow(onClick = { onOpen(item.id) })` was already
+    wired (this package's own file, from the R-043 follow-up), and `OrtNavHost.kt`/`TransmissionDetailContent.kt`
+    (WP3/WP6) do dispatch `onOpen` through to the detail drill-in with nothing special-casing
+    `TransmissionState.REJECTED` — `TransmissionDetailScreen` falls through to the generic detail render
+    (`ReaderTransmissionViewStateMapper.transcriptLabel`'s `"(rejected: ...)"` text), not a distinct
+    "F04" treatment. Whether the validator's tap failed to register versus the resulting screen simply not
+    reading as visually distinct is not resolvable from static reading of WP6's files alone — reported per
+    the coordinator's "if it does not, say so", not fixed (`ui/screens/TransmissionDetailScreen.kt`/
+    `TransmissionDetailContent.kt` are WP6's).
+- **R-243 (filter bounds pre-fill).** `LogItemsMapper.filterSheetState` gained `dataExtentEndMillis:
+  Long? = null`; `toLabel` now falls back to it the same way `fromLabel` already fell back to the
+  session's start. `LogPolling.filterSheetState` computes it as the session's own end if it has one, else
+  the latest transmission's start (never wall-clock "now", which is not a fact this data carries and
+  would make the sheet drift on every re-render).
+- **R-246 (provisional row italics) — blocked, WP2.** `LogRow`'s marker-line label ("hearing…"/
+  "resolving…") is already italic (`ui/components/Rows.kt`); its transcript `Text` is not — the whole
+  provisional row needs to read as provisional, not just its label. That `Text` is in `Rows.kt`
+  (WP2's package) — not edited. Reported, not fixed.
+- **R-247 (no-session empty state).** `LogContent.kt`'s early `if (sessionId != null)` skip left
+  `screenState` at a placeholder with `emptyState = null` forever when no session exists at all — a
+  genuinely blank body below the column headers, matching the audit screenshot exactly. New
+  `LogPolling.noSessionState()` builds the real thing: the "All"/"Named"/"Rejected" quick-filter chips
+  and `LogItemsMapper.emptyStateFor`'s honest "No overs yet." / "Listening since —." sentence, used as
+  `LogContent`'s initial (and, for `sessionId == null`, final) state.
+- **R-248 (frequencies in the empty sentence + dimmed chips).** `LogItemsMapper.emptyStateFor` gained
+  `frequencies: List<Long> = emptyList()`; when non-empty the sentence reads "...on 145.230 and
+  146.960." (frequencies joined the same way `ReaderPolling.activeNowViewState`'s own "listening on ..."
+  fact already does for the identical session, so the two screens can never disagree). New private
+  `LogPolling.connectedFrequencies()` reads `RigStatus.state`'s `Connected` bands (never `Stale`/`Absent`
+  — matching that same call site) and is unioned into the quick-filter chip list, so a configured band
+  with zero overs yet still renders its own (unselected/dimmed-style) chip.
+- **R-249 (duration formatting).** New `ReaderTransmissionViewStateMapper.durationLabel(millis): String`
+  (`TransmissionDetail.kt`) is the one shared "38 s" / "1 m 55 s" formatter (a space before every unit);
+  `LogItemsMapper.gapLabel` (was `"38s"`, no space) and `ThreadListMapper.spanDurationLabel` (already
+  correct, now delegates instead of duplicating the logic) both switched to it.
+
+**Verified:**
+- Read R-240/R-241/R-242/R-243/R-246/R-247/R-248/R-249 in `results/ui-audit/register.md` in full, and the
+  cited screenshots (`overnight/L01-log.png`, `overnight/L02-filter.png`, `overnight/L05-rejected.png`,
+  `overnight/L05-rejected-tapped.png`, `pass-a-partial/L03.png`, `empty/L04.png`,
+  `first-session/L04b.png`) via the Read tool, before starting.
+- Fast-forward merge: `git merge --ff-only main` — `Updating e66728b..b94bb5e, Fast-forward`.
+  `git merge-base --is-ancestor HEAD main` — exit 0 before merging.
+- `.\gradlew.bat :app:ktlintFormat :app:detekt` — ktlint clean; detekt: 12 weighted issues remain, all in
+  files outside this package's row (`StationScreen.kt`, `StationPatternScreen.kt` x5, `ModelsViewData.kt`,
+  `FrequencyScreen.kt`, `LevelScreen.kt`, `ModelsControllerLexiconTest.kt` x2,
+  `ReaderActivityDestinationSmokeTest.kt`) — pre-existing, surfaced now that detekt runs for real in this
+  worktree; one issue this run *did* fix, in `ScenariosTest.kt` (a `MaxLineLength` line this package's own
+  new test pushed over, in a file this follow-up already touches). `.\gradlew.bat build dependencyRules
+  platformGuards` also surfaced pre-existing detekt debt in `:lexicon` (16 issues) and `:pipeline` (10
+  issues) — neither module this package touches; ran `dependencyRules`/`platformGuards` standalone instead
+  (both `OK`) plus `:app:testDebugUnitTest :app:assembleDebug -x detekt` for a clean signal on this
+  package's own change: BUILD SUCCESSFUL, every `:app` test `PASSED`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 185 covered -> results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (185
+  covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL (also covered by the combined run above).
+- New/changed tests, all `PASSED`: `LogViewDataTest` (+8 new: `R_240` kept-candidate present/absent/
+  non-AMBIGUOUS, `R_249` gap-over-a-minute, `R_248` known-frequencies sentence, `R_247` no-frequencies
+  sentence; 1 existing test's literal string updated for R-249's space-before-unit fix) ·
+  `LogPollingTest` (+6 new: `R_248` rig-connected-no-overs names both bands and their chips, `R_247`
+  no-rig-connected omits the clause, `R_247` `noSessionState()` itself, `R_243` `to` pre-fills from the
+  data's extent x2 (session-open and explicit-selection-wins cases), `R_249` gap duration through the
+  shared formatter, `R_242` a real rule token carries its why-line and duration) · `ScenariosTest`
+  (+1 new: `R_241` the QSO thread's INFERRED source really resolves via `TransmissionId.parse` and
+  round-trips to a real row in the session; 1 existing test's literal rejection-reason string updated to
+  match R-242's fixture change).
+
+**Left open:**
+- **R-240**: needs a WP2 change — `LogRowViewState.callsign: String?` + `LogRow` passing it to
+  `AttributionRow`. `LogItemsMapper.keptCandidateFor` is ready to consume.
+- **R-242's DUR column**: needs a WP2 change — `RejectedRow` has no duration parameter at all.
+  `LogListItem.RejectedItem.durationLabel` is ready to consume; `LogScreen.kt`'s own `RejectedRow(...)`
+  call site still cannot pass it until that parameter exists.
+- **R-242's tap-through to F04**: the navigation wiring is confirmed correct on this package's and WP3's
+  side; whether WP6's `TransmissionDetailScreen` renders a rejected over distinctly (an "F04" treatment)
+  is unconfirmed from static reading — flagged for WP6/the coordinator, not fixed here.
+- **R-246**: needs a WP2 change — `LogRow`'s transcript `Text` needs `fontStyle = FontStyle.Italic` when
+  `state.partial != null`, alongside the marker line's own label, which is already italic.
+- detekt debt in `:lexicon`/`:pipeline`/other `:app` files (12+16+10 = 38 weighted issues total) is
+  pre-existing and outside this package's row — not fixed here; flagged for the coordinator, since it now
+  blocks a plain `./gradlew build` for every worktree until whichever package owns each file clears it.
+- The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)

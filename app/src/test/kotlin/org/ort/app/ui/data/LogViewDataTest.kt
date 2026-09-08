@@ -169,13 +169,56 @@ class LogViewDataTest {
         assertNull(LogItemsMapper.alternateFor(d))
     }
 
+    // -- R-240 the AMBIGUOUS row's kept (primary) candidate ------------------------------------
+    // Not yet reachable on the rendered row — `ui/components/Rows.kt`'s `LogRowViewState` has no
+    // `callsign` field for `LogRow` to forward to `AttributionRow`'s own `callsign` param
+    // (`ui/components` is WP2's package); this proves the WP5-side derivation is correct and ready.
+
+    @Test
+    fun `R_240 an AMBIGUOUS row's kept candidate is the resolver's own selected one`() {
+        val inspection = InspectionViewState(
+            lattice = null,
+            candidates = listOf(candidate("KE7QRS", rank = 0, selected = true), candidate("KE7QRF", rank = 1)),
+        )
+        val d = detail(attribution = Attribution.ambiguous(), inspection = inspection)
+
+        assertEquals("KE7QRS", LogItemsMapper.keptCandidateFor(d))
+        assertEquals("KE7QRF", LogItemsMapper.alternateFor(d)) // the two never name the same candidate.
+    }
+
+    @Test
+    fun `R_240 no selected candidate at all never fabricates a kept candidate`() {
+        val inspection = InspectionViewState(lattice = null, candidates = listOf(candidate("KE7QRS", rank = 0)))
+        val d = detail(attribution = Attribution.ambiguous(), inspection = inspection)
+
+        assertNull(LogItemsMapper.keptCandidateFor(d))
+    }
+
+    @Test
+    fun `R_240 a non-AMBIGUOUS row never carries a kept candidate either`() {
+        val selectedCandidate = candidate("W7NPC", rank = 0, selected = true)
+        val inspection = InspectionViewState(lattice = null, candidates = listOf(selectedCandidate))
+        val d = detail(attribution = Attribution.confirmed("W7NPC", 0.95), inspection = inspection)
+
+        assertNull(LogItemsMapper.keptCandidateFor(d))
+    }
+
     // -- R-040 gap labelling (FR-UI-12/FR-RUN-12) ----------------------------------------------
 
     @Test
     fun `R_040 a finished gap names its duration and cause`() {
         val gap = gap(endedAt = 38_000L, cause = CaptureGapCause.CALL)
 
-        assertEquals("not listening · 38s · incoming call", LogItemsMapper.gapLabel(gap))
+        // R-249 (V3 pass 2): a space before the unit — "38 s", never "38s" — through the one
+        // shared duration formatter every "how long" label in the reader now uses.
+        assertEquals("not listening · 38 s · incoming call", LogItemsMapper.gapLabel(gap))
+    }
+
+    @Test
+    fun `R_249 a gap over a minute reads minutes and seconds, both spaced`() {
+        val g = gap(endedAt = 115_000L, cause = CaptureGapCause.INTERRUPTION)
+
+        assertEquals("not listening · 1 m 55 s · interruption", LogItemsMapper.gapLabel(g))
     }
 
     @Test
@@ -352,5 +395,29 @@ class LogViewDataTest {
         val empty = LogItemsMapper.emptyStateFor(hasAnyTransmission = true, sessionStartedAtUtcMillis = 0L)
 
         assertEquals("No overs match this filter.", empty.message)
+    }
+
+    @Test
+    fun `R_248 known frequencies are named in the listening-since sentence`() {
+        val empty = LogItemsMapper.emptyStateFor(
+            hasAnyTransmission = false,
+            sessionStartedAtUtcMillis = 0L,
+            frequencies = listOf(145_230_000L, 146_960_000L),
+        )
+
+        assertEquals(
+            "Listening since 00:00 on 145.230 and 146.960. The first one appears here the moment squelch opens.",
+            empty.subMessage,
+        )
+    }
+
+    @Test
+    fun `R_247 no known frequencies at all omits the on-clause entirely, never a fabricated one`() {
+        val empty = LogItemsMapper.emptyStateFor(hasAnyTransmission = false, sessionStartedAtUtcMillis = null)
+
+        assertEquals(
+            "Listening since —. The first one appears here the moment squelch opens.",
+            empty.subMessage,
+        )
     }
 }
