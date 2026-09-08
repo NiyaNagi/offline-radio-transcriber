@@ -71,7 +71,7 @@ public class CaptureProcessingLoopTest {
             ),
         )
         val modelRef = AssetRef("fake-asr-model", "1")
-        val pass = PassBFactory.create(filesDir, db, engine, modelRef)
+        val pass = PassBFactory.create(filesDir, db, engine, modelRef, provider = "cpu")
         val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
 
         val leased = loop.drainOnce()
@@ -107,7 +107,7 @@ public class CaptureProcessingLoopTest {
             queue.enqueue("TX-SHORT", PassId.B_OFFLINE)
 
             val engine = FakeAsrEngine()
-            val pass = PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"))
+            val pass = PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"), provider = "cpu")
             val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
 
             loop.drainOnce()
@@ -131,7 +131,7 @@ public class CaptureProcessingLoopTest {
             val engine = FakeAsrEngine(
                 FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "test transmission received")),
             )
-            val pass = PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"))
+            val pass = PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"), provider = "cpu")
             val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
 
             assertEquals(0, loop.drainOnce())

@@ -86,7 +86,12 @@ public class PassB(
     private val audioProvider: SegmentAudioProvider,
     private val rejectionPipeline: RejectionPipeline,
     private val resolution: PassBResolutionChain,
-    private val fingerprint: PassFingerprint,
+    /**
+     * Public (audit F-013, constitution I: "every machine conclusion MUST be inspectable") so a
+     * caller — [PassBFactory]'s own tests included — can confirm what this instance was actually
+     * built with, rather than trusting an assembly step no one can see.
+     */
+    public val fingerprint: PassFingerprint,
     private val sink: PassBResultSink,
     private val contextFor: (WorkQueueItemEntity) -> RankingContext = { RankingContext() },
     private val decodeOptions: DecodeOptions = DecodeOptions(),

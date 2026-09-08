@@ -287,18 +287,20 @@ public class RealCaptureService : Service() {
      */
     private suspend fun startProcessingLoop(db: OrtDatabase, queue: WorkQueue) {
         val availability = RealAsrEngineProvider(filesDir).provide()
-        val (engine, modelRef) = when (availability) {
+        val (engine, modelRef, provider) = when (availability) {
             is AsrEngineAvailability.Available -> {
                 AsrAvailability.available(availability.modelRef.canonical)
-                availability.engine to availability.modelRef
+                Triple(availability.engine, availability.modelRef, availability.provider)
             }
             is AsrEngineAvailability.Unavailable -> {
                 AsrAvailability.unavailable(availability.reason)
                 updateNotification("ASR unavailable")
-                UnavailableAsrEngine(availability.reason) to org.ort.core.AssetRef("asr-unavailable", "0")
+                // audit F-013: no engine ran at all here, so the fingerprint's provider must say
+                // so honestly ("none") rather than repeating the real engine's "cpu".
+                Triple(UnavailableAsrEngine(availability.reason), org.ort.core.AssetRef("asr-unavailable", "0"), "none")
             }
         }
-        val pass = PassBFactory.create(filesDir, db, engine, modelRef)
+        val pass = PassBFactory.create(filesDir, db, engine, modelRef, provider)
         CaptureProcessingLoop(PassDrainRunner(queue, runId = sessionId), pass).runForever()
     }
 
