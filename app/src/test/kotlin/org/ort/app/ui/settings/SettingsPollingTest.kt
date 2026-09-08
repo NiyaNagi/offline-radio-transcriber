@@ -1,0 +1,133 @@
+package org.ort.app.ui.settings
+
+import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.AudioDeviceKind
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
+import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.ShedStatus
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * R-090: [SettingsPolling]'s pure mappers over the real `:pipeline` holders and [SettingsStore] —
+ * never a fabricated fact where a holder has not measured anything yet (constitution I).
+ */
+@RunWith(RobolectricTestRunner::class)
+class SettingsPollingTest {
+
+    private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    @After
+    fun resetHolders() {
+        InputStatus.reset()
+        LevelStatus.reset()
+        RigStatus.reset()
+        ShedStatus.reset()
+    }
+
+    @Before
+    fun clearHolders() {
+        InputStatus.reset()
+        LevelStatus.reset()
+        RigStatus.reset()
+        ShedStatus.reset()
+    }
+
+    @Test
+    fun `R_090 capture with no input selected reads honestly, not fabricated`() {
+        val state = SettingsPolling.capture(InMemorySettingsStore())
+        assert(state.inputLabel == "No input selected")
+        assert(state.levelLabel == "Not measured")
+    }
+
+    @Test
+    fun `R_090 capture reflects a verified InputStatus device`() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor(id = "1", kind = AudioDeviceKind.USB_DEVICE, label = "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "linear",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val state = SettingsPolling.capture(InMemorySettingsStore())
+        assert(state.inputLabel == "USB Audio Device")
+        assert(state.inputSubLine.contains("verified"))
+        assert(state.inputSubLine.contains("48000 Hz"))
+    }
+
+    @Test
+    fun `R_090 capture reflects a measured level`() {
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = 0L,
+            ),
+            peakHistoryDbfs = emptyList(),
+        )
+        val state = SettingsPolling.capture(InMemorySettingsStore())
+        assert(state.levelLabel.contains("-14"))
+        assert(state.levelSubLine.contains("-58"))
+    }
+
+    @Test
+    fun `R_090 rig with no rig configured is honest, not a fabricated connection`() {
+        val state = SettingsPolling.rig()
+        assert(!state.connected)
+        assert(state.descriptorLabel == "No radio configured")
+        assert(state.bands.isEmpty())
+    }
+
+    @Test
+    fun `R_090 tier reads from the shed level placeholder and honours an override`() {
+        ShedStatus.update(level = 0, backlog = 0)
+        val notOverridden = SettingsPolling.tier(InMemorySettingsStore())
+        assert(notOverridden.currentTierLabel == "3")
+        assert(!notOverridden.isOverridden)
+
+        val overridden = SettingsPolling.tier(InMemorySettingsStore(tierOverrideName = "T2"))
+        assert(overridden.isOverridden)
+        assert(overridden.overrideLabel == "Held at T2")
+    }
+
+    @Test
+    fun `R_090 contribute reports every category off when the store is off`() {
+        val state = SettingsPolling.contribute(InMemorySettingsStore())
+        assert(!state.contributionEnabled)
+        assert(state.categories.all { !it.enabled })
+        assert(state.neverIncluded == NEVER_LEAVES_DEVICE)
+    }
+
+    @Test
+    fun `R_090 about reads the real app version from the package manager, not a literal`() {
+        val state = SettingsPolling.about(context)
+        assert(state.appVersionLabel.isNotBlank())
+        assert(state.minSdkLabel == "8.0")
+    }
+
+    @Test
+    fun `R_090 storage sums real categories from the audio directory and installed model files`(): Unit = runTest {
+        val state = SettingsPolling.storage(context, InMemorySettingsStore())
+        assert(state.categories.any { it.label == "Audio" })
+        assert(state.categories.any { it.label == "Models" })
+        assert(state.budgetGb == null)
+    }
+
+    @Test
+    fun `R_090 export counts real sessions and overs from the database`(): Unit = runTest {
+        val state = SettingsPolling.export(context)
+        assert(state.allSessionCount == 0)
+        assert(state.allOverCount == 0)
+    }
+}

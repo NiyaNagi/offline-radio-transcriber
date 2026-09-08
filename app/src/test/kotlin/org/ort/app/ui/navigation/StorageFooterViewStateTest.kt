@@ -6,14 +6,16 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 
 /**
  * Audit F-020: the footer must report the real byte total of retained transmission audio, not a
- * whole-device [android.os.StatFs] figure labelled "Audio", and it must never claim a per-category
- * budget (FR-STO-3) that no prompt has built yet.
+ * whole-device [android.os.StatFs] figure labelled "Audio". R-090 (ui-conformance-plan WP10): once
+ * a budget is set via [org.ort.app.ui.settings.SettingsStore], the footer reads it — no budget set
+ * still reads honestly as "no budget", never a fabricated one.
  */
 @RunWith(RobolectricTestRunner::class)
 class StorageFooterViewStateTest {
@@ -50,5 +52,20 @@ class StorageFooterViewStateTest {
         // contract this asserts is "read from StatFs, never fabricated", not a specific value.
         assertTrue(state.freeBytes >= 0L)
         assertFalse(state.hasBudget)
+    }
+
+    @Test
+    @Requirement("FR-STO-5")
+    fun `R_090 a budget set via SettingsStore is read honestly, in bytes`() {
+        val prefs = context.getSharedPreferences(
+            SharedPreferencesSettingsStore.PREFS_NAME,
+            android.content.Context.MODE_PRIVATE,
+        )
+        SharedPreferencesSettingsStore(prefs).audioBudgetGb = 30
+
+        val state = StorageFooterViewState.fromAudioDirectory(context)
+
+        assertTrue(state.hasBudget)
+        assertEquals(30_000_000_000L, state.budgetBytes)
     }
 }

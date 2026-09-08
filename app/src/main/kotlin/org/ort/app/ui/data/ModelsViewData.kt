@@ -170,6 +170,14 @@ public data class ModelRowViewState(
     val status: ModelRowStatus,
     val detail: String?,
     val checksumKnown: Boolean = true,
+    /** R-093 (`Settings-Assets.dc.html`): the installed file's size, when it is on disk — `null`
+     * when [status] is [ModelRowStatus.NOT_INSTALLED] (there is nothing on disk to size). */
+    val sizeBytes: Long? = null,
+    /** R-093: the first 8 hex characters of the checksum this install was verified (or, for an
+     * unverified trust-on-first-use install, computed) against — `null` exactly when [sizeBytes]
+     * is, for the same reason. Never the full digest: the board shows a prefix, not the whole
+     * value, and a prefix is enough to recognise a row without wrapping. */
+    val checksumPrefix: String? = null,
 )
 
 public data class ModelsViewState(val rows: List<ModelRowViewState>, val requeuedMessage: String? = null)
@@ -294,7 +302,15 @@ public object ModelsController {
             val marker = markerFile(spec.destination)
             val verified = spec.destination.isFile && marker.isFile && marker.readText() == spec.checksum.value
             val status = if (verified) ModelRowStatus.INSTALLED else ModelRowStatus.NOT_INSTALLED
-            return ModelRowViewState(id, id.label, status, detail = null, checksumKnown = true)
+            return ModelRowViewState(
+                id,
+                id.label,
+                status,
+                detail = null,
+                checksumKnown = true,
+                sizeBytes = if (verified) spec.destination.length() else null,
+                checksumPrefix = if (verified) spec.checksum.value.take(CHECKSUM_PREFIX_LENGTH) else null,
+            )
         }
 
         val reason = (ModelCatalog.entry(id).checksumState as ChecksumState.UnknownSideloadOnly).reason
@@ -302,8 +318,18 @@ public object ModelsController {
         val marker = markerFile(destination)
         val installed = destination.isFile && marker.isFile
         val status = if (installed) ModelRowStatus.INSTALLED_UNVERIFIED else ModelRowStatus.NOT_INSTALLED
-        return ModelRowViewState(id, id.label, status, detail = reason, checksumKnown = false)
+        return ModelRowViewState(
+            id,
+            id.label,
+            status,
+            detail = reason,
+            checksumKnown = false,
+            sizeBytes = if (installed) destination.length() else null,
+            checksumPrefix = if (installed) marker.readText().take(CHECKSUM_PREFIX_LENGTH) else null,
+        )
     }
+
+    private const val CHECKSUM_PREFIX_LENGTH = 8
 
     private fun markerFile(destination: File) = File(destination.parentFile, destination.name + ".sha256")
 

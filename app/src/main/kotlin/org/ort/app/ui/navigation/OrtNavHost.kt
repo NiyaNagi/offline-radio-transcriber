@@ -46,7 +46,6 @@ import org.ort.app.ui.screens.FrequenciesContent
 import org.ort.app.ui.screens.FrequencyDetailContent
 import org.ort.app.ui.screens.LogContent
 import org.ort.app.ui.screens.NowContent
-import org.ort.app.ui.screens.PlaceholderScreen
 import org.ort.app.ui.screens.SearchContent
 import org.ort.app.ui.screens.StationDetailContent
 import org.ort.app.ui.screens.StationsContent
@@ -124,8 +123,7 @@ private val SearchFilterInputSaver: Saver<SearchFilterInput, String> = Saver(
  * except `Now`/`Capture`, which pin their own the same way. Every real destination and drill-in
  * dispatches to the package that owns it (`Now`/`Capture`/live-bar feed → WP4; `Search` → WP7;
  * `Log`/`Threads`/transmission and thread drill-ins → WP5/WP6; `Stations`/`Frequencies` and their
- * drill-ins → WP8); `Earlier nights`/`Improve records` are a [PlaceholderScreen] until their own
- * prompt builds them.
+ * drill-ins → WP8; `Settings`/`Earlier nights`/`Improve records` → WP10).
  *
  * [sessionId] is null when the host is opened with no active or prior capture session (for
  * example, opened directly rather than from the status flow) - `Now`/`Log` then show their
@@ -343,9 +341,7 @@ private fun NavHostBody(
                     sessionId = sessionId,
                     context = context,
                     search = search,
-                    onOpenTransmission = callbacks.onOpenTransmission,
-                    onOpenStation = callbacks.onOpenStation,
-                    onOpenFrequency = callbacks.onOpenFrequency,
+                    callbacks = callbacks,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -430,12 +426,14 @@ private fun DestinationContent(
     sessionId: String?,
     context: android.content.Context,
     search: SearchHostState,
-    onOpenTransmission: (String) -> Unit,
-    onOpenStation: (String) -> Unit,
-    onOpenFrequency: (Long) -> Unit,
+    callbacks: NavHostCallbacks,
     modifier: Modifier,
 ) {
     val content = modifier
+    val onOpenTransmission = callbacks.onOpenTransmission
+    val onOpenStation = callbacks.onOpenStation
+    val onOpenFrequency = callbacks.onOpenFrequency
+    val onOpenDrawer = callbacks.onOpenDrawer
     when (current) {
         // Both dispatch to WP4/WP7's own real content composables now that they are on this
         // branch (confirmed by reading `ui/screens/NowContent.kt`/`ui/screens/SearchContent.kt`
@@ -472,10 +470,18 @@ private fun DestinationContent(
         ReaderDestination.CAPTURE ->
             CaptureStatusContent(context = context, sessionId = sessionId, modifier = content)
 
+        // ui-conformance-plan WP10 (register R-090/R-091/R-092/R-107): all three dispatch to
+        // WP10's own real content composables now that they are on this branch. `Earlier nights`
+        // and `Improve records` no longer fall through to `PlaceholderScreen` — see
+        // `ReaderDestination`'s own doc comment for what each one now is.
         ReaderDestination.SETTINGS ->
-            org.ort.app.ui.settings.ModelsContent(context = context, modifier = content)
+            org.ort.app.ui.settings.SettingsContent(context = context, onDrawer = onOpenDrawer, modifier = content)
 
-        else -> PlaceholderScreen(destinationLabel = current.label, modifier = content)
+        ReaderDestination.EARLIER_NIGHTS ->
+            org.ort.app.ui.digest.SessionsContent(context = context, onDrawer = onOpenDrawer, modifier = content)
+
+        ReaderDestination.IMPROVE_RECORDS ->
+            org.ort.app.ui.improve.ImproveContent(context = context, onDrawer = onOpenDrawer, modifier = content)
     }
 }
 

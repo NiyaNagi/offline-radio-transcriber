@@ -16,7 +16,9 @@ package org.ort.app.ui.navigation
  * correction/labelling meaning; asset management reads as a `Settings` concern instead. `Capture`
  * is a real screen as of ui-conformance-plan WP4:
  * [org.ort.app.ui.screens.CaptureStatusContent], reached from the drawer row and the live bar's
- * own tap target alike.
+ * own tap target alike. `Earlier nights` is a real screen as of ui-conformance-plan WP10 (register
+ * R-092/R-107): [org.ort.app.ui.digest.SessionsContent]. `Improve records` is a real screen as of
+ * WP10 (register R-091, P12): [org.ort.app.ui.improve.ImproveContent].
  */
 public enum class ReaderDestination(public val label: String, public val hasScreen: Boolean) {
     NOW("Now", hasScreen = true),
@@ -25,9 +27,9 @@ public enum class ReaderDestination(public val label: String, public val hasScre
     THREADS("Threads", hasScreen = true),
     STATIONS("Stations", hasScreen = true),
     FREQUENCIES("Frequencies", hasScreen = true),
-    EARLIER_NIGHTS("Earlier nights", hasScreen = false),
+    EARLIER_NIGHTS("Earlier nights", hasScreen = true),
     CAPTURE("Capture", hasScreen = true),
-    IMPROVE_RECORDS("Improve records", hasScreen = false),
+    IMPROVE_RECORDS("Improve records", hasScreen = true),
     SETTINGS("Settings", hasScreen = true),
     ;
 

@@ -30,7 +30,7 @@ import java.io.IOException
  * always reflects what `ModelAcquisition` itself verified, not an optimistic guess.
  */
 @Composable
-public fun ModelsContent(context: android.content.Context, modifier: Modifier) {
+public fun ModelsContent(context: android.content.Context, modifier: Modifier, onBack: (() -> Unit)? = null) {
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(ModelsController.currentState(context)) }
     var busy by remember { mutableStateOf(emptySet<ModelId>()) }
@@ -73,6 +73,7 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier) {
             filePicker.launch(arrayOf("*/*"))
         },
         modifier = modifier,
+        onBack = onBack,
     )
 }
 
