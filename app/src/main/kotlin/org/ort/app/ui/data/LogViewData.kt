@@ -183,28 +183,38 @@ public object LogItemsMapper {
         }
     }
 
-    /** guide §6.1: the AMBIGUOUS row's "or QRF" alternate — the best-ranked non-selected candidate, if recorded. */
-    public fun alternateFor(detail: TransmissionDetail): String? {
-        if (detail.attribution.state != AttributionState.AMBIGUOUS) return null
-        return detail.inspection.candidates.filterNot { it.selected }.minByOrNull { it.rank }?.callsign
-    }
-
     /**
-     * R-240 (V3 pass 2 @de56368, register): the AMBIGUOUS row's *kept* candidate — `States.dc.html`
-     * renders it in `text/high` beside the marker, with [alternateFor]'s runner-up trailing as
-     * "or QRF" in amber. `Attribution.ambiguous()` deliberately carries no `stationId` of its own
-     * (`:core`'s own doc comment: attaching one would misrepresent an undecided call as resolved),
-     * so this reads the resolver's own `selected` candidate out of band, the same
-     * [org.ort.app.ui.data.InspectionViewState] `alternateFor` already reads its runner-up from.
+     * R-322 (V4 pass 2 @ee4fd07, register — reopened from R-240): the AMBIGUOUS row's *kept*
+     * candidate — `States.dc.html` renders it in `text/high` beside the marker, with
+     * [alternateFor]'s runner-up trailing as "or QRF" in amber.
      *
-     * Wired into [toRowState]'s `callsign` param (V3 pass 2 follow-up) now that main carries WP2's
-     * own `LogRowViewState.callsign`/`LogRow`→`AttributionRow` plumbing (register R-240's
-     * `ui/components` half) — this function was written and tested one commit before that landed,
-     * against the day it would; see this package's CHANGELOG for that history.
+     * **Root cause of R-322.** This used to key off [CandidateInspectionViewState.selected], on the
+     * assumption the resolver marks one candidate `selected` even on an AMBIGUOUS attribution. It
+     * does not, by design: `AttributionState.AMBIGUOUS`'s own doc comment is "the system will not
+     * choose", and `AmbiguousCandidatesFixtureTest` (WP6, `R_184`) asserts exactly that — "no
+     * candidate should be pre-selected on an AMBIGUOUS over" — against the real `overnight` fixture.
+     * The unit test this function shipped with fabricated a `selected = true` candidate no real
+     * mapper output ever produces, so it passed while the device read only the alternate, forever.
+     *
+     * Fixed to read rank instead — the same `candidates.sortedBy { it.rank }.take(2)` pattern
+     * `DetailViewStateMapper.ambiguousBody` already uses for `Detail-Ambiguous.dc.html`'s own "X or
+     * Y" explanation (confirmed correct on device — register: "D03's own header is right") — so Log
+     * and Detail can never name a different pair for the same over. `Attribution.ambiguous()`
+     * deliberately carries no `stationId` of its own (`:core`'s own doc comment: attaching one would
+     * misrepresent an undecided call as resolved), so this still reads the candidate list out of
+     * band, just by rank rather than a flag the real data never sets for this state.
      */
     public fun keptCandidateFor(detail: TransmissionDetail): String? {
         if (detail.attribution.state != AttributionState.AMBIGUOUS) return null
-        return detail.inspection.candidates.firstOrNull { it.selected }?.callsign
+        return detail.inspection.candidates.sortedBy { it.rank }.getOrNull(0)?.callsign
+    }
+
+    /** guide §6.1/R-322: the AMBIGUOUS row's "or QRF" alternate — the runner-up of
+     * [keptCandidateFor]'s same rank-sorted top two, never the top-ranked candidate itself (see
+     * [keptCandidateFor]'s doc comment for why this is no longer `selected`-based). */
+    public fun alternateFor(detail: TransmissionDetail): String? {
+        if (detail.attribution.state != AttributionState.AMBIGUOUS) return null
+        return detail.inspection.candidates.sortedBy { it.rank }.getOrNull(1)?.callsign
     }
 
     public fun toRowState(detail: TransmissionDetail, isFirstHeard: Boolean): LogRowViewState {
