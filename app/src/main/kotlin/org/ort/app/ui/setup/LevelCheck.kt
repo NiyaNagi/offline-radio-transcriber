@@ -3,6 +3,7 @@ package org.ort.app.ui.setup
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.ort.app.ui.data.LevelViewState
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioIo
 import org.ort.pipeline.capture.LevelStatus
@@ -24,8 +25,15 @@ public data class LevelReading(
     val noiseFloorDbfs: Double?,
     val band: LevelBand,
 ) {
-    /** `Setup-Level.dc.html`'s "Headroom" row: how far the peak sits below clipping (0 dBFS). */
-    public val headroomDb: Double get() = -peakDbfs
+    /**
+     * `Setup-Level.dc.html`'s "Headroom" row: how far the peak sits below clipping (0 dBFS).
+     * Validator finding (register R-120..R-125 follow-up): a peak of exactly `0.0` (positive
+     * zero) negated is IEEE 754 `-0.0`, which `"%.0f"` formats as the literal, confusing string
+     * "-0 dB" — `0.0 - peakDbfs` is used instead of unary `-peakDbfs` because subtraction of two
+     * positive zeros is `+0.0` under IEEE 754, never `-0.0` (a genuinely over-0-dBFS peak, e.g.
+     * `0.3`, still correctly reads a real negative headroom, `-0.3`).
+     */
+    public val headroomDb: Double get() = 0.0 - peakDbfs
 }
 
 /** Everything [LevelCheck.run] can report — including the honest "cannot measure" state guide
@@ -66,13 +74,32 @@ public fun levelBandFor(peakDbfs: Double, clipped: Boolean = false): LevelBand =
     else -> LevelBand.IN_BAND
 }
 
-/** Maps a dBFS reading onto `0f..1f` for the bar graph — shared by [RealLevelCheck] and
- * [levelReadingFrom] so a bar means the same height regardless of which source measured it. */
+/**
+ * Maps a dBFS reading onto `0f..1f` for the bar graph — shared by [RealLevelCheck] and
+ * [levelReadingFrom] so a bar means the same height regardless of which source measured it, and
+ * used for the target-band/clip/noise-floor line positions too ([LevelScreen]'s chart), so every
+ * mark on S07's meter sits on the exact same scale.
+ *
+ * Validator finding (register R-120..R-125 follow-up): this used to scale against a local
+ * `-90 dBFS` silence floor, three times wider than [LevelViewState]'s own `-60..0` chart range
+ * (`LevelMeterScreen.dc.html`'s real chart, read before writing this). Ordinary speech (roughly
+ * `-40` to `-15` dBFS) only occupies the top third of a `-90..0` scale, so every bar looked
+ * near-full-height and clipping (`0` dBFS) was barely distinguishable from a quiet signal
+ * (`-38` dBFS) — exactly the "static wall of full-height bars" the validator screenshotted.
+ * [LevelViewState.CHART_FLOOR_DBFS]/[LevelViewState.CHART_CEILING_DBFS] is the same `-60..0`
+ * range WP4's real meter already uses, reused (not duplicated) here per the brief.
+ */
 public fun levelBarFraction(dbfs: Double): Float {
-    val clamped = dbfs.coerceIn(NOISE_FLOOR_SILENCE_DBFS, 0.0)
-    return ((clamped - NOISE_FLOOR_SILENCE_DBFS) / -NOISE_FLOOR_SILENCE_DBFS).toFloat()
+    val floor = LevelViewState.CHART_FLOOR_DBFS.toDouble()
+    val ceiling = LevelViewState.CHART_CEILING_DBFS.toDouble()
+    val clamped = dbfs.coerceIn(floor, ceiling)
+    return ((clamped - floor) / (ceiling - floor)).toFloat()
 }
 
+/** [RealLevelCheck.peakDbfs]'s sentinel for "read nothing at all this frame" — deliberately far
+ * below [LevelViewState.CHART_FLOOR_DBFS] so [levelBarFraction] always clamps it to `0f` (an
+ * empty bar), never a fabricated reading. Unrelated to the chart's own floor (see
+ * [levelBarFraction]'s doc comment) — this is a read failure, not a measurement. */
 private const val NOISE_FLOOR_SILENCE_DBFS: Double = -90.0
 
 /**

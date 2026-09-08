@@ -58,6 +58,29 @@ class ReadyRowsForTest {
     }
 
     @Test
+    fun `R_082 a level-in-band flag with no measured peak never renders as a green in-band row`() {
+        // The exact drift a stored-preference test-only setup once produced: KEY_LEVEL_IN_BAND
+        // true with KEY_LEVEL_PEAK_DBFS never written (validator finding, register R-120..R-125).
+        val store = InMemorySetupStore(levelInBand = true, levelPeakDbfs = null)
+        val row = rows(store).first { it.label == "Level" }
+
+        assertFalse(row.ok, "ok must never be true without a measured peak backing it")
+        assertEquals("Not measured", row.value)
+        assertEquals(null, row.statusText)
+        assertEquals("Fix", row.actionLabel)
+    }
+
+    @Test
+    fun `R_082 a real measured peak in band renders the green row with its value`() {
+        val store = InMemorySetupStore(levelInBand = true, levelPeakDbfs = -14.0)
+        val row = rows(store).first { it.label == "Level" }
+
+        assertTrue(row.ok)
+        assertEquals("in band", row.statusText)
+        assertTrue(row.value.contains("-14"))
+    }
+
+    @Test
     fun `R_084 choosing no radio is a valid, green row naming the manual frequency`() {
         val store = InMemorySetupStore(radioChoice = RadioChoice.NONE, manualFrequencyHz = 145_230_000L)
         val row = rows(store).first { it.label == "Radio" }

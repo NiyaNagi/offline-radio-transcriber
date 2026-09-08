@@ -32,6 +32,173 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9 · validator fixes: timeout state, stale rig, step counter, route types, font-scale scaffold, level meter)
+
+### (pending) — ui-conformance WP9 · validator fixes: timeout state, stale rig, step counter, route types, font-scale scaffold, level meter
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**` and their tests only — the same row this
+package's four earlier WP9 entries (below) own. `main` fast-forward merged first
+(`git merge --ff-only main`, this branch already an ancestor, at `f8430b8` — "ui-conformance WP9
+round 3: setup step entry, Install destination"); no rebase, no stash. This entry addresses the
+V1 Setup validator's six findings (register.md R-120..R-125, `results/ui-audit/register.md`),
+filed against the build at `6aaa608` on the emulator at `5c8d144` — two of the six (`R-121`,
+`R-125`) filed as `halt`. Every screenshot the register cites (`results/ui-audit/setup/**`,
+`level-low/**`, `level-clip/**`, `rig-lost/**`) was read (the `Read` tool on the PNGs) before any
+fix, not inferred from the register's prose alone.
+
+**Requirements/ACs:** R-120 (S01/S04's duplicated step counter), R-081/R-121 (S05's
+`RouteCheckState.TimedOut`, halt), R-081/R-122 (S04/S06's device typing and refusal), FR-A11Y-3/
+R-123 (font-scale-2.0 scaffold clearance), FR-CAP-3/R-082/R-124 (S07's level meter), FR-RIG-2/3/
+R-084/R-125 (S11's `Stale`/`Absent` rendering, halt), plus the coordinator's own S12 observation
+(no register id — the Level row's "Not measured" beside a green marker).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs the two most consequential
+  fixes here: R-121's timed-out signal check must say plainly that nothing was heard rather than
+  silently reverting every check to unfilled, and R-124's level meter must draw the *real*
+  measured scale rather than a compressed one that made every reading look the same. Principle
+  VII (Boundaries Are Structural) shaped every fix that touched a shared WP2 component's *absence*
+  of a capability (no icon slot on `RadioRow`, no way to suppress `StepIndicator`'s own built-in
+  label): each is solved by composing around the shared component from within this row's own
+  files, or by building a small local equivalent, never by editing `ui/components/Controls.kt`
+  itself (WP2's file, outside this row's owned files this round) or by silently hand-rolling a
+  full look-alike where the shared component still does most of the real work.
+- **R-121 (halt) — `RouteCheckState.TimedOut`.** `VerifyScreen` used to fall into
+  `else -> emptySet()` for every check's `passed` set on a timeout, silently reverting the two
+  genuinely-completed checks (native rate, route match — `RealRouteCheck`'s own flow always
+  clears them before the signal wait) to unfilled, offered no honest explanation, kept `Continue`
+  disabled forever, and passed `onBack = null` unconditionally — a real dead end, confirmed on
+  `setup/S05-verify-stuck.png`. Now: the two completed checks stay ticked, the signal check shows
+  an honest failed mark and "No signal heard in 30 s on `<device>`" (from
+  `VerifyViewState.inputLabel`, already on hand — no new field on `RouteCheckState.TimedOut`
+  needed), `Continue` is replaced by `Try again`/`Choose another input` (`SetupActivity`'s already-
+  existing `onTryVerifyAgain`/`onChooseAnotherInput`, the same recovery `RouteMismatchScreen`
+  already offered for the sibling halt), and `onBack` is now always supplied to `SetupScaffold`.
+- **R-125 (halt) — `RadioVerifiedScreen`'s blank screen on `Stale`.** Used to accept only
+  `RigStatus.State.Connected` and `return` (rendering nothing) for anything else — a `Stale`
+  reading (the real `rig-lost` scenario) hit exactly that `return`, confirmed blank on
+  `rig-lost/S11-check.png`. Now takes the full `RigStatus.State` and dispatches: `Connected`
+  unchanged; `Stale` renders `Fail-Rig.dc.html`'s "last known … stale since HH:MM:SS" treatment
+  (the same `RigVerifiedContent` grid `RadioVerifiedConnected` uses, fed `stale.lastKnown`) with
+  `Reconnect`/`Change radio` (no `Continue` — setup has not started capture yet, so "stale before
+  ever really connecting" is closer to `RouteMismatchScreen`'s halt than to the running-capture
+  banner's "continue, marked stale"); `Absent` is handled one level up, in
+  `SetupActivity.RenderRadioVerified`, *before* this composable is ever invoked — a
+  `LaunchedEffect` routes back to S09 with a new `RadioScreen(banner = ...)` rather than ever
+  showing a blank RADIO_VERIFIED. `SetupActivity.onReconnectRadio()` re-reads `RigStatus.state`
+  honestly (no fabricated reconnect handshake — `:rig`/`:rig-usb` are still unbuilt).
+- **R-120 — the duplicated "N of 7".** `SetupScaffold`'s own header row already drew "n of N"
+  (correct, matches the board); WP2's shared `StepIndicator` (`Controls.kt`) draws an identical
+  "n of N" of its own directly above its segment bars, with no parameter to suppress it — confirmed
+  by reading `Controls.kt` before writing this, and out of this row's owned files to edit this
+  round. Fix: a new private `SegmentBars` in `SetupScaffold.kt` draws only the coloured segments
+  (the board's own "unlabeled" segment row), preserving the `contentDescription` TalkBack read
+  from `StepIndicator` so accessibility does not regress just because the visible label moved.
+  `StepIndicator` itself is untouched, still used and tested by WP2's own `ControlsTest.kt`.
+- **R-122 — device typing and refusal.** `InputRouteEnumerator.subtitleFor` only distinguished
+  `AudioDeviceKind.BUILT_IN_MIC` from everything else, and `AndroidAudioIo.toKind()`
+  (`:capture-android`, outside this row's owned files) collapses every type it does not
+  recognise — telephony among them — into `UNKNOWN`, confirmed against the validator's own
+  emulator screenshot (`setup/S04-input.png`: three of four rows read "Unknown"). Rather than
+  widen `:capture-android`'s `AudioDeviceKind`, `InputRouteEnumerator` now reads the real
+  `android.media.AudioDeviceInfo.type` directly, by id (`typesById()`, the same best-effort
+  pattern `nativeRatesById()` already used), and a new `DeviceTypeNaming` resolves it into a real
+  name (built-in mic / telephony / USB audio / wired headset / Bluetooth / an honestly-numbered
+  "unrecognised type N") with the guide §7 icon where one already exists in `OrtIcons` (`null`,
+  never a substituted wrong icon, for Bluetooth — no such icon exists yet, a real gap left open
+  below) — falling back to `DeviceTypeNaming.forKind` when no real `AudioManager` entry matches
+  (every existing `FakeAudioIo`-driven test, which cannot produce a matching real device id).
+  Every source that is not plausibly an external adapter (not only the built-in mic) is now
+  refused. `RadioRow` has no icon slot (`Controls.kt`, confirmed by reading it, outside this row's
+  files) — `InputScreen` composes a small leading `Icon` alongside `RadioRow` rather than editing
+  the shared component or hand-rolling a look-alike radio row. `InputRouteOption.isBuiltInMic`
+  is renamed `refused` (more precise now that more than the built-in mic is refused) — every
+  caller and test updated. S06's "chosen X · routed Y" row (`RouteMismatchScreen`) now appends
+  each device's real type in parentheses via the same `DeviceTypeNaming.forKind`, so two devices
+  sharing one raw label (the validator's own emulator: every route reads `sdk_gphone64_x86_64`)
+  are still distinguishable.
+- **R-123 — font-scale-2.0 scaffold clearance.** At a larger font scale the fixed bottom action
+  bar grows taller; the scrollable content above it needs a bottom spacer exactly that tall so the
+  last item, once scrolled to, clears the bar rather than sitting flush against it (confirmed on
+  `setup/S01-welcome@2x.png`/`S04-input@2x.png`: the last visible line was clipped right at the
+  button's top edge). `SetupScaffold` now measures the real `bottomActions` height via
+  `onGloballyPositioned` and appends a `Spacer` of that exact height to the scrollable content —
+  never a guessed constant that would drift from the bar's actual height at any given font scale.
+  `WelcomeScreen` (S01, the one screen with no `SetupScaffold` chrome at all) carries the identical
+  fix locally, since it cannot share the scaffold's own implementation.
+- **R-124 — the level meter.** Three real bugs, confirmed on `level-low/S07-level-low.png` and
+  `level-clip/S07-level-clip.png`: (1) `levelBarFraction` scaled against a local `-90 dBFS` floor
+  three times wider than `LevelViewState`'s own `-60..0` real chart range
+  (`ui/screens/LevelMeterScreen.kt`, WP4 — read, its scale constants reused via import, not
+  duplicated, per the brief), compressing ordinary speech into the top third of the bar and making
+  `-38 dBFS` look nearly as full as `0 dBFS` clipping — fixed by switching to
+  `LevelViewState.CHART_FLOOR_DBFS`/`CHART_CEILING_DBFS`; (2) the meter drew bars only, no target
+  band, no clip line, no noise-floor line — `LevelMeter` is now a `Canvas` mirroring
+  `LevelHistoryChart`'s visual spec (that composable is `private` to its own file, so this is a
+  second, small Canvas built to the same spec, not a shared one) — translucent green target band,
+  a halt-coloured clip line at 0 dBFS (WP4's own rule: "never amber," preserved), and a dashed
+  noise-floor line once one is tracked; (3) `LevelReading.headroomDb`'s `-peakDbfs` produced IEEE
+  754 `-0.0` for an exact `0.0` dBFS peak, which `"%.0f"` formats as the literal string "-0 dB" —
+  fixed by using `0.0 - peakDbfs` (subtraction of two positive zeros is always `+0.0`). Also: the
+  clipping status *dot* (the live state indicator, distinct from the chart's own fixed clip line)
+  changed from `haltFill` (red) to `accentAmber` — guide §3: "red is for one thing — capture has
+  stopped"; a setup-time clip warning is a degradation, not a halt. The "noise −58" axis label was
+  a hardcoded literal regardless of the real reading (both level-low and level-clip screenshots
+  showed the identical text) — now built from `reading.noiseFloorDbfs`.
+- **S12's Level row** (coordinator's own observation, no register id): `readyRowsFor`'s Level row
+  derived `ok`/`statusText` from `store.levelInBand` alone, so a stored flag `true` with no
+  measured peak (`store.levelPeakDbfs == null` — the exact drift a test-only `SharedPreferences`
+  setup can produce, and the shape of a real bug were the two ever to fall out of sync) rendered a
+  green "in band" marker beside "Not measured". Extracted into `levelRow`, which now requires a
+  real, non-null peak before `ok` can ever be true — never derived from the flag alone.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.MainActivityTest"` — **121 passing**, zero failures (up from round 3's 97; this
+  entry's new/updated tests: `SetupScaffoldTest` (new file, R-120/R-123), `VerifyScreenTest`
+  (R-121 × 4 new + 1 back-chevron), `RadioVerifiedScreenTest` (R-125 × 2 new), `SetupActivityTest`
+  (R-125's Absent-discovered-on-S11 routing), `InputRouteEnumeratorTest`/`InputScreenTest`
+  (R-122), `RouteMismatchScreenTest` (R-122), `WelcomeScreenTest` (R-123), `LevelCheckTest`/
+  `LevelScreenTest` (R-124 × 6 new), `ReadyRowsForTest` (S12 Level row × 2 new)).
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **817 PASSED, 0 failed**,
+  BUILD SUCCESSFUL (up from round 3's 793 — this entry's 24 new tests, no other module changed).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — clean on the final run. Two real `LongMethod`
+  fixes needed along the way: `RouteMismatchScreen` (extracted `MismatchChecks`) and
+  `SetupScaffold` (extracted `ScaffoldHeaderRow`), both over detekt's 80-line threshold once the
+  new logic landed; `ktlintFormat` auto-fixed one import-order violation.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` unchanged this round.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- The font-scale-2.0 tests use `CompositionLocalProvider(LocalDensity provides Density(fontScale =
+  2f))`, matching `FailureScreensTest`'s/`ReaderAccessibilityTest`'s own established V7 pattern —
+  **not** `@Config(qualifiers = "fontscale-2.0")` as the brief's wording suggested: Robolectric
+  rejects that string outright (`fontscale-2.0` is not a real Android resource-qualifier format;
+  confirmed by running it first and reading the `IllegalArgumentException`), and the codebase's
+  own precedent for this exact scenario already exists and works.
+
+**Left open / not done:**
+- **No Bluetooth icon exists in `OrtIcons`** (`ui/components/OrtIcons.kt`, WP2's file) — a
+  Bluetooth-typed route's row carries no leading icon (`icon = null`), stated honestly rather than
+  reusing an unrelated icon. Reported, not fixed, per this row's file ownership this round.
+  `RadioRow` also still has no icon slot at all; `InputScreen` composes around it rather than
+  waiting on that gap.
+- **`InputRouteEnumerator`'s finer-grained typing (`typesById`) is real-`AudioManager`-only** —
+  exactly like `nativeRatesById`'s existing, unchanged limitation, a `FakeAudioIo`-driven unit
+  test can only exercise the `DeviceTypeNaming.forKind` fallback path, never the richer
+  `forAndroidType` path a real device's `AudioDeviceInfo.type` would take. Manual verification on
+  the emulator (or a physical device) is the only way to confirm the telephony/USB-accessory cases
+  render as intended.
+- **`RigStatus.State.Absent` discovered mid-S11 is exercised in tests via a forced
+  `Lifecycle.State.STARTED` → `RESUMED` transition**, standing in for a real backgrounded-then-
+  foregrounded visit — genuinely rare in practice (`onChooseRadio` itself already routes a
+  same-moment `Absent` reading to S10, never S11), and stated as such in code.
+- Every register row this entry closes (R-120..R-125) remains Robolectric-verified only, per this
+  program's own rule; no on-device or emulator re-confirmation is claimed here — that is the next
+  validator pass's job, not this builder's.
+
 ## 2026-09-08 (ui-conformance WP2: marker descriptions in prose without confidence; live-bar meter tone override)
 
 ### (pending) — ui-conformance WP2 · marker descriptions in prose without confidence; live-bar meter tone override
@@ -142,7 +309,6 @@ could not previously produce).
   of this component already works (`label`/`partialText` are opaque strings this component does
   not interpret beyond what the guide specifies), but is worth a caller knowing about rather than
   discovering by a blank amber "Act now".
-
 ---
 
 ## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)

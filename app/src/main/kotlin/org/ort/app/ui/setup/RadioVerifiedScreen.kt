@@ -21,16 +21,48 @@ import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 import org.ort.pipeline.capture.RigStatus
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
- * S11 (`Setup-Rig-Verified.dc.html`, R-084) — renders a real [RigStatus.State.Connected] (or the
- * `lastKnown` half of a [RigStatus.State.Stale]). Since `:rig`/`:rig-usb` are unbuilt, the only
- * producer of either today is the debug scenario simulator's `rig-lost` scenario poking
- * [RigStatus] directly (WP0) — see [RadioUsbScreen]'s doc comment for the full accounting of what
- * is and is not reachable with real hardware right now (nothing).
+ * S11 (`Setup-Rig-Verified.dc.html`, R-084) — renders a real [RigStatus.State.Connected] or a
+ * [RigStatus.State.Stale] (the `Fail-Rig.dc.html` "last known … stale since" treatment, adapted for
+ * setup: `Reconnect`/`Change radio` rather than the running-capture banner's "set the frequency by
+ * hand", since setup has not started capture yet). [RigStatus.State.Absent] is **not** accepted
+ * here — validator finding (register R-120..R-125, halt): the previous version silently `return`ed
+ * on anything but `Connected`, rendering a blank black screen for `Stale` (the real `rig-lost` case
+ * this package's own debug scenario exists to exercise). [SetupActivity.RenderRadioVerified] now
+ * routes `Absent` back to S09 with a banner *before* this composable is ever called, so the
+ * `Absent` case genuinely cannot reach here in practice; the `when` below still has no `else`
+ * (would not compile against [RigStatus.State]'s three cases without one) so a future fourth
+ * `RigStatus.State` cannot silently render nothing here either.
+ *
+ * Since `:rig`/`:rig-usb` are unbuilt, the only producer of any of this today is the debug scenario
+ * simulator poking [RigStatus] directly (WP0) — see [RadioUsbScreen]'s doc comment for the full
+ * accounting of what is and is not reachable with real hardware right now (nothing).
  */
 @Composable
 public fun RadioVerifiedScreen(
+    state: RigStatus.State,
+    onContinue: () -> Unit,
+    onChangeRadio: () -> Unit,
+    onReconnect: () -> Unit,
+) {
+    when (state) {
+        is RigStatus.State.Connected -> RadioVerifiedConnected(state, onContinue, onChangeRadio)
+        is RigStatus.State.Stale -> RadioVerifiedStale(state, onReconnect, onChangeRadio)
+        is RigStatus.State.Absent -> {
+            // See this file's own doc comment: the caller routes Absent away before ever
+            // reaching this composable. A blank Box, not a crash, is the last-resort fallback if
+            // that ever stops being true — never the fully blank screen the validator found.
+        }
+    }
+}
+
+@Composable
+private fun RadioVerifiedConnected(
     connected: RigStatus.State.Connected,
     onContinue: () -> Unit,
     onChangeRadio: () -> Unit,
@@ -58,6 +90,41 @@ public fun RadioVerifiedScreen(
         RigVerifiedContent(connected)
     }
 }
+
+@Composable
+private fun RadioVerifiedStale(stale: RigStatus.State.Stale, onReconnect: () -> Unit, onChangeRadio: () -> Unit) {
+    val sinceLabel = STALE_SINCE_FORMAT.format(Instant.ofEpochMilli(stale.sinceMillis).atZone(ZoneId.systemDefault()))
+    SetupScaffold(
+        step = SetupStep.RADIO_VERIFIED,
+        title = "${stale.lastKnown.descriptor} — last known",
+        subtitle = "Stale since $sinceLabel",
+        onBack = null,
+        bottomActions = {
+            PrimaryButton(
+                text = "Reconnect",
+                onClick = onReconnect,
+                modifier = Modifier.fillMaxWidth().testTag("setup-radio-verified-reconnect"),
+            )
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                TextAction(
+                    text = "Change radio",
+                    onClick = onChangeRadio,
+                    modifier = Modifier.testTag("setup-radio-verified-change"),
+                )
+            }
+        },
+    ) {
+        SetupHaltBanner(
+            title = "The radio stopped reporting at $sinceLabel",
+            body = "What is shown below is the last reading, not a live one — the frequency, mode " +
+                "and squelch state may have changed since. Reconnect to verify again, or change " +
+                "which radio this setup uses.",
+        )
+        RigVerifiedContent(stale.lastKnown)
+    }
+}
+
+private val STALE_SINCE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT)
 
 /** The reading grid + verified command list — shared with [RadioUsbScreen]'s defensive
  * `Connected`/`Stale` fallback rendering so the two screens never drift on what "verified" shows. */

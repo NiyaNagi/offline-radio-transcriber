@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -22,11 +23,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
@@ -43,10 +47,18 @@ import org.ort.app.ui.theme.OrtType
  * app wordmark, the offline promise, the five things setup will ask for, `Begin`, and a `Sheet`
  * carrying `Settings-About.dc.html`'s own "the offline promise" copy verbatim (P8's own board
  * cites that file for this text — this package does not invent it).
+ *
+ * R-123 (validator finding, register R-120..R-125): the same fixed-bar clearance fix
+ * [SetupScaffold]'s own doc comment describes, duplicated here (not shared — this is the one
+ * screen with no [SetupScaffold] chrome at all) because this screen does not use it. Without a
+ * bottom [Spacer] sized to [WelcomeFooter]'s real, measured height, the fifth ask sat flush behind
+ * `Begin` at a larger font scale instead of clearing it once scrolled to.
  */
 @Composable
 public fun WelcomeScreen(onBegin: () -> Unit, modifier: Modifier = Modifier) {
     var sheetOpen by remember { mutableStateOf(false) }
+    var footerHeightPx by remember { mutableIntStateOf(0) }
+    val footerHeight = with(LocalDensity.current) { footerHeightPx.toDp() }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -59,8 +71,13 @@ public fun WelcomeScreen(onBegin: () -> Unit, modifier: Modifier = Modifier) {
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 WelcomeHeader()
                 WelcomeAsks()
+                Box(modifier = Modifier.height(footerHeight))
             }
-            WelcomeFooter(onBegin = onBegin, onWhatIsCaptured = { sheetOpen = true })
+            WelcomeFooter(
+                onBegin = onBegin,
+                onWhatIsCaptured = { sheetOpen = true },
+                modifier = Modifier.onGloballyPositioned { footerHeightPx = it.size.height },
+            )
         }
 
         if (sheetOpen) {
@@ -130,9 +147,9 @@ private fun WelcomeAsks() {
 }
 
 @Composable
-private fun WelcomeFooter(onBegin: () -> Unit, onWhatIsCaptured: () -> Unit) {
+private fun WelcomeFooter(onBegin: () -> Unit, onWhatIsCaptured: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+        modifier = modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
         verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
         PrimaryButton(

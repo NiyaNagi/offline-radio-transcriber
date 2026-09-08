@@ -29,11 +29,50 @@ class InputRouteEnumeratorTest {
         val routes = InputRouteEnumerator(context, io).list()
 
         assertEquals(1, routes.size)
-        assertTrue(routes.single().isBuiltInMic)
+        assertTrue(routes.single().refused)
         assertTrue(
             "expected a refusal warning, got '${routes.single().subtitle}'",
             routes.single().subtitle.contains("refuse", ignoreCase = true),
         )
+    }
+
+    // --- R-122 (validator finding, register R-120..R-125): named by real device type ------------
+
+    @Test
+    fun `R_122 the built-in mic row names its type in the subtitle, not just Unknown`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone")),
+        )
+
+        val subtitle = InputRouteEnumerator(context, io).list().single().subtitle
+
+        assertTrue("got '$subtitle'", subtitle.startsWith("Built-in microphone"))
+    }
+
+    @Test
+    fun `R_122 an unrecognised device type is refused too, never silently treated as a radio`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("weird-0", AudioDeviceKind.UNKNOWN, "sdk_gphone64_x86_64")),
+        )
+
+        val route = InputRouteEnumerator(context, io).list().single()
+
+        assertTrue(
+            "an unrecognised type must default to refused, not silently pass as a radio",
+            route.refused,
+        )
+    }
+
+    @Test
+    fun `R_122 a USB device is not refused and carries the USB audio icon`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device")),
+        )
+
+        val route = InputRouteEnumerator(context, io).list().single()
+
+        assertFalse(route.refused)
+        assertEquals(org.ort.app.ui.components.OrtIcons.usbAudio, route.icon)
     }
 
     @Test
