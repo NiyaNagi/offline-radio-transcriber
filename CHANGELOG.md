@@ -65,6 +65,95 @@ closing condition) — both explicitly require the user, not a session. The docu
 items for the pilot round" section lists three specific defaults (the 20-minute thread gap
 foremost) that should be revisited once real audio exists.
 
+---
+
+## 2026-09-07 (P10 follow-up — real sherpa-onnx JVM binding)
+
+### (pending) — P10 follow-up · Real sherpa-onnx JVM binding and a genuine ASR decode
+
+**Scope:** `asr-sherpa/` (new `real/RealSherpaDecoder.kt`, its README, its `.gitignore`, the
+gated `RealSherpaDecoderRealModelTest`), `gradle/libs.versions.toml` (new `sherpaOnnx` version
+and two library coordinates), `settings.gradle.kts` (one new repository).
+
+**Requirements/ACs:** FR-ASR-1 (the decode path this proves is real). Not AC-6 — see "Left open"
+below; this task was explicitly scoped narrower than AC-6.
+
+**What changed:** P10 built `SherpaAsrEngine` against a `SherpaDecoder` seam with only
+`FakeSherpaDecoder` behind it, because no real JVM sherpa-onnx binding had been confirmed
+resolvable and no model was on hand to exercise it. This follow-up closes that:
+
+- **A real JVM/JNI binding is resolvable and used.** sherpa-onnx does not publish its Kotlin/JVM
+  artifact to Maven Central — upstream only documents a build-it-yourself CMake + `kotlinc-jvm`
+  path. What upstream does publish, as GitHub Release assets per tag, is a `sherpa-onnx-jvm`
+  jar (the Java/Kotlin API classes) plus per-platform `sherpa-onnx-native-lib-<platform>` jars
+  bundling the native library. These are mirrored onto JitPack
+  (`com.github.k2-fsa.sherpa-onnx:<artifact>:1.13.7` — the same version the real R1 probe already
+  confirmed usable via Python, `results/r1-lora-export.md`), which is an ordinary resolvable
+  Maven repository. Added `maven { url = uri("https://jitpack.io") }` to
+  `settings.gradle.kts`'s `dependencyResolutionManagement` (required — `FAIL_ON_PROJECT_REPOS` is
+  set, so a project-level repository isn't an option), and
+  `implementation(libs.sherpa.onnx.jvm)` / `runtimeOnly(libs.sherpa.onnx.native.win.x64)` in
+  `asr-sherpa/build.gradle.kts`. Verified genuinely resolvable, not just metadata: after
+  `:asr-sherpa:compileKotlin` and `:asr-sherpa:test`, `sherpa-onnx-jvm-1.13.7.jar` (187KB) is
+  present in `~/.gradle/caches/modules-2/files-2.1/com.github.k2-fsa.sherpa-onnx/` — an actual
+  jar, not a `.pom` stub. `./gradlew dependencyRules` still passes with `:asr-sherpa`'s module
+  edges unchanged (`:asr-api`, `:core`, `:onnx`) — this is an external library dependency, not a
+  new module edge.
+- **`real.RealSherpaDecoder`** (`asr-sherpa/src/main/kotlin/org/ort/asrsherpa/real/RealSherpaDecoder.kt`)
+  — a genuine second `SherpaDecoder` implementation alongside the untouched
+  `fake.FakeSherpaDecoder`. Wraps a real sherpa-onnx `OfflineRecognizer` built from explicit
+  Whisper encoder/decoder/tokens file paths; `decode()` creates an `OfflineStream`, calls
+  `acceptWaveform` at the pipeline's fixed 16kHz (`SampleClock.DEFAULT_SAMPLE_RATE`), decodes,
+  and maps `OfflineRecognizerResult` (text, tokens, timestamps, durations) onto this module's
+  `DecodedHypothesis`. Not wired into any production construction path (`:pipeline`/`:app`) —
+  see "Left open".
+- **The model**: sherpa-onnx's own published pretrained model zoo, per the task's preferred
+  option — Whisper `tiny.en`, int8-quantized (`tiny.en-{encoder,decoder}.int8.onnx`, ≈101MB
+  combined), from `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.en.tar.bz2`.
+  Not committed (`asr-sherpa/.gitignore` excludes `.models-cache/`); `asr-sherpa/README.md`
+  documents the exact download/extract commands and the `ORT_SHERPA_MODEL_DIR` override.
+- **`RealSherpaDecoderRealModelTest`** (`asr-sherpa/src/test/kotlin/org/ort/asrsherpa/real/`) —
+  gated behind `@EnabledIfEnvironmentVariable(named = "ORT_RUN_REAL_SHERPA", matches = "1")`
+  (mirrors `corpus/tests/test_probe_lora_export.py`'s `ORT_RUN_REAL_R1` pattern), with an
+  `Assumptions.assumeTrue` skip (not a failure) if the model directory is missing even when the
+  env var is set. Reads `test_wavs/0.wav` (16kHz mono PCM16, via a small WAV reader written
+  inline — no new module dependency) through a real `RealSherpaDecoder` and asserts the output
+  contains real recognizable words from the clip's actual ground truth
+  (`test_wavs/trans.txt`: "AFTER EARLY NIGHTFALL THE YELLOW LAMPS ...").
+
+**Verified:**
+- `./gradlew :asr-sherpa:dependencies --configuration runtimeClasspath` — both new coordinates
+  resolve (`BUILD SUCCESSFUL`); confirmed via cache inspection that the actual jars download.
+- `./gradlew dependencyRules :asr-sherpa:test` (JDK 17, Windows 10, this machine) — `dependencyRules:
+  OK`; 7 tests pass, `RealSherpaDecoderRealModelTest` **SKIPPED** (env var unset — proves it does
+  not run in ordinary CI).
+- `./gradlew :asr-sherpa:test --tests "*RealSherpaDecoderRealModelTest*"` with
+  `ORT_RUN_REAL_SHERPA=1` set and the model extracted under `asr-sherpa/.models-cache/` — **PASSED**.
+  Actual transcribed text (captured via the test's own stdout, JDK 17, Windows 10, sherpa-onnx
+  1.13.7, CPU provider, Whisper tiny.en int8): `"After early nightfall, the yellow lamps would
+  light up here and there the squalid quarter of the brothels."` — matches the clip's ground
+  truth (`test_wavs/trans.txt`) essentially exactly (Whisper adds its own casing/punctuation).
+  This is a real decode through a real binding and a real model, not a claim about accuracy
+  (constitution VI) — no fold, no aggregate metric, one clip.
+
+**Left open / not done:**
+- **Not AC-6.** AC-6 needs the real development noise tape (radio traffic, not LibriSpeech-style
+  read speech), which still doesn't exist (Q2/Q16; see `docs/reference/labelling-protocol.md`
+  for the drafted protocol). This task proves the decode *mechanism* is real; it does not attempt
+  AC-6's accuracy claim.
+- `RealSherpaDecoder` is not constructed anywhere in `:pipeline` or `:app`. Wiring it in needs the
+  real asset install/activation path (`ModelRegistry`, `ModelDescriptor`/`AssetRef` resolved to
+  concrete encoder/decoder/tokens paths, side-loaded or downloaded per FR-ASR-8/FR-AST-2) — out
+  of scope here, which was narrowly "prove the seam is real."
+- Only `sherpa-onnx-native-lib-win-x64` is declared (this machine is Windows x64). A build on a
+  different host platform needs its own `sherpa-onnx-native-lib-<platform>` coordinate —
+  documented in `asr-sherpa/README.md`.
+- No n-best beyond a single hypothesis, no `noSpeechProb`/`avgLogProb` (the Java API's
+  `OfflineRecognizerResult` doesn't expose them for greedy-search Whisper decoding) — both fields
+  are `null` in `RealSherpaDecoder`'s output, same shape `FakeSherpaDecoder` already allows.
+
+---
+
 ## 2026-09-07 (evening, cont. — coverage-matrix hygiene)
 
 ### (pending) — Fix three misused `@Requirement` tags; note a real gap in the coverage tool

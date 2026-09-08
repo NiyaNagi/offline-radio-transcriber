@@ -10,6 +10,10 @@ dependencies {
     implementation(project(":onnx"))
     implementation(project(":asr-api"))
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.sherpa.onnx.jvm)
+    // Platform-specific native binding: this is a JVM build on Windows x64, so only that
+    // platform's native jar is pulled. A different host platform would need its own coordinate.
+    runtimeOnly(libs.sherpa.onnx.native.win.x64)
 
     testImplementation(project(":testing"))
     testImplementation(libs.kotlinx.coroutines.test)
