@@ -32,6 +32,48 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (morning — a real device catches two real bugs neither CI nor Robolectric could)
+
+### (pending) — Fix the on-device hang at the battery-exemption step, found by the user's own phone
+
+**Scope:** `app/src/main/AndroidManifest.xml`, `app/src/main/kotlin/org/ort/app/MainActivity.kt`,
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`.
+**Requirements/ACs:** AC-65 (battery exemption diagnostic-only, never gates capture readiness —
+`PermissionsFlowTest`'s existing `AC_65 battery exemption is requested last and never gates
+capture readiness` already asserted this at the `PermissionsFlow` layer; the bug was entirely in
+`MainActivity`'s own glue code misusing a correct API).
+**What changed:** the user installed the smoke-test APK on their own phone and reported it stuck
+on "Asking to ignore battery optimisation…" with no further progress, screenshot attached. Two
+real bugs, neither catchable by Robolectric (no `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
+dialog exists in that environment) or CI (never ran on a real device at all):
+1. **Missing manifest permission.** Launching that action's intent without
+   `android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` declared throws `SecurityException`
+   on a real device — added the `<uses-permission>`, and confirmed with `aapt2 dump badging` that
+   it's actually present in the built APK now (it wasn't checked for on the first build).
+2. **A real design bug, independent of the crash.** `MainActivity.advance()` used
+   `PermissionsFlow.nextStep()`, which sequences `BATTERY_EXEMPTION` *before* `DONE` — so even
+   with the permission fixed, capture would never start until the user granted (or the OS
+   otherwise resolved) that step, directly contradicting `PermissionsFlow.captureIsPermitted()`'s
+   own contract that battery exemption must never gate capture readiness. Fixed by checking
+   `captureIsPermitted()` (mic + notifications only) directly, and making the battery-exemption
+   request fire-and-forget — launched via `startActivity` (not `startActivityForResult`), with
+   `SecurityException`/`ActivityNotFoundException` both caught and logged, never blocking.
+3. Added a same-instant related guard to `RealCaptureService`: a foreground service is a
+   singleton per process, so relaunching `MainActivity` while it's already running would have sent
+   a second start command with a different session id, starting a second concurrent
+   `AudioRecordSource`/`Segmenter` against the same microphone. `onStartCommand` now ignores a
+   second start while one is already active.
+**Verified:** `./gradlew build dependencyRules` — full green, including the pre-existing
+`PermissionsFlowTest`'s AC-65 case (confirming the underlying flow logic was always correct — the
+bug was entirely in this glue code); `aapt2 dump badging` on the freshly built APK confirms the
+new permission is present. **Not yet re-verified on the reporting user's actual device** — that
+is the next real check, same as the original bug report.
+**Left open / not done:** if `MainActivity` is relaunched while `RealCaptureService` is already
+running, `StatusActivity` will be shown a fresh session id the service silently ignored (polls an
+empty session rather than the one actually capturing) — a minor UX inconsistency in an edge case
+(relaunching a running capture), not a crash or data-loss risk, left as a known v0 limitation
+rather than fixed here.
+
 ## 2026-09-08 (just after midnight, cont. — CI catches a real ruff-version-drift bug too)
 
 ### (pending) — Fix 23 ruff findings surfaced by an unpinned `ruff>=0.5`, then pin it

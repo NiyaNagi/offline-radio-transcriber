@@ -89,6 +89,12 @@ public class RealCaptureService : Service() {
             stopCapture()
             return START_NOT_STICKY
         }
+        // A foreground service is a singleton per process — relaunching MainActivity (e.g. the
+        // app icon tapped again while this is already running) sends a second start command with
+        // a *different* session id. Without this guard that would start a second concurrent
+        // AudioRecordSource/Segmenter/coroutine against the same microphone, writing two
+        // overlapping sessions into :data at once. Found by on-device testing.
+        if (source != null) return START_STICKY
         sessionId = intent?.getStringExtra(EXTRA_SESSION_ID) ?: Ulid.generate().value
         wakeLock?.let { if (!it.isHeld) it.acquire(WAKE_LOCK_TIMEOUT_MILLIS) }
         startedAtWallMillis = SystemClock.wallMillis()

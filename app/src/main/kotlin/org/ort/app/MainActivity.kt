@@ -12,7 +12,6 @@ import android.provider.Settings
 import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import org.ort.app.permissions.PermissionStep
 import org.ort.app.permissions.PermissionsFlow
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.status.StatusActivity
@@ -50,20 +49,29 @@ class MainActivity : Activity() {
         advance()
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_BATTERY_EXEMPTION) advance()
-    }
-
-    /** Re-reads real permission state and asks for the next thing [PermissionsFlow] wants, or starts capture. */
+    /**
+     * Re-reads real permission state and asks for the next thing needed, or starts capture.
+     *
+     * **Bug found by on-device testing, not any test suite**: the first version of this method
+     * used [PermissionsFlow.nextStep], which sequences through `BATTERY_EXEMPTION` *before*
+     * `DONE` — so capture never started until that step completed. That
+     * directly contradicts [PermissionsFlow.captureIsPermitted]'s own contract (and this file's
+     * own comment on the old battery-exemption branch): battery exemption is diagnostic-only and
+     * must never gate capture readiness. On a real device, `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
+     * also threw `SecurityException` (a required manifest permission was missing — now added),
+     * which meant that step never completed at all, and this bug turned a diagnostic-only ask
+     * into a permanent block on ever starting capture. Fixed by checking
+     * [PermissionsFlow.captureIsPermitted] directly and treating the battery-exemption request as
+     * fire-and-forget, asked but never awaited.
+     */
     private fun advance() {
         val state = currentPermissionsState()
-        when (PermissionsFlow.nextStep(state)) {
-            PermissionStep.RECORD_AUDIO -> {
+        when {
+            !state.recordAudioGranted -> {
                 statusView.text = getString(R.string.placeholder_running) + "\n\nRequesting microphone access…"
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_CODE)
             }
-            PermissionStep.NOTIFICATIONS -> {
+            !state.notificationsGranted -> {
                 statusView.text = getString(R.string.placeholder_running) + "\n\nRequesting notification access…"
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     ActivityCompat.requestPermissions(
@@ -75,17 +83,29 @@ class MainActivity : Activity() {
                     advance() // nothing to request pre-33; PermissionsState already reports it granted
                 }
             }
-            PermissionStep.BATTERY_EXEMPTION -> {
-                // Diagnostic-only per PermissionsFlow's own doc comment (AC-65, constitution IV) —
-                // requested for the OS's sake, never trusted as proof capture will keep running.
-                statusView.text = getString(R.string.placeholder_running) +
-                    "\n\nAsking to ignore battery optimisation (does not gate capture readiness)…"
-                val intent =
-                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
-                @Suppress("DEPRECATION")
-                startActivityForResult(intent, REQUEST_BATTERY_EXEMPTION)
+            else -> {
+                check(PermissionsFlow.captureIsPermitted(state)) { "mic and notifications granted but not permitted" }
+                requestBatteryExemptionBestEffort(state)
+                startCaptureAndShowStatus()
             }
-            PermissionStep.DONE -> startCaptureAndShowStatus()
+        }
+    }
+
+    /**
+     * Fire-and-forget: asked for the OS's sake, never awaited, never blocks capture (AC-65,
+     * constitution IV). Swallows every way this can fail — a missing manifest permission on an
+     * older install, an OEM that restricts or has no handler for this action at all — because
+     * none of those are reasons to keep the microphone from working.
+     */
+    private fun requestBatteryExemptionBestEffort(state: PermissionsState) {
+        if (state.isIgnoringBatteryOptimizationsDiagnosticOnly) return
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+            startActivity(intent)
+        } catch (e: SecurityException) {
+            android.util.Log.w(TAG, "battery-exemption request denied (diagnostic-only, ignoring)", e)
+        } catch (e: android.content.ActivityNotFoundException) {
+            android.util.Log.w(TAG, "no handler for battery-exemption request (diagnostic-only, ignoring)", e)
         }
     }
 
@@ -113,8 +133,8 @@ class MainActivity : Activity() {
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
     private companion object {
+        const val TAG = "MainActivity"
         const val REQUEST_CODE = 1001
-        const val REQUEST_BATTERY_EXEMPTION = 1002
         const val KEY_SESSION_ID = "session_id"
     }
 }
