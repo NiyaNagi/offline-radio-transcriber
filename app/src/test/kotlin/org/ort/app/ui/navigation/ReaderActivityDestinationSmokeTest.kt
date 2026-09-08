@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -253,6 +254,27 @@ class ReaderActivityDestinationSmokeTest {
         }
     }
 
+    // Round 6 (register R-132): `Settings-Capture`'s `Meter` action (`SettingsCaptureScreen.kt`'s
+    // `TextAction(text = "Meter", onClick = onOpenLevelMeter)`) now has a real target —
+    // `NavHostCallbacks.onOpenLevelMeter` switches to `Capture` and asks `CaptureStatusContent` to
+    // land directly on `LevelMeterScreen` (`openLevelMeter`, this round's own new parameter on that
+    // file). Landing on `Settings-Capture` via `initialScreen` first (round 5's own seam) is what
+    // makes `Meter` reachable without a real tap sequence through the `Settings` root.
+    @Test
+    fun `R_132_settings_capture_meter_opens_the_level_meter`() {
+        runReaderActivity(ReaderDestination.SETTINGS, settingsScreen = SettingsScreenId.CAPTURE) { rule ->
+            rule.waitUntilContentDescriptionExists("Back to Settings")
+            rule.onNode(hasText("Meter") and hasClickAction()).performClick()
+            // `LevelMeterScreen.kt`'s own `DrillInHeader(parentLabel = "Capture", ...)`.
+            rule.waitUntilContentDescriptionExists("Back to Capture")
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            rule.waitUntilContentDescriptionExists("Back to Capture")
+        }
+    }
+
     // -- drill-ins ------------------------------------------------------------------------------
 
     @Test
@@ -378,7 +400,7 @@ class ReaderActivityDestinationSmokeTest {
         destination: ReaderDestination,
         sessionId: String? = null,
         settingsScreen: SettingsScreenId? = null,
-        body: (rule: ReaderComposeRule) -> Unit,
+        body: (rule: ReaderComposeTestRule) -> Unit,
     ) {
         val activityRule =
             ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId, settingsScreen))

@@ -51,10 +51,27 @@ private enum class CaptureStatusSubScreen { NONE, LEVEL_METER }
  * that later stopped matching the live session meant it kept polling the *wrong* one forever
  * instead of falling back to the honest idle facts. Both are fixed by resolving the session to
  * read fresh, every tick, rather than once.
+ *
+ * [openLevelMeter] (round 6, register R-132, lead-approved single-parameter addition — WP4 is
+ * idle): lets a caller land directly on [LevelMeterScreen] instead of always starting at the
+ * status root — the same "opens there on launch" contract
+ * [org.ort.app.ui.settings.SettingsContent]'s own `initialScreen` already has (a fresh `remember`
+ * seeded once; re-entering `Capture` is what gives a later change to this parameter effect, since
+ * that disposes and rebuilds this composition — see `OrtNavHost.kt`'s own doc comment on the
+ * identical reasoning for `initialScreen`). `false` (the default, so every existing caller keeps
+ * compiling unchanged) starts at the status root, exactly as before this parameter existed. Its
+ * one caller today is `OrtNavHost`, routing `Settings-Capture`'s `Meter` action here.
  */
 @Composable
-public fun CaptureStatusContent(context: Context, sessionId: String?, modifier: Modifier = Modifier) {
-    var sub by remember { mutableStateOf(CaptureStatusSubScreen.NONE) }
+public fun CaptureStatusContent(
+    context: Context,
+    sessionId: String?,
+    modifier: Modifier = Modifier,
+    openLevelMeter: Boolean = false,
+) {
+    var sub by remember {
+        mutableStateOf(if (openLevelMeter) CaptureStatusSubScreen.LEVEL_METER else CaptureStatusSubScreen.NONE)
+    }
     var state by remember { mutableStateOf(idleCaptureStatus()) }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
     // Not [currentLevelViewState] (suspend, R-175 reads the session's overs) — the first frame

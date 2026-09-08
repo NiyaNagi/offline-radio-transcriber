@@ -6786,6 +6786,125 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · round 6: level-meter entry point, live-bar content clearance
+
+**Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`), `ui/screens/CaptureStatusContent.kt`
+(lead-approved single-parameter addition — WP4 idle), tests (`ui/navigation/OrtNavHostDestinationDispatchTest.kt`,
+`ui/navigation/ReaderActivityDestinationSmokeTest.kt`), `CHANGELOG.md`. Seventh reconciliation
+addendum. `git merge --ff-only main` succeeded cleanly (`main` at `075919c`, titled "ui-conformance
+WP3 round 5: search header, settings routes, sessions drill-in, failure actions" — the coordinator's
+own required title match, confirmed before merging). WP10's "single header" SETTINGS commit had not
+landed by the time this round's own gate finished, so item (2) of the coordinator's brief (removing
+the host's `ScreenHeader` for `SETTINGS` the way `SEARCH` got it) is **not done this round** — see
+Left open.
+
+**A real, silent merge-conflict corruption found and fixed before any of this round's own edits.**
+The `git merge --ff-only main` fast-forward landed a *merge commit* (built by the lead merging this
+branch into `main`) whose two parents had each independently added a same-purpose `private typealias`
+to `ReaderActivityDestinationSmokeTest.kt` — this branch's own round-5 commit named it
+`ReaderComposeRule`; a concurrent `main`-side commit (WP5's own pass-2 Log-fixes round, landed on
+`main` between this branch's round-5 commit and the lead's merge) named an equivalent one
+`ReaderComposeTestRule`, at a different position in the file, for the identical ktlint line-length
+reason. Git's line-based 3-way merge auto-resolved with **no conflict markers** (the two edits never
+overlapped a common line), but the result kept `main`'s typealias *definition* while leaving one of
+this branch's own *usages* (`runReaderActivity`'s `body` parameter type) referencing the name that no
+longer existed — a compile failure only `:app:compileDebugUnitTestKotlin` surfaced, not `git merge`
+itself. Fixed by renaming that one stale usage to the surviving name; re-verified by a full
+`:app:compileDebugUnitTestKotlin` run before touching anything else this round. Recorded here because
+"the merge succeeded with no conflicts" is not, on its own, proof the merged file is still correct —
+the same caution this engagement already applies to test results and gate output.
+
+**Requirements/ACs:** R-132 (Settings-Capture's `Meter` action, `CaptureStatusContent`'s new
+`openLevelMeter` entry point), R-262 (accessibility validator — live bar bottom clearance).
+
+**Constitution check.** Principle II (uncertainty is content): the R-262 test's own doc comment
+states plainly that it could not be made to fail without the fix in this JVM environment (tried both
+a steady-state and a temporal "live bar arrives after the operator has already scrolled to the
+bottom" repro) — reported as a regression guard on the real wiring, not overclaimed as proof of the
+original on-device defect, the same standard this class already holds the `CAPTURE` drawer-row click
+gap to. Principle VII (structural boundaries / file ownership): `CaptureStatusContent.kt`'s one new
+parameter is the single lead-approved edit outside this row; `LiveBar.kt` itself was deliberately
+*not* touched (its own `modifier` param only reaches its inner `Row`, not the 1dp top-edge strip) —
+this round's own measurement wraps `LiveBar`'s call site in `OrtNavHost.kt` instead, needing no edit
+to `ui/components/LiveBar.kt`.
+
+**What changed:**
+
+- **R-132 — `CaptureStatusContent.openLevelMeter: Boolean = false`** (new parameter, this round's
+  lead-approved single addition to WP4's file): seeds its internal `sub` state at
+  `LEVEL_METER` instead of `NONE` on a fresh composition — the identical "opens there on launch, not
+  always jumps there" contract `SettingsContent.initialScreen` already established (round 5), applied
+  to WP4's own internal sub-screen enum this time. `NavHostCallbacks.onOpenLevelMeter` (new field)
+  switches `current` to `CAPTURE` and sets a new `NavHostNavState.openCaptureLevelMeter` flag
+  (`rememberSaveable`, reset inside `closeDrillIns()` so any ordinary way of reaching `Capture` — the
+  drawer row, the live bar's own tap target — never leaves a stale `true` from an earlier
+  `Settings-Capture` "Meter" tap reopening the meter); `SettingsContent`'s existing `onOpenLevelMeter`
+  parameter (WP10's own file, R-132's round-4 half — no edit needed, it already existed exactly for
+  this) is wired straight to it. "N06 `Adjust`" itself is unaffected — round 5's own report that no
+  such button exists still stands; this closes the *other* half of R-132, `Settings-Capture`'s real
+  `Meter` action, which the register already distinguished.
+- **R-262 — the live bar now pads scrolling destination content by its own real, measured height.**
+  Mirrors `contentTopPadding` exactly (`org.ort.app.ui.failures.FailureHost`'s own R-178 mechanism):
+  `NavHostBody` wraps its `LiveBar` call site in a `Box` (`testTag("live-bar-clearance")`, not passed
+  as `LiveBar`'s own `modifier` — see Constitution check) measured via `onGloballyPositioned` +
+  `LocalDensity`, stored in `liveBarHeight`, applied as `padding(bottom = liveBarHeight)` on the same
+  content `Box` that already carries `padding(top = contentTopPadding)`; reset to `0.dp` in the branch
+  where nothing is shown, mirroring `FailurePresentation.None -> onBannerHeightChanged(0.dp)`'s own
+  precedent in that same file.
+- **`OrtNavHostDestinationDispatchTest`** gains one new case (`R_262 the live bar pads a scrolling
+  destination's last row clear of it at font scale 2_0`) — `createComposeRule()`, not a real
+  `Activity` (no isolation-JVM concern; composes `OrtNavHost` directly with a custom
+  `rememberReaderNavigator(SETTINGS, ASSETS)`, the same pattern this file's own `SETTINGS`/
+  `EARLIER_NIGHTS`/etc. cases already use), `CaptureState.capturing(sessionId)` for a real live bar,
+  font scale 2.0 via the established `CompositionLocalProvider(LocalDensity provides ...)` seam
+  (`SetupScaffoldTest`/`ReaderAccessibilityTest`/`RowsTest`'s own — `@Config(qualifiers =
+  "fontscale-2.0")` is not a real Android resource-qualifier string, per those files' own doc
+  comments), scrolled to `ModelsScreen.kt`'s own fixed closing paragraph (present regardless of the
+  asset catalog's own state) both before and after the live bar appears, comparing
+  `positionInRoot.y (+ size.height)` against the new `live-bar-clearance` tag's own top, the same
+  `RowsTest.kt`-established geometry-assertion idiom.
+- **`ReaderActivityDestinationSmokeTest`** gains `R_132_settings_capture_meter_opens_the_level_meter`:
+  launches `SETTINGS` with `EXTRA_SETTINGS_SCREEN=CAPTURE` (round 5's own seam), taps the real
+  `"Meter"` text action, asserts `"Back to Capture"` (`LevelMeterScreen.kt`'s own `DrillInHeader`)
+  appears and survives `recreate()`.
+
+**Verified:**
+- `git merge --ff-only main` — clean fast-forward to `075919c` (title confirmed matching the
+  coordinator's own requirement before merging).
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — FAILED once, immediately
+  after the merge, on the stale-typealias corruption above; `BUILD SUCCESSFUL` after the one-line fix.
+- `.\gradlew.bat :app:ktlintCheck` — `ktlintTestSourceSetCheck`/`ktlintDebugSourceSetCheck` both
+  clean; `ktlintMainSourceSetCheck` fails on one pre-existing finding in `ui/data/LogViewData.kt:690`
+  (WP5's file, not touched, not this row) — zero findings in any file this round touched.
+- `.\gradlew.bat :app:detekt --rerun-tasks` — `BUILD SUCCESSFUL`, zero findings across all of `:app`
+  (the three `StationScreen.kt`/`StationPatternScreen.kt` findings this row reported last round are
+  gone — resolved by whatever landed on `main` in between, not by this row).
+- `.\gradlew.bat :app:testDebugUnitTest` — `BUILD SUCCESSFUL`, 0 failed.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` — `BUILD SUCCESSFUL`, 16 tests, 0 failed (round 5's 15
+  plus this round's `R_132_settings_capture_meter_opens_the_level_meter`).
+- `.\gradlew.bat dependencyRules` — `OK`, 17 modules, no new edge.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat coverageMatrix --rerun-tasks` — 419 requirements, 185 covered, regenerated (gate
+  side-effect, included in this commit as generated output).
+- **Verified against a deliberately broken build, not merely the fixed one**: `bottom = liveBarHeight`
+  temporarily replaced with `bottom = 0.dp`, both the steady-state and the temporal-arrival version of
+  the new `R_262` test still passed — see that test's own doc comment and Constitution check for what
+  this does and does not prove.
+
+**Left open / not done:**
+- **Item (2) of this round's brief — removing `SETTINGS`'s host `ScreenHeader` — not done.** WP10's
+  "single header" commit had not landed on `main` by the time this round's gate finished (checked via
+  `git log --oneline -30` for a title containing "single header"/"WP10"; only round-4's own
+  differently-scoped commit of that same name matched). The Settings sub-screen double-header
+  (`initialScreen` landing on a sub-screen shows both the host's `ScreenHeader` and that sub-screen's
+  own `DrillInHeader`) reported last round therefore still stands, unchanged.
+- R-262's own test cannot be made to fail without the fix in this Robolectric environment — stated in
+  full in its own doc comment and the Constitution check above, not treated as settled proof of the
+  original on-device defect.
+- `onRetryInput`/`onEndSession`/`onRequestUsbPermission` remain no-op stubs (unchanged from round 5).
+- `ui/data/LogViewData.kt:690`'s ktlint finding (WP5's file) blocks a fully clean `:app:ktlintCheck`
+  — reported for the coordinator to route, not touched here.
+
 ### (pending) — ui-conformance WP3 · round 5: search header, settings sub-screen routes, sessions drill-in, failure actions complete
 
 **Scope:** `:app` `ui/navigation/**` (`ReaderNavigator.kt`, `OrtNavHost.kt`), `ui/ReaderActivity.kt`,
