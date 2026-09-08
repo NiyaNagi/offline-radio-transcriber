@@ -1,5 +1,8 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -88,6 +91,35 @@ class LogScreenTest {
     }
 
     @Test
+    fun `FR_UI_4 the confidence value is shown as visible text, not only in the content description`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    entries = listOf(
+                        entry("TX-confirmed", "a", Attribution.confirmed("W7NPC", 0.95)),
+                        entry("TX-inferred", "b", Attribution.inferred("K7LWH", 0.82)),
+                    ),
+                    onOpen = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.95").assertExists()
+        composeTestRule.onNodeWithText("0.82").assertExists()
+    }
+
+    @Test
+    fun `FR_UI_4 an UNKNOWN row shows no confidence number rather than a fabricated one`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(entries = listOf(entry("TX-unknown", "d", Attribution.unknown())), onOpen = {})
+            }
+        }
+
+        composeTestRule.onNode(looksLikeAConfidenceNumber).assertDoesNotExist()
+    }
+
+    @Test
     fun `tapping a row opens that transmission`() {
         var opened: String? = null
         composeTestRule.setContent {
@@ -110,5 +142,11 @@ class LogScreenTest {
         }
 
         composeTestRule.onNodeWithText("No transmissions yet").assertExists()
+    }
+
+    /** Matches any node whose visible text looks like a two-decimal confidence value (e.g. "0.82"). */
+    private val looksLikeAConfidenceNumber = SemanticsMatcher("has text matching a confidence number (0.NN)") { node ->
+        val texts = node.config.getOrNull(SemanticsProperties.Text).orEmpty()
+        texts.any { Regex("""^\d\.\d\d$""").matches(it.text) }
     }
 }

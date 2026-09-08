@@ -105,6 +105,10 @@ are individually green.*
   `RealTransmissionAudioPlayer` plays retained audio through `:pipeline`'s existing
   `FlacSegmentAudioProvider`. FR-UI-1/4/5 and FR-A11Y-1..4 hold; the digest, thread grouping and
   FR-UI-8 lattice/prior panel are named divergences left to P15-P17. See CHANGELOG.md.
+  **Correction (2026-09-07, audit F-012):** FR-UI-4's confidence number was reachable only via
+  `AttributionMarker`'s merged `contentDescription`, never as visible text in the Log row or
+  Detail header — fixed in `AttributionMarker.kt`; see the 2026-09-07 (audit — F-012) CHANGELOG
+  entry.
 - [x] **P15 · Search and threads** *(`:app`, `:data`)* — done 2026-09-08. `SearchDao` (a new DAO
   file, per the prompt, to stay conflict-free with concurrent P17) queries the FTS5 index P5 built
   and nothing queried until now, with callsign/frequency/date filters; `SearchScreen`/`ThreadScreen`

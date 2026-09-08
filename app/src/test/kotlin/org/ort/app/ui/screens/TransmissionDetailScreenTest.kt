@@ -1,5 +1,8 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -99,6 +102,36 @@ class TransmissionDetailScreenTest {
     }
 
     @Test
+    fun `FR_UI_4 the confidence value is shown as visible text in the header, not only in the content description`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(attribution = Attribution.confirmed("W7NPC", 0.95)),
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.95").assertExists()
+    }
+
+    @Test
+    fun `FR_UI_4 an UNKNOWN attribution shows no confidence number rather than a fabricated one`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(attribution = Attribution.unknown()),
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                )
+            }
+        }
+
+        composeTestRule.onNode(looksLikeAConfidenceNumber).assertDoesNotExist()
+    }
+
+    @Test
     fun `FR_UI_1 a superseded transcript's earlier versions are visible, not hidden`() {
         composeTestRule.setContent {
             OrtTheme {
@@ -128,5 +161,11 @@ class TransmissionDetailScreenTest {
 
         composeTestRule.onNodeWithContentDescription("Back").performClick()
         assert(backCalled)
+    }
+
+    /** Matches any node whose visible text looks like a two-decimal confidence value (e.g. "0.82"). */
+    private val looksLikeAConfidenceNumber = SemanticsMatcher("has text matching a confidence number (0.NN)") { node ->
+        val texts = node.config.getOrNull(SemanticsProperties.Text).orEmpty()
+        texts.any { Regex("""^\d\.\d\d$""").matches(it.text) }
     }
 }

@@ -55,6 +55,14 @@ public fun AttributionMarker(attribution: Attribution, modifier: Modifier = Modi
         AttributionShape(attribution.state)
         Spacer(modifier = Modifier.width(OrtSpacing.xs))
         Text(text = row.attributionLabel, style = OrtType.callsign)
+        // FR-UI-4: confidence SHALL never be omitted from the visible surface — it was, until this
+        // fix, reachable only via the merged contentDescription above (F-012). UNKNOWN (and an
+        // AMBIGUOUS with no surviving candidate) carry no confidence at all, so none is fabricated
+        // here; `confidence?.let` renders nothing rather than a placeholder number.
+        attribution.confidence?.let { confidence ->
+            Spacer(modifier = Modifier.width(OrtSpacing.xs))
+            Text(text = "%.2f".format(confidence), style = OrtType.caption)
+        }
     }
 }
 
