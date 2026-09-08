@@ -3,6 +3,8 @@ package org.ort.app.ui.data
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.ort.core.AttributionState
+import org.ort.data.Band
 import org.ort.testing.Requirement
 
 /**
@@ -58,5 +60,29 @@ public class SearchFilterParserTest {
         val params = SearchFilterParser.parse(SearchFilterInput(dateUtc = "not a date"))
         assertNull(params.fromUtcMillis)
         assertNull(params.toUtcMillis)
+    }
+
+    @Test
+    @Requirement("FR-UI-3")
+    public fun `FR_UI_3 band, attribution state and rejected filter pass through unparsed`() {
+        val params = SearchFilterParser.parse(
+            SearchFilterInput(
+                band = Band.VHF_2M,
+                attributionState = AttributionState.CONFIRMED,
+                rejectedFilter = RejectedFilter.REJECTED,
+            ),
+        )
+        assertEquals(Band.VHF_2M, params.band)
+        assertEquals(AttributionState.CONFIRMED, params.attributionState)
+        assertEquals(true, params.rejected)
+    }
+
+    @Test
+    @Requirement("FR-UI-3")
+    public fun `FR_UI_3 the default rejected filter is All, which means no rejected-state filter`() {
+        val params = SearchFilterParser.parse(SearchFilterInput())
+        assertNull(params.band)
+        assertNull(params.attributionState)
+        assertNull(params.rejected)
     }
 }

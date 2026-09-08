@@ -151,9 +151,10 @@ are individually green.*
   real (currently always-null) `threadId` column with an honest "not yet grouped" fallback — M6
   still owns actually populating it. See CHANGELOG.md. **Update (audit F-017, 2026-09-07):** the
   `:data` half of FR-UI-3's remaining filters — band, attribution state, rejected/accepted — is
-  now built in `SearchDao`/`Band.kt` (see CHANGELOG's audit F-017 entry). The `:app` half
-  (`SearchScreen` exposing these filters in the UI) is still open, tracked in
-  `results/audit-2026-09-07.md` F-017.
+  now built in `SearchDao`/`Band.kt` (see CHANGELOG's audit F-017 entry). **Update (audit F-017,
+  2026-09-07, `:app` half):** `SearchScreen` now exposes band, attribution-state and
+  rejected/accepted controls, wired through `SearchFilterInput`/`SearchPolling` to `SearchDao`.
+  F-017 is closed — see CHANGELOG's second audit F-017 entry.
 - [x] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
   `:data`)* — done 2026-09-08. FR-UI-6 (one-tap correction, Q8's tiers), FR-UI-8 (the inspection
   surface, honestly empty until a future `:pipeline` change writes lattice/candidate rows), and

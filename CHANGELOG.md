@@ -134,6 +134,49 @@ tools/spec-check/spec_check.py` — all 8 checks PASS.
 implemented; only test naming/coverage changed. FR-STO-2, FR-STO-2a and CON-STO-1 are reported
 as not established in `:data` for the reason above, not fixed. Never claimed on-device
 verification — everything here is Robolectric/JVM only.
+## 2026-09-07 (audit — F-017)
+
+### (pending) — audit F-017 · :app half: Search screen gains band, attribution-state and rejected/accepted controls
+
+**Scope:** `:app` — `app/src/main/kotlin/org/ort/app/ui/data/SearchViewData.kt`
+(`SearchFilterInput`, `SearchQueryParams`, the new `RejectedFilter` enum, `SearchFilterParser`,
+`SearchPolling.search`), `app/src/main/kotlin/org/ort/app/ui/screens/SearchScreen.kt` (three new
+filter controls); `SearchFilterParserTest.kt`, `SearchPollingTest.kt`, `SearchScreenTest.kt`.
+**Requirements/ACs:** FR-UI-3 (band, attribution-state and rejected/accepted filters — the `:app`
+half; the `:data` half landed separately, `SearchDao` commit 1520a03).
+**What changed:** `SearchDao.search`/`filterOnly`/`searchText` already accepted trailing
+`band`/`attributionState`/`rejected` parameters that nothing on the `:app` side passed. Extended
+`SearchFilterInput` with `band: Band?`, `attributionState: AttributionState?` and a new
+`RejectedFilter` tri-state enum (`ALL`/`ACCEPTED`/`REJECTED`, `toDaoValue()` mapping it onto the
+DAO's nullable `Boolean?`); `SearchFilterParser.parse` passes the first two through unparsed (both
+are already typed, selected from a closed set on the screen rather than typed as free text) and
+resolves the third. `SearchPolling.search` now forwards all three to `SearchDao.search` on both
+the direct and the fts5-degrade call paths. `SearchScreen` gains three new filter controls
+(`BandFilterControl`, `AttributionStateFilterControl`, `RejectedFilterControl`) — a "tap to
+cycle" text control for each, consistent with the screen's existing "tap to act" style (no
+dropdown/menu widget existed anywhere in this codebase to reuse) and the accessibility floor
+(constitution VII): each control's current selection is always plain text
+(`"Band filter: 160M"`, `"Attribution state filter: CONFIRMED"`, `"Accepted/rejected filter:
+Rejected"`), never colour-only.
+**Verified:** New tests seen failing first for the right reason before the fix: `SearchScreenTest`
+(band/attribution-state/rejected controls did not exist — `assertExists()` failed with "the
+matcher had 0 matches"); `SearchPollingTest`'s three new `FR_UI_3_...` cases and
+`SearchFilterParserTest`'s two new cases failed to compile (`SearchQueryParams`/`SearchFilterInput`
+had no `band`/`attributionState`/`rejectedFilter` parameters) before the view-data change. After
+the fix: `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.SearchPollingTest"
+--tests "org.ort.app.ui.data.SearchFilterParserTest" --tests
+"org.ort.app.ui.screens.SearchScreenTest"` — 6/6, 5/5, 8/8 green. Full module:
+`./gradlew :app:test` green. Full gate: `./gradlew build dependencyRules` (green, after one
+`detekt` `MaxLineLength` fix) and `python tools/spec-check/spec_check.py` (`spec-check: OK`, all 8
+checks pass). Everything here is Robolectric/JVM; nothing was run on-device.
+**Left open / not done:** Adding the three new filter controls pushed `SearchScreen`'s scrollable
+content past the fixed-size Robolectric compose-test viewport, which silently broke two
+pre-existing tests' `performClick()` calls (the click landed outside the root's visible bounds, so
+the callback never fired — no exception, a false assertion) — fixed by adding
+`.performScrollTo()` before those two clicks, matching the precedent already used elsewhere
+(`ReaderAccessibilityTest.kt`). The three new controls are a minimal "tap to cycle" affordance
+rather than a dropdown/multi-select; a richer widget (e.g. a proper picker, or an FR-UI-11-style
+chip row) is a plausible follow-on but out of this finding's scope.
 
 ## 2026-09-07 (audit — F-005)
 

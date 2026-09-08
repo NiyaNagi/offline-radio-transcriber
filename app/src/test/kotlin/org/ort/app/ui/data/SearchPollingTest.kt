@@ -8,7 +8,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
+import org.ort.data.Band
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
@@ -77,35 +79,41 @@ class SearchPollingTest {
         overCountsByAttributionState = null,
     )
 
-    private fun transmission(id: String, samplePosition: Long, stationId: String?, frequencyHz: Long?) =
-        TransmissionEntity(
-            id = id,
-            sessionId = "S1",
-            threadId = null,
-            startedAtUtc = samplePosition,
-            endedAtUtc = samplePosition + 1_000L,
-            durationMs = 1_000L,
-            audioFormat = "flac/16k/mono",
-            preRollMs = 200,
-            postRollMs = 200,
-            frequencyHz = frequencyHz,
-            frequencyProvenance = "measured",
-            mode = null,
-            signalStrength = null,
-            channelName = null,
-            voiceprintId = null,
-            attributionState = org.ort.core.AttributionState.UNKNOWN,
-            stationId = stationId,
-            attributionConfidence = null,
-            attributionSourceTransmissionId = null,
-            processingState = TransmissionState.CAPTURED,
-            rejectionReason = null,
-            samplePosition = samplePosition,
-            monotonicStartNanos = 0L,
-            utcOffsetMinutes = 0,
-            calibrationId = null,
-            executionProvider = null,
-        )
+    private fun transmission(
+        id: String,
+        samplePosition: Long,
+        stationId: String?,
+        frequencyHz: Long?,
+        attributionState: AttributionState = AttributionState.UNKNOWN,
+        processingState: TransmissionState = TransmissionState.CAPTURED,
+    ) = TransmissionEntity(
+        id = id,
+        sessionId = "S1",
+        threadId = null,
+        startedAtUtc = samplePosition,
+        endedAtUtc = samplePosition + 1_000L,
+        durationMs = 1_000L,
+        audioFormat = "flac/16k/mono",
+        preRollMs = 200,
+        postRollMs = 200,
+        frequencyHz = frequencyHz,
+        frequencyProvenance = "measured",
+        mode = null,
+        signalStrength = null,
+        channelName = null,
+        voiceprintId = null,
+        attributionState = attributionState,
+        stationId = stationId,
+        attributionConfidence = null,
+        attributionSourceTransmissionId = null,
+        processingState = processingState,
+        rejectionReason = null,
+        samplePosition = samplePosition,
+        monotonicStartNanos = 0L,
+        utcOffsetMinutes = 0,
+        calibrationId = null,
+        executionProvider = null,
+    )
 
     @Test
     fun `FR_UI_3 filtering by callsign works with no text term`(): Unit = runTest {
@@ -175,4 +183,55 @@ class SearchPollingTest {
             assertEquals(listOf("TX1"), result.details.map { it.id })
             assertEquals(!fts5Available(), result.textSearchUnavailable)
         }
+
+    @Test
+    fun `FR_UI_3 the band filter narrows results to one amateur band`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        // TX1 sits in the 2M band (144-148 MHz), TX2 in 70CM (420-450 MHz).
+        db.transmissionDao().insert(transmission("TX1", 1L, null, 145_230_000L))
+        db.transmissionDao().insert(transmission("TX2", 2L, null, 440_000_000L))
+
+        val result = SearchPolling.search(context, SearchQueryParams(text = null, band = Band.VHF_2M))
+
+        assertEquals(listOf("TX1"), result.details.map { it.id })
+        assertFalse(result.textSearchUnavailable)
+    }
+
+    @Test
+    fun `FR_UI_3 the attribution-state filter narrows results to one state`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(
+            transmission("TX1", 1L, null, 145_230_000L, attributionState = AttributionState.CONFIRMED),
+        )
+        db.transmissionDao().insert(
+            transmission("TX2", 2L, null, 146_520_000L, attributionState = AttributionState.UNKNOWN),
+        )
+
+        val result = SearchPolling.search(
+            context,
+            SearchQueryParams(text = null, attributionState = AttributionState.CONFIRMED),
+        )
+
+        assertEquals(listOf("TX1"), result.details.map { it.id })
+        assertFalse(result.textSearchUnavailable)
+    }
+
+    @Test
+    fun `FR_UI_3 the rejected filter narrows results to only-rejected or only-accepted`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(
+            transmission("TX1", 1L, null, 145_230_000L, processingState = TransmissionState.REJECTED),
+        )
+        db.transmissionDao().insert(
+            transmission("TX2", 2L, null, 146_520_000L, processingState = TransmissionState.COMPLETE),
+        )
+
+        val rejectedOnly = SearchPolling.search(context, SearchQueryParams(text = null, rejected = true))
+        val acceptedOnly = SearchPolling.search(context, SearchQueryParams(text = null, rejected = false))
+        val all = SearchPolling.search(context, SearchQueryParams(text = null, rejected = null))
+
+        assertEquals(listOf("TX1"), rejectedOnly.details.map { it.id })
+        assertEquals(listOf("TX2"), acceptedOnly.details.map { it.id })
+        assertEquals(setOf("TX1", "TX2"), all.details.map { it.id }.toSet())
+    }
 }
