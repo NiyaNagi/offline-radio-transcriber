@@ -37,6 +37,11 @@ dependencies {
     // so it is not on this module's classpath transitively without a matching test dependency.
     testImplementation(libs.room.runtime)
     testImplementation(libs.room.ktx)
+    // R-204 (see :data/build.gradle.kts's identical comment): this module's own Robolectric
+    // tests (PassDrainRunnerTest, GapPersisterTest) open a real OrtDatabase, whose driver-mode
+    // native library AGP otherwise resolves to the Android-variant artifact even on a unit-test
+    // (host-JVM) classpath.
+    testImplementation(libs.androidx.sqlite.bundled.jvm)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.junit.jupiter)

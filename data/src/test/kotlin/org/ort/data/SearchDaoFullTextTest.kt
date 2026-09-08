@@ -3,7 +3,6 @@ package org.ort.data
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,20 +14,15 @@ import org.robolectric.RobolectricTestRunner
 /**
  * FR-UI-3's full-text half, over the real `transcript_fts` table [OrtDatabase] builds.
  *
- * **Empirically confirmed for this build-plan P15 session**: under this project's pinned
- * Robolectric/Android-Gradle-Plugin versions, even with `robolectric.properties` set to
- * `sqliteMode=NATIVE` (the real Android SQLite amalgamation, not the legacy sqlite4java shadow),
- * creating an `fts5` virtual table fails with `no such module: fts5` — the exact message
- * [OrtDatabase.createFtsIndex] already catches narrowly and skips. This was verified directly
- * with a throwaway probe (`CREATE VIRTUAL TABLE probe_fts USING fts5(text)` against
- * `OrtDatabase.create(..., inMemory = true)`) before this test was written, per this prompt's own
- * instruction not to assume either way.
- *
- * [assumeTrue] below means this test is honestly **skipped**, not silently passed, whenever the
- * host's SQLite build lacks fts5 — it must never report green without having exercised MATCH
- * against a real index. `minSdk 26`'s bundled SQLite always ships fts5 (see [OrtDatabase]'s own
- * comment), so production devices are unaffected; this gap is test-environment-only, and is
- * reported as such rather than worked around.
+ * **No longer conditional.** Before register R-204, this test [org.junit.Assume]d itself skipped
+ * whenever the host SQLite build lacked the `fts5` module — true both on this project's pinned
+ * Robolectric/host-JVM SQLite *and*, it turned out, on the API 34 reference emulator's platform
+ * SQLite ("no such module: fts5"), which is the bug R-204 names. [OrtDatabase.create] now always
+ * installs `BundledSQLiteDriver` (`androidx.sqlite:sqlite-bundled`), a SQLite build with fts5
+ * compiled in, bypassing the platform/host SQLite entirely — so this test now runs unconditionally,
+ * on every machine, and a regression back to "fts5 unavailable" fails it loudly instead of quietly
+ * skipping it. See `FtsIndexRepairTest` for the driver-availability and repair-on-open checks R-204
+ * added.
  */
 @RunWith(RobolectricTestRunner::class)
 public class SearchDaoFullTextTest {
@@ -38,22 +32,6 @@ public class SearchDaoFullTextTest {
     @Before
     public fun openDatabase() {
         db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
-    }
-
-    /**
-     * A `sqlite_master` row for `transcript_fts` can exist even when fts5 is genuinely
-     * unavailable — `CREATE VIRTUAL TABLE IF NOT EXISTS ... USING fts5(...)` can leave a schema
-     * entry behind even though the module lookup that follows it fails with
-     * `no such module: fts5` (confirmed empirically in this build-plan P15 session against a
-     * file-backed database: a `sqlite_master` check alone reported "available" while every real
-     * query against the table then threw exactly that error). Actually preparing a statement
-     * against the table is the only reliable check.
-     */
-    private fun fts5Available(): Boolean = try {
-        db.openHelper.writableDatabase.query("SELECT count(*) FROM transcript_fts").use { it.moveToFirst() }
-        true
-    } catch (e: android.database.sqlite.SQLiteException) {
-        false
     }
 
     private fun transcript(id: String, transmissionId: String, text: String) = TranscriptEntity(
@@ -72,14 +50,8 @@ public class SearchDaoFullTextTest {
     )
 
     @Test
-    @Requirement("FR-UI-3", "FR-STO-1")
+    @Requirement("FR-UI-3", "FR-STO-1", "R-204")
     public fun `full-text search returns a transmission by a word in its transcript`(): Unit = runTest {
-        assumeTrue(
-            "fts5 module unavailable under this Robolectric host SQLite build (confirmed: " +
-                "'no such module: fts5') — see this class's doc comment. Real minSdk-26 devices " +
-                "always carry fts5, but this exact behaviour cannot be exercised here.",
-            fts5Available(),
-        )
         db.sessionDao().insert(TestFixtures.session())
         db.transmissionDao().insert(TestFixtures.transmission("TX1", samplePosition = 1L))
         db.transmissionDao().insert(TestFixtures.transmission("TX2", samplePosition = 2L))

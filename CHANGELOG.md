@@ -32,6 +32,246 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance data: busy timeout; processed tier per record)
+
+### (pending) — ui-conformance data · busy timeout; processed tier per record
+
+**Scope:** `:data` (`OrtDatabase.kt` schema v3 → v4, `dao/TransmissionDao.kt`,
+`entity/TransmissionEntity.kt`, new `data/schemas/org.ort.data.OrtDatabase/4.json`, new
+`test/kotlin/org/ort/data/dao/TransmissionDaoTest.kt`, `test/DurabilityTest.kt`,
+`test/MigrationTest.kt`); one minimal call site in `:pipeline`
+(`reprocess/ReprocessRunner.kt`, where the tier is known — per the lead's own brief — plus its
+test). A same-branch merge of `main` (`8ab1968..cc0d922`, a real merge commit, resolving conflicts
+in `Scenarios.kt`/`CHANGELOG.md`/`register.md`/`coverage-matrix.md`) preceded this unit.
+
+**Requirements/ACs:** FR-RUN-2 (busy-timeout follow-up), FR-REP-2, FR-REP-9 (per-record processed
+tier), AC-53 (FR-AST-5/6, migration preserves existing rows), register R-110 (`ScenariosTest`'s
+own flake, WP0), R-204 (both are this package's own follow-ups from the FTS5/driver session).
+
+**What changed:**
+
+*Constitution Check.* Principle III ("nothing is deleted quietly") is implicit in the migration
+discipline both changes share: `MIGRATION_3_4` adds one nullable column and touches nothing else,
+verified the same way `MIGRATION_2_3` was. Principle I: `processedTier` makes "still needs
+improving" an inspectable fact per record instead of a session-wide guess — the read path this
+unblocks (`ImprovePolling`, WP11d) can now tell a genuinely-unimproved record from one a reprocess
+already brought current, rather than re-offering every record in a flagged session forever.
+
+- **The merge.** `git merge main` (no `--ff-only`, a real merge commit — main had moved from
+  `8ab1968` to `cc0d922` with unrelated work touching the same files this session's own `:data`
+  commit touched). Four conflicts: `results/ui-audit/register.md` and `results/coverage-matrix.md`
+  resolved to main's version entirely (the lead's own instruction — those are the lead's to keep);
+  `CHANGELOG.md` resolved to keep both entries (markers removed, no content dropped);
+  `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` needed real reconciliation — WP0
+  independently found and fixed the *same* `androidx.room.withTransaction`/`OrtDatabase.openHelper`
+  breakage this session's FTS5 work diagnosed (register R-110's own flaky-gate investigation,
+  landed on main while this branch was still open), wrapped in a well-documented bounded retry.
+  Resolved by keeping WP0's full retry/backoff structure and root-cause writeup verbatim, and
+  swapping its two broken calls for this session's own driver-native replacements
+  (`OrtDatabase.inWriteTransaction`, `OrtDatabase.execRaw`) — the same fix, expressed with the
+  primitives this session had already built rather than a second, parallel one. `CorrectionPolling.kt`
+  and `SearchViewData.kt` auto-merged cleanly (both sides' changes were disjoint once git saw them
+  in context). Verified no conflict markers remain: `grep -rn '^(<<<<<<<|=======|>>>>>>>)'` across
+  every `.kt`/`.md`/`.kts`/`.toml` file — one hit, `.specify/memory/constitution.md`'s own
+  `====...` divider line, not a real marker.
+- **Busy timeout (`OrtDatabase.create`).** Room 2.7.2's `BundledSQLiteDriver` path already sets
+  `PRAGMA busy_timeout` to a 3000ms default on every connection it opens — confirmed by
+  disassembling the shipped `room-runtime` class (`BaseRoomConnectionManager.configureBusyTimeout`,
+  called from the same always-run `configureDatabase` step this session's earlier `Callback`
+  finding does *not* apply to, so this one was never actually broken). `configureBusyTimeout`
+  (new, in `OrtDatabase.kt`) sets an explicit 10-second value on the writer connection `create()`
+  already touches — headroom beyond Room's own default for exactly the shared-machine/
+  back-to-back-`OrtDatabase`-instance contention `Scenarios.kt`'s own regression test (merged from
+  main, above) diagnosed. `Scenarios.kt`'s bounded retry stays in place as defence in depth for
+  whatever a 10-second wait does not itself absorb.
+- **Per-record processed tier (schema v4).** `TransmissionEntity.processedTier: Tier?` (nullable,
+  default `null` — "never reprocessed"), written only by
+  `TransmissionDao.setProcessedTier(id, tier)` and read via
+  `TransmissionDao.idsBelowProcessedTier(belowTiers: List<Tier>)` (SQLite has no notion of enum
+  *order*, so the caller supplies the tier names considered "still below target," computed from
+  `Tier.ordinal`). `ReprocessRunner.run()` — the one place the tier a run is actually using is
+  known (`val tier = currentTier()`, threaded through the whole batch) — calls
+  `setProcessedTier(id, tier)` on both a `COMPLETED` and a `REJECTED` outcome (both mean Pass B
+  genuinely ran at that tier) but not a `FAILED` one (it did not), so a record whose pass never
+  resolved stays eligible for a later attempt. **Not wired into a read path**: `ImprovePolling`'s
+  own session-level `deviceTier` grouping is unchanged by this commit — per the lead's brief, that
+  read-path change is WP11d's, using the write/read pair this commit adds; `ReprocessRunner`'s own
+  kdoc now says so explicitly.
+
+**Verified:**
+- `.\gradlew.bat :data:test` (debug+release) — 71 tests, 0 failed (new: `TransmissionDaoTest`'s
+  four tests, `DurabilityTest.the_writer_connection_carries_a_busy_timeout_longer_than_rooms_own_default`,
+  `MigrationTest.migration_from_v3_to_v4_preserves_existing_rows_and_adds_the_processed_tier_column`;
+  every pre-existing test still green).
+- `.\gradlew.bat :pipeline:test` — full suite green, including
+  `ReprocessRunnerTest.FR_REP_2_completed_and_rejected_outcomes_stamp_the_processed_tier`.
+- `.\gradlew.bat build dependencyRules platformGuards :app:smokeTestDebugUnitTest` —
+  `dependencyRules: OK`; `platformGuards: OK`; `:app:smokeTestDebugUnitTest`
+  (`ReaderActivityDestinationSmokeTest`, 13 tests) green. First attempt caught two genuine
+  `:data:ktlintMainSourceSetCheck`/detekt `MaxLineLength`/function-signature findings in this
+  session's own FTS5 commit (`OrtDatabase.inWriteTransaction`, `WorkQueue.requeueFailed`) and one
+  in this commit's own `ReprocessRunnerTest` addition — all three fixed here, then reverified
+  green (`:data`/`:pipeline` ktlint + detekt). The full `:app:testDebugUnitTest` run inside `build`
+  accumulated ~45 `androidx.test.espresso.AppNotIdleException` Compose-idle-timeout failures under
+  sustained contention — confirmed via the OS process list mid-run to be four *other* worktree
+  agents' own concurrent Gradle/Robolectric processes on this same shared machine, not this
+  machine being quiet as expected. Per the rerun-once instruction: every failing class from that
+  run (`DrawerContentTest`, `FailureScreensTest`, `ImproveScreensTest`, `SessionsScreensTest` — 45
+  tests) re-run alone, uncontended, in 45s — **all 45 passed, 0 failed.** No failure in either run
+  named Room, SQLite or any file this branch touches.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — `186 covered of 419`
+  (up from 183, this commit's new `@Requirement`-tagged tests); `coverageMatrixCheck` green.
+  `results/coverage-matrix.md` is regenerated and committed here despite the lead's "I keep those"
+  merge-conflict instruction, because `coverageMatrixCheck` — part of the standing gate — fails
+  stale otherwise; that instruction was about the *merge* (not carrying this branch's superseded
+  count into main's), not a standing hold on the file.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- Register `results/ui-audit/register.md`: unchanged by this commit (main's version was kept
+  verbatim on the earlier merge, per the lead's instruction — the lead updates it).
+
+**Left open / not done:**
+- `ImprovePolling`'s read-path wiring (WP11d) — the two new `:data` primitives are ready for it,
+  untouched itself.
+- `PassId.C_SPOT` still has no runner in `:pipeline` (pre-existing, `ReprocessRunner`'s own kdoc),
+  so `processedTier` is only ever stamped at a Pass B outcome today.
+- The explicit 10-second busy-timeout is a judgement call, not a measured figure — if a future
+  contention scenario needs longer, `OrtDatabase.BUSY_TIMEOUT_MILLIS` is the one place to change it.
+
+## 2026-09-08 (ui-conformance data: bundled SQLite with FTS5)
+
+### (pending) — ui-conformance data · bundled SQLite with FTS5 so text search works on every device and in tests
+
+**Scope:** `:data` (`OrtDatabase.kt`, `build.gradle.kts`), `gradle/libs.versions.toml`; two narrowly-
+scoped, mechanically-forced follow-on fixes outside `:data` (justified below) — `:pipeline`'s
+`DataPassBResultSink.kt`/`build.gradle.kts`, `:app`'s `Scenarios.kt` (`src/debug`),
+`CorrectionPolling.kt`, `SearchViewData.kt`, `build.gradle.kts`, and their affected tests
+(`DurabilityTest.kt`, `TranscriptVersioningTest.kt`, `WorkQueueTest.kt`, new `FtsIndexRepairTest.kt`,
+rewritten `SearchDaoFullTextTest.kt`, `SearchPollingTest.kt`); `results/ui-audit/register.md` (R-204
+closed).
+
+**Requirements/ACs:** R-204 (halt, `Search-Results`/`Search-Unavailable`, FR-UI-3), FR-STO-1,
+AC-53 (FR-AST-5/6, migration preserves existing rows), constitution I ("uncertainty is content" —
+a silent capability gap one layer down in the stack is the same failure shape), constitution V/VII
+(`:data` gaining a SQLite library, no network — `platformGuards`/`dependencyRules` verified).
+
+**What changed:**
+
+*Constitution Check.* Principle I is the throughline: R-204 was a **silent** degrade — every text
+search failed the same reproducible way and told the operator "unavailable" without ever surfacing
+why, because `OrtDatabase` assumed `fts5` was always present on minSdk 26 and that assumption was
+false on the very reference emulator this project targets. Fixing the symptom (make search degrade
+more gracefully) would have been another silent layer; the actual fix removes the false assumption.
+Principle VII: the fix is structural (every `OrtDatabase` connection, on every platform, uses the
+same bundled SQLite binary) rather than conventional (a comment telling callers to remember a
+workaround). Principle V: `androidx.sqlite:sqlite-bundled` is a local, offline SQLite implementation
+— `platformGuards` confirms `:data` still links no HTTP client and declares no network permission.
+
+- **Root cause, fully diagnosed** (WP7 had already found half of it): the API 34 reference
+  emulator's platform SQLite has no `fts5` module (`no such module: fts5` at `CREATE VIRTUAL TABLE`).
+  Robolectric's host-JVM SQLite has the identical gap — this project's own test suite had been
+  carrying a "confirmed unavailable, tests skip" doc comment for it since build-plan P15.
+- **The fix:** `OrtDatabase.create` now installs `BundledSQLiteDriver` via
+  `RoomDatabase.Builder.setDriver(...)` (Room bumped 2.6.1 → **2.7.2**, pulling in
+  `androidx.sqlite:sqlite-bundled:2.5.2` — both resolved and verified against this project's
+  existing `google()`/`mavenCentral()` repositories, no new repository needed). This SQLite build
+  has `fts5` compiled in and is not the platform's/host's own — verified two ways: `FtsIndexRepairTest.FR_UI_3_fts5_is_available_on_every_supported_sqlite`
+  (a `MATCH` query executes without the "no such module" error) and by inspecting the assembled
+  debug APK directly (`lib/{arm64-v8a,armeabi-v7a,x86,x86_64}/libsqliteJni.so` all present).
+- **A second bug found and fixed along the way, more consequential than the first:**
+  `RoomDatabase.Callback.onCreate`/`.onOpen` **do not run at all** once `.setDriver(...)` is used
+  (confirmed empirically — instrumented `onOpen` to throw unconditionally and watched nothing catch
+  it). Every hand-written schema element this module needs Room's own annotations cannot express —
+  `idx_transcript_one_current`, `idx_wq_active`, `idx_prior_adjustment_one_current`, and the
+  `transcript_fts` table/triggers themselves — silently never existed, on *every* database, not just
+  ones lacking fts5. Fixed by moving `applyHandWrittenSchema` out of the (now-removed) `Callback` and
+  running it explicitly and idempotently (`CREATE ... IF NOT EXISTS` throughout, plus FTS5's own
+  `'rebuild'` command for the index content) inside `create()` itself, synchronously
+  (`runBlocking { db.useWriterConnection { ... } }`) so `create()` stays non-suspend for its many
+  existing callers. `FtsIndexRepairTest.FR_UI_3_an_install_without_the_index_gets_it_built_on_open`
+  proves the repair path directly: a database built from the committed v3 schema fixture (the same
+  state a real pre-existing install is in, and the same mechanism `MigrationTestHelper` already uses
+  for every other migration test) gets `transcript_fts` built **and backfilled** from its pre-existing
+  transcript row the moment it is opened.
+- **A third, related bug found and fixed:** `androidx.room.withTransaction` (`room-ktx`'s KTX
+  helper) also silently breaks under the driver — throws `Cannot return a SupportSQLiteOpenHelper
+  since no SupportSQLiteOpenHelper.Factory was configured with Room` the moment it is actually
+  exercised, because it still routes through the classic blocking-transaction bridge internally.
+  Every call site repo-wide is fixed: `:data`'s new `OrtDatabase.inWriteTransaction` (built on
+  `useWriterConnection`/`Transactor.withTransaction(IMMEDIATE)`, letting nested suspend DAO calls
+  transparently reuse the same pooled connection, the same mechanism `@Transaction`-annotated DAO
+  methods already use) replaces it in `:data`'s own `WorkQueue.kt`, `:pipeline`'s
+  `DataPassBResultSink.kt`, and `:app`'s `CorrectionPolling.retryFailedPass`. A fourth broken pattern,
+  `OrtDatabase.openHelper` (raw `SupportSQLiteDatabase` access outside a `Migration`/`Callback`,
+  where it does still work), is fixed the same way: a new `OrtDatabase.execRaw(sql, vararg args)`
+  helper (driver-native positional-bind raw statement execution) replaces it in `:app/src/debug`'s
+  `Scenarios.kt` (the debug scenario simulator's own data-cleanup path, made `suspend`) and in three
+  test files that used it for raw diagnostic probes (`DurabilityTest`'s WAL-mode check,
+  `SearchDaoFullTextTest`'s — now `FtsIndexRepairTest`'s — fts5-availability probe,
+  `SearchPollingTest`'s equivalent). **Why files outside `:data` were touched**, given the brief's
+  file list: every one of these was a genuine regression this exact change caused (confirmed by the
+  full gate going red without them, and green with them) in code this session did not otherwise
+  touch — a mechanical, same-shape substitution (`db.withTransaction { }` → `db.inWriteTransaction { }`,
+  `db.openHelper.writableDatabase.execSQL(sql, args)` → `db.execRaw(sql, *args)`) with the new
+  primitives `:data` now exports, not a redesign; left unfixed, "full gate green" (this task's own
+  explicit requirement) was unreachable. `TranscriptVersioningTest`/`WorkQueueTest`'s own constraint
+  tests needed one further adjustment: the driver throws the base `android.database.SQLException`
+  for a failed prepare, not always the narrower `SQLiteConstraintException`/`SQLiteException`
+  subclasses the classic driver did — `SearchViewData.kt`'s live fts5-missing degrade path (R-204's
+  original symptom) is widened the same way, so that safety net still actually catches what it is
+  for if this class of regression ever recurs.
+- **Test gap closed, not left skipped:** `SearchDaoFullTextTest`'s always-`assumeTrue`-guarded test
+  now runs unconditionally (fts5 is guaranteed present); `robolectric.properties`'s comment, which
+  had claimed NATIVE mode gives Robolectric real fts5 (empirically false, and the actual reason this
+  gap existed at all), is corrected.
+
+**Verified:**
+- `.\gradlew.bat :data:test` (debug + release) — 66 tests total, 0 failed, including new
+  `FtsIndexRepairTest.FR_UI_3_fts5_is_available_on_every_supported_sqlite` and
+  `.FR_UI_3_an_install_without_the_index_gets_it_built_on_open`, and the pre-existing
+  `MigrationTest`/`DurabilityTest`/`TranscriptVersioningTest`/`SearchDaoFullTextTest` suites, all
+  green with the driver.
+- `.\gradlew.bat :pipeline:test` — full suite green, including `DataPassBResultSinkTest` (the
+  `withTransaction` regression this exposed) and `RealCaptureServiceTest`/`ThermalTrackingPassTest`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.debug.ScenariosTest --tests org.ort.app.ui.data.SearchPollingTest --tests org.ort.app.ui.data.CorrectionPollingTest` —
+  41 + 6 + 20 tests, 0 failed (every scenario-simulator and Room/SQLite-touching test in `:app`).
+  The full, unfiltered `:app:testDebugUnitTest` (~945 tests, most of them Compose UI tests
+  unrelated to this change) could not be run to a single clean completion in this session — this
+  machine runs several other worktree agents' Gradle/Robolectric processes concurrently (confirmed
+  via the OS process list), and Compose's Robolectric idling strategy has a hard 60-second timeout
+  per test that heavy shared-machine contention trips intermittently
+  (`androidx.test.espresso.AppNotIdleException`). Isolated after-the-fact: `FailureScreensTest`
+  (27/27) and `ActivityPatternChartTest` (12/12) — the two classes that showed the most such
+  failures under contention — both pass 100% cleanly, unmodified, when run alone; every failure
+  observed under contention was a Compose idle timeout with no reference to Room, SQLite or any file
+  this change touched, and re-running the exact same class alone always passed.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules: checked 17 modules …
+  OK`; `platformGuards: checked 17 modules' external dependencies and 17 manifests … OK` (no HTTP
+  client outside `:net`, no new network permission from `:data`'s new SQLite dependency).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `coverageMatrix: 419 requirements, 183 covered`; `coverageMatrixCheck: up to date (183 covered of
+  419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL; `app-debug.apk` inspected directly and
+  confirmed to package `lib/{arm64-v8a,armeabi-v7a,x86,x86_64}/libsqliteJni.so`.
+- Register `results/ui-audit/register.md`: R-204 marked `fixed` (lead to confirm on the emulator).
+
+**Left open / not done:**
+- The full `:app:testDebugUnitTest` Compose UI suite was not run to one clean, uncontended
+  completion in this session, for the environmental reason above — a validator (or a rerun once
+  this machine is not running several concurrent agents) should do a full, single-invocation pass
+  to confirm the whole suite, not just the classes spot-checked here.
+- `idx_prior_adjustment_one_current`'s pre-existing upgrade-path gap (noted in the prior `:data`
+  session's entry below) is unaffected by this change, still open.
+- `execRaw`/`inWriteTransaction` are now the two general-purpose driver-native primitives this
+  project has for "arbitrary transaction" and "arbitrary raw statement" respectively; any future
+  code that reaches for `androidx.room.withTransaction` or `OrtDatabase.openHelper` directly will
+  hit the same silent breakage this entry fixes — worth a lint rule or a code-review note, not
+  something this change adds.
+
+## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
+
 ## 2026-09-08 (ui-conformance WP10 round 9: R-137 Preview/Save bundle wired to WP11e's real DiagnosticsBundleBuilder)
 
 ## 2026-09-08 (ui-conformance WP11c follow-up: FR-OBS-1 diagnostics log writers)
@@ -694,7 +934,6 @@ been a new capture-blocking bug introduced while fixing an unrelated one.
 
 
 ## 2026-09-08 (ui-conformance WP2: DayOfWeekGrid's legend wraps whole swatches instead of squeezing the last one to a sliver)## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
-
 ### (pending) — ui-conformance WP11c · storage accounting and the next automatic-prune candidate, exposed for Settings-Storage
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/StorageAccounting.kt` (new),
@@ -9126,6 +9365,81 @@ new `R_276` test is a real Room-backed regression guard for the count-honesty fi
 - The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
 - WP3 wires `OrtNavHost.kt`'s host route to pass a real `initialFilter` the moment this lands on
   main — not this package's file, per the coordinator's own message.
+
+### (pending) — ui-conformance WP5 · AMBIGUOUS row's kept candidate, actually fixed (R-322)
+
+**Scope:** `ui/data/LogViewData.kt` and its tests (`LogViewDataTest`, `LogScreenTest`) — R-322, the
+V4 pass 2 device reopening of R-240 (which this package believed fixed and closed two rounds ago).
+
+**Requirements/ACs:** R-322 (register.md, reopened from R-240).
+
+**Constitution Check.** Principle I (Uncertainty Is Content) — the real failure this round: a test
+that passed against fabricated data while the device stayed wrong is exactly the shape of bug the
+constitution calls out. Principle II (Test-Backed Change): the new `R_322` test in `LogScreenTest`
+is not a fixture I invented — it seeds the real `overnight` scenario through `Scenarios.load` and
+drives the actual production call chain (`LogPolling.screenState` → `LogItemsMapper.toRowState` →
+`LogScreen` → `LogRow`), confirmed to fail against the pre-fix code (reverted, re-ran, restored —
+same verification discipline as every `Saver`/regression-guard test this package has shipped) and
+pass against the fix.
+
+**Root cause.** `keptCandidateFor`'s original design (two commits ago) read
+`candidates.firstOrNull { it.selected }` — on the assumption the resolver marks one candidate
+`selected` even on an AMBIGUOUS attribution. It never does, by design:
+`AttributionState.AMBIGUOUS`'s own doc comment is "the system will not choose", and WP6's
+`AmbiguousCandidatesFixtureTest` (`R_184`, landed on main between this package's original R-240 fix
+and this reopening) asserts exactly that against the real `overnight` fixture — "no candidate
+should be pre-selected on an AMBIGUOUS over". The unit test `keptCandidateFor` originally shipped
+with fabricated a `selected = true` candidate no real mapper output has ever produced (the real
+`overnight` fixture's AMBIGUOUS candidates were already all `selected = false`, even before R-184's
+change added a third one) — so CI stayed green while the device read only `alternateFor`'s output
+("or KE7QRS") forever, because `alternateFor` had the same latent flaw: with nothing ever
+`selected`, its `filterNot { it.selected }.minByOrNull { it.rank }` degenerated to "the best-ranked
+candidate overall" — the *primary*, not a runner-up — which is exactly the "or KE7QRS" the register
+screenshots show (KE7QRS is the real fixture's rank-0, best-scored candidate).
+
+**The fix.** Both functions now read rank instead of `selected`:
+`keptCandidateFor` = `candidates.sortedBy { it.rank }.getOrNull(0)`, `alternateFor` =
+`candidates.sortedBy { it.rank }.getOrNull(1)` — the exact `candidates.sortedBy { it.rank
+}.take(2)` pattern `DetailViewStateMapper.ambiguousBody` already uses for `Detail-Ambiguous.dc.html`
+(confirmed correct on device — register: "D03's own header is right"), so Log and Detail can never
+name a different pair for the same over again.
+
+**Verified:**
+- Read R-322 in `results/ui-audit/register.md` in full and its cited screenshots
+  (`overnight/L01-log-pass2.png`, `overnight/L01-log-real-pass2.png`) via the Read tool before
+  starting; also read WP6's `AmbiguousCandidatesFixtureTest.kt` and `DetailViewStateMapper`'s
+  `ambiguousBody` to find the real fixture shape and the pattern D03 already uses correctly.
+  `git merge --ff-only main` — `Updating <prior>..16172f0, Fast-forward`; `git merge-base
+  --is-ancestor HEAD main` exit 0 before merging.
+- **Reproduced first**: `LogScreenTest`'s new `R_322` test, run against the code as merged (before
+  any fix), failed exactly as the register describes — `Expected... 'KE7QRS'... could not find any
+  node`. Applied the rank-based fix; re-ran; passed. Reverted the fix a second time to confirm the
+  test still fails on the old code (not a false-positive from test ordering or caching), then
+  restored the fix.
+- `.\gradlew.bat :app:ktlintFormat :app:detekt` — BUILD SUCCESSFUL, ktlint clean, detekt clean.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (846 actionable tasks);
+  every test in the full `:app` suite `PASSED` — the `ReadyScreenTest` regression this package
+  flagged as open in the prior two entries is gone (fixed upstream by WP9/WP2 in the interim, not
+  by this commit).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 190 covered ->
+  results\coverage-matrix.md` (already at 190 on main before this commit's own regeneration — no
+  diff).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (190
+  covered of 419)`.
+- Full `:app` suite: 1168 tests, 0 failed. New/changed tests: `LogViewDataTest` (`R_040`'s two
+  AMBIGUOUS-alternate/kept-candidate tests replaced by five `R_322` tests — best-ranked-of-three
+  real-shape candidates, order-independence, single-candidate, zero-candidate, non-AMBIGUOUS) ·
+  `LogScreenTest` (+1 new: `R_322 the real overnight fixture's AMBIGUOUS row names its kept
+  candidate, not just the alternate` — the real-fixture reproduction described above).
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- If a future validator still finds this wrong on device, the next place to look is `LogRow`
+  (`ui/components/Rows.kt`, WP2's package) itself — this round's reproduction confirms the state
+  reaches `LogRowViewState.callsign` correctly, so a further regression would be render-side, not
+  this package's mapper.
 
 ---
 

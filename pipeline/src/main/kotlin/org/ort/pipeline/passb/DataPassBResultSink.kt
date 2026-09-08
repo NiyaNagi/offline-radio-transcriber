@@ -1,6 +1,5 @@
 package org.ort.pipeline.passb
 
-import androidx.room.withTransaction
 import org.ort.asrapi.PassBOutcome
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
@@ -10,6 +9,7 @@ import org.ort.data.entity.CallsignCandidateEntity
 import org.ort.data.entity.PhoneticLatticeEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
+import org.ort.data.inWriteTransaction
 import org.ort.lexicon.PhoneticLattice
 
 /**
@@ -39,7 +39,7 @@ import org.ort.lexicon.PhoneticLattice
  */
 public class DataPassBResultSink(private val db: OrtDatabase) : PassBResultSink {
 
-    override suspend fun record(result: PassBResult): Unit = db.withTransaction {
+    override suspend fun record(result: PassBResult): Unit = db.inWriteTransaction {
         when (val outcome = result.outcome) {
             is PassBOutcome.Accepted -> {
                 db.transcriptDao().supersede(

@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.Tier
 import org.ort.data.dao.StationIdentityDao
 import org.ort.data.entity.PriorAdjustmentEntity
 import org.ort.data.entity.ShedEventEntity
@@ -195,6 +196,53 @@ public class MigrationTest {
             assertEquals("Dave", renamed!!.userName) // new tables usable post-migration
             val prior = runBlocking { db.stationIdentityDao().currentPriorWeight("N7XYZ", "on_this_repeater") }
             assertEquals(0.2, prior!!.weight, 0.0)
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * Register R-204 follow-up (FR-REP-2, FR-REP-9) — the v3 -> v4 migration adds
+     * `transmission.processedTier` without touching any existing column. Proves both halves of
+     * FR-AST-5/6: a pre-existing transmission row survives with its real data intact, and the new
+     * column defaults to `NULL` (never processed) until [OrtDatabase.transmissionDao]'s new write
+     * path is used.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-REP-2", "FR-REP-9", "R-204")
+    public fun migration_from_v3_to_v4_preserves_existing_rows_and_adds_the_processed_tier_column() {
+        val dbName = "migration-test-db-v4"
+        val v3 = helper.createDatabase(dbName, 3)
+        v3.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 1, 0, 0)",
+        )
+        v3.execSQL(
+            "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
+                "audioFormat, preRollMs, postRollMs, frequencyHz, frequencyProvenance, mode, signalStrength, " +
+                "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
+                "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
+                "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
+                "isReprocessCandidate) VALUES ('TX1', 'S1', NULL, 0, 1000, 1000, 'flac/16k/mono', 200, 200, " +
+                "NULL, 'measured', NULL, NULL, NULL, NULL, 'UNKNOWN', NULL, NULL, NULL, 0, 'CAPTURED', NULL, " +
+                "0, 0, 0, NULL, '', NULL, 0)",
+        )
+        v3.close()
+
+        helper.runMigrationsAndValidate(dbName, 4, true, OrtDatabase.MIGRATION_3_4)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val transmission = runBlocking { db.transmissionDao().getById("TX1") }
+            assertEquals("flac/16k/mono", transmission!!.audioFormat) // pre-existing row survives
+            assertEquals(null, transmission.processedTier) // new column defaults to "never processed"
+
+            runBlocking { db.transmissionDao().setProcessedTier("TX1", Tier.T2) }
+            val processed = runBlocking { db.transmissionDao().getById("TX1") }
+            assertEquals(Tier.T2, processed!!.processedTier) // new write path usable post-migration
         } finally {
             db.close()
         }
