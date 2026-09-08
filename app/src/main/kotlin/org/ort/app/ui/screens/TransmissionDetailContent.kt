@@ -1,8 +1,12 @@
 package org.ort.app.ui.screens
 
 import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -13,6 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.launch
@@ -30,6 +36,7 @@ import org.ort.app.ui.data.ReaderPolling
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.data.TransmissionDetail
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
 import java.io.File
@@ -45,6 +52,11 @@ import java.io.File
  * (`design/design-guide.md`'s R-050: [TransmissionDetailScreen] no longer draws its own back row),
  * and the nested why/revisions/correction/propagated navigation, delegated one composable per
  * [DetailDestination] below so this dispatcher itself stays short.
+ *
+ * [backLabel] (R-017) names the destination [onBack] actually returns to — defaulted to `"Log"`
+ * (today's only real entry point) so `OrtNavHost.kt` compiles unchanged while WP3 wires true origin
+ * tracking through separately; a caller that knows the real origin (Search, a station's overs, a
+ * thread) passes it once that wiring lands.
  */
 @Composable
 public fun TransmissionDetailContent(
@@ -53,6 +65,7 @@ public fun TransmissionDetailContent(
     player: TransmissionAudioPlayer,
     onBack: () -> Unit,
     onOpenTransmission: (String) -> Unit,
+    backLabel: String = "Log",
     modifier: Modifier = Modifier,
 ) {
     var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
@@ -75,56 +88,66 @@ public fun TransmissionDetailContent(
     val viewState = DetailViewStateMapper.from(ReaderTransmissionViewStateMapper.detailView(current))
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
+    val dest = destination
 
-    when (val dest = destination) {
-        DetailDestination.Main -> MainDestination(
-            context = context,
-            transmissionId = transmissionId,
-            current = current,
-            viewState = viewState,
-            player = player,
-            onBack = onBack,
-            onOpenTransmission = onOpenTransmission,
-            onDestinationChange = { destination = it },
-            refresh = ::refresh,
-            modifier = modifier,
-        )
+    // `Detail-Correct-A/B/C.dc.html`: the sheet sits over the *dimmed detail screen*, not a second
+    // full screen — Correcting renders `Main` underneath (so the callsign stays visible through
+    // the scrim, matching the artboard) plus the scrim+sheet overlay on top, inside one `Box` so
+    // the two genuinely stack rather than one replacing the other.
+    Box(modifier = modifier.fillMaxSize()) {
+        when (dest) {
+            DetailDestination.Main, DetailDestination.Correcting -> MainDestination(
+                context = context,
+                transmissionId = transmissionId,
+                current = current,
+                viewState = viewState,
+                player = player,
+                onBack = onBack,
+                onOpenTransmission = onOpenTransmission,
+                onDestinationChange = { destination = it },
+                refresh = ::refresh,
+                backLabel = backLabel,
+                modifier = Modifier.fillMaxSize(),
+            )
 
-        DetailDestination.Why -> DetailWhyScreen(
-            callsignLabel = whyParentLabel,
-            why = viewState.why,
-            onBack = { destination = DetailDestination.Main },
-            modifier = modifier,
-        )
+            DetailDestination.Why -> DetailWhyScreen(
+                callsignLabel = whyParentLabel,
+                why = viewState.why,
+                onBack = { destination = DetailDestination.Main },
+                modifier = Modifier.fillMaxSize(),
+            )
 
-        DetailDestination.Revisions -> RevisionsDestination(
-            context = context,
-            transmissionId = transmissionId,
-            dest = dest,
-            parentLabel = whyParentLabel,
-            onBack = { destination = DetailDestination.Main },
-            refresh = ::refresh,
-            modifier = modifier,
-        )
+            DetailDestination.Revisions -> RevisionsDestination(
+                context = context,
+                transmissionId = transmissionId,
+                dest = dest,
+                parentLabel = whyParentLabel,
+                onBack = { destination = DetailDestination.Main },
+                refresh = ::refresh,
+                modifier = Modifier.fillMaxSize(),
+            )
 
-        DetailDestination.Correcting -> CorrectingDestination(
-            context = context,
-            transmissionId = transmissionId,
-            current = current,
-            viewState = viewState,
-            dest = dest,
-            onDestinationChange = { destination = it },
-            modifier = modifier,
-        )
+            is DetailDestination.Propagated -> PropagatedDestination(
+                context = context,
+                outcome = dest.outcome,
+                onBack = onBack,
+                onDestinationChange = { destination = it },
+                refresh = ::refresh,
+                backLabel = backLabel,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
-        is DetailDestination.Propagated -> PropagatedDestination(
-            context = context,
-            outcome = dest.outcome,
-            onBack = onBack,
-            onDestinationChange = { destination = it },
-            refresh = ::refresh,
-            modifier = modifier,
-        )
+        if (dest == DetailDestination.Correcting) {
+            CorrectingOverlay(
+                context = context,
+                transmissionId = transmissionId,
+                current = current,
+                viewState = viewState,
+                dest = dest,
+                onDestinationChange = { destination = it },
+            )
+        }
     }
 }
 
@@ -140,11 +163,12 @@ private fun MainDestination(
     onOpenTransmission: (String) -> Unit,
     onDestinationChange: (DetailDestination) -> Unit,
     refresh: suspend () -> Unit,
+    backLabel: String,
     modifier: Modifier,
 ) {
     val scope = rememberCoroutineScope()
     Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = "Log", onBack = onBack)
+        DrillInHeader(parentLabel = backLabel, onBack = onBack)
         TransmissionDetailScreen(
             state = viewState,
             player = player,
@@ -216,15 +240,25 @@ private fun RevisionsDestination(
     )
 }
 
+/**
+ * `Detail-Correct-A/B/C.dc.html`: the sheet over a dimmed backdrop, dismissed on scrim tap — the
+ * identical `Column`-of-scrim-then-sheet split `SearchScreen.kt`'s `FiltersSheetOverlay` (WP7)
+ * uses (read for the pattern, not edited): a `Column`, not two `fillMaxSize()` siblings in a `Box`,
+ * so the scrim's clickable area is exactly the strip actually exposed above the sheet, never the
+ * area the sheet itself covers — two overlapping `fillMaxSize()` elements would both claim the
+ * same tap, and the sheet, drawn on top, would always win regardless of which one the operator
+ * meant. [CorrectionSheet] itself owns the `fillMaxHeight(0.85f)` cap and its own scroll, for the
+ * same reason `SearchFiltersSheet` does (see that composable's doc comment).
+ */
+@Suppress("LongParameterList") // one seam per independent I/O effect this overlay wires up.
 @Composable
-private fun CorrectingDestination(
+private fun CorrectingOverlay(
     context: Context,
     transmissionId: String,
     current: TransmissionDetail,
     viewState: DetailViewState,
     dest: DetailDestination,
     onDestinationChange: (DetailDestination) -> Unit,
-    modifier: Modifier,
 ) {
     val scope = rememberCoroutineScope()
     var everyOverCount by remember(transmissionId) { mutableStateOf(1) }
@@ -235,30 +269,44 @@ private fun CorrectingDestination(
             CorrectionScope.EVERY_OVER_SAME_VOICE,
         )
     }
-    CorrectionSheet(
-        currentCallsign = current.attribution.stationId,
-        candidates = viewState.why.candidates,
-        everyOverSameVoiceCount = everyOverCount,
-        onSearchLexicon = { query -> ReaderPolling.searchLexicon(query) },
-        onApply = { callsign, tier, correctionScope ->
-            scope.launch {
-                val outcome = CorrectionPolling.applyCorrection(
-                    context,
-                    CorrectionRequest(
-                        transmissionId = transmissionId,
-                        previousStationId = current.attribution.stationId,
-                        newStationId = callsign,
-                        tier = tier,
-                        correctedAtMillis = SystemClock.wallMillis(),
-                    ),
-                    correctionScope,
-                )
-                onDestinationChange(DetailDestination.Propagated(outcome))
-            }
-        },
-        onDismiss = { onDestinationChange(DetailDestination.Main) },
-        modifier = modifier,
-    )
+
+    fun apply(callsign: String, tier: CorrectionTier, correctionScope: CorrectionScope) {
+        scope.launch {
+            val outcome = CorrectionPolling.applyCorrection(
+                context,
+                CorrectionRequest(
+                    transmissionId = transmissionId,
+                    previousStationId = current.attribution.stationId,
+                    newStationId = callsign,
+                    tier = tier,
+                    correctedAtMillis = SystemClock.wallMillis(),
+                ),
+                correctionScope,
+            )
+            onDestinationChange(DetailDestination.Propagated(outcome))
+        }
+    }
+    val onDismiss = { onDestinationChange(DetailDestination.Main) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .background(OrtColors.bgPage.copy(alpha = 0.78f))
+                .clickable(role = Role.Button, onClickLabel = "Dismiss correction", onClick = onDismiss)
+                .testTag("correction-sheet-scrim"),
+        )
+        CorrectionSheet(
+            currentCallsign = current.attribution.stationId,
+            candidates = viewState.why.candidates,
+            everyOverSameVoiceCount = everyOverCount,
+            onSearchLexicon = { query -> ReaderPolling.searchLexicon(query) },
+            onApply = ::apply,
+            onDismiss = onDismiss,
+            modifier = Modifier.testTag("correction-sheet"),
+        )
+    }
 }
 
 @Composable
@@ -268,11 +316,12 @@ private fun PropagatedDestination(
     onBack: () -> Unit,
     onDestinationChange: (DetailDestination) -> Unit,
     refresh: suspend () -> Unit,
+    backLabel: String,
     modifier: Modifier,
 ) {
     val scope = rememberCoroutineScope()
     Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = "Log", onBack = onBack)
+        DrillInHeader(parentLabel = backLabel, onBack = onBack)
         PropagatedScreen(
             outcome = outcome,
             onUndoAll = {
