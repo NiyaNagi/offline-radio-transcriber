@@ -32,6 +32,97 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 small round: SessionsContent.initialSessionId, for WP3's Review link)
+
+### (pending) — ui-conformance WP10 · SessionsContent gains initialSessionId, seeding a session's own detail (R-133)
+
+**Scope:** `ui/digest/SessionsContent.kt` and `SessionsContentTest.kt` only. `git merge --ff-only
+main` (local `main`, this branch already an ancestor of the coordinator's named `bd3b2a3`) — fast-
+forwarded cleanly, no conflict.
+
+**Requirements/ACs:** R-133 (round-8's real "Next deletion" row, `Review` link — WP3 cannot route
+it because this composable had no external seed for its own page state at all before this round).
+Constitution none new — a pure additive navigation-state change.
+
+**What changed:**
+
+*Constitution Check.* No principle bears directly — this is additive plumbing (a new, defaulted
+parameter and the `Saver` its `rememberSaveable` conversion needs), not a new fact-bearing surface.
+
+- **`SessionsContent` gains `initialSessionId: String? = null`** — seeds its internal `page` state
+  directly to that session's own `Session` (DG04) detail on first composition, matching
+  `SettingsContent.initialScreen`'s own established "opens there on launch, not always jumps
+  there" contract (a later change to the parameter after first composition has no effect). `null`
+  (the default) opens the `Sessions` list exactly as before this parameter existed — every
+  existing caller (`OrtNavHost.kt`, `SessionsContentTest.kt`'s own two pre-existing tests) compiles
+  and behaves unchanged.
+- **`page` (the private `SessionsPage` sealed interface) moved from a plain `remember` to
+  `rememberSaveable`**, with a new explicit `SessionsPageSaver` — `SessionsPage` itself is not
+  Bundle-safe (`DigestItem` carries a whole `DigestItemViewState`), so the automatic saver cannot
+  be used. Encodes to one delimiter-joined `String` (always Bundle-safe via the default
+  `autoSaver()` path a raw `List<String?>` is not guaranteed to be) using a control character
+  (``) as the field separator — real headline/sub-line/reason prose in this app never
+  produces one, so no escaping is needed for the fields that carry free text
+  (`DigestItemViewState.headline`/`subLine`/`reason`). This was a genuine, if secondary, gap the
+  `initialSessionId` seed exposed: `page` was never configuration-change-safe before this — this
+  round's `rememberSaveable` conversion applies to *every* page (`List`/`Detail`/`Digest`/
+  `DigestItem`/`Log`), not only the newly-seedable `Detail`.
+- **Back from the seeded detail returns to the `Sessions` list**, the same as reaching that detail
+  any other way (`Detail`'s own `onBack = { page = SessionsPage.List }` is unchanged) — a host
+  that needs "back to `Settings-Storage`" instead wraps this composable with its own header/back
+  at the call site (WP3's own work, per the coordinator's message), not something this package's
+  internal navigation state expresses.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.digest.SessionsContentTest"` —
+  `BUILD SUCCESSFUL in 32s`, 3 tests, all `PASSED`, including the new
+  `R_133_review_seeds_session lands directly on the detail, never the list first` (real session/
+  transmission rows, `initialSessionId = "S1"`, asserts the detail's own "Export" action-bar chip
+  renders with no prior tap on "Tonight" at all — the direct proof the seed took).
+  `SessionsContentTest`'s two pre-existing tests (`FR_UI_1`, `FR_DIG_9`) unaffected.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.digest.SessionsContentTest"
+  --tests "org.ort.app.ui.digest.SessionsScreensTest"` — `BUILD SUCCESSFUL in 23s`, 5/5 `PASSED`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.digest.*"` (the whole package, 14
+  tests) — flaked twice in a row on `SessionsScreensTest`'s two `R_250` tests (a file this round
+  never touched) with a `withTimeout(5_000)` real-time exceedance; both pass individually and pass
+  together with `SessionsContentTest` in isolation (above) — real, reproducible resource
+  contention when the whole 14-test package runs as one JVM worker under this machine's current
+  load, not a regression from this round's own change. Left for a future round to isolate the same
+  way `ReaderActivityDestinationSmokeTest` already was, if it recurs.
+- `.\gradlew.bat :app:ktlintFormat` — one line-length violation this round introduced (a test
+  name), shortened; `git status --porcelain` afterward showed only the two files this round
+  legitimately touched, no foreign-file pollution.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, no findings.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL in 34s`.
+- `.\gradlew.bat dependencyRules platformGuards` — both `OK` (17 modules).
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`, 8/8 `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — `419 requirements, 191
+  covered` (up from 190 — unrelated drift from other packages' own concurrent landings, not from
+  this round's own additive-only change); `coverageMatrixCheck: up to date`.
+- **`:app:testDebugUnitTest`, the full module, unfiltered, was not confirmed green this round** —
+  a first attempt (backgrounded) never produced output over a very long wait; a second, foreground
+  attempt then failed immediately on `Unable to delete directory .../testDebugUnitTest/binary`
+  (`output.bin` still open) — proof the first attempt was still genuinely alive and running, not
+  hung/crashed, just far slower than this suite's own historical 1–3 minute runtime under this
+  session's current load (many concurrent worktree builds sharing one machine/daemon, evidenced
+  throughout this session by repeated "N busy daemons" messages). Never ran `gradlew --stop` to
+  clear it — the standing rule, since that daemon is shared with every other worktree's own build.
+  Every *other* real gate signal is green (above), and the change itself is small, additive and
+  isolated to one file pair — reported honestly rather than claimed unverified.
+
+**Left open / not done:**
+- `OrtNavHost.kt`'s own wiring of `SessionsContent(initialSessionId = ...)` from
+  `Settings-Storage`'s `Review` link, and the host-level "back to Settings-Storage" — WP3's own
+  work, next.
+- The `SessionsScreensTest` `R_250` flake under full-package load — reported above, not this
+  round's file to fix or isolate.
+- The full, unfiltered `:app:testDebugUnitTest` run — not confirmed green this round, for the
+  resource-contention reason above; every targeted run of the two files this round touched (plus
+  their one adjacent sibling test file) was.
+
+---
+
 ## 2026-09-08 (ui-conformance data: busy timeout; processed tier per record)
 
 ### (pending) — ui-conformance data · busy timeout; processed tier per record
