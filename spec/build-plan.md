@@ -138,6 +138,19 @@ are individually green.*
   `samplePosition = 0L` into every heartbeat record; it now reads the session's `Segmenter`'s
   own `position()` at write time, matching the sample-position provenance the parallel
   `capture-android.CaptureService` already had — see CHANGELOG.md.
+  **Audit F-011 (2026-09-07) fixed:** the "constructed and wired into `RealCaptureService`,
+  proven against `FakeAsrEngine` on Robolectric" claim above had no test that actually started
+  the service — `CaptureProcessingLoopTest` proved `PassDrainRunner`+`PassBFactory` draining a
+  hand-assembled queue, not `RealCaptureService.startCapture()`'s own composition. A small
+  `RealCaptureService.Dependencies` seam (settable after `onCreate()`, real-construction
+  defaults, no Hilt) now lets `RealCaptureServiceTest` start the real service under Robolectric's
+  `ServiceController` with `FakeAudioIo`/`FakeAsrEngine`/`FakeShedSignals`/an in-memory
+  `OrtDatabase`, feed one synthetic speech-then-silence burst, and prove a `TransmissionEntity` +
+  transcript row appear (AC-31), the heartbeat carries a real non-zero sample position (F-005), a
+  deliberate `ACTION_STOP` marks the session's heartbeat clean (AC-5), and an
+  `Interrupted`/`Resumed` pair yields a real `capture_gap` row (AC-48, F-028) — all through the
+  service's own composition, not a hand-wired harness. Still Robolectric/JVM only; no device has
+  run this. See CHANGELOG.md.
 - [x] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
   done 2026-09-08.
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
