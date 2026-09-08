@@ -8,8 +8,14 @@ import java.io.File
  */
 object CoverageMatrix {
 
-    /** A requirement id token as it appears in the spec, e.g. `FR-RUN-10a`, `AC-91`, `NFR-1a`, `CON-SEG-1`. */
-    private val REQUIREMENT = Regex("""\b((?:FR|AC|NFR|CON)(?:-[A-Z]{2,5})*-\d+[a-z]?)\b""")
+    /**
+     * A requirement id token as it appears in the spec, e.g. `FR-RUN-10a`, `AC-91`, `NFR-1a`,
+     * `CON-SEG-1`, `FR-A11Y-1` — the middle segment(s) are letters *or digits* (found by
+     * adversarial review: `FR-A11Y-1` was invisible to this regex because `[A-Z]{2,5}` rejected
+     * the digits in `A11Y`, silently uncounting a real, correctly-cited requirement and flagging
+     * every test that named it as an orphan).
+     */
+    private val REQUIREMENT = Regex("""\b((?:FR|AC|NFR|CON)(?:-[A-Z][A-Z0-9]{1,5})*-\d+[a-z]?)\b""")
 
     /** How a test declares the requirement it establishes: an @Requirement annotation, or the id in its name. */
     private val ANNOTATION = Regex("""@Requirement\(\s*((?:"[^"]+"\s*,?\s*)+)\)""")
@@ -20,7 +26,7 @@ object CoverageMatrix {
 
     /** A requirement id embedded in a test-function name, `_`-separated: `AC_91`, `FR_RUN_10a`, `CON_SEG_1`. */
     private val NAME_ID =
-        Regex("""(?<![A-Za-z0-9])((?:FR|AC|NFR|CON)(?:_[A-Z]{2,5})*_\d+[a-z]?)(?=_|\s|${'$'})""")
+        Regex("""(?<![A-Za-z0-9])((?:FR|AC|NFR|CON)(?:_[A-Z][A-Z0-9]{1,5})*_\d+[a-z]?)(?=_|\s|${'$'})""")
 
     data class Coverage(
         val requirements: List<String>,

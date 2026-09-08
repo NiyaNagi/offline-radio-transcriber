@@ -32,6 +32,38 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (night, cont. — fix the coverage-tool regex gap flagged earlier)
+
+### (pending) — CoverageMatrix: recognise requirement ids with alphanumeric segments
+
+**Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt`,
+`buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt`. No session currently owns
+`:buildSrc`; this is a small, well-contained fix to a shared tool, not a drive-by edit to
+someone else's module.
+**Requirements/ACs:** none new — tool accuracy only. Makes `FR-A11Y-1` (the real accessibility
+requirement P11's `TransmissionListViewStateMapperTest` correctly cites) count as covered
+instead of orphaned.
+**What changed:** the earlier hygiene pass (`b0fbb60`) documented but didn't fix a real gap in
+`CoverageMatrix`'s id-recognition regex; P11 immediately produced a second, concrete case of it —
+`@Requirement("FR-A11Y-1")` was flagged as an orphan even though `FR-A11Y-1` is a real,
+correctly-cited functional-spec requirement (§7.16), because the regex's middle-segment pattern
+(`[A-Z]{2,5}`) rejected the digits in `A11Y`. Widened both `REQUIREMENT` and `NAME_ID` to
+`[A-Z][A-Z0-9]{1,5}` (still starts with a letter, so it doesn't start matching arbitrary numbers)
+so alphanumeric segment codes like `A11Y` are recognised. Added a regression test proving
+`FR-A11Y-1` is now counted as a real requirement, shows as covered, and is not orphaned.
+**Deliberately not attempted here:** widening the regex further to recognise bare `F`/`D`/`R`/`Q`
+ids (`F13`, `D28`, `R15`, `Q16` — flagged in `b0fbb60`) — those single-letter prefixes carry a
+real risk of false-positive matches against ordinary prose elsewhere in the spec (quarter/date
+references, resistor-style callouts, etc.) that would need checking against the whole spec
+corpus before landing, which this session didn't have the scope to do safely. Left as still-open,
+now with a narrower, better-understood shape than before.
+**Verified:** `./gradlew :buildSrc:test` (new test green, all existing ones still pass);
+`./gradlew build dependencyRules coverageMatrix` (full multi-module build green); coverage
+matrix now reports 419 requirement ids (was 413 — six previously-invisible alphanumeric-segment
+ids, including `FR-A11Y-1`, now counted), 101 covered (was 100), 1 orphan remaining (`F13`, the
+documented bare-prefix gap).
+**Left open / not done:** the bare `F`/`D`/`R`/`Q` id gap, as above.
+
 ## 2026-09-07 (evening, cont. — post-merge ktlint fix)
 
 ### (pending) — Fix a ktlint class-signature violation in RealSherpaDecoder after merging

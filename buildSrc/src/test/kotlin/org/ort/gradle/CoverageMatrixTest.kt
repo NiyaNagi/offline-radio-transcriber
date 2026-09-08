@@ -48,6 +48,31 @@ class CoverageMatrixTest {
     }
 
     @Test
+    fun `a requirement id whose middle segment contains digits is recognised, not orphaned`(@TempDir dir: Path) {
+        // Found by adversarial review: FR-A11Y-1 (functional-spec.md's real accessibility
+        // requirement) was invisible to the old regex because [A-Z]{2,5} rejected digits in the
+        // middle segment, silently dropping it from the requirement count and flagging every
+        // test that correctly cited it as an orphan.
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "functional-spec.md").writeText(
+            "**FR-A11Y-1 (M)** The four attribution states SHALL be distinguishable without colour.",
+        )
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("FR-A11Y-1")
+                @Test fun `all four states render distinctly`() {}
+            }
+            """.trimIndent(),
+        )
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        assertTrue(coverage.requirements.contains("FR-A11Y-1"), coverage.requirements.toString())
+        assertTrue(coverage.covered.contains("FR-A11Y-1"))
+        assertFalse(coverage.orphanTests.containsKey("FR-A11Y-1"), coverage.orphanTests.toString())
+    }
+
+    @Test
     fun `an orphan test naming an unknown requirement is surfaced`(@TempDir dir: Path) {
         val spec = dir.resolve("spec").toFile().apply { mkdirs() }
         File(spec, "s.md").writeText("AC-1 exists.")
