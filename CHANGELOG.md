@@ -1521,6 +1521,78 @@ rendered "not measured" or omitted rather than invented) and IV (liveness from h
 
 ## 2026-09-08 (ui-conformance WP7: search)
 
+### (pending) — ui-conformance WP7 · matched-word highlighting, filters chip icon, shared text field
+
+**Scope:** `:app` only — `ui/data/SearchViewData.kt` (new `MatchHighlighter`), new
+`ui/data/MatchHighlighterTest.kt`, `ui/screens/SearchScreen.kt`, `ui/screens/SearchFiltersSheet.kt`.
+Merged `main` (`e935a83`, WP2's follow-up: component gaps) first, fast-forward, before starting.
+
+**Requirements/ACs:** R-065 (complete — see below), R-061 (`Filters` chip icon), R-060/R-063
+(query field migrated to the shared `TextField`).
+
+**What changed:**
+- **Constitution Check.** Principle I: highlighting is additive, never the only way a row
+  communicates a match, and a blank query or an unmatched transcript highlight nothing rather
+  than fabricating a match (`MatchHighlighter`'s own tests cover both). Principle II: the
+  coordinator's named test (`R_065_matched_words_are_highlighted_in_result_rows`) is written and
+  named for the id it establishes, alongside five more covering case-insensitivity, ordering, and
+  the two "nothing to highlight" cases.
+- **R-065, complete.** New `MatchHighlighter.rangesFor(transcript, query)` in `SearchViewData.kt`:
+  every case-insensitive, whitespace-token occurrence of a query word inside a transcript, sorted
+  by position — a reading aid, not a re-implementation of FTS5's own match semantics. `SearchScreen`
+  now threads the live query text through to `TransmissionListEntryViewState.toLogRowViewState`,
+  which passes `MatchHighlighter.rangesFor(transcriptText, query)` as `LogRowViewState
+  .highlightRanges` (WP2's follow-up) for every row `ResultsState` renders. `UnavailableState`
+  passes `query = ""` deliberately — the text term was never actually applied there, so nothing is
+  highlighted as if it had been.
+- **R-061.** The `Filters` quick chip now carries `OrtIcons.filters` as `FilterChip`'s new
+  `leadingIcon`, matching `Search.dc.html`.
+- **R-060/R-063.** `SearchScreen.kt`'s query field and every field in `SearchFiltersSheet.kt`
+  (`MonoField`, now deleted) are rebuilt on the shared `ui/components/Controls.kt` `TextField`.
+  Two real integration issues found and fixed along the way, both from `TextField`'s own
+  documented behaviour ("the modifier passed in lands on the inner field only — the outer wrapper
+  always `fillMaxWidth()`s itself"): `Modifier.weight(1f)` passed straight to `TextField` inside a
+  `Row` has no direct-Row-child to attach to and is silently dropped, so the field claims the
+  row's full width and pushes its siblings out past it — this broke `SearchHeaderRow`'s
+  `PrimaryButton` (found by `R_060 once the field is non-blank a single PrimaryButton-styled
+  Search action appears`, the exact same class of overlapping-click bug the previous addendum
+  fixed for the filters-sheet scrim) and would have broken `SearchFiltersSheet`'s Range from/to
+  pair the same way had a test exercised the second field's placement. Fixed both by wrapping each
+  `TextField` in a `Box(Modifier.weight(1f))` instead of weighting the field directly.
+- **Accepted regressions, both documented in-code where they occur:** the shared `TextField` has
+  no leading-icon slot, so the query field's search glyph and its clear (×) now sit either side of
+  the field's own bordered box rather than inset inside it as the hand-rolled version drew them;
+  it has no `keyboardOptions`/`keyboardActions`, so the keyboard's own "search" IME action (R-060's
+  original run action) is gone — the visible `PrimaryButton` is the only run action now once the
+  field is non-blank. Its `errorText` styles in `halt/text` (capture-stopped red), the wrong colour
+  for "the text term was not applied" (a `DEGRADED` fact, not a halt — constitution: "red is for
+  one thing"), so the query field no longer draws its own cue for that state either; the amber
+  `Banner` in `UnavailableState` still says so, in words, regardless.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forward, `f95ec6e..e935a83`; `git log --oneline -1` confirmed
+  `e935a83` before starting.
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL, 642 tests, 0 failed, 0 skipped**
+  (counted from every `app/build/test-results/testDebugUnitTest/*.xml`'s `tests`/`failures`
+  attributes, 94 files — main's merge brought many more tests from the other packages that landed
+  since this package's branch started).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+  `dependencyRules: OK`, `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered (R-065 was already counted
+  covered before this change; the new test file adds depth, not a new covered id).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 181 of 419.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:ktlintCheck`, `:app:detekt` — both clean.
+
+**Left open / not done:**
+- The two accepted `TextField` regressions above (no leading-icon slot, no keyboard search IME
+  action) are real, if minor, UX losses versus the hand-rolled fields this replaces — left to a
+  future `Controls.kt` change (outside this package's row) if they matter enough to fix.
+- Every gap the two WP7 entries below already list (the recently-heard-frequency chips, sheet
+  drag-to-dismiss, `RecentSearches`' single-term label) is unchanged by this addendum.
+
 ### (pending) — ui-conformance WP7 · search tests green on the rewired host
 
 **Scope:** `:app` only — `ui/screens/SearchFiltersSheet.kt`, `ui/screens/SearchScreen.kt`,
