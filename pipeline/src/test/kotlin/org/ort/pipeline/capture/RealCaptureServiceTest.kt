@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -178,5 +179,126 @@ public class RealCaptureServiceTest {
         } finally {
             controller.destroy()
         }
+    }
+
+    @Test
+    @Requirement("FR-RUN-1")
+    public fun `FR_RUN_1 capture keeps producing new transmissions while a pass is stalled on inference`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        // Segment 0 -- closed normally. This is the one that will be leased and stall in inference.
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+        // Segment 1 -- closed normally too. Capture must keep producing this while segment 0 sits
+        // stuck in the (single) inference slot -- constitution IV: "capture MUST proceed with
+        // every processing pass stalled".
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+
+        // Longer than this test's own assertions but shorter than RejectionPipeline's own 15s
+        // engine timeout (DEFAULT_TIMEOUT_MS) -- the point is to observe capture continuing
+        // *while* the engine is genuinely still stuck, not to watch it eventually recover.
+        val engine = FakeAsrEngine(FakeAsrEngine.Behaviour.HangsFor(30_000))
+        val sessionId = "TEST-SESSION-RUN1"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            // Segment 0 reaches PROCESSING and stalls there -- the engine is genuinely hung.
+            waitUntil(20_000) {
+                runBlocking {
+                    db.transmissionDao().getById("$sessionId-0")
+                }?.processingState == TransmissionState.PROCESSING
+            }
+
+            // FR-RUN-1: capture keeps running regardless -- segment 1 is fully captured (closed,
+            // FLAC-encoded, persisted, enqueued) while segment 0 is still stuck. Capture never
+            // waited on the stalled inference call to produce this row.
+            waitUntil(20_000) { runBlocking { db.transmissionDao().getById("$sessionId-1") } != null }
+
+            val stalled = runBlocking { db.transmissionDao().getById("$sessionId-0") }!!
+            assertEquals(
+                "FR-RUN-1: the stalled segment must still be genuinely stuck in PROCESSING at the " +
+                    "moment segment 1 was captured -- proving concurrency, not lucky sequencing",
+                TransmissionState.PROCESSING,
+                stalled.processingState,
+            )
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    @Test
+    @Requirement("NFR-4a")
+    public fun `NFR_4a an unexpected termination loses at most the in-flight segment`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        // Segment 0 -- closed normally, must survive the kill below.
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+        // Segment 1 -- opened (enough speech to confirm) but deliberately never closed (no
+        // trailing silence follows it). This is the one and only in-flight segment when the kill
+        // below happens -- NFR-4a permits losing at most this one, never a segment already closed.
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "test transmission received")),
+        )
+        val sessionId = "TEST-SESSION-NFR4A"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        val startIntent = Intent(context, RealCaptureService::class.java)
+            .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+        controller.withIntent(startIntent).startCommand(0, 0)
+
+        waitUntil(20_000) { runBlocking { db.transmissionDao().getById("$sessionId-0") } != null }
+        // Real-time buffer, not a fixed contract: segment 1's raw frames are read and fed to the
+        // segmenter only after segment 0's close() (FLAC encode + DB insert) returns on the same
+        // sequential collector -- this gives that a moment to happen on real Robolectric threads,
+        // consistent with the class kdoc's "no test dispatcher to advance" note.
+        Thread.sleep(1_000)
+
+        // Simulate an unexpected termination: onDestroy() directly, never ACTION_STOP -- no clean
+        // shutdown path runs first (constitution IV, NFR-4a).
+        controller.destroy()
+
+        val closedSegment = runBlocking { db.transmissionDao().getById("$sessionId-0") }
+        assertNotNull("the segment that closed before the kill must survive it", closedSegment)
+
+        val inFlightSegment = runBlocking { db.transmissionDao().getById("$sessionId-1") }
+        assertNull(
+            "NFR-4a: at most the in-flight (never-closed) segment may be lost -- it never became " +
+                "a persisted row because it was still open when the unexpected termination happened",
+            inFlightSegment,
+        )
+
+        val heartbeatStore = FileHeartbeatStore(File(service.filesDir, "heartbeat.txt"))
+        assertTrue(
+            "an unexpected termination must be surfaced honestly as an unclean end, never silently",
+            heartbeatStore.hadUncleanEnd(),
+        )
     }
 }

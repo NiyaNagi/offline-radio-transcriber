@@ -87,6 +87,10 @@ underlying breakdown each prompt draws on.
   dev-fold callsign precision/recall is NOT MEASURED (no labelled dev-fold occurrences exist,
   same gap P7 hit); the M4 fork decision is explicitly left OPEN — no real KWS/encoder-similarity
   implementation or measured 3-way comparison was possible in this sandbox. See CHANGELOG.md.
+  audit F-027 `:pipeline` slice (2026-09-07): named tests for FR-RUN-1, FR-RUN-9, AC-29, NFR-2b
+  (mechanism only, no device number) and NFR-4a; FR-RUN-4 (reprocess-candidate marking on shed)
+  is genuinely unbuilt and FR-RUN-6's "warn before exhaustion" half remains unbuilt — see
+  CHANGELOG.
 
 **Yours, not a session:** record the validation hour (Q2) and pilot the labelling protocol (Q16).
 Do it any time after P2; P6's probes and P7's harness both get better once it exists. **The
