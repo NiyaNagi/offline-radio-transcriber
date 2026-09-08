@@ -1,6 +1,7 @@
 package org.ort.app.ui.setup
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -40,6 +41,9 @@ class NotificationsScreenTest {
             OrtTheme { NotificationsScreen(onAllow = {}, onSkip = {}) }
         }
 
-        composeTestRule.onNodeWithText("Capturing · 6:42 · 412 overs").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-notify-preview").assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription("Capturing", substring = true)).assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription("412 overs", substring = true)).assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription("145.230 and 146.960", substring = true)).assertIsDisplayed()
     }
 }

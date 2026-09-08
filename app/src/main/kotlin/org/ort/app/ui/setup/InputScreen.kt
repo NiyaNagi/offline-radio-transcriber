@@ -8,18 +8,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.RadioRow
+import org.ort.app.ui.components.RowTone
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 
 /**
  * S04 (`Setup-Input.dc.html`, R-081) — every real route [InputRouteEnumerator] found, each as a
- * WP2 [RadioRow] (the closest existing selectable-row component; see this package's report for the
- * gap this leaves — WP2 ships no icon+subtitle selectable row, so the type/native-rate text rides
- * in `RadioRow`'s trailing `count` slot rather than a second line under the label, and the
- * built-in mic's refusal warning cannot be rendered in amber through that slot). `Refresh` sits
- * beside the title (guide's title-trailing action), `Verify this input` is disabled until a route
- * is chosen.
+ * WP2 [RadioRow] using its `subtitle` (type · native rate, or the built-in mic's refusal reason)
+ * and `tone = RowTone.Warning` for the refused built-in mic (WP2's own follow-up closed the earlier
+ * gap this screen used to work around — `RadioRow` had no subtitle slot or colour override; it
+ * has both now). `Refresh` sits beside the title (guide's title-trailing action), `Verify this
+ * input` is disabled until a route is chosen.
  */
 @Composable
 public fun InputScreen(
@@ -59,7 +59,8 @@ public fun InputScreen(
                     label = route.label,
                     selected = route.id == state.selectedId,
                     onClick = { onSelect(route.id) },
-                    count = route.subtitle,
+                    subtitle = route.subtitle,
+                    tone = if (route.isBuiltInMic) RowTone.Warning else RowTone.Neutral,
                     modifier = Modifier.testTag("setup-input-route-${route.id}"),
                 )
             }

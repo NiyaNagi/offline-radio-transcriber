@@ -1,38 +1,27 @@
 package org.ort.app.ui.setup
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import org.ort.app.R
+import org.ort.app.ui.components.NotificationCard
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
-import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 
 /**
- * S03 (`Setup-Notify.dc.html`, R-080) — re-homed from `MainActivity`. WP2 ships no dedicated
- * `Notification`-style card component (checked every file under `ui/components` — no such name;
- * report to the lead), so [NotificationPreviewCard] below builds the board's own
- * card markup directly from tokens, per the brief's fallback instruction. `Allow` / `Skip` — skip
- * never gates capture (constitution: notifications are diagnostic-only).
+ * S03 (`Setup-Notify.dc.html`, R-080) — re-homed from `MainActivity`. The preview card is WP2's
+ * shared [NotificationCard] (`Capture-Notification.dc.html`'s own component, landed in the WP2
+ * follow-up) — this screen's earlier hand-rolled markup, built from tokens directly because no
+ * such component existed yet, is gone. `Allow` / `Skip` — skip never gates capture (constitution:
+ * notifications are diagnostic-only).
  */
 @Composable
 public fun NotificationsScreen(onAllow: () -> Unit, onSkip: () -> Unit, onBack: (() -> Unit)? = null) {
@@ -61,67 +50,24 @@ public fun NotificationsScreen(onAllow: () -> Unit, onSkip: () -> Unit, onBack: 
             style = OrtType.bodyProse,
             color = OrtColors.textSecondary,
         )
-        NotificationPreviewCard()
+        // Setup-Notify.dc.html's own illustrative reading -- the same figures the pre-WP2-follow-up
+        // markup showed, now through the shared component `Capture-Notification.dc.html` names.
+        NotificationCard(
+            icon = OrtIcons.frequencies,
+            title = "Capturing",
+            elapsedLabel = "6:42",
+            countLabel = "412 overs",
+            secondLine = "145.230 and 146.960 · tier 3 · 38.2 GB used",
+            primaryActionLabel = "Open",
+            onPrimaryAction = {},
+            secondaryActionLabel = "Stop",
+            onSecondaryAction = {},
+            modifier = Modifier.fillMaxWidth().testTag("setup-notify-preview"),
+        )
         Text(
             text = stringResource(R.string.setup_notify_footer),
             style = OrtType.cardBody,
             color = OrtColors.textDim,
         )
-    }
-}
-
-/** `Setup-Notify.dc.html`'s illustrative preview — static, not the real notification
- * (`RealCaptureService`/`CaptureNotificationBuilder` own that, register R-102). */
-@Composable
-private fun NotificationPreviewCard() {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(OrtColors.bgPage, RoundedCornerShape(12.dp))
-            .border(1.dp, OrtColors.lineSection, RoundedCornerShape(12.dp))
-            .padding(OrtSpacing.md),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = OrtIcons.frequencies,
-                contentDescription = null,
-                tint = OrtColors.accentGreen,
-                modifier = Modifier.size(14.dp),
-            )
-            Text(
-                text = stringResource(R.string.setup_notify_preview_app),
-                style = OrtType.subLine,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(start = 9.dp).weight(1f),
-            )
-            Text(
-                text = stringResource(R.string.setup_notify_preview_now),
-                style = OrtType.signal,
-                color = OrtColors.textLow,
-            )
-        }
-        Text(
-            text = stringResource(R.string.setup_notify_preview_title),
-            style = OrtType.subtitle.copy(fontWeight = FontWeight.Medium),
-            color = OrtColors.textHigh,
-            modifier = Modifier.padding(top = 7.dp),
-        )
-        Text(
-            text = stringResource(R.string.setup_notify_preview_body),
-            style = OrtType.cardBody,
-            color = OrtColors.textMuted,
-        )
-        Row(modifier = Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            Text(
-                text = stringResource(R.string.setup_notify_preview_open),
-                style = OrtType.subtitle.copy(fontWeight = FontWeight.Medium),
-                color = OrtColors.accentGreen,
-            )
-            Text(
-                text = stringResource(R.string.setup_notify_preview_stop),
-                style = OrtType.subtitle.copy(fontWeight = FontWeight.Medium),
-                color = OrtColors.accentGreen,
-            )
-        }
     }
 }

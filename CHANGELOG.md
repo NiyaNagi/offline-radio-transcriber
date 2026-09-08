@@ -32,6 +32,136 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9 follow-up: setup rows, notification preview and fields on shared components; route and level checks read the pipeline holders)
+
+### (pending) — ui-conformance WP9 · setup rows, notification preview and fields on shared components; route and level checks read the pipeline holders
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**` and its tests only — the same package this
+package's original WP9 entry (below) owns. `main` fast-forward merged first (`git merge --ff-only
+main`, this branch already an ancestor of it; HEAD confirmed at `e935a83`) — no rebase, no stash,
+no file outside `ui/setup/**` touched. Follow-up to that entry, at the coordinator's request, now
+that WP2's follow-up (`ui/components/Controls.kt`/`Rows.kt`) and WP11c's `InputStatus`/`LevelStatus`
+have landed on `main` and close three of the four gaps that entry's own "Left open" section named.
+
+**Requirements/ACs:** R-081 (S04's rows, `RouteCheck`'s fourth check), R-082 (S07's level source),
+R-080 (S03's preview, S10's frequency field) — same rows as the original entry; none reopened,
+each narrowed.
+
+**What changed:**
+
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs every change below: S10's
+  new frequency field returns `null` for a blank or unparseable entry (`parseMegahertzToHz`), never
+  a guessed value; `RouteCheck`'s pipeline-sourced resampler string is used only when
+  `InputStatus.State.Opened.descriptor.id` actually matches the device being verified — never
+  borrowed from a different device's identity (`RouteCheckTest`'s new
+  "never borrowed for this one" case exists to keep that true); `LevelReading.noiseFloorDbfs`
+  became nullable rather than backfilled with a guess, because the real `LevelStatus.State
+  .Measured.noiseFloorDbfs` genuinely can be `null` (not enough RMS history yet) and this package
+  must not paper over that the way it would never paper over `RigStatus.State.Absent`. Principle
+  VII (Boundaries Are Structural) is why the `:capture-api` gap below is described as *partially*,
+  not *fully*, resolved — the actual compile-time boundary is unchanged; only a new, deliberately
+  narrow `String`-typed door (`InputStatus.resamplerId`) opened through it.
+- **R-081 — `InputScreen` now uses `RadioRow`'s real `subtitle`/`tone` parameters.** Each route's
+  type/native-rate text moves from the trailing `count` slot (a lossy workaround, dropped) to the
+  board's actual second line; the built-in mic's row gets `tone = RowTone.Warning` (amber subtitle
+  text, `Setup-Input.dc.html`'s own treatment) instead of riding in a fixed-colour slot that could
+  not carry it. No test changed shape (`InputScreenTest` already asserted on the row's presence and
+  click behaviour, not its old `count` text).
+- **R-080 — `NotificationsScreen`'s preview is now WP2's shared `NotificationCard`.** The hand-rolled
+  `NotificationPreviewCard` (built from tokens directly because no such component existed when the
+  original entry landed) is gone; the same illustrative figures
+  (`Capturing` / `6:42` / `412 overs` / `145.230 and 146.960 · tier 3 · 38.2 GB used`) now render
+  through the one component `Capture-Notification.dc.html` and WP11b's failure screens will also
+  use, so this preview and the real notification can never visually drift apart again. Test updated
+  to assert against the card's merged `contentDescription` (`hasContentDescription(..., substring =
+  true)`) rather than a literal combined-string `Text` node that no longer exists in this shape.
+- **R-080 — S10 (`RadioUsbScreen`) gained a real frequency entry field.** The original entry's
+  "Enter the frequency instead" button stored no value at all — a real, if easily missed, gap
+  (nothing had a `TextField` to build it against yet). It now uses WP2's shared `TextField` (`label
+  = "Frequency (MHz)"`, `mono = true`, placeholder `"145.230"`); confirming parses the entered text
+  as MHz into an exact Hz `Long` (`parseMegahertzToHz`, new, unit-tested directly — five cases,
+  including zero/negative/blank/garbage all reporting `null`, never a guess) and reaches
+  `SetupActivity`'s new `onEnterFrequency(hz: Long?)`, which sets `store.radioChoice = NONE` and
+  `store.manualFrequencyHz = hz` before resuming the sequence — the same field `ReadyScreen`'s
+  "No radio · frequency by hand" row already read, now actually populated. New testTag
+  `setup-radio-usb-frequency-field`; every existing tag on this screen is unchanged.
+- **R-081 — `RouteCheck`'s fourth check now reads `InputStatus.State.Opened.resamplerId`** when a
+  live capture session already has the exact device being verified open (matched by
+  `AudioDeviceDescriptor.id`), falling back to the locally-computed description otherwise. See the
+  "Left open" section for exactly what this does and does not resolve. Two new tests
+  (`RouteCheckTest`): a matching `InputStatus.State.Opened` supplies the pipeline's own string
+  verbatim; a *different* device's `InputStatus` is never attributed to the one being checked.
+  `InputStatus` is a process-wide singleton (like `RigStatus`/`CaptureState` elsewhere in this
+  suite) — `@BeforeEach`/`@AfterEach` `InputStatus.reset()` added to `RouteCheckTest` for isolation.
+- **R-082 — S07 (`LevelScreen`, via `SetupActivity`) now prefers a real, already-publishing
+  `LevelStatus` over running a second, competing `RealLevelCheck`.** `LevelStatus` is a plain
+  `@Volatile` holder, not Compose-observable state, so `SetupActivity.RenderLevel` polls it (every
+  `LEVEL_STATUS_POLL_INTERVAL_MILLIS = 200`, matching `RealLevelCheck`'s own default sample
+  interval and `LevelStatus`'s documented ~10Hz publish cadence) rather than reading it once; the
+  fallback path (nothing published yet — the ordinary first-run case, since `LevelStatus` is
+  published only by `RealCaptureService`, which has not started during first-ever setup) is
+  unchanged. New `levelReadingFrom(measured, history, barCount)` in `LevelCheck.kt` maps
+  `LevelStatus.State.Measured` into the same `LevelReading` shape `RealLevelCheck` already produces
+  — `bandFor`/`dbfsToFraction` extracted from `RealLevelCheck` into shared top-level
+  `levelBandFor`/`levelBarFraction` functions so both sources classify and draw identically.
+  `levelBandFor`'s new `clipped: Boolean` parameter prefers `LevelStatus`'s real per-frame clip bit
+  (`:capture-android`'s `LevelMeter`) over the peak-threshold heuristic when it is available; `Real
+  LevelCheck` (no such detector reachable from its own `AudioIo` seam) still passes `clipped =
+  false` and relies on the threshold alone, unchanged. `LevelReading.noiseFloorDbfs` widened to
+  `Double?` (see Constitution Check); `LevelScreen`'s "Noise floor" row already had a "—" fallback
+  path for a null reading, extended to cover this case with one line changed.
+
+**Does this fully resolve the `:capture-api` classpath gap the original entry reported? Partially,
+precisely characterized, not overstated:**
+`InputStatus.State.Opened.resamplerId` is a plain `String`, computed pipeline-side (where
+`:capture-api` *is* reachable) specifically so `:app` never needs the typed `ResamplerIdentity`
+object — and this package only ever needed the display string, never the object. So for the
+*display* need, yes: whenever `InputStatus` holds a real value for the exact device being verified,
+`RouteCheck`'s fourth check now shows the pipeline's own real identity string, not a
+locally-approximated one. But `InputStatus` is published only by `RealCaptureService` itself, so it
+holds nothing for a device no capture session has yet opened — which is still the *ordinary* case
+for a fresh install's S05 (setup runs entirely before `MainActivity` ever starts capture). The
+locally-computed fallback in `RouteCheck.kt` therefore remains the primary path for a first-run
+verification, not dead code; the pipeline-sourced path becomes the common one only once setup is
+re-entered while a capture session is already running (an operator revisiting Settings, or S05
+re-verifying after `Setup-Route-Mismatch`, on a device a live session still has open). The
+underlying structural fact from the original entry — `:capture-api` is still not on `:app`'s
+compile classpath through any edge this package may add — is completely unchanged; only a new,
+narrow, `String`-typed door through it was opened, pipeline-side, outside this package.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.MainActivityTest"` — **91 of 91 passing**, zero failures (up from the original
+  entry's 86: 2 new `RouteCheckTest` cases, 2 new `RadioUsbScreenTest` cases replacing the old
+  single "Enter the frequency instead invokes its callback" case, 1 new pure `parseMegahertzToHz`
+  case beyond that).
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **641 of 641 passing**, zero
+  failures (the large jump from the original entry's 374 is `main`'s WP2/WP4/WP5/WP6/WP8/data
+  follow-ups landing via the `--ff-only` merge, not this package's own change — confirmed by diffing
+  against `:app:testDebugUnitTest --tests "org.ort.app.ui.setup.*"`'s own 91).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `detekt` needed one
+  real pass: 2 `MaxLineLength` violations (`RouteCheck.kt`'s new pipeline-lookup branch,
+  `RadioUsbScreenTest.kt`'s new frequency-entry test) — both wrapped, not suppressed.
+  `ktlintCheck` clean on the first run this time.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both **BUILD SUCCESSFUL**; `results/coverage-matrix.md` regenerated and included in this commit.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- **S10/S11 real-hardware reachability is unchanged** — still exactly what the original entry
+  reported (`:rig`/`:rig-usb` unbuilt; nothing new landed to change that).
+- **The `:capture-api` classpath gap is narrowed, not closed** — see the dedicated section above.
+  `RouteCheck`'s own fallback path (native-rate-only description, no coefficient hash) is still what
+  a fresh install's first verification actually shows.
+- **S12's "Install" action still has nowhere to navigate to from setup** — unchanged; still outside
+  this package's ownership (`OrtNavHost`, WP3's file).
+- **The manual-frequency `TextField` on S10 has no validation range** (e.g. a physically implausible
+  MHz value is accepted as long as it parses and is positive) — `parseMegahertzToHz` only guards
+  against fabrication (blank/zero/negative/unparseable → `null`), not plausibility. Not asked for by
+  this brief; noted so a future pass does not assume it is already handled.
+
 ## 2026-09-08 (ui-conformance WP4, round three: the Level row opens the live level meter)
 
 ### (pending) — ui-conformance WP4 · Level row opens the live level meter
@@ -283,7 +413,6 @@ all green. Full gate reported in this package's report to the lead.
 **Left open:** unchanged from the entry above — this follow-up touched only the three things the
 coordinator asked about, all three now checked and either fixed or recorded as deliberately not
 fixed with why.
-
 ---
 
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)

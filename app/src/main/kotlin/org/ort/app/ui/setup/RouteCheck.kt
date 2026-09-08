@@ -8,6 +8,7 @@ import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioIo
 import org.ort.capture.android.RouteVerdict
 import org.ort.capture.android.RouteVerifier
+import org.ort.pipeline.capture.InputStatus
 import kotlin.math.abs
 import kotlin.math.log10
 
@@ -25,12 +26,11 @@ public sealed interface RouteCheckState {
     ) : RouteCheckState
 
     /**
-     * All four checks passed — `Continue` unlocks. [resamplerDescription] is `null` when
-     * [nativeRateHz] already matches the pipeline's target rate (no resampling occurs); otherwise
-     * a short, honest description of the fact that resampling will happen — **not** the same
-     * `ResamplerIdentity` object `AudioRecordSource` records (see [RealRouteCheck]'s own doc
-     * comment for why: `:capture-api` is not on `:app`'s compile classpath through any dependency
-     * this package may edit).
+     * All four checks passed — `Continue` unlocks. [resamplerDescription] is the real pipeline
+     * string (`InputStatus.State.Opened.resamplerId` — see [RealRouteCheck]'s own doc comment)
+     * whenever a live capture session already has this exact device open; otherwise it is `null`
+     * when [nativeRateHz] already matches the pipeline's target rate (no resampling occurs), or a
+     * locally-computed, honest description that resampling will happen.
      */
     public data class Passed(val nativeRateHz: Int, val resamplerDescription: String?) : RouteCheckState
 
@@ -58,19 +58,26 @@ public sealed interface RouteCheckState {
  * only add a place for the two to drift apart. On real hardware the caller supplies
  * `AndroidAudioIo` instead — the same [AudioIo] seam capture's own `AudioRecordSource` uses.
  *
- * **Gap found while building this (report to the lead):** the fourth check
- * ("resampler identity recorded") cannot construct capture's real `ResamplerIdentity` — this
- * class reads [AudioIo] directly (raw `select`/`open`/`routedDevice`/`read`) rather than wrapping
- * `AudioRecordSource`, because `AudioRecordSource`'s public surface (`resamplerIdentity`,
- * `deviceFormat`, `outputFormat`, `start(): Flow<CaptureEvent>`) is typed entirely in
- * `:capture-api`, and `:capture-api` is not on `:app`'s compile classpath through any edge WP9 may
- * add: `:capture-android` and `:pipeline` both depend on it with `implementation`, not `api`
- * (`capture-android/build.gradle.kts`, `pipeline/build.gradle.kts` — neither file is in this
- * package's row). [RouteCheckState.Passed.resamplerDescription] is therefore a plain, honest
- * *description* of whether resampling will occur (native rate vs. [OUTPUT_SAMPLE_RATE_HZ]), not
- * the same coefficient-hashed identity object the pipeline records. Reaching real parity needs one
- * of those two build files to re-export `:capture-api` as `api` — a one-line change outside this
- * package's ownership.
+ * **The `:capture-api` classpath gap (register R-081) is now resolved for this check's real
+ * purpose, not worked around.** This class still reads [AudioIo] directly (raw
+ * `select`/`open`/`routedDevice`/`read`) rather than wrapping `AudioRecordSource`, because
+ * `AudioRecordSource`'s public surface (`resamplerIdentity`, `deviceFormat`, `outputFormat`,
+ * `start(): Flow<CaptureEvent>`) is still typed entirely in `:capture-api`, which is still not on
+ * `:app`'s compile classpath through any edge this package may add (`:capture-android` and
+ * `:pipeline` both depend on it with `implementation`, not `api`). What changed is
+ * [org.ort.pipeline.capture.InputStatus] (WP11c): its `State.Opened.resamplerId` is the pipeline's
+ * *own* `ResamplerIdentity.toString()` (or the honest `"none (native rate matches output)"` when
+ * no resampling occurs — `RealCaptureService`'s own doc comment), already reduced to a `String`
+ * pipeline-side specifically so `:app` can read it without ever needing the typed object. This
+ * class's fourth check reads that string whenever [InputStatus.State.Opened] already exists for
+ * the device being verified — see [Passed]'s own doc comment. **This is a partial, not complete,
+ * resolution**: `InputStatus` is published only by `RealCaptureService` itself, so it holds a real
+ * value for this device only once a capture session has actually opened it — which is not yet true
+ * during the ordinary first-run path (S05 runs *before* capture ever starts). The
+ * locally-computed fallback below therefore remains the primary path for a fresh install, not dead
+ * code; it becomes secondary only once setup is re-entered while capture is already running (an
+ * operator revisiting Settings, or S05 re-verifying after `Setup-Route-Mismatch`, with a capture
+ * session still up on the same device).
  */
 public interface RouteCheck {
     public fun run(io: AudioIo, selected: AudioDeviceDescriptor): Flow<RouteCheckState>
@@ -123,13 +130,22 @@ public class RealRouteCheck(
         passed = passed + RouteCheckStage.SIGNAL
         emit(RouteCheckState.InProgress(passed, nativeRate, elapsed))
 
-        val resamplerDescription = if (nativeRate == OUTPUT_SAMPLE_RATE_HZ) {
-            null
-        } else {
-            "$nativeRate Hz -> $OUTPUT_SAMPLE_RATE_HZ Hz, resampled"
-        }
+        val resamplerDescription = resamplerDescriptionFor(nativeRate, selected)
         io.close()
         emit(RouteCheckState.Passed(nativeRate, resamplerDescription))
+    }
+
+    /** [InputStatus.state] when it is a real [InputStatus.State.Opened] for this exact device
+     * (matched by id — never borrowing a different device's identity) is the pipeline's own,
+     * already-honest string; otherwise a locally-computed description — see this class's own doc
+     * comment for exactly when each path applies. */
+    private fun resamplerDescriptionFor(nativeRate: Int, selected: AudioDeviceDescriptor): String? {
+        val fromPipeline = (InputStatus.state as? InputStatus.State.Opened)
+            ?.takeIf { it.descriptor.id == selected.id }
+            ?.resamplerId
+        if (fromPipeline != null) return fromPipeline
+        if (nativeRate == OUTPUT_SAMPLE_RATE_HZ) return null
+        return "$nativeRate Hz -> $OUTPUT_SAMPLE_RATE_HZ Hz, resampled"
     }
 
     private fun peakDbfs(buffer: ShortArray, n: Int): Double {

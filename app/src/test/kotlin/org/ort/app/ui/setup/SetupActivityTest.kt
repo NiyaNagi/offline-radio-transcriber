@@ -10,6 +10,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.MainActivity
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.util.ReflectionHelpers
@@ -37,6 +39,10 @@ class SetupActivityTest {
     @After
     fun tearDown() {
         clearPrefs()
+        // Process-wide singletons (same pattern as CaptureState/RigStatus elsewhere in this
+        // suite) -- reset so a stray value from this class never leaks into a later test.
+        InputStatus.reset()
+        LevelStatus.reset()
     }
 
     private fun clearPrefs() {

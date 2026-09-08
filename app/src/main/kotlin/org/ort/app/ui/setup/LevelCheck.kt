@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioIo
+import org.ort.pipeline.capture.LevelStatus
 import kotlin.math.abs
 import kotlin.math.log10
 
@@ -13,11 +14,14 @@ import kotlin.math.log10
 public enum class LevelBand { TOO_QUIET, IN_BAND, CLIPPING }
 
 /** One reading S07's live meter renders. [bars] are the last few peak samples as `0f..1f`
- * fractions (for the bar-graph), most-recent last. */
+ * fractions (for the bar-graph), most-recent last. [noiseFloorDbfs] is `null` until enough history
+ * exists to report a floor honestly — [RealLevelCheck] always has one after its first sample
+ * (a running minimum of what it has already seen), but [levelReadingFrom] (real `LevelStatus`
+ * data, published by `RealCaptureService`) can genuinely not have one yet — never fabricated. */
 public data class LevelReading(
     val bars: List<Float>,
     val peakDbfs: Double,
-    val noiseFloorDbfs: Double,
+    val noiseFloorDbfs: Double?,
     val band: LevelBand,
 ) {
     /** `Setup-Level.dc.html`'s "Headroom" row: how far the peak sits below clipping (0 dBFS). */
@@ -36,10 +40,47 @@ public interface LevelCheck {
     public fun run(io: AudioIo, selected: AudioDeviceDescriptor): Flow<LevelCheckState>
 }
 
+/** Maps [LevelStatus.State.Measured] and the last [barCount] entries of `LevelStatus.peakHistoryDbfs`
+ * into the same [LevelReading] shape [RealLevelCheck] produces, so S07 renders identically
+ * whichever source fed it. [measured.clipped] (a real, per-frame clip detector in
+ * `:capture-android`'s `LevelMeter`) is authoritative for [LevelBand.CLIPPING] over the peak
+ * threshold alone — a genuine clip can be brief enough that the peak of a later, quieter frame no
+ * longer shows it, and this bit is exactly how `LevelMeter` remembers it happened. */
+public fun levelReadingFrom(
+    measured: LevelStatus.State.Measured,
+    history: List<Float>,
+    barCount: Int = RealLevelCheck.DEFAULT_BAR_COUNT,
+): LevelReading = LevelReading(
+    bars = history.takeLast(barCount).map { levelBarFraction(it.toDouble()) },
+    peakDbfs = measured.peakDbfs.toDouble(),
+    noiseFloorDbfs = measured.noiseFloorDbfs?.toDouble(),
+    band = levelBandFor(measured.peakDbfs.toDouble(), clipped = measured.clipped),
+)
+
+/** [clipped], when true (a real per-frame detector — see [levelReadingFrom]'s doc comment),
+ * overrides the peak-threshold check; [RealLevelCheck] (no such detector of its own — see its doc
+ * comment) always passes `false` and relies on the peak threshold alone. */
+public fun levelBandFor(peakDbfs: Double, clipped: Boolean = false): LevelBand = when {
+    clipped || peakDbfs >= RealLevelCheck.CLIPPING_AT_OR_ABOVE_DBFS -> LevelBand.CLIPPING
+    peakDbfs < RealLevelCheck.TOO_QUIET_BELOW_DBFS -> LevelBand.TOO_QUIET
+    else -> LevelBand.IN_BAND
+}
+
+/** Maps a dBFS reading onto `0f..1f` for the bar graph — shared by [RealLevelCheck] and
+ * [levelReadingFrom] so a bar means the same height regardless of which source measured it. */
+public fun levelBarFraction(dbfs: Double): Float {
+    val clamped = dbfs.coerceIn(NOISE_FLOOR_SILENCE_DBFS, 0.0)
+    return ((clamped - NOISE_FLOOR_SILENCE_DBFS) / -NOISE_FLOOR_SILENCE_DBFS).toFloat()
+}
+
+private const val NOISE_FLOOR_SILENCE_DBFS: Double = -90.0
+
 /**
  * Reads raw PCM from [AudioIo] directly (the same seam [RealRouteCheck] uses — see that class's
  * doc comment for why this stays below `AudioRecordSource`/`:capture-api`, which are not reachable
- * from `:app`'s compile classpath through any edge this package may add).
+ * from `:app`'s compile classpath through any edge this package may add). The fallback S07 runs
+ * when nothing has published a real [LevelStatus] yet — see [levelReadingFrom]'s own doc comment
+ * for the source S07 prefers when one exists.
  *
  * The target-band boundaries below are a documented policy choice, not read from any spec number
  * (`spec/functional-spec.md` names no dBFS thresholds — confirmed by search before writing this).
@@ -47,7 +88,11 @@ public interface LevelCheck {
  * board, not a tolerance a live meter can realistically hit sample-to-sample; [TOO_QUIET_BELOW_DBFS]
  * and [CLIPPING_AT_OR_ABOVE_DBFS] give that target room to breathe while still rejecting near-silence
  * and true clipping. Every number *shown* to the operator (peak, noise floor, headroom) is real,
- * measured audio — only the three-way banding is policy.
+ * measured audio — only the three-way banding is policy. Unlike [levelReadingFrom]'s real
+ * [LevelStatus.State.Measured.clipped] bit, this class has no per-frame clip detector of its own
+ * (`:capture-android`'s `LevelMeter` is the one place that lives, and it is reached through
+ * `LevelStatus`, not through the raw [AudioIo] seam) — its own [LevelBand.CLIPPING] is peak-
+ * threshold only, via [levelBandFor]'s default `clipped = false`.
  */
 public class RealLevelCheck(
     private val durationMillis: Long = DEFAULT_DURATION_MILLIS,
@@ -72,9 +117,9 @@ public class RealLevelCheck(
                 everRead = true
                 val peak = peakDbfs(buffer, n)
                 noiseFloorDbfs = if (noiseFloorDbfs == Double.NEGATIVE_INFINITY) peak else minOf(noiseFloorDbfs, peak)
-                bars.addLast(dbfsToFraction(peak))
+                bars.addLast(levelBarFraction(peak))
                 if (bars.size > barCount) bars.removeFirst()
-                emit(LevelCheckState.Reading(LevelReading(bars.toList(), peak, noiseFloorDbfs, bandFor(peak))))
+                emit(LevelCheckState.Reading(LevelReading(bars.toList(), peak, noiseFloorDbfs, levelBandFor(peak))))
             }
             delay(sampleIntervalMillis)
             elapsed += sampleIntervalMillis
@@ -93,18 +138,6 @@ public class RealLevelCheck(
         return 20.0 * log10(peak / SHORT_FULL_SCALE)
     }
 
-    private fun dbfsToFraction(dbfs: Double): Float {
-        // Maps [NOISE_FLOOR_SILENCE_DBFS, 0] onto [0f, 1f] for the bar graph.
-        val clamped = dbfs.coerceIn(NOISE_FLOOR_SILENCE_DBFS, 0.0)
-        return ((clamped - NOISE_FLOOR_SILENCE_DBFS) / -NOISE_FLOOR_SILENCE_DBFS).toFloat()
-    }
-
-    private fun bandFor(peakDbfs: Double): LevelBand = when {
-        peakDbfs >= CLIPPING_AT_OR_ABOVE_DBFS -> LevelBand.CLIPPING
-        peakDbfs < TOO_QUIET_BELOW_DBFS -> LevelBand.TOO_QUIET
-        else -> LevelBand.IN_BAND
-    }
-
     public companion object {
         public const val DEFAULT_DURATION_MILLIS: Long = 60_000L
         public const val DEFAULT_SAMPLE_INTERVAL_MILLIS: Long = 200L
@@ -116,7 +149,6 @@ public class RealLevelCheck(
         /** At or above this, the input is clipping. */
         public const val CLIPPING_AT_OR_ABOVE_DBFS: Double = -3.0
 
-        private const val NOISE_FLOOR_SILENCE_DBFS: Double = -90.0
         private const val READ_BUFFER_FRAMES: Int = 1_600
         private const val SHORT_FULL_SCALE: Double = 32_768.0
     }
