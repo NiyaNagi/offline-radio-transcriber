@@ -7798,6 +7798,104 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · round 8: settings header count confirmed; R-276 blocked on LogContent.initialFilter
+
+**Scope:** `:app` `ui/navigation/**`, tests, `CHANGELOG.md`. Ninth reconciliation addendum. No
+production code changed this round — see What changed for why. `git merge --ff-only main` succeeded
+cleanly to `2be24a9`, which sits on WP8's pass-2 batch (`0455401`) and its own register pass
+(`9c3cd7d`), both confirmed present via `git log main --oneline` before merging.
+
+**Requirements/ACs:** R-090 (confirmed, not re-fixed), R-276 (investigated; still `partial` —
+routing half not done, blocked, reported below).
+
+**Constitution check.** Principle II (uncertainty is content): R-276 is reported as blocked, not
+routed with a filter that would not actually apply — a button that opens an *unfiltered* Log while
+still labelled "The 61 overs" would show a number the screen no longer honours, which is worse than
+the current no-op, not better; wiring a route that cannot deliver what it claims is exactly the kind
+of silent gap the constitution forbids. Principle VII (structural boundaries): `ui/screens/
+LogContent.kt` is WP5's file — not touched, per the coordinator's own standing instruction; the exact
+minimal signature this row needs is specified below for WP5 to add, not guessed at or worked around.
+
+**What changed:**
+
+- **Item (1) — confirmed, not re-fixed.** Round 7's `SettingsRootScreen`/`OrtNavHost.kt` header-
+  ownership fix already stands; this round's own merge brought no further changes to
+  `ui/settings/**`'s header shape. Reran the `SETTINGS` smoke cases fresh (`--rerun-tasks`, not
+  reused from cache) to confirm directly rather than assume: `R_129_SETTINGS_composes_and_survives_
+  recreation`'s own `assertExactlyOneContentDescription("Open navigation")`/`("Search")` (round 7's
+  own strengthened assertions) both still pass. No code change was needed or made.
+- **Item (2), R-276 — investigated in full; still blocked, not routed.** WP8's batch
+  (`0455401`/`9c3cd7d`) landed the real `onOpenOvers: (Long, TimeWindow) -> Unit = { _, _ -> }` on
+  both `FrequencyChangeScreen` and `FrequencyDetailContent` (`org.ort.app.ui.data.TimeWindow(
+  startMillis, endMillis)`), threaded through to this package's own drill-in dispatch site exactly as
+  `onOpenStation` already is. `LogFilterSelection` (`ui/data/LogViewData.kt`) already carries every
+  field this needs — `frequencyHz: Long?`, `fromMillis: Long?`, `toMillis: Long?` — so the *filter
+  type itself* is not the gap the coordinator's brief anticipated it might be. The actual gap: reading
+  `LogContent.kt` in full found its `selection` state has no external seed at all —
+  `var selection by rememberSaveable(stateSaver = LogFilterSelectionSaver) { mutableStateOf(
+  LogFilterSelection()) }`, always starting from the empty filter, with no parameter of any kind to
+  land on a pre-set one. This is the identical shape this package has already asked for and received
+  twice this engagement (`SettingsContent.initialScreen`, round 5; `CaptureStatusContent.openLevelMeter`,
+  round 6) — a `null`-default parameter read once into the same `rememberSaveable` initial value.
+  **Per the coordinator's own explicit instruction for exactly this case, `LogContent.kt` is not
+  touched; the needed signature is specified in full below** rather than worked around (e.g., wiring
+  `onOpenOvers` to open `Log` unfiltered would make the button's own "The N overs" label a lie the
+  moment it is tapped — reported instead, per Constitution check above).
+
+**The exact `LogContent.kt` change this row needs, for the coordinator to route to WP5:**
+
+```kotlin
+@Composable
+public fun LogContent(
+    context: Context,
+    sessionId: String?,
+    onOpen: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onOpenThread: (String) -> Unit = {},
+    initialFilter: LogFilterSelection? = null,  // new — same "opens there on launch, not always
+                                                 // jumps there" contract as SettingsContent.initialScreen
+) {
+    ...
+    var selection by rememberSaveable(stateSaver = LogFilterSelectionSaver) {
+        mutableStateOf(initialFilter ?: LogFilterSelection())
+    }
+    ...
+}
+```
+
+Once this lands, this row's own remaining work is mechanical and already scoped: `OrtNavHost.kt`
+wires `FrequencyDetailContent`'s `onOpenOvers = { hz, window -> ... }` to set `current = LOG`, track
+`LogFilterSelection(frequencyHz = hz, fromMillis = window.startMillis, toMillis = window.endMillis)`
+in a new piece of `NavHostNavState`, and pass it through as `LogContent`'s new `initialFilter` — the
+same `NavHostNavState`/`NavHostIds` bundling pattern `settingsInitialScreen`/`openCaptureLevelMeter`
+already established. The smoke test the coordinator asked for (`FQ03 → Log` with the filter applied,
+real-`Activity`) is written the same round this lands, once there is something real to assert against
+— not before.
+
+**Verified:**
+- `git merge --ff-only main` — clean fast-forward to `2be24a9`.
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:ktlintCheck` — `BUILD SUCCESSFUL`, fully clean (the `Rows.kt` findings this
+  row reported last round are gone, resolved elsewhere).
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, fully clean.
+- `.\gradlew.bat dependencyRules` — `OK`, 17 modules, no new edge.
+- `.\gradlew.bat :app:testDebugUnitTest` — 1051 tests, 3 failed: 2 in `ui/setup/ReadyScreenTest.kt`
+  (WP9's file, identical to last round's own finding, unchanged, not this row); 1 in
+  `ui/data/CorrectionPollingTest.kt` (`SQLiteDatabaseLockedException`, the same concurrent-worktree
+  file-DB contention this engagement has hit before — reran in isolation and it passed clean).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --rerun-tasks` — `BUILD SUCCESSFUL`, 16 tests, 0 failed.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat coverageMatrix --rerun-tasks` — 419 requirements, 185 covered, unchanged from round
+  7's own run (no delta to `results/coverage-matrix.md` this round).
+- `python tools/spec-check/spec_check.py` — 8/8 `PASS`.
+
+**Left open / not done:**
+- **R-276 stays `partial`** — the routing half is specified but not built, blocked on the
+  `LogContent.initialFilter` signature above landing on `main` from WP5.
+- Two pre-existing `ui/setup/ReadyScreenTest.kt` failures (WP9's file) remain, unchanged from round 7.
+- Round 6/7's own open items (`onOpenLevelMeter`'s own further gaps, `onRetryInput`/`onEndSession`/
+  `onRequestUsbPermission` no-ops) are unchanged.
+
 ### (pending) — ui-conformance WP3 · round 7: settings header owned by content; frequency overs route
 
 **Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`), tests
