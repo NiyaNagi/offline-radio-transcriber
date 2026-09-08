@@ -32,6 +32,97 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: DayOfWeekGrid's legend wraps whole swatches instead of squeezing the last one to a sliver)
+
+### (pending) — ui-conformance WP2 · R-310
+
+**Scope:** `:app` `ui/components/ActivityPatternChart.kt` and `ActivityPatternChartTest.kt` only.
+`git merge --ff-only main` run first (fast-forward `ba12e71..a038128` — WP5/WP8/WP9/pipeline pass-3
+work and screenshots; none of this package's files touched by the merge). No rebase, no stash, no
+`gradlew --stop`.
+
+**Requirements/ACs:** R-310 (spec/polish) — V5 pass-3's inspection finding on
+`stations-14-nights/ST03-hourxday-pass3@2x.png`: `DayOfWeekGrid`'s own three-item legend collapses
+its last ("not listening") item into a one-letter-per-line column at font scale 2.0; the same
+screen's `By hour` mode legend (`ST03-byhour-pass3@2x.png`) is unaffected.
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) again: the fix stays inside
+  `DayOfWeekGridLegend`'s own private layout, the one place this defect actually lives —
+  `ActivityPatternChart`'s own axis-row legend (`By hour` mode) was never broken because it only
+  ever lays out a single item, centred in its own `Box(weight(1f))`; `DayOfWeekGrid`'s is the one
+  legend with three items genuinely competing for room on the same row.
+- **Root cause.** `DayOfWeekGridLegend` was a plain `Row` of three unweighted `LegendSwatch`/
+  `NotListeningLegend` items, none of whose labels had `softWrap`/`maxLines` set. At font scale
+  2.0 the row runs out of horizontal room; a plain `Row` does not reflow a child it cannot fit —
+  the last item is instead handed whatever width remains, and with no `softWrap = false` its own
+  `Text` wraps within that remainder rather than moving to a new line, producing the register's
+  screenshot (a "not listening" swatch reading down the right edge, one letter per line).
+- **The fix.** `DayOfWeekGridLegend`'s `Row` is now a `FlowRow` (`@OptIn(ExperimentalLayoutApi::
+  class)`, the same fix `LogRowMarkerLine` already applies elsewhere in this package —
+  `Rows.kt`, an earlier entry in this file — for an equivalent "the last item has nowhere to go"
+  defect): an item with no room left on the current line now moves to its own new line as a whole
+  unit (dot + label together), never split mid-label. Both `LegendSwatch`'s label `Text` and
+  `NotListeningLegend`'s label `Text` (shared by both the grid legend and the unaffected `By hour`
+  legend — the fix is additive and safe for both) now carry `maxLines = 1, softWrap = false`, so
+  even a swatch on its own new line can never itself wrap onto a second.
+- **A real environmental limit, hit and worked around while writing the test.** This host's
+  Robolectric cannot force or verify a rendered *wrap* from real glyph metrics — a limitation
+  recorded repeatedly elsewhere in this package's own history, now confirmed to extend beyond
+  custom `fontFamily`s: `rememberTextMeasurer()` against `OrtType.subLine` (`FontFamily.
+  SansSerif`, a platform default, not a custom face) measured `"listened, not heard"` — 19
+  characters — at a width of exactly **19.0px**, one pixel per character, for every string tried;
+  this host's font fallback returns a fixed, degenerate per-glyph advance regardless of the real
+  font's actual metrics. A companion, deliberate attempt to force the historical bug by
+  constraining `DayOfWeekGrid` to `Modifier.width(15.dp)` (well under any real label's own natural
+  extent) inside `OrtTheme` also failed to reproduce it — investigated directly: `OrtTheme`'s own
+  `Surface` (`Theme.kt`) is `Modifier.fillMaxSize()`, and Material3's `Surface` propagates its own
+  resolved *minimum* constraints into its content, so `DayOfWeekGrid`'s own smaller `width()`
+  request is clamped back up to the full test-root size (confirmed via a semantics-node bounds
+  probe: `DayOfWeekGrid`'s own node measured at the root's full 320×470px regardless of a 15dp,
+  60dp or 340dp request). Neither limitation is specific to this fix; both are logged here because
+  the test below had to be designed around them rather than the pixel-collision test R-271's own
+  entry (an earlier entry in this file) used for a *different*, host-measurable class of defect.
+  What the test below checks instead — the one thing genuinely host-independent here — is that
+  every legend label's own rendered width is never narrower than what the identical style/text
+  independently measures to (`rememberTextMeasurer`), and that every label renders at one uniform,
+  single-line height. `FlowRow` itself (moving a whole overflowing item to a new line, as opposed
+  to only keeping each label's own text unsquashed) is reasoned about directly against
+  `LogRowMarkerLine`'s own already-established, identical precedent rather than independently
+  pixel-proven here, for the same reason.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.ActivityPatternChartTest"`
+  — **17 of 17 passing** (was 16). New: `R_310_legend labels are one line and never narrower than
+  their own intrinsic width, at font scale 2_0`.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **1103 of 1103 passing, 0 failed** (the
+  two `ReadyScreenTest` failures disclosed in this file's own previous entry are gone — resolved
+  upstream by `ui/setup/**`'s own owner, confirmed by summing every
+  `app/build/test-results/testDebugUnitTest/*.xml` report's `tests`/`failures` attributes).
+- `.\gradlew.bat dependencyRules platformGuards` (isolated) — both **OK** (17 modules).
+- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck :app:detekt --rerun-tasks` — **BUILD
+  SUCCESSFUL**; `app/build/reports/ktlint/ktlintMainSourceSetCheck/ktlintMainSourceSetCheck.txt`,
+  `.../ktlintTestSourceSetCheck.txt` and `app/build/reports/detekt/detekt.txt` all confirmed **0
+  bytes** (a first `detekt` run flagged this commit's own new test name for `MaxLineLength` —
+  shortened it, then reran clean).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 185 covered` (unchanged — R-310 is a
+  polish/spec finding, not yet a spec-registered id the matrix's generator counts against).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (185 covered of 419)`.
+
+**Left open / not done:**
+- **The register is not updated by this commit** — closing out R-310 is the validator/coordinator's
+  own bookkeeping.
+- **No screenshot/emulator re-capture** of `stations-14-nights/ST03-hourxday-pass3@2x.png` to
+  visually confirm the fix against the actual artboard — Robolectric assertions only, per the plan
+  (Phase E/Validators own screenshot verification), and per this entry's own "What changed" note,
+  the specific pixel-collision claim is not independently verifiable on this host at all — a real
+  device/emulator capture is the only way to see the swatches actually wrap.
+
+---
+
 ## 2026-09-08 (ui-conformance WP10 round 7: R-291 ANR-adjacent chip clipping, R-133/137/138/140 board conformance)
 
 ### (pending) — ui-conformance WP10 · R-291 chip-row fillMaxWidth; R-133/137/138/140 board conformance
