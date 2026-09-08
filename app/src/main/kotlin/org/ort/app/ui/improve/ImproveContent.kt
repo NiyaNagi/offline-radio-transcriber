@@ -38,9 +38,23 @@ private sealed interface ImprovePage {
  * publishes to as a side effect of the very `Flow` [runner]`.run` returns) is polled separately
  * while [ImprovePage.Running] is showing, both for the engine's own capture-priority auto-pause
  * (FR-REP-6) and for the real `Summary` [ImprovePage.Done] renders (R-143).
+ *
+ * [onOpenModels] (R-350, register): `Improve-Done`'s `Install` action (shown only when the real
+ * failure reasons name a missing model) needs `Settings-Assets` — the same destination R-139's
+ * "Install a model" already reaches, via `initialScreen` — which this package cannot resolve on
+ * its own (no drill-in of that shape exists inside `ui/improve`, and `OrtNavHost.kt` is outside
+ * this round's file ownership). Defaults to a no-op so every existing caller keeps compiling
+ * unchanged; the host is expected to wire it the same way it wires `NowScreen`'s own
+ * `onOpenModels` (`OrtNavHost.kt`'s `NavHostCallbacks.onOpenModels`, `navigator.openSettings
+ * (SettingsScreenId.ASSETS)`).
  */
 @Composable
-public fun ImproveContent(context: Context, onDrawer: () -> Unit, modifier: Modifier = Modifier) {
+public fun ImproveContent(
+    context: Context,
+    onDrawer: () -> Unit,
+    modifier: Modifier = Modifier,
+    onOpenModels: () -> Unit = {},
+) {
     val runner = remember { RealImproveRunner(context) }
     var page by remember { mutableStateOf<ImprovePage>(ImprovePage.Root) }
     var root by remember { mutableStateOf<ImproveRootViewState?>(null) }
@@ -100,6 +114,7 @@ public fun ImproveContent(context: Context, onDrawer: () -> Unit, modifier: Modi
             ),
             onDone = { page = ImprovePage.Root },
             modifier = modifier,
+            onInstallModel = onOpenModels,
         )
     }
 }

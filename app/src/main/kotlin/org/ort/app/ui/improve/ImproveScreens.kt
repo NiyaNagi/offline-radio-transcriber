@@ -33,6 +33,7 @@ import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
+import org.ort.pipeline.reprocess.ReprocessStatus
 
 private val IMPROVE_CARD_SHAPE = RoundedCornerShape(10.dp)
 
@@ -334,12 +335,25 @@ public fun ImproveRunningScreen(
     }
 }
 
-/** `Improve-Done.dc.html`: [ImproveDoneViewState.summary]'s real measured counts (R-143, WP11d
+/**
+ * `Improve-Done.dc.html`: [ImproveDoneViewState.summary]'s real measured counts (R-143, WP11d
  * addendum) once `RealImproveRunner` has driven the run; the honest "no reprocessing engine" note
  * (unchanged) when it has not — never a fabricated diff either way (see [ImproveRunner]'s kdoc for
- * why the per-record detail itself stays absent in both cases). */
+ * why the per-record detail itself stays absent in both cases).
+ *
+ * [onInstallModel] (R-350, register): shown only when [ReprocessStatus.Summary.failureReasons]
+ * names a missing-model cause — routes to `Settings-Assets` the same way R-139's "Install a model"
+ * already does (`initialScreen`, `OrtNavHost.kt`'s own wiring, outside this package's reach; see
+ * [org.ort.app.ui.improve.ImproveContent]'s own `onOpenModels` doc comment). Defaults to a no-op so
+ * every existing caller keeps compiling unchanged.
+ */
 @Composable
-public fun ImproveDoneScreen(state: ImproveDoneViewState, onDone: () -> Unit, modifier: Modifier = Modifier) {
+public fun ImproveDoneScreen(
+    state: ImproveDoneViewState,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+    onInstallModel: () -> Unit = {},
+) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = OrtSpacing.lg)) {
         Text(
             text = "Done",
@@ -368,6 +382,17 @@ public fun ImproveDoneScreen(state: ImproveDoneViewState, onDone: () -> Unit, mo
                 color = OrtColors.textBody,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
             )
+            // R-350 (register, round 10 System validator): `summary.failed` used to be the whole
+            // story — a real count with no real reason beside it, even though
+            // `ReprocessStatus.Summary.failureReasons` (real, per-item, WP11d/WP11c's own R-290
+            // work) has carried the *why* since round 6. `failureReasons` is deduplicated, not
+            // per-reason-counted (`ReprocessStatus.Summary`'s own doc comment: "distinct messages
+            // only") — so a single distinct reason can honestly be labelled with the real total
+            // failed count (every failure shares it), but more than one distinct reason cannot be
+            // split into per-reason counts without inventing a breakdown this build never measured.
+            if (summary.failed > 0 && summary.failureReasons.isNotEmpty()) {
+                FailureReasonLine(summary = summary, onInstallModel = onInstallModel)
+            }
             Text(
                 text = "Per-record detail is not shown — no per-record before/after view exists yet.",
                 style = OrtType.cardBody,
@@ -391,3 +416,40 @@ public fun ImproveDoneScreen(state: ImproveDoneViewState, onDone: () -> Unit, mo
         )
     }
 }
+
+/** R-350 (register): "<N> failed — <reason>", real throughout — split out of [ImproveDoneScreen]
+ * purely to keep that function under detekt's length limit. */
+@Composable
+private fun FailureReasonLine(
+    summary: ReprocessStatus.Summary,
+    onInstallModel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val reasons = summary.failureReasons
+    val reasonLabel = if (reasons.size == 1) {
+        humanizeFailureReason(reasons.single())
+    } else {
+        reasons.joinToString("; ") { humanizeFailureReason(it) }
+    }
+    Column(modifier = modifier.padding(top = OrtSpacing.xs)) {
+        Text(
+            text = "${summary.failed} failed — $reasonLabel",
+            style = OrtType.subLine,
+            color = OrtColors.accentAmber,
+        )
+        if (reasons.any(::isMissingModelReason)) {
+            TextAction(text = "Install", onClick = onInstallModel, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+}
+
+/** The real underlying `:pipeline` message (`AsrEngineProvisioning`'s own "ASR unavailable: no ASR
+ * model installed at …") reworded to `F13`'s already-established board phrase for the identical
+ * fact (`ModelsScreen.kt`'s own `FailedState` title, guide §9 — never a second, differently-worded
+ * claim about the same thing) — every other real reason stays exactly the real message
+ * `WorkQueueItemEntity.lastError` recorded, never invented or paraphrased. */
+private fun humanizeFailureReason(reason: String): String =
+    if (isMissingModelReason(reason)) "No transcription model installed" else reason
+
+private fun isMissingModelReason(reason: String): Boolean =
+    reason.contains("ASR unavailable", ignoreCase = true) || reason.contains("no ASR model", ignoreCase = true)
