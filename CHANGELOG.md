@@ -942,6 +942,88 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 · title attribution row and waveform scrubbing
+
+**Scope:** `:app`, this package's files only — `ui/screens/TransmissionDetailScreen.kt`,
+`ui/screens/CorrectionSheet.kt`; `ui/audio/FakeTransmissionAudioPlayer.kt`;
+`app/src/test/.../ui/screens/TransmissionDetailScreenTest.kt`,
+`app/src/test/.../ui/audio/FakeTransmissionAudioPlayerTest.kt`. `DetailWhyScreen.kt` was read and
+needed no change — it has no input fields to migrate. Addendum to the WP6 entry directly below,
+same package, a follow-up commit at the coordinator's request after `main` (merged here at
+`7964ceb`, carrying `4c795d3`) landed WP2's `TitleAttributionRow`/`WaveformCard.onScrub` and the
+shared `ui/components/Controls.kt` `TextField`.
+
+**Requirements/ACs:** R-050 (closed — title-size header, was a reported component gap in the entry
+below), R-054 (closed — scrubbing, was a reported gap in the entry below), guide §5/FR-A11Y-2
+(a real Material `TextField`'s content description, not a hand-applied `.semantics{}` block).
+
+**Constitution Check.** Principle I: the header's confidence-in-prose rule (this package's own
+FR-UI-4 rewrite) is unchanged — `TitleAttributionRow` renders no confidence chip at all in any
+state, which the detail header never relied on (confidence lives in the explanation sentence);
+proven directly rather than assumed. Principle VII: "never hand-roll a look-alike of a component
+that exists" is satisfied both ways here — the header uses `TitleAttributionRow` as-is rather than
+reimplementing it, and the one thing it cannot express (AMBIGUOUS's alternate callsign) is added
+as a plain sibling `Text`, not a rebuilt marker.
+
+**What changed:**
+
+1. **R-050 complete.** The header now renders through `TitleAttributionRow` (27sp mono callsign,
+   marker at `MARKER_TITLE_SIZE`) instead of `AttributionRow` at `MARKER_CARD_SIZE` — closing the
+   component gap the entry below reported. `TitleAttributionRow` has no `alternate` parameter
+   (unlike `AttributionRow`), so AMBIGUOUS's "or QRF" runner-up is rendered as one further `Text`
+   right after it, in `AttributionRow`'s own token choices (`OrtType.subLine`/`accentAmber`) for
+   the identical fact — an addition beside the shared component, not a look-alike of it.
+2. **R-054 complete.** `WaveformCard`'s `onScrub` (a `0f..1f` fraction from WP2's own tap/drag
+   gesture handling) now calls `TransmissionAudioPlayer.seekToFraction` directly and updates
+   `positionFraction` immediately, so the cursor tracks a drag rather than lagging a whole poll
+   interval. Wired whenever the transmission has retained audio (same gate as the play control).
+3. **Hand-rolled fields migrated to the shared `TextField`.** Every `androidx.compose.material3.TextField`
+   this package owned — the four labelled-sample fields (`TransmissionDetailScreen.kt`) and the
+   lexicon-search/typed-callsign fields (`CorrectionSheet.kt`) — now uses
+   `org.ort.app.ui.components.TextField` (`bg/current` ground, `line/strong`/`accent/green` border,
+   `mono` for every callsign-shaped field). Every field's content description is preserved exactly
+   via `contentDescriptionText`, so no existing `onNodeWithContentDescription` assertion needed to
+   change.
+
+**New tests:**
+- `TransmissionDetailScreenTest`: `R_050_the_header_renders_the_title_attribution_row` (the one
+  named in the request), plus `` `R_050 AMBIGUOUS renders the alternate callsign beside the title
+  attribution row` `` (proving the hybrid case the request's single test name doesn't cover on its
+  own) and `R_054_scrubbing_the_waveform_seeks_the_player` (the one named in the request — a real
+  touch dispatched via `performTouchInput` at the waveform's own measured bounds, not a direct
+  lambda call, so it proves the wiring reaches the actual composed gesture handler WP2 built).
+- `FakeTransmissionAudioPlayerTest`: `` `R_054 seekToFraction records every call so a Compose test
+  can assert on it` `` — the fake needed a `seekCalls` list (the same pattern `playCalls` already
+  established) before the scrub test above could assert on it; added test-first.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.TransmissionDetailScreenTest"
+  --tests "org.ort.app.ui.audio.FakeTransmissionAudioPlayerTest"` — **BUILD SUCCESSFUL**, all 19
+  tests green (12 in `TransmissionDetailScreenTest`, 7 in `FakeTransmissionAudioPlayerTest`).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.TransmissionDetailScreenCorrectionTest"
+  --tests "org.ort.app.ui.screens.CorrectionSheetTest" --tests "org.ort.app.ui.screens.TransmissionDetailContentTest"`
+  — **BUILD SUCCESSFUL** (the `TextField` migration and header change touch shared sections these
+  exercise; all pre-existing assertions pass unmodified).
+- `.\gradlew.bat :app:testDebugUnitTest` (whole module) — **BUILD SUCCESSFUL**, 712 tests total.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**; `dependencyRules: OK`;
+  `platformGuards: OK` (also confirmed as separate invocations).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged, same reason as the
+  entries below) and `.\gradlew.bat coverageMatrixCheck` (separate invocation, up to date) — both
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- The spoken-word outline during playback (R-054's other half) is still not built — no word-timing
+  data exists anywhere in the schema, unchanged from the entry below.
+- The correction sheet's search field placeholder ("callsign or name") is new copy this package
+  chose to fill the shared `TextField`'s `placeholder` slot, which the old hand-rolled field never
+  had (it relied on the content description alone) — a small, deliberate improvement, not a
+  requirement.
+
+---
+
 ### (pending) — ui-conformance WP6 · propagation rebinds the voiceprint and versions priors through StationIdentityDao
 
 **Scope:** `:app`, this package's files only — `ui/data/CorrectionPolling.kt`,

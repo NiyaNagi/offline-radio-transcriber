@@ -51,6 +51,16 @@ class FakeTransmissionAudioPlayerTest {
     }
 
     @Test
+    fun `R_054 seekToFraction records every call so a Compose test can assert on it`(): Unit = runTest {
+        val player = FakeTransmissionAudioPlayer()
+
+        player.seekToFraction(0.3f)
+        player.seekToFraction(0.6f)
+
+        assertEquals(listOf(0.3f, 0.6f), player.seekCalls)
+    }
+
+    @Test
     fun `R_054 setRate is readable back, defaulting to normal speed`(): Unit = runTest {
         val player = FakeTransmissionAudioPlayer()
         assertEquals(PlaybackRate.NORMAL, player.rate)

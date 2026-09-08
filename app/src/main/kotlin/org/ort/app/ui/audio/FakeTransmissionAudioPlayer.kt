@@ -8,12 +8,15 @@ package org.ort.app.ui.audio
  *
  * ui-conformance WP6 (R-054) extended this fake alongside the interface: [rate]/[positionFraction]/
  * [isPlaying] are plain in-memory state, so a Compose test can drive `Detail-Playback.dc.html`'s
- * playing/scrub/speed states without a real `AudioTrack`.
+ * playing/scrub/speed states without a real `AudioTrack`. [seekCalls] records every
+ * [seekToFraction] call, the same pattern [playCalls] already established, so a Compose test that
+ * dispatches a real scrub gesture can assert the fraction actually reached this fake.
  */
 public class FakeTransmissionAudioPlayer(private val script: Map<String, PlaybackOutcome> = emptyMap()) :
     TransmissionAudioPlayer {
 
     public val playCalls: MutableList<String> = mutableListOf()
+    public val seekCalls: MutableList<Float> = mutableListOf()
     public var stopCallCount: Int = 0
         private set
 
@@ -48,6 +51,7 @@ public class FakeTransmissionAudioPlayer(private val script: Map<String, Playbac
     }
 
     override fun seekToFraction(fraction: Float) {
+        seekCalls += fraction.coerceIn(0f, 1f)
         position = fraction.coerceIn(0f, 1f)
     }
 
