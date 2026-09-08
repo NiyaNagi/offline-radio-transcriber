@@ -8,6 +8,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -17,6 +19,7 @@ import org.ort.app.ui.data.LogFilterSheetViewState
 import org.ort.app.ui.data.LogPolling
 import org.ort.app.ui.data.LogQuickFilterId
 import org.ort.app.ui.data.LogScreenViewState
+import org.ort.core.AttributionState
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
 
@@ -26,6 +29,76 @@ private val EMPTY_LOG_SCREEN_STATE = LogScreenViewState(
     rejectedFocus = false,
     rejectedExplanation = null,
     emptyState = null,
+)
+
+/**
+ * R-129 (halt — audit V3 @3e2d4ee): [LogQuickFilterId] is a plain `sealed interface`, which
+ * Compose's default `Saver` cannot handle — under a real `SaveableStateRegistry` (any real
+ * Activity; Robolectric's `createComposeRule` installs none, which is why this was never caught by
+ * a Robolectric test) the *first* composition throws `IllegalArgumentException: MutableState
+ * containing All cannot be saved…`, crashing the process before Log ever renders. Encoded as a
+ * plain string key — `"All"`/`"Named"`/`"Rejected"`/`"Frequency:<hz>"` — rather than an `Int`
+ * ordinal, so a value written by one build survives a later build that inserts a new case.
+ */
+private val LogQuickFilterIdSaver: Saver<LogQuickFilterId, String> = Saver(
+    save = { id ->
+        when (id) {
+            LogQuickFilterId.All -> "All"
+            LogQuickFilterId.Named -> "Named"
+            LogQuickFilterId.Rejected -> "Rejected"
+            is LogQuickFilterId.Frequency -> "Frequency:${id.hz}"
+        }
+    },
+    restore = { encoded ->
+        when {
+            encoded == "All" -> LogQuickFilterId.All
+            encoded == "Named" -> LogQuickFilterId.Named
+            encoded == "Rejected" -> LogQuickFilterId.Rejected
+            encoded.startsWith("Frequency:") ->
+                encoded.removePrefix("Frequency:").toLongOrNull()?.let { LogQuickFilterId.Frequency(it) }
+                    ?: LogQuickFilterId.All
+            else -> LogQuickFilterId.All // an unrecognised saved value never crashes restore — falls back to All.
+        }
+    },
+)
+
+/** The delimiter [LogFilterSelectionSaver] joins [LogFilterSelection.attributionStates] names on. */
+private const val ATTRIBUTION_STATES_DELIMITER = ","
+
+/**
+ * R-129: [LogFilterSelection] is a plain data class too — same crash class as [LogQuickFilterId],
+ * for the same real-`SaveableStateRegistry` reason. `listSaver` fits it directly since every field
+ * is already a Bundle-primitive (`Long?`, `Boolean`) or a small enum set, joined into one string.
+ */
+private val LogFilterSelectionSaver: Saver<LogFilterSelection, Any> = listSaver(
+    save = { selection: LogFilterSelection ->
+        listOf(
+            selection.frequencyHz,
+            selection.attributionStates.joinToString(ATTRIBUTION_STATES_DELIMITER) { it.name },
+            selection.showRejected,
+            selection.showGaps,
+            selection.fromMillis,
+            selection.toMillis,
+        )
+    },
+    restore = { saved: List<Any?> ->
+        val statesField = saved[1] as String
+        val states = if (statesField.isEmpty()) {
+            emptySet()
+        } else {
+            statesField.split(ATTRIBUTION_STATES_DELIMITER).mapNotNull { name ->
+                runCatching { AttributionState.valueOf(name) }.getOrNull()
+            }.toSet()
+        }
+        LogFilterSelection(
+            frequencyHz = saved[0] as Long?,
+            attributionStates = states,
+            showRejected = saved[2] as Boolean,
+            showGaps = saved[3] as Boolean,
+            fromMillis = saved[4] as Long?,
+            toMillis = saved[5] as Long?,
+        )
+    },
 )
 
 /**
@@ -47,8 +120,10 @@ public fun LogContent(
     onOpenThread: (String) -> Unit = {},
 ) {
     var screenState by remember { mutableStateOf(EMPTY_LOG_SCREEN_STATE) }
-    var quickFilter by rememberSaveable { mutableStateOf<LogQuickFilterId>(LogQuickFilterId.All) }
-    var selection by remember { mutableStateOf(LogFilterSelection()) }
+    var quickFilter by rememberSaveable(stateSaver = LogQuickFilterIdSaver) {
+        mutableStateOf<LogQuickFilterId>(LogQuickFilterId.All)
+    }
+    var selection by rememberSaveable(stateSaver = LogFilterSelectionSaver) { mutableStateOf(LogFilterSelection()) }
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
     var sheetState by remember { mutableStateOf<LogFilterSheetViewState?>(null) }
 

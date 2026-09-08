@@ -13,7 +13,8 @@ import org.ort.core.Ulid
  * R-044 (ui-conformance WP5): [ThreadListMapper]'s pure rules — `Threads.dc.html`'s cards,
  * `Threads-Ungrouped.dc.html`'s honest "not grouped yet" state (real today, since nothing
  * populates `threadId` before M6) with its "by frequency, meanwhile" list, and
- * `Thread-Detail.dc.html`'s "how these were attributed" lines.
+ * `Thread-Detail.dc.html`'s "how these were attributed" lines. Extended (audit V3 @3e2d4ee,
+ * R-160/R-161/R-163): kind derivation, mode, span duration and the shared [pluralize] helper.
  */
 class ThreadViewDataTest {
 
@@ -23,6 +24,7 @@ class ThreadViewDataTest {
         threadId: String? = null,
         frequencyHz: Long? = 145_230_000L,
         attribution: Attribution = Attribution.unknown(),
+        mode: String? = null,
     ) = TransmissionDetail(
         id = id,
         startedAtUtcMillis = startedAtUtcMillis,
@@ -35,11 +37,12 @@ class ThreadViewDataTest {
         hasAudio = true,
         threadId = threadId,
         processingState = TransmissionState.COMPLETE,
+        mode = mode,
     )
 
     @Test
     fun `R_044 no transmissions at all is the Empty state`() {
-        assertEquals(ThreadListViewState.Empty, ThreadListMapper.listState(emptyList(), emptySet()))
+        assertEquals(ThreadListViewState.Empty, ThreadListMapper.listState(emptyList(), emptySet(), currentTier = 3))
     }
 
     @Test
@@ -50,10 +53,11 @@ class ThreadViewDataTest {
             detail("TX3", 2_000L, frequencyHz = 146_960_000L),
         )
 
-        val state = ThreadListMapper.listState(details, emptySet()) as ThreadListViewState.Ungrouped
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 1) as ThreadListViewState.Ungrouped
 
         assertEquals(3, state.totalOvers)
         assertEquals(2, state.byFrequency.size)
+        assertEquals(1, state.currentTier)
         val primary = state.byFrequency.first { it.frequencyHz == 145_230_000L }
         assertEquals(2, primary.overCount)
         assertEquals(1, primary.stationCount)
@@ -66,13 +70,15 @@ class ThreadViewDataTest {
             detail("TX2", 1_000L, threadId = "T1", attribution = Attribution.confirmed("K7LWH", 0.9)),
         )
 
-        val state = ThreadListMapper.listState(details, emptySet()) as ThreadListViewState.Grouped
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
 
         val card = state.cards.single()
         assertEquals("T1", card.threadId)
         assertEquals(2, card.overCount)
         assertEquals("W7NPC and K7LWH", card.titleText)
-        assertNull(card.kindLabel) // never guessed — no real classification column populated yet.
+        // two distinct stations, one over each, trivially alternating — the QSO rule (R-160) applies;
+        // the null/Activity/QSO boundary cases each get their own dedicated `R_160` test below.
+        assertEquals("QSO", card.kindLabel)
         assertTrue(card.metaText.contains("2 confirmed"))
     }
 
@@ -80,7 +86,72 @@ class ThreadViewDataTest {
     fun `R_044 kind is never guessed even when it could look like a QSO`() {
         val details = listOf(detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)))
 
-        val state = ThreadListMapper.listState(details, emptySet()) as ThreadListViewState.Grouped
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
+
+        assertNull(state.cards.single().kindLabel)
+    }
+
+    @Test
+    fun `R_160 two stations strictly alternating on the thread render as QSO`() {
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX2", 1_000L, threadId = "T1", attribution = Attribution.confirmed("K7LWH", 0.9)),
+            detail("TX3", 2_000L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX4", 3_000L, threadId = "T1", attribution = Attribution.confirmed("K7LWH", 0.9)),
+        )
+
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
+
+        assertEquals("QSO", state.cards.single().kindLabel)
+    }
+
+    @Test
+    fun `R_160 one station repeating renders as Activity`() {
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX2", 1_000L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX3", 2_000L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+        )
+
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
+
+        assertEquals("Activity", state.cards.single().kindLabel)
+    }
+
+    @Test
+    fun `R_160 three distinct stations never guesses a kind`() {
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX2", 1_000L, threadId = "T1", attribution = Attribution.confirmed("K7LWH", 0.9)),
+            detail("TX3", 2_000L, threadId = "T1", attribution = Attribution.confirmed("N7ABC", 0.9)),
+        )
+
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
+
+        assertNull(state.cards.single().kindLabel)
+    }
+
+    @Test
+    fun `R_160 two stations not alternating never guesses a kind`() {
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX2", 1_000L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX3", 2_000L, threadId = "T1", attribution = Attribution.confirmed("K7LWH", 0.9)),
+        )
+
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
+
+        assertNull(state.cards.single().kindLabel)
+    }
+
+    @Test
+    fun `R_160 an unresolved over in the thread never guesses a kind`() {
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX2", 1_000L, threadId = "T1", attribution = Attribution.unknown()),
+        )
+
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
 
         assertNull(state.cards.single().kindLabel)
     }
@@ -89,7 +160,7 @@ class ThreadViewDataTest {
     fun `R_044 an ambiguous-only thread is tinted and titled honestly, not with a guessed callsign`() {
         val details = listOf(detail("TX1", 0L, threadId = "T1", attribution = Attribution.ambiguous()))
 
-        val state = ThreadListMapper.listState(details, emptySet()) as ThreadListViewState.Grouped
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
 
         val card = state.cards.single()
         assertTrue(card.ambiguous)
@@ -100,7 +171,7 @@ class ThreadViewDataTest {
     fun `R_044 a first-heard station in the thread carries the NEW flag`() {
         val details = listOf(detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)))
 
-        val state = ThreadListMapper.listState(details, firstHeardIds = setOf("TX1")) as ThreadListViewState.Grouped
+        val state = ThreadListMapper.listState(details, setOf("TX1"), currentTier = 3) as ThreadListViewState.Grouped
 
         assertTrue(state.cards.single().isNew)
     }
@@ -129,6 +200,43 @@ class ThreadViewDataTest {
     @Test
     fun `R_044 detailState is null for a threadId with no transmissions`() {
         assertNull(ThreadListMapper.detailState("NOPE", listOf(detail("TX1", 0L, threadId = "T1"))))
+    }
+
+    @Test
+    fun `R_161 mode renders when the data has it and is null when no over in the thread recorded one`() {
+        val withMode = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9), mode = "FM"),
+        )
+        val withoutMode = listOf(
+            detail("TX2", 0L, threadId = "T2", attribution = Attribution.confirmed("W7NPC", 0.9)),
+        )
+
+        assertEquals("FM", ThreadListMapper.detailState("T1", withMode)!!.modeLabel)
+        assertNull(ThreadListMapper.detailState("T2", withoutMode)!!.modeLabel)
+    }
+
+    @Test
+    fun `R_161 the span line reports seconds under a minute and minutes and seconds beyond it`() {
+        val underAMinute = listOf(
+            detail("TX1", 0L, threadId = "T1"),
+            detail("TX2", 38_000L, threadId = "T1"),
+        )
+        val overAMinute = listOf(
+            detail("TX3", 0L, threadId = "T2"),
+            detail("TX4", 115_000L, threadId = "T2"),
+        )
+
+        assertTrue(ThreadListMapper.detailState("T1", underAMinute)!!.metaText.endsWith("38 s"))
+        assertTrue(ThreadListMapper.detailState("T2", overAMinute)!!.metaText.endsWith("1 m 55 s"))
+    }
+
+    @Test
+    fun `R_163 pluralize never drifts into 1 overs`() {
+        assertEquals("1 over", pluralize(1, "over"))
+        assertEquals("2 overs", pluralize(2, "over"))
+        assertEquals("0 overs", pluralize(0, "over"))
+        assertEquals("1 station", pluralize(1, "station"))
+        assertEquals("3 stations", pluralize(3, "station"))
     }
 
     // -- ThreadGroupingMapper.reasoningFor, still used by detailState's per-over reasoning line
