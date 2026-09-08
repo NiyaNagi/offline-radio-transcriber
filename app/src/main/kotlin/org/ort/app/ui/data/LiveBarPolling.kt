@@ -135,10 +135,14 @@ public object LiveBarPolling {
                 StorageForecast.state is StorageForecast.State.OneNightLeft ->
                 LiveBarTone.DEGRADED to "Low storage"
 
-            shedLevel > 0 -> LiveBarTone.DEGRADED to "Tier ${(MAX_TIER - shedLevel).coerceIn(0, MAX_TIER)}"
-
+            // Register R-149: this must match `FailureMapper.mapThermalOrBacklogOrRigBanner`'s own
+            // order exactly (thermal, then backlog, then rig) — a bare `shedLevel > 0` check used
+            // to sit here *before* backlog, so the `backlog` scenario (shed level 3, thermal
+            // nominal) read "Tier 0" instead of "112 behind": found by V6, `backlog/F8-banner.png`.
+            // `FailureMapper` has no standalone "tier dropped, no thermal reason" case at all — the
+            // tier number is only ever shown *as the reason `Fail-Thermal.dc.html` gives*.
             thermal is ThermalStatus.State.Warm || thermal is ThermalStatus.State.Hot ->
-                LiveBarTone.DEGRADED to "Running warm"
+                LiveBarTone.DEGRADED to "Tier ${(MAX_TIER - shedLevel).coerceIn(0, MAX_TIER)}"
 
             shedBacklog >= BACKLOG_GROWING_THRESHOLD -> LiveBarTone.DEGRADED to "$shedBacklog behind"
 

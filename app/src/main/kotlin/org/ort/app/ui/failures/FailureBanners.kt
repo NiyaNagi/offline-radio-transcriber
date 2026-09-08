@@ -1,10 +1,15 @@
 package org.ort.app.ui.failures
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -14,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
@@ -115,17 +121,67 @@ public fun FailStorageWarningBanner(
     modifier: Modifier = Modifier,
 ) {
     val nightWord = if (state.nightsLeftLabel == "1") "night" else "nights"
-    Banner(
-        title = "Storage getting low — warned at ${state.nightsLeftLabel} $nightWord left",
-        body = "${state.freeLabel} at the current write rate. Audio pauses first, then transcripts, before " +
-            "capture ever stops — and capture only stops loudly.",
-        tone = BannerTone.DEGRADED,
-        primaryActionLabel = "Free up space",
-        onPrimaryAction = onFreeUpSpace,
-        secondaryActionLabel = "Retention",
-        onSecondaryAction = onOpenRetentionSettings,
-        modifier = modifier.testTag("failure-storage-warning-banner"),
-    )
+    Column(modifier = modifier.testTag("failure-storage-warning-banner")) {
+        Banner(
+            title = "Storage getting low — warned at ${state.nightsLeftLabel} $nightWord left",
+            body = "${state.freeLabel} at the current write rate. Audio pauses first, then transcripts, " +
+                "before capture ever stops — and capture only stops loudly.",
+            tone = BannerTone.DEGRADED,
+            primaryActionLabel = "Free up space",
+            onPrimaryAction = onFreeUpSpace,
+            secondaryActionLabel = "Retention",
+            onSecondaryAction = onOpenRetentionSettings,
+        )
+        if (state.timeline.isNotEmpty()) {
+            StorageTimelineSection(state.timeline)
+        }
+    }
+}
+
+/** Register R-149: `Fail-Storage.dc.html`'s "How this unfolded" — built only from stages
+ * [FailureSignalsPolling] actually observed, see `FailureMapper.storageTimeline`'s own kdoc. */
+@Composable
+private fun StorageTimelineSection(timeline: List<StorageTimelineStage>, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .background(OrtColors.bgCard, RoundedCornerShape(10.dp))
+            .padding(top = 12.dp, bottom = 4.dp)
+            .testTag("failure-storage-timeline"),
+    ) {
+        Text(
+            text = "How this unfolded",
+            style = OrtType.sectionLabel,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 4.dp),
+        )
+        timeline.forEach { stage ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(11.dp),
+            ) {
+                val dotColor = if (stage.reached) OrtColors.accentGreen else OrtColors.textDisabled
+                Box(
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .size(9.dp)
+                        .background(dotColor, RoundedCornerShape(50)),
+                )
+                Column {
+                    Text(
+                        text = stage.label,
+                        style = OrtType.subtitle,
+                        color = if (stage.reached) OrtColors.textHigh else OrtColors.textDim,
+                    )
+                    Text(
+                        text = stage.detail,
+                        style = OrtType.subLine,
+                        color = OrtColors.textFaint,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------------------
@@ -193,13 +249,65 @@ public fun FailThermalBanner(state: ThermalViewState, modifier: Modifier = Modif
 
 @Composable
 public fun FailBacklogBanner(state: BacklogViewState, modifier: Modifier = Modifier) {
-    Banner(
-        title = "${state.waitingCount} overs deferred — the queue is growing",
-        body = "Capture takes priority; Pass B runs on what it can. Deferred overs keep a live partial and " +
-            "their audio, and get a final transcript once the band quiets.",
-        tone = BannerTone.DEGRADED,
-        modifier = modifier.testTag("failure-backlog-banner"),
-    )
+    Column(modifier = modifier.testTag("failure-backlog-banner")) {
+        Banner(
+            title = "${state.waitingCount} overs deferred — the queue is growing",
+            body = "Capture takes priority; Pass B runs on what it can. Deferred overs keep a live partial and " +
+                "their audio, and get a final transcript once the band quiets.",
+            tone = BannerTone.DEGRADED,
+        )
+        if (state.queueHistory.size >= 2) {
+            BacklogQueueChart(
+                history = state.queueHistory,
+                modifier = Modifier
+                    .padding(top = 12.dp)
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .testTag("failure-backlog-chart"),
+            )
+        }
+        BacklogStatRow("Waiting", "${state.waitingCount} overs")
+        state.growthRateLabel?.let { BacklogStatRow("Rate", it) }
+        BacklogStatRow("Capture", state.captureLabel)
+        BacklogStatRow("In the log", "final once the band quiets")
+    }
+}
+
+/** Register R-149: `Fail-Backlog.dc.html`'s "Queue, last 30 minutes" — the samples
+ * [FailureSignalsPolling] has actually kept, plotted with no smoothing or fabricated points. */
+@Composable
+private fun BacklogQueueChart(history: List<Float>, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(text = "Queue, last 30 minutes", style = OrtType.sectionLabel, color = OrtColors.textFaint)
+        Canvas(modifier = Modifier.fillMaxWidth().height(40.dp).padding(top = 4.dp)) {
+            val w = size.width
+            val h = size.height
+            if (history.size < 2) return@Canvas
+            val stepX = w / (history.size - 1)
+            for (i in 0 until history.size - 1) {
+                val x1 = stepX * i
+                val x2 = stepX * (i + 1)
+                val y1 = h - history[i].coerceIn(0f, 1f) * h
+                val y2 = h - history[i + 1].coerceIn(0f, 1f) * h
+                drawLine(color = OrtColors.accentAmber, start = Offset(x1, y1), end = Offset(x2, y2), strokeWidth = 2f)
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(text = "-30m", style = OrtType.axis, color = OrtColors.textLow)
+            Text(text = "now", style = OrtType.axis, color = OrtColors.textLow)
+        }
+    }
+}
+
+@Composable
+private fun BacklogStatRow(label: String, value: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(text = label, style = OrtType.subLine, color = OrtColors.textFaint)
+        Text(text = value, style = OrtType.subLine, color = OrtColors.textDim)
+    }
 }
 
 // -------------------------------------------------------------------------------------------

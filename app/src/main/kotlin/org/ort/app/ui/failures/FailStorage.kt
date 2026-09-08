@@ -2,13 +2,12 @@ package org.ort.app.ui.failures
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -36,36 +35,41 @@ public fun FailStorageHaltScreen(
     onFreeUpSpace: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
             .failureScreenInset()
             .testTag("failure-storage-halt-screen"),
     ) {
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Row9(state.freeLabel)
-            Banner(
-                title = "Storage exhausted — ${state.freeLabel}",
-                body = "Free space fell below the ${state.floorLabel} floor. Audio, then transcripts, then " +
-                    "capture itself — capture has now stopped, and it stopped loudly: this screen, the " +
-                    "notification and the status surface all say so. Free up space and start a new session.",
-                tone = BannerTone.HALTING,
-                primaryActionLabel = "Free up space",
-                onPrimaryAction = onFreeUpSpace,
-                modifier = Modifier.padding(horizontal = OrtSpacing.lg).padding(top = 16.dp),
-            )
-        }
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PrimaryButton(
-                text = "Free up space",
-                onClick = onFreeUpSpace,
-                modifier = Modifier.fillMaxWidth().testTag("failure-storage-halt-free-space"),
-            )
-        }
+        FailureActionBarScaffold(
+            content = {
+                Row9(state.freeLabel)
+                Banner(
+                    title = "Storage exhausted — ${state.freeLabel}",
+                    body = "Free space fell below the ${state.floorLabel} floor. Audio, then transcripts, " +
+                        "then capture itself — capture has now stopped, and it stopped loudly: this screen, " +
+                        "the notification and the status surface all say so. Free up space and start a new " +
+                        "session.",
+                    tone = BannerTone.HALTING,
+                    primaryActionLabel = "Free up space",
+                    onPrimaryAction = onFreeUpSpace,
+                    modifier = Modifier.padding(horizontal = OrtSpacing.lg).padding(top = 16.dp),
+                )
+            },
+            actionBar = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PrimaryButton(
+                        text = "Free up space",
+                        onClick = onFreeUpSpace,
+                        modifier = Modifier.fillMaxWidth().testTag("failure-storage-halt-free-space"),
+                    )
+                }
+            },
+        )
     }
 }
 

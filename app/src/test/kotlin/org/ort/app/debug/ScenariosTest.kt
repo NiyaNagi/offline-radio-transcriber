@@ -452,6 +452,18 @@ class ScenariosTest {
     }
 
     @Test
+    @Requirement("R-147")
+    fun `R_147 F14_clock-dst carries the facts and Around the change log the full screen needs`() = runTest {
+        Scenarios.load(context, "clock-dst")
+        val presentation = DebugFailureOverride.current
+        assertTrue(presentation is FailurePresentation.Clock)
+        presentation as FailurePresentation.Clock
+        assertTrue(presentation.state.nightLabel.isNotEmpty())
+        assertTrue(presentation.state.windowLabel.isNotEmpty())
+        assertTrue(presentation.state.logRows.isNotEmpty())
+    }
+
+    @Test
     @Requirement("F-016", "R-100")
     fun `F16_usb-permission sets the Usb debug override`() = runTest {
         Scenarios.load(context, "usb-permission")
@@ -463,6 +475,17 @@ class ScenariosTest {
     fun `F17_interrupted-pass sets the Interrupted debug override`() = runTest {
         Scenarios.load(context, "interrupted-pass")
         assertTrue(DebugFailureOverride.current is FailurePresentation.Interrupted)
+    }
+
+    @Test
+    @Requirement("R-147")
+    fun `R_147 F17_interrupted-pass carries the backlog label and the 3 overs list the full screen needs`() = runTest {
+        Scenarios.load(context, "interrupted-pass")
+        val presentation = DebugFailureOverride.current
+        assertTrue(presentation is FailurePresentation.Interrupted)
+        presentation as FailurePresentation.Interrupted
+        assertTrue(presentation.state.backlogLabel.isNotEmpty())
+        assertEquals(3, presentation.state.overs.size)
     }
 
     @Test
@@ -491,6 +514,17 @@ class ScenariosTest {
     fun `F21_asset-swap sets the AssetSwap debug override`() = runTest {
         Scenarios.load(context, "asset-swap")
         assertTrue(DebugFailureOverride.current is FailurePresentation.AssetSwap)
+    }
+
+    @Test
+    @Requirement("R-148")
+    fun `R_148 F21_asset-swap's options each carry a real sub-line, not a bare label`() = runTest {
+        Scenarios.load(context, "asset-swap")
+        val presentation = DebugFailureOverride.current
+        assertTrue(presentation is FailurePresentation.AssetSwap)
+        presentation as FailurePresentation.AssetSwap
+        assertTrue(presentation.state.options.isNotEmpty())
+        presentation.state.options.forEach { option -> assertTrue(option.subLine.isNotEmpty()) }
     }
 
     @Test

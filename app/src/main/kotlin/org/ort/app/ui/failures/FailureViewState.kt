@@ -86,8 +86,19 @@ public data class KilledViewState(public val stoppedAtLabel: String, public val 
 // StorageForecast.State.AtFloor + CaptureState.State.Failed (halt, takeover).
 // -------------------------------------------------------------------------------------------
 
-/** `Fail-Storage.dc.html`'s warning stage — "warned at N nights left". */
-public data class StorageWarningViewState(public val nightsLeftLabel: String, public val freeLabel: String)
+/** `Fail-Storage.dc.html`'s "How this unfolded" timeline entry — [reached] draws the filled vs.
+ * hollow dot the board itself uses for a stage that has/has not happened yet. */
+public data class StorageTimelineStage(public val label: String, public val detail: String, public val reached: Boolean)
+
+/** `Fail-Storage.dc.html`'s warning stage — "warned at N nights left". Register R-149: [timeline]
+ * is built from every `StorageForecast` transition `FailureSignalsPolling` has actually observed
+ * this process's lifetime (`FailureMapper.storageTimeline`) — never a fabricated multi-day
+ * history; a night that has not been observed is not in the list. */
+public data class StorageWarningViewState(
+    public val nightsLeftLabel: String,
+    public val freeLabel: String,
+    public val timeline: List<StorageTimelineStage> = emptyList(),
+)
 
 /** `Fail-Storage.dc.html`'s hard-floor stage — capture has actually stopped. */
 public data class StorageHaltViewState(public val freeLabel: String, public val floorLabel: String)
@@ -115,8 +126,20 @@ public data class ThermalViewState(
 // F8 — Fail-Backlog (banner). ShedStatus.backlog, once past a "growing" threshold.
 // -------------------------------------------------------------------------------------------
 
-/** `Fail-Backlog.dc.html`. */
-public data class BacklogViewState(public val waitingCount: Int)
+/** `Fail-Backlog.dc.html`. Register R-149: [queueHistory] is the real, in-process-observed
+ * backlog depth for up to the last 30 minutes (`FailureSignalsPolling`'s own rolling sample,
+ * normalised `0f..1f` against the highest depth seen in the window — never a fabricated 30
+ * minutes when the process has run for less), oldest first. [growthRateLabel] is measured from
+ * that same history (Δbacklog/Δtime), `null` until two samples exist to compare. [captureLabel]
+ * is `CaptureState`'s own honest summary — never a dropped-sample or ring-buffer figure this
+ * codebase has no signal for. */
+public data class BacklogViewState(
+    public val waitingCount: Int,
+    public val queueHistory: List<Float> = emptyList(),
+    public val oldestOverLabel: String? = null,
+    public val growthRateLabel: String? = null,
+    public val captureLabel: String = "Nominal",
+)
 
 // -------------------------------------------------------------------------------------------
 // F9 — Fail-Rig (banner). RigStatus.State.Stale.
@@ -129,12 +152,26 @@ public data class RigViewState(public val deviceLabel: String, public val sinceL
 // F14 — Fail-Clock (informational card, no runtime signal — DebugFailureOverride only).
 // -------------------------------------------------------------------------------------------
 
-/** `Fail-Clock.dc.html`. */
+/** `Fail-Clock.dc.html`'s "Around the change" log row. */
+public data class ClockLogRow(
+    public val timeLabel: String,
+    public val offsetLabel: String,
+    public val callsign: String?,
+    public val text: String,
+)
+
+/** `Fail-Clock.dc.html`. Register R-147: [nightLabel]/[windowLabel]/[logRows] are what turn the
+ * small info card ([FailClockCard], still used wherever a future Session-detail screen embeds
+ * this inline — a WP10 follow-up, not built by this package) into the board's own full screen
+ * ([FailClockScreen]) — defaulted so the card's existing call sites need no change. */
 public data class ClockViewState(
     public val offsetChangeLabel: String,
     public val ranForLabel: String,
     public val startedLabel: String,
     public val endedLabel: String,
+    public val nightLabel: String = "",
+    public val windowLabel: String = "",
+    public val logRows: List<ClockLogRow> = emptyList(),
 )
 
 // -------------------------------------------------------------------------------------------
@@ -159,15 +196,40 @@ public data class UsbViewState(
 // F17 — Fail-Interrupted (informational card, no runtime signal — DebugFailureOverride only).
 // -------------------------------------------------------------------------------------------
 
-/** `Fail-Interrupted.dc.html`. */
-public data class InterruptedViewState(public val overCount: Int, public val gapLabel: String)
+/** `Fail-Interrupted.dc.html`'s "The 3 overs" row — `statusLabel` is "resolving again…" or "queued". */
+public data class InterruptedOverRow(
+    public val timeLabel: String,
+    public val statusLabel: String,
+    public val text: String,
+)
+
+/** `Fail-Interrupted.dc.html`. Register R-147: [backlogLabel]/[overs] turn the small info card
+ * ([FailInterruptedCard], still used wherever a future Session-detail screen embeds this inline —
+ * a WP10 follow-up) into the board's own full screen ([FailInterruptedScreen]) — defaulted so the
+ * card's existing call sites need no change. */
+public data class InterruptedViewState(
+    public val overCount: Int,
+    public val gapLabel: String,
+    public val backlogLabel: String = "",
+    public val overs: List<InterruptedOverRow> = emptyList(),
+)
 
 // -------------------------------------------------------------------------------------------
 // F19 — Fail-Reconcile (standalone screen, no runtime signal — DebugFailureOverride only).
 // -------------------------------------------------------------------------------------------
 
 public data class ReconcileRecord(public val label: String, public val whenLabel: String, public val note: String?)
-public data class ReconcileFile(public val path: String, public val durationLabel: String, public val note: String?)
+
+/** Register R-148: [playable] is `true` only when a real audio player entry point exists for
+ * [path] — today it never does (`TransmissionAudioPlayer` is keyed by transmission id, not an
+ * arbitrary retained-audio path; an orphan file has no transmission row by definition), so `Play`
+ * always renders as an honest disabled control, never a fabricated affordance. */
+public data class ReconcileFile(
+    public val path: String,
+    public val durationLabel: String,
+    public val note: String?,
+    public val playable: Boolean = false,
+)
 
 /** `Fail-Reconcile.dc.html`. */
 public data class ReconcileViewState(
@@ -193,11 +255,17 @@ public data class MigrationViewState(
 // F21 — Fail-Asset-Swap (standalone screen, no runtime signal — DebugFailureOverride only).
 // -------------------------------------------------------------------------------------------
 
-/** `Fail-Asset-Swap.dc.html`. */
+/** `Fail-Asset-Swap.dc.html`'s Options rows — [subLine] is the board's own explanatory text under
+ * each choice ("the default · nothing else to do", ...). */
+public data class AssetSwapOption(public val label: String, public val subLine: String)
+
+/** `Fail-Asset-Swap.dc.html`. The Lexicon rows' own dots (solid `accent/green` for [activeLabel],
+ * a hollow ring for [stagedLabel] — guide §6.1's marker vocabulary, reused generically the way
+ * `FailedState`'s own marker already is) are fixed to those two rows, not a field here. */
 public data class AssetSwapViewState(
     public val activeLabel: String,
     public val stagedLabel: String,
-    public val options: List<String>,
+    public val options: List<AssetSwapOption>,
     public val selectedOption: Int,
 )
 

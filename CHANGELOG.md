@@ -1035,6 +1035,115 @@ coordinator asked about, all three now checked and either fixed or recorded as d
 fixed with why.
 ---
 
+### (pending) — ui-conformance WP11b · banners below the header, full-screen clock and interrupted boards, board copy completion, storage and backlog histories, font-scale action bars
+
+**Scope:** `:app` — `ui/failures/**` (`FailureHost.kt`, `FailureMapper.kt`,
+`FailureSignalsPolling.kt`, `FailureViewState.kt`, `FailureBanners.kt`, `FailInfoCards.kt`,
+`FailAssetSwap.kt`, `FailCalibration.kt`, `FailMigration.kt`, `FailReconcile.kt`, `FailRoute.kt`,
+`FailStorage.kt`, and a new `FailureActionBarScaffold.kt`), `ui/data/LiveBarPolling.kt` (WP4 idle
+this round, as before), `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, and the matching
+test files. Follow-up to the two WP11b commits above, at the coordinator's request, after
+`git merge --ff-only main` (R-126/R-127/R-128 already merged and flipped to fixed at `e4ed6d4`; no
+rebase, no stash, no other package's files touched). Fixes register rows R-147, R-148, R-149,
+R-151, R-164 (System/Reader validators, V6 `@5c8d144`).
+
+**Requirements/ACs:** R-147, R-148, R-149, R-151, R-164; constitution I (never fabricate a number
+or a history — the storage timeline and backlog chart are built only from samples actually
+observed) and IV (a banner must never make part of the running app unreachable).
+
+**What changed:**
+
+- **R-164 (halt): a banner can no longer cover the header.** `FailureHost`'s `BannerOverlay` now
+  clears a `HEADER_HEIGHT` (44dp, `ScreenHeader.kt`'s own guaranteed `heightIn(min = 44.dp)` — that
+  file exports no named constant to import, so this mirrors it exactly, cited in code) before its
+  own `OrtSpacing.lg` padding, so the drawer icon, live dot and search stay reachable while any
+  banner shows. `R_164 a banner never covers the header` (`FailureHostTest`) asserts the rendered
+  `failure-banner-overlay`'s top bound (`getUnclippedBoundsInRoot()`) is `>= 44.dp`, against the
+  same `backlog` scenario `backlog/T01-threads-live-header.png` caught.
+- **R-147: F14 (`Fail-Clock`) and F17 (`Fail-Interrupted`) are now full-screen presentations, not
+  small floating cards.** New `FailClockScreen`/`FailInterruptedScreen` (`FailInfoCards.kt`) carry
+  each board's facts table (window/ran-for/change, or gap/backlog) and its log
+  (`ClockViewState.logRows` → "Around the change"; `InterruptedViewState.overs` → "The N overs"),
+  routed through `FailureHost`'s existing `TakeoverOrScreen` group rather than `BannerOverlay`, and
+  dismissed the same way F5/F15 are (keyed by `windowLabel`/`gapLabel`, via a new
+  `FailureDismissState` bundling all four dismissable labels so `FailurePresentationOverlay` stays
+  under detekt's `LongParameterList`). `FailClockCard`/`FailInterruptedCard` are kept, documented as
+  the shape a future Session-detail embedding would use — **that embedding stays a WP10
+  follow-up**, this package owns no `Detail*.kt`. `Scenarios.kt`'s `clockDst()`/`interruptedPass()`
+  now seed the boards' own fictional content (`Fail-Clock.dc.html`'s "Overnight, Sat 31 Oct" window
+  and W7NPC/KJ7ABC log rows; `Fail-Interrupted.dc.html`'s three timed over rows). Tests:
+  `R_147 F14/F17 becomes a full screen…` (`FailureScreensTest`), `R_147 a clock-DST override takes
+  over the whole screen…` (`FailureHostTest`), `R_147 F14/F17…carries the facts and…log the full
+  screen needs` (`ScenariosTest`).
+- **R-148: board copy verified or completed on F19/F21/F22 — the status-bar inset itself was
+  already fixed by R-127's `failureScreenInset()` modifier, confirmed present on all three by
+  re-reading each file.** F19 (`FailReconcile.kt`): orphan-file rows now carry a `Play` action,
+  honestly disabled by default (`ReconcileFile.playable = false`) — `TransmissionAudioPlayer` is
+  keyed by transmission id, not an arbitrary retained-audio path, so no real player entry point
+  exists for a file with no record by definition; wired to `onPlay` when one is supplied. F21
+  (`FailAssetSwap.kt`, `FailureViewState.kt`): `AssetSwapViewState.options` is now
+  `List<AssetSwapOption>` (label + sub-line), each option row showing its sub-line, and the
+  Lexicon rows carry a marker dot (solid for active, hollow ring for staged) — `Scenarios.kt`'s
+  `assetSwap()` updated to the new type with the board's own three sub-lines. F22
+  (`FailCalibration.kt`): added the "score →" axis label, the "Dots below the diagonal are
+  over-confident…" caption, and the closing "The four states are thresholds…" paragraph, copied
+  verbatim from `Fail-Calibration.dc.html`. Tests: `R_148 F19/F21/F22 …` (`FailureScreensTest`),
+  `R_148 F21_asset-swap's options each carry a real sub-line…` (`ScenariosTest`).
+- **R-149: F6's "How this unfolded" timeline and F8's queue chart/rows are now real, observed
+  history — never a fabricated multi-day figure.** `FailureSignalsPolling` keeps two small
+  in-process rolling histories (`storageHistory`, capped at 20 entries; `backlogHistory`, a 30-
+  minute window), recorded every poll tick and cleared by `reset()` (now called from
+  `Scenarios.resetProcessWideFacets()` too, so one scenario's history never leaks into the next).
+  `FailureMapper.storageTimeline()` turns only the `StorageForecast` transitions actually observed
+  into `StorageTimelineStage` rows (`ThreeNightsLeft`/`OneNightLeft`/`AtFloor` → the board's own
+  three headlines), always appending an unreached "500 MB hard floor" stage — rendered by
+  `FailStorageWarningBanner`'s new "How this unfolded" section. `FailureMapper.backlogViewState()`
+  builds `BacklogViewState.queueHistory` (normalized against the observed max), a
+  `growthRateLabel` (Δbacklog/Δtime, `null` under two samples — never invented), and a
+  `captureLabel` from `CaptureState` alone; rendered by `FailBacklogBanner`'s new "Queue, last 30
+  minutes" line chart plus Waiting/Rate/Capture/In-the-log rows. **The live-bar "Tier 0" bug is
+  fixed**: `LiveBarPolling`'s tier-number branch used to be a standalone `shedLevel > 0` check with
+  no equivalent in `FailureMapper`'s own order, so the `backlog` scenario (shed level 3, thermal
+  nominal) read "Tier 0" instead of "112 behind" — the tier computation now lives only inside the
+  thermal branch, exactly matching `mapThermalOrBacklogOrRigBanner`'s real order (thermal →
+  backlog → rig). Tests: `R_149 the storage timeline carries only the stages…observed…`,
+  `R_149 with no observed history, only the unreached floor stage shows…`,
+  `R_149 F8 backlog carries a growth-rate label…`, `R_149 F8 backlog with fewer than two
+  samples never invents a growth rate` (`FailureMapperTest`); `R_149 a thermal-caused tier drop
+  still outranks a stale rig`, `R_149 a bare tier drop…falls through…never Tier N`,
+  `R_149 F8_backlog reads N behind, not Tier 0…` (`LiveBarPollingTest`).
+- **R-151: every takeover with a fixed bottom action bar now scrolls its content above the bar,
+  with bottom padding equal to the bar's real (font-scale-reactive) height.** New
+  `FailureActionBarScaffold` (a `Box` with a scrollable content `Column` padded by an
+  `onGloballyPositioned`-measured action-bar height, replacing the old `weight(1f)` sibling-Column
+  split) is now used by `FailAssetSwapScreen`, `FailMigrationScreen`, `FailStorageHaltScreen`
+  (`FailStorage.kt`) and `FailRouteScreen` (`FailRoute.kt`) — one shared place, per the
+  coordinator's "same class as R-123" note, rather than four separate calculations. Tests (font
+  scale 2.0, `CompositionLocalProvider(LocalDensity provides Density(fontScale = 2f))`, matching
+  this file's own established pattern rather than a Robolectric `@Config` qualifier):
+  `R_151 F20 migration scrolls its content above the action bar…`, `R_151 F21 asset-swap scrolls
+  its content above the Done bar…` (`FailureScreensTest`) — both prove the fixed bar's own button
+  is on screen with no scroll needed, and the last piece of scrolled content (a truncated bullet,
+  a second option row) reaches the screen only by scrolling past the bar's own footprint.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.debug.ScenariosTest"` — all green
+(69 tests across `FailureScreensTest`/`FailureHostTest`/`FailureMapperTest`/
+`DebugFailureOverrideTest`/`RecoveryAnnouncerTest` plus `LiveBarPollingTest` and `ScenariosTest`
+selected by that filter). `.\gradlew.bat :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL, zero
+issues. `python tools/spec-check/spec_check.py` — OK, all 8 checks pass. Full gate
+(`.\gradlew.bat build dependencyRules platformGuards`, `.\gradlew.bat -p buildSrc test`,
+`.\gradlew.bat coverageMatrix`, `.\gradlew.bat coverageMatrixCheck`,
+`.\gradlew.bat :app:assembleDebug`) reported in this package's report to the lead.
+
+**Left open:** the F14/F17 Session-detail embedding (WP10's, per the coordinator's own framing);
+`FailStorageWarningBanner`'s timeline and `FailBacklogBanner`'s chart render inside the top banner
+overlay rather than a dedicated scrollable surface — acceptable for the amount of content each
+board actually specifies, but a future round should watch for either growing past a phone's usable
+top-of-screen space.
+---
+
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)
 
 ### (pending) — ui-conformance WP2 · highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card

@@ -6,6 +6,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -370,7 +371,10 @@ class FailureScreensTest {
                     state = AssetSwapViewState(
                         activeLabel = "2026.08 active",
                         stagedLabel = "2026.09 staged",
-                        options = listOf("Wait", "Swap now"),
+                        options = listOf(
+                            AssetSwapOption("Wait", "the default"),
+                            AssetSwapOption("Swap now", "starts a new session"),
+                        ),
                         selectedOption = 0,
                     ),
                     onSelectOption = {},
@@ -416,5 +420,176 @@ class FailureScreensTest {
         }
         composeTestRule.onNodeWithTag("failure-clock-card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("failure-interrupted-card").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_147 F14 becomes a full screen with the facts table and the Around the change log`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailClockScreen(
+                    state = ClockViewState(
+                        offsetChangeLabel = "PDT → PST",
+                        ranForLabel = "8 h 30 m",
+                        startedLabel = "23:10",
+                        endedLabel = "06:40",
+                        nightLabel = "Overnight, Sat 31 Oct",
+                        windowLabel = "23:10 – 06:40 · 8 h 30 m · the clock went back at 02:00",
+                        logRows = listOf(ClockLogRow("01:58:40", "before", "W7NPC", "copy on the repeater")),
+                    ),
+                    onContinue = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-clock-screen").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Overnight, Sat 31 Oct").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Around the change", ignoreCase = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("W7NPC").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_147 F17 becomes a full screen with the facts and the 3 overs list`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailInterruptedScreen(
+                    state = InterruptedViewState(
+                        overCount = 3,
+                        gapLabel = "03:12 – 06:48",
+                        backlogLabel = "3 overs waiting",
+                        overs = listOf(InterruptedOverRow("03:12:31", "audio only", "no transcript yet")),
+                    ),
+                    onContinue = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-interrupted-screen").assertIsDisplayed()
+        composeTestRule.onNodeWithText("The 1 overs", ignoreCase = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("03:12:31").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_148 F19 Play is honestly disabled on an orphan file with no reachable player`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailReconcileScreen(
+                    state = ReconcileViewState(
+                        recordsNoFile = emptyList(),
+                        filesNoRecord = listOf(ReconcileFile("a/x.flac", "6.2 s", null, playable = false)),
+                        causeText = "cause",
+                    ),
+                    onImport = {},
+                    onLeaveAsIs = {},
+                    onPlay = { },
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-reconcile-play-0").performScrollTo()
+        composeTestRule.onNodeWithText("Play").assertIsDisplayed().assertIsNotEnabled()
+    }
+
+    @Test
+    fun `R_148 F21 every option row carries its sub-line, and the lexicon rows carry marker dots`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailAssetSwapScreen(
+                    state = AssetSwapViewState(
+                        activeLabel = "2026.08 · active · this session",
+                        stagedLabel = "2026.09 · staged · next session",
+                        options = listOf(
+                            AssetSwapOption("Wait for the session to end", "the default · nothing else to do"),
+                            AssetSwapOption("Stop capture, swap, start a new session", "tonight's log ends here"),
+                        ),
+                        selectedOption = 0,
+                    ),
+                    onSelectOption = {},
+                    onDone = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("2026.08 · active · this session").assertIsDisplayed()
+        composeTestRule.onNodeWithText("2026.09 · staged · next session").assertIsDisplayed()
+        composeTestRule.onNodeWithText("the default · nothing else to do").assertIsDisplayed()
+        composeTestRule.onNodeWithText("tonight's log ends here").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_148 F22 carries the axis label, the over-confident caption and the closing paragraph`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailCalibrationScreen(
+                    state = CalibrationViewState(
+                        sinceLabel = "1 Sep",
+                        scoreLabel = "0.90",
+                        accuracyLabel = "78%",
+                        points = listOf(0.3f to 0.22f),
+                        calibrationVersion = "2026.09-a",
+                        correctionsCount = 22,
+                        correctionsNeeded = 100,
+                    ),
+                    onInstall = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("score →").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText(
+            "Dots below the diagonal are over-confident. The high-score end is where it drifted.",
+        ).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-calibration-closing").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_151 F20 migration scrolls its content above the action bar at maximum font scale`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    FailMigrationScreen(
+                        state = MigrationViewState(
+                            versionLabel = "Updated to 1.1.0",
+                            headline = "The records did not fully carry over",
+                            steps = listOf(
+                                MigrationStep("Audio untouched", "38.2 GB", ok = true),
+                                MigrationStep(
+                                    "Activity patterns need rebuilding",
+                                    "the hour-bucket table changed shape · 4,318 overs marked · runs in the background",
+                                    ok = false,
+                                ),
+                            ),
+                        ),
+                        onRebuildNow = {},
+                        onSaveDiagnosticBundle = {},
+                    )
+                }
+            }
+        }
+        // The rebuild button lives in the fixed action bar, not the scrolled content — it needs no
+        // scroll to be on screen at all; that is exactly what R-151 asks for (never behind the bar).
+        composeTestRule.onNodeWithTag("failure-migration-rebuild").assertIsDisplayed()
+        composeTestRule.onNodeWithText("runs in the background", substring = true)
+            .performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_151 F21 asset-swap scrolls its content above the Done bar at maximum font scale`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    FailAssetSwapScreen(
+                        state = AssetSwapViewState(
+                            activeLabel = "2026.08 active",
+                            stagedLabel = "2026.09 staged",
+                            options = listOf(
+                                AssetSwapOption("Wait", "the default"),
+                                AssetSwapOption("Swap now", "starts a new session"),
+                            ),
+                            selectedOption = 0,
+                        ),
+                        onSelectOption = {},
+                        onDone = {},
+                    )
+                }
+            }
+        }
+        // Same as the migration case above: the Done button is in the fixed action bar.
+        composeTestRule.onNodeWithTag("failure-asset-swap-done").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-asset-swap-option-1").performScrollTo().assertIsDisplayed()
     }
 }

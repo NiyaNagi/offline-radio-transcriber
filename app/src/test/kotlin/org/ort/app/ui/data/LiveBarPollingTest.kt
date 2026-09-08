@@ -123,13 +123,34 @@ class LiveBarPollingTest {
     }
 
     @Test
-    @Requirement("R-100")
-    fun `R_100 a tier drop still outranks a stale rig, matching the prior priority order`() = runTest {
+    @Requirement("R-149")
+    fun `R_149 a thermal-caused tier drop still outranks a stale rig`() = runTest {
         CaptureState.capturing("s1")
         ShedStatus.update(level = 1, backlog = 0)
+        ThermalStatus.update(osThermalStatus = ThermalStatus.THERMAL_STATUS_MODERATE, realTimeFactor = 0.7)
         RigStatus.stale(RigStatus.State.Connected("TH-D75A", emptyList()), sinceMillis = 0L)
         val state = LiveBarPolling.current(context, null)
         assertEquals("Tier 2", state.label)
+    }
+
+    @Test
+    @Requirement("R-149")
+    fun `R_149 a bare tier drop with no thermal reason falls through to the next real signal, never Tier N`() =
+        runTest {
+            CaptureState.capturing("s1")
+            ShedStatus.update(level = 1, backlog = 0)
+            RigStatus.stale(RigStatus.State.Connected("TH-D75A", emptyList()), sinceMillis = 0L)
+            val state = LiveBarPolling.current(context, null)
+            assertEquals("Rig lost", state.label)
+        }
+
+    @Test
+    @Requirement("R-149")
+    fun `R_149 F8_backlog reads N behind, not Tier 0, when the shed level is also raised`() = runTest {
+        CaptureState.capturing("s1")
+        ShedStatus.update(level = 3, backlog = 112)
+        val state = LiveBarPolling.current(context, null)
+        assertEquals("112 behind", state.label)
     }
 
     @Test
