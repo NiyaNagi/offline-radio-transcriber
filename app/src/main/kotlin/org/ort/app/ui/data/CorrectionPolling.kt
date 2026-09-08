@@ -1,8 +1,12 @@
 package org.ort.app.ui.data
 
 import android.content.Context
+import androidx.room.withTransaction
+import org.ort.core.PassId
+import org.ort.core.TransmissionState
 import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
+import org.ort.data.canTransition
 import org.ort.data.entity.PriorAdjustmentEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
@@ -10,6 +14,8 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintBindingSource
 import org.ort.data.entity.VoiceprintEntity
+import org.ort.data.entity.WorkQueueState
+import org.ort.data.requireLegalTransition
 import java.util.Locale
 
 /**
@@ -39,6 +45,11 @@ import java.util.Locale
  * only` scope must not rebind a voiceprint shared by overs the operator deliberately left alone.
  * [PropagationOutcome.voiceprintReassigned]/`.priorsUpdatedCount` are now real, derived from
  * [PropagationOutcome.voiceprintRebind]/`.priorAdjustments` rather than fixed at `false`/`0`.
+ *
+ * **R-153, F18 `Fail-Pass.dc.html`, FR-RUN-9.** [passFailure] reads the real terminally-`FAILED`
+ * [org.ort.data.entity.WorkQueueItemEntity] for a transmission, if any; [retryFailedPass] gives it
+ * a fresh, genuinely durable run. See each function's own doc for the schema gap this cannot
+ * honestly represent (per-attempt history) and why there is no scheduler to trigger synchronously.
  */
 public enum class CorrectionScope { THIS_OVER_ONLY, EVERY_OVER_SAME_VOICE }
 
@@ -293,6 +304,79 @@ public object CorrectionPolling {
                 createdAt = atMillis,
             ),
         )
+    }
+
+    /**
+     * R-153, F18 `Fail-Pass.dc.html`, FR-RUN-9: the real terminally-`FAILED`
+     * [org.ort.data.entity.WorkQueueItemEntity] for [transmissionId], if one exists — `null` for
+     * every other transmission, never a fabricated failure. There is no `:data` query that finds a
+     * failed item by transmission alone (`WorkQueueDao.findByTransmissionAndPass` needs the pass),
+     * so this checks every [PassId] in pipeline order and returns the first `FAILED` match — a
+     * transmission has at most one, since a queue item leaves the active-state set the moment it
+     * either completes or is marked terminally failed (technical design §7.1's partial unique
+     * index). Callers gate this behind `processingState == FAILED`
+     * ([org.ort.app.ui.screens.TransmissionDetailContent]) so a healthy transmission never pays for
+     * eight empty lookups.
+     */
+    public suspend fun passFailure(context: Context, transmissionId: String): PassFailureViewState? {
+        val db = OrtDatabase.create(context.applicationContext)
+        for (pass in PassId.entries) {
+            val item = db.workQueueDao().findByTransmissionAndPass(transmissionId, pass.name)
+                .firstOrNull { it.state == WorkQueueState.FAILED }
+            if (item != null) {
+                return PassFailureViewState(
+                    passId = pass,
+                    passLabel = passLabel(pass),
+                    lastError = item.lastError?.takeIf { it.isNotBlank() } ?: "no error text recorded",
+                    attempts = item.attemptCount,
+                )
+            }
+        }
+        return null
+    }
+
+    /** Guide §9's "pass" vocabulary, sentence case, never the raw [PassId] enum name. */
+    private fun passLabel(pass: PassId): String = when (pass) {
+        PassId.ENH -> "The enhancement pass"
+        PassId.A_STREAM -> "Pass A"
+        PassId.B_OFFLINE -> "Pass B"
+        PassId.FUSE -> "The fusion pass"
+        PassId.C_SPOT -> "Pass C"
+        PassId.D_RESOLVE -> "Pass D"
+        PassId.E_IDENTITY -> "The identity pass"
+        PassId.F_DIGEST -> "The digest pass"
+    }
+
+    /**
+     * R-153/FR-RUN-9: `Retry this pass` — genuinely gives the failed item a fresh run
+     * ([org.ort.data.dao.WorkQueueDao.requeueToReady]) and returns the transmission `FAILED` →
+     * `PROCESSING`, both in one transaction, the same pairing
+     * [org.ort.data.WorkQueue.requeueFailed] uses internally. **Scoped to exactly this
+     * transmission's item** — [org.ort.data.WorkQueue.requeueFailed] matches every `FAILED` item
+     * for a pass across the whole queue, which is too broad for a per-over button (it would retry
+     * every other transmission's stuck items too).
+     *
+     * There is no `:pipeline` scheduler or `WorkManager` job to trigger a synchronous re-run today
+     * (searched `pipeline/src/main/kotlin` for `WorkManager`/`Scheduler`; the only hit is a comment
+     * in `RealCaptureService.kt` noting the drain is in-process only, M8/M10 work) — this write is
+     * therefore the real re-queue this build has, not a no-op standing in for one: it genuinely
+     * flips durable queue state, and the next drain (this session's capture, or the next launch's
+     * `WorkQueue.recoverStaleLeases`/lease loop) picks it up. Returns `false`, changing nothing, if
+     * no matching `FAILED` item exists any more (e.g. it was already retried and failed again under
+     * a different pass, or completed) — never throws for a stale button press.
+     */
+    public suspend fun retryFailedPass(context: Context, transmissionId: String, pass: PassId): Boolean {
+        val db = OrtDatabase.create(context.applicationContext)
+        return db.withTransaction {
+            val failed = db.workQueueDao().findByTransmissionAndPass(transmissionId, pass.name)
+                .firstOrNull { it.state == WorkQueueState.FAILED }
+                ?: return@withTransaction false
+            db.workQueueDao().requeueToReady(failed.id)
+            if (db.transmissionDao().canTransition(transmissionId, TransmissionState.PROCESSING)) {
+                db.transmissionDao().requireLegalTransition(transmissionId, TransmissionState.PROCESSING)
+            }
+            true
+        }
     }
 
     /**

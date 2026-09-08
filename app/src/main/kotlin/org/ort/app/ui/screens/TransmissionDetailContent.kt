@@ -31,6 +31,7 @@ import org.ort.app.ui.data.CorrectionTier
 import org.ort.app.ui.data.DetailViewState
 import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.LabelledSampleWriter
+import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.PropagationOutcome
 import org.ort.app.ui.data.ReaderPolling
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
@@ -39,6 +40,7 @@ import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
+import org.ort.core.TransmissionState
 import java.io.File
 
 /**
@@ -57,6 +59,11 @@ import java.io.File
  * (today's only real entry point) so `OrtNavHost.kt` compiles unchanged while WP3 wires true origin
  * tracking through separately; a caller that knows the real origin (Search, a station's overs, a
  * thread) passes it once that wiring lands.
+ *
+ * **R-153.** [refresh] also looks up [CorrectionPolling.passFailure] whenever the polled
+ * [TransmissionDetail.processingState] is `FAILED`, so [TransmissionDetailScreen] can render the
+ * failed-pass state from the real queue row rather than the generic (and here misleading) UNKNOWN
+ * attribution copy. `Retry this pass` calls [CorrectionPolling.retryFailedPass].
  */
 @Composable
 public fun TransmissionDetailContent(
@@ -69,11 +76,20 @@ public fun TransmissionDetailContent(
     modifier: Modifier = Modifier,
 ) {
     var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
+    var passFailure by remember(transmissionId) { mutableStateOf<PassFailureViewState?>(null) }
     var destination by remember(transmissionId) { mutableStateOf<DetailDestination>(DetailDestination.Main) }
     val scope = rememberCoroutineScope()
 
+    // R-153: a pass-failure lookup is a real extra `:data` read, so it only runs for the
+    // transmissions that can possibly have one — `processingState == FAILED` — never on every poll.
     suspend fun refresh() {
-        detail = ReaderPolling.transmissionDetail(context, transmissionId)
+        val fetched = ReaderPolling.transmissionDetail(context, transmissionId)
+        detail = fetched
+        passFailure = if (fetched?.processingState == TransmissionState.FAILED) {
+            CorrectionPolling.passFailure(context, transmissionId)
+        } else {
+            null
+        }
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -85,7 +101,7 @@ public fun TransmissionDetailContent(
         )
         return
     }
-    val viewState = DetailViewStateMapper.from(ReaderTransmissionViewStateMapper.detailView(current))
+    val viewState = DetailViewStateMapper.from(ReaderTransmissionViewStateMapper.detailView(current), passFailure)
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
     val dest = destination
@@ -207,6 +223,18 @@ private fun MainDestination(
             onRecordLabel = { sample ->
                 LabelledSampleWriter.append(File(context.filesDir, "labelled-samples.tsv"), sample)
             },
+            onRetryPass = {
+                val failure = viewState.passFailure
+                if (failure != null) {
+                    scope.launch {
+                        CorrectionPolling.retryFailedPass(context, transmissionId, failure.passId)
+                        refresh()
+                    }
+                }
+            },
+            // R-153: "Keep the partial" writes nothing — the over already reads exactly as it is
+            // (the honest partial, or "(transcription failed)"); there is no state left to change.
+            onKeepPartial = {},
             modifier = Modifier.weight(1f),
         )
     }

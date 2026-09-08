@@ -18,6 +18,7 @@ import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.capture.android.heartbeat.HeartbeatRecord
 import org.ort.core.AttributionState
+import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -27,6 +28,8 @@ import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TranscriptPass
+import org.ort.data.entity.WorkQueueItemEntity
+import org.ort.data.entity.WorkQueueState
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -86,6 +89,7 @@ public object Scenarios {
         "os-stopped",
         "gap-call",
         "pass-a-partial",
+        "pass-failed",
         "corrected",
         "no-audio",
         "revisions",
@@ -123,6 +127,7 @@ public object Scenarios {
             "unclean-end" -> uncleanEnd(context, db)
             "os-stopped" -> osStopped(context, db)
             "pass-a-partial" -> passAPartial(db)
+            "pass-failed" -> passFailed(context, db)
             "corrected" -> corrected(db)
             "no-audio" -> noAudio(db)
             "revisions" -> revisions(context, db)
@@ -173,6 +178,13 @@ public object Scenarios {
         )
         sql.execSQL(
             "DELETE FROM transcript WHERE transmissionId IN " +
+                "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
+            likeScenario,
+        )
+        // R-153: `pass-failed` is the first scenario to write a work_queue_item row — cleared by
+        // the same transmissionId-through-sessionId join every other per-transmission table uses.
+        sql.execSQL(
+            "DELETE FROM work_queue_item WHERE transmissionId IN " +
                 "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
             likeScenario,
         )
@@ -336,6 +348,65 @@ public object Scenarios {
                 isCurrent = true,
                 createdAt = startedAt + 1_000L,
                 confidence = null,
+            ),
+        )
+        return LoadResult(1, 1, sessionId)
+    }
+
+    /**
+     * `pass-failed` — R-153, F18 `Fail-Pass.dc.html`, FR-RUN-9: a transmission whose Pass B
+     * ([PassId.B_OFFLINE]) errored out under [org.ort.data.WorkQueue.failPass]'s bound and is now
+     * terminally [WorkQueueState.FAILED] (3 attempts, the real `lastError` text), while its Pass A
+     * partial ([TranscriptPass.A], `isCurrent = true`) is the honest text
+     * [org.ort.app.ui.data.ReaderTransmissionViewStateMapper.transcriptLabel] shows in place of a
+     * final transcript — this scenario writes the [WorkQueueItemEntity] row directly (the same
+     * shape [org.ort.data.WorkQueue.failPass] itself writes via
+     * [org.ort.data.dao.WorkQueueDao.markFailed]) rather than driving a real pass through failure,
+     * the same "prove the rendering path, not the pipeline" approach [osStopped] already uses for
+     * its gap row. Retained audio is written so `Retry this pass`/the waveform have a real over to
+     * act on, matching `Fail-Pass.dc.html`'s own "the audio is here" reading.
+     */
+    private suspend fun passFailed(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("pass-failed")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 90 * 60_000L, endedAt = null),
+        )
+        val txId = "$sessionId-tx1"
+        val startedAt = SystemClock.wallMillis() - 5 * 60_000L
+        val tx = ScenarioFixtures.transmission(
+            id = txId,
+            sessionId = sessionId,
+            startedAtUtc = startedAt,
+            durationMs = 28_400L,
+            samplePosition = 1L,
+            frequencyHz = 145_230_000L,
+            signalStrength = 8.0,
+            attributionState = AttributionState.UNKNOWN,
+            processingState = TransmissionState.FAILED,
+        )
+        db.transmissionDao().insert(tx)
+        ScenarioFixtures.writeAudioFixture(context, tx)
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txId-t1",
+                transmissionId = txId,
+                text = "okay so for the net tonight we've got the following announcements first the club " +
+                    "meeting has moved to the second thursday and second the",
+                pass = TranscriptPass.A,
+                isCurrent = true,
+                createdAt = startedAt + 1_000L,
+                confidence = null,
+            ),
+        )
+        db.workQueueDao().insert(
+            WorkQueueItemEntity(
+                transmissionId = txId,
+                pass = PassId.B_OFFLINE,
+                state = WorkQueueState.FAILED,
+                priority = 0,
+                attemptCount = 3,
+                lastError = "out of memory in the decoder",
+                enqueuedAt = startedAt,
             ),
         )
         return LoadResult(1, 1, sessionId)

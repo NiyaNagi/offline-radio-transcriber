@@ -9,6 +9,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.AttributionState
+import org.ort.core.PassId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
@@ -18,6 +19,8 @@ import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingSource
 import org.ort.data.entity.VoiceprintEntity
+import org.ort.data.entity.WorkQueueItemEntity
+import org.ort.data.entity.WorkQueueState
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -419,6 +422,96 @@ class CorrectionPollingTest {
         val count = CorrectionPolling.affectedOverCount(context, "TX1", CorrectionScope.THIS_OVER_ONLY)
 
         assertEquals(1, count)
+    }
+
+    // ---- R-153, F18 Fail-Pass, FR-RUN-9: passFailure + retryFailedPass ----
+
+    private fun workQueueItem(
+        transmissionId: String,
+        pass: PassId = PassId.B_OFFLINE,
+        state: WorkQueueState = WorkQueueState.FAILED,
+        attemptCount: Int = 3,
+        lastError: String? = "out of memory in the decoder",
+    ) = WorkQueueItemEntity(
+        transmissionId = transmissionId,
+        pass = pass,
+        state = state,
+        priority = 0,
+        attemptCount = attemptCount,
+        lastError = lastError,
+        enqueuedAt = 0L,
+    )
+
+    @Test
+    fun R_153_passFailure_reads_the_real_failed_items_pass_attempts_and_error(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1").copy(processingState = TransmissionState.FAILED))
+        db.workQueueDao().insert(workQueueItem("TX1"))
+
+        val failure = CorrectionPolling.passFailure(context, "TX1")
+
+        assertEquals(PassId.B_OFFLINE, failure?.passId)
+        assertEquals("Pass B", failure?.passLabel)
+        assertEquals(3, failure?.attempts)
+        assertEquals("out of memory in the decoder", failure?.lastError)
+    }
+
+    @Test
+    fun R_153_passFailure_is_null_when_no_work_queue_item_is_terminally_failed(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1"))
+        db.workQueueDao().insert(workQueueItem("TX1", state = WorkQueueState.READY))
+
+        assertEquals(null, CorrectionPolling.passFailure(context, "TX1"))
+    }
+
+    @Test
+    fun FR_RUN_9_retryFailedPass_requeues_the_item_and_returns_the_transmission_to_processing(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1").copy(processingState = TransmissionState.FAILED))
+        db.workQueueDao().insert(workQueueItem("TX1"))
+
+        val retried = CorrectionPolling.retryFailedPass(context, "TX1", PassId.B_OFFLINE)
+
+        assertTrue(retried)
+        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX1")!!.processingState)
+        val item = db.workQueueDao().findByTransmissionAndPass("TX1", PassId.B_OFFLINE.name).single()
+        assertEquals(WorkQueueState.READY, item.state)
+        assertEquals(0, item.attemptCount)
+        // FR-RUN-9: the prior error is left reachable, not erased — constitution III.
+        assertEquals("out of memory in the decoder", item.lastError)
+    }
+
+    @Test
+    fun FR_RUN_9_retryFailedPass_is_scoped_to_this_transmissions_item_only(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1").copy(processingState = TransmissionState.FAILED))
+        db.transmissionDao().insert(transmission("TX2").copy(processingState = TransmissionState.FAILED))
+        db.workQueueDao().insert(workQueueItem("TX1"))
+        db.workQueueDao().insert(workQueueItem("TX2"))
+
+        CorrectionPolling.retryFailedPass(context, "TX1", PassId.B_OFFLINE)
+
+        assertEquals(
+            WorkQueueState.READY,
+            db.workQueueDao().findByTransmissionAndPass("TX1", PassId.B_OFFLINE.name).single().state,
+        )
+        assertEquals(
+            WorkQueueState.FAILED,
+            db.workQueueDao().findByTransmissionAndPass("TX2", PassId.B_OFFLINE.name).single().state,
+        )
+        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX1")!!.processingState)
+        assertEquals(TransmissionState.FAILED, db.transmissionDao().getById("TX2")!!.processingState)
+    }
+
+    @Test
+    fun FR_RUN_9_retryFailedPass_returns_false_and_never_throws_when_nothing_matches(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1"))
+
+        val retried = CorrectionPolling.retryFailedPass(context, "TX1", PassId.B_OFFLINE)
+
+        assertFalse(retried)
     }
 
     // ---- R-055: revisions + Restore ----
