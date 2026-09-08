@@ -48,16 +48,24 @@ public fun MicrophoneScreen(onAllow: () -> Unit, onBack: (() -> Unit)? = null) {
     }
 }
 
-/** S02b (`Setup-Mic-Denied.dc.html`, R-085) — the interim mic-denied screen, re-homed and kept
+/**
+ * S02b (`Setup-Mic-Denied.dc.html`, R-085) — the interim mic-denied screen, re-homed and kept
  * green (this row's register status is already `fixed`; WP9's job is folding it in, not changing
- * its behaviour). `MainActivity.onResume`-equivalent re-checking lives in [SetupActivity], unchanged. */
+ * its behaviour). `MainActivity.onResume`-equivalent re-checking lives in [SetupActivity], unchanged.
+ *
+ * [onBack] (R-223, validator pass 2): the board draws the header chevron here like every other
+ * step (confirmed by reading `Setup-Mic-Denied.dc.html` before writing this — it is not a board
+ * that omits it for halt states), so it is rendered — wired to [SetupActivity]'s ordinary
+ * back-stack `onBack`, same as everywhere else, not a special-cased action of its own. `null` only
+ * so this screen's own tests can render it without wiring a real activity behind it.
+ */
 @Composable
-public fun MicrophoneDeniedScreen(onOpenSettings: () -> Unit, onCheckAgain: () -> Unit) {
+public fun MicrophoneDeniedScreen(onOpenSettings: () -> Unit, onCheckAgain: () -> Unit, onBack: (() -> Unit)? = null) {
     SetupScaffold(
         step = SetupStep.MICROPHONE_DENIED,
         title = stringResource(R.string.setup_mic_denied_title),
         subtitle = stringResource(R.string.setup_mic_denied_subtitle),
-        onBack = null,
+        onBack = onBack,
         bottomActions = {
             PrimaryButton(
                 text = stringResource(R.string.setup_mic_denied_open_settings),

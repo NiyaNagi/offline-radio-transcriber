@@ -2,6 +2,7 @@ package org.ort.app.ui.setup
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,7 +16,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
@@ -43,6 +47,33 @@ public data class ReadyViewState(val rows: List<ReadyRow>)
  * wired by [SetupActivity]; the model row's `Install` has nowhere real to navigate to from setup
  * (the Models destination lives inside `OrtNavHost`, WP3's file, only reachable once
  * `ReaderActivity` exists after capture starts) — see this package's report for that gap.
+ *
+ * R-226 (validator pass 2): rows used to be a hand-rolled `Row` with a *fixed* 82dp label column
+ * (`Modifier.size(width = 82.dp, ...)`), which at font scale 2.0 truncated labels ("Input" ->
+ * "Inout", "Overnight" -> "Overni") and overlapped the leading marker dot entirely — confirmed on
+ * `setup/S12-ready-pass2@2x.png`. Now built on WP2's [KeyValueRow], whose own R-152 fix already
+ * sizes its label column to real content rather than a fixed ceiling (that row's own doc comment
+ * names the identical class of bug: "Stations5" colliding at large scale). The leading marker dot
+ * has no slot on [KeyValueRow] itself, so it is composed as a sibling in front of it here, the same
+ * pattern this package already used for R-122's device-type icons on [InputScreen] — never editing
+ * `Rows.kt` (WP2's file) and never hand-rolling a second full row component.
+ *
+ * R-265 (validator finding, halt): each row's marker/[KeyValueRow]/trailing status-or-action were
+ * three separate, non-merged `Text`/marker nodes with no focus action of their own — confirmed by
+ * reading `Rows.kt`'s [KeyValueRow] before writing this: its own `Row` carries neither
+ * `Modifier.semantics(mergeDescendants = true)` nor `Modifier.focusable()`, so TalkBack's linear
+ * swipe traversal skipped every one of S12's five facts entirely (there was no accessibility node
+ * to land on). `KeyValueRow` should provide this natively — reported to WP2 rather than fixed in
+ * `Rows.kt` (outside this row's owned files) — worked around here by wrapping each row's own outer
+ * `Row` in exactly the pair the finding names: `Modifier.focusable()` (a real focus/traversal stop)
+ * and `Modifier.semantics(mergeDescendants = true) { contentDescription = ... }` (one merged
+ * announcement, built explicitly rather than left to automatic child-`Text` merging, the same
+ * `"$title. $subtitle"` pattern `SetupScaffold.kt`'s own `NavigationRow` already established) —
+ * `"Input, USB Audio Device, verified"` for a verified row, exactly the string the finding quotes.
+ * Semantics merging (not raw touch dispatch) is the only thing this changes: a sighted operator's
+ * ordinary tap still only activates the small `Fix`/`Install` text as before; a TalkBack user's
+ * double-tap after landing on the merged row now correctly reaches the same action, forwarded up
+ * through the merge exactly as Compose's own accessibility merging documents.
  */
 @Composable
 public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
@@ -63,8 +94,9 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 12.dp)
-                    .testTag("setup-ready-row-${row.label.lowercase()}"),
+                    .testTag("setup-ready-row-${row.label.lowercase()}")
+                    .focusable()
+                    .semantics(mergeDescendants = true) { contentDescription = readyRowDescription(row) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (row.ok) {
@@ -72,24 +104,19 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
                 } else {
                     AmberHalfMarker()
                 }
-                Text(
-                    text = row.label,
-                    style = OrtType.subtitle,
-                    color = OrtColors.textDim,
-                    modifier = Modifier.padding(start = 12.dp).size(width = 82.dp, height = 18.dp),
+                KeyValueRow(
+                    key = row.label,
+                    value = row.value,
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                    trailingMarker = {
+                        when {
+                            row.statusText != null ->
+                                Text(text = row.statusText, style = OrtType.signal, color = OrtColors.accentGreenDim)
+                            row.actionLabel != null ->
+                                TextAction(text = row.actionLabel, onClick = { row.onAction?.invoke() })
+                        }
+                    },
                 )
-                Text(
-                    text = row.value,
-                    style = OrtType.control,
-                    color = OrtColors.textHigh,
-                    modifier = Modifier.weight(1f),
-                )
-                when {
-                    row.statusText != null ->
-                        Text(text = row.statusText, style = OrtType.signal, color = OrtColors.accentGreenDim)
-                    row.actionLabel != null ->
-                        TextAction(text = row.actionLabel, onClick = { row.onAction?.invoke() })
-                }
             }
         }
         Text(
@@ -102,6 +129,17 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
         )
     }
 }
+
+/** R-265: the exact merged announcement for one row — `"Input, USB Audio Device, verified"` when
+ * verified, `"Overnight, Battery exemption skipped, Fix"` when it needs one, naming whichever of
+ * [ReadyRow.statusText]/[ReadyRow.actionLabel] is actually present (never both — [ReadyRowsForTest]
+ * and every `readyRowsFor` builder below only ever sets one or neither). */
+internal fun readyRowDescription(row: ReadyRow): String = listOfNotNull(
+    row.label,
+    row.value,
+    row.statusText,
+    row.actionLabel,
+).joinToString(", ")
 
 @Composable
 private fun AmberHalfMarker() {

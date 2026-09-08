@@ -2,6 +2,7 @@ package org.ort.app.ui.data
 
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -19,6 +20,7 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.RigStatus
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -35,6 +37,12 @@ class LogPollingTest {
     @Before
     fun openDatabase() {
         db = OrtDatabase.create(context)
+        RigStatus.reset()
+    }
+
+    @After
+    fun resetRigStatus() {
+        RigStatus.reset()
     }
 
     @Test
@@ -159,6 +167,120 @@ class LogPollingTest {
         assertTrue(state.items.isEmpty())
         assertEquals("No overs yet.", state.emptyState?.message)
         assertTrue(state.emptyState!!.subMessage.contains("23:32"))
+    }
+
+    @Test
+    fun `R_248 a first session with the rig connected but no overs yet names both bands`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 84_720_000L))
+        RigStatus.connected(
+            descriptor = "TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = false),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+        )
+
+        val state = LogPolling.screenState(context, "S1", LogFilterSelection(), LogQuickFilterId.All)
+
+        assertTrue(state.emptyState!!.subMessage.contains("on 145.230 and 146.960"))
+        // R-248: the dimmed per-frequency chips render even though nothing has been heard on
+        // either band yet — sourced from the rig, not from (zero) transmissions.
+        val chipLabels = state.quickFilters.map { it.label }
+        assertTrue(chipLabels.contains("145.230"))
+        assertTrue(chipLabels.contains("146.960"))
+    }
+
+    @Test
+    fun `R_247 no rig connected at all never fabricates an on-frequency clause`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 84_720_000L))
+
+        val state = LogPolling.screenState(context, "S1", LogFilterSelection(), LogQuickFilterId.All)
+
+        assertTrue(state.emptyState!!.subMessage.startsWith("Listening since 23:32. "))
+    }
+
+    @Test
+    fun `R_247 no session at all is a real, fully drawn empty Log, not a blank body`() {
+        val state = LogPolling.noSessionState()
+
+        assertEquals("No overs yet.", state.emptyState?.message)
+        assertTrue(state.emptyState!!.subMessage.startsWith("Listening since —. "))
+        assertTrue(state.quickFilters.any { it.label == "All" && it.selected })
+        assertTrue(state.quickFilters.any { it.label == "Named" })
+        assertTrue(state.quickFilters.any { it.label == "Rejected" })
+    }
+
+    @Test
+    fun `R_243 the filter sheet pre-fills the to bound from the data's own extent`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 84_720_000L))
+        db.transmissionDao().insert(
+            transmission("TX1", sessionId = "S1", samplePosition = 1L, startedAtUtc = 84_720_000L + 60_000L),
+        )
+        db.transmissionDao().insert(
+            transmission("TX2", sessionId = "S1", samplePosition = 2L, startedAtUtc = 84_720_000L + 120_000L),
+        )
+
+        val sheet = LogPolling.filterSheetState(context, "S1", LogFilterSelection())
+
+        assertEquals("23:32", sheet.fromLabel) // the session's own start (unchanged behaviour).
+        assertEquals("23:34", sheet.toLabel) // TX2's start — the latest data point, session still open.
+    }
+
+    @Test
+    fun `R_243 an explicit toMillis selection always wins over the data's extent`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 84_720_000L))
+        db.transmissionDao().insert(
+            transmission("TX1", sessionId = "S1", samplePosition = 1L, startedAtUtc = 84_720_000L + 60_000L),
+        )
+
+        val sheet = LogPolling.filterSheetState(
+            context,
+            "S1",
+            LogFilterSelection(toMillis = 84_720_000L + 30_000L),
+        )
+
+        assertEquals("23:32", sheet.toLabel)
+    }
+
+    @Test
+    fun `R_249 a gap duration renders with a space before its unit, through the shared formatter`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "G1",
+                sessionId = "S1",
+                startedAt = 0L,
+                endedAt = 38_000L,
+                cause = CaptureGapCause.INTERRUPTION,
+                recoveredAutomatically = true,
+            ),
+        )
+
+        val state = LogPolling.screenState(context, "S1", LogFilterSelection(), LogQuickFilterId.All)
+
+        val gap = state.items.single() as LogListItem.Gap
+        assertTrue(gap.label.contains("38 s"))
+        assertTrue(!gap.label.contains("38s"))
+    }
+
+    @Test
+    fun `R_242 a rejected row with a real rule token carries its why-line and duration`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(
+            transmission(
+                "TX1",
+                sessionId = "S1",
+                samplePosition = 1L,
+                processingState = TransmissionState.REJECTED,
+                rejectionReason = "VAD_NO_SPEECH: squelch tail, 0.4 s",
+            ),
+        )
+
+        val state = LogPolling.screenState(context, "S1", LogFilterSelection(), LogQuickFilterId.Rejected)
+
+        val item = state.items.single() as LogListItem.RejectedItem
+        assertEquals("No speech detected, squelch tail, 0.4 s", item.why)
+        assertEquals("4 s", item.durationLabel) // the fixture's default 4_200ms transmission duration.
     }
 
     private fun session(id: String, startedAt: Long = 0L) = SessionEntity(

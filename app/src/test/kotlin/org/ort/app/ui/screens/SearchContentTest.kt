@@ -126,33 +126,32 @@ class SearchContentTest {
     )
 
     @Test
-    fun `R_202 opening the filter sheet with a real, non-empty corpus shows real counts, never 0`(): Unit =
-        runTest {
-            val db = OrtDatabase.create(context)
-            db.sessionDao().insert(session())
-            db.transmissionDao().insert(transmission("TX1", 1L))
-            db.transmissionDao().insert(transmission("TX2", 2L))
-            db.transmissionDao().insert(transmission("TX3", 3L))
+    fun `R_202 opening the filter sheet with a real, non-empty corpus shows real counts, never 0`(): Unit = runTest {
+        val db = OrtDatabase.create(context)
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", 1L))
+        db.transmissionDao().insert(transmission("TX2", 2L))
+        db.transmissionDao().insert(transmission("TX3", 3L))
 
-            composeTestRule.setContent {
-                OrtTheme {
-                    SearchContent(
-                        input = SearchFilterInput(),
-                        result = null,
-                        onInputChange = {},
-                        onSearch = {},
-                        onOpen = {},
-                    )
-                }
+        composeTestRule.setContent {
+            OrtTheme {
+                SearchContent(
+                    input = SearchFilterInput(),
+                    result = null,
+                    onInputChange = {},
+                    onSearch = {},
+                    onOpen = {},
+                )
             }
-
-            composeTestRule.onNodeWithTag("search-filters-chip").performScrollTo().performClick()
-
-            // Same real-background-thread-I/O reasoning as the widen-suggestions test above:
-            // `SearchPolling.facetCounts` is a genuine Room query, not tracked by `waitForIdle()`.
-            composeTestRule.waitUntil(timeoutMillis = 5_000) {
-                composeTestRule.onAllNodesWithText("Show 3 overs").fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNodeWithText("Show 3 overs").assertExists()
         }
+
+        composeTestRule.onNodeWithTag("search-filters-chip").performScrollTo().performClick()
+
+        // Same real-background-thread-I/O reasoning as the widen-suggestions test above:
+        // `SearchPolling.facetCounts` is a genuine Room query, not tracked by `waitForIdle()`.
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithText("Show 3 overs").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText("Show 3 overs").assertExists()
+    }
 }

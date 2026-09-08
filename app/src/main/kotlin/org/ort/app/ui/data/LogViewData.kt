@@ -13,6 +13,7 @@ import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.RigStatus
 import java.io.File
 
 /**
@@ -59,6 +60,15 @@ public sealed interface LogListItem {
         // prose, e.g. "Too short, segment is 120 ms, below the 250 ms floor" — never the raw rule
         // token. `null` exactly when the record carries nothing beyond [reason] itself.
         val why: String? = null,
+        /**
+         * R-242 (V3 pass 2 @de56368): the segment's own duration, through the shared
+         * [ReaderTransmissionViewStateMapper.durationLabel]. **Not yet rendered** —
+         * `ui/components/Rows.kt`'s `RejectedRow` (WP2's package) has no duration slot at all
+         * (`Log-Rejected.dc.html`'s DUR column has never had a value to show), so this is carried
+         * on the model, ready for a WP2 change to consume, rather than dropped. See this package's
+         * CHANGELOG entry for this date.
+         */
+        val durationLabel: String? = null,
     ) : LogListItem {
         override val key: String get() = "rejected-$id"
     }
@@ -180,6 +190,27 @@ public object LogItemsMapper {
         return detail.inspection.candidates.filterNot { it.selected }.minByOrNull { it.rank }?.callsign
     }
 
+    /**
+     * R-240 (V3 pass 2 @de56368, register): the AMBIGUOUS row's *kept* candidate — `States.dc.html`
+     * renders it in `text/high` beside the marker, with [alternateFor]'s runner-up trailing as
+     * "or QRF" in amber. `Attribution.ambiguous()` deliberately carries no `stationId` of its own
+     * (`:core`'s own doc comment: attaching one would misrepresent an undecided call as resolved),
+     * so this reads the resolver's own `selected` candidate out of band, the same
+     * [org.ort.app.ui.data.InspectionViewState] `alternateFor` already reads its runner-up from.
+     *
+     * **Not yet wired to a row.** `ui/components/Rows.kt`'s `LogRowViewState` has no `callsign`
+     * field and `LogRow` never passes one to `AttributionRow` (its call site only ever forwards
+     * [alternateFor]'s value as `alternate`) — `ui/components` is WP2's package, outside this
+     * package's row, so plumbing this value onto the rendered row needs a WP2 change
+     * (`LogRowViewState.callsign: String?` + `LogRow` passing it to `AttributionRow`'s own
+     * `callsign` param). This function exists so that change is a one-line consumer once WP2 adds
+     * the field — see this package's CHANGELOG entry for this date.
+     */
+    public fun keptCandidateFor(detail: TransmissionDetail): String? {
+        if (detail.attribution.state != AttributionState.AMBIGUOUS) return null
+        return detail.inspection.candidates.firstOrNull { it.selected }?.callsign
+    }
+
     public fun toRowState(detail: TransmissionDetail, isFirstHeard: Boolean): LogRowViewState {
         val partial = partialFor(detail)
         val text = if (partial != null) {
@@ -204,15 +235,17 @@ public object LogItemsMapper {
         )
     }
 
-    /** "not listening · 38 s · incoming call" (`Rows.dc.html`). FR-UI-12/FR-RUN-12: a gap is data, never quiet. */
+    /**
+     * "not listening · 38 s · incoming call" (`Rows.dc.html`). FR-UI-12/FR-RUN-12: a gap is data,
+     * never quiet. R-249 (V3 pass 2): the duration now goes through the one shared
+     * [ReaderTransmissionViewStateMapper.durationLabel] — this used to write "38s" (no space
+     * before the unit), which the board never does.
+     */
     public fun gapLabel(gap: CaptureGapEntity): String {
-        val duration = gap.endedAt?.let { durationLabel(it - gap.startedAt) } ?: "ongoing"
+        val duration = gap.endedAt?.let {
+            ReaderTransmissionViewStateMapper.durationLabel(it - gap.startedAt)
+        } ?: "ongoing"
         return "not listening · $duration · ${gapCauseProse(gap.cause)}"
-    }
-
-    private fun durationLabel(millis: Long): String {
-        val totalSeconds = (millis / 1000).coerceAtLeast(0)
-        return if (totalSeconds < 60) "${totalSeconds}s" else "${totalSeconds / 60}m ${totalSeconds % 60}s"
     }
 
     private fun gapCauseProse(cause: CaptureGapCause): String = when (cause) {
@@ -304,6 +337,7 @@ public object LogItemsMapper {
                 frequencyLabel = ReaderTransmissionViewStateMapper.frequencyLabel(detail.frequencyHz),
                 reason = detail.rejectionReason ?: "no reason recorded",
                 why = whyFor(detail.rejectionReason),
+                durationLabel = ReaderTransmissionViewStateMapper.durationLabel(detail.durationMs),
             )
         }
 
@@ -343,6 +377,7 @@ public object LogItemsMapper {
                         frequencyLabel = ReaderTransmissionViewStateMapper.frequencyLabel(detail.frequencyHz),
                         reason = detail.rejectionReason ?: "no reason recorded",
                         why = whyFor(detail.rejectionReason),
+                        durationLabel = ReaderTransmissionViewStateMapper.durationLabel(detail.durationMs),
                     ),
                     null,
                 )
@@ -446,28 +481,51 @@ public object LogItemsMapper {
         return "$count $segments rejected tonight. Audio for every one is kept; opening a row plays it."
     }
 
-    public fun emptyStateFor(hasAnyTransmission: Boolean, sessionStartedAtUtcMillis: Long?): LogEmptyStateViewState =
-        if (hasAnyTransmission) {
-            LogEmptyStateViewState(
-                message = "No overs match this filter.",
-                subMessage = "Try a different frequency or attribution filter.",
-            )
+    /**
+     * R-247/R-248 (V3 pass 2): [frequencies] is the rig's currently-known bands (see
+     * [LogPolling.connectedFrequencies]) — when non-empty, the sentence names them exactly as
+     * `NowViewStateMapper`'s own "listening on ..." fact does for the same session, so the two
+     * screens can never disagree; empty (no rig configured, or one whose bands are unknown) omits
+     * the clause entirely rather than fabricate a frequency the rig has not actually reported.
+     */
+    public fun emptyStateFor(
+        hasAnyTransmission: Boolean,
+        sessionStartedAtUtcMillis: Long?,
+        frequencies: List<Long> = emptyList(),
+    ): LogEmptyStateViewState = if (hasAnyTransmission) {
+        LogEmptyStateViewState(
+            message = "No overs match this filter.",
+            subMessage = "Try a different frequency or attribution filter.",
+        )
+    } else {
+        val since = sessionStartedAtUtcMillis
+            ?.let { ReaderTransmissionViewStateMapper.hourMinuteLabel(it) }
+            ?: "—"
+        val onClause = if (frequencies.isEmpty()) {
+            ""
         } else {
-            val since = sessionStartedAtUtcMillis
-                ?.let { ReaderTransmissionViewStateMapper.hourMinuteLabel(it) }
-                ?: "—"
-            LogEmptyStateViewState(
-                message = "No overs yet.",
-                subMessage = "Listening since $since. The first one appears here the moment squelch opens.",
-            )
+            " on " + frequencies.joinToString(" and ") { ReaderTransmissionViewStateMapper.frequencyLabel(it) }
         }
+        LogEmptyStateViewState(
+            message = "No overs yet.",
+            subMessage = "Listening since $since$onClause. The first one appears here the moment squelch opens.",
+        )
+    }
 
+    /**
+     * R-243 (V3 pass 2): [dataExtentEndMillis] pre-fills the `to` bound the same way
+     * [sessionStartedAtUtcMillis] already pre-fills `from` — the caller's own extent of the data
+     * ([LogPolling.filterSheetState] passes the session's end, or the latest transmission's start
+     * if the session is still open), never "now" (which is not a real event in the data and would
+     * make the sheet's own pre-fill drift every time it re-renders).
+     */
     public fun filterSheetState(
         nonRejected: List<TransmissionDetail>,
         rejectedCount: Int,
         gaps: List<CaptureGapEntity>,
         selection: LogFilterSelection,
         sessionStartedAtUtcMillis: Long?,
+        dataExtentEndMillis: Long? = null,
     ): LogFilterSheetViewState {
         val frequencies = nonRejected.mapNotNull { it.frequencyHz }.distinct().sorted()
         val frequencyOptions = buildList {
@@ -505,7 +563,8 @@ public object LogItemsMapper {
             gapsShown = selection.showGaps,
             fromLabel = selection.fromMillis?.let { ReaderTransmissionViewStateMapper.hourMinuteLabel(it) }
                 ?: sessionStartedAtUtcMillis?.let { ReaderTransmissionViewStateMapper.hourMinuteLabel(it) } ?: "—",
-            toLabel = selection.toMillis?.let { ReaderTransmissionViewStateMapper.hourMinuteLabel(it) } ?: "—",
+            toLabel = selection.toMillis?.let { ReaderTransmissionViewStateMapper.hourMinuteLabel(it) }
+                ?: dataExtentEndMillis?.let { ReaderTransmissionViewStateMapper.hourMinuteLabel(it) } ?: "—",
             matchingCount = matchingCount,
         )
     }
@@ -532,7 +591,10 @@ public object LogPolling {
         val details = entities.map { buildDetail(context, db, it) }
         val gaps = db.captureGapDao().listBySession(sessionId)
         val session = db.sessionDao().getById(sessionId)
-        val distinctFrequencies = entities.mapNotNull { it.frequencyHz }.distinct().sorted()
+        // R-248: union the rig's currently-known bands with what's actually been heard, so a
+        // configured-but-silent-so-far frequency still shows its own quick-filter chip (dimmed,
+        // in the unselected chip style) rather than waiting for a first over on it.
+        val distinctFrequencies = (entities.mapNotNull { it.frequencyHz } + connectedFrequencies()).distinct().sorted()
         val rejectedCount = details.count { it.processingState == TransmissionState.REJECTED }
         val quickFilters = LogItemsMapper.quickFilters(distinctFrequencies, activeQuickFilter, rejectedCount)
 
@@ -559,6 +621,7 @@ public object LogPolling {
             LogItemsMapper.emptyStateFor(
                 hasAnyTransmission = details.isNotEmpty(),
                 sessionStartedAtUtcMillis = session?.startedAt,
+                frequencies = distinctFrequencies,
             )
         } else {
             null
@@ -584,8 +647,51 @@ public object LogPolling {
         val session = db.sessionDao().getById(sessionId)
         val nonRejected = details.filter { it.processingState != TransmissionState.REJECTED }
         val rejectedCount = details.size - nonRejected.size
-        return LogItemsMapper.filterSheetState(nonRejected, rejectedCount, gaps, selection, session?.startedAt)
+        // R-243: the `to` bound pre-fills with the data's own extent — the session's end if it has
+        // one, else the latest transmission actually seen so far (never wall-clock "now", which
+        // is not itself a fact this data carries and would make the pre-fill drift on every poll).
+        val dataExtentEndMillis = session?.endedAt ?: entities.maxOfOrNull { it.startedAtUtc }
+        return LogItemsMapper.filterSheetState(
+            nonRejected,
+            rejectedCount,
+            gaps,
+            selection,
+            session?.startedAt,
+            dataExtentEndMillis,
+        )
     }
+
+    /**
+     * R-247: no session at all yet (`sessionId` itself `null` — the true first-launch state) —
+     * still an honest, fully-drawn empty Log (headline, sentence, quick-filter chips), never the
+     * blank body a `sessionId == null` early-return otherwise left behind.
+     */
+    public fun noSessionState(): LogScreenViewState {
+        val frequencies = connectedFrequencies()
+        return LogScreenViewState(
+            items = emptyList(),
+            quickFilters = LogItemsMapper.quickFilters(frequencies, LogQuickFilterId.All, rejectedCount = 0),
+            rejectedFocus = false,
+            rejectedExplanation = null,
+            emptyState = LogItemsMapper.emptyStateFor(
+                hasAnyTransmission = false,
+                sessionStartedAtUtcMillis = null,
+                frequencies = frequencies,
+            ),
+        )
+    }
+
+    /**
+     * R-247/R-248: the rig's currently-connected bands — the same [RigStatus] read
+     * `ui/data/ReaderPolling.kt`'s `activeNowViewState` already does for its own "listening on ..."
+     * fact (`RigStatus.State.Stale`/`Absent` never fabricate a frequency the rig is not presently
+     * reporting, so only `Connected` counts here, matching that call site exactly).
+     */
+    private fun connectedFrequencies(): List<Long> = (RigStatus.state as? RigStatus.State.Connected)?.bands
+        ?.mapNotNull { it.frequencyHz }
+        ?.distinct()
+        ?.sorted()
+        ?: emptyList()
 
     /** R-040's `NEW` badge: the first-ever over heard from a station, across every session, not just this one. */
     private suspend fun firstHeardTransmissionIds(db: OrtDatabase): Set<String> {

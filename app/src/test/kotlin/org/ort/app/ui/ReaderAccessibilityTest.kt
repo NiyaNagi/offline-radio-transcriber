@@ -135,6 +135,10 @@ class ReaderAccessibilityTest {
         }
 
         composeTestRule.onNodeWithContentDescription("Search").assertIsDisplayed().performClick()
-        composeTestRule.onNodeWithContentDescription("Open navigation").assertIsDisplayed()
+        // Round 5 (R-200): `SEARCH` no longer shows the host's `ScreenHeader` — `SearchContent`
+        // draws its own back chevron instead (`SearchScreen.kt`'s `search-back-chevron`,
+        // `contentDescription = "Back"`), so this asserts *that* marker is what actually opened,
+        // not the header this test used to expect to still be present underneath it.
+        composeTestRule.onNodeWithContentDescription("Back").assertIsDisplayed()
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.FailedState
@@ -61,17 +63,10 @@ public fun LevelScreen(state: LevelCheckState?, onContinue: () -> Unit) {
         }
 
         LevelMeter(reading = reading, modifier = Modifier.testTag("setup-level-meter"))
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 7.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                // "−" (U+2212 minus sign), matching "target −18 to −12"/"clip 0" beside it and
-                // `Setup-Level.dc.html`'s own typography -- never a plain hyphen-minus here.
-                text = reading?.noiseFloorDbfs?.let { "noise %.0f".format(it).replace('-', '−') } ?: "noise —",
-                style = OrtType.axis,
-                color = OrtColors.accentGapDim,
-            )
-            Text(text = "target −18 to −12", style = OrtType.axis, color = OrtColors.accentGreenDim)
-            Text(text = "clip 0", style = OrtType.axis, color = OrtColors.haltText)
-        }
+        LevelFooterFacts(
+            noiseText = reading?.noiseFloorDbfs?.let { "noise %.0f".format(it).replace('-', '−') } ?: "noise —",
+            modifier = Modifier.testTag("setup-level-footer-facts"),
+        )
 
         LevelRow(
             label = "Speech peaks",
@@ -113,6 +108,40 @@ public fun LevelScreen(state: LevelCheckState?, onContinue: () -> Unit) {
         )
     }
 }
+
+/**
+ * R-225 (validator pass 2): at font scale 2.0 the three facts ("noise −72", "target −18 to −12",
+ * "clip 0") no longer fit one row and used to collapse into a single concatenated, unreadable run
+ * (`Row` never wraps its children — confirmed on `setup/S07-level-pass2@2x.png`). Below
+ * [LARGE_FONT_SCALE_THRESHOLD], the original `SpaceBetween` `Row` is unchanged; at or above it,
+ * the three facts stack in a `Column` instead — never wrapped mid-run, always fully readable.
+ */
+@Composable
+private fun LevelFooterFacts(noiseText: String, modifier: Modifier = Modifier) {
+    val fontScale = LocalDensity.current.fontScale
+    if (fontScale >= LARGE_FONT_SCALE_THRESHOLD) {
+        Column(
+            modifier = modifier.fillMaxWidth().padding(top = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(text = noiseText, style = OrtType.axis, color = OrtColors.accentGapDim)
+            Text(text = "target −18 to −12", style = OrtType.axis, color = OrtColors.accentGreenDim)
+            Text(text = "clip 0", style = OrtType.axis, color = OrtColors.haltText)
+        }
+    } else {
+        Row(modifier = modifier.fillMaxWidth().padding(top = 7.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(text = noiseText, style = OrtType.axis, color = OrtColors.accentGapDim)
+            Text(text = "target −18 to −12", style = OrtType.axis, color = OrtColors.accentGreenDim)
+            Text(text = "clip 0", style = OrtType.axis, color = OrtColors.haltText)
+        }
+    }
+}
+
+/** guide's own "2.0" ceiling (FR-A11Y-3, AC-63) — the smallest scale the footer facts are known
+ * not to fit a single row at, confirmed on the validator's own `@2x` screenshot. A lower threshold
+ * would stack earlier than necessary; this is not a spec-mandated figure, only where the row is
+ * known to actually break. */
+private const val LARGE_FONT_SCALE_THRESHOLD = 1.5f
 
 /**
  * The real 60 s bar meter — target band, clip line and dashed noise-floor line drawn against the

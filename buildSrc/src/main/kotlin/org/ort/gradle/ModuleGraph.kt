@@ -37,7 +37,11 @@ object ModuleGraph {
             ":core", ":onnx", ":capture-api", ":segment", ":asr-api", ":asr-sherpa",
             ":lexicon", ":identity", ":rig", ":testing",
         ),
-        ":app" to setOf(":pipeline", ":data", ":net", ":core"),
+        // ":lexicon" added for the Models screen's lexicon-import flow (R-154, FR-LEX-30, FR-AST-2):
+        // ":app" needs LexiconImportValidator/LexiconImportInstaller directly, the same way F-008
+        // added ":net" here for model downloads — no edge this adds is on the forbidden list below
+        // (only ":capture-*" -> asr/lexicon/identity is named, and ":app" is not a capture module).
+        ":app" to setOf(":pipeline", ":data", ":net", ":core", ":lexicon"),
     )
 
     /** The forbidden edges the design calls out by name (technical design §2, last paragraph). */

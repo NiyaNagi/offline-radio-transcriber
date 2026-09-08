@@ -1,6 +1,9 @@
 package org.ort.app.ui.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertHeightIsAtLeast
@@ -115,5 +118,43 @@ class FeedbackTest {
         val clearAll = composeTestRule.onNodeWithText("Clear all")
         clearAll.assertIsDisplayed()
         clearAll.assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `R_261_a control behind an open sheet is unreachable once its host applies clearedWhileOverlaid`() {
+        // The register's own repro: a detail screen's "Back to Log" button stayed focusable and
+        // clickable behind an open correction sheet's scrim — invisible only to sighted eyes, not
+        // to TalkBack or a stray focus move. `Sheet` itself does not own dismissal/scrim/focus
+        // trapping (its own KDoc says so, deliberately, so each screen keeps its own scrim's exact
+        // tap geometry — `clearedWhileOverlaid` is the one general, reusable half of that job this
+        // package hands every such screen); this proves the mechanism a screen would wire in
+        // actually removes the control from the merged tree, not merely dims it visually.
+        var backTapped = false
+        var sheetOpen by mutableStateOf(true)
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    TextAction(
+                        text = "Back to Log",
+                        onClick = { backTapped = true },
+                        modifier = Modifier.clearedWhileOverlaid(contentHidden = sheetOpen),
+                    )
+                    if (sheetOpen) {
+                        Sheet(title = "Correct this callsign") {
+                            androidx.compose.material3.Text("content")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Unreachable while the sheet is open — not merely present-but-dim.
+        composeTestRule.onNodeWithText("Back to Log").assertDoesNotExist()
+
+        // Closing the sheet (the real screen's own dismissal — scrim tap/drag, outside this
+        // package) restores it exactly as before — this is a visibility gate, not a deletion.
+        sheetOpen = false
+        composeTestRule.onNodeWithText("Back to Log").assertIsDisplayed().performClick()
+        assert(backTapped)
     }
 }

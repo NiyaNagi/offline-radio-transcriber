@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -180,6 +181,27 @@ public fun Sheet(
         content()
     }
 }
+
+/** R-261: applied by the screen hosting an open [Sheet] (or any other modal overlay) to whatever
+ * sits *beneath* it — while [contentHidden] is true, this clears that content's entire semantics
+ * subtree, so accessibility traversal (TalkBack) and Compose's own semantics-based focus can no
+ * longer reach a control there. Without it, a button visually behind the scrim — the register's
+ * own finding was a detail screen's "Back to Log" — stays fully focusable and clickable, invisible
+ * only to sighted eyes, not to a screen reader or to a stray D-pad/keyboard focus move.
+ *
+ * [Sheet]'s own KDoc is explicit that dismissal/scrim/focus-trapping is "the host screen's job",
+ * not this component's — deliberately, so each screen keeps control of its own scrim's exact tap
+ * geometry (`TransmissionDetailContent.kt`'s own `CorrectingOverlay`/`SearchScreen.kt`'s
+ * `FiltersSheetOverlay`, both outside this package, read for the pattern). This is the one general,
+ * reusable half of that job this package can still hand every such screen, without this package
+ * owning the screen-specific content each one actually clears — a caller applies it to whatever
+ * `Modifier` chain its own main-content root already has, keyed to whatever local state means
+ * "a sheet is open" there.
+ *
+ * `false` (the default state before a screen wires this in) is a complete no-op — `this`,
+ * unchanged — so adopting it is purely additive for every screen that has not yet done so. */
+public fun Modifier.clearedWhileOverlaid(contentHidden: Boolean): Modifier =
+    if (contentHidden) this.clearAndSetSemantics {} else this
 
 // ---------------------------------------------------------------------------------------------
 // 6.8 Empty, loading, failed.

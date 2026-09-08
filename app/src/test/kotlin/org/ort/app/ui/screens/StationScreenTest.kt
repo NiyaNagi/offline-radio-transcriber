@@ -17,6 +17,7 @@ import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationListBadge
 import org.ort.app.ui.data.StationListEntryViewState
 import org.ort.app.ui.data.StationsFilter
+import org.ort.app.ui.data.StationsListState
 import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.data.UnidentifiedVoicesSummary
 import org.ort.app.ui.theme.OrtTheme
@@ -32,7 +33,9 @@ class StationScreenTest {
 
     @Test
     fun `an empty station list shows an honest empty state, not a fabricated placeholder`() {
-        composeTestRule.setContent { OrtTheme { StationsListScreen(stations = emptyList(), onOpen = {}) } }
+        composeTestRule.setContent {
+            OrtTheme { StationsListScreen(state = StationsListState(stations = emptyList()), onOpen = {}) }
+        }
 
         composeTestRule.onNodeWithContentDescription("No stations heard yet").assertExists()
     }
@@ -42,7 +45,7 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(stations = listOf(fixtureRow())),
                     onOpen = {},
                     selectedFilter = StationsFilter.TONIGHT,
                 )
@@ -61,7 +64,7 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(stations = listOf(fixtureRow())),
                     onOpen = {},
                     onFilterSelected = { selected = it },
                 )
@@ -78,11 +81,13 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(
-                        fixtureRow().copy(
-                            givenName = "Dave",
-                            badge = StationListBadge.NEW,
-                            countContext = "6 overs",
+                    state = StationsListState(
+                        stations = listOf(
+                            fixtureRow().copy(
+                                givenName = "Dave",
+                                badge = StationListBadge.NEW,
+                                countContext = "6 overs",
+                            ),
                         ),
                     ),
                     onOpen = {},
@@ -99,9 +104,11 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(
+                        stations = listOf(fixtureRow()),
+                        unidentified = UnidentifiedVoicesSummary(voiceCount = 4, overCount = 36),
+                    ),
                     onOpen = {},
-                    unidentified = UnidentifiedVoicesSummary(voiceCount = 4, overCount = 36),
                 )
             }
         }
@@ -114,9 +121,11 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 StationsListScreen(
-                    stations = listOf(fixtureRow()),
+                    state = StationsListState(
+                        stations = listOf(fixtureRow()),
+                        unidentified = UnidentifiedVoicesSummary(voiceCount = null, overCount = 12),
+                    ),
                     onOpen = {},
-                    unidentified = UnidentifiedVoicesSummary(voiceCount = null, overCount = 12),
                 )
             }
         }
@@ -125,10 +134,58 @@ class StationScreenTest {
     }
 
     @Test
+    fun `R_207 the subtitle names the real all-time and tonight totals, and the header has no TIME or FREQ columns`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                StationsListScreen(
+                    state = StationsListState(
+                        stations = listOf(fixtureRow()),
+                        heardAllTimeCount = 12,
+                        heardTonightCount = 3,
+                    ),
+                    onOpen = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("12 stations heard all time · 3 tonight").assertExists()
+        // R-207 (halt-adjacent design finding): the old header borrowed the Log row's TIME/FREQ
+        // columns this board never had.
+        composeTestRule.onNodeWithText("TIME").assertDoesNotExist()
+        composeTestRule.onNodeWithText("FREQ").assertDoesNotExist()
+        composeTestRule.onNodeWithText("STATION").assertExists()
+        composeTestRule.onNodeWithText("LAST").assertExists()
+    }
+
+    @Test
+    fun `R_207 Most heard toggles the sort and reports it, and the row's last-heard is a bare mono time`() {
+        var sorted = false
+        composeTestRule.setContent {
+            OrtTheme {
+                StationsListScreen(
+                    state = StationsListState(stations = listOf(fixtureRow().copy(lastHeardLabel = "02:14"))),
+                    onOpen = {},
+                    onToggleSort = { sorted = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("stations-sort-most-heard").performClick()
+
+        assert(sorted)
+        // This row renders whatever `lastHeardLabel` it is given verbatim — no date, no "UTC"
+        // suffix added here; `StationsAndFrequenciesTest`/`StationPollingTest` prove the real
+        // mapper now produces exactly this bare local "HH:mm" shape (R-207).
+        composeTestRule.onNodeWithText("02:14").assertExists()
+    }
+
+    @Test
     fun `tapping a station row opens that station`() {
         var opened: String? = null
         composeTestRule.setContent {
-            OrtTheme { StationsListScreen(stations = listOf(fixtureRow()), onOpen = { opened = it }) }
+            OrtTheme {
+                StationsListScreen(state = StationsListState(stations = listOf(fixtureRow())), onOpen = { opened = it })
+            }
         }
 
         composeTestRule.onNodeWithText("W7NPC").performClick()
@@ -215,6 +272,30 @@ class StationScreenTest {
     }
 
     @Test
+    fun `R_192 the header kebab is discoverable as Station identity and opens it`() {
+        // `Station.dc.html` draws no explicit Identity action, section preview or row anywhere in
+        // its body — the header kebab is the *only* affordance (V4/V5 register R-192), so it must
+        // carry a real, specific description and testTag rather than the shared header's generic
+        // "More".
+        var openedIdentity = false
+        val state = StationDetailViewState(
+            stationId = "W7NPC",
+            label = "W7NPC",
+            transmissionCount = 0,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { StationDetailScreen(state = state, onBack = {}, onOpenIdentity = { openedIdentity = true }) }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Station identity").assertExists()
+        composeTestRule.onNodeWithTag("station-identity-open").performClick()
+        assert(openedIdentity)
+    }
+
+    @Test
     fun `station detail with no transmissions shows an honest empty state`() {
         val state = StationDetailViewState(
             stationId = "W7NPC",
@@ -229,6 +310,44 @@ class StationScreenTest {
         composeTestRule.onNode(hasScrollAction())
             .performScrollToNode(hasText("No transmissions recorded from this station"))
         composeTestRule.onNodeWithText("No transmissions recorded from this station").assertExists()
+    }
+
+    @Test
+    fun `R_208 the detail title carries a real state marker and an honest context sentence`() {
+        val state = StationDetailViewState(
+            stationId = "W7NPC",
+            label = "W7NPC",
+            attribution = Attribution.confirmed("W7NPC", 0.95),
+            contextSentence = "Heard 14 nights of 14",
+            transmissionCount = 1,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent { OrtTheme { StationDetailScreen(state = state, onBack = {}) } }
+
+        // The marker itself has no text — its content description carries the real state
+        // (`AttributionMarker`'s own convention); the context sentence is real, visible prose.
+        composeTestRule.onNodeWithContentDescription("Confirmed", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Heard 14 nights of 14", substring = true).assertExists()
+    }
+
+    @Test
+    fun `R_208 first and last heard render local, with no raw ISO date and no UTC suffix`() {
+        val state = StationDetailViewState(
+            stationId = "W7NPC",
+            label = "W7NPC",
+            transmissionCount = 1,
+            firstHeardLabel = "2026-08-26 05:12",
+            lastHeardLabel = "2026-09-08 05:37",
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent { OrtTheme { StationDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("2026-08-26 05:12", substring = true).assertExists()
+        composeTestRule.onNodeWithText("UTC", substring = true).assertDoesNotExist()
     }
 
     @Test

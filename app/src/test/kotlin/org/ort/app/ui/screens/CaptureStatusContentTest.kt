@@ -1,5 +1,7 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -9,9 +11,11 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -197,6 +201,39 @@ class CaptureStatusContentTest {
 
         composeTestRule.waitUntilTextExists("1 captured")
         composeTestRule.onNodeWithText("1 captured", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("R-232")
+    fun `R_232 the title respects a top-padded modifier the way the host's banner-height inset relies on`() {
+        // R-232: `OrtNavHost.kt`'s `NavHostBody` (WP3's file) already applies the host's real,
+        // measured banner height as top padding to the *outer* Box every destination's content sits
+        // inside — `DestinationContent`'s `ReaderDestination.CAPTURE` branch calls this composable
+        // with that already-padded space, unchanged, the same as every other destination (confirmed
+        // by reading `OrtNavHost.kt` before writing this test: the padding is applied once, at
+        // `NavHostBody`, never per-destination). So closing R-232 needs no code change in this
+        // package's own files — `CaptureStatusContent`/`CaptureStatusScreen` take whatever `modifier`
+        // they are given and were never the ones dropping it. This test proves that contract holds:
+        // a caller-supplied top inset (standing in for the host's real `contentTopPadding`) is
+        // respected, not silently reset by an internal `fillMaxSize()` that ignores its parent.
+        val insetDp = 64.dp
+        runBlocking { db.sessionDao().insert(session()) }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent {
+            OrtTheme {
+                CaptureStatusContent(context = context, sessionId = "S1", modifier = Modifier.padding(top = insetDp))
+            }
+        }
+
+        composeTestRule.waitUntilTagExists("capture-status-title")
+        val density = composeTestRule.density
+        val insetPx = with(density) { insetDp.toPx() }
+        val titleTop = composeTestRule.onNodeWithTag("capture-status-title").fetchSemanticsNode().boundsInRoot.top
+        assertTrue(
+            "expected the title to sit at or below the caller's top inset (${insetPx}px), was ${titleTop}px",
+            titleTop >= insetPx - 1f, // sub-pixel rounding tolerance
+        )
     }
 
     @Test

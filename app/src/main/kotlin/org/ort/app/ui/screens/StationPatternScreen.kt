@@ -26,6 +26,7 @@ import org.ort.app.ui.components.ActivityPatternChart
 import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.DayHourCell
 import org.ort.app.ui.components.DayOfWeekGrid
+import org.ort.app.ui.components.DayOfWeekGridOrientation
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
@@ -38,13 +39,17 @@ import org.ort.app.ui.theme.OrtType
 import org.ort.core.Attribution
 
 /**
- * `Station-Pattern.dc.html` (R-072, R-075, FR-UI-11/12): the `By hour` / `Hour × day` /
- * `Change over time` toggle, [DayOfWeekGrid] for the hour x day grid (its own hatch and
- * three-swatch legend), the week-over-week lines under "Change over time", and a "What this
- * says" list that names the unknown days and hours explicitly. Every bucket here is **local
- * time** — R-075: this screen's title carries no "(UTC)", and [StationPatternViewState]'s buckets
- * are already local by the time they reach this pure render (`StationPolling.stationPattern`
- * always calls `ActivityPatternMapper` with `zone = ZoneId.systemDefault()`).
+ * `Station-Pattern.dc.html` (R-072, R-075, R-209, FR-UI-11/12): the `By hour` / `Hour × day` /
+ * `Change over time` toggle, WP2's shared [DayOfWeekGrid] for the hour x day grid (`orientation =
+ * DaysAsRows` — R-209 found this screen's grid transposed from the board; WP2 has since added the
+ * matching orientation and legend wording this screen used to hand-roll its own copy of, so this
+ * screen went back to the shared component rather than keep maintaining a look-alike — guide's own
+ * rule: never hand-roll what a shared component already does), the week-over-week lines under
+ * "Change over time", and a "What this says" list that names the unknown days and hours
+ * explicitly. Every bucket here is **local time** — R-075: this screen's title carries no "(UTC)",
+ * and [StationPatternViewState]'s buckets are already local by the time they reach this pure
+ * render (`StationPolling.stationPattern` always calls `ActivityPatternMapper` with `zone =
+ * ZoneId.systemDefault()`).
  */
 @Composable
 public fun StationPatternScreen(state: StationPatternViewState, onBack: () -> Unit, modifier: Modifier = Modifier) {
@@ -58,8 +63,11 @@ public fun StationPatternScreen(state: StationPatternViewState, onBack: () -> Un
                 style = OrtType.screenTitle,
                 modifier = Modifier.semantics { heading() },
             )
+            // R-210 (register, polish, V5 @f8430b8): "Local time" named the zone, not the fact an
+            // operator actually wants here — the real night count and the calendar range it spans,
+            // matching `Station-Pattern.dc.html`'s own subtitle verbatim.
             Text(
-                text = "Local time",
+                text = state.nightsSubtitle,
                 style = OrtType.subtitle,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.md),
@@ -83,7 +91,10 @@ public fun StationPatternScreen(state: StationPatternViewState, onBack: () -> Un
                     ActivityPatternChart(pattern = state.hourPattern, title = "")
 
                 PatternMode.HOUR_BY_DAY ->
-                    DayOfWeekGrid(cells = state.hourByDay.toDayHourCells())
+                    DayOfWeekGrid(
+                        cells = state.hourByDay.toDayHourCells(),
+                        orientation = DayOfWeekGridOrientation.DaysAsRows,
+                    )
 
                 PatternMode.CHANGE_OVER_TIME ->
                     ChangeOverTime(lines = state.weekOverWeekSummary)
@@ -110,6 +121,12 @@ private fun modeLabel(mode: PatternMode): String = when (mode) {
     PatternMode.CHANGE_OVER_TIME -> "Change over time"
 }
 
+// [HourByDayActivityCell] (this package's own bucket shape, local-hour-of-day) to [DayHourCell]
+// (the shared grid's shape, historically UTC-hour-of-day — its own field is still named
+// `hourOfDayUtc` for that reason, but the grid itself is timezone-agnostic: it only ever indexes
+// cells by whatever hour number a caller gives it, so passing an already-local hour here is
+// correct, not a mismatch. R-075: every bucket this screen renders is local by the time it
+// reaches here (`StationPolling.stationPattern`), so nothing here re-buckets by any zone.
 private fun List<HourByDayActivityCell>.toDayHourCells(): List<DayHourCell> =
     map { DayHourCell(dayOfWeek = it.dayOfWeek, hourOfDayUtc = it.hourOfDay, state = it.state) }
 

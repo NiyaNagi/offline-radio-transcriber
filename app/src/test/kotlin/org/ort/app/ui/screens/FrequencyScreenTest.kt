@@ -15,6 +15,7 @@ import org.junit.runner.RunWith
 import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.FrequencyDetailViewState
 import org.ort.app.ui.data.FrequencyListEntryViewState
+import org.ort.app.ui.data.FrequencyNetViewState
 import org.ort.app.ui.data.FrequencyRegularViewState
 import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.theme.OrtTheme
@@ -80,6 +81,24 @@ class FrequencyScreenTest {
     }
 
     @Test
+    fun `R_215 the subtitle names the real frequency counts, all time and tonight`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FrequenciesListScreen(
+                    frequencies = listOf(
+                        FrequencyListEntryViewState(145_230_000L, "145.230 MHz", transmissionCount = 1),
+                    ),
+                    onOpen = {},
+                    heardAllTimeCount = 5,
+                    heardTonightCount = 2,
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("5 frequencies heard all time · 2 tonight").assertExists()
+    }
+
+    @Test
     fun `R_074 a busier-than-usual frequency reads in amber text, never colour alone`() {
         composeTestRule.setContent {
             OrtTheme {
@@ -138,6 +157,69 @@ class FrequencyScreenTest {
         composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag("regular-W7NPC"))
         composeTestRule.onNodeWithText("W7NPC").assertExists()
         composeTestRule.onNodeWithText("612 over(s) · 14 session(s)").assertExists()
+    }
+
+    @Test
+    fun `R_216 Listened and Nets rows show real facts, and More reaches Frequency-Change`() {
+        var openedChange = false
+        val state = FrequencyDetailViewState(
+            frequencyHz = 145_230_000L,
+            label = "145.230 MHz",
+            transmissionCount = 1,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+            listenedLabel = "14 nights of 14 · 96 h total",
+            net = FrequencyNetViewState(
+                dayOfWeek = java.time.DayOfWeek.TUESDAY,
+                hourOfDay = 19,
+                controlStationId = "W7NPC",
+                weeksSeen = 3,
+                weeksTotal = 3,
+            ),
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { FrequencyDetailScreen(state = state, onBack = {}, onOpenChange = { openedChange = true }) }
+        }
+
+        composeTestRule.onNodeWithText("14 nights of 14 · 96 h total").assertExists()
+        composeTestRule.onNodeWithText("W7NPC control", substring = true).assertExists()
+        composeTestRule.onNodeWithText("More").performClick()
+        assert(openedChange)
+    }
+
+    @Test
+    fun `R_216 Nets is honestly absent, never fabricated, when no recurring pattern was found`() {
+        val state = FrequencyDetailViewState(
+            frequencyHz = 145_230_000L,
+            label = "145.230 MHz",
+            transmissionCount = 1,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+            net = null,
+        )
+
+        composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Nets").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_216 an always-listening frequency shows the no-hatch caption, never a fabricated hatch legend`() {
+        val alwaysListening = (0 until 24).map { hour ->
+            org.ort.app.ui.data.HourActivityBucket(hourOfDayUtc = hour, state = HourActivityState.HEARD, heardCount = 1)
+        }
+        val state = FrequencyDetailViewState(
+            frequencyHz = 145_230_000L,
+            label = "145.230 MHz",
+            transmissionCount = 24,
+            activityPattern = alwaysListening,
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("no hatch: always listening here", substring = true).assertExists()
     }
 
     @Test

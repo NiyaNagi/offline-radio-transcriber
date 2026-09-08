@@ -1,5 +1,6 @@
 package org.ort.app.ui.components
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -8,16 +9,22 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
@@ -140,6 +147,159 @@ class RowsTest {
         composeTestRule.onNodeWithText("resolving…").assertExists()
         composeTestRule.onNodeWithText("NEW").assertExists()
         composeTestRule.onNodeWithTag("confirmed").assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `R_240_an ambiguous row with a callsign shows it beside the alternate, never just or-alternate`() {
+        // The register's own repro (`overnight/L01-log.png`): AttributionState.AMBIGUOUS never
+        // carries a stationId (Attribution.ambiguous() sets it null by design — more than one
+        // candidate survived), so before LogRowViewState.callsign existed the row could only ever
+        // read "or KE7QRS" — the kept candidate silently missing. A caller supplying one now
+        // reaches the rendered row.
+        composeTestRule.setContent {
+            OrtTheme {
+                LogRow(
+                    state = row(Attribution.ambiguous()).copy(callsign = "KE7QRS", alternate = "N7ABC"),
+                    onClick = {},
+                    modifier = Modifier.testTag("ambiguous"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("KE7QRS").assertIsDisplayed()
+        composeTestRule.onNodeWithText("or N7ABC").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_240_an ambiguous row with no callsign supplied still falls back to Attribution_stationId`() {
+        // Documents the fallback explicitly: `callsign = null` (every caller before R-240) keeps
+        // AttributionRow's own default (`attribution.stationId`) — for AMBIGUOUS that is null too,
+        // so the row reads only "or <alternate>", exactly the register's pre-fix screenshot. This
+        // is the honest current behaviour for a caller that has not supplied one yet, not silently
+        // hidden by this fix.
+        composeTestRule.setContent {
+            OrtTheme {
+                LogRow(
+                    state = row(Attribution.ambiguous()).copy(alternate = "N7ABC"),
+                    onClick = {},
+                    modifier = Modifier.testTag("ambiguous"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("or N7ABC").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_244_a badge that no longer fits beside the attribution wraps below it, never clipping`() {
+        // A narrow row leaves the marker line (shape + callsign + badge) too little width for a
+        // badge to sit beside the attribution on one line — real, non-text-driven minimums do the
+        // forcing here (AttributionShape's own fixed Canvas size, Badge's own padding), not font
+        // metrics Robolectric can't measure reliably (see R_152's own findings elsewhere in this
+        // file). If the badge wraps to a second line rather than clipping, the row measures
+        // taller than the same narrow row with no badge at all.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    Column {
+                        Box(modifier = Modifier.width(220.dp)) {
+                            LogRow(state = row(badge = null), onClick = {}, modifier = Modifier.testTag("no-badge"))
+                        }
+                        Box(modifier = Modifier.width(220.dp)) {
+                            LogRow(
+                                state = row(badge = LogRowBadge.NEW),
+                                onClick = {},
+                                modifier = Modifier.testTag("with-badge"),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // The badge is still reachable — never dropped from the tree — and the row grew to fit it
+        // on a wrapped second line rather than clipping it to a sliver.
+        composeTestRule.onNodeWithText("NEW").assertExists()
+        val noBadgeHeight = composeTestRule.onNodeWithTag("no-badge").fetchSemanticsNode().size.height
+        val withBadgeHeight = composeTestRule.onNodeWithTag("with-badge").fetchSemanticsNode().size.height
+        assert(withBadgeHeight > noBadgeHeight) {
+            "expected the badge to wrap onto a second line in a narrow row, measuring taller than " +
+                "the same row with no badge; got no-badge=${noBadgeHeight}px, with-badge=${withBadgeHeight}px"
+        }
+    }
+
+    @Test
+    fun `R_244_log_row's merged description carries the attribution's own words, not just time-freq-transcript`() {
+        // The side finding this fix addresses: AttributionRow is itself its own
+        // `semantics(mergeDescendants = true)` boundary, and this Compose version does not
+        // reliably carry a nested boundary's contentDescription up through a second, outer one —
+        // validators read the row's merged description to judge state ("filled circle, Confirmed,
+        // W7NPC" is the exact wording V3 checked for) and, before this fix, found nothing of the
+        // sort. Composed explicitly now, so `onNodeWithContentDescription` finds it directly, the
+        // same way a validator/accessibility service would, without an unmerged-tree query.
+        //
+        // Deliberately checks for "Confirmed, W7NPC" — state prose + callsign — never prefixed
+        // with "filled circle,": `AttributionRow`'s own node (still separately, correctly
+        // queryable — unaffected by this fix, it is not the thing being tested) already carries
+        // that exact full phrase, and a real caller outside this package
+        // (`ui/screens/LogScreenTest.kt`) finds "the row" by searching for it — this fix must not
+        // turn that one match into two. `LogRow`'s own new description omits the shape word for
+        // exactly that reason (see `Rows.kt`'s `logRowDescription` doc).
+        composeTestRule.setContent {
+            OrtTheme {
+                LogRow(
+                    state = row(Attribution.confirmed("W7NPC", 0.95)),
+                    onClick = {},
+                    modifier = Modifier.testTag("confirmed"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("confirmed").assert(
+            hasContentDescription("Confirmed, W7NPC", substring = true),
+        )
+        // The transcript this fix must not silently drop — an explicit contentDescription
+        // replaces what an accessibility service reads for a node, so it has to still be present
+        // in the new one, not merely still visible in the merged Text list nothing now reads.
+        composeTestRule.onNodeWithTag("confirmed").assert(
+            hasContentDescription("this is whiskey seven november papa charlie, monitoring", substring = true),
+        )
+        // The coordinator's own literal check — `onNodeWithContentDescription` genuinely finds
+        // the row by its description, not merely a tag-scoped assertion against it. A bare
+        // "Confirmed, W7NPC" matches `AttributionRow`'s own separate node too (both nodes
+        // genuinely do carry those words — that overlap is the correct, intended outcome, not a
+        // bug), so this reaches into the transcript, which only `LogRow`'s own description has,
+        // to name the row uniquely.
+        composeTestRule
+            .onNodeWithContentDescription("Confirmed, W7NPC, this is whiskey seven", substring = true)
+            .assertIsDisplayed()
+        // And the shape-prefixed full phrase `AttributionRow` alone carries still finds exactly
+        // one node, not two — proving this fix really did leave that existing, real caller
+        // pattern (`ui/screens/LogScreenTest.kt`'s own query) alone.
+        composeTestRule
+            .onNodeWithContentDescription("filled circle, Confirmed, W7NPC", substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_245_column_header_row's STATION label renders whole, never split mid-word, at font scale 2`() {
+        // Robolectric's degenerate glyph metrics for this codebase's custom `fontFamily`s mean a
+        // rendered wrap can't be forced or verified reliably here (established repeatedly
+        // elsewhere in this file/CHANGELOG — even a 1dp-wide box does not force a real Compose
+        // `Text` to report more than one line in this environment). `maxLines = 1`/`softWrap =
+        // false` are themselves deterministic, host-independent Compose guarantees — not
+        // something this test needs to re-verify the framework does correctly — so what this
+        // checks is the one thing that *is* host-independently meaningful: the full word survives
+        // into the semantics tree, not a hyphen-split substring ("STATIO"/"N").
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    ColumnHeaderRow()
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("STATION").assertIsDisplayed()
     }
 
     @Test
@@ -279,6 +439,39 @@ class RowsTest {
     }
 
     @Test
+    fun `R_192_drill_in_header_kebab_can_be_named`() {
+        // WP8 had to clone this whole header (StationDetailHeader) just to relabel its kebab
+        // "Station identity" — kebabDescription/kebabTestTag let a screen say so directly instead.
+        var kebabTapped = false
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    DrillInHeader(
+                        parentLabel = "Station",
+                        onBack = {},
+                        onKebab = { kebabTapped = true },
+                        kebabDescription = "Station identity",
+                        kebabTestTag = "station-kebab",
+                        modifier = Modifier.testTag("named"),
+                    )
+                    // The default is unchanged for every caller that does not name it.
+                    DrillInHeader(
+                        parentLabel = "Log",
+                        onBack = {},
+                        onKebab = {},
+                        modifier = Modifier.testTag("default"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNode(hasContentDescription("Station identity")).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("station-kebab").performClick()
+        assert(kebabTapped)
+        composeTestRule.onNode(hasContentDescription("More")).assertIsDisplayed()
+    }
+
+    @Test
     fun `a key value row and an action bar render at a 44dp target`() {
         composeTestRule.setContent {
             OrtTheme {
@@ -295,127 +488,42 @@ class RowsTest {
     }
 
     @Test
-    fun `R_131_nav_row carries its leading icon, title, sub-line and a trailing chevron`() {
+    fun `R_265_key_value_row_is_a_traversal_stop`() {
+        // Without a merge boundary, "Input"/"USB Audio Device"/"verified" are three separate
+        // TalkBack stops a screen-reader user has to swipe through individually, rather than
+        // hearing as the one fact row they visually are.
         composeTestRule.setContent {
             OrtTheme {
-                Column {
-                    NavRow(
-                        rowTitle = "Rig",
-                        subLine = "TH-D75A · connected",
-                        icon = OrtIcons.rig,
-                        onClick = {},
-                        modifier = Modifier.testTag("nav-rig"),
-                    )
-                    NavRow(rowTitle = "Improve", onClick = {}, modifier = Modifier.testTag("nav-bare"))
-                }
-            }
-        }
-
-        composeTestRule.onNodeWithText("Rig").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TH-D75A · connected").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Improve").assertIsDisplayed()
-    }
-
-    @Test
-    fun `R_131_nav_row is a real 44dp Role_Button target with a merged title-then-subLine description`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                Column {
-                    NavRow(
-                        rowTitle = "Tier",
-                        subLine = "Tier 1 · this phone's best",
-                        onClick = {},
-                        modifier = Modifier.testTag("nav-tier"),
-                    )
-                    NavRow(rowTitle = "About", onClick = {}, modifier = Modifier.testTag("nav-about"))
-                }
-            }
-        }
-
-        val withSubLine = composeTestRule.onNodeWithTag("nav-tier")
-        withSubLine.assertHeightIsAtLeast(44.dp)
-        withSubLine.assert(hasContentDescription("Tier. Tier 1 · this phone's best"))
-
-        // No sub-line: the bare title, never a dangling ". ".
-        val bare = composeTestRule.onNodeWithTag("nav-about")
-        bare.assertHeightIsAtLeast(44.dp)
-        bare.assert(hasContentDescription("About"))
-    }
-
-    @Test
-    fun `R_131_nav_row fires onClick and renders an optional trailing slot beside the chevron`() {
-        var tapped = false
-        composeTestRule.setContent {
-            OrtTheme {
-                NavRow(
-                    rowTitle = "Tier",
-                    onClick = { tapped = true },
-                    trailing = { Badge(text = "Tier 1", kind = BadgeKind.TIER) },
-                    modifier = Modifier.testTag("nav-tier"),
+                KeyValueRow(
+                    key = "Input",
+                    value = "USB Audio Device",
+                    subLine = "verified",
+                    modifier = Modifier.testTag("kv"),
                 )
             }
         }
 
-        composeTestRule.onNodeWithText("TIER 1").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("nav-tier").performClick()
-        assert(tapped)
+        val row = composeTestRule.onNodeWithTag("kv")
+        row.assert(hasContentDescription("Input, USB Audio Device, verified"))
+        // A real accessibility stop, not merely a description string sitting unused on an inert
+        // node — `focusable()` registers a real `RequestFocus` action on the merged node itself,
+        // which is what marks it focusable (as opposed to `SemanticsProperties.Focused`, which
+        // reflects only whether it currently *has* focus, not whether it *can*).
+        row.assertIsDisplayed()
+        row.assert(
+            SemanticsMatcher("has RequestFocus") { it.config.getOrNull(SemanticsActions.RequestFocus) != null },
+        )
+        // "Input" and "USB Audio Device" each resolve to exactly the one merged row node, not
+        // two/three separate ones of their own — genuinely one stop, not three independently
+        // reachable texts a merged description was merely layered on top of.
+        composeTestRule.onAllNodesWithText("Input", substring = true).assertCountEquals(1)
+        composeTestRule.onAllNodesWithText("USB Audio Device", substring = true).assertCountEquals(1)
     }
 
-    @Test
-    fun `R_131_nav_row's sub-line renders in full at font scale 2 point 0, never truncated`() {
-        // R-131 (`Settings.dc.html`): a real status sentence must be free to wrap rather than
-        // being cut to one ellipsised line — `NavRow` sets no `maxLines`/`overflow` on its
-        // sub-line `Text` at all (Compose's own default is unrestricted, soft-wrapping), so there
-        // is no ceiling here to regress back to. A height-based "did it actually wrap onto more
-        // lines" assertion was tried and dropped: Robolectric returns degenerate glyph metrics
-        // for this codebase's custom `fontFamily`s (confirmed directly, same finding recorded
-        // against R-152's fix earlier in this file/CHANGELOG — a 71-character sub-line and a
-        // 9-character one measured the identical row height, 88px, at the same font scale), so a
-        // rendered-pixel wrap can't be verified reliably on this host. What *is* real and
-        // host-independent is that the full sentence survives verbatim into the semantics tree —
-        // this catches a future regression that truncates/summarises the string before it ever
-        // reaches `Text`, which no font metric is needed to detect.
-        val longSubLine = "This phone's best · what it does not know about weak signals or noise"
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
-                OrtTheme {
-                    NavRow(
-                        rowTitle = "Tier",
-                        subLine = longSubLine,
-                        onClick = {},
-                        modifier = Modifier.width(320.dp).testTag("nav-tier"),
-                    )
-                }
-            }
-        }
-
-        composeTestRule.onNodeWithText(longSubLine).assertIsDisplayed()
-        composeTestRule.onNodeWithTag("nav-tier").assert(hasContentDescription(longSubLine, substring = true))
-    }
-
-    @Test
-    fun `R_131_nav_row's NotBuilt tone dims the row without hiding it`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                Column {
-                    NavRow(
-                        rowTitle = "Rig",
-                        icon = OrtIcons.rig,
-                        onClick = {},
-                        tone = NavRowTone.NotBuilt,
-                        modifier = Modifier.testTag("nav-not-built"),
-                    )
-                }
-            }
-        }
-
-        // Still present, still reachable (constitution III: never delete quietly) — only its
-        // colour differs, which this test does not (and, per this package's prior findings on
-        // Robolectric font/paint metrics, reliably cannot) assert directly; the structural claim
-        // — the row still renders and is still a real target — is what is checked here.
-        composeTestRule.onNodeWithText("Rig").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("nav-not-built").assertHeightIsAtLeast(44.dp)
-    }
+    // `NavRow`'s own tests moved to `NavRowTest.kt` (detekt's `LargeClass` finding, once this file
+    // grew past a reasonable size across every row family it covers) — `NavRow` was already a
+    // self-contained cluster here, not entangled with `LogRow`/`KeyValueRow`/the rest this file
+    // still owns.
 
     @Test
     fun `R_065_highlightRanges paints the matched words in highlightGreen, per Search-Results_dc_html`() {
@@ -489,6 +597,71 @@ class RowsTest {
         }
 
         composeTestRule.onNodeWithText("REJECTED · SQUELCH TAIL").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_242_a rejected row's optional duration renders in the DUR column and reaches the description`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    RejectedRow(
+                        timeLabel = "02:16:40",
+                        frequencyLabel = "146.960",
+                        reason = "squelch tail",
+                        durationLabel = "0.4s",
+                        modifier = Modifier.testTag("with-duration"),
+                    )
+                    // Additive — a caller that supplies no duration renders exactly as before,
+                    // no empty DUR column.
+                    RejectedRow(
+                        timeLabel = "01:52:07",
+                        frequencyLabel = "145.230",
+                        reason = "hallucination",
+                        modifier = Modifier.testTag("no-duration"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.4s").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("with-duration").assert(hasContentDescription("0.4s", substring = true))
+        composeTestRule.onNodeWithTag("no-duration").assert(
+            hasContentDescription("01:52:07, 145.230, rejected, hallucination"),
+        )
+    }
+
+    @Test
+    fun `R_246_a provisional log row's transcript style is italic, a resolved row's is not`() {
+        // A rendered `fontStyle` isn't reliably verifiable through Compose semantics (no property
+        // exposes it), so this checks the pure decision `LogRow` renders from directly —
+        // `TextStyle`/`FontStyle` compare as ordinary data classes, no composition needed.
+        assert(logRowTranscriptStyle(LogRowPartial.HEARING).fontStyle == FontStyle.Italic) {
+            "expected a HEARING row's transcript style to be italic"
+        }
+        assert(logRowTranscriptStyle(LogRowPartial.RESOLVING).fontStyle == FontStyle.Italic) {
+            "expected a RESOLVING row's transcript style to be italic"
+        }
+        assert(logRowTranscriptStyle(null).fontStyle != FontStyle.Italic) {
+            "expected a resolved (non-partial) row's transcript style to stay upright"
+        }
+    }
+
+    @Test
+    fun `R_246_a provisional log row still renders its real transcript text, unchanged by the italic style`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogRow(
+                    state = row(partial = LogRowPartial.HEARING, attribution = null),
+                    onClick = {},
+                    modifier = Modifier.testTag("hearing"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "this is whiskey seven november papa charlie, monitoring",
+            substring = true,
+        ).assertExists()
     }
 
     @Test

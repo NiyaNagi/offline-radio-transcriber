@@ -1,6 +1,8 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -44,11 +46,24 @@ class StationIdentityScreenTest {
 
         // "N7XYZ" legitimately renders twice — the header and the Heard section's own callsign
         // row — so this checks the row's own sub-line rather than the ambiguous bare callsign.
-        composeTestRule.onNodeWithText("heard 31 time(s)", substring = true).assertExists()
+        // R-212: the shared plural helper, "heard 31 times" — never the literal "(s)" placeholder.
+        composeTestRule.onNodeWithText("heard 31 times", substring = true).assertExists()
         composeTestRule.onNodeWithText("region 7").assertExists()
         composeTestRule.onNodeWithText("One cluster, 38 overs").assertExists()
         composeTestRule.onNodeWithTag("station-identity-rename").performScrollTo()
         composeTestRule.onNodeWithText("Dave").assertExists()
+    }
+
+    @Test
+    fun `R_214 the HEARD section label is present and the Callsign row carries a real state marker`() {
+        composeTestRule.setContent { OrtTheme { StationIdentityScreen(state = fixtureState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithText("HEARD").assertExists()
+        // The marker is shape-only (no confidence chip); its content description still names the
+        // real state, so this proves a marker is actually drawn beside the Heard-section facts,
+        // not merely that the rows' own text renders. Both Callsign and Lexicon carry one here.
+        composeTestRule.onAllNodesWithContentDescription("filled circle", substring = true)
+            .assertCountEquals(2)
     }
 
     @Test

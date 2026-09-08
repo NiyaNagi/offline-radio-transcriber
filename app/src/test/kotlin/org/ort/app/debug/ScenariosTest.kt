@@ -11,9 +11,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
+import org.ort.app.ui.failures.FailureSignals
+import org.ort.app.ui.failures.RecoveryAnnouncer
+import org.ort.app.ui.setup.SetupStateMachine
+import org.ort.app.ui.setup.SetupStep
+import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.core.AttributionState
+import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
@@ -50,6 +57,24 @@ class ScenariosTest {
         db = OrtDatabase.create(context)
     }
 
+    /**
+     * Closes this test's own [OrtDatabase] instance before the next test method opens a fresh one
+     * against the *same* on-disk `ort.db` (`OrtDatabase.create(context)`'s default `name`,
+     * unchanged per test — Robolectric's `filesDir` is stable across test methods within one JVM
+     * fork, and this class calls [OrtDatabase.create] once per test, over three dozen tests plus
+     * the five-times-thirty-scenario regression test below). Left un-closed, each test method's
+     * `RoomDatabase` instance — its own connection pool, its own `InvalidationTracker` — stayed
+     * alive for the rest of the run, so by the end there were dozens of live, still-warm writers
+     * all pointed at one file: part of what let `clearPriorScenarioData`'s `BEGIN IMMEDIATE`
+     * intermittently race a stale instance's own background bookkeeping into
+     * `SQLiteBusyException: [database is locked]` (see `Scenarios.clearPriorScenarioData`'s doc
+     * comment for the other half — the un-transacted multi-statement clear this closes off too).
+     */
+    @After
+    fun closeDatabase() {
+        db.close()
+    }
+
     @After
     fun resetProcessWideAvailability() {
         AsrAvailability.reset()
@@ -62,6 +87,11 @@ class ScenariosTest {
         LevelStatus.reset()
         InputStatus.reset()
         DebugFailureOverride.clear()
+        // setup-verified (register R-227) is the one scenario that writes outside :data and the
+        // process-wide capture facets -- clear it too, or it would leak into every later test in
+        // this same Robolectric process the same way a stray SharedPreferences write always would.
+        context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            .edit().clear().commit()
     }
 
     @Test
@@ -70,6 +100,28 @@ class ScenariosTest {
         Scenarios.NAMES.forEach { name ->
             val result = Scenarios.load(context, name)
             assertTrue("'$name' reported a negative session count", result.sessionCount >= 0)
+        }
+    }
+
+    /**
+     * Regression test for the intermittent `SQLiteBusyException` `clearPriorScenarioData` used to
+     * throw (main's gate, `SQLiteBusyException: [database is locked]` during its `DELETE FROM
+     * correction ...` step) — root-caused to that function running as several separate `execSQL`
+     * calls against [OrtDatabase.openHelper]'s raw connection, outside Room's own transaction
+     * coordination, racing Room's `InvalidationTracker` background bookkeeping (see
+     * `Scenarios.clearPriorScenarioData`'s own doc comment for the full diagnosis). Loading every
+     * scenario five times back-to-back — several times the failure rate the coordinator reported
+     * (2 of 4 runs) needed to show itself — is the regression proof: every one of 150 loads
+     * (30 scenarios × 5 passes) must complete without a locked-database exception.
+     */
+    @Test
+    @Requirement("R-110")
+    fun `R_110 loading every scenario back to back five times never hits a database-locked error`() = runTest {
+        repeat(5) { pass ->
+            Scenarios.NAMES.forEach { name ->
+                val result = Scenarios.load(context, name)
+                assertTrue("pass $pass, '$name' reported a negative session count", result.sessionCount >= 0)
+            }
         }
     }
 
@@ -136,8 +188,13 @@ class ScenariosTest {
         assertTrue(rows.any { it.attributionState == AttributionState.UNKNOWN })
         assertTrue("expected a corrected row", rows.any { it.corrected })
         assertTrue(
+            // R-242 (V3 pass 2): a real "$rule: $detail" token, not a bare short reason, so
+            // `LogItemsMapper.whyFor` has something to build the Rejected view's why-line from.
             "expected a rejected row with its reason retained",
-            rows.any { it.processingState == TransmissionState.REJECTED && it.rejectionReason == "squelch tail" },
+            rows.any {
+                it.processingState == TransmissionState.REJECTED &&
+                    it.rejectionReason == "VAD_NO_SPEECH: squelch tail, 0.4 s"
+            },
         )
         assertTrue("expected a shared threadId across a QSO", rows.any { it.threadId != null })
         assertTrue("expected mixed signal strengths", rows.mapNotNull { it.signalStrength }.toSet().size > 3)
@@ -198,6 +255,33 @@ class ScenariosTest {
                     }
                 AttributionState.AMBIGUOUS, AttributionState.UNKNOWN -> Unit
             }
+        }
+    }
+
+    @Test
+    @Requirement("R-241")
+    fun `R_241 overnight's QSO thread carries an INFERRED over whose source really resolves`() = runTest {
+        // V3 pass 2 @de56368: every INFERRED reasoning line on Thread-Detail read "source
+        // transmission not recorded" because `attributionSourceTransmissionId` pointed at a
+        // readable-but-not-ULID id (`TransmissionId.parse` throws, silently swallowed by
+        // `ReaderPolling.sourceId`'s `runCatching`) — this proves the fixture's source id is a
+        // real, parseable ULID, so the reasoning line can actually link to it.
+        val result = Scenarios.load(context, "overnight")
+        val sessionId = requireNotNull(result.primarySessionId)
+
+        val rows = db.transmissionDao().listBySession(sessionId)
+        val inferredWithSource = rows.filter {
+            it.attributionState == AttributionState.INFERRED && it.attributionSourceTransmissionId != null
+        }
+        assertTrue("expected at least one INFERRED over with a source", inferredWithSource.isNotEmpty())
+        inferredWithSource.forEach { row ->
+            val sourceId = row.attributionSourceTransmissionId!!
+            val parsed = runCatching { TransmissionId.parse(sourceId) }.getOrNull()
+            assertNotNull("${row.id}'s source '$sourceId' must be a parseable ULID", parsed)
+            assertTrue(
+                "${row.id}'s source '$sourceId' must be a real transmission in this session",
+                rows.any { it.id == sourceId },
+            )
         }
     }
 
@@ -396,6 +480,87 @@ class ScenariosTest {
         sinceMillis <= System.currentTimeMillis() - 29 * 60_000L
 
     @Test
+    @Requirement("R-230")
+    fun `R_230_rig-reconnected sets RigStatus Connected on the same descriptor and bands rig-lost uses`() = runTest {
+        Scenarios.load(context, "rig-lost")
+        val stale = RigStatus.state as RigStatus.State.Stale
+
+        Scenarios.load(context, "rig-reconnected")
+
+        val state = RigStatus.state
+        assertTrue(state is RigStatus.State.Connected)
+        state as RigStatus.State.Connected
+        assertEquals(stale.lastKnown.descriptor, state.descriptor)
+        assertEquals(stale.lastKnown.bands.map { it.frequencyHz }, state.bands.map { it.frequencyHz })
+        assertTrue(CaptureState.isCapturing)
+    }
+
+    @Test
+    @Requirement("R-230")
+    fun `R_230 rig-lost then rig-reconnected is a real Stale to Connected transition RecoveryAnnouncer fires on`() =
+        runTest {
+            Scenarios.load(context, "rig-lost")
+            val previous = signalsFromHolders()
+
+            Scenarios.load(context, "rig-reconnected")
+            val current = signalsFromHolders()
+
+            val toasts = RecoveryAnnouncer.diff(previous, current)
+            assertTrue(
+                "expected the rig recovery toast",
+                toasts.any {
+                    it.id == "rig" &&
+                        it.message == "Radio reconnected"
+                },
+            )
+        }
+
+    @Test
+    @Requirement("R-231")
+    fun `R_231_storage-fine sets StorageForecast Fine with capture still genuinely running`() = runTest {
+        Scenarios.load(context, "storage-fine")
+
+        assertTrue(StorageForecast.state is StorageForecast.State.Fine)
+        assertTrue(CaptureState.isCapturing)
+    }
+
+    @Test
+    @Requirement("R-231")
+    fun `R_231 storage-warn then storage-fine is a real transition RecoveryAnnouncer fires the storage toast on`() =
+        runTest {
+            Scenarios.load(context, "storage-warn")
+            val previous = signalsFromHolders()
+
+            Scenarios.load(context, "storage-fine")
+            val current = signalsFromHolders()
+
+            val toasts = RecoveryAnnouncer.diff(previous, current)
+            assertTrue(
+                "expected the storage recovery toast",
+                toasts.any { it.id == "storage" && it.message == "Storage back above the floor" },
+            )
+        }
+
+    /** The same shape [RecoveryAnnouncer.diff] itself takes — read directly off the process-wide
+     * holders a scenario just set, the same way [org.ort.app.ui.failures.FailureHost]'s own poll
+     * loop would (never a fixture double: these two tests exist to prove the real recipe two
+     * consecutive [Scenarios.load] calls produce actually reaches [RecoveryAnnouncer], not just
+     * that each scenario's own state looks right in isolation). */
+    private fun signalsFromHolders() = FailureSignals(
+        captureState = CaptureState.state,
+        inputStatus = InputStatus.state,
+        levelStatus = LevelStatus.state,
+        thermalStatus = ThermalStatus.state,
+        rigStatus = RigStatus.state,
+        storageForecast = StorageForecast.state,
+        shedLevel = ShedStatus.currentLevel,
+        shedBacklog = ShedStatus.backlog,
+        newestGap = null,
+        nowMillis = 0L,
+        debugOverride = DebugFailureOverride.current,
+    )
+
+    @Test
     @Requirement("R-112")
     fun `R_112_level-low sets LevelStatus Measured at minus 38 dBFS with no clip`() = runTest {
         Scenarios.load(context, "level-low")
@@ -447,6 +612,83 @@ class ScenariosTest {
         assertEquals("USB Audio Device", state.expected.label)
         assertEquals("Built-in microphone", state.actual?.label)
         assertFalse("a mismatch must not claim capture is still running", CaptureState.isCapturing)
+    }
+
+    /**
+     * R-227 (validator pass 2): before this, S07/S12 had no sanctioned path on an emulator with a
+     * silent mic -- this proves the scenario actually lands `SetupStateMachine.stepFor` at
+     * `SetupStep.READY` (S12) given fully-granted permissions, the same real decision function
+     * `SetupActivity` itself calls, not merely that some preferences got written.
+     */
+    @Test
+    @Requirement("R-227")
+    fun `R_227_setup-verified seeds SetupStore so stepFor resumes at READY`() = runTest {
+        Scenarios.load(context, "setup-verified")
+
+        val store = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+        )
+        assertTrue(store.inputVerified)
+        assertTrue(store.levelInBand)
+        assertTrue(store.overnightStepSeen)
+        assertFalse("must land the operator on READY, not skip straight past it", store.setupComplete)
+
+        val fullyGranted = PermissionsState(
+            recordAudioGranted = true,
+            notificationsGranted = true,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+        )
+        val step = SetupStateMachine.stepFor(fullyGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
+        assertEquals(SetupStep.READY, step)
+    }
+
+    /** The one thing this scenario cannot seed -- see the scenario's own doc comment and
+     * `results/ui-audit/README.md`'s "Reaching S07/S12" section. Without a granted `RECORD_AUDIO`,
+     * `stepFor` must still resume at `MICROPHONE`, never silently past it. */
+    @Test
+    @Requirement("R-227")
+    fun `R_227_setup-verified does not and cannot grant the two OS permissions itself`() = runTest {
+        Scenarios.load(context, "setup-verified")
+
+        val store = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+        )
+        val micNotGranted = PermissionsState(
+            recordAudioGranted = false,
+            notificationsGranted = true,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+        )
+        val step = SetupStateMachine.stepFor(micNotGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
+        assertEquals(SetupStep.MICROPHONE, step)
+    }
+
+    /**
+     * R-264 (V7 accessibility pass, register R-260..R-267): `setup-verified` alone only reaches S07
+     * (`Setup-Level.dc.html`) via S12's own `Fix` row -- unreachable from a cold `MainActivity`
+     * launch, which is exactly the gap the README's old direct-`SetupActivity`-launch recipe was
+     * covering for (and could not, since that activity is `exported=false`). This proves
+     * `setup-level` lands `stepFor` at `SetupStep.LEVEL` directly, given fully-granted permissions --
+     * the same real decision function `MainActivity`/`SetupActivity` themselves call.
+     */
+    @Test
+    @Requirement("R-264")
+    fun `R_264_setup-level seeds a verified input with level not yet measured so stepFor resumes at LEVEL`() = runTest {
+        Scenarios.load(context, "setup-level")
+
+        val store = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+        )
+        assertTrue(store.inputVerified)
+        assertFalse("the level must be left honestly unmeasured, never fabricated", store.levelInBand)
+        assertNull(store.levelPeakDbfs)
+
+        val fullyGranted = PermissionsState(
+            recordAudioGranted = true,
+            notificationsGranted = true,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+        )
+        val step = SetupStateMachine.stepFor(fullyGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
+        assertEquals(SetupStep.LEVEL, step)
     }
 
     // -----------------------------------------------------------------------------------------

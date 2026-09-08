@@ -15,7 +15,6 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintEntity
 import java.time.Instant
 import java.time.ZoneId
-import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -94,18 +93,55 @@ public object StationPolling {
             .groupingBy { it }.eachCount().entries.map { it.key to it.value }
         val lastEntity = entities.maxByOrNull { it.startedAtUtc }
 
+        // R-208 (register, spec, V5 @f8430b8): the same real, all-time dominant state R-206 put on
+        // the Stations list row belongs beside this station's own title too — a station's detail
+        // screen naming Unknown while its own facts table shows 10/10 CONFIRMED was the same defect
+        // in a second place.
+        val nightsHeard = entities.map { it.sessionId }.toSet().size
+        val totalNights = sessions.size
+        val contextSentence = if (totalNights > 0) {
+            "Heard ${pluralize(nightsHeard, "night")} of $totalNights"
+        } else {
+            ""
+        }
+
         val base = StationViewMapper.detail(stationId, label, details, pattern, dayOfWeekPattern, weekOverWeek)
         return base.copy(
             givenName = station?.userName,
+            attribution = dominantAttribution(stationId, entities),
+            contextSentence = contextSentence,
             transmissionCountTonight = tonightCount,
             confirmedCount = confirmed,
             inferredCount = inferred,
             correctedCount = corrected,
             frequenciesSummary = StationViewMapper.frequencySummary(frequencyCounts),
-            firstHeardLabel = station?.firstHeardAt?.let { LABEL_FORMAT.format(Instant.ofEpochMilli(it)) },
-            lastHeardLabel = station?.lastHeardAt?.let { LABEL_FORMAT.format(Instant.ofEpochMilli(it)) },
+            firstHeardLabel = station?.firstHeardAt?.let { LOCAL_DATETIME_FORMAT.format(Instant.ofEpochMilli(it)) },
+            lastHeardLabel = station?.lastHeardAt?.let { LOCAL_DATETIME_FORMAT.format(Instant.ofEpochMilli(it)) },
             lastHeardSignalLabel = lastEntity?.signalStrength?.let { "S%.0f".format(Locale.ROOT, it) },
         )
+    }
+
+    /** The real dominant attribution across every [entities] this station has ever produced
+     * (R-206/R-208) — shared by [stationDetail] and [stationRow] so the list row and the detail
+     * screen it opens can never disagree about the same station's own state. */
+    private fun dominantAttribution(stationId: String, entities: List<TransmissionEntity>): Attribution {
+        val confirmed = entities.count { it.attributionState == AttributionState.CONFIRMED }
+        val inferred = entities.count { it.attributionState == AttributionState.INFERRED }
+        val ambiguous = entities.count { it.attributionState == AttributionState.AMBIGUOUS }
+        val dominant = when {
+            confirmed > 0 -> AttributionState.CONFIRMED
+            inferred > 0 -> AttributionState.INFERRED
+            ambiguous > 0 -> AttributionState.AMBIGUOUS
+            else -> AttributionState.UNKNOWN
+        }
+        val bestConfidence = entities.filter { it.attributionState == dominant }
+            .mapNotNull { it.attributionConfidence }.maxOrNull()
+        return when (dominant) {
+            AttributionState.CONFIRMED -> Attribution.confirmed(stationId, bestConfidence ?: 0.0)
+            AttributionState.INFERRED -> Attribution.inferred(stationId, bestConfidence ?: 0.0)
+            AttributionState.AMBIGUOUS -> Attribution.ambiguous()
+            AttributionState.UNKNOWN -> Attribution.unknown()
+        }
     }
 
     /** `Station-Pattern.dc.html`'s state (R-072, R-075) — every bucket is local-time. */
@@ -127,7 +163,22 @@ public object StationPolling {
             hourByDay = hourByDay,
             weekOverWeekSummary = weekOverWeekSummaryText(weekOverWeek),
             whatThisSays = PatternInsights.build(hourPattern, dayOfWeekPattern),
+            nightsSubtitle = nightsSubtitle(sessions, zone),
         )
+    }
+
+    /** `Station-Pattern.dc.html`'s own subtitle (R-210) — "14 nights of listening, 25 Aug – 7 Sep",
+     * never "Local time" (which named the zone, not the fact an operator actually wants here). The
+     * device's own locale, never [Locale.ROOT] — R-170 (register) found `Locale.ROOT` with `MMM`
+     * renders a raw numeric month ("M09") instead of a real month name on this JVM. */
+    private fun nightsSubtitle(sessions: List<SessionWindow>, zone: ZoneId): String {
+        val nights = sessions.map { Instant.ofEpochMilli(it.startedAtUtc).atZone(zone).toLocalDate() }
+        if (nights.isEmpty()) return "Not enough listening yet"
+        val earliest = nights.min()
+        val latest = nights.max()
+        val format = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
+        return "${pluralize(nights.toSet().size, "night")} of listening, ${format.format(earliest)} – " +
+            format.format(latest)
     }
 
     /**
@@ -143,10 +194,14 @@ public object StationPolling {
         val db = OrtDatabase.create(context.applicationContext)
         val station = db.catalogDao().getStation(stationId)
         val entities = db.activityDao().transmissionsForStation(stationId)
-        val voiceprints = db.catalogDao().voiceprintsForStation(stationId)
-        val clusterOvers = voiceprints.sumOf { it.memberCount }
         val confirmed = entities.count { it.attributionState == AttributionState.CONFIRMED }
         val inferred = entities.count { it.attributionState == AttributionState.INFERRED }
+        // R-213 (register, spec, V5 @f8430b8): the cluster total must equal the confirmed/inferred
+        // breakdown shown right beneath it — a `voiceprintsForStation().sumOf { memberCount }`
+        // total once diverged from it (voice-cluster membership, M4's own pipeline, can lag or omit
+        // overs the attribution pipeline already resolved), which read as two different, provably
+        // inconsistent counts of the same "how many overs" fact on one screen.
+        val clusterOvers = confirmed + inferred
         val (name, note) = currentGivenByYou(db, stationId, station?.userName, station?.notes)
         return StationIdentityViewState(
             stationId = stationId,
@@ -300,6 +355,15 @@ public object StationPolling {
         return name to note
     }
 
+    /**
+     * R-206 (register, halt, V5 @f8430b8): this row's marker and count context are the station's
+     * **real dominant state across every night it has ever been heard**, not just the most recent
+     * session — the earlier shape here computed both only from tonight's transmissions and fell
+     * back to a bare, unearned [Attribution.unknown] for every station not heard in the *single*
+     * most recent session, which is most of a 14-night "All time" list on any given night. A
+     * station's own detail screen ([stationDetail]) already reads its full history; this row must
+     * agree with it, not contradict it with a fabricated Unknown.
+     */
     private suspend fun stationRow(
         db: OrtDatabase,
         station: StationEntity,
@@ -307,43 +371,26 @@ public object StationPolling {
     ): StationListEntryViewState {
         val (givenName, _) = currentGivenByYou(db, station.id, station.userName, station.notes)
         val base = StationViewMapper.listEntry(station).copy(givenName = givenName)
-        val tonightTx = if (latest != null) {
-            db.transmissionDao().listBySession(latest.id).filter { it.stationId == station.id }
-        } else {
-            emptyList()
-        }
-        if (tonightTx.isEmpty() || latest == null) return base
+        val allTx = db.activityDao().transmissionsForStation(station.id)
+        if (allTx.isEmpty()) return base
 
-        val confirmed = tonightTx.count { it.attributionState == AttributionState.CONFIRMED }
-        val inferred = tonightTx.count { it.attributionState == AttributionState.INFERRED }
-        val ambiguous = tonightTx.count { it.attributionState == AttributionState.AMBIGUOUS }
-        val corrected = tonightTx.any { it.corrected }
-        val dominant = when {
-            confirmed > 0 -> AttributionState.CONFIRMED
-            inferred > 0 -> AttributionState.INFERRED
-            ambiguous > 0 -> AttributionState.AMBIGUOUS
-            else -> AttributionState.UNKNOWN
-        }
-        val bestConfidence = tonightTx.filter { it.attributionState == dominant }
-            .mapNotNull { it.attributionConfidence }.maxOrNull()
-        val attribution = when (dominant) {
-            AttributionState.CONFIRMED -> Attribution.confirmed(station.id, bestConfidence ?: 0.0)
-            AttributionState.INFERRED -> Attribution.inferred(station.id, bestConfidence ?: 0.0)
-            AttributionState.AMBIGUOUS -> Attribution.ambiguous()
-            AttributionState.UNKNOWN -> Attribution.unknown()
-        }
+        val confirmed = allTx.count { it.attributionState == AttributionState.CONFIRMED }
+        val inferred = allTx.count { it.attributionState == AttributionState.INFERRED }
+        val corrected = allTx.any { it.corrected }
+        val attribution = dominantAttribution(station.id, allTx)
         val firstHeardAt = station.firstHeardAt
-        val isNew = firstHeardAt != null && firstHeardAt >= latest.startedAt
+        val isNew = firstHeardAt != null && latest != null && firstHeardAt >= latest.startedAt
         val badge = when {
             isNew -> StationListBadge.NEW
             corrected -> StationListBadge.CORRECTED
             else -> null
         }
+        val heardTonight = latest != null && allTx.any { it.sessionId == latest.id }
         return base.copy(
             attribution = attribution,
             countContext = StationViewMapper.countContext(confirmed, inferred),
             badge = badge,
-            heardTonight = true,
+            heardTonight = heardTonight,
         )
     }
 
@@ -426,7 +473,54 @@ public object FrequencyPolling {
             regulars = regulars,
             nights = nights.map { it.state },
             busierThanUsual = NightlyDeparture.isBusierThanUsual(nights),
+            listenedLabel = listenedLabel(sessions, nowMillis, zone),
+            net = netFor(entities, zone),
         )
+    }
+
+    /**
+     * `Listened` (R-074, R-216): every configured session listens on every configured rig band at
+     * once (`AGENTS.md`'s own "the TH-D75A receives on two bands at once" note), so a frequency's
+     * own "nights listened" is simply every night a session ever ran — never a per-frequency
+     * sub-count this package has no column to derive honestly.
+     */
+    private fun listenedLabel(sessions: List<SessionWindow>, nowMillis: Long, zone: ZoneId): String {
+        if (sessions.isEmpty()) return ""
+        val nights = sessions.map { Instant.ofEpochMilli(it.startedAtUtc).atZone(zone).toLocalDate() }.toSet().size
+        val totalHours = sessions.sumOf { session ->
+            val end = session.endedAtUtc ?: nowMillis
+            if (end <= session.startedAtUtc) return@sumOf 0L
+            val gapMillis = session.gaps.sumOf { (it.endedAt ?: end) - it.startedAt }
+            (end - session.startedAtUtc - gapMillis).coerceAtLeast(0L)
+        } / 3_600_000.0
+        return "${pluralize(nights, "night")} of $nights · %.0f h total".format(Locale.ROOT, totalHours)
+    }
+
+    /**
+     * `Nets` (R-074, R-216): a recurring weekly (day-of-week, local hour) slot with real activity
+     * in at least half of the calendar weeks this frequency has ever been heard on — [FrequencyNetViewState]'s
+     * own doc comment names the heuristic's limits. `null`, never a fabricated net, with fewer than
+     * two distinct weeks of data or no slot meeting that bar.
+     */
+    private fun netFor(entities: List<TransmissionEntity>, zone: ZoneId): FrequencyNetViewState? {
+        if (entities.isEmpty()) return null
+        fun epochWeek(millis: Long) = Instant.ofEpochMilli(millis).atZone(zone).toLocalDate().toEpochDay() / 7
+        val totalWeeks = entities.map { epochWeek(it.startedAtUtc) }.toSet().size
+        if (totalWeeks < 2) return null
+        val bySlot = entities.groupBy { entity ->
+            val zdt = Instant.ofEpochMilli(entity.startedAtUtc).atZone(zone)
+            zdt.dayOfWeek to zdt.hour
+        }
+        val minWeeks = kotlin.math.ceil(totalWeeks / 2.0).toInt().coerceAtLeast(2)
+        return bySlot.entries
+            .mapNotNull { (slot, tx) ->
+                val weeksSeen = tx.map { epochWeek(it.startedAtUtc) }.toSet().size
+                if (weeksSeen < minWeeks) return@mapNotNull null
+                val control = tx.filter { it.attributionState == AttributionState.CONFIRMED && it.stationId != null }
+                    .groupingBy { it.stationId!! }.eachCount().maxByOrNull { it.value }?.key
+                FrequencyNetViewState(slot.first, slot.second, control, weeksSeen, totalWeeks)
+            }
+            .maxByOrNull { it.weeksSeen }
     }
 
     /**
@@ -457,7 +551,7 @@ public object FrequencyPolling {
             val firstHeardAt = station?.firstHeardAt
             if (firstHeardAt != null && latestSession != null && firstHeardAt >= latestSession.startedAt) {
                 val count = tonightTx.count { it.stationId == stationId }
-                causes.add(FrequencyChangeCause("$stationId · $count over(s) · first time heard"))
+                causes.add(FrequencyChangeCause("$stationId · ${pluralize(count, "over")} · first time heard"))
             }
         }
         val unidentifiedTonight = tonightTx.filter { it.attributionState == AttributionState.UNKNOWN }
@@ -466,7 +560,7 @@ public object FrequencyPolling {
             val voiceLabel = if (distinctVoices > 0) distinctVoices else unidentifiedTonight.size
             causes.add(
                 FrequencyChangeCause(
-                    "$voiceLabel unidentified voice(s), ${unidentifiedTonight.size} over(s)",
+                    "${pluralize(voiceLabel, "unidentified voice")}, ${pluralize(unidentifiedTonight.size, "over")}",
                     isUnidentified = true,
                 ),
             )
@@ -507,9 +601,11 @@ public object FrequencyPolling {
             stationId = stationId,
             label = station?.callsign ?: stationId,
             attribution = attribution,
-            countContext = "${tx.size} over(s) · $nightCount session(s)",
+            // R-212 (register, design, V5 @f8430b8): the shared plural helper, not a literal
+            // "(s)" placeholder — "6 overs · 6 sessions", never "6 over(s) · 6 session(s)".
+            countContext = "${pluralize(tx.size, "over")} · ${pluralize(nightCount, "session")}",
             lastHeardLabel = tx.maxByOrNull { it.startedAtUtc }?.startedAtUtc?.let {
-                HHMM_FORMAT.format(Instant.ofEpochMilli(it))
+                LOCAL_HHMM_FORMAT.format(Instant.ofEpochMilli(it))
             },
         )
     }
@@ -524,5 +620,3 @@ public object FrequencyPolling {
             SessionWindow(startedAtUtc = session.startedAt, endedAtUtc = session.endedAt, gaps = gaps)
         }
 }
-
-private val HHMM_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT).withZone(ZoneOffset.UTC)

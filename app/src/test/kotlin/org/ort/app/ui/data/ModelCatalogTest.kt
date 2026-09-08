@@ -91,12 +91,19 @@ class ModelCatalogTest {
     }
 
     @Test
-    @Requirement("FR-AST-1")
-    fun `FR_AST_1 an unknown-checksum entry's reason cites what was actually checked`() {
+    @Requirement("R-267")
+    fun `R_267 an unknown-checksum entry's reason is a short operator fact, not the maintainer's research trail`() {
+        // Before R-267 this `reason` string *was* the maintainer's research trail (git blob SHA-1
+        // vs SHA-256, which HuggingFace/sherpa-onnx endpoints were checked, the date checked) —
+        // real and cited, but read verbatim on `Settings-Assets` as a multi-paragraph sub-line no
+        // operator asked for. That citation now lives only in `ModelCatalog`'s own KDoc comment
+        // (see the source file directly above `ASR_TOKENS_UNKNOWN_REASON`); this runtime value is
+        // the short, board-shaped fact `ModelRowViewState.detail` is allowed to carry instead.
         val reason = (ModelCatalog.entry(ModelId.ASR_TOKENS).checksumState as ChecksumState.UnknownSideloadOnly).reason
-        // Must say enough that a future session doesn't have to re-derive why this one is
-        // unpinned: it is not LFS-tracked (so its HF API "oid" is a git blob sha1, not a sha256).
         assertFalse(reason.contains("UNPINNED"))
-        assertTrue(reason.contains("sha1", ignoreCase = true) || reason.contains("blob", ignoreCase = true))
+        assertFalse("reason must not wrap onto a second line: $reason", reason.contains('\n'))
+        assertTrue("expected a short operator fact, got ${reason.length} chars: $reason", reason.length <= 60)
+        assertFalse(reason.contains("HuggingFace"))
+        assertFalse(reason.contains("checked 2026"))
     }
 }

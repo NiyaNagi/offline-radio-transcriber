@@ -96,6 +96,43 @@ second process, no serialization boundary, and no cache to go stale — the writ
 the same JVM heap. `-NoRestart` only changes whether Android delivers the broadcast to a fresh
 process or the one already on screen; it does not change how the receiver updates state.
 
+### Recovery toast recipes (register R-103, R-230, R-231)
+
+`RecoveryAnnouncer.diff` (`app/src/main/kotlin/org/ort/app/ui/failures/RecoveryAnnouncer.kt`, WP11b's
+file) fires a toast only on a real transition *into* the recovered state — the two-scenario,
+`-NoRestart` recipe above is what makes that transition observable at all, but two of the toasts
+had no scenario that ever reached the recovered half of the pair before register R-230/R-231:
+
+- **"Radio reconnected"** needs `RigStatus.State.Stale` → `RigStatus.State.Connected`. `rig-lost` →
+  `empty` never fires it (`empty` publishes no `RigStatus` at all, so the holder just resets to
+  `Absent` and stays there — not the transition the toast is watching for). Use `rig-reconnected`
+  instead — same descriptor and bands `rig-lost` itself uses, so the "same radio came back" story is
+  honest:
+  ```powershell
+  .\tools\ui-audit\scenario.ps1 -Port 5554 -Name rig-lost
+  $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start `
+      -n org.ort.app/.debug.ScenarioReaderActivity --es session_id scenario-rig-lost
+  .\tools\ui-audit\nav.ps1 -Port 5554 -Screen now
+  .\tools\ui-audit\scenario.ps1 -Port 5554 -Name rig-reconnected -NoRestart
+  # watch for "Radio reconnected", or shoot.ps1 a few seconds later.
+  ```
+- **"Storage back above the floor"** needs `StorageForecast.State.ThreeNightsLeft`/`OneNightLeft`/
+  `AtFloor` → `StorageForecast.State.Fine`. No scenario published `Fine` at all before `storage-fine`
+  existed, so this toast was unreachable no matter what preceded it:
+  ```powershell
+  .\tools\ui-audit\scenario.ps1 -Port 5554 -Name storage-warn
+  $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start `
+      -n org.ort.app/.debug.ScenarioReaderActivity --es session_id scenario-storage-warn
+  .\tools\ui-audit\nav.ps1 -Port 5554 -Screen now
+  .\tools\ui-audit\scenario.ps1 -Port 5554 -Name storage-fine -NoRestart
+  # watch for "Storage back above the floor", or shoot.ps1 a few seconds later.
+  ```
+
+Both recipes are also proved directly (no emulator needed) in `ScenariosTest.kt`, by reading
+`RigStatus.state`/`StorageForecast.state` off the real holders after two consecutive `Scenarios.load`
+calls and feeding both snapshots straight into `RecoveryAnnouncer.diff` — the exact function
+`FailureHost`'s own poll loop calls.
+
 Or, for a whole phase-E set at once:
 
 ```powershell
@@ -147,12 +184,16 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `backlog` | `ShedStatus` set to level 3 / backlog 112 (F8), capture marked running. |
 | `model-missing` | `AsrAvailability.unavailable(...)` (F13); captured but untranscribed transmissions. |
 | `storage-warn` | `StorageForecast.ThreeNightsLeft` (FR-STO-3, register R-105), capture genuinely still running — replaces this scenario's earlier misuse of F6's exhaustion failure string. |
+| `storage-fine` | `StorageForecast.Fine` (register R-231) — the recovery half of `storage-warn`'s transition; see "Recovery toast recipes" below. |
 | `thermal` | `ThermalStatus.Warm`, measured RTF 0.9 (F7, register R-104), the same shed level/backlog `backlog` sets. |
 | `rig-lost` | `RigStatus.Stale` since 30 minutes ago, last known on 145.230/146.960 (F9, register R-104). |
+| `rig-reconnected` | `RigStatus.Connected` (register R-230), the same descriptor/bands `rig-lost` uses — the recovery half of `rig-lost`'s transition; see "Recovery toast recipes" below. |
 | `level-low` | `LevelStatus.Measured` peak −38 dBFS, floor −60 dBFS, no clip (F3, register R-112), capture genuinely still running. |
 | `level-clip` | `LevelStatus.Measured` peak 0 dBFS, clipped, 12 clips in the last second (F3, register R-112). |
 | `input-verified` | `InputStatus.Opened` with a USB descriptor, native 48 kHz, a recorded resampler identity, `routeVerified`/`routedDeviceMatches` both true (register R-113). |
 | `input-mismatch` | `InputStatus.Mismatch` — built-in mic routed instead of the chosen USB device (F1, register R-113). Capture is **not** marked running — see "Known gaps" below. |
+| `setup-verified` | Seeds `org.ort.app.setup`'s real `SharedPreferences` (through `SharedPreferencesSetupStore`, not a duplicated key set) so `SetupStateMachine.stepFor` lands at `SetupStep.READY` (S12) directly, its Level row already green (register R-227) — see "Reaching S07/S12" below. |
+| `setup-level` | The same verified-input base as `setup-verified`, but `levelInBand`/`levelPeakDbfs` are left honestly unset so `stepFor` lands at `SetupStep.LEVEL` (S07) directly, from a cold launch (register R-264) — see "Reaching S07/S12" below. |
 | `clock-dst` | F14 (`Fail-Clock.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Clock`. No runtime signal exists; see "Known gaps" below. |
 | `usb-permission` | F16 (`Fail-Usb.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Usb`. No runtime signal exists. |
 | `interrupted-pass` | F17 (`Fail-Interrupted.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Interrupted`. No runtime signal exists. |
@@ -160,6 +201,59 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `migration-failed` | F20 (`Fail-Migration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Migration`, one failed step (activity patterns) among three passed ones. No runtime signal exists. |
 | `asset-swap` | F21 (`Fail-Asset-Swap.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.AssetSwap`, an active and a staged lexicon. No runtime signal exists. |
 | `calibration` | F22 (`Fail-Calibration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Calibration`, a five-point reliability scatter. No runtime signal exists. |
+| `lexicon-corrupt` | R-154, F12 (`Fail-Lexicon.dc.html`), FR-LEX-12/FR-LEX-30/FR-AST-2 — unlike every scenario above, this one is **not** a `DebugFailureOverride` stand-in: it seeds a real "previous" `lexicon_version` row (2026.08 · 1,104,208 records), then calls the *real* `org.ort.app.ui.data.ModelsController.installLexicon` against a genuinely corrupt bundled asset (`app/src/debug/assets/lexicon-corrupt/lexicon-2026.09.tsv` — a manifest declaring 1,122,410 records whose checksum matches neither the 2 data rows actually present nor their count), through the new `:lexicon` package `org.ort.lexicon.import` (`LexiconImportValidator`/`LexiconImportInstaller`). The genuine `LexiconImportResult.Rejected` this produces is stored in `org.ort.app.debug.LexiconCorruptScenario.lastResult` — see "Known gaps" below for why nothing renders it yet. |
+
+### Reaching S07/S12 (register R-227, R-264)
+
+Before `setup-verified`, S07 (`Setup-Level.dc.html`) and S12 (`Setup-Done.dc.html`) were
+unreachable on this AVD at all: `SetupStateMachine.stepFor` resumes at `SetupStep.INPUT` until
+`SetupStore.inputVerified` is real, and the only way that becomes real is S05's own 30 s
+raw-signal listen (`RealRouteCheck`) actually hearing something — which the AVD's silent virtual
+mic never does. `setup-verified`/`setup-level` seed the real `SetupStore` preferences (not a fake)
+so setup's own state machine resumes at S12/S07 respectively, no `run-as`/manual `SharedPreferences`
+edit needed.
+
+**R-264 (V7 accessibility pass) found the recipe below this line used to launch — `adb shell am
+start -n org.ort.app/org.ort.app.ui.setup.SetupActivity` — throws a `SecurityException` on a real
+device.** `SetupActivity` is `android:exported="false"` (`app/src/main/AndroidManifest.xml`; only
+`MainActivity` may launch it, the same restriction `ReaderActivity` has and
+`ScenarioReaderActivity.kt` exists to work around for the reader — see "Why a debug-only reader
+launch alias exists" above). `MainActivity` **is** exported (it is the app's own launcher
+activity) — launch that instead, and let its own real routing decision
+(`SetupStateMachine.isComplete`/`stepFor`, the exact function `SetupActivity` itself calls) carry
+you the rest of the way, exactly as a real cold launch would:
+
+```powershell
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell pm grant org.ort.app android.permission.RECORD_AUDIO
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell pm grant org.ort.app android.permission.POST_NOTIFICATIONS
+
+# S12 (Ready), Level row already green:
+.\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-verified
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/.MainActivity
+
+# S07 (Level), reached directly rather than via S12's own Fix row:
+.\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-level
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/.MainActivity
+```
+
+**Why `setup-level` exists as its own scenario rather than an `EXTRA_STEP` recipe.**
+`SetupActivity.EXTRA_STEP` (WP9 round 3) is real and still does exactly what its own doc comment
+says — but only for a caller that can actually reach `SetupActivity` directly (WP3's
+`ReaderNavigator`, an in-process caller, not an adb command), and **only when the store's own gate
+allows it**: a requested step is honored only if its ordinal sits at or before
+`SetupStateMachine.stepFor`'s own natural resume point — never a way to skip a verification the
+guide requires (see `SetupActivity.kt`'s own doc comment for the exact rule). `MainActivity` itself
+does not read or forward any `step` extra to `SetupActivity` today (confirmed by reading
+`MainActivity.kt` before writing this — its own `route()` starts `SetupActivity` with no extras at
+all), so there is no adb-reachable path to `EXTRA_STEP` at all right now; `setup-level` reaches S07
+the honest way instead — by seeding a `SetupStore` snapshot whose own natural resume point already
+*is* `LEVEL`, no override needed.
+
+**The two OS permissions above are not part of what either scenario seeds** — `RECORD_AUDIO`/
+`POST_NOTIFICATIONS` are live `PackageManager` state, not a `SetupStore` preference
+(`SetupStateMachine.stepFor` reads both from a live `PermissionsState`, confirmed by reading it
+before writing this) — grant them the same way `install.ps1` already does for every other scenario
+that exercises a real screen.
 
 ### WP11b's failure screens (register R-100/R-101/R-103)
 
@@ -234,6 +328,15 @@ DebugFailureOverride`'s own kdoc says precisely what each would need and from wh
   path is ready, not that the screen shows it.
 - **`field-tier1` is representable, unread.** `SessionEntity.deviceTier` is a free `String?`; no
   screen renders it yet (register R-090, `Settings-Tier`/CF05 is a placeholder).
+- **`lexicon-corrupt` is representable, unread — and, unlike every other row in this list, the
+  underlying feature is now real, not just the fixture.** R-154's own register row previously said
+  "no lexicon-import validator exists in `:app`/`:lexicon`/`:net` — F12 is an unbuilt feature, not a
+  staging gap"; that validator now exists (`:lexicon`'s `org.ort.lexicon.import` package,
+  `ModelsController.installLexicon` in `:app`). What is still missing is the **screen**:
+  `Fail-Lexicon.dc.html` has no WP10 build, so nothing in `ui/screens/ModelsScreen.kt` reads
+  `LexiconCorruptScenario.lastResult` (or the `LexiconImportViewState` an "Install from a file"
+  gesture would produce) yet. `ModelsViewData.kt`'s `LexiconImportViewState`/`LexiconCheckViewRow`
+  are exactly what such a screen needs — see that file's own kdoc for the shape.
 
 ## `screens.json` and `sets.json`
 
@@ -252,6 +355,29 @@ Seeded screens: `now` (the landing screen after `ScenarioReaderActivity` launche
 `run-set.ps1`. Only the sets whose scenarios and screens this package made reachable are
 populated — see `run-set.ps1`'s own doc comment for why the rest are deliberately absent rather
 than faked.
+
+## The JVM unit-test gate (register R-129)
+
+This validator's own V3 pass found `Log` crashing on entry (`LogContent.kt`'s `rememberSaveable`
+with no `Saver` — register R-129, `register.md`) *only once a real `Activity` was involved*: every
+JVM-side test up to that point composed the reader's screens through `createComposeRule()`, which
+installs no real `SaveableStateRegistry`, so nothing on the JVM side ever hit the same crash a real
+device did. `org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest` closes that gap — one
+real `Activity`, launched and `recreate()`d, per destination and drill-in — but real `Activity`
+launches this numerous are heavier than anything else in this suite: left inside the same JVM worker
+`:app:testDebugUnitTest` reuses for its other ~900 tests, they could leave that worker's Compose
+test environment unable to reach idle for whatever test happened to compose *next*, unrelated to the
+code under test (see that class's own KDoc for the full account). `app/build.gradle.kts` now runs it
+as its own Gradle task instead, `smokeTestDebugUnitTest` — the same classpath/test classes/JVM
+argument providers as `testDebugUnitTest`, excluded from that task, forked into its own JVM worker.
+Both tasks are part of `check`/`build`, so `./gradlew build` (this repo's own top-level gate command,
+per `AGENTS.md`) still runs every one of this class's cases; a reviewer confirming R-129 stays fixed
+(or checking this validator's own findings are covered) needs both:
+
+```
+./gradlew :app:testDebugUnitTest
+./gradlew :app:smokeTestDebugUnitTest
+```
 
 ## Verified
 

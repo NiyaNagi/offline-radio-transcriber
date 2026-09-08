@@ -39,6 +39,10 @@ import java.security.MessageDigest
  * install, report, requeue) end to end, exactly as [ModelsController.currentState]/`download`/
  * `sideload`'s own doc comments describe that seam existing for.
  */
+/** R-267: a generous single-line budget for [ModelRowViewState.detail] — well under a full sentence,
+ * let alone the multi-paragraph maintainer note this bug used to surface verbatim. */
+private const val R_267_MAX_DETAIL_LENGTH = 60
+
 @RunWith(RobolectricTestRunner::class)
 class ModelsControllerTest {
 
@@ -199,6 +203,34 @@ class ModelsControllerTest {
             assertEquals(ModelRowStatus.INSTALLED_UNVERIFIED, row.status)
             assertFalse(row.checksumKnown)
         }
+
+    @Test
+    @Requirement("R-267")
+    fun `R_267 the tokens row's not-installed detail is short, never the maintainer's research trail`() = runTest {
+        val tempFilesDir = Files.createTempDirectory("models-controller-r267-test").toFile()
+        val fakeContext = object : android.content.ContextWrapper(context) {
+            override fun getFilesDir(): File = tempFilesDir
+        }
+
+        val row = ModelsController.currentState(fakeContext).rows.first { it.id == ModelId.ASR_TOKENS }
+
+        val detail = row.detail
+        assertTrue("expected a detail string, got null", detail != null)
+        checkNotNull(detail)
+        // `Settings-Assets.dc.html`'s row shape (size · checksum prefix · tier, guide §9) has no
+        // room for a paragraph — one line, no embedded newline, and short enough it cannot be one.
+        assertFalse("detail must not wrap onto a second line: $detail", detail.contains('\n'))
+        assertTrue(
+            "expected a short operator fact (<= $R_267_MAX_DETAIL_LENGTH chars), got ${detail.length}: $detail",
+            detail.length <= R_267_MAX_DETAIL_LENGTH,
+        )
+        // The maintainer's research trail (git blob SHA-1 vs SHA-256, which HuggingFace/sherpa-onnx
+        // endpoints were checked, the date checked) belongs in `ModelCatalog`'s own doc comment,
+        // never read aloud to the operator deciding whether to sideload a file.
+        assertFalse(detail.contains("HuggingFace"))
+        assertFalse(detail.contains("SHA-1"))
+        assertFalse(detail.contains("checked 2026"))
+    }
 
     private fun session(id: String) = SessionEntity(
         id = id,

@@ -51,6 +51,10 @@ dependencies {
     implementation(project(":pipeline"))
     implementation(project(":data"))
     implementation(project(":net"))
+    // R-154 (FR-LEX-30, FR-AST-2): the Models screen's lexicon-import flow calls
+    // LexiconImportValidator/LexiconImportInstaller directly. Previously test-only below;
+    // promoted to main so ModelsViewData.kt can call it from real (non-test) code.
+    implementation(project(":lexicon"))
     implementation(libs.androidx.core.ktx)
     // :data's Room types (OrtDatabase, its DAOs) are used directly by StatusActivity/
     // TransmissionListActivity's real-data polling (v0 smoke test — see RealCaptureService's doc
@@ -61,7 +65,9 @@ dependencies {
 
     testImplementation(project(":testing"))
     testImplementation(project(":eval"))
-    testImplementation(project(":lexicon"))
+    // :lexicon is now a main `implementation` dependency above (R-154), so it no longer needs its
+    // own testImplementation/androidTestImplementation lines here — both test source sets already
+    // see it transitively.
     // Test-only (ModuleGraph/dependencyRules deliberately exempts test scope, buildSrc's
     // build.gradle.kts comment): build-plan P14's playback tests need to write a real
     // codec-encoded fixture file the same way `:capture-android`'s `RealSegmentSink` does, to
@@ -84,5 +90,47 @@ dependencies {
     // sourceSets comment above and ModuleGraph.kt's documented test-scope exemption.
     androidTestImplementation(project(":eval"))
     androidTestImplementation(project(":testing"))
-    androidTestImplementation(project(":lexicon"))
 }
+
+// ui-conformance WP3 (lead-approved edit to this file only — everything else stays this
+// package's own row): `ReaderActivityDestinationSmokeTest` launches many real `Activity`
+// instances, each with real polling `LaunchedEffect`s, more than any other file in this suite —
+// see that class's own KDoc for the full account of what was tried. Left inside `testDebugUnitTest`
+// it can leave the one JVM worker that task reuses for its ~900 other tests unable to reach Compose
+// idle for whatever test composes *next*, a failure with nothing to do with the code under test.
+// Giving it a task of its own is what actually fixes that: a different `Test` task is always a
+// fresh worker process, never one shared with `testDebugUnitTest`'s own run, regardless of either
+// task's own fork settings — `forkEvery = 1` below is an extra guard for if this task ever grows a
+// second class, not what does the isolating.
+val smokeTestDebugUnitTest = tasks.register<Test>("smokeTestDebugUnitTest") {
+    group = "verification"
+    description = "Runs ReaderActivityDestinationSmokeTest alone, in its own JVM never shared " +
+        "with testDebugUnitTest's — see that class's own KDoc for why."
+    include("**/ReaderActivityDestinationSmokeTest*")
+    forkEvery = 1
+}
+
+// `afterEvaluate`, not immediate: `testDebugUnitTest` is AGP's own task (registered by the
+// `com.android.application` plugin `ort.android-app` applies), and AGP does not create it until
+// its own variant-configuration callbacks run — this script's own top level runs first and a plain
+// `tasks.named("testDebugUnitTest")` at that point fails with "Task ... not found" (found by
+// actually running this, not by inspection). `afterEvaluate` is the standard, documented point
+// AGP's own task is guaranteed to exist. Its `classpath`/`testClassesDirs` and
+// `jvmArgumentProviders` (exactly how modern AGP passes Robolectric's own resource/manifest paths
+// into a unit test task — confirmed by inspecting `testDebugUnitTest`'s configuration before
+// writing this) are copied wholesale into the new task, rather than reimplemented, so it is
+// genuinely "the same type/config" and not a same-looking task that silently can't find its own
+// resources; `testDebugUnitTest` itself is also excluded here, once it is guaranteed to exist.
+afterEvaluate {
+    val debugUnitTest = tasks.withType<Test>().named("testDebugUnitTest").get()
+    debugUnitTest.exclude("**/ReaderActivityDestinationSmokeTest*")
+    smokeTestDebugUnitTest.configure {
+        testClassesDirs = debugUnitTest.testClassesDirs
+        classpath = debugUnitTest.classpath
+        jvmArgumentProviders.addAll(debugUnitTest.jvmArgumentProviders)
+        systemProperties.putAll(debugUnitTest.systemProperties)
+    }
+}
+
+tasks.named("check") { dependsOn(smokeTestDebugUnitTest) }
+tasks.named("build") { dependsOn(smokeTestDebugUnitTest) }

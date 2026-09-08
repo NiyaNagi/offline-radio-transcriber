@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.ActivityPatternChart
 import org.ort.app.ui.components.AttributionRow
@@ -30,10 +31,15 @@ import org.ort.app.ui.components.Sparkline
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.FrequencyDetailViewState
 import org.ort.app.ui.data.FrequencyListEntryViewState
+import org.ort.app.ui.data.FrequencyNetViewState
 import org.ort.app.ui.data.FrequencyRegularViewState
+import org.ort.app.ui.data.HourActivityState
+import org.ort.app.ui.data.pluralize
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
+import java.time.format.TextStyle
+import java.util.Locale
 
 /**
  * The "Frequencies" list (R-074, FR-UI-10): `Frequencies.dc.html`'s column header, what it is
@@ -46,6 +52,8 @@ public fun FrequenciesListScreen(
     frequencies: List<FrequencyListEntryViewState>,
     onOpen: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    heardAllTimeCount: Int = 0,
+    heardTonightCount: Int = 0,
 ) {
     if (frequencies.isEmpty()) {
         EmptyState(
@@ -55,12 +63,18 @@ public fun FrequenciesListScreen(
         return
     }
     Column(modifier = modifier.fillMaxSize()) {
-        Text(
-            text = "Frequencies",
-            style = OrtType.screenTitle,
-            modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
-                .semantics { heading() },
-        )
+        Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+            Text(text = "Frequencies", style = OrtType.screenTitle, modifier = Modifier.semantics { heading() })
+            // R-215 (register, polish, V5 @f8430b8): the real frequency counts, matching
+            // `Frequencies.dc.html`'s own subtitle verbatim.
+            Text(
+                text = "${pluralize(heardAllTimeCount, "frequency", "frequencies")} heard all time · " +
+                    "$heardTonightCount tonight",
+                style = OrtType.subtitle,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = OrtSpacing.xs),
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.xs),
         ) {
@@ -201,15 +215,41 @@ private fun FrequencyHeaderSection(
                 key = "Stations",
                 value = "${state.stationCountAllTime} all time · ${state.stationCountTonight} tonight",
             )
+            // R-216 (register, spec, V5 @f8430b8): `Listened` and `Nets` — absent before; `Nets`
+            // stays absent (never fabricated) rather than show a row with nothing to say.
+            if (state.listenedLabel.isNotBlank()) {
+                KeyValueRow(key = "Listened", value = state.listenedLabel)
+            }
+            state.net?.let { net -> KeyValueRow(key = "Nets", value = netLabel(net)) }
         }
 
         Column(modifier = Modifier.padding(top = OrtSpacing.md)) {
-            SectionHeader(label = "Typical night, by hour")
+            val hasNotListeningHours = state.activityPattern.any { it.state == HourActivityState.NOT_LISTENING }
+            SectionHeader(
+                label = "Typical night, by hour",
+                trailingActionLabel = "More",
+                onTrailingAction = onOpenChange,
+            )
             ActivityPatternChart(
                 pattern = state.activityPattern,
                 title = "",
+                axisStart = "18:00",
+                axisEnd = "10:00",
                 modifier = Modifier.padding(top = OrtSpacing.sm),
             )
+            // R-216: the always-listening caption `Frequency-Change.dc.html` shows in place of the
+            // hatch legend when this frequency has no not-listening hours at all — `ActivityPatternChart`
+            // (WP2's shared component) only ever draws the hatch legend, never this alternative, so
+            // it is drawn here instead of asking WP2 to add a caller-supplied caption slot.
+            if (!hasNotListeningHours) {
+                Text(
+                    text = "averaged over every night · no hatch: always listening here",
+                    style = OrtType.subLine,
+                    color = OrtColors.textFaint,
+                    modifier = Modifier.padding(top = OrtSpacing.xs).fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                )
+            }
             if (state.patternSummarySentence.isNotBlank()) {
                 Text(
                     text = state.patternSummarySentence,
@@ -220,6 +260,15 @@ private fun FrequencyHeaderSection(
             }
         }
     }
+}
+
+/** "Tuesday 19:00 · W7NPC control · 3 of 5 seen" or, with no reliable control station, "Tuesday
+ * 19:00 · 3 of 5 seen" — never a fabricated control station name. */
+private fun netLabel(net: FrequencyNetViewState): String {
+    val day = net.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
+    val hour = "%02d:00".format(net.hourOfDay)
+    val control = net.controlStationId?.let { "$it control · " } ?: ""
+    return "$day $hour · $control${net.weeksSeen} of ${net.weeksTotal} seen"
 }
 
 @Composable

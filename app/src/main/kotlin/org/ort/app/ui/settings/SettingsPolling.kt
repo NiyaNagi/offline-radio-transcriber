@@ -113,10 +113,18 @@ public object SettingsPolling {
         is RigStatus.State.Stale -> "${state.lastKnown.descriptor} · disconnected"
     }
 
+    /** R-131/R-253 (register, round 6 System validator pass 2): `Settings.dc.html`'s own copy is
+     * "Tier 3 of 3 · this phone's best · what it does not know" — verbatim at the common case (the
+     * current tier is this phone's real maximum, no override held), but "this phone's best" would
+     * be a false claim at a lower tier (a thermal shed, or a held override), so that clause is
+     * shown only then; "what it does not know" is always true — every tier below the top one misses
+     * something `Settings-Tier` explains, which this row's own tap opens. */
     private fun tierSummaryLine(store: SettingsStore): String {
         val current = currentTierNumber()
-        val overrideNote = store.tierOverrideName?.let { " · held at $it" } ?: ""
-        return "Tier $current of $MAX_TIER$overrideNote"
+        val overrideName = store.tierOverrideName
+        val overrideNote = overrideName?.let { " · held at $it" } ?: ""
+        val bestNote = if (current == MAX_TIER && overrideName == null) " · this phone's best" else ""
+        return "Tier $current of $MAX_TIER$bestNote$overrideNote · what it does not know"
     }
 
     private fun aboutSummaryLine(context: Context): String {
