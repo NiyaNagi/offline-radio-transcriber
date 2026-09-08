@@ -218,6 +218,15 @@ public data class FrequencyChangeCause(val label: String, val isUnidentified: Bo
 public data class TimeWindow(val startMillis: Long, val endMillis: Long)
 
 /**
+ * Which sub-screen `FrequencyDetailContent` opens on. Exposed (not `private`) so a caller —
+ * `OrtNavHost` (WP3) reopening this drill-in after a round trip through the Log, R-276's
+ * `onOpenOvers` destination — can seed `FrequencyDetailContent`'s `initialView` and land the
+ * operator back where they left, on `Frequency-Change`, rather than always on the drill-in's own
+ * root.
+ */
+public enum class FrequencyDetailView { Detail, Change }
+
+/**
  * `Frequency-Change.dc.html`'s state (R-074): tonight's per-hour counts plotted as bars over the
  * usual per-hour average as a line, and the causes this package can honestly derive — a first-time
  * station heard tonight on this frequency, and any weak/unidentified activity. Cross-frequency
