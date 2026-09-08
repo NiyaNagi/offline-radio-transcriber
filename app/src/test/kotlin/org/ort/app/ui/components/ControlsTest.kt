@@ -18,11 +18,9 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
-import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -246,6 +244,7 @@ class ControlsTest {
                         label = "Callsign",
                         placeholder = "W7NPC",
                         mono = true,
+                        contentDescriptionText = "Typed callsign",
                         modifier = Modifier.testTag("field"),
                     )
                     TextField(
@@ -263,13 +262,11 @@ class ControlsTest {
         composeTestRule.onNodeWithText("Not a known callsign").assertIsDisplayed()
         composeTestRule.onNodeWithTag("field").assertHeightIsAtLeast(44.dp)
 
-        // `modifier` (carrying the testTag) lands on TextField's outer wrapper, not on the
-        // BasicTextField itself (so `weight` works in a Row — see the dedicated test below);
-        // `RequestFocus`/text-editing actions live on the real editable node underneath, found via
-        // `hasAnyAncestor` rather than the tag directly.
-        composeTestRule
-            .onNode(hasSetTextAction() and hasAnyAncestor(hasTestTag("field")), useUnmergedTree = true)
-            .performTextInput("K7LWH")
+        // `modifier` (carrying the testTag) lands on TextField's outer wrapper, so `weight` works
+        // in a Row (see the dedicated test below); `contentDescriptionText` and the real
+        // `RequestFocus`/`SetText` actions live together on the inner BasicTextField, so callers
+        // drive the field the same simple way every other content-description query does.
+        composeTestRule.onNodeWithContentDescription("Typed callsign").performTextInput("K7LWH")
         assert(value == "K7LWH") { "expected onValueChange to report the typed text, got '$value'" }
     }
 
@@ -315,14 +312,13 @@ class ControlsTest {
                     onValueChange = {},
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { searched = true }),
+                    contentDescriptionText = "Search text",
                     modifier = Modifier.testTag("search-field"),
                 )
             }
         }
 
-        composeTestRule
-            .onNode(hasSetTextAction() and hasAnyAncestor(hasTestTag("search-field")), useUnmergedTree = true)
-            .performImeAction()
+        composeTestRule.onNodeWithContentDescription("Search text").performImeAction()
         assert(searched) { "expected the keyboard's Search IME action to reach the caller's onSearch" }
     }
 
