@@ -2,9 +2,11 @@ package org.ort.app.ui.data
 
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -18,6 +20,11 @@ import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.AsrAvailability
+import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.capture.VadAvailability
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -43,6 +50,74 @@ class ReaderPollingTest {
         // disconnected database.
         db = OrtDatabase.create(context)
     }
+
+    @After
+    fun resetProcessWideAvailability() {
+        // AsrAvailability/VadAvailability/CaptureState/ShedStatus are all process-wide holders
+        // (not persisted, by design — see their own doc comments); reset so this test's fixtures
+        // never leak into another test.
+        AsrAvailability.reset()
+        VadAvailability.reset()
+        CaptureState.idle()
+        ShedStatus.reset()
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 currentStatus reads the real ASR and VAD availability, not a healthy default`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        AsrAvailability.unavailable("no model at /data/models/asr")
+        VadAvailability.stub("Silero model not installed")
+
+        val view = ReaderPolling.currentStatus(context, "S1", startedAtWallMillis = 0L)
+
+        assertTrue(view.asrStatusLabel.contains("no model at /data/models/asr"))
+        assertTrue(view.vadStatusLabel.contains("Silero model not installed"))
+        assertEquals(
+            "No transcription model installed — transcripts will not appear",
+            view.transcriptionUnavailableMessage,
+        )
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 currentStatus reports not started when the service has not set availability yet`(): Unit = runTest {
+        db.sessionDao().insert(session())
+
+        val view = ReaderPolling.currentStatus(context, "S1", startedAtWallMillis = 0L)
+
+        assertTrue(view.asrStatusLabel.contains("not started"))
+        assertFalse(view.asrStatusLabel.contains("available ("))
+    }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `FR_RUN_5 currentStatus reads the real shed level and backlog once capture has started`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        CaptureState.capturing("S1")
+        ShedStatus.update(level = 2, backlog = 7)
+
+        val view = ReaderPolling.currentStatus(context, "S1", startedAtWallMillis = 0L)
+
+        assertEquals(2, view.shedLevel)
+        assertEquals("Level 2 — speaker identity paused", view.shedLevelLabel)
+        assertEquals(7, view.backlog)
+        assertTrue(view.backlogLabel.contains("7"))
+    }
+
+    @Test
+    @Requirement("FR-RUN-5")
+    fun `FR_RUN_5 currentStatus reports not measured before capture has ever started, never a fabricated zero`(): Unit =
+        runTest {
+            db.sessionDao().insert(session())
+
+            val view = ReaderPolling.currentStatus(context, "S1", startedAtWallMillis = 0L)
+
+            assertNull(view.shedLevel)
+            assertEquals("Not measured", view.shedLevelLabel)
+            assertNull(view.backlog)
+            assertEquals("Not measured", view.backlogLabel)
+        }
 
     private fun session(id: String = "S1") = SessionEntity(
         id = id,

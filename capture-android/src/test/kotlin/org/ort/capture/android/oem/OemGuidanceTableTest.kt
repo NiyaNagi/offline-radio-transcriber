@@ -8,7 +8,7 @@ import org.ort.testing.Requirement
 class OemGuidanceTableTest {
 
     @Test
-    @Requirement("AC-66", "FR-SVC-5a")
+    @Requirement("AC-66", "FR-SVC-5a", "NFR-9")
     fun `AC_66 Oppo gets the four ColorOS-specific steps`() {
         val guidance = OemGuidanceTable.forDevice(manufacturer = "OPPO", brand = "oppo")
         assertEquals(4, guidance.steps.size)

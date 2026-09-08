@@ -10,7 +10,7 @@ import kotlin.math.abs
 class ReliabilityDiagramTest {
 
     @Test
-    fun `a perfectly calibrated set of bins has zero expected calibration error`() {
+    fun `FR_LEX_20 a perfectly calibrated set of bins has zero expected calibration error`() {
         val diagram = ReliabilityDiagram(
             listOf(
                 ReliabilityBin(0.0f, 0.1f, 10, meanPredicted = 0.05f, observedAccuracy = 0.05f),
@@ -22,7 +22,7 @@ class ReliabilityDiagramTest {
     }
 
     @Test
-    fun `a systematically overconfident model has a positive expected calibration error`() {
+    fun `FR_LEX_20 a systematically overconfident model has a positive expected calibration error`() {
         val diagram = ReliabilityDiagram(
             listOf(ReliabilityBin(0.9f, 1.0f, 100, meanPredicted = 0.95f, observedAccuracy = 0.6f)),
         )

@@ -115,6 +115,1668 @@ rows) is untouched; that is a separate finding.
 
 ---
 
+## 2026-09-08 (audit — F-008 follow-up)
+
+### (pending) — audit F-008 follow-up · real, cited sha256 checksums replace the placeholder in `ModelCatalog`
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (new:
+`ChecksumState`; `ModelCatalogEntry`/`ModelCatalog.specFor` now checksum-aware;
+`ModelsController.download`/`.sideload`/`rowFor` react to it), `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`
+(unknown-checksum state text and disabled Download button only); tests
+`app/src/test/kotlin/org/ort/app/ui/data/ModelCatalogTest.kt` (new),
+`ModelsControllerTest.kt`, `ModelsScreenTest.kt`; `asr-sherpa/README.md` (new checksum table).
+No `:net` file touched.
+
+**Requirements/ACs:** FR-AST-1, constitution V/VII (asset integrity checked before activation),
+constitution I (an installed state without its verification confidence is a bug, same discipline
+as an attribution without its state), constitution VI (no number without its provenance, applied
+to a checksum).
+
+**What changed:** The previous F-008 `:app`-half change (2026-09-07, this file) shipped every
+`ModelCatalog` entry with `UNPINNED_CHECKSUM`, a deliberately non-hex placeholder string, because
+no network egress was available to actually download a model and hash it. This change obtains the
+*real* published digests without downloading any binary, using `WebFetch` against small,
+non-binary metadata endpoints, and records exactly where each was read (KDoc on `ModelCatalog`,
+table in `asr-sherpa/README.md`):
+
+- `tiny.en-encoder.int8.onnx` and `tiny.en-decoder.int8.onnx` are Git-LFS-tracked on HuggingFace:
+  fetching `.../raw/main/<file>` for an LFS path returns the small LFS pointer text itself
+  (`oid sha256:<hex>`, `size <bytes>`) rather than the binary. Both are now `ChecksumState.Known`
+  with the sha256 read from that pointer.
+- `tiny.en-tokens.txt` is *not* LFS-tracked: HuggingFace's file-listing API gives only a 40-hex git
+  blob id for it (a SHA-1, not a SHA-256), and no sha256 for this specific extracted file is
+  published anywhere else found (checked: HF's raw/API endpoints, and sherpa-onnx's own
+  `checksum.txt` release manifest, which covers whole `.tar.bz2` archives only). Rather than invent
+  a value, this entry is `ChecksumState.UnknownSideloadOnly` with a reason string.
+- `silero_vad.onnx` has no per-asset `digest` field on GitHub's Releases API (confirmed null even
+  for the differently-named `silero_vad_v5.onnx` asset in the same release), but the release
+  itself publishes a `checksum.txt` manifest asset — a tab-separated `<filename>\tsha256` line per
+  asset — which lists `silero_vad.onnx` by its exact name. Now `ChecksumState.Known` from that line.
+
+`ModelCatalog.specFor` now returns `ModelFetchSpec?`, null exactly for an
+`UnknownSideloadOnly` entry. `ModelsController.download()` refuses such an entry with a `Failure`
+and **no network call at all** (proven by a test client that throws if invoked) — there is nothing
+to verify a downloaded file against. `ModelsController.sideload()` still works for such an entry:
+since there is no known-good digest to check the user's file against, it computes
+`sha256Of(source)` itself and installs against that self-referential value — a plain
+trust-on-first-use of the exact bytes supplied, entirely within `:app` (no `:net` change), never
+presented as "checksum verified" (a new `ModelRowStatus.INSTALLED_UNVERIFIED`, distinct from
+`INSTALLED`, and a new `ModelRowViewState.checksumKnown` flag the screen uses to disable Download
+and show "No published checksum for this file — Download is disabled.").
+
+**Verified:**
+- `ModelCatalogTest` (new, 6 tests) seen to fail for the right reason first: before `ChecksumState`
+  existed, `./gradlew :app:compileDebugUnitTestKotlin` failed with `Unresolved reference
+  'checksumState'` / `'ChecksumState'` (18 errors) against the test file; after the implementation,
+  the same command is clean and all 6 tests pass.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.ModelCatalogTest" --tests
+  "org.ort.app.ui.data.ModelsControllerTest" --tests "org.ort.app.ui.screens.ModelsScreenTest"`:
+  green, including two new `ModelsControllerTest` cases (download refuses with no network call for
+  `ASR_TOKENS`; sideload installs it `INSTALLED_UNVERIFIED`) and two new `ModelsScreenTest` cases
+  (unknown-checksum text + disabled Download; unverified-install status text).
+- `./gradlew :app:testDebugUnitTest` (full module): green.
+- `./gradlew build dependencyRules` (full gate): green (after fixing two detekt findings —
+  `MaxLineLength`, `MayBeConst` — surfaced by this same run).
+- `python tools/spec-check/spec_check.py`: all 8 checks PASS.
+- Every digest above was read from published metadata via `WebFetch`, never computed from a
+  download this change performed, and never typed from memory — see the per-entry KDoc and the
+  `asr-sherpa/README.md` table for the exact source of each. No on-device install and no real
+  network fetch against these URLs was run in this session (everything above is Robolectric/JVM
+  against fakes, same as the original F-008 `:app`-half change).
+
+**Left open / not done:**
+- `tiny.en-tokens.txt` still has no known-good sha256 to pin — genuinely unresolved, not merely
+  unpinned by omission: no authoritative sha256 for this exact file was found anywhere published.
+  It installs only via the trust-on-first-use side-load path now built for exactly this case.
+- `silero_vad.onnx`'s exact size in bytes was not confirmed (GitHub's paginated asset list was not
+  fully walked to find that one entry — see `asr-sherpa/README.md`'s note); this does not affect
+  checksum verification, since `ModelFetchSpec` carries no size field.
+- The `:net` half of F-008 (the `INTERNET` manifest grant) remains a separate agent's already-landed
+  work, per the previous entry; not touched here.
+- No real download against any of these four URLs, and no on-device install, has been run in any
+  session to date.
+## 2026-09-07 (audit — F-019)
+
+### (pending) — audit F-019 · FR-UI-11's day-of-week and week-over-week halves
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/data/ActivityPattern.kt` (new
+`ActivityBucket` interface, `DayOfWeekActivityBucket`, `WeekTrend`, `WeekOverWeekBucket`,
+`ActivityPatternMapper.buildDayOfWeekPattern`/`buildWeekOverWeekComparison`),
+`ui/components/ActivityPatternChart.kt` (generalised to `List<ActivityBucket>`, `title`/
+`summaryLabel`/`barLabels` params), `ui/data/StationsAndFrequencies.kt` (view states carry
+`dayOfWeekPattern`/`weekOverWeekSummary`; new `dayOfWeekShortLabel`/`weekOverWeekSummaryText`),
+`ui/data/ReaderPolling.kt` (wires the two new mappers through, in `ZoneId.systemDefault()`),
+`ui/screens/StationScreen.kt` and `ui/screens/FrequencyScreen.kt` (render the day-of-week chart
+and week-over-week text beneath the existing hour chart), plus their tests.
+
+**Requirements/ACs:** FR-UI-11 (both halves P17 left open: "by day of week" and "how that has
+changed"), FR-UI-12/AC-126 (the three-state not-heard/not-listening distinction now also holds in
+every day-of-week bucket, not only every hour-of-day one).
+
+**What changed:** `ActivityPatternMapper.buildDayOfWeekPattern` buckets the same real
+session/gap windows `buildPattern` already used, at calendar-day rather than hour granularity, in
+the device's own zone (`ZoneId`, not UTC or a sample position — F-001 made real wall-clock
+timestamps available) — same three-state priority (HEARD, then SILENT_WHILE_LISTENING, else
+NOT_LISTENING), folded onto the 7 ISO weekdays. `buildWeekOverWeekComparison` compares the most
+recent 7-day window against the 7 days before it, per weekday, and reports `WeekTrend.NO_DATA`
+(never a fabricated up/down) whenever either window had no listening time at all for that
+weekday. `ActivityPatternChart` is generalised behind a new `ActivityBucket` interface
+(`state`/`heardCount`) so one component renders either pattern; `HourActivityBucket` and
+`DayOfWeekActivityBucket` both implement it. The station and frequency detail screens now render
+the day-of-week chart (with "Mon".."Sun" bar labels) and a plain-text "this week vs last" line per
+weekday beneath the existing hour-of-day chart. `StationEntity.activityByHourDow` (unused,
+flagged in the finding) is left untouched — the pattern is still computed live from session/gap
+rows, exactly as the hour-of-day pattern already was, rather than wiring an unrelated cache column.
+
+**Verified:** `./gradlew :app:testDebugUnitTest` (green, includes new
+`ActivityPatternMapperTest` cases `FR_UI_11_day_of_week ...` ×3, `AC_126_FR_UI_11_day_of_week ...`,
+`FR_UI_11_week_over_week ...` ×2, and new `StationScreenTest`/`FrequencyScreenTest` cases
+asserting the day-of-week chart renders with seven labelled buckets); `./gradlew build
+dependencyRules` (green); `python tools/spec-check/spec_check.py` (OK). Robolectric/JVM only, no
+device run.
+
+**Left open / not done:** The week-over-week comparison is deliberately text-only, one weekday
+against its single predecessor a week prior — with only one real 7-day window on each side there
+is no honest multi-point trend to plot, so no chart was added for it (would need weeks of history
+to be more than one sample point wide). `StationEntity.activityByHourDow` remains unused; wiring
+it as a cache is out of this finding's scope.
+## 2026-09-07 (audit — F-025)
+
+### (pending) — audit F-025 · record that the Pass B backlog only drains while `RealCaptureService` is alive
+
+**Scope:** `spec/build-plan.md` (P12 progress note only), `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt` (KDoc only, no behaviour change), `CHANGELOG.md`.
+
+**Requirements/ACs:** FR-RUN-2 (the durable on-disk work queue — confirmed still holding; this
+entry documents a limitation, not a defect in it). No new id established.
+
+**What changed:** `results/audit-2026-09-07.md`'s F-025 records that `CaptureProcessingLoop`
+(built by `RealCaptureService.startProcessingLoop`) runs as a coroutine in the service's own
+`CoroutineScope`, cancelled by the same `scope.cancel()` that `onDestroy()` already calls for
+everything else — there is no `WorkManager` job, `PeriodicWorkRequest`, or any other scheduler
+that resumes draining the backlog once the service stops. Confirmed by grep, run before this
+change's own KDoc edit landed: no reference to `WorkManager` or `PeriodicWorkRequest` anywhere
+under `app/`, `pipeline/`, or `data/`'s `src/main` trees (`Grep` for
+`WorkManager|PeriodicWorkRequest` over those three modules' `src/main/**` returned no files) —
+i.e. no such dependency exists in code, only the two mentions this very entry's KDoc paragraph
+now adds to `RealCaptureService.startProcessingLoop`'s doc comment, in prose, to name the
+scheduler that is absent. FR-RUN-2 holds regardless — the queue is durable and a backlog
+left behind at stop is not lost, it is picked up again the next time capture starts — but the
+wait for "the next time capture starts" was previously undocumented anywhere a reader would find
+it. The register's fix sketch offered "record or build"; **record** is the decision here, because
+building a post-capture drain (a `WorkManager` job, or equivalent, that continues draining
+`WorkQueue` after `RealCaptureService.onDestroy()`) is M8 streaming/M10 reprocessing scope per
+`spec/build-plan.md`'s own milestone breakdown (M8 is explicitly listed as owning "the
+drain-outside-service gap (F-025)"), and the constitution's capture-never-blocks-on-processing
+principle (IV) is about capture not depending on processing, not about processing depending on
+capture being alive — but scheduling processing work is still a real design decision (queue
+scheduling policy, wake-lock/battery cost of running unattended on the ColorOS reference device,
+interaction with the shed/backpressure system) that does not belong improvised into a
+documentation-only audit fix. This change is therefore two things, done exactly as scoped: (1) a
+one-line "Left open" addition to `spec/build-plan.md`'s newest P12 progress note stating the
+limitation and that M8/M10 own the fix; (2) a KDoc paragraph on
+`RealCaptureService.startProcessingLoop` stating the same, citing FR-RUN-2 and F-025.
+
+**Verified:** Documentation/KDoc only — no behaviour changed, so no test was written and none is
+claimed; adding a fake test to satisfy TDD for a comment-only change would test nothing and was
+deliberately not done (constitution II: "a test that passes before its implementation exists is
+testing nothing" applies in spirit to a test with no implementation to fail against at all).
+Verified instead by: `Grep` for `WorkManager|PeriodicWorkRequest` over `app/pipeline/data`'s
+`src/main/**` (no matches, confirming the finding's premise) and `./gradlew :pipeline:compileDebugKotlin --console=plain -q` green after the KDoc edit (Robolectric/JVM
+tooling only; no device involved, nothing to verify on one for a comment change).
+
+**Left open / not done:** Building the actual post-capture drain is explicitly not done here —
+it is M8/M10 scope, and the fix sketch's alternative (build it now, e.g. via `WorkManager`) was
+rejected for the reasons above: it is a scheduling and battery-behaviour design decision on the
+ColorOS reference device (constitution IV's liveness-by-heartbeat concern), not a documentation
+fix, and belongs to the milestone that already claims it.
+
+## 2026-09-07 (audit — F-008)
+
+### (pending) — audit F-008 (`:app` half) · a "Models" screen is the declared, user-initiated channel through which an ASR/VAD model reaches the device
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (new:
+`ModelCatalog`, `ModelsController`), `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`
+(new), `app/src/main/kotlin/org/ort/app/ui/navigation/ReaderDestination.kt` (`SETTINGS.hasScreen`
+flips to `true`), `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`ModelsContent`
+dispatch + wiring); tests `app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerTest.kt` and
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenTest.kt`. `app/build.gradle.kts` already
+carried `implementation(project(":net"))` (confirmed, not touched). The `:net` half of F-008 (the
+`INTERNET` manifest grant) was owned by a parallel agent and is not part of this change — no
+manifest was touched here.
+
+**Requirements/ACs:** FR-ASR-1, constitution V (nothing leaves the device except by a declared
+channel; user-initiated model download is one of exactly two), constitution I (never claim
+"installed" without the checksum having verified), FR-RUN-9/FR-REP-8 (F-016's `WorkQueue.
+requeueFailed`, now actually called from somewhere).
+
+**What changed:** Before this change `:net`'s `ModelAcquisition.fetch()`/`.sideload()` had no
+`:app` call site at all (confirmed by grep, per the audit finding) — the debug build could capture
+audio but never transcribe it, because no ASR (Whisper tiny.en) or VAD (Silero) model could ever
+reach the device. This adds the drawer's `Settings` destination (previously a placeholder;
+`Improve records` was left alone — P16 already gave it a per-transmission
+correction/labelling meaning, so asset management reads as a `Settings` concern instead) as a real
+"Models" screen:
+
+- `ModelCatalog` lists the four files the real providers actually read —
+  `AsrModelLocator`'s three (`tiny.en-encoder.int8.onnx`, `tiny.en-decoder.int8.onnx`,
+  `tiny.en-tokens.txt`) and `SileroVadLocator`'s one (`silero_vad.onnx`) — each with a real,
+  individually-fetchable URL. The Whisper files are the same sherpa-onnx release contents
+  `asr-sherpa/README.md` documents, but fetched as flat files from HuggingFace
+  (`csukuangfj/sherpa-onnx-whisper-tiny.en`, confirmed to host each file separately) rather than
+  extracting the `.tar.bz2` archive that README uses for the desktop-JVM test cache — deliberately
+  avoiding a new, untested archive-extraction dependency this fix does not need. The VAD URL is
+  the one already documented and confirmed reachable in `asr-sherpa/README.md`.
+- `ModelsController.download()` mints `NetCapability.UserInitiated` and calls
+  `ModelAcquisition.fetch()` on `Dispatchers.IO`; `.sideload()` does the same for a file the user
+  picks via `ActivityResultContracts.OpenDocument()` (content `Uri` copied to app-private cache
+  first, since `ModelAcquisition.sideload()` takes a `File`). Both write to the exact destination
+  the real providers already read, so a successful install is picked up with no second path
+  definition. Neither is reachable from `:pipeline` or `:capture-*` — `:app`-only, off the
+  capture/processing path, matching constitution V/IV.
+- A row is "Installed" only when `ModelAcquisition`'s own `.sha256` marker file is present and
+  matches the pinned checksum for that exact destination — never inferred from the file merely
+  existing.
+- On every successful install, `WorkQueue.requeueFailed()` (F-016, no filter — deliberately not
+  narrowed to a specific error-message prefix `:pipeline` owns the wording of) runs and the count
+  is shown to the user.
+
+**Left open / not done:**
+- **`ModelCatalog`'s checksums are not pinned to the real published bytes.** This session had no
+  network egress to actually download either model and compute its real SHA-256 (confirmed: a
+  `PowerShell Invoke-WebRequest` to a small file failed immediately — "NonInteractive mode" — while
+  `WebFetch` could reach HuggingFace's *page*, which is how the flat-file URLs and file listing
+  above were confirmed to exist, but that tool renders pages to text and cannot hand back raw
+  bytes to hash). `ModelCatalog.UNPINNED_CHECKSUM` is a human-readable placeholder string, not a
+  hex digest, so it can never be mistaken for a genuinely pinned value — a real fetch or side-load
+  against these specs today will correctly and loudly fail checksum verification rather than ever
+  silently installing unverified bytes (fails closed, not open). Replacing it with the real digest,
+  computed once from a genuinely downloaded copy of each file, is the next session's job before
+  this can install a real model on a device.
+- **No real download has been run, on a device or against the real URLs, in this session.**
+  Everything below is Robolectric/JVM, against `FakeHttpRangeClient`.
+- The `:net` half of F-008 (the `INTERNET` manifest grant) is a separate agent's work, landing
+  separately.
+- Progress and resume mid-download are not surfaced in the UI (`ModelAcquisition` itself supports
+  resume; the screen shows only a coarse "Downloading…"/done/failed state) — not required by the
+  finding's fix sketch, noted as a possible follow-up.
+- `spec/build-plan.md`'s P18 note and P12's note are updated alongside this entry to say the
+  `:app` call site now exists (see that file's Progress section) — the checksum-pinning gap above
+  is the reason F-008 is not fully closed by this half alone.
+
+**Verified:**
+- `FR_ASR_1_...` tests seen to fail for the right reason first: with `ModelsController`'s
+  installed-check hardcoded to `false`, `./gradlew :app:testDebugUnitTest --tests
+  "org.ort.app.ui.data.ModelsControllerTest"` failed 1 of 4 with `java.lang.AssertionError:
+  expected:<INSTALLED> but was:<NOT_INSTALLED>`; restored, the same command passes 4/4.
+- `./gradlew :app:testDebugUnitTest` (full module): green, including the new
+  `ModelsControllerTest` (download/checksum-mismatch/requeue/honest-not-installed) and
+  `ModelsScreenTest` (row rendering, Download tap, busy state, message display).
+- `./gradlew build dependencyRules` (full gate): green.
+- `python tools/spec-check/spec_check.py`: all 8 checks PASS.
+- Everything above is Robolectric/JVM only — no on-device verification, no real network call in
+  any test (constitution V; `FakeHttpRangeClient` throughout).
+## 2026-09-07 (audit — F-011)
+
+### (pending) — audit F-011 · `RealCaptureService` is now started end to end under Robolectric, proving P12's composition rather than just its parts
+
+**Scope:** `:pipeline` only — `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`
+(the `Dependencies` injection seam only — no behavioural change to production defaults) and the
+`runShedMonitor` parameter type it forced (`AndroidShedSignals` → `ShedSignals`, so a fake shed
+signal source can be substituted too); new test
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/RealCaptureServiceTest.kt`.
+**Requirements/ACs:** build-plan P12's claim; AC-31, AC-5, AC-48, F-005, F-028; constitution II
+(test-backed change) and IV (capture never blocks/drops/lies).
+**What changed:** P12 claimed `PassDrainRunner`/`PassB`/`RealSherpaDecoder` were "constructed and
+wired into `RealCaptureService`, proven against `FakeAsrEngine` on Robolectric", but no test ever
+started the service — `CaptureProcessingLoopTest` proves `PassDrainRunner`+`PassBFactory` draining
+a hand-assembled `WorkQueue`, which is a different claim from `RealCaptureService.startCapture()`'s
+own composition (VAD/route selection, the capture flow, the F-028/F-007 gap/shed relays, the
+processing-loop launch) actually running end to end; F-001/F-005/F-006 had all lived in exactly
+that untested composition code. `RealCaptureService` gained a small settable `Dependencies` field
+(four factory functions: `database`, `audioIo`, `asrEngine`, `shedSignals`), each defaulting to the
+exact real construction the class already did — no Hilt, no behavioural change to production.
+`RealCaptureServiceTest` uses Robolectric's `ServiceController` to start the *real* service with
+`FakeAudioIo` (a synthetic loud-then-silent burst), `FakeAsrEngine`, `FakeShedSignals` and an
+in-memory `OrtDatabase` substituted through that seam, then asserts, through the running service's
+own code path: a `TransmissionEntity` + current transcript row appear (AC-31); the written
+heartbeat carries a real non-zero sample position, not the fabricated `0L` F-005 fixed (read via
+`FileHeartbeatStore` against the service's own `filesDir`); a deliberate `ACTION_STOP` (not
+`onDestroy()`, which is never a clean stop in this class) marks the session's heartbeat clean
+(AC-5); and a `FakeAudioIo.raiseInterruption`/auto-recovery pair produces a real `capture_gap` row
+with cause `INTERRUPTION` (AC-48, F-028). The VAD itself is not faked — the service's existing
+`EnergyVadModel` fallback (no Silero model file exists in this environment) genuinely trips on the
+loud synthetic tone, so the real fallback path is what's exercised. `runShedMonitor`'s parameter
+was narrowed from the concrete `AndroidShedSignals` to the `ShedSignals` interface (calling
+`refreshBacklog()` only when the runtime type is `AndroidShedSignals`) so `FakeShedSignals` — which
+has no refresh step, because it is already live — can be injected without changing
+`AndroidShedSignals`'s own contract.
+**Verified:** test written first against the pre-seam class and confirmed to fail to compile
+(`Unresolved reference 'dependencies'` / `'Dependencies'`) via
+`./gradlew :pipeline:compileDebugUnitTestKotlin`; after the seam,
+`./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.capture.RealCaptureServiceTest"`
+green (2 tests, 0 failures, ~5s); `./gradlew :pipeline:test` green (no regressions in the existing
+suite, including `CaptureProcessingLoopTest`); full gate `./gradlew build dependencyRules` green;
+`python tools/spec-check/spec_check.py` green. All Robolectric/JVM — no device has run this;
+real-thread/real-wall-clock timing (the service's own `Dispatchers.IO` scope and
+`CaptureProcessingLoop`'s 2s poll interval are unmodified — there is no test-dispatcher seam),
+so the test polls with a real timeout rather than advancing a virtual clock.
+**Left open / not done:** on-device verification remains entirely unestablished, as it always was
+for this class (its own doc comment says so). The processing loop's attribution resolution against
+the real lexicon grammar is not exercised here (the synthetic burst carries no callsign phonetics);
+that path is already covered by `CaptureProcessingLoopTest`'s "kilo seven alpha bravo charlie" case
+and was out of scope for this finding, which is about service *composition*, not decode accuracy.
+
+---
+
+## 2026-09-07 (audit — F-009)
+
+### (pending) — audit F-009 · Pass B now persists the phonetic lattice and every ranked candidate, so the inspection surface is no longer permanently empty
+
+**Scope:** `:pipeline` only — `pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`;
+new test `pipeline/src/test/kotlin/org/ort/pipeline/passb/DataPassBResultSinkTest.kt`.
+**Requirements/ACs:** FR-UI-8, FR-LEX-12, constitution I ("every machine conclusion MUST be
+inspectable — the lattice, the candidates, each prior's contribution").
+**What changed:** `DataPassBResultSink.record` wrote the transcript and the attribution only —
+`PassBResult.lattice` and `.ranked` never reached `:data`'s `phonetic_lattice`/`callsign_candidate`
+tables, so `CatalogDao.latticesFor`/`candidatesFor` (which `app/.../ui/data/ReaderPolling.kt` and
+`InspectionSurface.kt` already read) were permanently empty — P16 recorded this as blocked on a
+`:pipeline` change and it is now unblocked. The sink now persists, in the same
+`db.withTransaction { }` as the transcript/attribution write: every entry of `PassBResult.ranked`
+as a `CallsignCandidateEntity` (rank = list index, `score` = `RankedCandidate.totalScore`,
+`ituPrefix`/`ituCountry` from the candidate's `ItuAllocation`, `priorBreakdown` as a
+name→logOdds map built from every `PriorContribution`, `grammarValid = true` — `CallsignGrammar`
+only ever emits structurally valid candidates — `databaseHit` read honestly off the "database"
+prior's own contribution rather than threading a new signal through `PassBResult`, and `selected`
+set for the one candidate matching a `CONFIRMED` attribution's station id), and `PassBResult.lattice`
+(when non-null) as a `PhoneticLatticeEntity`, its `unitsBlob` a lossless hand-rolled JSON array of
+slots (`startMs`/`endMs`/`alts[]`, each alt's unit name and log-probability) — `unitsBlob` is
+documented as an opaque blob owned by the writer, so no `:data` change was needed. Both entities
+are `@Insert`-only with a fresh ULID per call, so re-running Pass B for the same transmission adds
+a second lattice/candidate set instead of overwriting the first (constitution III: nothing is
+deleted quietly) — no new "supersede" mechanism was added because none of `FR-UI-8`/`FR-LEX-12`
+calls for one; every version stays reachable via `latticesFor`/`candidatesFor`.
+**Verified:** on a Windows JVM (JDK 17.0.20.101, Robolectric — no device). `DataPassBResultSinkTest`
+cases `FR_UI_8_the_ranked_candidate_list_is_persisted...`, `FR_LEX_12_the_phonetic_lattice_is_persisted...`
+and `FR_LEX_12_a_second_run_for_the_same_transmission_adds_rather_than_replaces` were seen to fail
+first (`expected:<2> but was:<0>` etc. — nothing had been written), then made to pass by the fix
+above; a fourth case confirms a `Rejected` outcome still persists neither. `./gradlew :pipeline:test`
+(all green), then `./gradlew build dependencyRules` and `python tools/spec-check/spec_check.py`
+(both green).
+**Left open / not done:** `databaseHit` is derived from the "database" prior's contribution sign
+rather than a dedicated field on `PassBResult`/`RankingContext` threaded through — correct for
+every prior shipped today (`DatabasePresencePrior`'s clamp is `(+1.0, -0.3)`, so the sign always
+distinguishes hit from miss/cold), but a future prior named `"database"` with a different
+convention would silently break this; worth a dedicated field if that prior's contract ever
+changes. Real per-prior-ablation cross-checking (whether the stored `priorBreakdown` values match
+what a `withoutPrior` re-rank would show) is not exercised here — only the plumbing from
+`RankedCandidate.contributions` into the stored map is.
+
+## 2026-09-07 (audit — F-002)
+
+### (pending) — audit F-002 · the status surface now shows the real shed level and backlog, or says "Not measured" — never a fabricated "Nominal"
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/data/ReaderPolling.kt`
+(`statusRepository`/`currentStatus`), `app/src/main/kotlin/org/ort/app/status/StatusViewState.kt`
+(`StatusViewState`, `StatusViewStateMapper.from`), `app/src/main/kotlin/org/ort/app/ui/screens/StatusScreen.kt`
+(new "Queue backlog" row), `app/src/main/AndroidManifest.xml` (dead-activity entries removed);
+deleted `app/src/main/kotlin/org/ort/app/status/StatusActivity.kt` and
+`app/src/main/kotlin/org/ort/app/transmissions/TransmissionListActivity.kt` and their tests; test
+changes in `StatusViewStateMapperTest.kt`, `ReaderPollingTest.kt`, `StatusScreenTest.kt`.
+**Requirements/ACs:** FR-RUN-5 (queue depth and shed level visible in the status surface),
+FR-UI-7, constitution IV ("never lies").
+**What changed:** `ReaderPolling.currentStatus` and `StatusActivity` (now deleted) each built a
+`ShedController` on an anonymous `ShedSignals` returning `batteryPercent()=100`,
+`isCharging()=true`, `queueBacklog()=0`, `freeStorageBytes()=Long.MAX_VALUE` — and, worse, never
+called `.sample()`/`.tick()` on it, so `currentLevel` stayed `0` regardless of those fake signals;
+the surface could only ever render "Nominal". `StatusViewStateMapper.from` now takes explicit
+`shedLevel`/`backlog: Int?` parameters instead of reading `CaptureStatus.shedLevel` (which is still
+populated by a `ShedController` `CaptureStatusRepository`'s constructor requires but whose output
+is now discarded — see that function's doc comment); `null` renders as "Not measured" via the new
+`StatusViewState.NOT_MEASURED_LABEL`, and a real level/backlog render their existing/new labels.
+`ReaderPolling.currentStatus` supplies those real values from `org.ort.pipeline.capture.ShedStatus`
+(F-007's process-wide holder, published by `RealCaptureService`'s real `ShedController` every
+~10 s) whenever `CaptureState.state != CaptureState.State.Idle` — i.e. capture has started at least
+once this process, which is when the shed monitor coroutine can plausibly have sampled anything;
+before that, both render "Not measured", never a fabricated `0`. `StatusScreen` gained a "Queue
+backlog" row alongside the existing "Shed level" row. `ReaderPolling.statusRepository` still must
+construct *some* `ShedController` to satisfy `CaptureStatusRepository`'s constructor (in `:pipeline`,
+out of this change's scope) but now reuses `:pipeline`'s own `FakeShedSignals` rather than a second
+bespoke anonymous fake — its output is never read for anything user-visible any more. The dead v0
+`StatusActivity`/`TransmissionListActivity` (grepped: no production code launched either — only
+stale doc comments and their own manifest/tests — since `MainActivity` has launched `ReaderActivity`
+since build-plan P13) are deleted along with their manifest entries and tests, removing the second
+copy of the fabricated-signal bug outright rather than patching it twice.
+**Verified:** New/updated tests in `StatusViewStateMapperTest.kt` (`FR_RUN_5_an explicit shed level
+and backlog render as measured...`, `FR_RUN_5_no shed reading published renders not measured...`),
+`ReaderPollingTest.kt` (`FR_RUN_5_currentStatus reads the real shed level and backlog once capture
+has started`, `FR_RUN_5_currentStatus reports not measured before capture has ever started...`),
+and `StatusScreenTest.kt` (`FR_RUN_5_queue backlog is shown as a number`, `FR_RUN_5_an unmeasured
+shed level and backlog render as not measured, never zero`) — confirmed failing first with
+`e: ... No parameter with name 'shedLevel' found` / `Unresolved reference 'backlog'` compile errors
+against the pre-fix `StatusViewState`/`StatusViewStateMapper.from` signature (verified by
+temporarily reverting the three production files to their pre-fix content and re-running
+`./gradlew :app:testDebugUnitTest --tests ...`), then green once the fix was restored.
+`grep -r "object : ShedSignals" app/` returns no matches. `./gradlew :app:test` (green, all tests),
+`./gradlew build dependencyRules` (exit 0), `python tools/spec-check/spec_check.py` (all 8 checks
+PASS). All JVM/Robolectric only — nothing here is device-verified.
+**Left open / not done:** the "not measured" gate is `CaptureState.state != Idle`, a proxy for
+"the shed monitor coroutine has plausibly sampled something" rather than a direct flag on
+`ShedStatus` itself — `ShedStatus` (owned by F-007, out of this change's `:pipeline`-scope) has no
+`hasMeasurement`/"unset" signal of its own, so there is a narrow race between `CaptureState`
+flipping off `Idle` and the async shed-monitor coroutine's first tick where a stale `0`/`0` could
+theoretically show as "measured" for one poll interval; not exercised by a test here.
+`FR-RUN-5`'s "oldest-unprocessed age" is not shown — neither `ShedStatus` nor `WorkQueueDao`
+exposes it cheaply today (`WorkQueueDao` has no oldest-`enqueuedAt`-by-state query), and adding one
+would mean touching `:data`/`:pipeline`, both out of this change's `:app`-only scope; reported here
+rather than fabricated.
+## 2026-09-07 (audit — F-008, `:net` half)
+
+### (pending) — audit F-008 · `:net`'s manifest now grants INTERNET, and `platformGuards` fails the build if it ever stops
+
+**Scope:** `:net` (`src/main/AndroidManifest.xml`, new `src/test/kotlin/org/ort/net/NetManifestPermissionTest.kt`,
+`README.md`); `buildSrc` (`PlatformGuards.kt`, `PlatformGuardsTask.kt`, and an unrelated
+pre-existing compile break in `PlatformGuardsTest.kt`'s sibling file `CoverageMatrixTest.kt` fixed
+incidentally — see "What changed"). This is the `:net` half only; the `:app` call site that mints
+`NetCapability.UserInitiated` and drives `ModelAcquisition.fetch()` from a real user action is
+still unbuilt (tracked as the other half of F-008).
+
+**Requirements/ACs:** FR-ASR-1, AC-59, NFR-6; constitution V (exactly two declared outbound
+channels — the user-initiated download must be able to exist, not just be exclusive).
+
+**What changed:**
+- `net/src/main/AndroidManifest.xml` was `<manifest />` — no permission at all. It now declares
+  `android.permission.INTERNET`, with a comment citing constitution V and technical design §8.4.
+  Without this, `ModelAcquisition.fetch()` would fail at runtime with a `SecurityException` the
+  moment an `:app` call site exists, regardless of how correct that call site was.
+- `PlatformGuards.missingInternetPermissionViolations()` (new): the existing
+  `internetPermissionViolations()` only ever asserted exclusivity — it is satisfied vacuously if
+  *nobody*, `:net` included, declares the permission. The new function fails when `:net`'s own
+  manifest lacks the grant, closing that gap. Wired into `PlatformGuardsTask.check()` so
+  `./gradlew platformGuards` fails on either direction of the mistake.
+- `net/src/test/kotlin/org/ort/net/NetManifestPermissionTest.kt` (new): reads the manifests on
+  disk directly (not through the Gradle build script) and asserts the same thing from inside
+  `:net` — `NFR_6_the_INTERNET_permission_is_declared_by_net_and_only_net` plus a companion
+  assertFalse-style test over every other module's manifest text.
+- `net/README.md` gained a paragraph documenting where the permission lives and why, and what
+  enforces it in both directions.
+- Incidental, unrelated fix: `buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt` had
+  a missing closing brace (a pre-existing merge artifact, not connected to this finding) that
+  broke compilation of the entire `buildSrc` test source set, which meant `./gradlew -p buildSrc
+  test` could not run at all — including the new `PlatformGuardsTest` cases this change needed to
+  verify. Fixed with a one-line brace insertion; no test logic in that file was changed.
+
+**Verified:**
+- `./gradlew -p buildSrc test --console=plain -q` — green, all buildSrc tests pass including the
+  three new `PlatformGuardsTest` cases (`F_008_constitution_V_...`). Confirmed failing first with
+  `Unresolved reference: missingInternetPermissionViolations` before the function was written.
+- `./gradlew :net:test --console=plain` — green, 17 tests including the two new
+  `NetManifestPermissionTest` cases. Confirmed the manifest-declaration test failing first
+  (`AssertionFailedError: ... expected: <true> but was: <false>`) against `net`'s original
+  `<manifest />`, by reverting the manifest, re-running, and restoring it.
+- `./gradlew platformGuards --console=plain` — green: "checked 17 modules' external dependencies
+  and 17 manifests — ... android.permission.INTERNET declared by :net and only :net".
+- All of the above are JVM/Robolectric-free plain-file and unit-test checks. **No on-device
+  download has been verified** — that requires the still-missing `:app` call site plus a real
+  device or emulator with network access, neither attempted here.
+
+**Left open / not done:**
+- The `:app` half of F-008 (a Settings/"Improve" action, `NetCapability.UserInitiated`, wiring
+  `ModelAcquisition.fetch()` into `RealAsrEngineProvider`/`RealVadProvider`) is untouched — F-008
+  stays OPEN in `results/audit-2026-09-07.md` (not edited here; the auditor owns it) until that
+  half lands too.
+- On-device model download is unverified, structurally — no device test exists yet.
+
+## 2026-09-07 (audit — F-007)
+
+### (pending) — audit F-007 · RealCaptureService now ticks a real ShedController, persists shed events, and stops loudly at a storage floor
+
+**Scope:** `:pipeline` only — new `AndroidShedSignals.kt` and `ShedEventPersister.kt`
+(`org.ort.pipeline.shed`), new `ShedStatus.kt` (`org.ort.pipeline.capture`),
+`RealCaptureService.kt` (`startCapture`'s wiring, the new `runShedMonitor`/
+`stopForStorageExhaustion` methods, the new top-level `ShedEventRelay` class and
+`storageFloorBreached` function), plus new tests `AndroidShedSignalsTest.kt`,
+`ShedEventPersisterTest.kt`, `RealCaptureServiceShedTest.kt`.
+**Requirements/ACs:** FR-RUN-3, FR-RUN-5, FR-RUN-6, FR-STO-4; constitution IV ("overload sheds
+work in a documented order … only storage exhaustion stops capture, loudly").
+**What changed:** `ShedController` was never constructed in the running capture service — it
+existed only in `:app`'s status display, fed a `FakeShedSignals` purely for something to show
+(F-002), and no production `ShedSignals` implementation existed at all. So FR-RUN-3's shed order
+could never actually trigger and a full disk was discovered only when a write threw. This adds:
+(1) `AndroidShedSignals`, the first real `ShedSignals` — battery percent and charging state from
+`BatteryManager`, free storage from `StatFs(filesDir)`, queue backlog from
+`WorkQueueDao.count()` (cached via a `refreshBacklog()` suspend call, since `ShedSignals` is a
+plain synchronous interface and `ShedController.sample()` runs from a hot loop). Every signal that
+cannot be read returns a documented sentinel on the *conservative* side — `-1` for an unreadable
+battery percent (reads as "critical" to the controller), `false` for unreadable charging state,
+`0L` for unreadable free storage (reads as certainly below any floor) — never a fabricated healthy
+value. (2) `RealCaptureService.startCapture()` now constructs one `ShedController` per session and
+ticks it every 10 s (`runShedMonitor`), refreshing the backlog, sampling the controller, draining
+any new level transitions through the new `ShedEventRelay`/`ShedEventPersister` pair into F-021's
+`shed_event` table (with the real sample position from `Segmenter.position()`, the F-005 pattern),
+and republishing `currentLevel`/backlog through the new `ShedStatus` process-wide holder (the same
+pattern as `CaptureState`/`AsrAvailability`/`VadAvailability`) for `:app`'s status surface to read
+in place of its own fake-fed controller (a follow-up on F-002, not done here — see Left open).
+(3) A free-storage floor (`STORAGE_FLOOR_BYTES`, 100 MiB, a named constant with its own KDoc
+justification — deliberately not the full FR-STO-3 budget system) checked every tick:
+`storageFloorBreached` breaches it, `stopForStorageExhaustion` sets `CaptureState.failed(...)`
+with the real reason, updates the notification, and stops the audio source — the same loud-failure
+route a route mismatch already uses, never a silent write failure. `ShedController` itself was not
+changed; level 5 ("storage exhaustion") is handled as this separate stop path, not as a level the
+controller's own hysteresis machinery reaches, since its `sample()` has no branch that reads
+`freeStorageBytes()` at all.
+**Verified:** New tests, all written first and confirmed failing on `Unresolved reference` compile
+errors for `AndroidShedSignals`/`ShedEventPersister`/`ShedEventRelay`/`storageFloorBreached` before
+being implemented. `AndroidShedSignalsTest` (`FR_RUN_3_...`, `FR_STO_4_...`, `FR_RUN_5_...`,
+Robolectric — battery/charging via `ShadowBatteryManager`, free storage via
+`ShadowStatFs.registerStats`, backlog via a real in-memory `WorkQueue`) asserts real reads and the
+conservative sentinels. `ShedEventPersisterTest` (`FR_RUN_3_...`, Robolectric, in-memory `OrtDatabase`)
+asserts a persisted `shed_event` row's fields and trigger classification. `RealCaptureServiceShedTest`
+(`FR_RUN_3_...`, `FR_STO_4_...`) exercises `ShedEventRelay` against a real `ShedController` +
+`FakeShedSignals` (two successive transitions each get their own `levelBefore`, not both `0`) and
+`storageFloorBreached`'s boundary directly — no `ServiceController` harness exists yet to start
+`RealCaptureService` itself (F-011, still open), so this follows the same extracted-seam approach
+F-005/F-028 used. `./gradlew :pipeline:test` — 79 tests, 0 failures, `ShedControllerTest` (pre-
+existing) unchanged and green. Full gate: `./gradlew build dependencyRules` (exit 0) and
+`python tools/spec-check/spec_check.py` (all 8 checks PASS). All JVM/Robolectric only — nothing
+here is device-verified.
+**Left open / not done:** `:app`'s status surface (`ReaderPolling.kt`, `StatusActivity.kt`) still
+constructs its own `ShedController` against `FakeShedSignals` for display — that is F-002's finding
+and `:app` is explicitly out of scope for this change. `ShedStatus` (level + backlog, two plain
+`Int`s, no new module edge) is what a follow-up on F-002 should read instead. The full FR-STO-3
+storage-budget/warning system (per-category footer, configurable thresholds, export-and-prune) is
+still unbuilt — only the FR-STO-4 stop-before-exhaustion floor is added here, deliberately not that
+larger system (see F-020). `AndroidShedSignals.refreshBacklog()`'s one honest gap: a failed read
+leaves the cached backlog unchanged, so an unread value and a genuinely-empty queue are both `0`
+and indistinguishable from each other — documented in its KDoc, not fixed, since a `Int` cannot
+carry a third "unread" state without changing the `ShedSignals` interface's contract.
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · `:app` half: seven built-but-untested requirement ids get named tests
+
+**Scope:** `app/src/test/**` only (`ActivityPatternMapperTest.kt`, `ReaderAccessibilityTest.kt`,
+`TransmissionDetailScreenTest.kt`, new `OrtColorsContrastTest.kt`), `results/coverage-matrix.md`.
+
+**Requirements/ACs:** AC-14, AC-126, FR-A11Y-2, FR-A11Y-3, FR-A11Y-4, FR-PLT-6 (font-scale clause
+only) established. FR-A11Y-5, FR-ASR-10, FR-UI-11 (day-of-week half), and FR-PLT-6's per-app
+language/system-contrast/reduced-motion clauses investigated and confirmed genuinely unbuilt — see
+below. Constitution I ("every machine conclusion MUST be inspectable") and VII ("every user-visible
+surface obeys the accessibility floor").
+
+**What changed:** F-027 flagged eight `:app`-owned id groups as built-but-untested, or (AC-126)
+mislabelled unbuilt. Rebased this worktree onto `main` first (51 commits behind — picked up P17,
+F-017's search filters, F-021's migration, and the F-027 `:data`/`:lexicon` slices already merged).
+Per id:
+- **AC-14** — `InspectionSection` (`TransmissionDetailScreen.kt`) already renders the candidate
+  list and phonetic lattice; only `InspectionViewStateMapperTest` tested the mapping, nothing
+  tested the render. Added `AC_14 the candidate list and phonetic lattice are viewable on the
+  detail screen` to `TransmissionDetailScreenTest`, asserting the lattice line, a candidate's score
+  line and a prior-contribution line are all `onNodeWithText`-findable.
+- **AC-126** — the auditor's own correction: P17 built exactly this. Renamed
+  `ActivityPatternMapperTest`'s capture-gap test to
+  `AC_126_FR_UI_12 an hour covered entirely by a capture gap is NOT_LISTENING...` (unchanged
+  assertions) and added a KDoc paragraph pointing at `ActivityPatternChartTest` as the render-side
+  proof, and stating plainly that FR-UI-11's day-of-week half is not built (`HourActivityBucket` and
+  this mapper only ever bucket by hour-of-day; grepped for `dayOfWeek`/`DayOfWeek` in `:app` — no
+  match anywhere).
+- **FR-A11Y-2, FR-A11Y-3** — both already established by `ReaderAccessibilityTest`'s two existing
+  tests (content descriptions across the nav host; no clipping at 2x font scale) under the `AC_63`
+  name only. Renamed to `AC_63_FR_A11Y_2_...` and `AC_63_FR_A11Y_3_FR_PLT_6_...` respectively,
+  assertions unchanged.
+- **FR-A11Y-4** — no test computed an actual contrast ratio anywhere. Added
+  `OrtColorsContrastTest`: a genuine WCAG 2.2 relative-luminance/contrast-ratio implementation run
+  against `OrtColors`' real sRGB values, checked at the threshold that actually applies to each
+  colour's real call site — 4.5:1 for `textHigh`/`textMedium`/`textMuted` (all used to render
+  `Text`) and 3:1 for `accentGreen`/`accentAmber`/`textLow` (used only to fill graphical shapes in
+  `AttributionMarker`/`ActivityPatternChart`, never text). All five pairs pass with the palette as
+  it stands today (ratios 4.29–15.19); no palette change was needed.
+- **FR-PLT-6** — only the font-scale clause is established, by the same `ReaderAccessibilityTest`
+  evidence as FR-A11Y-3 (nothing in `:app` overrides `LocalDensity.fontScale`, so "respecting" it is
+  the same fact as "does not clip when it is honoured"). Its other three clauses — per-app language
+  preference, system contrast, reduced motion — are recorded in the test's own KDoc as **not
+  established, because not built**: no per-app language config, no contrast-mode handling, no
+  reduced-motion check exists anywhere in `:app` (confirmed by grep, not assumed).
+- **FR-A11Y-5** — checked whether user-visible strings are resourced. `app/src/main/res/values/strings.xml`
+  holds exactly one string (`placeholder_running`), used nowhere (`MainActivity.kt` is its only
+  `stringResource`/`R.string` reference in the whole module, and it doesn't reference that key).
+  Every `Text(...)` in every screen and component is a hardcoded Kotlin string literal. **Not
+  established here, because it is not built** — no test was added; a test asserting "strings are
+  resourced" would need the resourcing to exist first, and that is a `:app/src/main` UI change well
+  beyond this finding's scope (every screen file). Left open, filed honestly rather than as a false
+  test.
+- **FR-ASR-10** — grepped `:app` for model-metadata fields (`isFineTuned`, `fineTune`, stock/tuned
+  labelling) — no match anywhere. **Not established here, because it is not built.** No settings
+  screen and no per-transcript model-metadata field exist in `:app` at all yet.
+
+**Verified:** `./gradlew :app:test` — all tests green including the 1 new `TransmissionDetailScreenTest`
+case, 2 renamed `ReaderAccessibilityTest` cases, 1 renamed `ActivityPatternMapperTest` case, and 5
+new `OrtColorsContrastTest` cases (all passing on the first run — no palette or main-source change
+was needed for any of the six established ids). `./gradlew coverageMatrix` — regenerated;
+`results/coverage-matrix.md` now names AC-14, AC-126, FR-A11Y-2, FR-A11Y-3, FR-A11Y-4 and FR-PLT-6
+under "Covered" and they no longer appear in "Not yet covered"; FR-A11Y-5, FR-ASR-10 and FR-UI-11
+remain listed there, correctly. `./gradlew coverageMatrixCheck` green. `./gradlew build
+dependencyRules` green (two `detekt` `MaxLineLength` findings in the new/edited test files fixed
+along the way). `python tools/spec-check/spec_check.py` — all 8 checks PASS. All Robolectric/JVM
+only, per constitution — no on-device verification is claimed; `OrtColorsContrastTest` is plain
+JVM (no Robolectric needed — `androidx.compose.ui.graphics.Color` is pure Kotlin math).
+
+**Left open / not done:** FR-A11Y-5 (no string-resourcing anywhere in `:app`'s UI), FR-ASR-10 (no
+model-metadata surface exists), and FR-UI-11's day-of-week bucketing are genuinely unbuilt, not
+merely untested — each would need a `:app/src/main` change (and, for FR-ASR-10, upstream metadata
+this module has no source for yet) outside this finding's `app/src/test/**`-only scope. FR-PLT-6's
+non-font-scale clauses (language preference, system contrast, reduced motion) are the same: unbuilt,
+not untested. `:capture-android`/`:capture-api`, `:pipeline`, `:lexicon`/`:eval`, `corpus/` and
+`:asr-*`/`:onnx` slices of F-027 are out of this session's scope (owns `app/src/test/**` only) and
+remain as the register describes them.
+
+---
+
+## 2026-09-07 (audit — F-028)
+
+### (pending) — audit F-028 · RealCaptureService now joins GapTracker to GapPersister, so a capture gap is actually a row
+
+**Scope:** `:pipeline` — `RealCaptureService.kt` (`startCapture`'s event-collect loop, the new
+`CaptureGapRelay` class), `GapPersister.kt` (`causeFor`), `RealCaptureServiceGapTest.kt`,
+`GapPersisterTest.kt`.
+**Requirements/ACs:** FR-RUN-12, FR-UI-12, AC-48; constitution IV ("silence that was never
+listened to MUST be distinguishable from silence that was").
+**What changed:** `RealCaptureService` constructed neither `GapTracker` nor `GapPersister` — the
+`AudioRecordSource` event stream it already collects (`Interrupted`/`Resumed`, and, since F-010, a
+dropped-span cause) went nowhere but `CaptureState`/the notification. `captureGapDao` was
+therefore always empty in production, so P17's not-listening distinction (FR-UI-12) could never
+show a real gap regardless of how correct `GapTracker`/`GapPersister` themselves were (each already
+had its own passing unit test). Fixed by constructing a `GapTracker(SystemClock)` and a
+`GapPersister(db.captureGapDao(), SystemClock)` in `startCapture()`, and feeding every
+`CaptureEvent` the collect loop already receives through a new `CaptureGapRelay` (mirrors F-005's
+`buildHeartbeatRecord` extraction: a plain, non-Android class ahead of the exhaustive `when`, so no
+`ServiceController` harness is needed to test it — F-011 is still open). `CaptureGapRelay` watches
+`GapTracker.gaps` grow and persists each new record, in order, exactly once. Separately,
+`GapPersister.causeFor` mapped F-010's `DroppedSpanCause` string ("dropped samples: N samples over
+Xms (stalled consumer or read shortfall)") to `UNKNOWN` — it matched none of the existing
+substring checks (neither "device" nor "read error" appears in it) — so it now matches the stable
+"dropped samples:" prefix directly to `DEVICE_LOST`, the cause it actually is. No new
+`CaptureGapCause` value was needed.
+**Verified:** `./gradlew :pipeline:test` — 3 new `RealCaptureServiceGapTest` cases (an
+Interrupted/Resumed pair, a dropped-span Interrupted with no persisted duplicate from its
+following no-op Resumed, and Frames/RouteChanged/EndOfStream producing no persist) plus a new
+`GapPersisterTest` case (`AC_48 F-010's dropped-span cause is mapped to DEVICE_LOST, not UNKNOWN`,
+seen failing against `UNKNOWN` before the `causeFor` fix) all pass; `./gradlew build
+dependencyRules` green; `python tools/spec-check/spec_check.py` — all 8 checks PASS. All
+Robolectric/JVM only, per constitution — no on-device verification is claimed.
+**Left open / not done:** F-011 (no `ServiceController` test starts the real `Service`) is
+unchanged and still open — this fix is verified at the extracted `CaptureGapRelay` seam, not by
+observing `captureGapDao` populate from an actually-running `RealCaptureService`. The dropped-span
+mapping is a substring match on a string `:capture-android` treats as free text (`DroppedSpanCause`
+is `internal`, so `:pipeline` cannot reference its prefix constant directly); if that string's
+wording ever changes, this mapping silently reverts to `UNKNOWN` again with no compile-time link
+between the two.
+
+---
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · `:data` half: eight built-but-untested requirement ids get named tests
+
+**Scope:** `:data` (`data/src/test/**` only — no production change), `results/coverage-matrix.md`.
+
+**Requirements/ACs:** FR-ASR-7, FR-AST-5, FR-AST-6, FR-AST-8, FR-RUN-2, FR-STO-1, NFR-4b, FR-LEX-12
+established. FR-STO-2, FR-STO-2a, CON-STO-1 investigated and left uncovered — see below.
+
+**What changed:** F-027 flagged eleven `:data`-owned ids as built but unnamed by any test.
+Rebased this branch onto `main` first (it had drifted 38 commits behind, missing F-021's
+`ShedEventEntity`/`MIGRATION_1_2` and F-017's `SearchDao` filters). Per id:
+- **FR-AST-5, FR-AST-6** — `MigrationTest`'s two existing tests already exercise exactly this
+  (schema-versioned forward migration preserving audio and superseded transcripts, tested against
+  the committed v1 fixture); added both ids to their `@Requirement` annotations alongside AC-53.
+- **FR-AST-8** — same for `ReconciliationTest`'s existing orphan/dangling-row test, alongside
+  AC-54.
+- **FR-STO-1** — `SearchDaoFullTextTest`'s real FTS5 MATCH test already establishes "persist in
+  SQLite with FTS5 over transcripts"; added the id alongside FR-UI-3, keeping its honest
+  `assumeTrue` skip for the Robolectric host-SQLite fts5 gap untouched.
+- **FR-ASR-7** — no existing test asserted the model identity/version/quantization/decode-params
+  columns round-trip; added a new test to `TranscriptVersioningTest` with five distinct,
+  non-default field values, checked through both `getCurrent` and `getAllVersions`.
+- **FR-LEX-12** — no test exercised `CatalogDao`'s phonetic-lattice/candidate-list persistence at
+  all. Added `data/src/test/kotlin/org/ort/data/dao/CatalogDaoTest.kt`: one test proves the full
+  ranked candidate list (not just the selected one) persists with its prior breakdown intact, one
+  proves a raw lattice persists and round-trips its source/model/units blob.
+- **FR-RUN-2** — every existing `WorkQueueTest` uses an in-memory database, which cannot show a
+  queued item survives the database closing. Added `data/src/test/kotlin/org/ort/data/DurabilityTest.kt`:
+  enqueues an item against a real on-disk file, closes that `OrtDatabase` instance, opens a second
+  independent instance against the same file, and asserts the item is still `READY` there — the
+  strongest claim actually checkable without an OS-level process kill.
+- **NFR-4b** — "survives process kill mid-write" cannot be proven on Robolectric/JVM (no way to
+  induce an unclean kill mid-transaction and observe recovery — needs the device matrix). What is
+  checkable and is the actual durability primitive the requirement rests on: `OrtDatabase.create`
+  configures WAL journal mode for every non-in-memory database. Added a test in the same
+  `DurabilityTest.kt` asserting `PRAGMA journal_mode` reports `wal` on a file-backed instance. The
+  test's doc comment says explicitly that this is configuration verified, not a survived kill.
+- **FR-STO-2, FR-STO-2a, CON-STO-1 — left uncovered, honestly.** `TransmissionEntity.audioFormat`
+  is a free-text `String` column with no validation or codec-selection logic anywhere in `:data`;
+  the actual codec choice (currently FLAC, per FR-STO-2a/CON-STO-1's "lossless until Pass C is
+  measured") is made outside this module. A test that only asserted a hardcoded fixture string
+  round-tripped would be exactly the "checks a type exists" test the brief forbids, so none was
+  written. These three remain in coverage-matrix's "Not yet covered" and belong to whichever
+  module actually chooses/enforces the retention codec.
+
+**Verified:** `./gradlew :data:test --console=plain -q` — green, all 8 renamed/new tests included
+(`DurabilityTest` 2/2, `CatalogDaoTest` 2/2, `TranscriptVersioningTest` 3/3, plus the renamed
+`MigrationTest`/`ReconciliationTest`/`SearchDaoFullTextTest` assertions unchanged). `./gradlew
+coverageMatrix` then `./gradlew coverageMatrixCheck` (run as two separate invocations, per the
+task's known implicit-dependency Gradle validation issue) — both green; the regenerated
+`results/coverage-matrix.md` shows "Covered by at least one test" rising 120 → 128 and all eight
+ids now listed by name under `## Covered` rather than `## Not yet covered`. `./gradlew build
+dependencyRules --console=plain -q` — green (one ktlint import-ordering/function-signature
+violation caught and fixed via `:data:ktlintFormat` before this run). `python
+tools/spec-check/spec_check.py` — all 8 checks PASS.
+
+**Left open / not done:** No production code was changed — every id closed here was already
+implemented; only test naming/coverage changed. FR-STO-2, FR-STO-2a and CON-STO-1 are reported
+as not established in `:data` for the reason above, not fixed. Never claimed on-device
+verification — everything here is Robolectric/JVM only.
+## 2026-09-07 (audit — F-017)
+
+### (pending) — audit F-017 · :app half: Search screen gains band, attribution-state and rejected/accepted controls
+
+**Scope:** `:app` — `app/src/main/kotlin/org/ort/app/ui/data/SearchViewData.kt`
+(`SearchFilterInput`, `SearchQueryParams`, the new `RejectedFilter` enum, `SearchFilterParser`,
+`SearchPolling.search`), `app/src/main/kotlin/org/ort/app/ui/screens/SearchScreen.kt` (three new
+filter controls); `SearchFilterParserTest.kt`, `SearchPollingTest.kt`, `SearchScreenTest.kt`.
+**Requirements/ACs:** FR-UI-3 (band, attribution-state and rejected/accepted filters — the `:app`
+half; the `:data` half landed separately, `SearchDao` commit 1520a03).
+**What changed:** `SearchDao.search`/`filterOnly`/`searchText` already accepted trailing
+`band`/`attributionState`/`rejected` parameters that nothing on the `:app` side passed. Extended
+`SearchFilterInput` with `band: Band?`, `attributionState: AttributionState?` and a new
+`RejectedFilter` tri-state enum (`ALL`/`ACCEPTED`/`REJECTED`, `toDaoValue()` mapping it onto the
+DAO's nullable `Boolean?`); `SearchFilterParser.parse` passes the first two through unparsed (both
+are already typed, selected from a closed set on the screen rather than typed as free text) and
+resolves the third. `SearchPolling.search` now forwards all three to `SearchDao.search` on both
+the direct and the fts5-degrade call paths. `SearchScreen` gains three new filter controls
+(`BandFilterControl`, `AttributionStateFilterControl`, `RejectedFilterControl`) — a "tap to
+cycle" text control for each, consistent with the screen's existing "tap to act" style (no
+dropdown/menu widget existed anywhere in this codebase to reuse) and the accessibility floor
+(constitution VII): each control's current selection is always plain text
+(`"Band filter: 160M"`, `"Attribution state filter: CONFIRMED"`, `"Accepted/rejected filter:
+Rejected"`), never colour-only.
+**Verified:** New tests seen failing first for the right reason before the fix: `SearchScreenTest`
+(band/attribution-state/rejected controls did not exist — `assertExists()` failed with "the
+matcher had 0 matches"); `SearchPollingTest`'s three new `FR_UI_3_...` cases and
+`SearchFilterParserTest`'s two new cases failed to compile (`SearchQueryParams`/`SearchFilterInput`
+had no `band`/`attributionState`/`rejectedFilter` parameters) before the view-data change. After
+the fix: `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.SearchPollingTest"
+--tests "org.ort.app.ui.data.SearchFilterParserTest" --tests
+"org.ort.app.ui.screens.SearchScreenTest"` — 6/6, 5/5, 8/8 green. Full module:
+`./gradlew :app:test` green. Full gate: `./gradlew build dependencyRules` (green, after one
+`detekt` `MaxLineLength` fix) and `python tools/spec-check/spec_check.py` (`spec-check: OK`, all 8
+checks pass). Everything here is Robolectric/JVM; nothing was run on-device.
+**Left open / not done:** Adding the three new filter controls pushed `SearchScreen`'s scrollable
+content past the fixed-size Robolectric compose-test viewport, which silently broke two
+pre-existing tests' `performClick()` calls (the click landed outside the root's visible bounds, so
+the callback never fired — no exception, a false assertion) — fixed by adding
+`.performScrollTo()` before those two clicks, matching the precedent already used elsewhere
+(`ReaderAccessibilityTest.kt`). The three new controls are a minimal "tap to cycle" affordance
+rather than a dropdown/multi-select; a richer widget (e.g. a proper picker, or an FR-UI-11-style
+chip row) is a plausible follow-on but out of this finding's scope.
+
+## 2026-09-07 (audit — F-005)
+
+### (pending) — audit F-005 · heartbeat now carries the segmenter's real sample position, not a fabricated 0
+
+**Scope:** `:pipeline` — `RealCaptureService.kt` (`onHeartbeat`, the new `buildHeartbeatRecord`
+helper, the new `segmenter` field), `RealCaptureServiceHeartbeatTest.kt`.
+**Requirements/ACs:** FR-RUN-16 (audio sample position is the authoritative timeline); constitution
+VI ("no number without provenance").
+**What changed:** `RealCaptureService.onHeartbeat()` used to write
+`HeartbeatRecord(sessionId, monotonic, wall, 0L)` — the sample-position field was a literal `0L`
+on every single heartbeat, never the real value the parallel `capture-android` `CaptureService`
+threads through. The service now keeps a reference to the session's `Segmenter` (built once, in
+`startCapture()`) and reads `Segmenter.position()` — "absolute sample position of the next sample
+to be fed", already public and unchanged in `:segment` — at the moment each heartbeat is written.
+The heartbeat-record construction itself is pulled out into a small top-level function,
+`buildHeartbeatRecord(sessionId, samplePosition: () -> Long)`, specifically so this could be
+tested without standing up the whole `android.app.Service` under Robolectric (no
+`ServiceController` harness exists for `RealCaptureService` yet — see the still-open F-011). `0L`
+remains the value reported in the one honest case: before the segmenter has been constructed for
+this session (i.e. before any sample has been read at all) — the field defaults to `null` and the
+call site falls back to `0L` only then, never once capture is under way.
+**Verified:** `./gradlew :pipeline:test` (green) after seeing
+`RealCaptureServiceHeartbeatTest.FR_RUN_16_the_heartbeat_carries_the_last_captured_sample_position_not_zero`
+fail first with `error: Unresolved reference 'buildHeartbeatRecord'` (the function did not exist
+yet); it and its sibling test now pass, driving a real `Segmenter` through five frames of audio and
+asserting the built record's `samplePosition` equals the segmenter's own `position()` — not zero.
+Then the full gate: `./gradlew build dependencyRules` (green, after fixing one ktlint
+spacing-between-declarations-with-comments violation the new field comment introduced) and
+`python tools/spec-check/spec_check.py` (`spec-check: OK`, all 8 checks pass).
+**Left open / not done:** `RealCaptureService` as a whole is still never started under Robolectric
+(F-011, unrelated, still OPEN) — this fix is verified at the seam it touches (the segmenter →
+heartbeat wiring), not end-to-end through `onStartCommand`/`onHeartbeat` as methods on a running
+service instance. All verification here is Robolectric/JVM; nothing was run on-device.
+
+## 2026-09-07 (audit — F-023)
+
+### (pending) — audit F-023 · coverage matrix treats bare F/D/R/Q ids as cross-references, not orphans
+
+**Scope:** `buildSrc/` — `CoverageMatrix.kt`, `CoverageMatrixTest.kt`; `results/coverage-matrix.md`.
+**Requirements/ACs:** none new — this is a tooling fix to the coverage matrix itself (test-plan
+§9, constitution VII "guarantees are expressed as types where possible" / II "the coverage matrix
+is generated rather than maintained").
+**What changed:** `results/coverage-matrix.md` listed `F13` (named by `ModelRegistryTest` and
+`RejectionPipelineTest` via `@Requirement("F13")`) and `Q8` (named by `CorrectionDaoTest`) as
+orphan tests — the spec does not define `F13`/`Q8` as requirement ids because they aren't
+requirement ids: `F13` is a functional-spec §12 failure-mode id and `Q8` is an open-questions
+register id, both legitimate cross-references the tests are documenting, not misnamed
+requirements. Chose the smaller of the two options in the finding: taught `CoverageMatrix.kt`
+that a bare `F\d+`/`D\d+`/`R\d+`/`Q\d+` id (new `CROSS_REFERENCE` regex) is a cross-reference, not
+an orphan — `Coverage.orphanTests` now excludes them and a new `Coverage.crossReferencedTests`
+carries them into their own rendered section, "Cross-referenced failure modes / decisions /
+questions (not requirement ids)". The requirement-id set (`REQUIREMENT`, `NAME_ID`) is unchanged;
+nothing about what counts as covered moved. Rejected the alternative (renaming the three tests to
+the `FR-*`/`AC-*` id they actually establish): that would have required a semantic judgement call
+per test with no clear single winner (e.g. the `F13` tests span model-fallback and probe-crash
+behaviour across two modules) and would still need the tool to special-case bare ids for the next
+one that appears — the tool fix is the durable, general answer, and it generalises to `D*`/`R*`
+ids the register also uses.
+**Verified:** `./gradlew :buildSrc:test --tests "org.ort.gradle.CoverageMatrixTest"` — new tests
+`F-023 a test naming a bare failure-mode or question id is not an orphan` and `F-023 the rendered
+matrix lists cross-references in their own section, not as orphans` seen failing first
+(`compileTestKotlin`: `Unresolved reference: crossReferencedTests`) before `Coverage
+.crossReferencedTests` was added, green after. `./gradlew coverageMatrix` regenerated
+`results/coverage-matrix.md`: header row "Tests naming a requirement id not in the spec" now `0`
+(was 2); `F13`/`Q8` moved to the new cross-reference section. `./gradlew coverageMatrixCheck` —
+up to date. Full gate: `./gradlew build dependencyRules` (exit 0) and
+`python tools/spec-check/spec_check.py` (all 8 checks PASS).
+**Left open / not done:** none for this finding. `coverageMatrix` and `coverageMatrixCheck` cannot
+be run in the same Gradle invocation without an explicit task dependency (Gradle flags the
+undeclared output/input relationship) — pre-existing, out of this finding's scope
+(`buildSrc/CoverageMatrixCheckTask.kt` is unowned by F-023), so they were run as separate
+invocations.
+## 2026-09-07 (audit — F-006)
+
+### (pending) — audit F-006 · too-short segments are retained as REJECTED rows instead of being deleted
+
+**Scope:** `:pipeline` — `capture/RealCaptureService.kt` (`RealSegmentSink.close()`),
+`capture/RealSegmentSinkTest.kt`.
+**Requirements/ACs:** FR-SEG-6, AC-72; constitution III ("nothing is deleted quietly").
+**What changed:** `RealSegmentSink.close()` previously deleted the staged PCM and returned early
+for any `SegmentOutcome` other than `SPEECH`, so a `REJECTED_TOO_SHORT` segment left no trace at
+all — no row, no audio, nothing in the queue, and nothing to distinguish it from audio that was
+never captured. It now FLAC-encodes and persists a `TransmissionEntity` for `REJECTED_TOO_SHORT`
+exactly as it does for `SPEECH` (same derived timestamps, same pre-/post-roll, same audio path),
+but with `processingState = TransmissionState.REJECTED` and `rejectionReason = "too_short"`
+(FR-SEG-6/AC-72's `rejected:too_short`, as the free-text `rejectionReason` value the rest of the
+schema already uses — see `TransmissionDetail.kt`'s `"(rejected: <reason>)"` rendering), and only
+enqueues for Pass B when the outcome is `SPEECH`. `TransmissionDao.insert` has no legal-transition
+check (it is a plain `@Insert`), so writing `REJECTED` directly at insert time needed no schema or
+state-machine change. The reader built for F-003 already renders `REJECTED` rows with their
+reason, so this segment becomes visible with no further change.
+**Verified:** new test `AC_72_a_too_short_segment_is_retained_as_a_rejected_row_with_its_audio_and_never_enqueued`
+in `RealSegmentSinkTest` — seen to fail first (`AssertionError: a too-short segment must still be
+recorded as a row`, because the old code returned before inserting anything) by stashing the
+production change and rerunning; after the fix it asserts a `REJECTED` row exists with
+`rejectionReason = "too_short"`, its encoded FLAC file exists on disk, the staged PCM is gone
+(deleted only as a side effect of `FlacStore.encodeAndVerify`'s post-verify cleanup, not by the
+old unconditional `staged.delete()`), and `WorkQueueDao.findByTransmissionAndPass` returns no
+item for it. `./gradlew :pipeline:test` — all 53 tests pass (JVM/Robolectric only, no device
+verification claimed). Full gate: `./gradlew build dependencyRules` green, `python
+tools/spec-check/spec_check.py` — all 8 checks pass.
+**Left open / not done:** none for this finding. F-007 (shedding/storage-exhaustion wiring) is a
+separate open finding in the same file, not touched here.
+
+## 2026-09-07 (audit — F-016)
+
+### (pending) — audit F-016 · WorkQueue.requeueFailed gives exhausted FAILED items a fresh run
+
+**Scope:** `:data` — `WorkQueue.kt`, `dao/WorkQueueDao.kt`, `WorkQueueTest.kt`.
+**Requirements/ACs:** FR-RUN-9, FR-REP-8 (reprocessing candidates); constitution III ("nothing is
+deleted quietly").
+**What changed:** `WorkQueueDao` gained `selectFailed(pass, lastErrorPrefix)` (both filters
+nullable — `null` matches everything) and `requeueToReady(id)`, which resets a `FAILED` row to
+`READY` with `attemptCount = 0` while leaving `lastError` untouched so the prior failure stays
+reachable until a new one overwrites it. `WorkQueue.requeueFailed(pass, lastErrorPrefix)`
+transactionally applies both to every matching item and, per item, moves the transmission along
+the state machine's already-documented reprocess path `FAILED` → `PROCESSING`
+(`core/TransmissionState.kt`), guarded by the same `TransmissionDao.canTransition` check
+`completePass`/`failPass` use so a sibling pass that already moved the transmission on is left
+alone. Returns the count requeued. Fixes F-016: before this, a transmission captured while no ASR
+model was installed drained against `UnavailableAsrEngine`, hit `maxAttempts`, landed terminally
+`FAILED`, and had no path back to `READY` — it stayed lost forever even after a model was
+installed. No new transmission state or `WorkQueueState` was introduced; the fix uses transitions
+the state machine already declares legal.
+**Verified:** Three new `WorkQueueTest` cases (`FR_RUN_9_a_failed_item_past_max_attempts_is_requeued_to_ready_with_attempts_reset`,
+`FR_RUN_9_items_not_failed_are_untouched`, `FR_RUN_9_requeueFailed_returns_the_count_and_honours_the_error_prefix_filter`)
+were written first and confirmed to fail with `Unresolved reference 'requeueFailed'` before the
+implementation existed. After the fix: `./gradlew :data:test` — 11/11 `WorkQueueTest` cases green
+(0 failures); `./gradlew build dependencyRules` — exit 0; `python tools/spec-check/spec_check.py`
+— all 8 checks PASS. All Robolectric/JVM only; no on-device verification was performed or claimed.
+**Left open / not done:** No caller wires this into a model-install action yet — that lives with
+F-008, which is a separate finding/module (`:app`/`:pipeline` orchestration) and was out of this
+fix's scope. No queue behavioural fake exists yet in `:testing` to update.
+## 2026-09-07 (audit — F-014)
+
+### (pending) — audit F-014 · coverage-matrix delta is now a CI gate
+
+**Scope:** `buildSrc/` (new `CoverageMatrixCheckTask.kt`, `CoverageMatrix.contentMatches` and its
+tests), root `build.gradle.kts` (new `coverageMatrixCheck` task registration only),
+`.github/workflows/ci.yml` (`report` job); `results/coverage-matrix.md` regenerated.
+
+**Requirements/ACs:** constitution, Development Workflow ("CI gates every push... the
+coverage-matrix delta"); test-plan §9.
+
+**What changed:** `results/audit-2026-09-07.md` F-014 found that `.github/workflows/ci.yml`'s
+`report` job only ran `./gradlew coverageMatrix` and uploaded the regenerated file as an
+artefact — it never compared the regeneration to the committed `results/coverage-matrix.md`, so
+the committed file had drifted a whole wave stale (101 covered committed vs. 117 actually
+covered) with no CI failure. Added `CoverageMatrix.contentMatches(generated, committed)` — a pure
+comparison that normalises CRLF/LF and a trailing-newline difference before comparing, so only
+real content drift fails — and a new `CoverageMatrixCheckTask` that regenerates the matrix from
+the current spec/tests and throws with a clear message
+(`results\coverage-matrix.md is stale — run ./gradlew coverageMatrix and commit the result.`)
+when it disagrees with the committed file. Registered as `coverageMatrixCheck` in root
+`build.gradle.kts`, sharing the same `specDir`/`testRoots` wiring `coverageMatrix` already used.
+`ci.yml`'s `report` job now runs `coverageMatrixCheck` before `coverageMatrix`, keeping the
+existing regenerate-and-upload steps. Regenerated `results/coverage-matrix.md` in the same
+change so the check passes on the committed tree (101 → 117 covered — the actual staleness the
+finding described).
+
+**Verified:** `./gradlew -p buildSrc test` — new `CoverageMatrixTest` cases seen failing first
+(`Unresolved reference: contentMatches`, a compile failure — the right reason, since the method
+did not exist yet), green after implementing `contentMatches`. `./gradlew coverageMatrixCheck`
+failed on the stale committed file before regeneration ("results\coverage-matrix.md is stale");
+green after regenerating and committing it. Confirmed the check still fails on real drift by
+editing one number in the committed matrix and re-running (failed as expected), then reverting.
+Full gate: `./gradlew build dependencyRules coverageMatrixCheck` green;
+`python tools/spec-check/spec_check.py` — all 8 checks PASS. All JVM/Robolectric only, per the
+standing constraint; no device verification claimed.
+
+**Left open / not done:** `coverageMatrixCheck` is wired only into the existing `report` CI job,
+not into local pre-commit tooling — a contributor can still forget to run `coverageMatrix`
+locally and will only find out from CI. That matches how `dependencyRules` and the other gates in
+this repo already work, so left as is rather than inventing a new mechanism.
+## 2026-09-07 (audit — F-003)
+
+### (pending) — audit F-003 · the reader distinguishes FAILED and REJECTED from still-pending
+
+**Scope:** `:app` only — `ui/data/TransmissionDetail.kt` (`TransmissionDetail`'s new
+`processingState`/`rejectionReason` fields, and `ReaderTransmissionViewStateMapper`'s new
+`transcriptLabel`), `ui/data/ReaderPolling.kt` (`detailFrom` now carries the two real
+`TransmissionEntity` columns through), and their tests.
+
+**Requirements/ACs:** FR-RUN-9 (`FAILED` is distinct from `REJECTED` and from pending),
+constitution I (Uncertainty Is Content) and VII (text, not colour, carries the four states).
+
+**What changed:** `results/audit-2026-09-07.md` F-003: `app/src/main` never read
+`TransmissionEntity.processingState`, so every transmission with no current transcript rendered
+`"(captured, not yet transcribed)"` — including one the work queue had already moved to `FAILED`
+after `WorkQueue.DEFAULT_MAX_ATTEMPTS` or to `REJECTED` with a recorded reason. With no ASR model
+on disk (the `UnavailableAsrEngine` fallback, `RealCaptureService.kt`), every real transmission
+reaches `FAILED` within five drain cycles today and was displayed as pending forever.
+`TransmissionDetail` now carries `processingState: TransmissionState` and `rejectionReason:
+String?` (both already existed on `TransmissionEntity`; only the reader's mapping was blind to
+them). `ReaderTransmissionViewStateMapper` gained a private `transcriptLabel` used by both
+`listEntry` and `detailView` (so the log row and the detail screen render identically): a
+non-null `currentTranscriptText` wins as before; otherwise `FAILED` renders `"(transcription
+failed)"`, `REJECTED` renders `"(rejected: <reason>)"` (or `"(rejected — no reason recorded)"` if
+none was written), and `CAPTURED`/`PROCESSING`/`COMPLETE` keep the original honest pending label.
+`ReaderPolling.detailFrom` now passes `entity.processingState` and `entity.rejectionReason`
+through.
+
+**Left open / not done:** the `FAILED` label carries no `lastError` text, only the state. The
+work queue's `lastError` lives on `WorkQueueItemEntity`, keyed by `(transmissionId, pass)`;
+`:data`'s `WorkQueueDao` has no query that reaches a `FAILED` item by `transmissionId` alone
+(`findByTransmissionAndPass` needs the pass id, which this reader does not carry per
+transmission), and adding one is a `:data` change out of this fix's owned files — flagged rather
+than added silently. A state label alone was called an acceptable outcome for this case in the
+finding itself.
+
+**Verified:** `ReaderTransmissionViewStateMapperTest` — 5 new cases named `FR_RUN_9_...` (a
+`FAILED` row renders a distinct failure label in both `listEntry` and `detailView`; a `REJECTED`
+row renders its reason, and renders distinctly even with no reason recorded; `CAPTURED`/
+`PROCESSING` keep the original pending label) — first run failed to *compile* (`No parameter with
+name 'processingState' found`), confirming the fields did not exist yet, before the production
+change. `LogScreenTest` — 1 new case (`FR_RUN_9 a transmission the work queue moved to FAILED
+shows a failure label, not the pending state`) driving the real mapper end-to-end into the
+Compose screen. `./gradlew :app:test --console=plain -q` — green, no failures. Full gate:
+`./gradlew build dependencyRules --console=plain -q` — green; `python
+tools/spec-check/spec_check.py` — all 8 checks PASS. All on JVM/Robolectric; no on-device
+verification is claimed.
+
+---
+## 2026-09-07 (audit — F-001)
+
+### d3459d7 — audit F-001 · RealSegmentSink stops fabricating transmission clock fields
+
+**Scope:** `:pipeline` — `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`
+(`RealCaptureService.startCapture`, `RealSegmentSink`); new
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/RealSegmentSinkTest.kt`.
+
+**Requirements/ACs:** FR-RUN-15, FR-RUN-16, FR-RUN-18; constitution I (never fabricate a
+healthy-looking value) and "never report a number without its fold/machine/provider" read here as
+"never persist a timestamp that was not actually derived from the clock model."
+
+**What changed:** `results/audit-2026-09-07.md` finding F-001 recorded that every real
+transmission `RealSegmentSink` persisted carried `startedAtUtc = 0L`, `endedAtUtc = null`,
+`monotonicStartNanos = 0L` and `utcOffsetMinutes = 0` — literal placeholders, not measurements —
+plus a duplicated `preRollMs = 1200`/`postRollMs = 400` that could silently drift from the
+`SegmentConfig` actually driving the `Segmenter`. `RealCaptureService.onStartCommand` now anchors
+`SystemClock.wallMillis()`, `SystemClock.monotonicNanos()` and `SystemClock.utcOffsetMinutes()`
+together, once, at session start, and builds `:core`'s `SampleClock` from that anchor at
+`FrameSpec.SAMPLE_RATE`. `RealSegmentSink` takes that `SampleClock` plus the same `SegmentConfig`
+instance as constructor parameters (no second clock invented); on `close()` it calls
+`sampleClock.timestampsAt(record.startSample)` for `startedAtUtc`/`monotonicStartNanos`/
+`utcOffsetMinutes`, `sampleClock.wallMillisAt(record.endSample)` for `endedAtUtc`, and reads
+`preRollMs`/`postRollMs` off `segmentConfig` instead of restating the defaults.
+
+**Verified:** `./gradlew :pipeline:test` (Robolectric/JVM only — no device). New test
+`RealSegmentSinkTest.a closed segment carries real wall clock and monotonic start derived from
+its sample position` (`FR-RUN-15`) constructs `RealSegmentSink` against an in-memory `OrtDatabase`
+with a `TestClock`-derived `SampleClock` anchored away from zero, closes one `SPEECH` segment
+starting 3 seconds into the session, and asserts the persisted `TransmissionEntity`'s
+`startedAtUtc`/`endedAtUtc`/`monotonicStartNanos`/`utcOffsetMinutes`/`preRollMs`/`postRollMs`
+match values derived from the anchor and `record.startSample`/`endSample` — not `0`/`null`/
+defaults. Confirmed failing first: against the pre-fix constructor/body the file did not compile
+(`Too many arguments for RealSegmentSink(...)`), the correct failure shape once the test asserts
+the new derived fields the old constructor has no way to supply. Full gate:
+`./gradlew build dependencyRules` and `python tools/spec-check/spec_check.py`, both green.
+
+**Left open / not done:** Not verified on a real device — Robolectric/JVM only, as for the rest of
+this smoke-test wiring. Two adjacent issues in the same file were left untouched per the finding's
+scope: the too-short-segment deletion path (`staged.delete()` on `REJECTED_TOO_SHORT`, which
+contradicts "real product retains it") and the heartbeat's use of a placeholder `0L` sample
+position, both owned by other audit agents.
+## 2026-09-07 (audit — F-010)
+
+### (pending) — audit F-010 · a stalled consumer or `AudioRecord` shortfall now produces an explicit dropped-span event on the real capture path
+
+**Scope:** `:capture-android` (`AudioRecordSource.kt`, `GapTracker.kt`, new `DroppedSpanCause.kt`),
+`AudioRecordSourceTest.kt`; `CHANGELOG.md`, `spec/build-plan.md` notes.
+**Requirements/ACs:** AC-3, constitution IV ("silence that was never listened to MUST be
+distinguishable from silence that was").
+**What changed:** `results/audit-2026-09-07.md` F-010 found that `:capture-api`'s `RingBuffer`
+(`hasOverrun()`/`droppedSamples()`, credited for AC-3 in the coverage matrix) is constructed
+nowhere in `src/main` — the real `AudioRecordSource` → `Segmenter` path had no mechanism at all
+for detecting a producer overrun or a stalled downstream collector; such a stall would lose audio
+silently, with no gap record. `AudioRecordSource` now takes an injected `Clock` (default
+`SystemClock`) and, on every successful read, compares the real wall time elapsed since the
+previous read against the audio actually delivered. When the gap exceeds
+`OVERRUN_TOLERANCE_READ_BUFFERS` (4) read-buffers' worth of slack — generous, to avoid false
+positives from ordinary scheduling jitter — the shortfall is reported as dropped samples via a new
+`DroppedSpanCause` encoding, carried through the *existing* `CaptureEvent.Interrupted`/`Resumed`
+pair rather than a new `CaptureEvent` variant: `:pipeline`'s `RealCaptureService` switches over
+`CaptureEvent` exhaustively with no `else`, and this fix does not own `:pipeline` (build-plan
+boundary), so a new sealed case there was not an option without crossing it. `GapTracker`
+recognises the `DroppedSpanCause` prefix and closes the gap immediately from its encoded duration
+(the whole span is already known at detection time, unlike a real interruption which opens on
+`Interrupted` and closes on the later `Resumed`); the paired `Resumed` that follows is a no-op for
+it. `RingBuffer` itself is untouched — it remains correct, tested code that nothing in `src/main`
+constructs; this fix does not route audio through it, so **AC-3 is now established on the real
+`AudioRecordSource` path independently of `RingBuffer`**, which stays available for a future
+producer/consumer split (technical design §5.3) if one is ever built.
+**Verified:** New test
+`AudioRecordSourceTest.AC_3_a_stalled_consumer_or_short_read_produces_an_explicit_dropped_span_event_rather_than_silent_loss`,
+seen to fail first with a compile error (`No parameter with name 'clock' found`) before
+`AudioRecordSource` gained the `clock` parameter — then green.
+`./gradlew :capture-android:test :capture-api:test --console=plain -q` — green (7/7 in
+`AudioRecordSourceTest`, `RingBufferTest` unchanged and still green). Full gate:
+`./gradlew build dependencyRules --console=plain -q` — green (after `ktlintFormat` fixed test
+indentation); `python tools/spec-check/spec_check.py` — all 8 checks PASS. JVM/Robolectric only;
+no on-device verification claimed.
+**Left open / not done:** The detection is a wall-clock heuristic (elapsed time vs. samples
+delivered), not a hardware-reported overrun counter — `AudioRecord` does not expose one directly.
+`GapPersister` (`:pipeline`, not touched) will currently file this cause under
+`CaptureGapCause.UNKNOWN` since it does not recognise the `"dropped samples:"` prefix; a
+`CaptureGapCause.DROPPED_SAMPLES` category, and wiring `GapTracker`'s output into
+`RealCaptureService`/`GapPersister` at all (`RealCaptureService` does not currently invoke either —
+a separate, pre-existing wiring gap, not introduced or fixed here), are `:pipeline`/`:data`
+follow-ups outside this fix's ownership.
+## 2026-09-07 (audit — F-024)
+
+### (pending) — audit F-024 · RealHttpRangeClient gets a loopback test and a real bug fix
+
+**Scope:** `:net` — `real/RealHttpRangeClient.kt`, new `real/LoopbackHttpFixture.kt` and
+`real/RealHttpRangeClientTest.kt` under `net/src/test`, `net/README.md`.
+**Requirements/ACs:** FR-AST-1, FR-AST-3; constitution II (test-backed change), V (`:net` is the
+only declared outbound channel and must be correct because it is the only one).
+**What changed:** `RealHttpRangeClient` — the `HttpURLConnection`/`Range`-header wiring behind
+`ModelAcquisition` — had no automated test (F-024); a prior attempt at a loopback
+`com.sun.net.httpserver.HttpServer` fixture was rejected because `jdk.httpserver` is not on this
+Android-library module's unit-test classpath (JPMS module visibility). Replaced that approach
+with a minimal `java.net.ServerSocket`-based HTTP/1.1 fixture (`LoopbackHttpFixture`, binds only
+to `127.0.0.1` on an ephemeral port) and a new `RealHttpRangeClientTest` covering: a full fetch
+returning the exact bytes; a resumed fetch sending `Range: bytes=<offset>-` and receiving only
+the tail (206); a non-2xx status surfacing as `HttpRangeResult.Failure` rather than a thrown
+exception; and a connection that closes mid-body. The last case failed against the real client
+before any fix — `AssertionFailedError: Expected java.io.IOException to be thrown, but nothing
+was thrown` — revealing a genuine divergence from `FakeHttpRangeClient`'s documented contract:
+`HttpURLConnection` does not throw when the peer closes the socket short of its own
+`Content-Length`, so a dropped connection read to a silent, truncated success instead of an
+exception. That would have made a mid-transfer drop indistinguishable from a complete-but-corrupt
+download to `ModelAcquisition`, defeating FR-AST-3 resumability (the caller only preserves the
+`.part` file for resume when the read throws). Fixed `RealHttpRangeClient` by wrapping the
+response body in a length-validating `InputStream` that throws `IOException` on a short EOF,
+bringing it in line with the fake's `dropAfterBytes` semantics exactly. `net/README.md`'s "what is
+genuinely verified vs. fake-verified" section is updated to reflect that `RealHttpRangeClient` is
+now covered.
+**Verified:** test written first and seen to fail for the truncation case specifically (quoted
+above) against the pre-fix client; all four cases green after the fix under
+`./gradlew :net:test` (`RealHttpRangeClientTest`, 4/4 passing). Full gate green:
+`./gradlew build dependencyRules` and `python tools/spec-check/spec_check.py` (all 8 checks
+PASS). JVM-only (Robolectric/desktop), no on-device verification claimed.
+**Left open / not done:** none for this finding. The other clustered F-027 gaps (FR-AST-4/7/9,
+etc.) are out of this change's scope.
+## 2026-09-07 (audit — F-004)
+
+### (pending) — audit F-004 · Status surface now shows ASR/VAD model availability
+
+**Scope:** `:app` — `status/StatusViewState.kt` (and its mapper), `ui/data/ReaderPolling.kt`
+(`currentStatus` only), `ui/screens/StatusScreen.kt`, `ui/screens/NowScreen.kt`, and their tests
+(`StatusViewStateMapperTest.kt`, new `StatusScreenTest.kt`, `NowScreenTest.kt`,
+`ReaderPollingTest.kt`).
+**Requirements/ACs:** FR-UI-7 (capture status surface shows current tier/processing state);
+constitution I (uncertainty is content — a status surface must never read as more capable than it
+is) and IV (capture never lies).
+**What changed:** `AsrAvailability`/`VadAvailability` (set by `RealCaptureService`, `:pipeline`)
+were previously read only by the dead `StatusActivity`; nothing in the live Compose reader
+(`OrtNavHost` → `ReaderPolling.currentStatus` → `StatusViewState` → `StatusScreen`, inside
+`NowScreen`) showed whether a transcription model was installed, so with no model fetch built yet
+(build-plan P18 not shipped) the reader gives no reason transcripts never appear. `StatusViewState`
+gained `asrStatusLabel`, `vadStatusLabel` and `transcriptionUnavailableMessage` (all with safe
+"not started"/unavailable defaults, never a healthy-looking default when unset);
+`StatusViewStateMapper.from` gained optional `asrState`/`vadState` parameters read from the real
+`AsrAvailability.state`/`VadAvailability.state` in `ReaderPolling.currentStatus`. `StatusScreen`
+renders two new plain-text rows ("ASR: …", "VAD: …"); `NowScreen`'s header shows the one-line
+`transcriptionUnavailableMessage` ("No transcription model installed — transcripts will not
+appear") whenever ASR is not `Available`. No change to `:pipeline`'s `AsrAvailability`/
+`VadAvailability` API — it was sufficient as built.
+**Verified:** TDD — each new/changed assertion was first run against the pre-fix code and seen to
+fail for the right reason (compile error for the new `StatusViewState` fields/params; Compose
+`assertExists` failures for the missing rows/header text; `ReaderPollingTest`'s new case failed
+because `AsrAvailability.unavailable(...)` had no effect before the mapper was wired to it), then
+the fix was applied and all tests passed. `./gradlew :app:test` — green (Robolectric/JVM only; no
+on-device verification). `python tools/spec-check/spec_check.py` — OK. Full gate
+`./gradlew build dependencyRules` run before commit.
+**Left open / not done:** No ASR/VAD model can actually be installed yet (build-plan P18), so on
+Robolectric this only proves the "not started"/"unavailable" path renders correctly, not the
+"available" path against a real model — that is P18's own verification once model fetch exists.
+`StatusActivity` (dead) is left untouched per the finding's scope.
+## 2026-09-07 (audit — F-017)
+
+### (pending) — audit F-017 · `:data` half: SearchDao gains band, attribution-state and rejected/accepted filters
+
+**Scope:** `:data` — `dao/SearchDao.kt` (`filterOnly`, `searchText`, `search`), new `Band.kt`;
+tests in `SearchDaoFilterTest.kt`. Does not touch `:app`'s `SearchScreen` half (tracked
+separately in `results/audit-2026-09-07.md` F-017) or any other module.
+**Requirements/ACs:** FR-UI-3 (band, attribution state, rejected/accepted — the three filters
+P15 left open; see CHANGELOG's earlier P15 entry and `results/audit-2026-09-07.md` F-017).
+**What changed:**
+- Added `org.ort.data.Band`: the amateur-radio band table (functional spec §8's "Band plan
+  tables") as sixteen `[minHz, maxHz]` allocations from 160m through 23cm, with `Band.of(hz)`
+  and `Band.contains(hz)`. Deliberately amateur-only, not a full scanner-service table — that is
+  what FR-UI-3's "band" filter and the lexicon's own band-plan table mean. No `Band` type
+  existed anywhere in `:core` or `:data` before this (confirmed by grep), so it lives in `:data`
+  at the package root beside `Converters.kt`, reusable by any `:data` caller.
+- `SearchDao.filterOnly` and `SearchDao.searchText` each gained four new bind parameters:
+  `bandMinHz`/`bandMaxHz` (inclusive frequency bounds), `attributionState`
+  (`org.ort.core.AttributionState?`), and `rejected` (`Boolean?`, tri-state: null = don't
+  filter, true = `processingState = 'REJECTED'` only, false = everything else). All four compose
+  with each other, with the pre-existing callsign/frequency/date filters, and with both the
+  filter-only path and the FTS5 MATCH path.
+- `SearchDao.search()` — the one entry point `:app` calls — kept its original parameter names
+  and positions (`text, callsign, frequencyHz, fromUtc, toUtc`) so
+  `org.ort.app.ui.data.SearchPolling.search`'s existing named-argument call sites keep compiling
+  unchanged, and gained three new trailing optional parameters: `band: Band?`,
+  `attributionState: AttributionState?`, `rejected: Boolean?`. `search()` resolves `band` to its
+  `minHz`/`maxHz` range before calling `filterOnly`/`searchText`.
+- Considered bundling all eight filters into one data-class parameter (to keep `searchText`'s
+  parameter count down and give the DAO a named "filter model"); reverted after confirming Room's
+  raw-SQL `@Query` binder has no dot-path syntax for a POJO's fields (`:filters.callsign` is a
+  SQL parse error under KSP, not a Room-specific one) — `filterOnly`/`searchText` must bind each
+  filter as its own flat parameter. `searchText` (9 parameters: the match expression plus the
+  six filters plus the original callsign/frequency pair split doesn't apply — see the file for
+  the exact list) needed `@Suppress("LongParameterList")` for detekt's threshold of 8; this is a
+  direct consequence of Room's raw-SQL binding, not a hidden design smell.
+**Verified:** `./gradlew :data:testDebugUnitTest --tests "org.ort.data.SearchDaoFilterTest" --tests "org.ort.data.SearchDaoFullTextTest"`
+green (all filter and full-text-search tests pass, including the honest fts5-unavailable
+`Assume` skip in `SearchDaoFullTextTest`, unchanged). Full gate:
+`./gradlew build dependencyRules` green; `python tools/spec-check/spec_check.py` — all 8 checks
+PASS. All JVM/Robolectric only; no on-device verification was performed or claimed.
+New tests, all named `FR_UI_3_...` in spirit (backtick test names, per this codebase's existing
+convention in this file): filtering by band (2m vs. 70cm), filtering by attribution state
+(CONFIRMED vs. AMBIGUOUS), filtering by rejected (true) and accepted (false), and one combined
+case exercising band + attribution state + rejected + frequency together. Caught and fixed one
+test-fixture bug in the same change: `TestFixtures.transmission()`'s default `attributionState`
+is derived from the `stationId` argument passed to that call, not from a later `.copy()` — the
+existing TX1/TX2 seed rows in `SearchDaoFilterTest` were silently `UNKNOWN` rather than
+`CONFIRMED` until `attributionState` was set explicitly.
+**Left open / not done:** The `:app` half of F-017 (`SearchScreen` UI: exposing these three new
+filters to the user, e.g. a band picker, attribution-state chips, rejected/accepted toggle) is
+untouched — out of scope for this change per the finding's own split into two briefs. No new
+Room migration was needed (no schema change; the new filters read existing columns).
+## 2026-09-07 (audit — F-012)
+
+### (pending) — audit F-012 · attribution confidence becomes visible text, not screen-reader-only
+
+**Scope:** `:app` — `ui/components/AttributionMarker.kt`, `ui/screens/LogScreen.kt` (no code
+change needed there, it renders `AttributionMarker` already), `ui/screens/TransmissionDetailScreen.kt`
+(no code change needed there either), and their tests (`AttributionMarkerTest.kt` unchanged/still
+green, `LogScreenTest.kt`, `TransmissionDetailScreenTest.kt`).
+**Requirements/ACs:** FR-UI-4, constitution I.
+**What changed:** `results/audit-2026-09-07.md` finding F-012: `AttributionMarker` put the
+numeric confidence only into its merged `contentDescription`, so a sighted user reading the Log
+rows or the Transmission Detail header never saw the number FR-UI-4 requires ("SHALL never be
+omitted"), even though `Log.dc.html`/`Detail.dc.html` both show a visible `0.82`-style badge.
+Added a visible `Text` inside `AttributionMarker`, rendered beside the state label whenever
+`attribution.confidence` is non-null, formatted `%.2f` to match the artboards and the existing
+content-description wording. `UNKNOWN` (and any `AMBIGUOUS` without a confidence) render no
+number — `confidence?.let { }` renders nothing rather than fabricating a placeholder, per
+constitution I. Because `LogScreen` and `TransmissionDetailScreen` already delegate to
+`AttributionMarker` for every rendering of an attribution, no change was needed in either screen
+file itself — the fix is entirely in the shared component, which is also why P13's "prove it once
+here" reuse note in `AttributionMarker`'s own doc comment made this a one-file fix rather than two.
+**Verified:** Strict TDD — added `FR_UI_4 the confidence value is shown as visible text...` and
+`FR_UI_4 an UNKNOWN row/attribution shows no confidence number...` to both `LogScreenTest.kt` and
+`TransmissionDetailScreenTest.kt`; confirmed both "visible text" tests failed first with
+`Expected exactly '1' node but could not find any node that satisfies: (Text + EditableText
+contains '0.95' ...)` against the pre-fix component (verified by stashing the component change
+and re-running), then made the fix and reran green. `./gradlew :app:testDebugUnitTest --tests
+org.ort.app.ui.screens.LogScreenTest --tests org.ort.app.ui.screens.TransmissionDetailScreenTest
+--tests org.ort.app.ui.components.AttributionMarkerTest --tests
+org.ort.app.ui.ReaderAccessibilityTest` (all green); `./gradlew :app:test` (green, full module);
+full gate `./gradlew build dependencyRules` (green) and `python tools/spec-check/spec_check.py`
+(`spec-check: OK`, all 8 checks pass). All Robolectric/JVM — no on-device verification performed
+or claimed.
+**Left open / not done:** none for this finding. Other open findings in
+`results/audit-2026-09-07.md` (e.g. F-013, F-014) are out of scope and untouched.
+## 2026-09-07 (audit — F-021)
+
+### (pending) — audit F-021 · shed events get a `shed_event` table (`:data` half only)
+
+**Scope:** `:data` — new `entity/ShedEventEntity.kt` (+ `ShedTrigger` enum), new
+`dao/ShedEventDao.kt`; `OrtDatabase.kt` (entity registration, `shedEventDao()` accessor, schema
+version 1 → 2, `MIGRATION_1_2`); `data/schemas/org.ort.data.OrtDatabase/2.json` (generated);
+`data/src/test/kotlin/org/ort/data/dao/ShedEventDaoTest.kt` (new); `MigrationTest.kt` (new v1→v2
+case). No `:pipeline` file touched — the persist call from `ShedController` is a follow-up
+(F-021's `:pipeline` half, tracked separately).
+
+**Requirements/ACs:** FR-RUN-3, FR-RUN-4, FR-RUN-5, FR-AST-5, FR-AST-6, AC-53. Constitution IV
+(capture/shedding never lies silently) and III/AC-53 (migrations preserve existing rows).
+
+**What changed:** `results/audit-2026-09-07.md`'s F-021 recorded that
+`pipeline/.../shed/ShedController.kt`'s `ShedEvent` (`level`, `reason`, `atWallMillis`) lives only
+in that controller's in-memory `events` list, so shed steps are not durably surfaced (FR-RUN-3),
+affected records cannot be identified as reprocessing candidates after the fact (FR-RUN-4), and
+shed level is not observable beyond the current process (FR-RUN-5). Added `ShedEventEntity`
+(`id`, `sessionId`, `levelBefore`, `levelAfter`, `trigger: ShedTrigger` — `BATTERY`/`BACKLOG`/
+`STORAGE` — `reason`, `atWallMillis`, `atMonotonicNanos`, `samplePosition: Long?`) and
+`ShedEventDao` (`insert`, `listBySession` ordered by wall time, `latestForSession`). Fields mirror
+`ShedController.ShedEvent`'s shape (`level`→split into before/after, `reason`, `atWallMillis`)
+plus what the requirements need once persisted: which session, a closed trigger category
+alongside the free-text reason, monotonic time (the controller already tracks
+`enteredAtMonotonic`), and stream sample position (nullable — the controller does not track this
+today). Bumped `OrtDatabase.SCHEMA_VERSION` to 2, added `MIGRATION_1_2` (adds the `shed_event`
+table only — no existing table altered), and registered `ShedEventEntity`/`ShedEventDao`. No
+DAO fake was added to `:testing` — that module holds no DAO fakes for any entity today (checked
+directly), so there was no existing convention to extend.
+
+**Deliberately not done:** the `:pipeline` persist call wiring `ShedController.transitionTo` (or
+a caller) to `ShedEventDao.insert` — that requires touching `:pipeline`, which this fix does not
+own per the audit assignment, and `:pipeline` has no dependency on `:data` in the module graph
+today (a persist call would need to go through a repository/use-case seam that does not yet
+exist). This entity and DAO exist so that follow-up is a mechanical field mapping, not a schema
+design exercise.
+
+**Verified:** `./gradlew :data:test --console=plain -q` — 38 tests, all green (36 pre-existing +
+`ShedEventDaoTest`'s 2 new cases + `MigrationTest`'s 1 new case). Both new tests were confirmed to
+fail first: with `ShedEventEntity.kt`/`ShedEventDao.kt` moved aside and `OrtDatabase.kt`
+unmodified, `./gradlew :data:test` failed to compile with `Unresolved reference 'shedEventDao'` /
+`'ShedEventEntity'` / `'ShedTrigger'` in both `ShedEventDaoTest.kt` and `MigrationTest.kt`. After
+restoring the implementation, `./gradlew build dependencyRules --console=plain -q` and
+`python tools/spec-check/spec_check.py` both passed (spec-check: OK, all 8 checks PASS). Robolectric/JVM only — no on-device verification was performed or claimed.
+
+**Left open / not done:** the `:pipeline` persist call (see above) — F-021 stays partially open
+until that lands; this fix closes only the `:data` half the assignment specified. `samplePosition`
+is nullable and unpopulated by any writer yet since nothing calls `insert` in production code —
+its semantics (which stream position) are fixed by whatever the eventual `:pipeline` caller passes.
+## 2026-09-07 (audit — F-027, `:lexicon`/`:eval`/`:testing` slice)
+
+### (pending) — audit F-027 · naming and adding tests so 21 built-but-untested ids leave the coverage matrix
+
+**Scope:** `lexicon/src/test/**`, `eval/src/test/**`, `testing/src/test/**` — no production code
+changed (every capability inspected in this slice was either already correct, or genuinely does
+not exist yet).
+
+**Requirements/ACs:** established by rename or new test — FR-LEX-6, FR-LEX-11 (partial, see below),
+FR-LEX-14, FR-LEX-18, FR-LEX-19, FR-LEX-20, FR-LEX-21, FR-LEX-23, FR-LEX-29, FR-TST-2, FR-TST-4,
+FR-TST-5, FR-A11Y-6, NFR-1a, NFR-1c, AC-57. Left uncovered, honestly (see below): AC-13, AC-35,
+FR-LEX-15, FR-LEX-16, FR-LEX-22, FR-LEX-32.
+
+**What changed:**
+- Renamed 11 existing tests to carry the requirement id they already established (no assertion
+  loosened), across `ThresholdDerivationTest`, `PlattCalibratorTest`, `ReliabilityDiagramTest`,
+  `TextDerivedLatticeBuilderTest`, `ItuPrefixTableTest`, `TestClockTest`, `HarnessDeterminismTest`,
+  `HarnessCallsignPrecisionRecallTest` (e.g. `FR_LEX_19 AC_56 raising the precision target moves
+  the CONFIRMED threshold upward`; `NFR_1a AC_56 the achieved recall falls as the precision target
+  rises` — NFR-1a's precision-over-recall tradeoff, per the finding's own suggestion, is provable
+  only as this threshold-derivation property, not a measured number).
+- Added five new test files/cases against existing production code, each written first and seen
+  to fail for the right reason before any rename/no-op confirmed it passed:
+  - `MyStationsPriorTest` (FR-LEX-14): the "my stations" prior's full positive clamp when a
+    station is on the list, zero (not a penalty) when absent, cold-zero when unconfigured, and
+    that its magnitude matches the other recency-class priors.
+  - `RankedCandidateListTest` (FR-LEX-11, partial — see left-open): `PriorCombiner.rank` emits
+    every surviving candidate with its own finite score, sorted best-first. This establishes only
+    FR-LEX-11's first sentence; the `AMBIGUOUS`-at-separation-threshold half is a different,
+    already-correct capability in `:pipeline`'s `CallsignResolver`/`CallsignResolverTest` —
+    outside this brief's ownership, and its test is not id-named.
+  - A case added to `ColdStartTest` (AC-57 / FR-LEX-23): with `geographicDistanceKm = null`
+    (location permission denied), the geographic prior alone goes cold while recency and
+    my-stations priors still contribute at full strength — "everything functions, losing only
+    geographic-prior precision".
+  - Two cases added to `VariantTableTest` (FR-A11Y-6): a novel legacy/regional spoken form is
+    addable as a plain TSV row with no code change, and the bundled table resolves identically
+    under a non-ROOT default JVM locale (the Turkish-I trap) — the variant set is content, not
+    localization.
+  - Two cases added to `PlattCalibratorTest` (FR-LEX-21): fitting two differently-shaped synthetic
+    generating processes (standing in for two tiers/models) separately yields visibly different
+    calibration curves, and applying the wrong tier's calibrator to the other's distribution
+    calibrates measurably worse toward 0.9 than the matched one — calibration does not transfer
+    across tiers/models.
+  - `PerTierReportingTest` in `:eval` (NFR-1c): two `Harness.run` calls with different
+    `precisionTarget`s (standing in for two tiers) over the *same* evaluate set return two
+    independent `HarnessReport`s with different derived thresholds, and re-running one tier
+    reproduces exactly its own canonical report — nothing is aggregated across tiers.
+
+**Verified:** `./gradlew :lexicon:test :eval:test :testing:test` — all green (checked each new
+JUnit XML report for `failures="0"`). `./gradlew coverageMatrix` regenerated
+`results/coverage-matrix.md`; all 15 renamed/established ids above (plus NFR-1A/NFR-1C, rendered
+uppercase by the tool) left the "Not yet covered" block. `./gradlew build dependencyRules` green.
+`python tools/spec-check/spec_check.py` — 8/8 PASS.
+
+**Left open / not done:**
+- **AC-13** needs a real rig-reported frequency joined against an actual known-repeater list; no
+  repeater-list asset or import exists in `:lexicon` (only the test double `RepeaterMatch`, which
+  a caller constructs by hand) — not established here, per the finding's own instruction not to
+  fabricate this.
+- **AC-35** — the harness (`:eval`) reports callsign precision/recall, a reliability diagram and
+  per-prior ablation, but not WER, rejection-rate-by-reason, or attribution accuracy: those need
+  the ASR pass and Pass B/attribution-state wiring the harness's own doc comment says are later
+  waves. Only the built subset is now named (FR-TST-5); the full AC-35 claim is not established.
+- **FR-LEX-15 / FR-LEX-16** — the "active slice" for Pass A hotword biasing does not exist
+  anywhere in the repository (confirmed by grep for `ActiveSlice`/`hotword` across all modules,
+  finding only spec prose and one `asr-api` doc comment naming the concept, no implementation).
+  Not established; this is genuinely unbuilt, not merely untested.
+- **FR-LEX-22** — rig-position/GPS/manual-grid location-sourcing priority is not implemented in
+  `:lexicon` (no `Location`/`Maidenhead` code found); `RankingContext.geographicDistanceKm` takes
+  a pre-computed distance and has no notion of *how* that distance was sourced. Not established.
+- **FR-LEX-32** — no WWARA-repeater-import or recency-seeding code exists to seed the recency
+  prior on day one; `MyStationsPrior`/`RecencyPrior` consume already-populated context but nothing
+  in `:lexicon` populates it from an import. Not established.
+- `coverageMatrixCheck`, which the standing brief's generic verification step names, is not an
+  actual Gradle task in this checkout (`./gradlew coverageMatrixCheck` fails with "task not
+  found"); `.github/workflows/ci.yml`'s `report` job still only runs `coverageMatrix` and uploads
+  the artefact without diffing it. This belongs to F-014's owner, not this finding; flagged here
+  rather than silently skipped.
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · name the tests that already establish capture-android/capture-api's built capability
+
+**Scope:** `capture-android/src/test/**`, `capture-api/src/test/**`, `results/coverage-matrix.md`.
+No `src/main` changes in either module.
+**Requirements/ACs:** Established here, by rename (`@Requirement` annotation) or by a new test:
+`AC-1`, `FR-CAP-1`, `FR-CAP-5`, `FR-RUN-13`, `FR-SVC-1`, `FR-SVC-2`, `FR-SVC-3`, `FR-SVC-4`,
+`FR-SVC-5c`, `NFR-9`, `NFR-10`. Left uncovered, with reasons below: `FR-CAP-2`, `FR-PLT-2`,
+`FR-PLT-4`, `FR-RUN-14`, `FR-RUN-18`, `FR-SVC-5`, `FR-SVC-6`, `NFR-4a`.
+**What changed:**
+
+- **Constitution Check.** Principle II (Test-Backed Change) is the whole point — "tests are named
+  for the requirement they establish so the coverage matrix is generated rather than maintained" —
+  this finding is exactly that discipline lapsing for one slice. Principle IV (Capture Never
+  Blocks, Never Drops, Never Lies) bears on the two genuinely new tests: FR-CAP-5's retry-with-
+  backoff and FR-RUN-13's mid-session route re-verification are both "never silently continue"
+  guarantees that had code but no test pinning them.
+- **Established by adding ids to an existing `@Requirement` annotation** (no assertion loosened):
+  `AC-1` on `RouteVerifierTest`'s matching-route case; `FR-CAP-1` on `AudioRecordSourceTest`'s two
+  resampler-identity tests (also strengthened with an explicit mono-channel assertion); `FR-SVC-4`
+  and `NFR-10` on `CaptureServiceTest`'s existing AC-5 unclean-end test (also strengthened with an
+  assertion that the report's last-heartbeat time is real, not a placeholder); `FR-SVC-3` on the
+  service's stop-action test; `FR-SVC-5c` on all three `ProveItAnalyzerTest` cases; `NFR-9` on
+  `OemGuidanceResolverTest` and `OemGuidanceTableTest` (confirmed identical in substance to the
+  already-tagged FR-SVC-5a).
+- **Established by a new, real test**, against the existing fakes:
+  - `AC-1`/`FR-CAP-5` (`AudioRecordSourceTest`): a mid-run disconnection (`raiseInterruption`
+    with the adapter refusing to reopen) is surfaced immediately as `CaptureEvent.Interrupted`,
+    retried more than once with backoff (driven via `advanceTimeBy`/`runCurrent` against the
+    virtual clock, `≥3` real `FakeAudioIo.open()` attempts), and never emits `Failed` — the
+    session stays open until the adapter reopens.
+  - `FR-RUN-13` (`AudioRecordSourceTest`): a route change raised *after* the source is already
+    running (not before `start()`, which every existing test used and which cannot exercise the
+    `AudioIoEvent.RouteChanged` branch at all) lands on a mismatch and halts exactly as FR-CAP-3 —
+    this branch of `AudioRecordSource.start()` had no test exercising it before this change.
+  - `FR-SVC-1` (`CaptureServiceTest`): parses `capture-android/src/main/AndroidManifest.xml`
+    directly (Robolectric's shadow `android.jar` for this project's configured SDK throws
+    `NoSuchMethodError` on `ServiceInfo.getForegroundServiceType()`, so `PackageManager` cannot be
+    used here) to confirm the `<service>` declares `android:foregroundServiceType="microphone"`,
+    plus a live check that starting the service posts a foreground notification.
+  - `FR-SVC-2` (`CaptureServiceTest`): the wake lock (`ShadowPowerManager.getLatestWakeLock()`) is
+    held once capture starts and released once the service is destroyed — modelled through
+    `controller.destroy()`, because `cleanStop()` only requests teardown (`stopSelf()`); release
+    happens in `onDestroy()`, matching the real Android service lifecycle, not a bug.
+- **Left uncovered, honestly, not fabricated:**
+  - `FR-CAP-2` (OS enumeration/filtering via real `AudioManager.getDevices`/`AudioDeviceInfo`) —
+    `AndroidAudioIo`'s own doc comment already states this is deliberately left to the physical
+    device; Robolectric cannot construct a real `AudioDeviceInfo`.
+  - `FR-PLT-2` (per-attachment USB permission) — no `UsbManager`/permission-request code exists
+    anywhere in `capture-android` to test; this is audio-adapter capture, not the rig-USB CAT
+    link, and nothing here implements it.
+  - `FR-PLT-4` (functioning fully with notifications denied) — no such branching exists in
+    `capture-android`; this is an `:app`-level onboarding/UI concern.
+  - `FR-RUN-14` (concurrent capture / audio focus so a phone call degrades to a gap) —
+    `AndroidAudioIo`'s doc comment confirms `AudioManager.OnAudioFocusChangeListener` is "not
+    wired yet"; the capability does not exist.
+  - `FR-RUN-18` (UTC + originating offset retained for stored wall-clock times) — capture-android
+    stores `wallMillis`/`monotonicNanos` only; the offset-retention requirement belongs to `:data`
+    entity timestamp fields, not this module.
+  - `FR-SVC-5` (on-launch detection of whether the app is subject to restriction) — only the
+    manufacturer-keyed guidance *content* (FR-SVC-5a, already tested) is built here; the
+    detection/trigger and onboarding flow live in `:app`, untested here.
+  - `FR-SVC-6` (finalise the interrupted session and process backlog on next launch) — capture-
+    android only detects the unclean end (`UncleanEndDetector`); finalisation and backlog
+    reprocessing are `:pipeline`'s job and are not built in this module.
+  - `NFR-4a` (unexpected termination loses at most the in-flight segment) — a segmenter/boundary
+    guarantee that belongs to `:pipeline`; nothing in `capture-android` bounds segment loss.
+
+**Verified:** `./gradlew :capture-android:testDebugUnitTest :capture-api:test --console=plain -q`
+green (all pre-existing tests plus 4 new tests pass; the two new `AudioRecordSourceTest` cases and
+two new `CaptureServiceTest` cases were run and observed failing first — the backoff test failed
+with "must attempt reconnection more than once… got 1" before the virtual-clock driving was
+correct, the manifest test failed with `NoSuchMethodError` on the `PackageManager` approach before
+switching to direct XML parsing, and the wake-lock test failed with "must be released" before
+`controller.destroy()` was added — then passing once each test was made to exercise the real
+behaviour correctly). `./gradlew coverageMatrix` regenerated `results/coverage-matrix.md`; all
+eleven established ids above now appear under "Covered" with the tests listed. `./gradlew build
+dependencyRules --console=plain -q` green (includes detekt, ktlint, all module tests,
+dependency-rule enforcement). `python tools/spec-check/spec_check.py` run and green.
+**Left open / not done:** `coverageMatrixCheck` (named in the standing brief's verification step)
+is not a registered Gradle task on this branch's base commit — `./gradlew tasks` confirms no such
+task exists in this worktree; only `coverageMatrix` (the generator) exists. Verified the
+regenerated matrix directly instead (diffed and grepped for the established ids). The eight ids
+listed as "left uncovered" above are unchanged in the matrix and remain honestly listed as not yet
+covered — none were fabricated as covered.
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · execution-provider, minSdk and the network/telemetry/backup structural set get tests
+
+**Scope:** `:onnx` (`ModelDescriptor.kt` + new `ModelDescriptorCpuPathTest.kt`); `buildSrc`
+(new `PlatformGuards.kt`/`PlatformGuardsTask.kt` + `PlatformGuardsTest.kt`); root
+`build.gradle.kts` (wires `platformGuards` into `check`, and adds `buildSrc/src/test/kotlin` to
+`coverageMatrix`'s scanned test roots — it was previously invisible to the matrix entirely);
+`app/src/test/kotlin/org/ort/app/structural/` (new package, `AllowBackupTest.kt`);
+`results/coverage-matrix.md` (regenerated).
+**Requirements/ACs:** FR-ACC-2, NFR-5b, AC-59, FR-OBS-5, NFR-6, FR-STO-8, NFR-6a, FR-PLT-5.
+Explicitly NOT established here: NFR-5, NFR-5b's "no vendor SDK" clause beyond the CPU-path
+slice, CON-CAP-1 (see Left open).
+**What changed:**
+- `ModelDescriptor`'s `init` now `require`s `"cpu" in providerBinaries` (was: any non-empty
+  set). This is the type-level slice of FR-ACC-2/NFR-5b that is actually built today — a
+  descriptor that only ever declares an accelerator binary can no longer be constructed. The
+  full `ExecutionProvider` abstraction technical design §3.3 describes does not exist yet (M11
+  scope); `ModelDescriptorCpuPathTest` says so in its KDoc and establishes only this slice.
+- New `PlatformGuards` (pure logic, buildSrc) + `PlatformGuardsTask`, wired as the `platformGuards`
+  Gradle task and into `check`: fails the build on (a) any dependency coordinate matching a
+  telemetry/analytics/crash-reporting marker list in any module (FR-OBS-5), (b) any HTTP-client
+  dependency coordinate outside `:net` (constitution V, NFR-6), (c) `android.permission.INTERNET`
+  declared in any module's manifest outside `:net` (AC-59, NFR-6). Ran against the real project:
+  currently zero violations on all three. These are declared-artifact checks — they prove what a
+  build *could* do, never what it *did*; the task's own log output and KDoc say this explicitly.
+- New `AllowBackupTest` (Robolectric) reads the merged manifest's `ApplicationInfo.FLAG_ALLOW_BACKUP`
+  and asserts it is unset — `android:allowBackup="false"` was already correct in
+  `AndroidManifest.xml`, so no manifest edit was needed; this only adds the missing proof.
+- `coverageMatrix`'s `testRoots` now includes `buildSrc/src/test/kotlin`, which was silently
+  excluded before (buildSrc is a separate included build, not a `subprojects` member). Side
+  effect: regenerating surfaced two pre-existing, unrelated staleness items in the matrix —
+  `Q8` (`CorrectionDaoTest`, already in `:data`, was already an orphan the last regen missed)
+  and `AC-999` (`CoverageMatrixTest`'s own fixture for testing the orphan-detector, a permanent
+  and expected orphan now that buildSrc is scanned). Neither is part of F-027; left as the
+  regenerated tool now honestly reports them.
+**Verified:** `./gradlew :onnx:test :buildSrc:test :asr-api:test :asr-sherpa:test :core:test
+dependencyRules platformGuards --console=plain -q` green. `ModelDescriptorCpuPathTest`'s
+rejection case and `PlatformGuardsTest`'s four detection cases were written and run failing
+first (`Unresolved reference` / compile failure before `PlatformGuards` existed;
+`IllegalArgumentException` not thrown before the `ModelDescriptor` guard existed).
+`AllowBackupTest` was proven against a deliberate, uncommitted, reverted-before-commit
+`allowBackup="true"` edit (`:app:testDebugUnitTest` failed with the expected assertion message),
+then against the real (unchanged) `false` value (green) — `app/src/main/AndroidManifest.xml`
+carries no net diff. `./gradlew coverageMatrix` regenerated; FR-ACC-2, NFR-5b, AC-59, FR-OBS-5,
+NFR-6, FR-STO-8, FR-PLT-5, NFR-6a no longer appear in "Not yet covered". Robolectric/JVM only
+throughout — no device, no real accelerator, no real network involved anywhere in this change.
+**Left open / not done:**
+- **NFR-5** (minSdk 26) — `MinSdkLaunchTest` (`app/src/androidTest/kotlin/org/ort/app/`) already
+  documents NFR-5 in its KDoc and is a genuine, running instrumented test, but its test *function
+  name* only carries `AC_93`, so the matrix generator does not credit NFR-5 to it. Renaming it
+  needs `app/src/androidTest`, outside this fix's owned paths (`:onnx`/`:asr-api`/`:asr-sherpa`/
+  `:core`/`app/src/test/kotlin/org/ort/app/structural`). Not fixed here — flagging as a one-line
+  follow-up for whoever owns that file.
+- **NFR-5b**'s "no required dependency on any specific SoC, NPU or vendor SDK" beyond the CPU-path
+  slice, and the rest of **FR-ACC-2**'s "stable execution-provider interface" — not established
+  here. The `ExecutionProvider`/`CpuProvider` abstraction technical design §3.3 describes has not
+  been built (only `ModelDescriptor.providerBinaries`, a `Set<String>` with no NPU implementation
+  behind it, exists); building that interface is production scope well beyond a test-only audit
+  fix, and there is currently no vendor SDK dependency anywhere to test against regardless.
+- **CON-CAP-1** (Bluetooth audio input never offered) — would need a test in `:capture-android`/
+  `:capture-api` (where `AudioDeviceKind.BLUETOOTH` and route selection actually live), which is
+  outside this fix's owned modules. Not established here.
+- `PlatformGuards`' three checks are structural proxies, stated as such in their own KDoc: they
+  cannot and do not prove a build made no network call, ran no telemetry SDK, or attempted no
+  backup at runtime — only that the declared building blocks for doing so are absent from the
+  source tree today. A regression there (someone adds `implementation("com.squareup.okhttp3:...")`
+  to `:pipeline`, say) is what `platformGuards` catches; a compiled binary phoning home through a
+  hand-rolled `java.net.Socket` is not.
+- This worktree carried pre-existing, unrelated, uncommitted changes to
+  `app/src/main/kotlin/org/ort/app/ui/data/SearchViewData.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/screens/SearchScreen.kt`, and two Search tests (a
+  broken/incomplete Search feature — `:app`'s main source set does not currently compile because
+  of them). Not part of F-027, not touched or committed by this change; noted so `./gradlew
+  build` failing on `:app:compileDebugKotlin` for an unrelated `Band` reference is not mistaken
+  for a regression from this fix.
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · Coverage matrix now scans corpus/'s pytest suite; FR-TST-8/7/9 pytest tests named for the id they establish
+
+**Scope:** `corpus/tests/` (rename only — five test functions), `buildSrc/` (`CoverageMatrix.kt`,
+`CoverageMatrixTest.kt`), root `build.gradle.kts` (task wiring only — `coverageMatrix`'s
+`testRoots`), `results/coverage-matrix.md`.
+
+**Requirements/ACs:** FR-TST-8, FR-TST-7, FR-TST-9. **FR-TST-6 is explicitly NOT closed here —
+see "Left open" below; the finding's premise was wrong about it.**
+
+**What changed:** F-027 grouped `FR-TST-6`/`FR-TST-8` under "corpus/: Python tests exist; the
+Kotlin matrix cannot see them." Only half of that was true.
+
+- `CoverageMatrix.testsByRequirement` now also walks `**/*.py` under each test root and matches
+  `def test_...(` (a new `PY_TEST_FUNCTION` regex), reusing the existing `NAME_ID` extraction so
+  `test_FR_TST_8_source_missing_licence_is_rejected` yields `FR-TST-8` exactly as the Kotlin
+  `_`-separated convention does. A Python match is attributed as
+  `corpus/tests/<file>.py::<function>` (a new `corpusRelativePath` helper, rooted at the last
+  `corpus` path segment so the attribution is identical regardless of checkout location) rather
+  than the Kotlin `ClassName.function` form. `CoverageMatrixTest` gained two cases: one asserting
+  the exact `corpus/tests/test_manifest.py::test_FR_TST_8_...` attribution string, one exercising
+  `analyse()` end-to-end with a synthetic `FR-TST-6`-named fixture (a mechanism test — it does
+  **not** claim the real FR-TST-6 exists; see below).
+- Root `build.gradle.kts`: extracted `coverageMatrixTestRoots` (previously inlined into the
+  `coverageMatrix` task registration) and added `corpus/tests` to it, so the one `val` is now the
+  single place a future task (e.g. a `coverageMatrixCheck`, not present on this branch) would
+  also draw from.
+- `corpus/tests/test_manifest.py`, `test_harness.py`, `test_fold_gate.py`, `test_synth_generator.py`:
+  renamed five tests that already genuinely established a requirement, per the matrix's `test_ID_`
+  convention adapted to Python (`test_FR_TST_8_...`, `test_FR_TST_7_...`, `test_FR_TST_9_...`) —
+  no assertion changed:
+  - `test_source_missing_licence_is_rejected` → `test_FR_TST_8_...` (FR-TST-8's
+    "licence-recorded" half; `test_evaluate_reports_per_source_and_aggregate` →
+    `test_FR_TST_8_...` in `test_harness.py` covers its "metrics per source" half).
+  - `test_eval_fold_is_refused_without_the_flag` and `test_eval_fold_opens_only_with_explicit_opt_in`
+    → `test_FR_TST_7_...` (the harness-side eval-fold gate; already established on the Kotlin side
+    too, per F-027).
+  - `test_synthetic_session_in_eval_is_rejected` (manifest-level) and
+    `test_generated_output_is_barred_from_the_eval_fold` (generator-level) → `test_FR_TST_9_...`.
+- Regenerated `results/coverage-matrix.md`: `FR-TST-8` moved from "Not yet covered" to "Covered",
+  attributed to the four `corpus/tests/...::test_...` entries above; `FR-TST-7` and `FR-TST-9`'s
+  "Covered" rows gained the corpus-side attributions alongside their existing Kotlin ones.
+
+**Left open / not done — FR-TST-6 could not be closed, and was not faked:** the finding's premise
+— "FR-TST-6 ... built in `corpus/src/corpus/`" — does not hold. FR-TST-6 (functional-spec §7.17)
+is a **synthetic traffic generator with configurable activity fraction, transmission length
+distribution and SNR, for load/endurance testing of the running pipeline without an 8-hour tape**.
+Grepped for `activity`/`fraction`/`SNR`/`endurance`/`traffic` across all of `corpus/src/` and
+`corpus/tests/`: no matches. What *does* exist — `corpus/src/corpus/synth/generator.py`
+(`generate_utterance`/`generate_dataset`) — is the D22 per-callsign accuracy-training generator
+(ULS callsign → phonetic → TTS/splice → learned channel), a different, already-tested feature
+(FR-TST-9's generator, which this change did rename a test for). It has no activity-fraction,
+transmission-length-distribution or SNR-sweep controls, and produces isolated utterances, not a
+continuous traffic stream. Building FR-TST-6 for real is new functionality under `corpus/src/`,
+which this brief's scope explicitly excludes ("do not touch `corpus/src/**` unless a genuine bug
+is found") and which the audit itself buckets elsewhere as unbuilt work, not a coverage-naming
+gap — so no test was written or renamed to claim it, and `results/coverage-matrix.md` correctly
+still lists `FR-TST-6` under "Not yet covered." This should be re-filed as its own UNBUILT finding
+rather than reopened as F-027.
+
+Also left open: no `coverageMatrixCheck` task exists on this branch (only `coverageMatrix` does),
+so the second half of the standing brief's verification step — "then run `./gradlew
+coverageMatrixCheck` in a separate invocation" — could not be run; `coverageMatrixTestRoots` is
+structured as a shared `val` so wiring it in is a one-line addition whenever that task lands.
+
+**Verified:** `cd corpus; python -m pytest -q` — 68 passed, 1 skipped, before and after the
+renames (renames only, no assertion changes). `./gradlew -p buildSrc test --console=plain -q`:
+the two new `CoverageMatrixTest` cases were confirmed to FAIL first (`2 tests failed` against the
+pre-fix `CoverageMatrix.kt`, stashed and restored to prove it), then pass after the `.py`-scanning
+change (7/7 green). `./gradlew coverageMatrix --console=plain -q` regenerated
+`results/coverage-matrix.md` — `FR-TST-8` now under "Covered" with the four corpus attributions
+above; `FR-TST-6` remains under "Not yet covered" (honestly — see above). `./gradlew build
+dependencyRules --console=plain -q` — exit 0 (the interleaved Robolectric `CloseGuard` stack
+traces in its log are known-noisy warnings from Room/SQLite teardown, not task failures — the
+build's own exit code and lint HTML-report lines confirm completion). `python
+tools/spec-check/spec_check.py` — all 8 checks PASS. All runs: this machine (`TAMBURLAINE`), JVM
+only, Robolectric where used — no on-device verification was performed or claimed.
+## 2026-09-07 (audit — F-013)
+
+### (pending) — audit F-013 · Pass B's fingerprint now carries a real `configHash` and a real `provider`, not `"v0-smoke"`/`"cpu"` literals
+
+**Scope:** `:pipeline` only — new `PassBFingerprintBuilder.kt` and `PassBFactoryTest.kt`
+(`org.ort.pipeline.passb`); `PassBFactory.kt` (new `provider` parameter, real `configHash`
+computation); `AsrEngineProvisioning.kt` (`AsrEngineAvailability.Available` gained a `provider`
+field, populated from the real `SherpaOnnxSession` descriptor it already builds);
+`RealCaptureService.kt` (`startProcessingLoop` now threads a real provider string through instead
+of a literal); `PassB.kt` (`fingerprint` made public for inspectability); two pre-existing call
+sites updated (`CaptureProcessingLoopTest.kt`).
+
+**Requirements/ACs:** FR-REP-1; constitution III ("every pass is a pure function of (audio,
+lexicon snapshot, model set, config) and records the fingerprint of what produced it") and VI
+("provider is part of provenance").
+
+**What changed:** `PassBFactory.create` stamped every `PassFingerprint` it built with the literal
+`configHash = "v0-smoke"` and `provider = "cpu"`, regardless of what actually ran — two different
+configurations produced identical fingerprints, and the honest-failure `UnavailableAsrEngine` path
+falsely reported `"cpu"` as if a real decode had happened. Fixed in two parts: (1)
+`PassBFingerprintBuilder.configHash` computes a deterministic SHA-256 hex hash (the same technique
+`:core`'s `ResolvedConfig.configHash` already uses, repeated here rather than exported since
+`ResolvedConfig.sha256Hex` is private) over a canonical string of every input fixed at
+`PassBFactory.create` time that can change Pass B's output: `confirmThreshold`,
+`separationThreshold`, the fixed `DecodeOptions()` passed to the engine on every run (now shared
+between the fingerprint and the `PassB` instance itself, rather than two separate defaults that
+could silently drift), and the three bundled lexicon tables' independent versions
+(`VariantTable`/`ItuPrefixTable`/`ConfusionCostMatrix` — material here, unlike Pass D's separate
+`lexiconVersion` field, because `PassBResolutionChain` resolves a callsign from the lexicon inside
+Pass B itself). Segmentation config is deliberately excluded, matching `:core`'s own
+`ConfigRelevance` table for `B_OFFLINE`. (2) `provider` is no longer guessed in `:pipeline`: the
+one place that already knows which execution provider ran — `RealAsrEngineProvider`, via the
+`SherpaOnnxSession` descriptor it constructs — now surfaces it on
+`AsrEngineAvailability.Available.provider`; `RealCaptureService` threads that value (or the literal
+`"none"` for the `Unavailable`/`UnavailableAsrEngine` path) into `PassBFactory.create`'s new
+required `provider` parameter, which has no default — a caller must supply a real value, never a
+constant. No `:asr-api`/`:asr-sherpa` change was needed or made: the descriptor was already built
+in `:pipeline`, just never read back out of `AsrEngineAvailability`.
+
+**Verified:** `PassBFactoryTest` (new), four `FR_REP_1_...`-named cases, written first and
+confirmed failing against the unfixed code for the right reason before implementing: two different
+`confirmThreshold`s produced identical hashes (`AssertionError: ... Actual: v0-smoke`), the
+provider case failed `expected:<[none]> but was:<[cpu]>`, and the "never v0-smoke" case failed with
+`Actual: v0-smoke`. (The determinism case passed both before and after, as expected — a constant
+is trivially deterministic — so it does not itself distinguish the fix, but it does pin the
+regression the other three exist to catch.) Re-verified all four green after restoring the fix.
+`./gradlew :pipeline:test` — all tests green (pre-existing `CaptureProcessingLoopTest` call sites
+updated for the new required `provider` parameter). Full gate: `./gradlew build dependencyRules`
+(exit 0) and `python tools/spec-check/spec_check.py` (all 8 checks PASS). All JVM/Robolectric only
+— nothing here is device-verified.
+
+**Left open / not done:** `PassBFactory.create` is not called from anywhere but
+`RealCaptureService` and its own tests yet (P12's real-model wiring is still gated behind a fetched
+model — see that prompt's CHANGELOG entry), so this fix has not been observed against a real
+on-device decode; `RealSherpaDecoder` does not configure any accelerator execution provider today,
+so `"cpu"` remains the only value the real path can ever report — this fix makes that fact honest
+and traceable rather than adding accelerator support. `Materiality`'s `B_OFFLINE` entry (`:core`,
+untouched here) already treats `CONFIG_HASH` as material, so a lexicon bump now correctly flags a
+stored Pass B row as a reprocessing candidate — this is a behavioural change downstream of the fix,
+not verified against `PassFingerprint.isReprocessCandidate` directly in this session (that
+mechanism's own tests are in `:core` and were not touched).
+
+---
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture

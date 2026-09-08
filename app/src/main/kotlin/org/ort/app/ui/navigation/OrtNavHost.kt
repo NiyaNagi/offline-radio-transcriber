@@ -1,5 +1,7 @@
 package org.ort.app.ui.navigation
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,6 +28,9 @@ import kotlinx.coroutines.launch
 import org.ort.app.status.StatusViewState
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
 import org.ort.app.ui.data.FrequencyListEntryViewState
+import org.ort.app.ui.data.ModelActionResult
+import org.ort.app.ui.data.ModelId
+import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.NowSummaryMapper
 import org.ort.app.ui.data.NowSummaryViewState
 import org.ort.app.ui.data.ReaderPolling
@@ -41,6 +46,7 @@ import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.screens.FrequenciesListScreen
 import org.ort.app.ui.screens.FrequencyDetailScreen
 import org.ort.app.ui.screens.LogScreen
+import org.ort.app.ui.screens.ModelsScreen
 import org.ort.app.ui.screens.NowScreen
 import org.ort.app.ui.screens.PlaceholderScreen
 import org.ort.app.ui.screens.SearchScreen
@@ -50,6 +56,7 @@ import org.ort.app.ui.screens.ThreadScreen
 import org.ort.app.ui.screens.TransmissionDetailScreen
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
+import java.io.IOException
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
 
@@ -184,6 +191,9 @@ private fun DestinationContent(
         ReaderDestination.FREQUENCIES ->
             FrequenciesContent(context = context, onOpen = onOpenFrequency, modifier = content)
 
+        ReaderDestination.SETTINGS ->
+            ModelsContent(context = context, modifier = content)
+
         else -> PlaceholderScreen(destinationLabel = current.label, modifier = content)
     }
 }
@@ -314,6 +324,84 @@ private fun FrequenciesContent(context: android.content.Context, onOpen: (Long) 
     LaunchedEffect(Unit) { frequencies = ReaderPolling.listFrequencySummaries(context) }
     FrequenciesListScreen(frequencies = frequencies, onOpen = onOpen, modifier = modifier)
 }
+
+/**
+ * Audit F-008: the "Models" destination (`Settings` in the drawer). Owns its own busy/last-message
+ * state — [ModelsController] itself is stateless — and drives [ModelsController.download]/
+ * [ModelsController.sideload] from a tap, off the main dispatcher (both already hop to
+ * [kotlinx.coroutines.Dispatchers.IO] internally), refreshing [ModelsController.currentState]
+ * after either finishes so the row's installed/not-installed fact always reflects what
+ * `ModelAcquisition` itself verified, not an optimistic guess.
+ */
+@Composable
+private fun ModelsContent(context: android.content.Context, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    var state by remember { mutableStateOf(ModelsController.currentState(context)) }
+    var busy by remember { mutableStateOf(emptySet<ModelId>()) }
+    var lastMessage by remember { mutableStateOf<String?>(null) }
+    var pendingSideloadId by remember { mutableStateOf<ModelId?>(null) }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = pendingSideloadId
+        pendingSideloadId = null
+        if (uri == null || id == null) return@rememberLauncherForActivityResult
+        busy = busy + id
+        scope.launch {
+            val source = copyPickedFileToCache(context, uri, id)
+            val result = if (source != null) {
+                ModelsController.sideload(context, id, source)
+            } else {
+                ModelActionResult.Failure("could not read the picked file")
+            }
+            busy = busy - id
+            lastMessage = messageFor(id, result)
+            state = ModelsController.currentState(context)
+        }
+    }
+
+    ModelsScreen(
+        state = state,
+        busy = busy,
+        lastMessage = lastMessage,
+        onDownload = { id ->
+            busy = busy + id
+            scope.launch {
+                val result = ModelsController.download(context, id)
+                busy = busy - id
+                lastMessage = messageFor(id, result)
+                state = ModelsController.currentState(context)
+            }
+        },
+        onSideload = { id ->
+            pendingSideloadId = id
+            filePicker.launch(arrayOf("*/*"))
+        },
+        modifier = modifier,
+    )
+}
+
+private fun messageFor(id: ModelId, result: ModelActionResult): String = when (result) {
+    is ModelActionResult.Success ->
+        "${id.label}: installed, checksum verified. Requeued ${result.requeuedCount} previously failed transmission(s)."
+    is ModelActionResult.Failure -> "${id.label}: ${result.reason}"
+}
+
+/**
+ * [ModelAcquisition][org.ort.net.ModelAcquisition].sideload takes a [java.io.File], not a content
+ * [android.net.Uri] — the system picker only ever hands back the latter, so this copies the picked
+ * document into app-private cache storage first. No network call either way (constitution V).
+ */
+private fun copyPickedFileToCache(context: android.content.Context, uri: android.net.Uri, id: ModelId): java.io.File? =
+    try {
+        val dest = java.io.File(context.cacheDir, "sideload-${id.name}.tmp")
+        val opened = context.contentResolver.openInputStream(uri)?.use { input ->
+            dest.outputStream().use { output -> input.copyTo(output) }
+            true
+        }
+        if (opened == true) dest else null
+    } catch (e: IOException) {
+        null
+    }
 
 @Composable
 private fun StationDetailContent(context: android.content.Context, stationId: String, onBack: () -> Unit) {

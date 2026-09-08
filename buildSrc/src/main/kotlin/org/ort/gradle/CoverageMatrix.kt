@@ -28,6 +28,24 @@ object CoverageMatrix {
     private val NAME_ID =
         Regex("""(?<![A-Za-z0-9])((?:FR|AC|NFR|CON)(?:_[A-Z][A-Z0-9]{1,5})*_\d+[a-z]?)(?=_|\s|${'$'})""")
 
+    /**
+     * F-023: a bare `F13`, `D28`, `R15` or `Q8` is not a requirement id — it is a cross-reference
+     * to functional-spec §12's failure-mode register, a technical-design decision, a risk, or an
+     * open-questions entry. A test naming one is documenting which failure mode, decision or
+     * question it establishes behaviour for, not claiming an undefined requirement id, so it must
+     * not be counted or rendered as an orphan. It is still worth surfacing on its own.
+     */
+    private val CROSS_REFERENCE = Regex("""^[FDRQ]\d+[A-Z]?$""")
+
+    /**
+     * F-027: `corpus/` is Python (its own `pyproject.toml`, pytest under `corpus/tests/`), not a
+     * Gradle module — a requirement whose home is the desktop tooling (FR-TST-6, FR-TST-8) can be
+     * genuinely established there and still show up as permanently uncovered if the matrix only
+     * ever looks at `.kt`. A pytest test declares itself with `def test_...(`, never a backtick
+     * name or an annotation, so it is matched on the def line alone.
+     */
+    private val PY_TEST_FUNCTION = Regex("""def\s+(test_[A-Za-z0-9_]*)\s*\(""")
+
     data class Coverage(
         val requirements: List<String>,
         val testsByRequirement: Map<String, List<String>>,
@@ -35,7 +53,9 @@ object CoverageMatrix {
         val covered: Set<String> get() = testsByRequirement.keys.filter { it in requirements }.toSet()
         val uncovered: List<String> get() = requirements.filterNot { it in testsByRequirement }
         val orphanTests: Map<String, List<String>>
-            get() = testsByRequirement.filterKeys { it !in requirements }
+            get() = testsByRequirement.filterKeys { it !in requirements && !CROSS_REFERENCE.matches(it) }
+        val crossReferencedTests: Map<String, List<String>>
+            get() = testsByRequirement.filterKeys { it !in requirements && CROSS_REFERENCE.matches(it) }
     }
 
     fun requirementsFrom(specDir: File): List<String> {
@@ -50,25 +70,55 @@ object CoverageMatrix {
     fun testsByRequirement(testRoots: Collection<File>): Map<String, MutableList<String>> {
         val map = sortedMapOf<String, MutableList<String>>(comparator())
         testRoots.filter { it.isDirectory }.forEach { root ->
-            root.walkTopDown().filter { it.isFile && it.extension == "kt" }.forEach { kt ->
-                val text = kt.readText()
-                val fqnHint = kt.nameWithoutExtension
-
-                ANNOTATION.findAll(text).forEach { m ->
-                    ANNOTATION_ID.findAll(m.groupValues[1]).forEach { id ->
-                        map.getOrPut(normalise(id.groupValues[1])) { mutableListOf() }.add(fqnHint)
-                    }
+            root.walkTopDown()
+                .filter { it.isFile && (it.extension == "kt" || it.extension == "py") }
+                .forEach { file ->
+                    if (file.extension == "kt") scanKotlinTest(file, map) else scanPythonTest(file, map)
                 }
-                TEST_FUNCTION.findAll(text).forEach { m ->
-                    val fn = m.groupValues[1].ifEmpty { m.groupValues[2] }
-                    NAME_ID.findAll(fn).forEach { g ->
-                        val id = normalise(g.groupValues[1].replace('_', '-'))
-                        map.getOrPut(id) { mutableListOf() }.add("$fqnHint.${fn.replace(' ', '_')}")
-                    }
-                }
-            }
         }
         return map.mapValues { it.value.distinct().toMutableList() }.toSortedMap(comparator())
+    }
+
+    private fun scanKotlinTest(kt: File, map: MutableMap<String, MutableList<String>>) {
+        val text = kt.readText()
+        val fqnHint = kt.nameWithoutExtension
+
+        ANNOTATION.findAll(text).forEach { m ->
+            ANNOTATION_ID.findAll(m.groupValues[1]).forEach { id ->
+                map.getOrPut(normalise(id.groupValues[1])) { mutableListOf() }.add(fqnHint)
+            }
+        }
+        TEST_FUNCTION.findAll(text).forEach { m ->
+            val fn = m.groupValues[1].ifEmpty { m.groupValues[2] }
+            NAME_ID.findAll(fn).forEach { g ->
+                val id = normalise(g.groupValues[1].replace('_', '-'))
+                map.getOrPut(id) { mutableListOf() }.add("$fqnHint.${fn.replace(' ', '_')}")
+            }
+        }
+    }
+
+    /**
+     * `def test_FR_TST_8_source_missing_licence_is_rejected(` -> attributed as
+     * `corpus/tests/test_manifest.py::test_FR_TST_8_source_missing_licence_is_rejected` — the
+     * pytest node id form, rooted at the `corpus/` directory regardless of where on disk the
+     * checkout lives, so the matrix is reproducible across machines.
+     */
+    private fun scanPythonTest(py: File, map: MutableMap<String, MutableList<String>>) {
+        val text = py.readText()
+        val attribution = corpusRelativePath(py)
+        PY_TEST_FUNCTION.findAll(text).forEach { m ->
+            val fn = m.groupValues[1]
+            NAME_ID.findAll(fn).forEach { g ->
+                val id = normalise(g.groupValues[1].replace('_', '-'))
+                map.getOrPut(id) { mutableListOf() }.add("$attribution::$fn")
+            }
+        }
+    }
+
+    private fun corpusRelativePath(file: File): String {
+        val parts = file.invariantSeparatorsPath.split("/")
+        val idx = parts.lastIndexOf("corpus")
+        return if (idx >= 0) parts.subList(idx, parts.size).joinToString("/") else file.name
     }
 
     fun analyse(specDir: File, testRoots: Collection<File>): Coverage =
@@ -97,6 +147,14 @@ object CoverageMatrix {
             appendLine("## Orphan tests (name a requirement id the spec does not define)")
             appendLine()
             coverage.orphanTests.toSortedMap(comparator())
+                .forEach { (req, tests) -> appendLine("- `$req` — ${tests.joinToString(", ")}") }
+            appendLine()
+        }
+        if (coverage.crossReferencedTests.isNotEmpty()) {
+            // F-023: bare F/D/R/Q ids are not requirements — see CROSS_REFERENCE's doc comment.
+            appendLine("## Cross-referenced failure modes / decisions / questions (not requirement ids)")
+            appendLine()
+            coverage.crossReferencedTests.toSortedMap(comparator())
                 .forEach { (req, tests) -> appendLine("- `$req` — ${tests.joinToString(", ")}") }
             appendLine()
         }
@@ -135,4 +193,16 @@ object CoverageMatrix {
     }
 
     private fun normalise(raw: String): String = raw.trim().uppercase().replace("--", "-")
+
+    /**
+     * F-014: `coverageMatrixCheck` compares freshly generated content against the committed
+     * `results/coverage-matrix.md` and must fail on any real drift, but line-ending
+     * (CRLF/LF) and trailing-newline differences are not drift — they are an artefact of the
+     * checkout/editor, not a stale matrix — so they are normalised away before comparing.
+     */
+    fun contentMatches(generated: String, committed: String): Boolean =
+        normaliseLineEndings(generated) == normaliseLineEndings(committed)
+
+    private fun normaliseLineEndings(text: String): String =
+        text.replace("\r\n", "\n").replace("\r", "\n").trimEnd('\n')
 }

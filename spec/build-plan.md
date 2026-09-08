@@ -37,12 +37,39 @@ underlying breakdown each prompt draws on.
 
 - [x] **P3 · Lexicon: grammar** — units, ITU trie, FSA, confusion scoring *(`:lexicon`)* — done 2026-09-07
 - [x] **P4 · Capture and segmentation** — source, resampler, ring, VAD *(`:capture-api`, `:segment`)* — done 2026-09-07
-- [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07
+- [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07; audit F-016 (2026-09-07) added `WorkQueue.requeueFailed` so terminally `FAILED` items get a path back to `READY` (FR-RUN-9, FR-REP-8); audit F-027 (2026-09-07) named FR-ASR-7, FR-AST-5/6/8, FR-RUN-2, FR-STO-1, FR-LEX-12 and NFR-4b in the coverage matrix (renamed/added tests, no production change); FR-STO-2, FR-STO-2a and CON-STO-1 stay genuinely uncovered — `:data` stores `audioFormat` as an unvalidated string, it does not choose or enforce a codec — see CHANGELOG
 - [x] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)* — done 2026-09-07; both probes NOT RUN (no Fearless Steps / no LoRA+sherpa-onnx toolchain or GPU in this environment) — see `results/r4-speaker-separation.md`, `results/r1-lora-export.md`
+- [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07
+- [x] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)* — done 2026-09-07; both probes NOT RUN (no Fearless Steps / no LoRA+sherpa-onnx toolchain or GPU in this environment) — see `results/r4-speaker-separation.md`, `results/r1-lora-export.md`. **FR-TST-6 (audit F-027, 2026-09-07): the D22 callsign generator built here is not the FR-TST-6 load/endurance synthetic traffic generator (activity fraction, transmission length distribution, SNR) — that is unbuilt, not just untested.**
 
 **Wave C — composition.**
 
 - [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07
+- [x] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)* — done 2026-09-07;
+  audit F-010 (2026-09-07): AC-3 was previously covered only by `RingBuffer`, which nothing in
+  `src/main` constructs. `AudioRecordSource` now detects a stalled downstream collector or
+  `AudioRecord` shortfall directly (elapsed wall time vs. samples delivered) and reports it through
+  the existing `CaptureEvent.Interrupted`/`Resumed` pair, closed immediately by `GapTracker` — AC-3
+  now holds on the real capture path. `RingBuffer` is unchanged and still unused in production.
+  audit F-021 (2026-09-07): shed events were memory-only in `ShedController` with no `shed_event`
+  table — the `:data` half is now fixed (`ShedEventEntity`/`ShedEventDao`, schema v2, migration).
+  audit F-007 (2026-09-07): `ShedController` was never constructed in `RealCaptureService` at all —
+  it only ever ran (against a fake) in `:app`'s status display — so FR-RUN-3's shed order could
+  never trigger and F-021's persist call had nothing to be called from. `RealCaptureService` now
+  ticks a real `ShedController` backed by the new `AndroidShedSignals` every 10 s, persists each
+  transition via `ShedEventPersister` into F-021's table, republishes level+backlog through the new
+  `ShedStatus` holder, and stops capture loudly at a documented free-storage floor (FR-STO-4). The
+  `:app` display side (F-002: still reads its own fake-fed `ShedController`) is not done here.
+  audit F-002 (2026-09-07): `:app`'s status surface now reads the real level/backlog from
+  `ShedStatus` (published by F-007's `RealCaptureService`) instead of an inert, always-nominal
+  local `ShedController`, and shows an explicit "Not measured" label — never a fabricated `0` —
+  before capture has ever started this process. The dead v0 `StatusActivity`/
+  `TransmissionListActivity` (nothing launched either once `OrtNavHost` took over, P13/P14) are
+  deleted, removing the second copy of the same bug.
+- [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07;
+  audit F-027 (2026-09-07) named/added tests for FR-LEX-6/11(partial)/14/18/19/20/21/23/29,
+  FR-TST-2/4/5, FR-A11Y-6, NFR-1a/1c, AC-57 — FR-LEX-15/16/22/32 and AC-13/35 remain genuinely
+  unbuilt or unmeasurable here, see CHANGELOG
 - [x] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)* — done 2026-09-07
 
 **Wave D — the M2 gate, then transcription.**
@@ -93,8 +120,44 @@ are individually green.*
   2026-09-08 afternoon: `PassDrainRunner`/`PassB`/`RealSherpaDecoder` are now constructed and wired
   into `RealCaptureService`, proven against `FakeAsrEngine` on Robolectric; a real Silero VAD
   binding was located and wrapped (`RealSileroVad`), gated on a model file P18 now fetches.
+  Audit F-013 fixed 2026-09-07: `PassBFactory`'s `PassFingerprint` had shipped with the
+  `configHash = "v0-smoke"` / `provider = "cpu"` placeholders from that morning's defect-3 work
+  left in permanently; both are now derived for real (`PassBFingerprintBuilder`, a real provider
+  threaded from `RealAsrEngineProvider`) — see CHANGELOG.md.
   **Still not checked off**: not verified on a real device (none available), and no ASR/VAD model
   was actually run for real in this session — see CHANGELOG for exactly what remains.
+  Audit F-001 (2026-09-07) fixed `RealSegmentSink` fabricating `startedAtUtc`/`endedAtUtc`/
+  `monotonicStartNanos`/`utcOffsetMinutes` as `0L`/`null`/`0L`/`0` on every real transmission;
+  it now derives all four from `:core`'s `SampleClock`, anchored once at session start, plus the
+  segment's own sample position — see CHANGELOG.md.
+  Audit F-006 (2026-09-07) fixed the same `RealSegmentSink.close()` deleting every
+  `REJECTED_TOO_SHORT` segment's staged audio and returning without recording anything; it now
+  persists a `REJECTED` row with `rejectionReason = "too_short"` and its FLAC audio retained,
+  exactly as FR-SEG-6/AC-72 require, and never enqueues it for Pass B — see CHANGELOG.md.
+  Audit F-005 (2026-09-07) fixed `RealCaptureService.onHeartbeat()` writing a fabricated
+  `samplePosition = 0L` into every heartbeat record; it now reads the session's `Segmenter`'s
+  own `position()` at write time, matching the sample-position provenance the parallel
+  `capture-android.CaptureService` already had — see CHANGELOG.md.
+  **Audit F-011 (2026-09-07) fixed:** the "constructed and wired into `RealCaptureService`,
+  proven against `FakeAsrEngine` on Robolectric" claim above had no test that actually started
+  the service — `CaptureProcessingLoopTest` proved `PassDrainRunner`+`PassBFactory` draining a
+  hand-assembled queue, not `RealCaptureService.startCapture()`'s own composition. A small
+  `RealCaptureService.Dependencies` seam (settable after `onCreate()`, real-construction
+  defaults, no Hilt) now lets `RealCaptureServiceTest` start the real service under Robolectric's
+  `ServiceController` with `FakeAudioIo`/`FakeAsrEngine`/`FakeShedSignals`/an in-memory
+  `OrtDatabase`, feed one synthetic speech-then-silence burst, and prove a `TransmissionEntity` +
+  transcript row appear (AC-31), the heartbeat carries a real non-zero sample position (F-005), a
+  deliberate `ACTION_STOP` marks the session's heartbeat clean (AC-5), and an
+  `Interrupted`/`Resumed` pair yields a real `capture_gap` row (AC-48, F-028) — all through the
+  service's own composition, not a hand-wired harness. Still Robolectric/JVM only; no device has
+  run this. See CHANGELOG.md.
+  **Left open (audit F-025, 2026-09-07, recorded not fixed):** the Pass B backlog drains only
+  while `RealCaptureService` is alive — `startProcessingLoop`'s coroutine runs in the same
+  service-scoped `scope` that `onDestroy()` cancels, and there is no `WorkManager` job or other
+  scheduler that resumes draining after the service stops. FR-RUN-2 still holds (the queue is
+  durable, nothing is lost) but a backlog left behind at stop waits for the next capture session.
+  Building a post-capture drain is M8 streaming/M10 reprocessing scope, not P12's — see
+  CHANGELOG.md.
 - [x] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
   done 2026-09-08.
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
@@ -105,6 +168,17 @@ are individually green.*
   `RealTransmissionAudioPlayer` plays retained audio through `:pipeline`'s existing
   `FlacSegmentAudioProvider`. FR-UI-1/4/5 and FR-A11Y-1..4 hold; the digest, thread grouping and
   FR-UI-8 lattice/prior panel are named divergences left to P15-P17. See CHANGELOG.md.
+  **2026-09-07 (audit F-003):** the read path never surfaced `TransmissionEntity.processingState`,
+  so `FAILED`/`REJECTED` transmissions rendered identically to still-pending ones; fixed (FR-RUN-9)
+  — see CHANGELOG 2026-09-07 entry. The `FAILED` label still lacks the queue's `lastError` text.
+  **2026-09-07 audit fix (F-004):** `StatusScreen`/`NowScreen` did not surface
+  `AsrAvailability`/`VadAvailability` at all — the reader gave no reason transcripts never appear.
+  Fixed: `StatusViewState` now carries real ASR/VAD status labels and an honest
+  "no transcription model installed" header message; see CHANGELOG.md's F-004 entry.
+  **Correction (2026-09-07, audit F-012):** FR-UI-4's confidence number was reachable only via
+  `AttributionMarker`'s merged `contentDescription`, never as visible text in the Log row or
+  Detail header — fixed in `AttributionMarker.kt`; see the 2026-09-07 (audit — F-012) CHANGELOG
+  entry.
 - [x] **P15 · Search and threads** *(`:app`, `:data`)* — done 2026-09-08. `SearchDao` (a new DAO
   file, per the prompt, to stay conflict-free with concurrent P17) queries the FTS5 index P5 built
   and nothing queried until now, with callsign/frequency/date filters; `SearchScreen`/`ThreadScreen`
@@ -113,10 +187,16 @@ are individually green.*
   `Assume`-skipped rather than faked; filters, the query-construction logic, and the graceful
   degrade-to-filters-only behaviour are all proven for real. Thread grouping is proven against the
   real (currently always-null) `threadId` column with an honest "not yet grouped" fallback — M6
-  still owns actually populating it. See CHANGELOG.md.
+  still owns actually populating it. See CHANGELOG.md. **Update (audit F-017, 2026-09-07):** the
+  `:data` half of FR-UI-3's remaining filters — band, attribution state, rejected/accepted — is
+  now built in `SearchDao`/`Band.kt` (see CHANGELOG's audit F-017 entry). **Update (audit F-017,
+  2026-09-07, `:app` half):** `SearchScreen` now exposes band, attribution-state and
+  rejected/accepted controls, wired through `SearchFilterInput`/`SearchPolling` to `SearchDao`.
+  F-017 is closed — see CHANGELOG's second audit F-017 entry.
 - [x] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
   `:data`)* — done 2026-09-08. FR-UI-6 (one-tap correction, Q8's tiers), FR-UI-8 (the inspection
-  surface, honestly empty until a future `:pipeline` change writes lattice/candidate rows), and
+  surface — was honestly empty pending a `:pipeline` change; that change landed 2026-09-07 as
+  audit F-009, `DataPassBResultSink` now writes lattice/candidate rows, see CHANGELOG), and
   FR-OBS-4 (labelled-sample capture per `docs/reference/labelling-protocol.md`) — see
   CHANGELOG.md for the CORRECTED-lock enforcement. **Update (audit F-018, 2026-09-08):** the
   "search the lexicon" tier's module-boundary substitution ("search known stations") is resolved —
@@ -126,7 +206,12 @@ are individually green.*
   done 2026-09-08. FR-UI-9/FR-UI-10 (everything heard from one station/on one frequency, across
   every session), FR-UI-11 (hour-of-day activity patterns), and FR-UI-12 (the not-heard/not-
   listening distinction, structural as a closed three-state enum) — see CHANGELOG.md for exactly
-  how the distinction is computed and tested, and what FR-UI-11's day-of-week half leaves open.
+  how the distinction is computed and tested. FR-UI-11's day-of-week and week-over-week halves
+  (audit F-019, fixed 2026-09-07) are now built too — see the 2026-09-07 (audit — F-019) CHANGELOG
+  entry.
+  Note (audit F-028, fixed 2026-09-07): P17's `:app`/`:data` half was correct, but nothing upstream
+  in `:pipeline` had ever populated `captureGapDao` in production — `RealCaptureService` built no
+  `GapTracker`/`GapPersister`, so FR-UI-12's distinction had no real gap to show. See CHANGELOG.md.
 - [x] **P18 · Model acquisition through `:net`** *(`:net`)* — done 2026-09-08. Without a model on
   disk the app can capture but never transcribe, and P12 correctly refused to fetch one from
   `:pipeline`: **only `:net` may link an HTTP client, and never in the capture or processing
@@ -135,7 +220,29 @@ are individually green.*
   and side-load a model, mirroring `corpus/acquire.py`'s semantics; `dependencyRules` confirms
   `:net -> :core` only and that neither `:capture-android` nor `:pipeline` has any edge to `:net`.
   **Not done here, by design:** the `:app` call site that mints `NetCapability.UserInitiated` and
-  actually downloads the models P12 is waiting on — see CHANGELOG.md.
+  actually downloads the models P12 is waiting on — see CHANGELOG.md. **Update 2026-09-07 (audit
+  F-024):** `RealHttpRangeClient` now has an automated loopback test (`ServerSocket`-based, not
+  `jdk.httpserver`) and a real truncated-body bug it caught is fixed — see CHANGELOG.md. **Update
+  2026-09-07 (audit F-008, `:net` half):** `net/src/main/AndroidManifest.xml` now declares
+  `android.permission.INTERNET` (it declared none before, so even the still-missing `:app` call
+  site would have failed at runtime with a `SecurityException`); `platformGuards` gained a rule
+  that fails the build if `:net` itself lacks the permission, not just if another module has it.
+  **Update 2026-09-08 (audit F-008, `:app` half):** the "Models" screen
+  (`ReaderDestination.SETTINGS`) is that call site — `ModelsController.download()`/`.sideload()`
+  mint `NetCapability.UserInitiated` and drive `ModelAcquisition` for all four required files
+  (three `AsrModelLocator` files, one `SileroVadLocator` file), writing to the exact paths P12's
+  providers read, and requeue F-016's `FAILED` items on a successful install. **Still not done:**
+  `ModelCatalog`'s checksums were placeholders, not the real published SHA-256 (no network egress
+  available to compute one) — a real fetch today verifies the *mechanism* correctly but will
+  correctly refuse to install real bytes until a real digest is pinned. **Update 2026-09-08 (audit
+  F-008 follow-up):** those checksums are no longer placeholders — the encoder, decoder and VAD
+  entries carry real sha256 values read from published metadata (HuggingFace's Git-LFS pointer
+  text; sherpa-onnx's own release `checksum.txt`), cited in KDoc and `asr-sherpa/README.md`.
+  `tiny.en-tokens.txt` has no published sha256 anywhere found and is now explicitly
+  `ChecksumState.UnknownSideloadOnly` rather than a placeholder: Download is refused for it with no
+  network call, and Side-load installs it via a trust-on-first-use digest computed from the user's
+  own file, never claimed as "checksum verified". See CHANGELOG.md. No real download or on-device
+  install has been run against any of these URLs in any session.
 
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not

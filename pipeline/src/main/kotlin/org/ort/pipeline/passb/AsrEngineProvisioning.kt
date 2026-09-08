@@ -48,9 +48,14 @@ public data class AsrModelFiles(val encoder: File, val decoder: File, val tokens
  * What [RealAsrEngineProvider.provide] found. A caller MUST handle [Unavailable] explicitly and
  * say so (constitution I: uncertainty is content) — never silently substitute a different engine
  * for the one that was supposed to run.
+ *
+ * [Available.provider] is the execution provider [engine] actually runs on (audit F-013,
+ * constitution VI: "provider is part of provenance") — read from the real [SherpaOnnxSession]
+ * descriptor this class builds, never a literal guessed downstream of here.
  */
 public sealed interface AsrEngineAvailability {
-    public data class Available(val engine: AsrEngine, val modelRef: AssetRef) : AsrEngineAvailability
+    public data class Available(val engine: AsrEngine, val modelRef: AssetRef, val provider: String) :
+        AsrEngineAvailability
     public data class Unavailable(val reason: String) : AsrEngineAvailability
 }
 
@@ -73,7 +78,9 @@ public class RealAsrEngineProvider(private val filesDir: File) {
         val modelRef = AssetRef(AsrModelLocator.MODEL_ID, "1")
         return try {
             val decoder = RealSherpaDecoder(files.encoder.path, files.decoder.path, files.tokens.path)
-            AsrEngineAvailability.Available(SherpaAsrEngine(SherpaOnnxSession(modelRef, decoder), decoder), modelRef)
+            val session = SherpaOnnxSession(modelRef, decoder)
+            val provider = session.descriptor.providerBinaries.sorted().joinToString(",")
+            AsrEngineAvailability.Available(SherpaAsrEngine(session, decoder), modelRef, provider)
         } catch (t: Throwable) {
             AsrEngineAvailability.Unavailable("ASR model present but failed to load: ${t.message}")
         }

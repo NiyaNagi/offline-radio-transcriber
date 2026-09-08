@@ -65,4 +65,24 @@ class ColdStartTest {
             if (c.coldStart) assertEquals(0f, c.logOdds, "prior '${prior.name}' cold contribution must be exactly zero")
         }
     }
+
+    @Test
+    fun `AC_57 FR_LEX_23 denying location leaves only the geographic prior cold, everything else unaffected`() {
+        // "Location permission denied" surfaces here as RankingContext.geographicDistanceKm == null
+        // (FR-LEX-22/23's fallback state) — every other prior must still function at full strength.
+        val combiner = PriorCombiner(defaultPriors(PropagationModel()))
+        val withoutLocation = RankingContext(
+            geographicDistanceKm = null,
+            recency = mapOf(candidate.text to RecencyInfo(0)),
+            myStations = setOf(candidate.text),
+        )
+        val ranked = combiner.rank(listOf(candidate), withoutLocation).single()
+
+        assertTrue("geographic" in ranked.coldPriorNames, "geographic prior should be cold with no location")
+        assertEquals(0f, ranked.contribution("geographic")!!.logOdds)
+        // the other configured priors still contributed — full function, only geographic precision lost
+        assertTrue(ranked.contribution("recency")!!.logOdds > 0f)
+        assertTrue(ranked.contribution("my-stations")!!.logOdds > 0f)
+        assertFalse(ranked.contribution("recency")!!.coldStart)
+    }
 }

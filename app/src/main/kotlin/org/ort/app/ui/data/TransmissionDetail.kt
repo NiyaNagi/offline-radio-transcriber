@@ -1,6 +1,7 @@
 package org.ort.app.ui.data
 
 import org.ort.core.Attribution
+import org.ort.core.TransmissionState
 import java.util.Locale
 
 /**
@@ -39,6 +40,25 @@ public data class TransmissionDetail(
     val samplePosition: Long = 0L,
     /** Build-plan P16, FR-UI-8: the resolver's lattice/candidates/per-prior breakdown, if recorded. */
     val inspection: InspectionViewState = InspectionViewState.EMPTY,
+    /**
+     * The real `transmission.processingState` column (FR-RUN-7/FR-RUN-9). Audit F-003: a
+     * `FAILED` or `REJECTED` transmission has [currentTranscriptText] `null` for exactly the
+     * same reason a merely-still-pending `CAPTURED`/`PROCESSING` one does, so the reader needs
+     * this to tell "will never have a transcript" from "does not have one yet". Defaults to
+     * `CAPTURED` only for call sites that do not (yet) carry the real column — never used to
+     * fabricate a terminal state.
+     */
+    val processingState: TransmissionState = TransmissionState.CAPTURED,
+    /**
+     * The real `transmission.rejectionReason` column, non-null only when [processingState] is
+     * `REJECTED` (FR-RUN-9). A `FAILED` transmission's queue-side `lastError` is not carried
+     * here: the reader's read path (`:app`'s [org.ort.app.ui.data.ReaderPolling]) reaches a
+     * transmission by id, not by `(transmissionId, pass)`, and `:data`'s
+     * `WorkQueueDao.findByTransmissionAndPass` needs the pass id to look one up — surfacing it
+     * would need a new `:data` query this fix does not add. The `FAILED` label below is
+     * therefore a state label without the underlying error text; see CHANGELOG for this date.
+     */
+    val rejectionReason: String? = null,
 )
 
 /** One row of the live/log view — everything [org.ort.app.ui.screens.LogScreen] renders. */
@@ -79,16 +99,32 @@ public data class TransmissionDetailViewState(
 public object ReaderTransmissionViewStateMapper {
 
     private const val NOT_YET_TRANSCRIBED = "(captured, not yet transcribed)"
+    private const val TRANSCRIPTION_FAILED = "(transcription failed)"
+    private const val REJECTED_NO_REASON = "(rejected — no reason recorded)"
 
     public fun listEntry(detail: TransmissionDetail): TransmissionListEntryViewState = TransmissionListEntryViewState(
         id = detail.id,
         timeLabel = timeLabel(detail.startedAtUtcMillis),
         frequencyLabel = frequencyLabel(detail.frequencyHz),
-        transcriptText = detail.currentTranscriptText ?: NOT_YET_TRANSCRIBED,
+        transcriptText = transcriptLabel(detail),
         attribution = detail.attribution,
         revisionNote = revisionNote(detail.supersededTranscriptTexts.size),
         signalLabel = signalLabel(detail.signalStrength),
     )
+
+    /**
+     * FR-RUN-9 (audit F-003): a transcript exists, or it doesn't for one of three genuinely
+     * different reasons — still pending, permanently failed, or correctly rejected — and each
+     * MUST read differently (constitution I, VII's text-not-colour accessibility floor).
+     */
+    private fun transcriptLabel(detail: TransmissionDetail): String {
+        detail.currentTranscriptText?.let { return it }
+        return when (detail.processingState) {
+            TransmissionState.FAILED -> TRANSCRIPTION_FAILED
+            TransmissionState.REJECTED -> detail.rejectionReason?.let { "(rejected: $it)" } ?: REJECTED_NO_REASON
+            TransmissionState.CAPTURED, TransmissionState.PROCESSING, TransmissionState.COMPLETE -> NOT_YET_TRANSCRIBED
+        }
+    }
 
     /** Samples per millisecond at the capture rate every retained transmission is stored at (technical design §5). */
     private const val SAMPLES_PER_MS = 16L
@@ -100,7 +136,7 @@ public object ReaderTransmissionViewStateMapper {
         durationLabel = "%.1fs".format(Locale.ROOT, detail.durationMs / 1000.0),
         signalLabel = signalLabel(detail.signalStrength),
         attribution = detail.attribution,
-        transcriptText = detail.currentTranscriptText ?: NOT_YET_TRANSCRIBED,
+        transcriptText = transcriptLabel(detail),
         revisionHistory = detail.supersededTranscriptTexts,
         hasAudio = detail.hasAudio,
         inspection = detail.inspection,

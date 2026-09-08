@@ -1,6 +1,9 @@
 package org.ort.capture.android
 
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -61,23 +64,26 @@ class AudioRecordSourceTest {
     }
 
     @Test
-    @Requirement("AC-97", "FR-CAP-2a")
+    @Requirement("AC-97", "FR-CAP-2a", "FR-CAP-1")
     fun `AC_97 a 48kHz device records the resampler identity used to reach 16kHz`() {
         val io = FakeAudioIo(deviceSampleRate = 48_000)
         val source = AudioRecordSource(io, selection = usb)
 
         assertEquals(48_000, source.deviceFormat.sampleRate)
         assertEquals(16_000, source.outputFormat.sampleRate)
+        assertEquals(1, source.outputFormat.channels, "capture output is mono PCM (FR-CAP-1)")
         assertTrue(source.resamplerIdentity != null, "a rate-changing device must record which resampler produced it")
     }
 
     @Test
-    @Requirement("AC-97")
+    @Requirement("AC-97", "FR-CAP-1")
     fun `AC_97 a native 16kHz device records no resampler identity`() {
         val io = FakeAudioIo(deviceSampleRate = 16_000)
         val source = AudioRecordSource(io, selection = usb)
 
         assertEquals(null, source.resamplerIdentity)
+        assertEquals(16_000, source.outputFormat.sampleRate)
+        assertEquals(1, source.outputFormat.channels, "capture output is mono PCM (FR-CAP-1)")
     }
 
     @Test
@@ -121,6 +127,52 @@ class AudioRecordSourceTest {
     }
 
     @Test
+    @Requirement("AC-3", "FR-RUN-12")
+    fun `AC_3 a stalled consumer or short read produces an explicit dropped span event rather than silent loss`() =
+        runTest {
+            val io = FakeAudioIo(deviceSampleRate = 16_000)
+            io.enqueueFrames(tone(160))
+            io.forceRoutedDevice(usb)
+            val clock = TestClock()
+            val source = AudioRecordSource(io, selection = usb, clock = clock)
+            val tracker = GapTracker(clock)
+
+            val collected = mutableListOf<CaptureEvent>()
+            val job = this.launch {
+                source.start().collect { ev ->
+                    collected.add(ev)
+                    tracker.onEvent(ev)
+                    if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 1) {
+                        // A slow downstream collector: real time passes while this coroutine is
+                        // suspended here inside `collect`, before the producer loop gets to read
+                        // again — exactly the window in which a real device would silently overrun.
+                        clock.advance(10_000)
+                        io.enqueueFrames(tone(160))
+                    }
+                    if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 2) {
+                        source.stop()
+                    }
+                }
+            }
+            job.join()
+
+            assertTrue(
+                collected.any { it is CaptureEvent.Interrupted && it.cause.startsWith("dropped samples:") },
+                "a stalled consumer must be reported explicitly, never lost silently (constitution IV)",
+            )
+            assertTrue(
+                collected.any { it is CaptureEvent.Resumed },
+                "capture must be reported as resumed, not stuck interrupted",
+            )
+            assertEquals(1, tracker.gaps.size, "the stall must be recorded as exactly one gap")
+            val gap = tracker.gaps.single()
+            assertTrue(
+                gap.endWallMillis - gap.startWallMillis > 0,
+                "the recorded span must reflect the real elapsed time lost, not a zero-length placeholder",
+            )
+        }
+
+    @Test
     @Requirement("AC-49", "FR-RUN-12")
     fun `AC_49 a gap is distinguishable from genuine captured silence`() = runTest {
         // Genuine silence: real Frames events full of zeros, no interruption at all.
@@ -136,5 +188,98 @@ class AudioRecordSourceTest {
         }
 
         assertTrue(tracker.gaps.isEmpty(), "genuine silence that was actually captured must not register as a gap")
+    }
+
+    @Test
+    @Requirement("AC-1", "FR-CAP-5")
+    fun `AC_1 a mid-run disconnection is surfaced immediately and retried with backoff, not ended`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.enqueueFrames(tone(160))
+        io.forceRoutedDevice(usb)
+        val source = AudioRecordSource(io, selection = usb)
+
+        val collected = mutableListOf<CaptureEvent>()
+        val job = this.launch {
+            source.start().collect { ev ->
+                collected.add(ev)
+                if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 1) {
+                    // The adapter is unplugged: the OS reports it as an interruption, and every
+                    // reconnection attempt fails until it is physically plugged back in.
+                    io.openSucceeds = false
+                    io.raiseInterruption("disconnected")
+                }
+                if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 2) {
+                    source.stop()
+                }
+            }
+        }
+
+        // Drive the retry loop's virtual clock explicitly: it must attempt more than once
+        // before giving up, which is what "retry with backoff" means as opposed to a single
+        // failed attempt. 30_001ms comfortably exceeds every step of the backoff ladder
+        // (BackoffLadderTest), so each iteration advances past exactly one scheduled retry.
+        var guard = 0
+        while (io.openCount < 3 && guard < 20) {
+            advanceTimeBy(30_001)
+            runCurrent()
+            guard++
+        }
+        assertTrue(
+            io.openCount >= 3,
+            "must attempt reconnection more than once while the adapter is out (FR-CAP-5) — got ${io.openCount}",
+        )
+        // The adapter is plugged back in; let the next retry succeed and the session finish.
+        io.openSucceeds = true
+        io.enqueueFrames(tone(160))
+        advanceUntilIdle()
+        job.join()
+
+        val interruption = collected.filterIsInstance<CaptureEvent.Interrupted>().single()
+        assertEquals(
+            "disconnected",
+            interruption.cause,
+            "the disconnection must be surfaced with its real cause, not swallowed or generic",
+        )
+        assertTrue(
+            collected.any { it is CaptureEvent.Resumed },
+            "capture must resume once the adapter is reconnected",
+        )
+        assertFalse(
+            collected.any { it is CaptureEvent.Failed },
+            "a disconnection must never end the session outright — it keeps retrying and the session stays open",
+        )
+    }
+
+    @Test
+    @Requirement("FR-RUN-13")
+    fun `FR_RUN_13 a route change mid-session that lands on a mismatch halts exactly as FR-CAP-3`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.enqueueFrames(tone(160))
+        io.forceRoutedDevice(usb) // starts out matching the selection
+        val source = AudioRecordSource(io, selection = usb)
+
+        val collected = mutableListOf<CaptureEvent>()
+        source.start().collect { ev ->
+            collected.add(ev)
+            if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 1) {
+                // Mid-session: the OS silently re-routes — e.g. a headset is attached — after
+                // capture was already under way and verified once.
+                io.forceRoutedDevice(builtIn)
+            }
+        }
+
+        assertTrue(
+            collected.any { it is CaptureEvent.RouteChanged },
+            "a mid-session route change must be detected and re-verified (FR-RUN-13)",
+        )
+        assertTrue(
+            collected.any { it is CaptureEvent.Failed },
+            "a route change landing on a mismatch must halt exactly as FR-CAP-3",
+        )
+        assertEquals(
+            1,
+            collected.count { it is CaptureEvent.Frames },
+            "no frames must be recorded from the mismatched route after the change",
+        )
     }
 }

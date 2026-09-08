@@ -20,8 +20,16 @@ import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
 /**
- * AC-63 / FR-A11Y-2, FR-A11Y-3: the reader survives maximum system font scale without clipping,
- * and every interactive element carries a content description.
+ * AC-63 / FR-A11Y-2, FR-A11Y-3, FR-PLT-6: the reader survives maximum system font scale without
+ * clipping, and every interactive element carries a content description.
+ *
+ * FR-PLT-6's font-scale clause is established by the same evidence as FR-A11Y-3 below: nothing in
+ * `:app` overrides `LocalDensity`'s `fontScale`, so respecting it is a structural property of not
+ * fighting the system setting, and this test is what proves the app does not silently clip when
+ * that setting is honoured. FR-PLT-6's other three clauses — per-app language preference, system
+ * contrast, and reduced motion — are NOT established here, because no code reads any of them: no
+ * per-app language config, no `LocalContrast`/high-contrast handling, no reduced-motion check
+ * anywhere in `:app` (confirmed by search). They are not built, not merely untested.
  */
 @RunWith(RobolectricTestRunner::class)
 class ReaderAccessibilityTest {
@@ -37,7 +45,7 @@ class ReaderAccessibilityTest {
     private val maxFontScale = 2f
 
     @Test
-    fun `AC_63 the status screen renders every field without clipping at maximum font scale`() {
+    fun `AC_63_FR_A11Y_3_FR_PLT_6 the status screen renders every field without clipping at maximum font scale`() {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
                 OrtTheme {
@@ -69,7 +77,7 @@ class ReaderAccessibilityTest {
     }
 
     @Test
-    fun `AC_63 every interactive element in the nav host carries a content description`() {
+    fun `AC_63_FR_A11Y_2 every interactive element in the nav host carries a content description`() {
         composeTestRule.setContent {
             OrtTheme {
                 OrtNavHost(sessionId = null)

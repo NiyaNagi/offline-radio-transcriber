@@ -14,6 +14,15 @@ This module is the declared channel technical design §16.3 requires: a `NetCapa
 gates every entry point, and only `:app`'s UI (a later, tiny follow-up commit) can construct one
 from a real user action.
 
+**The `android.permission.INTERNET` grant lives in exactly this manifest** (`net/src/main/
+AndroidManifest.xml`, audit F-008). Constitution V names the user-initiated model download as
+one of exactly two declared outbound channels; without the permission here, `ModelAcquisition.
+fetch()` fails at runtime with a `SecurityException` no matter what call site `:app` builds. The
+root `platformGuards` Gradle task enforces both directions structurally: it fails the build if
+any *other* module's manifest declares `INTERNET`, and — since F-008 — it also fails the build if
+`:net`'s own manifest does not. `NetManifestPermissionTest` in this module asserts the same thing
+directly against the manifests on disk, independent of the build script.
+
 ## What is here
 
 - `HttpRangeClient` — the one interface through which this module makes a network call.
@@ -47,11 +56,20 @@ constraint to prefer the JDK client unless there is a concrete reason not to.
   `FakeHttpRangeClient`. The resumability test genuinely proves the byte offset requested on
   retry matches the partial file's own size, and the checksum-mismatch test genuinely proves
   nothing lands at the destination or survives as a resumable partial.
-- `RealHttpRangeClient` itself (the actual `HttpURLConnection`/`Range`-header wiring) is **not**
-  exercised by an automated test in this change — a loopback `com.sun.net.httpserver.HttpServer`
-  was tried and rejected because `jdk.httpserver` is not on this Android-library module's unit
-  test compile classpath (JPMS module visibility), and adding a real external network call was
-  never on the table. Its correctness rests on the JDK's own documented `HttpURLConnection`
-  contract and manual code review, not a passing test — noted here rather than left silent.
+- `RealHttpRangeClient` itself (the actual `HttpURLConnection`/`Range`-header wiring) **is**
+  exercised by `RealHttpRangeClientTest` (audit F-024), against `real/LoopbackHttpFixture` — a
+  minimal `java.net.ServerSocket`-based HTTP/1.1 fixture, not `com.sun.net.httpserver.HttpServer`
+  (still rejected for the JPMS reason above: `jdk.httpserver` is not on this Android-library
+  module's unit test compile classpath). The fixture binds only to `127.0.0.1` on an ephemeral
+  port. It covers a full fetch, an honoured `Range` request receiving only the tail, a non-2xx
+  status surfacing as `HttpRangeResult.Failure` rather than a thrown exception, and a connection
+  that closes mid-body. The last case caught a real bug: `HttpURLConnection` does **not** throw
+  when the peer closes the socket before delivering as many bytes as its own `Content-Length`
+  promised — a caller reading to EOF got a silently truncated body instead of an exception, which
+  would have made a dropped connection indistinguishable from a genuinely complete-but-corrupt
+  download and defeated `FR-AST-3` resumability (the caller only keeps the partial file for
+  resume when the read throws). Fixed by wrapping the response body in a length-validating
+  stream that throws `IOException` on a short EOF, matching `FakeHttpRangeClient.dropAfterBytes`'s
+  documented contract exactly.
 - No test in this module, or anywhere in the ordinary `./gradlew test` run, makes a real network
   call.

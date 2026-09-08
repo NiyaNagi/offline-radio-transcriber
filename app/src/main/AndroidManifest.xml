@@ -20,19 +20,14 @@
             </intent-filter>
         </activity>
 
-        <!-- The capture status surface (build-plan P8, FR-UI-7). Not yet the app's launcher —
-             MainActivity remains the entry point until the reader UI/navigation host lands. -->
-        <activity android:name=".status.StatusActivity" android:exported="false" />
-
-        <!-- The minimal transmission-list reader surface (build-plan P11, FR-A11Y-1) — the first
-             point an attribution reaches a screen. A full reader (live view, threads, playback,
-             correction) is M5; not yet the app's launcher for the same reason as StatusActivity. -->
-        <activity android:name=".transmissions.TransmissionListActivity" android:exported="false" />
-
-        <!-- The Compose navigation host (build-plan P13, D15): theme, drawer and nav graph made
-             real, with the status and transmission-list surfaces above ported to it as Compose
-             screens. Not yet the app's launcher — the switchover is a deliberate follow-up once
-             P12's concurrent capture-wiring work lands; see ui/ReaderActivity.kt. -->
+        <!-- The Compose navigation host (build-plan P13, D15): theme, drawer and nav graph, with
+             capture status and the transmission list as Compose screens (`StatusScreen`,
+             `TransmissionListScreen`). This is now the app's reader — `MainActivity` launches it
+             directly after starting capture. The v0 plain-`TextView` `StatusActivity` and
+             `TransmissionListActivity` that originally carried these facts (build-plan P8/P11)
+             are deleted (audit F-002): nothing launched them once this nav host took over, and
+             `StatusActivity` carried the second copy of the fabricated-shed-signal bug fixed
+             here. -->
         <activity android:name=".ui.ReaderActivity" android:exported="false" />
     </application>
 </manifest>

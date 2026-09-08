@@ -34,7 +34,7 @@ class RouteVerifierTest {
     }
 
     @Test
-    @Requirement("AC-2")
+    @Requirement("AC-2", "AC-1")
     fun `AC_2 a matching USB route verifies ok and is not labelled built-in`() {
         val verdict = RouteVerifier.verify(selected = usb, routed = usb)
         assertTrue(verdict is RouteVerdict.Ok)

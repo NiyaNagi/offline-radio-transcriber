@@ -7,7 +7,7 @@ import org.ort.core.SampleClock
 class TestClockTest {
 
     @Test
-    fun `AC_91 the test clock advances only when a test advances it`() {
+    fun `FR_TST_2 AC_91 the test clock advances only when a test advances it`() {
         val clock = TestClock(startMonotonicNanos = 0, startWallMillis = 1_000)
         assertEquals(0, clock.monotonicNanos())
         clock.advance(millis = 250)

@@ -1,5 +1,8 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -8,6 +11,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
+import org.ort.app.ui.data.CandidateInspectionViewState
+import org.ort.app.ui.data.InspectionViewState
+import org.ort.app.ui.data.LatticeInspectionViewState
+import org.ort.app.ui.data.PriorContributionViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
@@ -99,6 +106,36 @@ class TransmissionDetailScreenTest {
     }
 
     @Test
+    fun `FR_UI_4 the confidence value is shown as visible text in the header, not only in the content description`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(attribution = Attribution.confirmed("W7NPC", 0.95)),
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.95").assertExists()
+    }
+
+    @Test
+    fun `FR_UI_4 an UNKNOWN attribution shows no confidence number rather than a fabricated one`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(attribution = Attribution.unknown()),
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                )
+            }
+        }
+
+        composeTestRule.onNode(looksLikeAConfidenceNumber).assertDoesNotExist()
+    }
+
+    @Test
     fun `FR_UI_1 a superseded transcript's earlier versions are visible, not hidden`() {
         composeTestRule.setContent {
             OrtTheme {
@@ -111,6 +148,46 @@ class TransmissionDetailScreenTest {
         }
 
         composeTestRule.onNodeWithText("first partial").assertExists()
+    }
+
+    @Test
+    fun `AC_14 the candidate list and phonetic lattice are viewable on the detail screen`() {
+        val inspection = InspectionViewState(
+            lattice = LatticeInspectionViewState(
+                source = "TEXT_DERIVED",
+                modelId = "text-derived-v1",
+                createdAt = 100L,
+            ),
+            candidates = listOf(
+                CandidateInspectionViewState(
+                    callsign = "K7ABC",
+                    rank = 0,
+                    score = 1.5,
+                    grammarValid = true,
+                    databaseHit = true,
+                    selected = true,
+                    priorContributions = listOf(
+                        PriorContributionViewState(priorName = "database", logOdds = 0.8, isColdStart = false),
+                    ),
+                ),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state().copy(inspection = inspection),
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                )
+            }
+        }
+
+        // AC-14 / FR-UI-8: a resolved callsign's candidate list and phonetic lattice must actually
+        // be viewable on this screen, not merely computable by the mapper (InspectionViewStateMapperTest
+        // already proves the mapping; this proves the render).
+        composeTestRule.onNodeWithText("Lattice: TEXT_DERIVED (model text-derived-v1)").assertExists()
+        composeTestRule.onNodeWithText("K7ABC — score 1.50").assertExists()
+        composeTestRule.onNodeWithText("  database: +0.80 (supported)").assertExists()
     }
 
     @Test
@@ -128,5 +205,11 @@ class TransmissionDetailScreenTest {
 
         composeTestRule.onNodeWithContentDescription("Back").performClick()
         assert(backCalled)
+    }
+
+    /** Matches any node whose visible text looks like a two-decimal confidence value (e.g. "0.82"). */
+    private val looksLikeAConfidenceNumber = SemanticsMatcher("has text matching a confidence number (0.NN)") { node ->
+        val texts = node.config.getOrNull(SemanticsProperties.Text).orEmpty()
+        texts.any { Regex("""^\d\.\d\d$""").matches(it.text) }
     }
 }

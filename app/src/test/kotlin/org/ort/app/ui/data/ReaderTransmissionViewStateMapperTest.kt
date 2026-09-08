@@ -1,11 +1,13 @@
 package org.ort.app.ui.data
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.core.Attribution
+import org.ort.core.TransmissionState
 
 /**
  * `TransmissionDetail` -> `TransmissionListEntryViewState`, compose-agnostic (build-plan P14).
@@ -14,6 +16,10 @@ import org.ort.core.Attribution
  * superseded partial is *visibly* superseded rather than silently replaced. The ordering half of
  * FR-UI-1 is established by `ReaderPollingTest` (real DB read order); this class tests the other
  * half — that the mapping itself never hides a supersession or fabricates a transcript.
+ *
+ * FR-RUN-9 (audit F-003): `FAILED` and `REJECTED` are terminal states distinct from "still
+ * pending" and must render distinct text, not just a null-transcript fallback shared with a
+ * transmission that has simply not been processed yet.
  */
 class ReaderTransmissionViewStateMapperTest {
 
@@ -23,6 +29,8 @@ class ReaderTransmissionViewStateMapperTest {
         supersededTranscriptTexts: List<String> = emptyList(),
         attribution: Attribution = Attribution.unknown(),
         hasAudio: Boolean = false,
+        processingState: TransmissionState = TransmissionState.CAPTURED,
+        rejectionReason: String? = null,
     ) = TransmissionDetail(
         id = id,
         startedAtUtcMillis = 1_000L,
@@ -33,6 +41,8 @@ class ReaderTransmissionViewStateMapperTest {
         currentTranscriptText = currentTranscriptText,
         supersededTranscriptTexts = supersededTranscriptTexts,
         hasAudio = hasAudio,
+        processingState = processingState,
+        rejectionReason = rejectionReason,
     )
 
     @Test
@@ -94,5 +104,63 @@ class ReaderTransmissionViewStateMapperTest {
         val view = ReaderTransmissionViewStateMapper.listEntry(detail().copy(frequencyHz = null))
 
         assertEquals("—", view.frequencyLabel)
+    }
+
+    @Test
+    fun `FR_RUN_9 a FAILED transmission renders a failure label distinct from the pending label`() {
+        val view = ReaderTransmissionViewStateMapper.listEntry(
+            detail(currentTranscriptText = null, processingState = TransmissionState.FAILED),
+        )
+
+        val message = "expected a failure label: ${view.transcriptText}"
+        assertTrue(view.transcriptText.contains("fail", ignoreCase = true), message)
+        assertNotEquals("(captured, not yet transcribed)", view.transcriptText)
+    }
+
+    @Test
+    fun `FR_RUN_9 a REJECTED transmission renders its rejection reason, not the pending label`() {
+        val view = ReaderTransmissionViewStateMapper.listEntry(
+            detail(
+                currentTranscriptText = null,
+                processingState = TransmissionState.REJECTED,
+                rejectionReason = "low confidence VAD boundary",
+            ),
+        )
+
+        val message = "expected the reason in: ${view.transcriptText}"
+        assertTrue(view.transcriptText.contains("low confidence VAD boundary"), message)
+        assertNotEquals("(captured, not yet transcribed)", view.transcriptText)
+    }
+
+    @Test
+    fun `FR_RUN_9 a REJECTED transmission with no recorded reason still renders distinctly from pending`() {
+        val view = ReaderTransmissionViewStateMapper.listEntry(
+            detail(currentTranscriptText = null, processingState = TransmissionState.REJECTED, rejectionReason = null),
+        )
+
+        assertNotEquals("(captured, not yet transcribed)", view.transcriptText)
+    }
+
+    @Test
+    fun `FR_RUN_9 a still-pending CAPTURED or PROCESSING transmission keeps the honest pending label`() {
+        val captured = ReaderTransmissionViewStateMapper.listEntry(
+            detail(currentTranscriptText = null, processingState = TransmissionState.CAPTURED),
+        )
+        val processing = ReaderTransmissionViewStateMapper.listEntry(
+            detail(currentTranscriptText = null, processingState = TransmissionState.PROCESSING),
+        )
+
+        assertEquals("(captured, not yet transcribed)", captured.transcriptText)
+        assertEquals("(captured, not yet transcribed)", processing.transcriptText)
+    }
+
+    @Test
+    fun `FR_RUN_9 the detail view renders the same failure label as the list entry`() {
+        val view = ReaderTransmissionViewStateMapper.detailView(
+            detail(currentTranscriptText = null, processingState = TransmissionState.FAILED),
+        )
+
+        val message = "expected a failure label: ${view.transcriptText}"
+        assertTrue(view.transcriptText.contains("fail", ignoreCase = true), message)
     }
 }

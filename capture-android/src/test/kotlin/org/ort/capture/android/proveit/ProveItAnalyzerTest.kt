@@ -12,7 +12,7 @@ class ProveItAnalyzerTest {
     private fun beat(wallMillis: Long) = HeartbeatRecord("s1", wallMillis * 1_000_000, wallMillis, wallMillis / 62)
 
     @Test
-    @Requirement("AC-64")
+    @Requirement("AC-64", "FR-SVC-5c")
     fun `AC_64 continuous heartbeats over 30 minutes predict an 8-hour survival`() {
         val heartbeats = (0..60).map { beat(it * 30_000L) } // one every 30s for 30 minutes
         val report = ProveItAnalyzer(expectedIntervalMillis = 30_000).analyze(
@@ -25,7 +25,7 @@ class ProveItAnalyzerTest {
     }
 
     @Test
-    @Requirement("AC-64")
+    @Requirement("AC-64", "FR-SVC-5c")
     fun `AC_64 a heartbeat gap during the 30-minute run predicts against 8-hour survival`() {
         val heartbeats = listOf(beat(0), beat(30_000), beat(300_000)) // a 4.5-minute silent gap
         val report = ProveItAnalyzer(expectedIntervalMillis = 30_000).analyze(
@@ -38,7 +38,7 @@ class ProveItAnalyzerTest {
     }
 
     @Test
-    @Requirement("AC-64")
+    @Requirement("AC-64", "FR-SVC-5c")
     fun `AC_64 a process restart during the 30-minute run predicts against 8-hour survival`() {
         val heartbeats = listOf(beat(0), beat(30_000))
         val report = ProveItAnalyzer(expectedIntervalMillis = 30_000).analyze(

@@ -14,25 +14,29 @@ import org.ort.core.TransmissionId
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureStatusRepository
+import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.capture.VadAvailability
 import org.ort.pipeline.passb.LexiconLookup
 import org.ort.pipeline.passb.LexiconMatch
 import org.ort.pipeline.passb.RealLexiconLookup
+import org.ort.pipeline.shed.FakeShedSignals
 import org.ort.pipeline.shed.ShedController
-import org.ort.pipeline.shed.ShedSignals
 import java.io.File
+import java.time.ZoneId
 
 /**
- * The same v0 smoke-test data path [org.ort.app.status.StatusActivity] and
- * [org.ort.app.transmissions.TransmissionListActivity] poll (build-plan P8/P11) — reused here,
- * not reinvented, so the new Compose screens (build-plan P13) show the identical facts the plain-
- * view surfaces already show ("no behaviour change"). Those two Activities are owned by a
- * concurrent session (P12) and are left untouched; this is a new, independent read path over the
- * same repository types.
+ * The read path build-plan P8/P11's original plain-view smoke-test Activities used to poll
+ * (`StatusActivity`, `TransmissionListActivity`) — both since deleted (audit F-002: they were the
+ * second copy of the fabricated-shed-signal bug fixed here, and nothing launched them once
+ * `ReaderActivity`/`OrtNavHost` became the app's real reader in build-plan P13/P14) — reused here
+ * rather than reinvented, so the Compose screens show the identical facts the plain-view surfaces
+ * used to show ("no behaviour change").
  *
  * A real reader (M5, P14 on) replaces polling with a `Flow` observed straight from `:data` and
- * `:pipeline`; this stays a poll for the same reason the Activities it mirrors do — it is not
- * this prompt's job to change that wiring, only to prove Compose can render what it produces.
+ * `:pipeline`; this stays a poll for now — it is not this prompt's job to change that wiring, only
+ * to prove Compose can render what it produces.
  */
 public object ReaderPolling {
 
@@ -56,7 +60,26 @@ public object ReaderPolling {
             gapCount = gaps,
             isIgnoringBatteryOptimizationsDiagnosticOnly = pm.isIgnoringBatteryOptimizations(context.packageName),
         )
-        val base = StatusViewStateMapper.from(status)
+        // FR-UI-7 / audit F-004: read the real, process-wide ASR/VAD availability the capture
+        // service set (or has not set yet — `AsrAvailability.state`/`VadAvailability.state`
+        // default to their own honest "not started"/fallback states, never a healthy default).
+        //
+        // FR-RUN-5 / audit F-002: the shed level/backlog CaptureStatusRepository.current() just
+        // computed above are discarded — they came from the inert, never-ticked `ShedController`
+        // `statusRepository` constructs purely to satisfy its constructor (see that function's
+        // doc comment). The real reading lives in `ShedStatus`, published by `RealCaptureService`
+        // (audit F-007) every ~10 s once capture actually starts. `CaptureState` is still `Idle`
+        // before any session in this process has started capturing — the shed monitor coroutine
+        // cannot have sampled anything yet either, so that is exactly when "not measured" (not a
+        // fabricated `0`) is the honest thing to show.
+        val shedMeasured = CaptureState.state != CaptureState.State.Idle
+        val base = StatusViewStateMapper.from(
+            status,
+            AsrAvailability.state,
+            VadAvailability.state,
+            shedLevel = if (shedMeasured) ShedStatus.currentLevel else null,
+            backlog = if (shedMeasured) ShedStatus.backlog else null,
+        )
         val failure = CaptureState.failureReason
         return if (failure != null) base.copy(stateLabel = "${base.stateLabel} — $failure") else base
     }
@@ -120,6 +143,8 @@ public object ReaderPolling {
             sessionId = entity.sessionId,
             samplePosition = entity.samplePosition,
             inspection = inspection,
+            processingState = entity.processingState,
+            rejectionReason = entity.rejectionReason,
         )
     }
 
@@ -206,9 +231,12 @@ public object ReaderPolling {
         val db = OrtDatabase.create(context.applicationContext)
         val entities = db.activityDao().transmissionsForStation(stationId)
         val details = entities.map { detailFrom(context, db, it) }
-        val pattern = activityPatternForEverySession(db, entities.map { it.startedAtUtc }, nowMillis)
+        val timestamps = entities.map { it.startedAtUtc }
+        val pattern = activityPatternForEverySession(db, timestamps, nowMillis)
+        val dayOfWeekPattern = dayOfWeekPatternForEverySession(db, timestamps, nowMillis)
+        val weekOverWeek = weekOverWeekComparisonForEverySession(db, timestamps, nowMillis)
         val label = db.catalogDao().getStation(stationId)?.callsign ?: stationId
-        return StationViewMapper.detail(stationId, label, details, pattern)
+        return StationViewMapper.detail(stationId, label, details, pattern, dayOfWeekPattern, weekOverWeek)
     }
 
     /** Everything heard on [frequencyHz], across every session (FR-UI-10), plus its activity pattern (FR-UI-11). */
@@ -216,8 +244,11 @@ public object ReaderPolling {
         val db = OrtDatabase.create(context.applicationContext)
         val entities = db.activityDao().transmissionsForFrequency(frequencyHz)
         val details = entities.map { detailFrom(context, db, it) }
-        val pattern = activityPatternForEverySession(db, entities.map { it.startedAtUtc }, nowMillis)
-        return FrequencyViewMapper.detail(frequencyHz, details, pattern)
+        val timestamps = entities.map { it.startedAtUtc }
+        val pattern = activityPatternForEverySession(db, timestamps, nowMillis)
+        val dayOfWeekPattern = dayOfWeekPatternForEverySession(db, timestamps, nowMillis)
+        val weekOverWeek = weekOverWeekComparisonForEverySession(db, timestamps, nowMillis)
+        return FrequencyViewMapper.detail(frequencyHz, details, pattern, dayOfWeekPattern, weekOverWeek)
     }
 
     /**
@@ -234,32 +265,57 @@ public object ReaderPolling {
         db: OrtDatabase,
         matchingTimestamps: List<Long>,
         nowMillis: Long,
-    ): List<HourActivityBucket> {
-        val sessions = db.sessionDao().listAll().map { session ->
+    ): List<HourActivityBucket> =
+        ActivityPatternMapper.buildPattern(everySessionWindow(db), matchingTimestamps, nowMillis)
+
+    /**
+     * The day-of-week half of FR-UI-11 (audit F-019) — same every-session windows as
+     * [activityPatternForEverySession], bucketed by calendar day in the device's own zone (F-001:
+     * real wall-clock timestamps, never a sample position).
+     */
+    private suspend fun dayOfWeekPatternForEverySession(
+        db: OrtDatabase,
+        matchingTimestamps: List<Long>,
+        nowMillis: Long,
+    ): List<DayOfWeekActivityBucket> = ActivityPatternMapper.buildDayOfWeekPattern(
+        everySessionWindow(db),
+        matchingTimestamps,
+        nowMillis,
+        ZoneId.systemDefault(),
+    )
+
+    /** FR-UI-11's "how that has changed" half (audit F-019). */
+    private suspend fun weekOverWeekComparisonForEverySession(
+        db: OrtDatabase,
+        matchingTimestamps: List<Long>,
+        nowMillis: Long,
+    ): List<WeekOverWeekBucket> = ActivityPatternMapper.buildWeekOverWeekComparison(
+        everySessionWindow(db),
+        matchingTimestamps,
+        nowMillis,
+        ZoneId.systemDefault(),
+    )
+
+    private suspend fun everySessionWindow(db: OrtDatabase): List<SessionWindow> =
+        db.sessionDao().listAll().map { session ->
             val gaps = db.captureGapDao().listBySession(session.id).map { gap ->
                 GapWindow(startedAt = gap.startedAt, endedAt = gap.endedAt)
             }
             SessionWindow(startedAtUtc = session.startedAt, endedAtUtc = session.endedAt, gaps = gaps)
         }
-        return ActivityPatternMapper.buildPattern(sessions, matchingTimestamps, nowMillis)
-    }
 
     private fun sourceId(entity: TransmissionEntity): TransmissionId? =
         entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }
 
     private fun statusRepository(context: Context): CaptureStatusRepository {
         val heartbeatStore = FileHeartbeatStore(File(context.filesDir, "heartbeat.txt"))
-        // Same neutral, always-nominal shed signals as the v0 Activities — no real shed telemetry
-        // is wired for this smoke path (see StatusActivity's identical comment).
-        val shedController = ShedController(
-            object : ShedSignals {
-                override fun batteryPercent(): Int = 100
-                override fun isCharging(): Boolean = true
-                override fun queueBacklog(): Int = 0
-                override fun freeStorageBytes(): Long = Long.MAX_VALUE
-            },
-            SystemClock,
-        )
+        // audit F-002: `CaptureStatusRepository`'s constructor requires a `ShedController`, but
+        // its output (`CaptureStatus.shedLevel`) is never read any more — `currentStatus` above
+        // reads the real level/backlog from `ShedStatus` instead. Rather than a second bespoke
+        // always-nominal fake object (the bug this fix removes), this reuses `:pipeline`'s own
+        // `FakeShedSignals` purely to satisfy the constructor; nothing sampled from it is ever
+        // shown to a user.
+        val shedController = ShedController(FakeShedSignals(), SystemClock)
         return CaptureStatusRepository(heartbeatStore, shedController, SystemClock)
     }
 }

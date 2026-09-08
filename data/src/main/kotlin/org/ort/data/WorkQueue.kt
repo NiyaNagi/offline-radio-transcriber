@@ -144,6 +144,34 @@ public class WorkQueue(
         return outcome
     }
 
+    /**
+     * FR-RUN-9 / FR-REP-8: gives previously exhausted `FAILED` items a fresh run — e.g. once an
+     * ASR model is installed after transmissions drained against `UnavailableAsrEngine` and hit
+     * [maxAttempts] with nothing to run against (F-016). Without this, a transmission captured
+     * before a model exists ends `FAILED` and stays so forever, which constitution III forbids.
+     *
+     * Matches every `FAILED` item, optionally narrowed to one [pass] and/or errors starting with
+     * [lastErrorPrefix]. Each match returns to `READY` with `attemptCount` reset to 0 (its
+     * previous [org.ort.data.entity.WorkQueueItemEntity.lastError] is left in place — reachable,
+     * not erased, until a fresh failure overwrites it). The transmission follows the state
+     * machine's documented reprocess path, `FAILED` → `PROCESSING`
+     * ([org.ort.core.TransmissionState]), via the same [TransmissionDao.canTransition] guard
+     * [completePass] and [failPass] use, so a sibling pass that already moved the transmission on
+     * is left alone rather than clobbered.
+     *
+     * Returns the number of items requeued.
+     */
+    public suspend fun requeueFailed(pass: PassId? = null, lastErrorPrefix: String? = null): Int = db.withTransaction {
+        val failed = queueDao.selectFailed(pass?.name, lastErrorPrefix)
+        for (item in failed) {
+            queueDao.requeueToReady(item.id)
+            if (transmissionDao.canTransition(item.transmissionId, TransmissionState.PROCESSING)) {
+                transmissionDao.requireLegalTransition(item.transmissionId, TransmissionState.PROCESSING)
+            }
+        }
+        failed.size
+    }
+
     public companion object {
         public const val DEFAULT_MAX_ATTEMPTS: Int = 5
     }

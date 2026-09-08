@@ -28,7 +28,7 @@ public class ReconciliationTest {
     }
 
     @Test
-    @Requirement("AC-54")
+    @Requirement("AC-54", "FR-AST-8")
     public fun reconciliation_reports_an_orphaned_file_and_a_dangling_row_and_deletes_neither(): Unit = runTest {
         db.sessionDao().insert(TestFixtures.session("SESSION01"))
 

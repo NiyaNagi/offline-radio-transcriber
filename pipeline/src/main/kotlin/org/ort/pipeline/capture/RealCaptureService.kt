@@ -13,10 +13,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.ort.capture.android.AndroidAudioIo
+import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.AudioIo
 import org.ort.capture.android.AudioRecordSource
+import org.ort.capture.android.GapRecord
+import org.ort.capture.android.GapTracker
 import org.ort.capture.android.codec.DeflatePredictiveCodec
 import org.ort.capture.android.codec.FlacStore
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
@@ -25,19 +30,26 @@ import org.ort.capture.android.service.CaptureNotificationBuilder
 import org.ort.captureapi.CaptureEvent
 import org.ort.core.AttributionState
 import org.ort.core.PassId
+import org.ort.core.SampleClock
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
+import org.ort.data.dao.WorkQueueDao
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureProcessingLoop
+import org.ort.pipeline.GapPersister
 import org.ort.pipeline.PassDrainRunner
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
 import org.ort.pipeline.passb.RealAsrEngineProvider
 import org.ort.pipeline.passb.UnavailableAsrEngine
+import org.ort.pipeline.shed.AndroidShedSignals
+import org.ort.pipeline.shed.ShedController
+import org.ort.pipeline.shed.ShedEventPersister
+import org.ort.pipeline.shed.ShedSignals
 import org.ort.segment.FrameSpec
 import org.ort.segment.SegmentConfig
 import org.ort.segment.SegmentId
@@ -75,13 +87,44 @@ import java.io.RandomAccessFile
  */
 public class RealCaptureService : Service() {
 
+    /**
+     * audit F-011: the seam that lets a test start this real [Service] under Robolectric's
+     * `ServiceController` and still substitute fakes for the four genuinely-Android/IO-bound
+     * collaborators [startCapture] used to construct directly — [OrtDatabase], the
+     * [org.ort.capture.android.AudioIo] + selected device pair, the [AsrEngineAvailability]
+     * lookup and [org.ort.pipeline.shed.ShedSignals]. Deliberately a plain settable field, not
+     * Hilt (see the finding): a test sets it after `onCreate()` (which never touches it) and
+     * before delivering the start intent that calls [startCapture]. Every default here is the
+     * exact real construction this class already did — production behaviour is unchanged.
+     */
+    internal var dependencies: Dependencies = Dependencies()
+
+    /** See [dependencies]'s kdoc. */
+    internal data class Dependencies(
+        val database: (android.content.Context) -> OrtDatabase = { OrtDatabase.create(it) },
+        val audioIo: (android.content.Context) -> Pair<AudioIo, AudioDeviceDescriptor>? = { ctx ->
+            val io = AndroidAudioIo(ctx)
+            io.defaultInputDevice()?.let { device -> io to device }
+        },
+        val asrEngine: (File) -> AsrEngineAvailability = { RealAsrEngineProvider(it).provide() },
+        val shedSignals: (android.content.Context, WorkQueueDao, File) -> ShedSignals =
+            { ctx, dao, dir -> AndroidShedSignals(ctx, dao, dir) },
+    )
+
     private var wakeLock: PowerManager.WakeLock? = null
     private var source: AudioRecordSource? = null
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private var sessionId: String = ""
     private var transmissionCount = 0
     private var startedAtWallMillis = 0L
+    private var startedAtMonotonicNanos = 0L
+    private var startedAtUtcOffsetMinutes = 0
     private lateinit var heartbeatStore: FileHeartbeatStore
+
+    // audit F-005: the only way onHeartbeat() can report the real sample position instead of a
+    // fabricated 0L -- the segmenter is the one thing in this class that knows how much audio has
+    // actually been fed to it (Segmenter.position(), unchanged in :segment).
+    private var segmenter: Segmenter? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -106,7 +149,12 @@ public class RealCaptureService : Service() {
         if (source != null) return START_STICKY
         sessionId = intent?.getStringExtra(EXTRA_SESSION_ID) ?: Ulid.generate().value
         wakeLock?.let { if (!it.isHeld) it.acquire(WAKE_LOCK_TIMEOUT_MILLIS) }
+        // Anchored together, once, at session start (FR-RUN-15/16): every transmission's
+        // timestamps are derived from this anchor plus its sample position, never from a fresh
+        // wall-clock read at persist time (constitution I).
         startedAtWallMillis = SystemClock.wallMillis()
+        startedAtMonotonicNanos = SystemClock.monotonicNanos()
+        startedAtUtcOffsetMinutes = SystemClock.utcOffsetMinutes()
         startForeground(NOTIFICATION_ID, notification(0))
         startCapture()
         return START_STICKY
@@ -120,13 +168,11 @@ public class RealCaptureService : Service() {
     }
 
     private fun startCapture() {
-        val db = OrtDatabase.create(applicationContext)
+        val db = dependencies.database(applicationContext)
         val queue = WorkQueue(db, SystemClock)
-        val io = AndroidAudioIo(applicationContext)
         // A real enumerated device — never a fabricated descriptor, which RouteVerifier would
         // (correctly) reject on the first read, halting capture. See defaultInputDevice()'s kdoc.
-        val device = io.defaultInputDevice()
-        if (device == null) {
+        val (io, device) = dependencies.audioIo(applicationContext) ?: run {
             CaptureState.failed("no audio input device is available")
             updateNotification("Failed: no audio input device")
             return
@@ -135,6 +181,32 @@ public class RealCaptureService : Service() {
         val audioSource = AudioRecordSource(io, device)
         source = audioSource
         CaptureState.capturing(sessionId)
+
+        // audit F-028: before this, nothing in the running service constructed a GapTracker or a
+        // GapPersister -- AudioRecordSource emitted Interrupted/Resumed (and, after F-010, a
+        // dropped-span cause) but no one joined them to CaptureGapDao, so captureGapDao was always
+        // empty in production and P17's not-listening distinction (FR-UI-12) could never show a
+        // real gap (FR-RUN-12, AC-48; constitution IV).
+        val gapPersister = GapPersister(db.captureGapDao(), SystemClock)
+        val gapRelay = CaptureGapRelay(GapTracker(SystemClock)) { gap -> gapPersister.persist(sessionId, gap) }
+
+        // audit F-007: before this, nothing in the running service ever constructed a
+        // ShedController against a real ShedSignals -- it was only ever built (against
+        // FakeShedSignals) for :app's status display (F-002), so FR-RUN-3's shed order could
+        // never actually trigger and a full disk was discovered only when a write threw. This
+        // ticks a real ShedController every SHED_SAMPLE_INTERVAL_MILLIS, persists each level
+        // transition (FR-RUN-5) and republishes level+backlog through ShedStatus for :app to
+        // read; a free-storage floor breach stops capture loudly rather than letting a write fail
+        // silently (FR-STO-4, FR-RUN-6; constitution IV).
+        val shedSignals = dependencies.shedSignals(applicationContext, db.workQueueDao(), filesDir)
+        val shedController = ShedController(shedSignals, SystemClock)
+        val shedRelay = ShedEventRelay(
+            controller = shedController,
+            sessionId = sessionId,
+            persister = ShedEventPersister(db.shedEventDao(), SystemClock),
+            samplePosition = { segmenter?.position() ?: 0L },
+        )
+        scope.launch { runShedMonitor(shedSignals, shedController, shedRelay) }
 
         // The processing loop (build-plan P12, defect 3): drains whatever RealSegmentSink
         // enqueues, independent of the capture flow above -- a stalled or unavailable ASR engine
@@ -158,31 +230,17 @@ public class RealCaptureService : Service() {
                 ),
             )
 
-            val sink = RealSegmentSink(filesDir, sessionId, db, queue) {
-                transmissionCount++
-                onHeartbeat()
-            }
-            // Real Silero VAD when a model is installed, the RMS-energy stand-in otherwise --
-            // never silently one pretending to be the other (build-plan P12; see VadAvailability).
-            val vadResult = RealVadProvider.provide(filesDir)
-            val vadModel = when (vadResult) {
-                is VadProvisionResult.Available -> {
-                    VadAvailability.real()
-                    vadResult.vad
-                }
-                is VadProvisionResult.Unavailable -> {
-                    VadAvailability.stub(vadResult.reason)
-                    EnergyVadModel()
-                }
-            }
-            val vad = SileroVad(vadModel)
-            val segmenter = Segmenter(SegmentConfig(), vad, sink)
+            val builtSegmenter = buildSegmenter(db, queue)
+            segmenter = builtSegmenter
 
             var lastHeartbeatAt = 0L
             audioSource.start().collect { event ->
+                // Fed through unconditionally, ahead of the exhaustive `when` below -- GapTracker
+                // itself ignores every CaptureEvent shape it doesn't care about (audit F-028).
+                gapRelay.onEvent(event)
                 when (event) {
                     is CaptureEvent.Frames -> {
-                        segmenter.onAudio(shortsToFloats(event.pcm))
+                        builtSegmenter.onAudio(shortsToFloats(event.pcm))
                         val now = SystemClock.wallMillis()
                         if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
                             lastHeartbeatAt = now
@@ -212,6 +270,38 @@ public class RealCaptureService : Service() {
     }
 
     /**
+     * FR-RUN-15/16/18: the session's [SampleClock] is anchored once, here, from the same
+     * wall/monotonic/offset triple captured together at session start -- never re-read per
+     * segment. Real Silero VAD when a model is installed, the RMS-energy stand-in otherwise --
+     * never silently one pretending to be the other (build-plan P12; see VadAvailability).
+     */
+    private fun buildSegmenter(db: OrtDatabase, queue: WorkQueue): Segmenter {
+        val segmentConfig = SegmentConfig()
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = startedAtMonotonicNanos,
+            anchorWallMillis = startedAtWallMillis,
+            anchorUtcOffsetMinutes = startedAtUtcOffsetMinutes,
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, segmentConfig) {
+            transmissionCount++
+            onHeartbeat()
+        }
+        val vadResult = RealVadProvider.provide(filesDir)
+        val vadModel = when (vadResult) {
+            is VadProvisionResult.Available -> {
+                VadAvailability.real()
+                vadResult.vad
+            }
+            is VadProvisionResult.Unavailable -> {
+                VadAvailability.stub(vadResult.reason)
+                EnergyVadModel()
+            }
+        }
+        return Segmenter(segmentConfig, SileroVad(vadModel), sink)
+    }
+
+    /**
      * Build-plan P12, defect 3: before this, `PassDrainRunner` (P8), `PassB` (P11) and
      * `RealSherpaDecoder` (P10 follow-up) all existed and none was constructed anywhere in the
      * running app -- a captured, enqueued transmission sat `CAPTURED` forever. [RealAsrEngineProvider]
@@ -220,28 +310,87 @@ public class RealCaptureService : Service() {
      * session's scope (see CHANGELOG). When no model is installed, [AsrAvailability] is set to
      * [AsrAvailability.State.Unavailable] and the queue still drains against [UnavailableAsrEngine]
      * so a rejection/failure reason is recorded honestly rather than nothing happening at all.
+     *
+     * **Audit F-025 (2026-09-07, recorded not fixed):** this loop only exists as long as
+     * [RealCaptureService] does -- it is a coroutine in the service-scoped `scope`, cancelled by
+     * `scope.cancel()` in [onDestroy] alongside everything else. There is no `WorkManager` job or
+     * any other scheduler that resumes draining after the service stops. FR-RUN-2 still holds --
+     * the backlog sits in the durable [WorkQueue] and nothing is lost, process death included --
+     * but a backlog left behind when capture stops waits for the *next* capture session to start
+     * before it drains further, and that wait is currently invisible to the user. Building a
+     * post-capture drain (WorkManager or equivalent) is out of scope here: it is M8 streaming/M10
+     * reprocessing work, not something to bolt on ad hoc from the capture-wiring prompt that owns
+     * this file. See CHANGELOG.md's F-025 entry.
      */
     private suspend fun startProcessingLoop(db: OrtDatabase, queue: WorkQueue) {
-        val availability = RealAsrEngineProvider(filesDir).provide()
-        val (engine, modelRef) = when (availability) {
+        val availability = dependencies.asrEngine(filesDir)
+        val (engine, modelRef, provider) = when (availability) {
             is AsrEngineAvailability.Available -> {
                 AsrAvailability.available(availability.modelRef.canonical)
-                availability.engine to availability.modelRef
+                Triple(availability.engine, availability.modelRef, availability.provider)
             }
             is AsrEngineAvailability.Unavailable -> {
                 AsrAvailability.unavailable(availability.reason)
                 updateNotification("ASR unavailable")
-                UnavailableAsrEngine(availability.reason) to org.ort.core.AssetRef("asr-unavailable", "0")
+                // audit F-013: no engine ran at all here, so the fingerprint's provider must say
+                // so honestly ("none") rather than repeating the real engine's "cpu".
+                Triple(UnavailableAsrEngine(availability.reason), org.ort.core.AssetRef("asr-unavailable", "0"), "none")
             }
         }
-        val pass = PassBFactory.create(filesDir, db, engine, modelRef)
+        val pass = PassBFactory.create(filesDir, db, engine, modelRef, provider)
         CaptureProcessingLoop(PassDrainRunner(queue, runId = sessionId), pass).runForever()
     }
 
+    /**
+     * audit F-007: the loop FR-RUN-3/5/6 needed and never had. Runs for as long as [source] is
+     * set (i.e. capture is actually running for this session) — cancelled either by that guard or
+     * by `scope.cancel()` on service destruction, whichever comes first.
+     *
+     * Order matters within a tick: the backlog is refreshed, then the controller is sampled (so
+     * its shed-level decision sees the fresh count), then any new transitions are persisted and
+     * republished, and only then is the storage floor checked — a floor breach's loud stop should
+     * reflect the same tick's shed level, not a stale one from before this tick ran.
+     */
+    private suspend fun runShedMonitor(signals: ShedSignals, controller: ShedController, relay: ShedEventRelay) {
+        while (source != null) {
+            // refreshBacklog() is AndroidShedSignals's own live-read step (queueBacklog() then
+            // returns a cache); a test's ShedSignals fake exposes queueBacklog() directly with no
+            // refresh needed, and the plain ShedSignals interface (this parameter's type, since
+            // audit F-011) does not declare a refresh step at all.
+            if (signals is AndroidShedSignals) signals.refreshBacklog()
+            controller.sample()
+            relay.drain()
+            ShedStatus.update(controller.currentLevel, signals.queueBacklog())
+
+            if (storageFloorBreached(signals.freeStorageBytes())) {
+                stopForStorageExhaustion()
+                return
+            }
+            delay(SHED_SAMPLE_INTERVAL_MILLIS)
+        }
+    }
+
+    /**
+     * FR-STO-4 / FR-RUN-3 level 5 / constitution IV: "only storage exhaustion stops capture,
+     * loudly". Uses the same failure path a route mismatch already relies on
+     * ([CaptureState.failed] plus a visible notification), then actually stops the audio source
+     * -- stopping capture "loudly" means the surface reads `Failed` with the real reason, never a
+     * write that silently throws later.
+     */
+    private fun stopForStorageExhaustion() {
+        val reason = "storage exhausted: free space below the ${STORAGE_FLOOR_BYTES / (1024 * 1024)} MiB floor"
+        CaptureState.failed(reason)
+        updateNotification("Failed: storage exhausted")
+        source?.stop()
+    }
+
     private fun onHeartbeat() {
-        heartbeatStore.write(
-            HeartbeatRecord(sessionId, SystemClock.monotonicNanos(), SystemClock.wallMillis(), 0L),
-        )
+        // audit F-005: samplePosition used to be a fabricated 0L literal. The segmenter is the
+        // one thing here that knows how much audio has actually been fed to it (Segmenter.position(),
+        // "absolute sample position of the next sample to be fed" -- no :segment change needed). 0L
+        // is honest, not fabricated, in the one case there is genuinely no sample yet: before the
+        // segmenter has been built for this session (the field is only assigned once capture starts).
+        heartbeatStore.write(buildHeartbeatRecord(sessionId) { segmenter?.position() ?: 0L })
         updateNotification("Capturing")
     }
 
@@ -254,6 +403,7 @@ public class RealCaptureService : Service() {
     private fun stopCaptureInternal(markClean: Boolean) {
         source?.stop()
         source = null
+        segmenter = null
         CaptureState.idle()
         if (markClean && sessionId.isNotEmpty()) heartbeatStore.markCleanShutdown(sessionId)
     }
@@ -309,6 +459,91 @@ public class RealCaptureService : Service() {
         private const val HEARTBEAT_INTERVAL_MILLIS: Long = 30_000
         private const val WAKE_LOCK_TIMEOUT_MILLIS: Long = 12 * 60 * 60 * 1000L
         private const val SHORT_MAX: Float = 32_768f
+
+        /** technical design §7.3's 10 s shed-controller tick (audit F-007). */
+        private const val SHED_SAMPLE_INTERVAL_MILLIS: Long = 10_000
+
+        /**
+         * FR-STO-4's storage floor (audit F-007) — deliberately generous, not tuned: this is the
+         * honest "stop before a write throws" line, not the full FR-STO-3 budget/warning system
+         * (still open, F-020/F-021 note it separately). 100 MiB is comfortably above a single
+         * FLAC-encoded transmission (minutes of 16 kHz mono speech, low tens of KB) plus Room's
+         * WAL/journal overhead, so normal operation never brushes it — it only fires when the
+         * device is genuinely, materially out of space, which is exactly when capture must stop
+         * loudly rather than let a write fail silently underneath the segmenter.
+         */
+        internal const val STORAGE_FLOOR_BYTES: Long = 100L * 1024 * 1024
+    }
+}
+
+/**
+ * FR-STO-4: `true` once free storage has dropped to or below [STORAGE_FLOOR_BYTES] (or a caller-
+ * supplied [floorBytes] in tests). A plain function, not a method on [AndroidShedSignals], so it
+ * is testable without a live signal source and so its threshold can be asserted on directly.
+ */
+internal fun storageFloorBreached(freeBytes: Long, floorBytes: Long = RealCaptureService.STORAGE_FLOOR_BYTES): Boolean =
+    freeBytes < floorBytes
+
+/**
+ * audit F-005: the exact seam that used to write a fabricated `samplePosition = 0L` into every
+ * heartbeat. Extracted to a small, non-Android function so it is testable without starting the
+ * whole [RealCaptureService] under Robolectric (no `ServiceController` harness exists for it yet
+ * -- see finding F-011). [samplePosition] is read lazily, at write time, from whatever currently
+ * knows the real value (the session's [Segmenter][org.ort.segment.Segmenter]).
+ */
+internal fun buildHeartbeatRecord(sessionId: String, samplePosition: () -> Long): HeartbeatRecord =
+    HeartbeatRecord(sessionId, SystemClock.monotonicNanos(), SystemClock.wallMillis(), samplePosition())
+
+/**
+ * audit F-028: the seam that joins `:capture-android`'s [GapTracker] output to
+ * [GapPersister][org.ort.pipeline.GapPersister], which nothing in the running service used to
+ * construct -- `captureGapDao` was always empty in production regardless of how faithfully
+ * [GapTracker] itself modelled a gap (FR-RUN-12, FR-UI-12, AC-48). Extracted as a plain,
+ * non-Android class -- same approach F-005 used for [buildHeartbeatRecord] -- so it is testable
+ * without starting the whole [RealCaptureService] under Robolectric (no `ServiceController`
+ * harness exists yet for it; see F-011, still open).
+ *
+ * [tracker] already de-duplicates the two shapes a gap can arrive in (an open/close
+ * `Interrupted`/`Resumed` pair, or a dropped-span `Interrupted` that closes itself immediately --
+ * F-010); this only has to notice when [GapTracker.gaps] has grown and persist what's new, once,
+ * in the order it appeared.
+ */
+internal class CaptureGapRelay(private val tracker: GapTracker, private val persist: suspend (GapRecord) -> Unit) {
+    private var persistedCount = 0
+
+    suspend fun onEvent(event: CaptureEvent) {
+        tracker.onEvent(event)
+        while (persistedCount < tracker.gaps.size) {
+            persist(tracker.gaps[persistedCount])
+            persistedCount++
+        }
+    }
+}
+
+/**
+ * audit F-007: the same shape [CaptureGapRelay] uses, for [ShedController]'s `events` list instead
+ * of [GapTracker]'s `gaps` — nothing in the running service used to construct a real
+ * [ShedController] at all, so this is new ground, not a persistence gap in an otherwise-wired
+ * class. [controller]'s `events` list only grows, one entry per transition; [drain] notices when
+ * it has grown since the last call and persists exactly what's new, once, tracking the level
+ * immediately before each transition itself (the controller only exposes the level *after*).
+ */
+internal class ShedEventRelay(
+    private val controller: ShedController,
+    private val sessionId: String,
+    private val persister: ShedEventPersister,
+    private val samplePosition: () -> Long,
+) {
+    private var persistedCount = 0
+    private var levelBeforeNext = controller.currentLevel
+
+    suspend fun drain() {
+        while (persistedCount < controller.events.size) {
+            val event = controller.events[persistedCount]
+            persister.persist(sessionId, levelBeforeNext, event, samplePosition())
+            levelBeforeNext = event.level
+            persistedCount++
+        }
     }
 }
 
@@ -336,10 +571,17 @@ internal class RealSegmentSink(
     private val sessionId: String,
     private val db: OrtDatabase,
     private val queue: WorkQueue,
+    private val sampleClock: SampleClock,
+    private val segmentConfig: SegmentConfig,
     private val onSegmentPersisted: () -> Unit,
 ) : SegmentSink {
 
     private val flacStore = FlacStore(DeflatePredictiveCodec())
+
+    private companion object {
+        /** FR-SEG-6 / AC-72's `rejected:too_short` tag, as the free-text `rejectionReason` value. */
+        const val REJECTION_REASON_TOO_SHORT = "too_short"
+    }
 
     override fun open(id: SegmentId, startSample: Long): SegmentWriter {
         val staged = File(filesDir, "staging/${sessionId}_${id.index}.pcm")
@@ -363,21 +605,29 @@ internal class RealSegmentSink(
 
             override fun close(record: SegmentRecord): SegmentRecord {
                 raf.close()
-                if (record.outcome != SegmentOutcome.SPEECH) {
-                    staged.delete() // rejected segment: this smoke test keeps SPEECH only, real product retains it
-                    return record
-                }
                 val transmissionId = "$sessionId-${record.id.index}"
+                // FR-RUN-15/16/18: derived from the session anchor plus this segment's sample
+                // position on the sample-accurate timeline -- never a fresh wall-clock read here,
+                // which would silently drift from when the audio actually happened.
+                val timestamps = sampleClock.timestampsAt(record.startSample)
+                // Constitution III "nothing is deleted quietly" / FR-SEG-6 -> AC-72: a too-short
+                // segment is recorded and its audio retained exactly like SPEECH, just marked
+                // REJECTED and never enqueued for Pass B (audit F-006 -- this used to delete the
+                // staged PCM here and return, losing the segment with no trace).
+                val (processingState, rejectionReason) = when (record.outcome) {
+                    SegmentOutcome.SPEECH -> TransmissionState.CAPTURED to null
+                    SegmentOutcome.REJECTED_TOO_SHORT -> TransmissionState.REJECTED to REJECTION_REASON_TOO_SHORT
+                }
                 val entity = TransmissionEntity(
                     id = transmissionId,
                     sessionId = sessionId,
                     threadId = null,
-                    startedAtUtc = 0L,
-                    endedAtUtc = null,
+                    startedAtUtc = timestamps.startedAtUtcMillis,
+                    endedAtUtc = sampleClock.wallMillisAt(record.endSample),
                     durationMs = (record.endSample - record.startSample) * 1000 / FrameSpec.SAMPLE_RATE,
                     audioFormat = "flac/16k/mono",
-                    preRollMs = 1200,
-                    postRollMs = 400,
+                    preRollMs = segmentConfig.preRollMs,
+                    postRollMs = segmentConfig.postRollMs,
                     frequencyHz = null,
                     frequencyProvenance = "unknown",
                     mode = null,
@@ -388,11 +638,11 @@ internal class RealSegmentSink(
                     stationId = null,
                     attributionConfidence = null,
                     attributionSourceTransmissionId = null,
-                    processingState = TransmissionState.CAPTURED,
-                    rejectionReason = null,
+                    processingState = processingState,
+                    rejectionReason = rejectionReason,
                     samplePosition = record.startSample,
-                    monotonicStartNanos = 0L,
-                    utcOffsetMinutes = 0,
+                    monotonicStartNanos = timestamps.monotonicStartNanos,
+                    utcOffsetMinutes = timestamps.utcOffsetMinutes,
                     calibrationId = null,
                     executionProvider = null,
                 )
@@ -403,7 +653,7 @@ internal class RealSegmentSink(
 
                 runBlocking {
                     db.transmissionDao().insert(entity)
-                    queue.enqueue(transmissionId, PassId.B_OFFLINE)
+                    if (record.outcome == SegmentOutcome.SPEECH) queue.enqueue(transmissionId, PassId.B_OFFLINE)
                 }
                 onSegmentPersisted()
                 return record

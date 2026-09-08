@@ -1,1 +1,15 @@
-﻿<manifest />
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Constitution V — "nothing leaves the device except by a declared channel" — names the
+      user-initiated model download as one of exactly two outbound channels, and :net is the
+      only module ModuleGraph/dependencyRules allow to link an HTTP client (technical design
+      §8.4, §16.1/§16.3; FR-ASR-1, FR-AST-2/3). This permission therefore belongs in exactly
+      this manifest: without it ModelAcquisition.fetch() fails at runtime with a
+      SecurityException even once :app's call site exists (audit F-008). PlatformGuardsTask
+      (buildSrc) fails the build if any *other* module's manifest declares it, and now also
+      fails the build if this one does not.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

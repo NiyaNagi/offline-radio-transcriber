@@ -11,6 +11,7 @@ import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.FrequencyDetailViewState
 import org.ort.app.ui.data.FrequencyListEntryViewState
 import org.ort.app.ui.data.TransmissionListEntryViewState
+import org.ort.app.ui.data.dayOfWeekShortLabel
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
@@ -89,5 +90,25 @@ class FrequencyScreenTest {
         composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
 
         composeTestRule.onNodeWithText("No transmissions recorded on this frequency").assertExists()
+    }
+
+    @Test
+    fun `FR_UI_11 frequency detail renders the day-of-week chart with seven labelled buckets`() {
+        val dayOfWeekPattern = ActivityPatternMapper.buildDayOfWeekPattern(emptyList(), emptyList(), 0L)
+        val state = FrequencyDetailViewState(
+            frequencyHz = 146_960_000L,
+            label = "146.960 MHz",
+            transmissionCount = 0,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            dayOfWeekPattern = dayOfWeekPattern,
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithContentDescription("Activity by day of week", substring = true).assertExists()
+        dayOfWeekPattern.forEach { bucket ->
+            composeTestRule.onNodeWithText(dayOfWeekShortLabel(bucket.dayOfWeek)).assertExists()
+        }
     }
 }

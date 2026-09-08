@@ -21,11 +21,11 @@ def test_dev_fold_opens_without_a_flag():
     assert [s.id for s in got] == ["s/d1"]
 
 
-def test_eval_fold_is_refused_without_the_flag():
+def test_FR_TST_7_eval_fold_is_refused_without_the_flag():
     with pytest.raises(EvalFoldSealed):
         load_fold_sessions(_manifest(), "eval")
 
 
-def test_eval_fold_opens_only_with_explicit_opt_in():
+def test_FR_TST_7_eval_fold_opens_only_with_explicit_opt_in():
     got = load_fold_sessions(_manifest(), "eval", allow_eval=True)
     assert [s.id for s in got] == ["s/e1"]

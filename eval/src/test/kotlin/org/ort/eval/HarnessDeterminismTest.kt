@@ -14,7 +14,7 @@ class HarnessDeterminismTest {
         (1..10).map { negative("n$it") }
 
     @Test
-    fun `AC_90 two runs over identical inputs produce byte-identical canonical reports`() {
+    fun `FR_TST_4 AC_90 two runs over identical inputs produce byte-identical canonical reports`() {
         val harness = Harness(bundledGrammar(), bundledCombiner())
         val occurrences = sample()
         val cfg = config()
@@ -24,7 +24,7 @@ class HarnessDeterminismTest {
     }
 
     @Test
-    fun `AC_90 a fresh harness instance over the same corpus and config reproduces the same report`() {
+    fun `FR_TST_4 AC_90 a fresh harness instance over the same corpus and config reproduces the same report`() {
         val occurrences = sample()
         val cfg = config()
         val a = Harness(bundledGrammar(), bundledCombiner()).run(occurrences, occurrences, cfg).canonicalText()

@@ -11,6 +11,7 @@ import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationListEntryViewState
 import org.ort.app.ui.data.TransmissionListEntryViewState
+import org.ort.app.ui.data.dayOfWeekShortLabel
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
@@ -94,5 +95,25 @@ class StationScreenTest {
         composeTestRule.setContent { OrtTheme { StationDetailScreen(state = state, onBack = {}) } }
 
         composeTestRule.onNodeWithText("No transmissions recorded from this station").assertExists()
+    }
+
+    @Test
+    fun `FR_UI_11 station detail renders the day-of-week chart with seven labelled buckets`() {
+        val dayOfWeekPattern = ActivityPatternMapper.buildDayOfWeekPattern(emptyList(), emptyList(), 0L)
+        val state = StationDetailViewState(
+            stationId = "W7NPC",
+            label = "W7NPC",
+            transmissionCount = 0,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            dayOfWeekPattern = dayOfWeekPattern,
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent { OrtTheme { StationDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithContentDescription("Activity by day of week", substring = true).assertExists()
+        dayOfWeekPattern.forEach { bucket ->
+            composeTestRule.onNodeWithText(dayOfWeekShortLabel(bucket.dayOfWeek)).assertExists()
+        }
     }
 }
