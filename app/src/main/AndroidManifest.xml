@@ -9,7 +9,12 @@
     <application
         android:name=".OrtApplication"
         android:allowBackup="false"
-        android:label="Offline Radio Transcriber">
+        android:label="Offline Radio Transcriber"
+        android:theme="@style/Theme.Ort">
+        <!-- R-001/R-006 (ui-conformance-plan WP1): `Theme.Ort` (res/values/themes.xml) replaces the
+             platform `Theme.DeviceDefault` every Activity rendered under before this attribute
+             existed — that default theme carries an ActionBar, which is what R-001 found: a
+             platform header above the Compose one on every screen. -->
 
         <activity
             android:name=".MainActivity"

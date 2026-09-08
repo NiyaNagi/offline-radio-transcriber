@@ -32,6 +32,155 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP1: theme, tokens, manifest, scaffold; themed permission screens)
+
+### (pending) — ui-conformance WP1 · theme, tokens, manifest, scaffold; themed permission screens
+
+**Scope:** `:app` — `AndroidManifest.xml`; new `res/values/themes.xml`, `res/values/colors.xml`;
+`res/values/strings.xml` (setup-screen copy added); `ui/theme/OrtColors.kt`, `ui/theme/OrtType.kt`,
+`ui/theme/Theme.kt` (full token rewrite); `MainActivity.kt` (TextView → `ComponentActivity` +
+Compose, themed permission screens); `ui/ReaderActivity.kt` (edge-to-edge, R-007 fix extracted as
+a pure function). Tests: new `ui/theme/OrtColorsContrastTest.kt`, `ui/theme/OrtTypeTest.kt`,
+`ui/theme/OrtThemeTest.kt`, `MainActivityTest.kt`, `SetupScreenSelectionTest.kt`,
+`ui/ReaderActivityTest.kt`. Also regenerated `results/coverage-matrix.md` (`coverageMatrix`).
+Working from `spec/ui-conformance-plan.md` WP1 and `results/ui-audit/register.md` rows
+R-001/R-002/R-005/R-006/R-007/R-085.
+
+**Requirements/ACs:** R-001, R-002, R-005, R-006, R-007, R-085 (register rows); FR-A11Y-1,
+FR-A11Y-3, FR-A11Y-4, AC-62, AC-63 (contrast and sp-scaling proofs for the full token set); AC-65,
+NFR-8 (battery-exemption flow unchanged); constitution IV "never lies" (R-007's same-process
+session-routing fix).
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) bears on R-005: every new
+  colour is a *computed* sRGB result of its OKLCH triple (Björn Ottosson's published OKLab→linear
+  sRGB matrices), not a hand-picked guess, so the palette is regenerable and its WCAG contrast is
+  a proof (`OrtColorsContrastTest`), not an eyeballed claim. Principle IV bears on R-007: a
+  relaunch over an already-capturing session must not silently poll a session nothing is writing
+  to — fixed, not just verified. Principle II (Test-Backed Change) bears throughout: every fix is
+  TDD'd, and a real test-infrastructure defect found mid-session (below) was root-caused and fixed
+  rather than worked around by weakening a test.
+- **R-001/R-006 — theme.** `res/values/themes.xml`'s `Theme.Ort` (`android:Theme.Material.NoActionBar`
+  parent — no AppCompat dependency in `:app`) replaces the platform `Theme.DeviceDefault` every
+  Activity rendered under before (the ActionBar-above-Compose-header bug the register recorded),
+  applied via `android:theme` on `<application>`. `windowBackground`/status/nav bar colour is
+  `bg_screen` (`res/values/colors.xml`, hand-kept in sync with `OrtColors.bgScreen`);
+  `windowLightStatusBar`/`windowLightNavigationBar` both false (guide §12: no light theme, ever).
+  `OrtTheme` (`Theme.kt`) now wraps content in a tagged `Surface` filling max size on
+  `OrtColors.bgScreen` — the previous version set a `darkColorScheme` with no root `Surface` at
+  all. Both `MainActivity` and `ReaderActivity` call `enableEdgeToEdge()`; the 44dp the boards
+  leave clear for the status bar is `WindowInsets.statusBars`, never a hardcoded dp.
+- **R-005 — tokens.** `OrtColors.kt`: every token in guide §3 (surfaces, lines, all 21 text steps,
+  both accent families with their extras, the `halt/*` red family, the three chart ramps as
+  `List<Color>`) — ~90 named values, each computed from its `oklch(L C H)` rather than
+  hand-picked, with the OKLCH kept in the KDoc beside it. `OrtType.kt`: every row of guide §4 (23
+  named `TextStyle`s) with size/weight/family/tracking/line-height computed from the table (a
+  `-0.022em` tracking at 27px is `27 * -0.022 = -0.594.sp`, the same rule for every row), mapped
+  onto M3 `Typography` so `bodyMedium` is 14sp (`control`) — not the 12.5sp caption it silently
+  was — `bodyLarge` 15, `bodySmall` 12.5, `labelSmall` 11, `titleLarge` 27, `titleMedium` 19. Six
+  legacy names (`background`, `surface`, `surfaceVariant`, `surfaceRaised`, `divider`,
+  `textMedium` in `OrtColors`; `titleLarge`, `callsign`, `body`, `caption` in `OrtType`) are kept
+  exactly as other packages reference them, repointed at the precise token each already described.
+- **R-002/R-085 — `MainActivity`.** Replaced the `TextView` scaffold with `ComponentActivity` +
+  `setContent { OrtTheme { … } }`. The existing tested decision logic (battery-exemption
+  fire-and-forget ordering, `PermissionsFlow.captureIsPermitted` gate) is unchanged. New: three
+  small `internal` composables (`MicrophoneSetupScreen`/`Setup-Mic.dc.html`,
+  `MicrophoneDeniedScreen`/`Setup-Mic-Denied.dc.html`, `NotificationsSetupScreen`/`Setup-Notify.dc.html`),
+  each matching its board's step indicator, copy (moved into `strings.xml`, FR-A11Y-6), and
+  actions. Permission requests now fire only from the screen's own button tap, never as a side
+  effect of computing which screen to show. R-085's real fix: `shouldShowRequestPermissionRationale`
+  alone cannot distinguish "never asked" from "denied twice, permanently" — a `SharedPreferences`
+  flag set the moment the real request fires tells them apart, giving the denied screen a real
+  `Open app settings` / `Check again` path where the old flow stuck on "Requesting microphone
+  access…" forever. `Skip` on the notifications screen persists via the same prefs mechanism,
+  folded into `notificationsGranted` by the caller — `PermissionsFlow.captureIsPermitted`'s own
+  tested contract is untouched.
+- **R-007.** `CaptureState.sessionId`/`isCapturing` is preferred over a stale intent extra in both
+  `MainActivity.startCaptureAndShowStatus` and `ReaderActivity.onCreate` — pulled out of the
+  latter as a pure `resolveSessionId` function for testability, reconciled on top of `main`'s own
+  later F-022 fix (same intent, same mechanism; this entry's version is what ships). Genuine
+  cross-*process*-death session recovery (as opposed to same-process relaunch) is not built
+  anywhere in this codebase and is out of WP1's owned files — flagged, not silently assumed
+  solved.
+- **A real test-infrastructure bug, found and fixed, not worked around.** The first version of
+  `ReaderActivityTest`/`MainActivityTest` built real Activities via bare
+  `Robolectric.buildActivity(...)`. Composing `OrtNavHost` (drawer, scaffold, top bar — a
+  pre-existing, unrelated composable) through that path left a live Compose `Recomposer`
+  registration behind that a full `create→start→resume→pause→stop→destroy` lifecycle did **not**
+  clear under this Robolectric version — confirmed by a controlled A/B: a pristine `git worktree`
+  at this branch's own unmodified base commit ran the whole `:app` suite clean, while this
+  branch's suite deterministically failed one unrelated, pre-existing test
+  (`ActivityPatternChartTest`, owned by a different work package) with
+  `AppNotIdleException: Compose did not get idle... in 60 SECONDS` two files after the leaking one
+  — every time, regardless of worker count. Root cause confirmed by systematically parking test
+  files until the failure disappeared. Fix: `ReaderActivityTest`'s R-001 cases now use
+  `createAndroidComposeRule<ReaderActivity>()` (the same officially-supported entry point
+  `ReaderAccessibilityTest` already uses for `OrtNavHost` itself), which disposes the composition
+  properly; R-007 no longer builds an activity at all, asserting `resolveSessionId` directly.
+  `results/coverage-matrix.md` was regenerated after this fix.
+- **Rebased onto `main` (`6b7dbeb`) from this package's original base (`b082bac`)**, which predated
+  the whole `ui-conformance` program (`spec/ui-conformance-plan.md`, `results/ui-audit/register.md`,
+  `design/design-guide.md` and the canvas did not exist there). Six conflicts:
+  - `AndroidManifest.xml` auto-merged cleanly (`main`'s newer activity list, this package's
+    `android:theme`) — no manual resolution needed.
+  - `MainActivity.kt`/`ReaderActivity.kt`: `main` had independently landed its own fix for the same
+    F-022 finding this package's R-007 addresses. Kept `main`'s doc-comment wording and its exact
+    `startCaptureAndShowStatus`/`RealCaptureService` intent-building code verbatim (including a
+    stale comment about `StatusActivity`/`TransmissionListActivity` still there on `main` — not
+    this package's file to clean up), layering this package's `enableEdgeToEdge()` call and the
+    `resolveSessionId` pure-function extraction (needed for the test-leak fix below) on top.
+  - `MainActivityTest.kt` (add/add): `main` had independently added its own `MainActivityTest.kt`
+    covering the same F-022 finding from `MainActivity`'s side (`FR_UI_7` tests, session-relaunch
+    behaviour). Merged into one file — both suites kept in full, since they test disjoint
+    behaviour (F-022 relaunch-safety vs. R-002/R-085 setup-screen UI), reusing this package's
+    `Robolectric`-permission-shadow helpers (`grant`/`deny` via `ReflectionHelpers`) for `main`'s
+    tests too rather than `main`'s own `shadowOf(Application).grantPermissions(...)`, which does
+    not appear to exist as a public method against this Robolectric version (see this package's
+    own investigation, recorded before the rebase).
+  - `OrtColorsContrastTest.kt` (add/add): `main`'s copy tested the original eight-token palette by
+    its legacy names; this package's copy tests the new precise names R-005 added. Both kept —
+    every legacy name is still an exact alias of a precise one, so `main`'s original assertions
+    still hold unmodified; one identically-named test on both sides was kept once (this package's,
+    against the canonical name — the fact it duplicated is separately proven by
+    `R_005 legacy names still resolve to the same Color as the precise token they alias`).
+  - `results/coverage-matrix.md`: took `main`'s version, then regenerated (`coverageMatrix`) once
+    the rebased build was green — see Verified.
+  - `CHANGELOG.md`: this entry moved above `main`'s WP11a/WP0 entries (this package's commit is
+    newest); no content lost either side.
+  Register rows R-001/R-002/R-005/R-006/R-007/R-085 were re-read from
+  `results/ui-audit/register.md` on the rebased branch itself (no longer a sibling-checkout
+  citation, since the file now genuinely exists here) and this package's fix still matches each,
+  word for word against what each row currently says.
+
+**Verified** (rebased onto `main` at `6b7dbeb`; full gate re-run there, `platformGuards`/
+`coverageMatrixCheck` now exist and both ran):
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 1m 14s`;
+  `dependencyRules: checked 17 modules … OK — every edge is permitted by the design graph.`;
+  `platformGuards: checked 17 modules' external dependencies and 17 manifests — no
+  analytics/telemetry SDK, no HTTP client outside :net, android.permission.INTERNET declared by
+  :net and only :net (FR-OBS-5, NFR-6, AC-59, audit F-008). OK.` 269 test methods passed across
+  the repo in this run, 0 failed.
+- `.\gradlew.bat :app:testDebugUnitTest` (isolated re-run) — `BUILD SUCCESSFUL in 27s`, **269
+  tests, 0 failures**.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL in 13s`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 180 covered -> results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` — `coverageMatrixCheck: up to date (180 covered of 419).`
+  `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- One real defect found and fixed by this re-run, not pre-existing on `main`: the merged
+  `OrtColorsContrastTest.kt` doc comment reused the phrase `` `halt/*` family `` — Kotlin nests
+  block comments, so that literal `/*` opened a second comment the file's own closing `*/`
+  then closed instead of the outer one, silently commenting out everything after it
+  (`ktlintCheck`: "Unclosed comment"). Same class of bug this package already hit once in
+  `MainActivity.kt` before the first commit; fixed the same way (reworded to avoid the substring).
+
+**Left open / not done:**
+- WP9 (register row R-080) replaces the three setup composables in `MainActivity.kt` wholesale
+  with the full 13-board guided sequence on WP2's shared components; they are deliberately small
+  and said so in their own doc comments.
+- No device is available to this session; every proof above is Robolectric/JVM.
+
 ## 2026-09-08 (ui-conformance WP11a)
 
 ### (pending commit) — ui-conformance WP11a · failure signals: thermal, rig, storage forecast, gap causes, notification

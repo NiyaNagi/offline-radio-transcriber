@@ -1,4 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="placeholder_running">Offline Radio Transcriber — scaffold running</string>
+
+    <!-- R-002 (ui-conformance-plan WP1) — Setup-Mic.dc.html (S02). -->
+    <string name="setup_mic_title">Microphone</string>
+    <string name="setup_mic_subtitle">The one permission capture cannot run without</string>
+    <string name="setup_mic_body">The radio\'s audio arrives through the phone\'s audio input, so Android treats it as recording. The app will ask you for microphone access next.</string>
+    <string name="setup_mic_point_1">Audio is stored on this phone, losslessly, and nowhere else.</string>
+    <string name="setup_mic_point_2">The next step verifies the audio is the radio, not this phone\'s own mic. Capture halts if it is not.</string>
+    <string name="setup_mic_point_3">Choose While using the app. \"Only this time\" ends an overnight run at the first restart.</string>
+    <string name="setup_mic_allow">Allow microphone</string>
+
+    <!-- R-085 (ui-conformance-plan WP1) — Setup-Mic-Denied.dc.html (S02b). -->
+    <string name="setup_mic_denied_title">Microphone refused</string>
+    <string name="setup_mic_denied_subtitle">Capture cannot start without it</string>
+    <string name="setup_mic_denied_banner_title">Android will not ask again</string>
+    <string name="setup_mic_denied_banner_body">\"Don\'t allow\" was chosen twice, so the prompt is gone. The permission can only be granted from the system settings now. Nothing else in setup can proceed until it is.</string>
+    <string name="setup_mic_denied_steps_label">In the system settings</string>
+    <string name="setup_mic_denied_step_1">Apps → Offline radio transcriber → Permissions</string>
+    <string name="setup_mic_denied_step_2">Microphone → Allow only while using the app</string>
+    <string name="setup_mic_denied_step_3">Come back — this screen checks again on its own</string>
+    <string name="setup_mic_denied_footer">The microphone is how the radio\'s audio reaches the app. It is never used for anything else, and the next step proves the audio is the radio, not the room.</string>
+    <string name="setup_mic_denied_open_settings">Open app settings</string>
+    <string name="setup_mic_denied_check_again">Check again</string>
+
+    <!-- R-002 (ui-conformance-plan WP1) — Setup-Notify.dc.html (S03). -->
+    <string name="setup_notify_title">Notifications</string>
+    <string name="setup_notify_subtitle">One persistent notification, so you can always see it is running</string>
+    <string name="setup_notify_body">Capture runs as a foreground service. Android requires it to show a notification while it does, and that notification is how you check the state from the lock screen.</string>
+    <string name="setup_notify_preview_app">Offline radio transcriber</string>
+    <string name="setup_notify_preview_now">now</string>
+    <string name="setup_notify_preview_title">Capturing · 6:42 · 412 overs</string>
+    <string name="setup_notify_preview_body">145.230 and 146.960 · tier 3 · 38.2 GB used</string>
+    <string name="setup_notify_preview_open">Open</string>
+    <string name="setup_notify_preview_stop">Stop</string>
+    <string name="setup_notify_footer">You can skip this. Capture still runs, but you will not see it is running without opening the app, and the OS is more likely to end it.</string>
+    <string name="setup_notify_allow">Allow notifications</string>
+    <string name="setup_notify_skip">Skip</string>
+
+    <!-- Shared setup-flow chrome. -->
+    <string name="setup_step_counter">%1$d of %2$d</string>
+    <string name="setup_back">Back</string>
 </resources>
