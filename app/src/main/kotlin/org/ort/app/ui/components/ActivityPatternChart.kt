@@ -288,7 +288,10 @@ private fun DaysAsRowsGrid(hours: List<Int>, byDayHour: Map<Pair<DayOfWeek, Int>
         verticalArrangement = Arrangement.spacedBy(GRID_GAP),
     ) {
         DayOfWeek.entries.forEach { day ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GRID_GAP)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(GRID_GAP),
+            ) {
                 Text(
                     text = dayAbbreviation(day),
                     style = OrtType.axis,
