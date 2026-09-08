@@ -63,6 +63,7 @@ import org.ort.app.ui.data.DetailViewState
 import org.ort.app.ui.data.LabelCertainty
 import org.ort.app.ui.data.LabelOutcome
 import org.ort.app.ui.data.LabelledSample
+import org.ort.app.ui.data.LogItemsMapper
 import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.RankedCandidateViewState
 import org.ort.app.ui.data.RejectedViewState
@@ -346,23 +347,31 @@ private fun FailedPassPartialSection(detail: TransmissionDetailViewState) {
  */
 @Composable
 private fun RejectedHeaderSection(detail: TransmissionDetailViewState, rejected: RejectedViewState) {
-    val reason = rejected.reason
+    // R-331: `Fail-Hallucination.dc.html`'s own title is "REJECTED" alone — never the raw
+    // `"$rule: $detail"` record (`org.ort.pipeline.passb.DataPassBResultSink`'s own write shape).
+    // The human sentence beneath it reuses `LogItemsMapper.whyFor` — the identical mapping WP5's own
+    // `Log-Rejected.dc.html` why-line already uses for the same raw record, rather than a second,
+    // drifting translation of the same six rule tokens. `whyFor` returns `null` for a `null` reason
+    // or one it does not recognise (an unrecognised rule token never gets a guessed category) —
+    // both cases fall back to honest, reason-free prose, never the raw enum in any form.
+    val why = LogItemsMapper.whyFor(rejected.reason)
+    val explanation = when {
+        why != null -> "The segment was kept, marked, and never attributed. $why."
+        rejected.reason == null -> "The segment was kept, marked, and never attributed. No reason was recorded."
+        else -> "The segment was kept, marked, and never attributed."
+    }
     Column(
         modifier = Modifier
             .padding(horizontal = OrtSpacing.lg)
             .testTag("rejected-section"),
     ) {
         Text(
-            text = if (reason != null) "rejected · $reason".uppercase() else "rejected".uppercase(),
+            text = "rejected".uppercase(),
             style = OrtType.callsignTitle.copy(fontStyle = FontStyle.Italic),
             color = OrtColors.textBody,
         )
         Text(
-            text = if (reason != null) {
-                "The segment was kept, marked, and never attributed. $reason"
-            } else {
-                "The segment was kept, marked, and never attributed. No reason was recorded."
-            },
+            text = explanation,
             style = OrtType.subtitle,
             color = OrtColors.textMuted,
             modifier = Modifier.padding(top = OrtSpacing.sm),

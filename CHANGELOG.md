@@ -6967,6 +6967,51 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 9 · R-331: the rejected detail's title reads REJECTED, never the raw rule record
+
+**Scope:** `:app`, this package's own files — `ui/screens/TransmissionDetailScreen.kt` and its
+tests (`TransmissionDetailScreenTest.kt`, `TransmissionDetailContentTest.kt`). Main `fa0a0a4`
+(no merge needed — this worktree was already at or past it).
+
+**Requirements/ACs:** R-331, F04 `Fail-Hallucination.dc.html`, FR-ASR-5.
+
+**Constitution Check.** Principle I: the title's own real fix is "never print the enum" — the raw
+`"$rule: $detail"` record (`org.ort.pipeline.passb.DataPassBResultSink`'s own write shape) is
+machine-internal, not operator prose, and printing it verbatim ("REJECTED · VAD_NO_SPEECH: SQUELCH
+TAIL, 0.4 S") was itself a small honesty defect — showing the *storage* fact rather than
+translating it. Principle VII (no look-alike of a component/mapping that exists): the fix reuses
+`LogItemsMapper.whyFor` — the identical translation `Log-Rejected.dc.html`'s own why-line already
+uses for the same raw record — rather than building a second, drifting translation of the same six
+rejection-rule tokens in this file.
+
+**What changed:**
+
+1. **`RejectedHeaderSection`'s title is now "REJECTED" alone**, matching
+   `Fail-Hallucination.dc.html` exactly — never `"rejected · $reason".uppercase()` (the raw record,
+   uppercased, that the validator's own screenshot named:
+   `overnight/F04-rejected-detail-pass3.png`).
+2. **The explanatory line beneath it now reuses `LogItemsMapper.whyFor(rejected.reason)`** — the
+   same mapping WP5's `Log-Rejected.dc.html` why-line already uses for the identical raw
+   `"$rule: $detail"` record, confirmed shared rather than reimplemented (per the round's own ask:
+   "reuse it if it is shared, otherwise say so" — it is shared, and is reused as-is, `import`ed from
+   `ui/data/LogViewData.kt`'s `LogItemsMapper` object, not copied). `whyFor` returns `null` for a
+   `null` reason or an unrecognised rule token (never a guessed category) — both cases now fall back
+   to reason-free honest prose ("No reason was recorded." / a bare "kept, marked, never attributed"
+   sentence), never the raw enum in any form, closing the gap for an unparseable record too, not
+   only the common one the validator's own screenshot showed.
+3. **Tests, named `R_331_detail_title` per the round's own ask**, plus fixes to the two now-stale
+   pre-existing assertions in `TransmissionDetailScreenTest`/`TransmissionDetailContentTest` that
+   had asserted the *old*, raw-enum title text (both now assert the real operator prose,
+   `"No speech detected, squelch tail, 0.4 s"`, and explicitly assert `"VAD_NO_SPEECH"` never
+   appears anywhere on screen).
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards` (clean), `.\gradlew.bat -p
+buildSrc test` (clean), `python tools\spec-check\spec_check.py` (`spec-check: OK`), `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate, both clean), `.\gradlew.bat
+:app:assembleDebug` (clean). Full `:app:testDebugUnitTest` suite clean.
+
+**Left open:** none new this round. R-321/R-320's own halts (round 8) are unchanged.
+
 ### (pending) — ui-conformance WP6 round 8 · R-323 prior-row reflow; R-321 (halt) investigated and reported, not fixed
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Inspection.kt` and its test

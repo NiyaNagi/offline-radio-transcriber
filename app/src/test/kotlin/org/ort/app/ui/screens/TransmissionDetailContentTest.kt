@@ -597,10 +597,13 @@ class TransmissionDetailContentTest {
                 )
             }
         }
-        composeTestRule.waitUntilTextExists("VAD_NO_SPEECH")
+        composeTestRule.waitUntilTextExists("REJECTED")
 
         composeTestRule.onNodeWithTag("rejected-section").assertExists()
-        composeTestRule.onNodeWithText("VAD_NO_SPEECH: squelch tail, 0.4 s", substring = true).assertExists()
+        // R-331: the operator-prose mapping (`LogItemsMapper.whyFor`), never the raw
+        // "VAD_NO_SPEECH: squelch tail, 0.4 s" record.
+        composeTestRule.onNodeWithText("No speech detected, squelch tail, 0.4 s", substring = true).assertExists()
+        composeTestRule.onNodeWithText("VAD_NO_SPEECH", substring = true).assertDoesNotExist()
         // The retained audio's own waveform still renders — nothing is deleted quietly (constitution III).
         composeTestRule.onNodeWithTag("waveform-card").assertExists()
     }
