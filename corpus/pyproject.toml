@@ -3,7 +3,14 @@ name = "ort-corpus"
 version = "0.1.0"
 description = "Corpus pipeline for the offline-radio-transcriber: acquisition, fold gate, evaluation harness v0 (functional-spec §14A.2/§14A.3, implementation-plan M0)."
 requires-python = ">=3.10"
-dependencies = []
+# numpy is used unconditionally (not lazily, unlike the r1-real extra below) by
+# synth/channel.py, synth/generator.py, synth/tts.py and probes/speaker_separation.py — it
+# belongs in base dependencies, not an optional extra. This was missing until CI on a clean
+# runner caught it (ModuleNotFoundError at test collection): it worked in every local session
+# only because numpy happened to already be installed as a transitive dependency of the r1-real
+# extra's own toolchain (torch etc.), which masked the gap until a machine without that
+# extra installed tried to run the base test suite.
+dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]

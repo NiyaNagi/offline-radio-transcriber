@@ -32,6 +32,32 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (just after midnight — CI catches a real dependency-declaration bug)
+
+### (pending) — Declare numpy as a real corpus dependency (found by CI, not local testing)
+
+**Scope:** `corpus/pyproject.toml` only.
+**Requirements/ACs:** none — dependency hygiene.
+**What changed:** pushing commit `3c5a274` (the smoke-test build + release wiring) triggered
+`ci.yml` on a clean GitHub-hosted runner for the first time in a while, and its `corpus` job
+failed: `ModuleNotFoundError: No module named 'numpy'` collecting
+`test_probe_speaker_separation.py`, `test_synth_channel.py` and `test_synth_generator.py`. P6's
+`synth/channel.py`, `synth/generator.py`, `synth/tts.py` and `probes/speaker_separation.py` all
+import `numpy` unconditionally at module load — not lazily, unlike the `r1-real` extra's
+torch/transformers/etc. — but `pyproject.toml`'s base `dependencies` was `[]`. Every local session
+this repo has seen (including this one) had numpy already present as a transitive dependency of
+the `r1-real` extra's own toolchain (installed while proving the real sherpa-onnx/LoRA path),
+which silently masked the gap. Added `numpy>=1.26` to base `dependencies`.
+**Verified:** built a throwaway venv (`python -m venv`), installed only `corpus[dev]` into it
+(no `r1-real` extra, so no incidental numpy from that path), ran `pytest corpus` inside it —
+70 passed, 1 skipped, matching this repo's normal local result — confirming the fix actually
+closes the gap rather than trusting the diagnosis. Also `python tools/spec-check/spec_check.py`
+(7/7 OK).
+**Left open / not done:** none for this specific bug. Worth noting as a process point: this is
+exactly why CI on a clean runner matters even when every local check passes — a session's own
+machine can accumulate installed packages across unrelated work (here, the real-R1 toolchain)
+that quietly cover for a missing declaration.
+
 ## 2026-09-07 (later still — GitHub Releases, at the user's request)
 
 ### (pending) — Wire GitHub Releases so a build is downloadable without going through the agent
