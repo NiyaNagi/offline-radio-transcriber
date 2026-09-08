@@ -89,7 +89,7 @@ are individually green.*
 - [ ] **P12 · Make capture actually work end to end on a device** *(`:capture-android`,
   `:pipeline`, `:app`)* — the three on-device defects, then the processing loop that turns a
   captured segment into a transcript. **This is the one that makes the app do its job at all.**
-- [ ] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
+- [x] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
   Compose wiring at all.
 - [ ] **P14 · Reader: live view and transmission detail** *(`:app`)* — FR-UI-1, FR-UI-4, FR-UI-5,

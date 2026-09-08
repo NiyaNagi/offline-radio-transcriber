@@ -32,6 +32,76 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (afternoon — P13)
+
+### (pending) — P13 · Compose foundation: theme, navigation, the design canvas made real
+
+**Scope:** `buildSrc/src/main/kotlin/ort.android-app.gradle.kts` and `buildSrc/build.gradle.kts`
+(Compose wiring), `gradle/libs.versions.toml` (Compose version entries), `.editorconfig` (one
+ktlint exemption Compose's own naming convention needs), new files under
+`app/src/main/kotlin/org/ort/app/ui/` and `app/src/test/kotlin/org/ort/app/ui/`,
+`app/src/main/AndroidManifest.xml` (registers the new activity only).
+**Requirements/ACs:** D15 (Compose), AC-62/FR-A11Y-1 (the four attribution states distinguishable
+without colour), AC-63/FR-A11Y-2/FR-A11Y-3 (content descriptions, no clipping at max font scale),
+D26 (the drawer's storage footer).
+**What changed:** the app had no Compose at all — P8 and P11 both shipped plain `TextView`s with
+Compose explicitly out of scope, and a real user installed the app and said "I see no UI." This
+prompt lands the foundation:
+- **Compose wiring** in the `ort.android-app` convention plugin: the Kotlin Compose-compiler
+  plugin (pinned to the exact Kotlin version, resolved from buildSrc's own classpath — the root
+  build's version catalog is not visible inside a buildSrc precompiled script), the Compose BOM,
+  and `ui`/`material3`/`foundation`/`activity-compose`, plus `ui-tooling`/`ui-test-manifest`
+  (debug-only) and `ui-test-junit4` (test-only). `testBuildType = "debug"` and disabling
+  `testReleaseUnitTest` outright — the release build type differs only by `isMinifyEnabled`, so
+  testing it separately proved nothing beyond failing every Compose UI test for a reason that has
+  nothing to do with the code under test (its merged manifest never carries the debug-only
+  `ui-test-manifest` stub `createComposeRule()` launches).
+- **Theme** (`ui/theme/`): colour tokens hand-picked as sRGB approximations of the `oklch(...)`
+  values quoted from the canvas artboards (Compose has no first-class OKLCH conversion worth
+  depending on for eight swatches — `design/canvas/*.dc.html` remains the source of truth for the
+  actual palette), typography sized in `sp` throughout (AC-63), and a single dark scheme —
+  every one of the seven artboards is dark-only, so there is no light palette to derive from yet.
+- **`AttributionMarker`** (`ui/components/`): the reusable four-state component `States.dc.html`
+  exists to prove out, built on top of the existing, tested `TransmissionListViewStateMapper`
+  rather than a second scheme — a distinct shape (filled circle / outlined ring / half-filled ring
+  / small dim dot) plus that mapper's existing text marker, merged into one accessibility node
+  naming the shape, the state and the confidence. `TransmissionListScreen` renders every row
+  through it rather than re-deriving attribution text itself.
+- **Navigation**: `ReaderDestination` (the nine `Menu.dc.html` destinations, in its order),
+  `ReaderDrawerContent` (every destination plus the D26 storage-budget footer — computed for now
+  from real `StatFs` device-storage figures, explicitly labelled a placeholder for D26's actual
+  per-category budgets, which no prompt has built the tracking for yet), and `OrtNavHost` (a
+  `ModalNavigationDrawer` + `Scaffold`, holding current destination in `rememberSaveable` — a
+  hand-rolled state holder rather than `androidx.navigation:navigation-compose`, deliberately: two
+  real destinations do not yet justify a second dependency to pin and verify). `Now` and `Log`
+  render the ported `StatusScreen`/`TransmissionListScreen`; the other seven destinations render
+  `PlaceholderScreen` until their own prompt (P15-P17) builds them — reachable, honestly not built,
+  rather than missing from the drawer or faked.
+- **`ReaderActivity`**: hosts the graph, registered `exported="false"`, **not** the launcher —
+  `MainActivity` stays the entry point until the switchover, a deliberate follow-up once P12's
+  concurrent capture-wiring work lands. `ui/data/ReaderPolling.kt` reuses the exact same
+  `CaptureStatusRepository`/`OrtDatabase` smoke-test path `StatusActivity`/
+  `TransmissionListActivity` already poll (P8/P11), so the new screens show the identical facts —
+  "no behaviour change" — without touching either owned-by-P12 Activity.
+**Verified:** wrote `AttributionMarkerTest` (AC-62), `ReaderAccessibilityTest` (AC-63, at
+`fontScale = 2f` — the largest scale Android's own accessibility settings offer on the reference
+API range; FR-A11Y-3 does not name a number) and `DrawerContentTest` (every `Menu.dc.html`
+destination present, D26 footer present) against Robolectric + `createComposeRule()` first, saw
+each fail for the right reason (unresolved references before the code existed, then real
+assertion failures — a false-positive `"filled circle"` substring match inside `"half-filled
+circle"`, and `"red"` inside `"INFERRED"` — both fixed in the tests, not the production code) and
+green after. `./gradlew :app:testDebugUnitTest` — 25 tests green, including all pre-existing P8/P11
+tests (`StatusActivityTest`, `TransmissionListActivityTest`, both `*ViewStateMapperTest`s,
+`PermissionsFlowTest`, `OnDeviceHarnessRunnerTest`) unchanged and still passing. Full
+`./gradlew build dependencyRules` — green; `dependencyRules` output confirms `:app -> :core,
+:data, :net, :pipeline`, exactly its permitted edge set, no new module dependency added.
+**Left open / not done:** the switchover making `ReaderActivity` the app's launcher (deliberate —
+P12 owns `MainActivity` this wave); `Main.dc.html`'s activity chart and "Worth knowing" digest,
+`Log.dc.html`'s dense table, `Detail.dc.html`'s drill-in, and the other six drawer destinations —
+all P14-P17; a light theme (no artboard to derive one from yet); live drawer badge counts (Log's
+`412`, Threads' `31`, Capture's running timer) — the drawer renders labels only for now. No device
+was available to this session; everything above is Robolectric-only, as the prompt allows.
+
 ## 2026-09-08 (morning, cont. — Wave E added; P12's first two defects fixed)
 
 ### (pending) — Decompose M5 into the build plan, and fix the two defects that made capture a lie
