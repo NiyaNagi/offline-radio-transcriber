@@ -38,8 +38,8 @@ an identical second AVD for port 5556; at most two AVDs run at once
 |---|---|
 | `boot.ps1 -Avd <name> -Port <n>` | Boots the named AVD headless and waits for `sys.boot_completed`. |
 | `create-avd.ps1 -Name <name>` | Creates a Pixel 6 / API 34 / x86_64 / google_apis AVD (`ort_audit_2` for port 5556). |
-| `install.ps1 -Port <n>` | `:app:assembleDebug`, installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`. |
-| `scenario.ps1 -Port <n> -Name <scenario> [-NoRestart]` | Force-stops the app (unless `-NoRestart`), broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`. |
+| `install.ps1 -Port <n> [-Clear]` | `:app:assembleDebug`, installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`. `-Clear` runs `adb shell pm clear org.ort.app` right after install and re-grants both permissions — see "Known gaps / hygiene" below for why. |
+| `scenario.ps1 -Port <n> -Name <scenario> [-NoRestart]` | Force-stops the app (unless `-NoRestart`), broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`, then a best-effort warning if a real (non-scenario) session is still in the app's own database (see "Known gaps / hygiene"). |
 | `shoot.ps1 -Port <n> -Scenario <s> -Screen <name>` | `screencap -p` to a device file, then `adb pull` — to `results/ui-audit/<s>/<name>.png`. |
 | `nav.ps1 -Port <n> -Screen <name>` | Replays the tap sequence for `<name>` from `screens.json`. |
 | `run-set.ps1 -Port <n> -Set <V3\|V5>` | Runs every (scenario, screen) pair of one phase-E set from `sets.json`, end to end. |
@@ -181,6 +181,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `stations-14-nights` | Fourteen sessions over a fifteen-day span (two weeks plus the skipped night), realistic hour-of-day/day-of-week spread across the design canvas's ~9 callsigns, a within-night hatch gap on most nights, one whole calendar day with no session at all, (register R-184) one AMBIGUOUS over on the primary session with the same three ranked, distinctly-scored candidates `overnight`'s own AMBIGUOUS over carries, and (register R-272) `WA7HJR` bound to two real voiceprint clusters (`voiceprint-wa7hjr-a`/`-b`), each with a real, non-fabricated `memberCount` matching the overs actually assigned to it — so `Station-Identity`'s Split screen has a genuine multi-voice case to render, not just the single-cluster empty state. |
 | `field-tier1` | A session with `deviceTier = "T1"`, twelve overs, each with a real, decodable retained-audio file at the exact path `FlacSegmentAudioProvider`/the real `ReprocessRunner` reads (register R-290 — before this fix, only the database rows existed, so `Improve-Running`/`Improve-Done` (R03/R04) crashed the app on the first item instead of ever completing). |
 | `search-corpus` | Fourteen transcripts mentioning "park activation" across three sessions ("nights"). |
+| `search-unavailable` | The same real corpus `search-corpus` seeds, plus a one-shot `DebugSearchOverride` (`SearchViewData.kt`, WP7's file) forced ahead of `SearchPolling.search`'s own free-text query (register — `Search-Unavailable.dc.html`, the amber `search-unavailable-banner` and the field's "Not applied" cue). The *first* free-text search after this scenario loads genuinely returns `textSearchUnavailable = true` through the real code path (the same `buildResult` branch the genuine fts5-missing exception handler also uses); the override is one-shot, so `Retry`'s own next call genuinely recovers to real results — never a sticky/simulated banner. A real SQL-level break of `transcript_fts`'s shadow tables was tried first and rejected: it survives `OrtDatabase.create()`'s own unconditional `ensureFtsIndex` rebuild step and instead breaks the fts5 vtable's *construction* (`vtable constructor failed: transcript_fts`), crashing every later `OrtDatabase.create()` call app-wide, not just Search — confirmed by running it, not assumed. A filters-only search (no free text) is unaffected either way, since it never touches `transcript_fts`. |
 | `backlog` | `ShedStatus` set to level 3 / backlog 112 (F8), capture marked running. |
 | `model-missing` | `AsrAvailability.unavailable(...)` (F13); captured but untranscribed transmissions. |
 | `storage-warn` | `StorageForecast.ThreeNightsLeft` (FR-STO-3, register R-105), capture genuinely still running — replaces this scenario's earlier misuse of F6's exhaustion failure string. |
@@ -281,8 +282,22 @@ own trigger requires). The seven scenarios this table's last block adds
 `calibration`) are the ones with no real signal at all — `org.ort.app.ui.failures.
 DebugFailureOverride`'s own kdoc says precisely what each would need and from which package.
 
-### Known gaps (report to the lead, not fixed here)
+### Known gaps / hygiene (report to the lead, not fixed here)
 
+- **Scenario reloads never delete a real (non-scenario) capture session.**
+  `Scenarios.clearPriorScenarioData` only ever deletes rows whose id starts with `scenario-` — a
+  genuine session an earlier mis-tap started (`Now`'s own "Start capture", pressed by accident
+  while poking around a scenario) or one the OS killed mid-capture is never touched by any scenario
+  load from then on, and persists in the app's own database across every scenario switch on a
+  shared AVD. Because it is real (`endedAt = null`, possibly a more recent `startedAt` than
+  whatever the current scenario just seeded), it can outrank the scenario's own fixture session on
+  `Now`. `install.ps1 -Clear` (`adb shell pm clear org.ort.app`, re-granting
+  `RECORD_AUDIO`/`POST_NOTIFICATIONS` afterward) is the reliable fix — it wipes the app's entire
+  on-device state, this stray session included; `scenario.ps1` also prints a best-effort warning
+  when it can query the device's own database for one (via `adb shell run-as` + the device's own
+  `sqlite3` binary, degrading to a printed reminder when either is unavailable — not verified
+  against a live device this round, since both shared AVD ports were in use; a validator exercises
+  both flags on the next pass).
 - **F2's disconnect banner and F6's hard-floor takeover have no scenario that seeds them
   directly.** Both are real, mapped signals (`InputStatus.State.Lost`,
   `StorageForecast.State.AtFloor` + `CaptureState.State.Failed`) — `FailureMapperTest` proves the

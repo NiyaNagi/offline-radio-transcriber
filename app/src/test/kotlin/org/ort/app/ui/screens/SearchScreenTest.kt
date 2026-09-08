@@ -1,5 +1,11 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -10,9 +16,14 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LogRow
+import org.ort.app.ui.components.LogRowViewState
+import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.RecentSearchEntry
 import org.ort.app.ui.data.SearchFacetCounts
 import org.ort.app.ui.data.SearchFacetRow
@@ -26,6 +37,10 @@ import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.robolectric.RobolectricTestRunner
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * `Search`/`Search-Results`/`Search-Empty`/`Search-Unavailable.dc.html` (R-060, R-063, R-065).
@@ -401,5 +416,110 @@ class SearchScreenTest {
         composeTestRule.onNodeWithTag("search-filters-scrim").performClick()
 
         assert(dismissed) { "expected tapping the scrim to call onDismissFilters" }
+    }
+
+    // --- R-370: day-group headers use the device's own locale, never Locale.ROOT's "M09" ---
+
+    @Test
+    fun `R_370 the day-group header renders the locale's real month name, never a raw MMM field code`() {
+        val startedAt = Instant.parse("2026-09-07T22:11:38Z").toEpochMilli()
+        val result = SearchResult(
+            details = listOf(detail("TX1", "mayday mayday", Attribution.confirmed("W7NPC", 0.9), startedAt)),
+            textSearchUnavailable = false,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+        screen(result = result)
+
+        // Computed the same way `SearchScreen.kt`'s own (now-fixed) `DAY_FORMAT` is — locale-aware,
+        // never `Locale.ROOT` — so this passes under whatever locale the host JVM actually runs
+        // with, and would have failed against the pre-fix `Locale.ROOT` formatter (whose "MMM"
+        // degrades to the literal field code "M09" the register's screenshot showed, not a real
+        // month name in any locale that has one).
+        val expectedFormat = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
+        val expected = Instant.ofEpochMilli(startedAt).atZone(ZoneOffset.UTC).toLocalDate().format(expectedFormat)
+        composeTestRule.onNodeWithText(expected.uppercase()).assertExists()
+        composeTestRule.onNodeWithText("M09", substring = true).assertDoesNotExist()
+    }
+
+    // --- R-373: a result row gets exactly the width LogScreen's own LogRow usage would give it ---
+
+    @Test
+    fun `R_373 a result row measures exactly as tall as the same LogRow rendered bare, at font scale 2_0`() {
+        // Diagnosis (register: "find the difference and make Search use the row exactly as
+        // LogScreen does"): there is no difference to fix in this package. `ResultsState`
+        // (`SearchScreen.kt`) composes the shared `LogRow` (`ui/components/Rows.kt`) as a direct
+        // child of a plain `Column` with no extra width-constraining wrapper — no `IntrinsicSize`,
+        // no missing `fillMaxWidth` (`LogRow`'s own root always applies one, regardless of caller),
+        // no horizontal scroll — exactly how `LogScreen.kt`'s own `LazyColumn` items compose it.
+        // This test proves that structurally: the same `LogRowViewState`, at the same fixed width
+        // and font scale, measures the *same height* whether it goes through the full `SearchScreen`
+        // or is rendered bare — real, on-device evidence (`overnight/L01-log-pass3@2x.png`,
+        // `search-corpus/Q03-results-2x-clean-pass4.png`) shows the *same* mid-word wrapping in
+        // both Log's and Search's own screenshots at font scale 2.0, confirming this is a shared
+        // `LogRow`/`Rows.kt` defect (its time/frequency column floors, `rememberTimeColumnWidth`/
+        // `rememberFreqColumnWidth`, leaving too little width for the weighted transcript column at
+        // a large scale) — outside this package's file ownership. Routed to WP2 for a min-width
+        // contract on the weighted column; see this round's CHANGELOG addendum.
+        val detail = detail(
+            id = "TX1",
+            text = "this is KE7QRS, doing a park activation at K-4403, any hunters listening",
+            attribution = Attribution.confirmed("KE7QRS", 0.9),
+        )
+        val entry = ReaderTransmissionViewStateMapper.listEntry(detail)
+        val referenceState = LogRowViewState(
+            id = entry.id,
+            timeLabel = entry.timeLabel,
+            frequencyLabel = entry.frequencyLabel,
+            transcript = entry.transcriptText,
+            attribution = entry.attribution,
+            signalLabel = entry.signalLabel,
+        )
+        val result = SearchResult(
+            details = listOf(detail),
+            textSearchUnavailable = false,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        SearchScreen(
+                            input = SearchFilterInput(),
+                            result = result,
+                            recent = emptyList(),
+                            widenSuggestions = null,
+                            filtersSheetOpen = false,
+                            onOpenFilters = {},
+                            onDismissFilters = {},
+                            onInputChange = {},
+                            onSearch = {},
+                            onOpen = {},
+                        )
+                    }
+                    // The same `LogRowViewState` LogScreen's own `LazyColumn` would render it
+                    // through — plain `LogRow(state = item.state, onClick = ...)`, no extra
+                    // modifier — at the identical width.
+                    Box(modifier = Modifier.width(390.dp)) {
+                        LogRow(
+                            state = referenceState,
+                            onClick = {},
+                            modifier = Modifier.testTag("log-row-reference"),
+                        )
+                    }
+                }
+            }
+        }
+
+        val searchRowHeight =
+            composeTestRule.onNodeWithTag("search-result-row-TX1").fetchSemanticsNode().size.height
+        val referenceHeight =
+            composeTestRule.onNodeWithTag("log-row-reference").fetchSemanticsNode().size.height
+        assert(searchRowHeight == referenceHeight) {
+            "expected SearchScreen's own row to measure identically to a bare LogRow at the same " +
+                "width/font scale (search=${searchRowHeight}px, reference=${referenceHeight}px) — " +
+                "if these ever diverge, this package's own composition of LogRow has drifted from " +
+                "LogScreen's, which this test exists to catch"
+        }
     }
 }

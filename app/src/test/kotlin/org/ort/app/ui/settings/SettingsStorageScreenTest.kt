@@ -5,10 +5,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -71,6 +73,22 @@ class SettingsStorageScreenTest {
         // — and honestly `0` today (no on-disk lexicon asset exists yet to measure, see that
         // type's own doc comment), never omitted as if the category itself did not exist.
         composeTestRule.onNodeWithText("Lexicon 0.0 GB").assertExists()
+    }
+
+    @Test
+    @Requirement("R-351")
+    fun `R_351 the usage bar renders at the board's real height with one segment per category`() {
+        composeTestRule.setContent {
+            OrtTheme { SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {}) }
+        }
+
+        // R-351 (register): before this fix, neither the outer nor the per-segment `Row` carried
+        // an explicit height, so the whole bar measured to zero regardless of data — the direct
+        // proof of the fix is a real, non-zero measured height (the board's own 8dp) and one real
+        // segment node per category (four, this fixture's own `state()`).
+        val barHeight = composeTestRule.onNodeWithTag(STORAGE_BAR_TEST_TAG).fetchSemanticsNode().size.height
+        assert(barHeight > 0) { "expected the usage bar to render at a real, non-zero height, got ${barHeight}px" }
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(4)
     }
 
     @Test

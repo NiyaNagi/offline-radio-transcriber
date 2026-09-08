@@ -3,6 +3,7 @@ package org.ort.data.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import org.ort.core.AttributionState
 import org.ort.core.Tier
 
 /**
@@ -36,6 +37,32 @@ public data class CallsignCandidateEntity(
     val priorBreakdown: Map<String, Double>?,
     val databaseHit: Boolean,
     val selected: Boolean,
+)
+
+/**
+ * Schema v5, register R-320/R-182: the persisted form of one [org.ort.lexicon.SlotDetail] from a
+ * [CallsignCandidateEntity]'s own `slotDetails` (`CallsignCandidate.slotDetails` on the lexicon
+ * side) — D05's `Detail-Why.dc.html` "each unit's score and kept alternate" list needs every
+ * slot for every candidate, in order, not just the winner's; D01/D03's transcript highlight needs
+ * the winning candidate's overall `[charStart, charEnd)` span, computed from these rows rather
+ * than stored redundantly on the candidate itself. [transmissionId] is denormalized from
+ * [candidateId] on purpose — every read this table serves (`CatalogDao.slotDetailsFor`,
+ * `.winningCandidateCharSpan`) is scoped by transmission first, and duplicating the (cheap,
+ * immutable) foreign key avoids a join through `callsign_candidate` for the common case.
+ * [keptAlternate]/[charStart]/[charEnd] are `null` exactly when [org.ort.lexicon.SlotDetail]'s own
+ * doc comment says they are — never fabricated to fill the column.
+ */
+@Entity(tableName = "lattice_slot", indices = [Index("transmissionId", "candidateId", "index")])
+public data class LatticeSlotEntity(
+    @PrimaryKey val id: String,
+    val transmissionId: String,
+    val candidateId: String,
+    val index: Int,
+    val unit: String,
+    val score: Double,
+    val keptAlternate: String?,
+    val charStart: Int?,
+    val charEnd: Int?,
 )
 
 @Entity(tableName = "station")
@@ -137,6 +164,20 @@ public data class LexiconVersionEntity(
     val checksum: String,
 )
 
+/**
+ * [previousAttributionState]/[previousAttributionConfidence]/
+ * [previousAttributionSourceTransmissionId]/[previousCorrected] (schema v5, register R-321):
+ * captured — not by the caller, by [org.ort.data.dao.CorrectionDao.recordCorrection] itself,
+ * from the transmission row's real state the instant before it overwrites it — so `Undo all`
+ * (`Detail-Propagated.dc.html`) can restore the *exact* prior attribution
+ * ([org.ort.data.dao.CorrectionDao.restoreAttribution]) instead of re-correcting to the old
+ * callsign, which always lands `INFERRED` and always sets the `corrected` lock — losing a prior
+ * `CONFIRMED`/`AMBIGUOUS` state and an uncorrected row's unlocked status. `null` on every row
+ * written before this column existed (schema v4 and earlier) and on [FIELD_STATION_UNVERIFIED]'s
+ * own genuinely-first-ever correction of a never-before-corrected transmission has real (non-null)
+ * values for the other three; only [previousCorrected] `== false` is itself informative there —
+ * still real data, not a sentinel.
+ */
 @Entity(tableName = "correction")
 public data class CorrectionEntity(
     @PrimaryKey val id: String,
@@ -146,6 +187,10 @@ public data class CorrectionEntity(
     val newValue: String,
     val correctedAt: Long,
     val propagatedToCount: Int = 0,
+    val previousAttributionState: AttributionState? = null,
+    val previousAttributionConfidence: Double? = null,
+    val previousAttributionSourceTransmissionId: String? = null,
+    val previousCorrected: Boolean? = null,
 )
 
 @Entity(tableName = "calibration")

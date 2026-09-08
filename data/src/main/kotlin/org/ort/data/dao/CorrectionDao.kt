@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Transaction
+import org.ort.core.AttributionState
 import org.ort.data.entity.CorrectionEntity
 
 /**
@@ -52,15 +53,77 @@ public interface CorrectionDao {
     )
     public suspend fun applyCorrectedAttribution(transmissionId: String, stationId: String)
 
-    /** Inserts the audit row and applies the locked attribution in one transaction. */
+    /**
+     * The transmission row's real attribution fields, read as they stand *before* a correction
+     * overwrites them (register R-321) — [recordCorrection] stamps this onto the audit row it
+     * inserts, so a later `Undo all` can restore exactly this, not a guess reconstructed from
+     * [CorrectionEntity.previousValue] alone (which only ever carried the previous *callsign*).
+     */
+    @Query(
+        "SELECT attributionState, attributionConfidence, attributionSourceTransmissionId, corrected " +
+            "FROM transmission WHERE id = :transmissionId",
+    )
+    public suspend fun attributionSnapshot(transmissionId: String): TransmissionAttributionSnapshot?
+
+    /**
+     * Inserts the audit row and applies the locked attribution in one transaction.
+     *
+     * Register R-321: [correction] arrives with its `previousAttribution*`/[previousCorrected]
+     * fields unset (the caller only knows the previous *callsign* —
+     * [org.ort.data.entity.CorrectionEntity.previousValue], already set); this DAO — not the
+     * caller — reads [attributionSnapshot] for [correction]'s transmission *before* applying the
+     * new attribution and stamps the real prior state onto the row it inserts, so it is
+     * unconditionally trustworthy: a caller cannot forget to pass it, and it cannot go stale
+     * between being computed and being written, since both happen in the same transaction here.
+     */
     @Transaction
     public suspend fun recordCorrection(correction: CorrectionEntity) {
-        insert(correction)
+        val before = attributionSnapshot(correction.transmissionId)
+        insert(
+            correction.copy(
+                previousAttributionState = before?.attributionState,
+                previousAttributionConfidence = before?.attributionConfidence,
+                previousAttributionSourceTransmissionId = before?.attributionSourceTransmissionId,
+                previousCorrected = before?.corrected,
+            ),
+        )
         applyCorrectedAttribution(correction.transmissionId, correction.newValue)
     }
+
+    /**
+     * Register R-321: restores [transmissionId]'s attribution to exactly [state]/[stationId]/
+     * [confidence]/[sourceTransmissionId]/[corrected] — the shape [attributionSnapshot] captured
+     * before some earlier correction overwrote it, read back from that correction's own
+     * `previousAttribution*`/`previousCorrected` columns by the caller (`Undo all`,
+     * `app/.../ui/data/CorrectionPolling.kt`). Unconditional, like [applyCorrectedAttribution]:
+     * this *is* the deliberate human "undo" action the `CORRECTED` lock exists to survive, not a
+     * machine re-propagation the lock is supposed to block — the same reasoning that makes
+     * [applyCorrectedAttribution] itself unconditional applies here.
+     */
+    @Query(
+        "UPDATE transmission SET attributionState = :state, stationId = :stationId, " +
+            "attributionConfidence = :confidence, attributionSourceTransmissionId = :sourceTransmissionId, " +
+            "corrected = :corrected WHERE id = :transmissionId",
+    )
+    public suspend fun restoreAttribution(
+        transmissionId: String,
+        state: AttributionState,
+        stationId: String?,
+        confidence: Double?,
+        sourceTransmissionId: String?,
+        corrected: Boolean,
+    )
 
     public companion object {
         public const val FIELD_STATION: String = "stationId"
         public const val FIELD_STATION_UNVERIFIED: String = "stationId_unverified"
     }
 }
+
+/** [CorrectionDao.attributionSnapshot]'s projection — the four transmission columns register R-321 preserves. */
+public data class TransmissionAttributionSnapshot(
+    val attributionState: AttributionState,
+    val attributionConfidence: Double?,
+    val attributionSourceTransmissionId: String?,
+    val corrected: Boolean,
+)

@@ -2,6 +2,10 @@ package org.ort.app.ui.navigation
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
@@ -12,6 +16,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
@@ -24,13 +29,16 @@ import org.junit.runner.RunWith
 import org.junit.runners.model.Statement
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.settings.SettingsScreenId
+import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.StorageForecast
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
@@ -353,6 +361,170 @@ class ReaderActivityDestinationSmokeTest {
             rule.waitForIdle()
 
             rule.waitUntilChipSelected(OVERS_FREQUENCY_LABEL)
+
+            // Round 10 (WP8 shipped `FrequencyDetailContent.initialView`): system back from here
+            // reopens the frequency drill-in landing directly on `Frequency-Change` — FQ03 itself,
+            // not FQ02's plain detail root — via `OrtNavHost`'s own `BackHandler`. Invoked through
+            // the real `OnBackPressedDispatcher` every `ComponentActivity` (this one included)
+            // installs, the same mechanism a device's system back gesture ultimately reaches — not
+            // `Espresso.pressBack()`, which this module carries no dependency on.
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
+            rule.waitUntilContentDescriptionExists("Back to $OVERS_FREQUENCY_LABEL")
+        }
+    }
+
+    // Register R-333 (halt): one system back press exited the whole app instead of popping one
+    // level — the host had no generic `BackHandler` at all. `D01` opened from a real `Log` row is
+    // the same host-tracked `openTransmissionId` drill-in every rejected-detail (F04) row also
+    // uses (confirmed by reading `LogScreen.kt`'s own `RejectedRow(onClick = { onOpen(item.id) })`
+    // before relying on it — this one case stands for both). [Lifecycle.State.RESUMED] surviving
+    // each back press, not just `DESTROYED`/finishing, is the actual regression this halt was
+    // about — that check comes first each time, before the destination-specific one.
+    @Test
+    fun `R_333_system_back_pops_the_drill_in_then_the_drawer_before_ever_finishing_the_activity`() {
+        runReaderActivity(ReaderDestination.LOG, sessionId = sessionId) { rule ->
+            rule.waitUntilContentDescriptionExists(STATION_ID)
+            rule.onNode(hasContentDescription(STATION_ID, substring = true) and hasClickAction()).performClick()
+            rule.waitUntilContentDescriptionExists("Back to Log")
+
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
+            check(rule.activityRule.scenario.state == Lifecycle.State.RESUMED) {
+                "expected the Activity to stay RESUMED after popping D01, was ${rule.activityRule.scenario.state}"
+            }
+            // Back on `Log` itself: its own `ScreenHeader` ("Open navigation") and its own real
+            // content (`LogScreen.kt`'s `Filter` action) both being there is "same destination".
+            rule.waitUntilContentDescriptionExists("Open navigation")
+            rule.onNode(hasText("Filter") and hasClickAction()).assertExists()
+
+            rule.onNodeWithContentDescription("Open navigation").performClick()
+            rule.waitForIdle()
+            rule.onNodeWithTag("drawer-row-LOG").assertExists()
+
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
+            val stateAfterDrawerClose = rule.activityRule.scenario.state
+            check(stateAfterDrawerClose == Lifecycle.State.RESUMED) {
+                "expected the Activity to stay RESUMED after closing the drawer, was $stateAfterDrawerClose"
+            }
+            rule.waitUntilContentDescriptionExists("Open navigation")
+            rule.onNode(hasText("Filter") and hasClickAction()).assertExists()
+        }
+    }
+
+    /**
+     * Register R-334 (halt): a failure banner used to render opaque *inside* the drawer panel once
+     * opened, hiding six of the nine rows (`storage-warn/N00-menu-with-banner-pass3.png`).
+     * [StorageForecast.set] forces a real `OneNightLeft` reading the same way the scenario
+     * simulator and this codebase's own tests already do (that object's own kdoc: "a caller that
+     * knows the state it wants... sets it directly") — reset in `finally` since it is a
+     * process-wide holder this test does not own past its own run.
+     *
+     * **What this does and does not prove — verified directly, not assumed**: every one of the
+     * nine `drawer-row-*` nodes exists, survives a scroll-to, and reports [assertIsDisplayed]
+     * (attached, non-zero size, not clipped by an ancestor) while the banner is showing and the
+     * drawer is open. Tried, deliberately, to make this fail against the *old* structure
+     * (`FailureHost` wrapping the whole `ModalNavigationDrawer` again, matching exactly how
+     * `ReaderActivity.kt` used to call it) before trusting it — **it still passed**:
+     * [assertIsDisplayed] checks attachment, size and ancestor-clipping only, not whether a later
+     * sibling paints over a node, so it cannot see the actual R-334 bug (a paint-order fact) either
+     * way. This assertion is a real regression guard on the *wiring* — the drawer rows and a real
+     * banner can compose together without either breaking the other, and `FailureHost`'s signature
+     * genuinely didn't need to change — not proof of the pixel-level fix, which rests on
+     * `ModalNavigationDrawer`'s own documented contract (its `drawerContent` always renders above
+     * its main-content slot) rather than on anything this JVM harness can observe directly. Stated
+     * here in full rather than left implicit.
+     */
+    @Test
+    fun `R_334_a_failure_banner_never_hides_the_drawer_rows`() {
+        StorageForecast.set(
+            StorageForecast.State.OneNightLeft(
+                freeBytes = 500_000_000L,
+                audioDirectoryBytes = 2_000_000_000L,
+                nightsLeft = 0.8,
+            ),
+        )
+        try {
+            runReaderActivity(ReaderDestination.NOW) { rule ->
+                rule.waitUntilTestTagExists("failure-storage-warning-banner")
+
+                rule.onNodeWithContentDescription("Open navigation").performClick()
+                rule.waitForIdle()
+                rule.waitUntilTestTagExists("failure-storage-warning-banner")
+
+                ReaderDestination.entries.filter { it != ReaderDestination.SEARCH }.forEach { destination ->
+                    rule.onNodeWithTag("drawer-row-${destination.name}").performScrollTo().assertIsDisplayed()
+                }
+            }
+        } finally {
+            StorageForecast.reset()
+        }
+    }
+
+    /**
+     * Register R-133 (round 11 addendum): `Settings-Storage`'s "Next deletion … Review" link
+     * (`SettingsStorageScreen.kt`'s `NextDeletionRow`, WP10's `948fe55`) now has a real target —
+     * `Earlier nights`, seeded directly on that session's own detail (DG04) via
+     * `SessionsContent.initialSessionId` (WP10's `e390c60`).
+     *
+     * A real `NextDeletion` needs `computeNextDeletion` to find either the free-disk floor or a set
+     * budget crossed (`StorageAccounting.kt`'s own doc comment) — the free-disk floor is not
+     * reliably reachable on a real test machine, so this seeds the budget path instead: a 0 GB
+     * budget, written directly into the same `SharedPreferences` `SettingsContent.kt` itself reads
+     * (`SharedPreferencesSettingsStore`'s own real key, not a fake store — this activity builds the
+     * real one), and a real, non-zero file under `filesDir/audio` (`measureDirectoryBytes` sums real
+     * files, never a board literal). [seedSession] leaves exactly one session in the database, so
+     * `computeNextDeletion`'s own "oldest" is unambiguous — landing on *any* session detail through
+     * this path is landing on the right one.
+     *
+     * System back from that seeded detail is the actual R-133 half of this round's own brief:
+     * `SessionsContent`'s own doc comment states its internal back only ever returns to its own
+     * list — this asserts `OrtNavHostBackHandler`'s new `canReturnToSettingsStorage` branch instead,
+     * reached through the real `OnBackPressedDispatcher`, the same mechanism R-333's own case above
+     * uses.
+     */
+    @Test
+    fun `R_133_settings_storage_review_link_opens_the_session_and_back_returns_to_settings_storage`() {
+        context.getSharedPreferences(SharedPreferencesSettingsStore.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(SharedPreferencesSettingsStore.KEY_AUDIO_BUDGET_GB, 0)
+            .apply()
+        val audioDir = File(context.filesDir, "audio").apply { mkdirs() }
+        File(audioDir, "seed.flac").writeBytes(ByteArray(2048))
+
+        runReaderActivity(
+            ReaderDestination.SETTINGS,
+            settingsScreen = SettingsScreenId.STORAGE,
+        ) { rule ->
+            rule.waitUntilContentDescriptionExists("Back to Settings")
+            rule.waitUntilTextExists("Review")
+            // Below the fold on a real-height screen — the same scroll-before-click idiom
+            // `SettingsStorageScreenTest.kt`'s own `R_133_next_deletion_row ... Review opens it`
+            // case already established: `performClick()` on a node scrolled out of the viewport is
+            // a real, silent no-op here (verified directly — a bare `performClick()` on this exact
+            // node timed out with no error and no downstream effect, before this scroll was added).
+            // That file's own screen-only composition has exactly one vertical-scroll node to
+            // disambiguate from its horizontal budget-chip row; a real `ReaderActivity` also keeps
+            // the closed drawer's own `drawer-rows` column composed off-screen (`Rows.dc.html` /
+            // `Drawer.kt`), which also reports a vertical scroll axis — excluded here the same way
+            // `R_129_transmission_drill_in_composes_and_survives_recreation`'s own scroll already
+            // does, so exactly one node remains.
+            val verticalScroll = SemanticsMatcher("has vertical scroll axis") {
+                it.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange) != null
+            }
+            rule.onNode(hasScrollAction() and verticalScroll and !hasTestTag("drawer-rows"))
+                .performScrollToNode(hasText("Review"))
+            rule.onNode(hasText("Review") and hasClickAction()).performClick()
+            rule.waitUntilContentDescriptionExists("Back to Earlier nights")
+
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
+            val stateAfterBack = rule.activityRule.scenario.state
+            check(stateAfterBack == Lifecycle.State.RESUMED) {
+                "expected the Activity to stay RESUMED after returning from the reviewed session, was $stateAfterBack"
+            }
+            rule.waitUntilContentDescriptionExists("Back to Settings")
         }
     }
 
@@ -569,6 +741,12 @@ class ReaderActivityDestinationSmokeTest {
      * of its own — its visible text is the only thing there is to match. */
     private fun ReaderComposeTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 15_000) {
         waitUntil(timeoutMillis) { onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    /** Round 11: [FailStorageWarningBanner]'s own `testTag("failure-storage-warning-banner")` —
+     * same allowance as [waitUntilTextExists], for a real, polled banner rather than static copy. */
+    private fun ReaderComposeTestRule.waitUntilTestTagExists(tag: String, timeoutMillis: Long = 15_000) {
+        waitUntil(timeoutMillis) { onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() }
     }
 
     /** Round 9: a quick-filter chip's own `Selected` semantics property only reflects the real,

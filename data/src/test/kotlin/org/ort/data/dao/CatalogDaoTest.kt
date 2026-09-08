@@ -9,6 +9,7 @@ import org.junit.runner.RunWith
 import org.ort.data.OrtDatabase
 import org.ort.data.TestFixtures
 import org.ort.data.entity.CallsignCandidateEntity
+import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.LatticeSource
 import org.ort.data.entity.PhoneticLatticeEntity
 import org.ort.testing.Requirement
@@ -122,4 +123,164 @@ public class CatalogDaoTest {
             stored.unitsBlob,
         )
     }
+
+    private fun candidate(id: String, transmissionId: String, rank: Int, selected: Boolean) = CallsignCandidateEntity(
+        id = id,
+        transmissionId = transmissionId,
+        callsign = "W7NPC",
+        rank = rank,
+        score = 0.9,
+        grammarValid = true,
+        ituPrefix = "W",
+        ituCountry = "United States",
+        priorBreakdown = null,
+        databaseHit = true,
+        selected = selected,
+    )
+
+    @Test
+    @Requirement("R-320", "FR-UI-8")
+    public fun R_320_slotDetailsFor_returns_every_slot_for_every_candidate_ordered_by_rank_then_index(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+            val dao = db.catalogDao()
+            dao.insert(candidate("C-RUNNERUP", "TX1", rank = 1, selected = false))
+            dao.insert(candidate("C-WINNER", "TX1", rank = 0, selected = true))
+
+            // Deliberately inserted out of both candidate-rank and slot-index order.
+            dao.insert(
+                LatticeSlotEntity(
+                    id = "S-RUNNERUP-0",
+                    transmissionId = "TX1",
+                    candidateId = "C-RUNNERUP",
+                    index = 0,
+                    unit = "W",
+                    score = 0.7,
+                    keptAlternate = null,
+                    charStart = null,
+                    charEnd = null,
+                ),
+            )
+            dao.insert(
+                LatticeSlotEntity(
+                    id = "S-WINNER-1",
+                    transmissionId = "TX1",
+                    candidateId = "C-WINNER",
+                    index = 1,
+                    unit = "7",
+                    score = 0.99,
+                    keptAlternate = null,
+                    charStart = 1,
+                    charEnd = 2,
+                ),
+            )
+            dao.insert(
+                LatticeSlotEntity(
+                    id = "S-WINNER-0",
+                    transmissionId = "TX1",
+                    candidateId = "C-WINNER",
+                    index = 0,
+                    unit = "W",
+                    score = 0.95,
+                    keptAlternate = "V",
+                    charStart = 0,
+                    charEnd = 1,
+                ),
+            )
+
+            val slots = dao.slotDetailsFor("TX1")
+
+            // The winning candidate (rank 0) first, its own slots in index order, then the
+            // runner-up (rank 1) -- D05's own ordering.
+            assertEquals(listOf("S-WINNER-0", "S-WINNER-1", "S-RUNNERUP-0"), slots.map { it.id })
+            assertEquals("V", slots.first { it.id == "S-WINNER-0" }.keptAlternate)
+            // Never fabricated: a slot the lattice really gave only one alternative for stays null.
+            assertEquals(null, slots.first { it.id == "S-RUNNERUP-0" }.keptAlternate)
+        }
+
+    @Test
+    @Requirement("R-182", "FR-UI-4")
+    public fun R_182_winningCandidateCharSpan_covers_only_the_selected_candidates_slots(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+        val dao = db.catalogDao()
+        dao.insert(candidate("C-WINNER", "TX1", rank = 0, selected = true))
+        dao.insert(candidate("C-LOSER", "TX1", rank = 1, selected = false))
+        dao.insert(
+            LatticeSlotEntity(
+                id = "S-W0",
+                transmissionId = "TX1",
+                candidateId = "C-WINNER",
+                index = 0,
+                unit = "W",
+                score = 0.9,
+                keptAlternate = null,
+                charStart = 0,
+                charEnd = 1,
+            ),
+        )
+        dao.insert(
+            LatticeSlotEntity(
+                id = "S-W1",
+                transmissionId = "TX1",
+                candidateId = "C-WINNER",
+                index = 1,
+                unit = "7",
+                score = 0.9,
+                keptAlternate = null,
+                charStart = 2,
+                charEnd = 3,
+            ),
+        )
+        // The loser's slots claim a wider span -- must never leak into the winner's result.
+        dao.insert(
+            LatticeSlotEntity(
+                id = "S-L0",
+                transmissionId = "TX1",
+                candidateId = "C-LOSER",
+                index = 0,
+                unit = "K",
+                score = 0.1,
+                keptAlternate = null,
+                charStart = 10,
+                charEnd = 20,
+            ),
+        )
+
+        val span = dao.winningCandidateCharSpan("TX1")
+
+        assertEquals(0, span.spanStart)
+        assertEquals(3, span.spanEnd)
+    }
+
+    @Test
+    @Requirement("R-182", "FR-UI-4")
+    public fun R_182_winningCandidateCharSpan_is_honestly_null_when_the_lattice_has_no_char_anchoring(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+            val dao = db.catalogDao()
+            dao.insert(candidate("C-WINNER", "TX1", rank = 0, selected = true))
+            // An acoustic lattice's slots carry no char span at all (see LatticeSlotEntity's own
+            // doc comment) -- never fabricated to 0.
+            dao.insert(
+                LatticeSlotEntity(
+                    id = "S-W0",
+                    transmissionId = "TX1",
+                    candidateId = "C-WINNER",
+                    index = 0,
+                    unit = "W",
+                    score = 0.9,
+                    keptAlternate = null,
+                    charStart = null,
+                    charEnd = null,
+                ),
+            )
+
+            val span = dao.winningCandidateCharSpan("TX1")
+
+            assertEquals(null, span.spanStart)
+            assertEquals(null, span.spanEnd)
+        }
 }

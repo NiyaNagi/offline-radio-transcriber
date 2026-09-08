@@ -127,16 +127,29 @@ public data class SearchFacetFilter(
  * asserting a filter that can never match. [nowUtcMillis] anchors [SearchTimeFilter.TONIGHT]/
  * [SearchTimeFilter.LAST_7_NIGHTS] — passed in rather than read from a clock so this stays a pure
  * function (constitution II — no hidden clock read inside `:app`'s only pure-parsing seam).
+ *
+ * R-371: [SearchFilterInput.text] — the free-text query box, not the Filters sheet's own
+ * dedicated [SearchFilterInput.callsign]/[SearchFilterInput.frequencyMhz] fields — is routed by
+ * shape before it reaches FTS. A frequency-shaped token ("146.960"/"146.96", the app's own TRY
+ * hint) never matched anything as literal transcript prose — nobody speaks a frequency into a
+ * transmission — so it is pulled out and filtered against the structured `frequencyHz` column
+ * instead. A callsign-shaped token is pulled out and matched against the attribution/candidate
+ * column ([org.ort.data.dao.SearchDao]'s own `callsign` bind, already a `station.callsign`
+ * comparison — no `:data` change needed). Whatever tokens are left, if any, still go to FTS —
+ * `"146.96 park"` finds every "park" over on 146.960MHz, not nothing. The Filters sheet's own
+ * dedicated fields, if set, always win over a shape match in the free-text box (typing a
+ * frequency into the box is a shortcut for the same field, not a second, competing filter).
  */
 public object SearchFilterParser {
     private val RANGE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
 
     public fun parse(input: SearchFilterInput, nowUtcMillis: Long): SearchQueryParams {
         val (from, to) = timeRange(input, nowUtcMillis)
+        val routed = TextQueryRouter.route(input.text)
         return SearchQueryParams(
-            text = input.text.trim().ifBlank { null },
-            callsign = input.callsign.trim().ifBlank { null },
-            frequencyHz = parseFrequencyHz(input.frequencyMhz),
+            text = routed.remainingText,
+            callsign = input.callsign.trim().ifBlank { null } ?: routed.callsign,
+            frequencyHz = parseFrequencyHz(input.frequencyMhz) ?: routed.frequencyHz,
             fromUtcMillis = from,
             toUtcMillis = to,
             band = input.band,
@@ -170,6 +183,48 @@ public object SearchFilterParser {
         } catch (e: DateTimeParseException) {
             null
         }
+    }
+}
+
+/**
+ * R-371: splits a free-text query into its frequency-shaped token, its callsign-shaped token, and
+ * whatever plain-prose tokens are left — see [SearchFilterParser.parse]'s own doc comment for why.
+ * At most one token of each shape is pulled out (the first one found, left to right); a second
+ * token that happens to share a shape falls through to the remaining FTS text unchanged — this is
+ * a query-routing convenience, not a general-purpose multi-value filter the rest of this file
+ * (one `frequencyHz`, one `callsign`) does not support either.
+ */
+internal object TextQueryRouter {
+    private val WHITESPACE: Regex = Regex("\\s+")
+
+    /** MHz with 2–3 decimals — "146.96"/"146.960", the app's own TRY hint shapes. A bare integer
+     * ("7") or an over-precise value is left as plain text: neither is a frequency an operator
+     * would type into this box the way "146.96" is. */
+    private val FREQUENCY_TOKEN: Regex = Regex("^\\d{1,3}\\.\\d{2,3}$")
+
+    /** The same shape `SearchScreen.kt`'s own (private, UI-only) `isCallsignLike` mono-styling
+     * check uses — 1–2 letters, a digit, 1–4 more letters/digits. */
+    private val CALLSIGN_TOKEN: Regex = Regex("^[A-Za-z]{1,2}[0-9][A-Za-z0-9]{1,4}$")
+
+    internal data class Routed(val remainingText: String?, val callsign: String?, val frequencyHz: Long?)
+
+    internal fun route(rawText: String): Routed {
+        val tokens = rawText.trim().split(WHITESPACE).filter { it.isNotBlank() }
+        var frequencyToken: String? = null
+        var callsignToken: String? = null
+        val remaining = mutableListOf<String>()
+        for (token in tokens) {
+            when {
+                frequencyToken == null && FREQUENCY_TOKEN.matches(token) -> frequencyToken = token
+                callsignToken == null && CALLSIGN_TOKEN.matches(token) -> callsignToken = token
+                else -> remaining += token
+            }
+        }
+        return Routed(
+            remainingText = remaining.joinToString(" ").ifBlank { null },
+            callsign = callsignToken,
+            frequencyHz = frequencyToken?.let { Math.round(it.toDouble() * 1_000_000.0) },
+        )
     }
 }
 
@@ -219,6 +274,58 @@ public data class SearchResult(
 )
 
 /**
+ * `search-unavailable` (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, WP4's own row)'s
+ * entry point for forcing [SearchPolling.search]'s real fts5-unavailable degrade path
+ * ([SearchResult.textSearchUnavailable]) — the exact same debug-override-receiver pattern
+ * [org.ort.app.ui.failures.DebugFailureOverride] already established for six failure boards with
+ * no real signal (WP11b's own file, see its own kdoc) and [DebugLexiconImportOverride] established
+ * for F12 (this file's own sibling, `ModelsViewData.kt`).
+ *
+ * **Why a flag, not real corruption of `transcript_fts`.** A real SQL-level break was tried first
+ * and rejected: [org.ort.data.OrtDatabase.create]'s own `ensureFtsIndex` touches `transcript_fts`
+ * unconditionally on every single call it makes (an fts5 `'rebuild'`, once the virtual table's own
+ * `CREATE VIRTUAL TABLE IF NOT EXISTS` step succeeds — register R-204), so any schema-level
+ * corruption of its shadow tables survives past that self-heal and breaks the fts5 virtual table's
+ * own *construction*, not merely a query against it — every later `OrtDatabase.create()` call
+ * anywhere in the app, not just Search, then fails outright (`vtable constructor failed:
+ * transcript_fts`, confirmed directly against real `BundledSQLiteDriver` SQLite in this package's
+ * own Robolectric test before this object existed, not assumed from FTS5's own documentation).
+ * [consumeForcedUnavailable] is one-shot rather than a sticky flag specifically so `Retry` — which
+ * only ever calls [SearchPolling.search] again — genuinely recovers to real results on its second
+ * call, the same "index was rebuilding, now it is ready" story `Search-Unavailable.dc.html`'s own
+ * `Retry` action tells.
+ *
+ * **Read gated on `BuildConfig.DEBUG`**, same as every sibling override in this codebase: a release
+ * build must never consult this even in the already-impossible case that something set it.
+ */
+public object DebugSearchOverride {
+
+    @Volatile
+    private var pending: Boolean = false
+
+    /** Test seam (see class kdoc) — production code never assigns this. */
+    @Volatile
+    internal var isDebugBuild: () -> Boolean = { org.ort.app.BuildConfig.DEBUG }
+
+    /** The scenario simulator's own entry point (debug-sourceset-only caller — see class kdoc). */
+    public fun forceNextTextSearchUnavailable() {
+        pending = true
+    }
+
+    public fun clear() {
+        pending = false
+    }
+
+    /** [SearchPolling.search]'s own read — consumes the pending override so it fires at most once
+     * per [forceNextTextSearchUnavailable] call. `false` outright in any non-debug build. */
+    public fun consumeForcedUnavailable(): Boolean {
+        if (!isDebugBuild() || !pending) return false
+        pending = false
+        return true
+    }
+}
+
+/**
  * The real read path for the Search destination (build-plan P15, FR-UI-3) — over
  * [org.ort.data.dao.SearchDao], reads through [OrtDatabase] directly (never through
  * [org.ort.app.ui.data.ReaderPolling]'s own query wrappers — those are WP4's; only the shared
@@ -232,6 +339,14 @@ public object SearchPolling {
         facetFilter: SearchFacetFilter,
     ): SearchResult {
         val db = OrtDatabase.create(context.applicationContext)
+        // register (round-eleven tooling): DebugSearchOverride's own one-shot forced-unavailable
+        // check, ahead of the real query — see that object's own kdoc for why a flag, not real
+        // corruption of transcript_fts. Consulted only when there is real free text to degrade
+        // (a filters-only search never touches transcript_fts either way, forced or real).
+        if (params.text != null && DebugSearchOverride.consumeForcedUnavailable()) {
+            val entities = rawSearch(db, params, text = null)
+            return buildResult(context, entities, facetFilter, textSearchUnavailable = true)
+        }
         return try {
             val entities = rawSearch(db, params, params.text)
             buildResult(context, entities, facetFilter, textSearchUnavailable = false)
@@ -340,16 +455,29 @@ public object SearchWidenSuggestions {
     ): SearchWidenViewState {
         val options = mutableListOf<SearchWidenOption>()
 
-        if (input.timeFilter != SearchTimeFilter.ALL) {
-            val widerParams = params.copy(fromUtcMillis = null, toUtcMillis = null)
+        suspend fun addDropOption(id: String, label: String, widerParams: SearchQueryParams) {
             val count = countMatching(context, widerParams, facetFilter)
             if (count > 0) {
-                options += SearchWidenOption(
-                    id = "all_nights",
-                    label = "All nights",
-                    detail = "would show $count ${overWord(count)}",
-                )
+                options += SearchWidenOption(id = id, label = label, detail = "would show $count ${overWord(count)}")
             }
+        }
+
+        if (input.timeFilter != SearchTimeFilter.ALL) {
+            addDropOption("all_nights", "All nights", params.copy(fromUtcMillis = null, toUtcMillis = null))
+        }
+        // R-372: "drop each active filter" — band/frequency/callsign each get their own honest-
+        // count widen row exactly like the time filter already did, not just the two that existed
+        // before this fix. `params.callsign` (not `input.callsign`) so a callsign the free-text box
+        // routed here (R-371) is offered a drop option too, not only one typed into the dedicated
+        // Filters-sheet field.
+        if (params.band != null) {
+            addDropOption("drop_band", "Any band", params.copy(band = null))
+        }
+        if (params.frequencyHz != null) {
+            addDropOption("drop_frequency", "Any frequency", params.copy(frequencyHz = null))
+        }
+        if (params.callsign != null) {
+            addDropOption("drop_callsign", "Any callsign", params.copy(callsign = null))
         }
 
         val everyState = SearchFacetFilter(
@@ -367,8 +495,12 @@ public object SearchWidenSuggestions {
             )
         }
 
-        val similar = if (input.callsign.isNotBlank()) {
-            SimilarCallsigns.near(context, input.callsign)
+        // R-372: sourced from `params.callsign`, not `input.callsign` — a callsign the free-text
+        // box routed here by shape (R-371, e.g. a typo'd "KE7QRT") reaches this exactly the same
+        // way a dedicated Filters-sheet callsign field does; before this fix a typo typed into the
+        // *search box* found nothing and got no suggestion at all ("KE7QRT should offer KE7QRS").
+        val similar = if (params.callsign != null) {
+            SimilarCallsigns.near(context, params.callsign)
         } else {
             emptyList()
         }

@@ -409,6 +409,11 @@ class RowsTest {
         }
     }
 
+    // R-373's two tests (`LogRow`'s response to a large font scale — the callsign never splitting
+    // character by character, and the row stacking time/freq beneath the marker line when too
+    // narrow for the callsign floor) moved to `LogRowResponsiveTest.kt` — detekt's own `LargeClass`
+    // finding, once this file grew past a reasonable size across every row family it covers.
+
     @Test
     fun `a drill-in header and a screen header carry their own targets and descriptions`() {
         var backCalled = false

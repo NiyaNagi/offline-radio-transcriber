@@ -3,12 +3,15 @@ package org.ort.app.ui.settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -16,7 +19,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.testTag
@@ -243,8 +249,23 @@ private fun NextDeletionMarker(modifier: Modifier = Modifier) {
     }
 }
 
-/** The storage-category bar + legend, split out of [SettingsStorageScreen] purely to keep that
- * function under detekt's length limit. */
+/**
+ * The storage-category bar + legend, split out of [SettingsStorageScreen] purely to keep that
+ * function under detekt's length limit.
+ *
+ * R-351 (register, round 10 System validator): the bar never rendered at all — neither the outer
+ * nor the per-segment `Row` carried an explicit height, and an empty-content child `Row`
+ * ([weight] alone gives it a share of *width*, never a height) has no intrinsic size to fall back
+ * to, so the whole bar measured to zero height regardless of data. Now
+ * [STORAGE_BAR_HEIGHT] (`Settings-Storage.dc.html`'s own `height: 8px`), one shared rounded-rect
+ * `clip` on the whole bar (the board's `overflow: hidden` on the *outer* element — not a rounded
+ * corner on every segment individually, the previous code's own approach), and each segment
+ * `fillMaxHeight()`s that fixed height instead of relying on content it never had. A zero-byte
+ * category still gets a real, visible hairline share of the bar (`coerceAtLeast(1L)` before
+ * dividing by the real total) — never dropped from the bar, and its real `0.0 GB` legend entry is
+ * unchanged. The legend now draws the board's own 10×10 colour [ColorSwatch] beside each label —
+ * text-only before this round.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StorageCategoryBreakdown(
@@ -253,14 +274,28 @@ private fun StorageCategoryBreakdown(
 ) {
     Column(modifier = modifier) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            // R-351: `padding` must sit *outside* `height` in this chain — a fixed `height(8.dp)`
+            // sets min == max == 8dp for everything nested inside it, so a `padding(top = sm)`
+            // placed after it (as this used to be ordered) does not add space above an 8dp box, it
+            // *consumes* the 8dp box's own budget — `OrtSpacing.sm` is itself `8.dp`, so the old
+            // order left exactly `0dp` for the bar's real content, the direct cause of R-351.
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = OrtSpacing.sm)
+                .height(STORAGE_BAR_HEIGHT)
+                .clip(RoundedCornerShape(STORAGE_BAR_CORNER_RADIUS))
+                .background(OrtColors.lineChip)
+                .testTag(STORAGE_BAR_TEST_TAG),
+            horizontalArrangement = Arrangement.spacedBy(1.dp),
         ) {
             val total = categories.sumOf { it.bytes }.coerceAtLeast(1L)
             categories.forEach { category ->
                 Row(
-                    modifier = Modifier.weight(category.bytes.coerceAtLeast(1L).toFloat() / total)
-                        .background(categoryColor(category.label), RoundedCornerShape(2.dp)),
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(category.bytes.coerceAtLeast(1L).toFloat() / total)
+                        .background(categoryColor(category.label))
+                        .testTag(STORAGE_BAR_SEGMENT_TEST_TAG),
                 ) {}
             }
         }
@@ -275,15 +310,37 @@ private fun StorageCategoryBreakdown(
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
         ) {
             categories.forEach { category ->
-                Text(
-                    text = "${category.label} ${category.bytes.toGigabyteLabel()}",
-                    style = OrtType.chip,
-                    color = OrtColors.textBody,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs),
+                ) {
+                    ColorSwatch(color = categoryColor(category.label))
+                    Text(
+                        text = "${category.label} ${category.bytes.toGigabyteLabel()}",
+                        style = OrtType.chip,
+                        color = OrtColors.textBody,
+                    )
+                }
             }
         }
     }
 }
+
+/** `Settings-Storage.dc.html`'s own 10×10, 2dp-rounded legend swatch (`.sw`). */
+@Composable
+private fun ColorSwatch(color: Color, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.size(STORAGE_SWATCH_SIZE).background(color, RoundedCornerShape(2.dp)))
+}
+
+private val STORAGE_BAR_HEIGHT = 8.dp
+private val STORAGE_BAR_CORNER_RADIUS = 4.dp
+private val STORAGE_SWATCH_SIZE = 10.dp
+
+/** R-351 (register): stable handles so a test can measure the bar's real height and count its
+ * real segments — the direct proof of the fix (a `Row` with no height/content gives neither a
+ * meaningful semantics size nor a countable child on its own). */
+internal const val STORAGE_BAR_TEST_TAG: String = "settings-storage-usage-bar"
+internal const val STORAGE_BAR_SEGMENT_TEST_TAG: String = "settings-storage-usage-bar-segment"
 
 /** R-291 (register): a stable handle onto the budget-chip `FilterChipRow` so a test can measure
  * its actual width against the root's, proving `fillMaxWidth()` reaches it — the fix for the row
