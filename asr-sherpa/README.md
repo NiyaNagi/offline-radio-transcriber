@@ -90,6 +90,50 @@ $env:ORT_RUN_REAL_SHERPA = "1"
 ./gradlew :asr-sherpa:test --tests "*RealSherpaDecoderRealModelTest*"
 ```
 
+## The Silero VAD binding (build-plan P12)
+
+The same `sherpa-onnx-jvm` artifact `RealSherpaDecoder` uses also exposes a real Silero VAD API —
+`com.k2fsa.sherpa.onnx.Vad`, `VadModelConfig`/`SileroVadModelConfig` (builder pattern, plain
+`FloatArray` in/out) — confirmed present in the resolved `sherpa-onnx-jvm-1.13.7.jar` (`jar tf`
+lists the classes; `javap` on them shows the shape below). `RealSileroVad` wraps it:
+
+```kotlin
+val vad = Vad(
+    VadModelConfig.builder()
+        .setSileroVadModelConfig(SileroVadModelConfig.builder().setModel(pathToOnnx).build())
+        .setSampleRate(16_000)
+        .setProvider("cpu")
+        .build(),
+)
+vad.compute(frame) // Float, the exact shape org.ort.segment.VadModel needs
+```
+
+No model ships inside either jar (confirmed by listing jar contents — `.class` files only, no
+`.onnx` resources) — `SileroVadModelConfig.setModel(path)` is a filesystem path the native
+`Vad(...)` constructor loads at construction time, exactly like `RealSherpaDecoder`'s encoder/
+decoder paths. The standard release asset name/URL is:
+
+```
+https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+```
+
+(confirmed reachable — HTTP 200 — from this environment; **never committed**, same as the Whisper
+model). Place it at `asr-sherpa/.models-cache/silero-vad/silero_vad.onnx` for
+`RealSileroVadRealModelTest`, gated identically to `RealSherpaDecoderRealModelTest`:
+
+```powershell
+$env:ORT_RUN_REAL_SHERPA = "1"
+./gradlew :asr-sherpa:test --tests "*RealSileroVadRealModelTest*"
+```
+
+`:pipeline`'s `RealVadProvider` (build-plan P12) looks for this same file at
+`<app-private-files>/models/silero-vad/silero_vad.onnx` at runtime and falls back to the
+RMS-energy `EnergyVadModel` stand-in — visibly, via `VadAvailability` — when it is absent, exactly
+mirroring `RealAsrEngineProvider`'s pattern for the ASR model. **Not verified against a real model
+in this session's environment** — no `.onnx` file was actually downloaded here (no device, and
+downloading assets is deliberately kept out of the capture/processing path per constitution V);
+`RealSileroVadRealModelTest` documents exactly what a future session needs to do so for real.
+
 ## What remains for AC-6
 
 This proves the `SherpaDecoder` seam has a real, working implementation — a real JVM binding, a

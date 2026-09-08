@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
+import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.entity.TransmissionEntity
 
@@ -35,4 +36,31 @@ public interface TransmissionDao {
 
     @Query("UPDATE transmission SET isReprocessCandidate = :value WHERE id = :id")
     public suspend fun setReprocessCandidate(id: String, value: Boolean)
+
+    /**
+     * Writes a resolved [org.ort.core.Attribution]'s fields (build-plan P12, defect 3: Pass B's
+     * resolver output previously had nowhere to land). The attribution's non-optional state
+     * (constitution I) is always written; [stationId]/[confidence]/[sourceTransmissionId] are
+     * null exactly when the state does not carry them (`AMBIGUOUS`/`UNKNOWN`).
+     */
+    @Query(
+        "UPDATE transmission SET attributionState = :state, stationId = :stationId, " +
+            "attributionConfidence = :confidence, attributionSourceTransmissionId = :sourceTransmissionId " +
+            "WHERE id = :id",
+    )
+    public suspend fun updateAttribution(
+        id: String,
+        state: AttributionState,
+        stationId: String?,
+        confidence: Double?,
+        sourceTransmissionId: String?,
+    )
+
+    /**
+     * Records why a rejection-pipeline control refused a segment, at the persisted layer (AC-8:
+     * a rejection is a result that stays reachable, not just in the in-memory
+     * [org.ort.asrapi.RejectedSegmentLog] build-plan P10 built).
+     */
+    @Query("UPDATE transmission SET rejectionReason = :reason WHERE id = :id")
+    public suspend fun setRejectionReason(id: String, reason: String)
 }

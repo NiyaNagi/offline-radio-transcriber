@@ -14,7 +14,9 @@ import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.SystemClock
 import org.ort.data.OrtDatabase
 import org.ort.pipeline.CaptureStatusRepository
+import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.VadAvailability
 import org.ort.pipeline.shed.ShedController
 import org.ort.pipeline.shed.ShedSignals
 import java.io.File
@@ -37,6 +39,8 @@ public class StatusActivity : Activity() {
     internal lateinit var gapView: TextView
     internal lateinit var shedView: TextView
     internal lateinit var livenessView: TextView
+    internal lateinit var asrView: TextView
+    internal lateinit var vadView: TextView
 
     private val pollHandler = Handler(Looper.getMainLooper())
     private var polling = false
@@ -51,6 +55,8 @@ public class StatusActivity : Activity() {
         gapView = TextView(this)
         shedView = TextView(this)
         livenessView = TextView(this)
+        asrView = TextView(this)
+        vadView = TextView(this)
         setContentView(
             LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -61,6 +67,8 @@ public class StatusActivity : Activity() {
                 addView(gapView)
                 addView(shedView)
                 addView(livenessView)
+                addView(asrView)
+                addView(vadView)
             },
         )
 
@@ -135,6 +143,10 @@ public class StatusActivity : Activity() {
                 render(StatusViewStateMapper.from(status))
                 // A stopped capture must say *why*, not just stop saying "Capturing".
                 CaptureState.failureReason?.let { stateView.text = "${stateView.text} — $it" }
+                // Capture succeeding and ASR being available are independent facts (build-plan
+                // P12) -- never let this screen look like transcription is working when it isn't.
+                asrView.text = AsrAvailability.statusLabel
+                vadView.text = VadAvailability.statusLabel
                 pollHandler.postDelayed(this, POLL_INTERVAL_MILLIS)
             }
         }

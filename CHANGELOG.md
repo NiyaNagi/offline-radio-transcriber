@@ -32,6 +32,103 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (afternoon — P12's third defect: the queue finally drains, and the Silero question is answered)
+
+### (pending) — P12 · Wire PassDrainRunner/PassB/RealSherpaDecoder into the running app; resolve the VAD question
+
+**Scope:** `:pipeline` (`passb/DataPassBResultSink.kt`, `passb/FlacSegmentAudioProvider.kt`,
+`passb/AsrEngineProvisioning.kt`, `passb/PassBFactory.kt`, `CaptureProcessingLoop.kt`,
+`capture/AsrAvailability.kt`, `capture/VadAvailability.kt`, `capture/RealVadProvider.kt`,
+`capture/RealCaptureService.kt`), `:data` (`dao/TransmissionDao.kt` — two new `@Query` methods,
+no schema change), `:asr-sherpa` (`real/RealSileroVad.kt`, its README section), `:app`'s capture
+wiring only (`status/StatusActivity.kt` — two new status lines).
+**Requirements/ACs:** AC-31 (exactly one current transcript, enforced end to end now, not just at
+`TranscriptDao.supersede`'s own layer), FR-RUN-1/constitution IV (the processing loop never blocks
+capture — it runs as an independent coroutine in the same service scope), constitution I (an
+`AsrEngineAvailability.Unavailable`/`VadProvisionResult.Unavailable` is reported, never silently
+substituted), FR-ASR-6/FR-RUN-9 (rejections and engine failures both reach `:data`, not just the
+in-memory `RejectedSegmentLog`).
+**What changed:** before this, `PassDrainRunner` (P8), `PassB`/`CallsignResolver` (P11) and
+`RealSherpaDecoder`/the six `RejectionRule`s (P10 + follow-up) all existed, tested, and were never
+constructed anywhere in the running app — a captured, enqueued transmission sat `CAPTURED` forever.
+- **The write path P11 left open.** `DataPassBResultSink` (`PassBResultSink`) persists an
+  `Accepted` outcome as a real `TranscriptEntity` via `TranscriptDao.supersede` (one current,
+  nothing deleted) and writes the resolved `Attribution` onto the transmission via two new
+  `TransmissionDao` queries (`updateAttribution`, `setRejectionReason` — additive, no migration).
+  A `Rejected` outcome records its rule/detail on the transmission's own column instead of a
+  transcript; a `Failed` outcome writes nothing (the queue's own `lastError` already carries it).
+- **The audio read-back path P11 left open.** `FlacSegmentAudioProvider` (`SegmentAudioProvider`)
+  loads a leased item's `TransmissionEntity`, reads its derived `audioPath()`, and decodes it with
+  the same `LosslessCodec` (`DeflatePredictiveCodec`) `RealSegmentSink` encoded it with — the exact
+  inverse of that class's PCM byte layout.
+- **The loop itself.** `CaptureProcessingLoop` wraps `PassDrainRunner` with a real `Pass`
+  (`PassBFactory.create(...)`, composing the two pieces above with the bundled lexicon grammar —
+  same `VariantTable`/`CallsignGrammar`/`PriorCombiner` `PassBTest` already exercises) and drains
+  repeatedly (`drainOnce`/`runForever`), continuing past an empty batch rather than stopping.
+  `RealCaptureService.startCapture()` now launches it as its own coroutine in the service's
+  existing scope — deliberately independent of the capture-flow collector, so a stalled or
+  unavailable ASR engine can never block capture (constitution IV).
+- **The model, honestly.** `RealAsrEngineProvider` looks for
+  `tiny.en-{encoder,decoder}.int8.onnx`/`tiny.en-tokens.txt` at a fixed app-private path
+  (`<filesDir>/models/whisper-tiny-en-int8/`) and constructs a real `SherpaAsrEngine`/
+  `RealSherpaDecoder` only if all three are present; a partial or missing model returns
+  `Unavailable` with a reason naming the exact expected path. **Fetching the model there is
+  deliberately not implemented here**: constitution V forbids a network call from the
+  capture/processing path this class runs in, and only `:net` may link an HTTP client — a real
+  fetch belongs behind a separate, user-initiated asset-download action through `:net` (still
+  effectively empty — only its `package-info.kt` exists). When unavailable, capture wires
+  `UnavailableAsrEngine`, which throws loudly on every `transcribe()` call rather than returning
+  anything — `RejectionPipeline` turns that into `PassBOutcome.Failed`, an honest, retryable
+  failure, never a fabricated transcript. `AsrAvailability` (mirrors `CaptureState`'s own
+  never-optimistic pattern) records which happened, and `StatusActivity` now shows it.
+- **The VAD question, resolved, not dodged.** A subagent located the actual downloaded
+  `sherpa-onnx-jvm-1.13.7.jar` in the Gradle cache and confirmed by `jar tf`/`javap` that it genuinely
+  ships `com.k2fsa.sherpa.onnx.Vad`/`VadModelConfig`/`SileroVadModelConfig` — a real, Kotlin-callable
+  Silero VAD API, not a gap in the binding. `RealSileroVad` (`:asr-sherpa`, mirroring
+  `RealSherpaDecoder`'s pattern exactly) wraps it, exposing `speechProbability(FloatArray): Float`
+  structurally rather than implementing `:segment`'s `VadModel` (ModuleGraph: `:asr-sherpa` may not
+  depend on `:segment`) — `:pipeline`'s `RealVadProvider` adapts it with a one-line lambda. What is
+  genuinely missing is the model file: neither jar bundles `silero_vad.onnx`, this repo doesn't
+  commit one, and the subagent confirmed (HTTP 200, this session) that
+  `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx` is the
+  correct, reachable release asset — fetching it is out of scope for the same constitution-V reason
+  the ASR model fetch is. `RealVadProvider` checks for it at
+  `<filesDir>/models/silero-vad/silero_vad.onnx` and falls back to the existing RMS-energy
+  `EnergyVadModel` when absent; `VadAvailability` (same pattern as `AsrAvailability`) records
+  honestly which one is running, surfaced on `StatusActivity`. **`EnergyVadModel` is still what
+  actually runs in this session's environment** — no model file was fetched here — but the seam is
+  now real, not aspirational, and `RealSileroVadRealModelTest` (gated exactly like
+  `RealSherpaDecoderRealModelTest`, `ORT_RUN_REAL_SHERPA=1`) documents precisely what a future
+  session needs to do to prove it against a real model.
+**Verified:** strict TDD — `CaptureProcessingLoopTest` (3 cases: accepted→`COMPLETE`+transcript+
+attribution, rejected→`REJECTED`+reason+no transcript, and draining across multiple enqueues) was
+written first and observed to fail (`AssertionError: expected COMPLETE but was PROCESSING`, and
+separately a spurious `withTimeoutOrNull` cancellation from mixing `kotlinx-coroutines-test`'s
+virtual clock with Room's real background-executor suspension inside `WorkQueue.runLeased` — fixed
+by using `runBlocking` for this test class, since production code has no virtual clock at all) for
+the right reasons before `CaptureProcessingLoop`/`PassBFactory`/`DataPassBResultSink`/
+`FlacSegmentAudioProvider` existed; `AsrEngineProvisioningTest`, `RealVadProviderTest`,
+`AsrAvailabilityTest`, `VadAvailabilityTest` cover the honesty seams. `./gradlew build
+dependencyRules` — full green (830 actionable tasks; `dependencyRules: checked 17 modules ...
+every edge is permitted by the design graph` — `:pipeline`'s existing `:asr-sherpa` edge covers the
+new `RealSileroVad`/`RealAsrEngineProvider` usage, no new edges needed). `RealSherpaDecoderRealModelTest`
+and the new `RealSileroVadRealModelTest` both `SKIPPED` (as designed — `ORT_RUN_REAL_SHERPA` unset).
+**Left open / not done:** **no real on-device ASR or VAD decode was run in this session** — no
+model files exist in this environment (neither was fetched; both gated real-model tests skip) — so
+`EnergyVadModel` and `UnavailableAsrEngine` are what a debug build actually runs today; only the
+Robolectric/fake-verified loop (`FakeAsrEngine`) is genuinely proven. AC-6 is not claimed (needs the
+real dev noise tape, still absent — Q2/Q16, per `asr-sherpa/README.md`'s own standing note). The
+`:net`-based model-fetch action itself (a download UI, progress state, and the install/verify/
+activate/roll-back/remove lifecycle technical design §8.4 specifies) is not built — `:net` remains
+essentially empty; this session only builds the seam that *reads* app-private storage once
+something else populates it. Confirm-threshold/separation-threshold in `PassBFactory` are the same
+uncalibrated placeholders `PassBTest` already used (no dev-fold data exists to fit real ones —
+constitution VI). Not verified on a real device — no device was available to this session, exactly
+as this prompt anticipated ("if the device work cannot be verified ... say so and stop"); everything
+above is Robolectric + JVM verified only.
+
+---
+
 ## 2026-09-08 (morning, cont. — Wave E added; P12's first two defects fixed)
 
 ### (pending) — Decompose M5 into the build plan, and fix the two defects that made capture a lie

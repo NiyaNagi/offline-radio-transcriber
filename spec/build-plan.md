@@ -89,6 +89,14 @@ are individually green.*
 - [ ] **P12 · Make capture actually work end to end on a device** *(`:capture-android`,
   `:pipeline`, `:app`)* — the three on-device defects, then the processing loop that turns a
   captured segment into a transcript. **This is the one that makes the app do its job at all.**
+  Defects 1 and 2 fixed 2026-09-08 morning. Defect 3 (the drain loop) and the VAD question fixed
+  2026-09-08 afternoon: `PassDrainRunner`/`PassB`/`RealSherpaDecoder` are now constructed and wired
+  into `RealCaptureService`, proven against `FakeAsrEngine` on Robolectric; a real Silero VAD
+  binding was located and wrapped (`RealSileroVad`), gated on a model file this session could not
+  fetch (constitution V: no network in the capture/processing path). **Still not checked off**: not
+  verified on a real device (none available), no ASR/VAD model was actually run for real in this
+  session, and the `:net` asset-fetch action itself is not built — see CHANGELOG for exactly what
+  remains.
 - [ ] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
   Compose wiring at all.

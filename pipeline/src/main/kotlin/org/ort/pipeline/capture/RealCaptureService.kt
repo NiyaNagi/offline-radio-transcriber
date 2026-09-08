@@ -32,6 +32,12 @@ import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.CaptureProcessingLoop
+import org.ort.pipeline.PassDrainRunner
+import org.ort.pipeline.passb.AsrEngineAvailability
+import org.ort.pipeline.passb.PassBFactory
+import org.ort.pipeline.passb.RealAsrEngineProvider
+import org.ort.pipeline.passb.UnavailableAsrEngine
 import org.ort.segment.FrameSpec
 import org.ort.segment.SegmentConfig
 import org.ort.segment.SegmentId
@@ -52,10 +58,13 @@ import java.io.RandomAccessFile
  * `:capture-android`'s own `CaptureService` doc comment names as `:pipeline`'s job ("wiring
  * capture into the queue"). Two real gaps this fills in, deliberately, for exactly this purpose:
  *
- * - **VAD**: no real Silero ONNX model/runtime exists yet anywhere in this repo (only
- *   `FakeVad`/`ScriptedVad` in `:segment`'s own tests) — [EnergyVadModel] here is a simple
- *   RMS-energy threshold, explicitly not Silero, wrapped in the real [SileroVad] hysteresis logic
- *   so swapping in a real model later is a one-line change.
+ * - **VAD**: a real Silero VAD binding does exist (`com.k2fsa.sherpa.onnx.Vad`, in the same
+ *   `sherpa-onnx-jvm` jar `RealSherpaDecoder` uses — see `asr-sherpa/README.md`), wrapped by
+ *   [RealSileroVad][org.ort.asrsherpa.real.RealSileroVad] and wired here via [RealVadProvider].
+ *   What this repo does not have is the model file itself — [EnergyVadModel] (a simple RMS-energy
+ *   threshold, wrapped in the real [SileroVad] hysteresis logic) is the fallback when
+ *   [RealVadProvider] finds no model installed, and [VadAvailability] records honestly which one
+ *   is actually running (constitution I — never silently one pretending to be the other).
  * - **Route/interruption handling**: [AndroidAudioIo] (see its own doc comment) is a real but
  *   minimal `AudioIo` — no proactive route-change callback, relies on read-error detection.
  *
@@ -127,6 +136,13 @@ public class RealCaptureService : Service() {
         source = audioSource
         CaptureState.capturing(sessionId)
 
+        // The processing loop (build-plan P12, defect 3): drains whatever RealSegmentSink
+        // enqueues, independent of the capture flow above -- a stalled or unavailable ASR engine
+        // must never block capture (constitution IV: "capture MUST proceed with every processing
+        // pass stalled"). Runs as its own coroutine in the same service-scoped `scope`, so it is
+        // cancelled by the same `scope.cancel()` onDestroy() already calls.
+        scope.launch { startProcessingLoop(db, queue) }
+
         scope.launch {
             db.sessionDao().insert(
                 SessionEntity(
@@ -146,7 +162,20 @@ public class RealCaptureService : Service() {
                 transmissionCount++
                 onHeartbeat()
             }
-            val vad = SileroVad(EnergyVadModel())
+            // Real Silero VAD when a model is installed, the RMS-energy stand-in otherwise --
+            // never silently one pretending to be the other (build-plan P12; see VadAvailability).
+            val vadResult = RealVadProvider.provide(filesDir)
+            val vadModel = when (vadResult) {
+                is VadProvisionResult.Available -> {
+                    VadAvailability.real()
+                    vadResult.vad
+                }
+                is VadProvisionResult.Unavailable -> {
+                    VadAvailability.stub(vadResult.reason)
+                    EnergyVadModel()
+                }
+            }
+            val vad = SileroVad(vadModel)
             val segmenter = Segmenter(SegmentConfig(), vad, sink)
 
             var lastHeartbeatAt = 0L
@@ -180,6 +209,33 @@ public class RealCaptureService : Service() {
             // or an unrecoverable failure. Never leave the surface claiming "Capturing".
             if (CaptureState.isCapturing) CaptureState.failed("capture stopped unexpectedly")
         }
+    }
+
+    /**
+     * Build-plan P12, defect 3: before this, `PassDrainRunner` (P8), `PassB` (P11) and
+     * `RealSherpaDecoder` (P10 follow-up) all existed and none was constructed anywhere in the
+     * running app -- a captured, enqueued transmission sat `CAPTURED` forever. [RealAsrEngineProvider]
+     * only ever reads app-private storage (constitution V: no network in the processing path) --
+     * fetching the model there is a separate, user-initiated action through `:net`, out of this
+     * session's scope (see CHANGELOG). When no model is installed, [AsrAvailability] is set to
+     * [AsrAvailability.State.Unavailable] and the queue still drains against [UnavailableAsrEngine]
+     * so a rejection/failure reason is recorded honestly rather than nothing happening at all.
+     */
+    private suspend fun startProcessingLoop(db: OrtDatabase, queue: WorkQueue) {
+        val availability = RealAsrEngineProvider(filesDir).provide()
+        val (engine, modelRef) = when (availability) {
+            is AsrEngineAvailability.Available -> {
+                AsrAvailability.available(availability.modelRef.canonical)
+                availability.engine to availability.modelRef
+            }
+            is AsrEngineAvailability.Unavailable -> {
+                AsrAvailability.unavailable(availability.reason)
+                updateNotification("ASR unavailable")
+                UnavailableAsrEngine(availability.reason) to org.ort.core.AssetRef("asr-unavailable", "0")
+            }
+        }
+        val pass = PassBFactory.create(filesDir, db, engine, modelRef)
+        CaptureProcessingLoop(PassDrainRunner(queue, runId = sessionId), pass).runForever()
     }
 
     private fun onHeartbeat() {
