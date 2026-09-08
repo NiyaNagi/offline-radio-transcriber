@@ -32,6 +32,91 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 round 5: Fail-Lexicon, RealImproveRunner, NavRow migration)
+
+### (pending) — ui-conformance WP10 · Fail-Lexicon refusal from the import validator; NavRow migration
+
+**Scope:** `ui/screens/ModelsScreen.kt`, `ui/settings/**`, `ui/improve/**`, `ui/data/ModelsViewData.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/{Scenarios,LexiconCorruptScenario}.kt`, and tests beside
+each. Read (not edited) `app/build.gradle.kts` and `ui/failures/DebugFailureOverride.kt` to confirm
+the `BuildConfig.DEBUG` gating pattern this round's own debug-override holder follows.
+
+**Requirements/ACs:** R-154 (Fail-Lexicon, FR-LEX-12/FR-LEX-30/FR-AST-2), R-091/R-143/FR-REP-6/
+FR-REP-9/FR-REP-11 (the real reprocessing engine wired into `ImproveContent`), R-131 (NavRow
+migration, settings root). Constitution I, II.
+
+**What changed:**
+
+*Constitution Check.* Principle I: `Improve-Done`'s new measured-counts line only ever shows a
+real `ReprocessStatus.Summary` (`RealImproveRunner`'s own run) — `FakeImproveRunner`'s path (tests,
+the debug scenario) keeps the pre-existing honest "no reprocessing engine" note rather than
+printing zeroes that would misrepresent "nothing changed" as a measured fact. Principle II: every
+behaviour below has a test named for its id, against real state.
+
+- **R-154 Fail-Lexicon:** "Install a lexicon from a file" on the Assets screen's new lexicon row
+  (`ModelsController.lexiconRow`, real — no `ModelId` covers the lexicon) opens the system document
+  picker → `ModelsController.installLexicon`. A `Rejected` result renders as a full-screen
+  `Fail-Lexicon.dc.html` (every check with its real pass/fail/not-reached marker and detail, the
+  real refusal reason, and `stillActiveLabel`'s "what stays active" — `null` rendered as "no
+  lexicon was active before this import attempt", never omitted); an `Accepted` result folds back
+  into the assets row in place, no takeover. The `lexicon-corrupt` debug scenario's refusal is now
+  reachable from the real screen too: `LexiconCorruptScenario` (debug sourceset) writes the real
+  result to a new `org.ort.app.ui.data.DebugLexiconImportOverride` (**main**-sourceset holder,
+  `DebugFailureOverride`'s exact pattern — a debug-only `internal object` cannot be imported from
+  `ui/screens`, since `app/src/main` does not depend on `app/src/debug`) which `ModelsContent`
+  polls and shows when nothing real is already in flight; `Scenarios.resetProcessWideFacets` clears
+  it (and `ReprocessStatus`) between scenario loads, the same cross-contamination guard every other
+  process-wide facet there already gets.
+- **R-091/R-143/FR-REP-6/9/11 RealImproveRunner:** `ImproveContent` now constructs
+  `RealImproveRunner` (over `:pipeline`'s newly-landed `ReprocessRunner`) instead of
+  `FakeImproveRunner` — the fake stays only for tests and the debug scenario, neither of which goes
+  through this composable. `ReprocessStatus.state` (the process-wide holder `ReprocessRunner`
+  publishes to as a side effect of the run) is polled separately while `Improve-Running` shows:
+  `State.Paused` (the engine's own capture-priority auto-yield, FR-REP-6) renders "Paused — waiting
+  — capture is busy", distinct from the operator's own Pause toggle; at completion, `State.Done`'s
+  real `Summary` reaches `Improve-Done`, which now shows "N transcripts changed · M attributions
+  changed · K rejected · F failed" (R-143's exact wording) when a real summary exists, keeping the
+  honest "no reprocessing engine" note otherwise. The per-record before/after diff
+  `Improve-Done.dc.html` also shows stays absent either way — `ReprocessStatus.Summary` carries only
+  aggregate counts, not a per-transmission before/after list, and the screen says so.
+- **R-131 NavRow migration:** `SettingsRootScreen`'s hand-rolled `SettingsNavRow` (no leading icon
+  slot) is now WP2's `NavRow` (`Settings.dc.html`'s own row family) — closes "rows lack their 18px
+  leading icons" for free. No bespoke icon exists per `SettingsScreenId` (`ui/components` is
+  outside this round's file ownership to add one to), so `TIER`/`ABOUT` reuse `OrtIcons.settings`
+  and `CONTRIBUTE` reuses `OrtIcons.lock`, named honestly in-code rather than silently approximated.
+  `ImproveScreens.kt`'s `ImproveGroupRow` was **not** migrated: `Improve`'s page applies
+  `padding(horizontal = lg)` to its whole scroll column (unlike Settings-root's per-element
+  padding), so `NavRow`'s own internal `lg` padding would double-indent every group row — migrating
+  it cleanly needs restructuring that column's padding, out of this round's time. `SessionsScreens`'
+  own `SessionRow` was also not migrated (its badge-inline-with-title and hatched/coloured sub-line
+  do not fit `NavRow`'s plain-`String` `subLine` slot without losing R-144's own fix).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, unfiltered) — `BUILD SUCCESSFUL in 1m 14s`
+  to `1m 28s` across reruns, every test `PASSED`, including new: `ModelsScreenTest.R_154_*` (×2),
+  `ImproveScreensTest` (new file, `FR_REP_6_*` ×2, `R_143_*` ×2), `SettingsPollingTest`/
+  `SettingsRootScreenTest` unaffected and still green.
+- `.\gradlew.bat :app:detekt`/`:app:ktlintFormat` — both files this round touches are clean; three
+  pre-existing `LongParameterList`/`ForEachOnRange` findings remain in WP8's
+  `ui/screens/StationScreen.kt`/`StationPatternScreen.kt` (confirmed via `git log` on those two
+  files: last touched by WP8's own commits, never by this package) — outside this round's file
+  ownership to fix; `:app:detekt` alone still fails on those until WP8 lands its own fix (main's
+  incoming commits at merge time already touch `StationPatternScreen.kt`, so this may already be
+  moot — see the next round's own gate run).
+- `.\gradlew.bat build dependencyRules platformGuards`, `.\gradlew.bat -p buildSrc test`,
+  `python tools\spec-check\spec_check.py`, `.\gradlew.bat coverageMatrix`/`coverageMatrixCheck`,
+  `.\gradlew.bat :app:assembleDebug` — not re-run standalone this entry (superseded by the fuller
+  gate run recorded in the next round's own entry, on top of this commit); `:app:testDebugUnitTest`
+  and the two lint tasks above were run directly against this exact change.
+
+**Left open / not done:**
+- `ImproveGroupRow`/`SessionRow` not migrated to `NavRow` — see "What changed" for the structural
+  reason each needs its own follow-up rather than a same-round fix.
+- The three pre-existing WP8 detekt findings named above.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
 ## 2026-09-08 (ui-conformance WP11d)
 
 ### (pending) — ui-conformance WP11d · reprocessing engine: re-run passes at the current tier, pausable, capture-safe

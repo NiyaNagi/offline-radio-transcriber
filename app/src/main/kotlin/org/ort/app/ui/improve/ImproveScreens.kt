@@ -284,7 +284,7 @@ public fun ImproveRunningScreen(
 ) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = OrtSpacing.lg)) {
         Text(
-            text = if (state.paused) "Paused" else "Improving",
+            text = if (state.paused || state.autoPausedReason != null) "Paused" else "Improving",
             style = OrtType.screenTitle,
             color = OrtColors.textHigh,
             modifier = Modifier.padding(top = OrtSpacing.sm),
@@ -297,20 +297,24 @@ public fun ImproveRunningScreen(
         )
         ProgressBar(progress = if (state.totalCount == 0) 0f else state.doneCount.toFloat() / state.totalCount)
 
+        // FR-REP-6 (WP11d addendum, round 5): the engine's own capture-priority yield
+        // (`ReprocessStatus.State.Paused`) is a distinct, real reason from the operator's own
+        // Pause toggle — shown honestly rather than left indistinguishable from a stalled run.
+        state.autoPausedReason?.let { reason ->
+            Text(
+                text = reason,
+                style = OrtType.cardBody,
+                color = OrtColors.accentAmber,
+                modifier = Modifier.padding(top = OrtSpacing.sm),
+            )
+        }
+
         Text(
             text = "Live capture is unaffected — it always has priority. Pausing keeps what is done. " +
                 "Cancelling keeps what is done too — nothing is rolled back.",
             style = OrtType.cardBody,
             color = OrtColors.textBody,
             modifier = Modifier.padding(top = OrtSpacing.md),
-        )
-        Text(
-            text = "No reprocessing engine exists in this build (see this package's report) — this " +
-                "run only clears the reprocess-candidate mark on each over; it does not rewrite any " +
-                "transcript, attribution or callsign.",
-            style = OrtType.cardBody,
-            color = OrtColors.textFaint,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
         )
 
         Column(modifier = Modifier.weight(1f)) {}
@@ -330,8 +334,10 @@ public fun ImproveRunningScreen(
     }
 }
 
-/** `Improve-Done.dc.html`: counts, and — honestly — no sample diff, for the same reason
- * [ImproveRunningScreen] shows none (see [ImproveRunner]'s kdoc). */
+/** `Improve-Done.dc.html`: [ImproveDoneViewState.summary]'s real measured counts (R-143, WP11d
+ * addendum) once `RealImproveRunner` has driven the run; the honest "no reprocessing engine" note
+ * (unchanged) when it has not — never a fabricated diff either way (see [ImproveRunner]'s kdoc for
+ * why the per-record detail itself stays absent in both cases). */
 @Composable
 public fun ImproveDoneScreen(state: ImproveDoneViewState, onDone: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = OrtSpacing.lg)) {
@@ -352,13 +358,31 @@ public fun ImproveDoneScreen(state: ImproveDoneViewState, onDone: () -> Unit, mo
             style = OrtType.control,
             color = OrtColors.textBody,
         )
-        Text(
-            text = "Nothing is deleted (P9): every current record was kept as-is. No content was " +
-                "rewritten — see this package's report for what a real reprocessing pass still needs.",
-            style = OrtType.cardBody,
-            color = OrtColors.textFaint,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
+        val summary = state.summary
+        if (summary != null) {
+            Text(
+                text = "${summary.transcriptsChanged} transcripts changed · " +
+                    "${summary.attributionsChanged} attributions changed · " +
+                    "${summary.rejected} rejected · ${summary.failed} failed",
+                style = OrtType.control,
+                color = OrtColors.textBody,
+                modifier = Modifier.padding(top = OrtSpacing.xs),
+            )
+            Text(
+                text = "Per-record detail is not shown — no per-record before/after view exists yet.",
+                style = OrtType.cardBody,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = OrtSpacing.sm),
+            )
+        } else {
+            Text(
+                text = "Nothing is deleted (P9): every current record was kept as-is. No content was " +
+                    "rewritten — see this package's report for what a real reprocessing pass still needs.",
+                style = OrtType.cardBody,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = OrtSpacing.sm),
+            )
+        }
         Column(modifier = Modifier.weight(1f)) {}
         PrimaryButton(
             text = "Done",

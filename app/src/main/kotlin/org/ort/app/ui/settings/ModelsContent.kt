@@ -3,17 +3,24 @@ package org.ort.app.ui.settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.ort.app.ui.data.DebugLexiconImportOverride
+import org.ort.app.ui.data.LexiconAssetActions
+import org.ort.app.ui.data.LexiconAssetRowViewState
+import org.ort.app.ui.data.LexiconImportViewState
 import org.ort.app.ui.data.ModelActionResult
 import org.ort.app.ui.data.ModelDownloadFailureViewState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelsController
+import org.ort.app.ui.data.ModelsScreenStatus
 import org.ort.app.ui.screens.ModelsScreen
 import java.io.IOException
 
@@ -44,13 +51,52 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
     var lastDownloadFailure by remember { mutableStateOf<ModelDownloadFailureViewState?>(null) }
     var pendingSideloadId by remember { mutableStateOf<ModelId?>(null) }
 
+    // R-154 (round 5): the lexicon row's own state — real (`ModelsController.lexiconRow`) and,
+    // once "Install a lexicon from a file" runs, the real [LexiconImportViewState] this screen
+    // renders as `Fail-Lexicon.dc.html` on a [LexiconImportViewState.Rejected]. See
+    // `DebugLexiconImportOverride`'s own doc comment for why the poll below also reads it.
+    var lexiconRow by remember { mutableStateOf<LexiconAssetRowViewState?>(null) }
+    var lexiconImportResult by remember { mutableStateOf<LexiconImportViewState?>(null) }
+    var lexiconRefreshToken by remember { mutableStateOf(0) }
+
+    LaunchedEffect(lexiconRefreshToken) { lexiconRow = ModelsController.lexiconRow(context) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (lexiconImportResult == null) {
+                DebugLexiconImportOverride.activeOverride?.let {
+                    lexiconImportResult = it
+                    lexiconRefreshToken++
+                }
+            }
+            delay(LEXICON_OVERRIDE_POLL_INTERVAL_MILLIS)
+        }
+    }
+
+    val lexiconFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val source = copyPickedFileToCache(context, uri, LEXICON_CACHE_FILE_NAME)
+            lexiconImportResult = if (source != null) {
+                ModelsController.installLexicon(context, source)
+            } else {
+                LexiconImportViewState.Rejected(
+                    fileName = "picked file",
+                    checks = emptyList(),
+                    reason = "could not read the picked file",
+                    stillActiveLabel = null,
+                )
+            }
+            lexiconRefreshToken++
+        }
+    }
+
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val id = pendingSideloadId
         pendingSideloadId = null
         if (uri == null || id == null) return@rememberLauncherForActivityResult
         busy = busy + id
         scope.launch {
-            val source = copyPickedFileToCache(context, uri, id)
+            val source = copyPickedFileToCache(context, uri, id.name)
             val result = if (source != null) {
                 ModelsController.sideload(context, id, source)
             } else {
@@ -84,8 +130,7 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
     ModelsScreen(
         state = state,
         busy = busy,
-        lastMessage = lastMessage,
-        downloadFailure = lastDownloadFailure,
+        status = ModelsScreenStatus(lastMessage = lastMessage, downloadFailure = lastDownloadFailure),
         onDownload = ::runDownload,
         onSideload = { id ->
             pendingSideloadId = id
@@ -93,8 +138,17 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
         },
         modifier = modifier,
         onBack = onBack,
+        lexicon = LexiconAssetActions(
+            row = lexiconRow,
+            importResult = lexiconImportResult,
+            onInstall = { lexiconFilePicker.launch(arrayOf("*/*")) },
+            onDismissResult = { lexiconImportResult = null },
+        ),
     )
 }
+
+private const val LEXICON_CACHE_FILE_NAME = "lexicon-sideload"
+private const val LEXICON_OVERRIDE_POLL_INTERVAL_MILLIS = 1_000L
 
 private fun messageFor(id: ModelId, result: ModelActionResult): String = when (result) {
     is ModelActionResult.Success ->
@@ -103,13 +157,16 @@ private fun messageFor(id: ModelId, result: ModelActionResult): String = when (r
 }
 
 /**
- * [ModelAcquisition][org.ort.net.ModelAcquisition].sideload takes a [java.io.File], not a content
- * [android.net.Uri] — the system picker only ever hands back the latter, so this copies the picked
- * document into app-private cache storage first. No network call either way (constitution V).
+ * [ModelAcquisition][org.ort.net.ModelAcquisition].sideload and [ModelsController.installLexicon]
+ * both take a [java.io.File], not a content [android.net.Uri] — the system picker only ever hands
+ * back the latter, so this copies the picked document into app-private cache storage first. No
+ * network call either way (constitution V). [name] is a cache-file-naming key only (a [ModelId]'s
+ * own name for a model sideload, [LEXICON_CACHE_FILE_NAME] for a lexicon import — the lexicon has
+ * no [ModelId] of its own).
  */
-private fun copyPickedFileToCache(context: android.content.Context, uri: android.net.Uri, id: ModelId): java.io.File? =
+private fun copyPickedFileToCache(context: android.content.Context, uri: android.net.Uri, name: String): java.io.File? =
     try {
-        val dest = java.io.File(context.cacheDir, "sideload-${id.name}.tmp")
+        val dest = java.io.File(context.cacheDir, "sideload-$name.tmp")
         val opened = context.contentResolver.openInputStream(uri)?.use { input ->
             dest.outputStream().use { output -> input.copyTo(output) }
             true

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -21,16 +22,24 @@ import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FailedState
+import org.ort.app.ui.components.OrtIcons
+import org.ort.app.ui.components.PrimaryButton
+import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
-import org.ort.app.ui.data.ModelDownloadFailureViewState
+import org.ort.app.ui.data.LexiconAssetActions
+import org.ort.app.ui.data.LexiconAssetRowViewState
+import org.ort.app.ui.data.LexiconCheckViewRow
+import org.ort.app.ui.data.LexiconImportViewState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
+import org.ort.app.ui.data.ModelsScreenStatus
 import org.ort.app.ui.data.ModelsViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
+import org.ort.lexicon.import.CheckStatus
 
 /**
  * R-093 (`Settings-Assets.dc.html`, guide §6.7): one row per asset — a verified/not-installed
@@ -54,18 +63,31 @@ import org.ort.app.ui.theme.OrtType
 public fun ModelsScreen(
     state: ModelsViewState,
     busy: Set<ModelId> = emptySet(),
-    lastMessage: String? = null,
     onDownload: (ModelId) -> Unit,
     onSideload: (ModelId) -> Unit,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
-    // R-140: a failed download renders as this amber `FailedState`, not the plain-text
-    // `lastMessage` above (mutually exclusive in practice — `ModelsContent` clears one when it
-    // sets the other) — `null` (the default) keeps every existing caller compiling unchanged.
-    // `Retry` reuses [onDownload] itself (with the failed asset's own id) rather than adding a
-    // tenth parameter for what is, structurally, the same action.
-    downloadFailure: ModelDownloadFailureViewState? = null,
+    // R-154 (round 5): bundled with `downloadFailure` (mutually exclusive in practice —
+    // `ModelsContent` clears one when it sets the other) into [ModelsScreenStatus] to keep this
+    // function's own parameter list under detekt's threshold once the lexicon row added a ninth.
+    // `Retry` reuses [onDownload] itself (with the failed asset's own id) rather than a separate
+    // callback for what is, structurally, the same action.
+    status: ModelsScreenStatus = ModelsScreenStatus(),
+    // R-154 (round 5): `null` (the default) keeps every existing caller compiling unchanged and
+    // draws no lexicon row at all — see [LexiconAssetActions]'s own doc comment.
+    lexicon: LexiconAssetActions? = null,
 ) {
+    val rejectedImport = lexicon?.importResult as? LexiconImportViewState.Rejected
+    if (rejectedImport != null) {
+        FailLexiconScreen(
+            result = rejectedImport,
+            onChooseAnotherFile = lexicon.onInstall,
+            onDone = lexicon.onDismissResult,
+            modifier = modifier,
+        )
+        return
+    }
+
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         onBack?.let { back -> DrillInHeader(parentLabel = "Settings", onBack = back) }
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
@@ -92,37 +114,7 @@ public fun ModelsScreen(
                 )
             }
 
-            state.requeuedMessage?.let { message ->
-                Text(
-                    text = message,
-                    style = OrtType.cardBody,
-                    color = OrtColors.textMuted,
-                    modifier = Modifier.padding(top = OrtSpacing.sm).semantics { contentDescription = message },
-                )
-            }
-            lastMessage?.let { message ->
-                Text(
-                    text = message,
-                    style = OrtType.cardBody,
-                    color = OrtColors.textMuted,
-                    modifier = Modifier
-                        .padding(top = OrtSpacing.xs)
-                        .semantics { contentDescription = "Last action: $message" },
-                )
-            }
-            // R-140: a failed download used to leave `:net`'s raw exception text sitting in the
-            // same plain-body slot a success message uses — this is the amber `FailedState`
-            // every other operator-facing failure in this build gets, with a real `Retry`.
-            downloadFailure?.let { failure ->
-                FailedState(
-                    title = "${failure.id.label} could not be downloaded",
-                    body = "The download did not complete: ${failure.reason}. The version already " +
-                        "installed, if any, is unchanged.",
-                    actionLabel = "Retry",
-                    onAction = { onDownload(failure.id) },
-                    modifier = Modifier.padding(top = OrtSpacing.sm),
-                )
-            }
+            ModelsNotices(requeuedMessage = state.requeuedMessage, status = status, onRetryDownload = onDownload)
 
             SectionHeader(label = "Assets", modifier = Modifier.padding(top = OrtSpacing.lg))
             // R-140 (round 4, System validator): grouped by real model family — was one flat row
@@ -142,6 +134,12 @@ public fun ModelsScreen(
                     AssetRow(row = row, isBusy = row.id in busy, onDownload = onDownload, onSideload = onSideload)
                 }
             }
+            // R-154 (round 5): the callsign lexicon is a real asset ([org.ort.data.entity.LexiconVersionEntity],
+            // via [org.ort.app.ui.data.ModelsController.lexiconRow]) with no [ModelId] of its own —
+            // it gets its own family caption and row rather than joining `groupAssetRows` above,
+            // since its install path (`installLexicon`, real validation + activation) is genuinely
+            // different from a plain checksum-and-copy model download.
+            lexicon?.row?.let { row -> LexiconAssetRow(row = row, onInstall = lexicon.onInstall) }
 
             Text(
                 text = "Checksum and record count are verified before anything replaces the current " +
@@ -149,6 +147,50 @@ public fun ModelsScreen(
                 style = OrtType.cardBody,
                 color = OrtColors.textFaint,
                 modifier = Modifier.padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
+            )
+        }
+    }
+}
+
+/** The requeued/last-action/download-failure notices, split out of [ModelsScreen] purely to keep
+ * that function under detekt's length limit. */
+@Composable
+private fun ModelsNotices(
+    requeuedMessage: String?,
+    status: ModelsScreenStatus,
+    onRetryDownload: (ModelId) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        requeuedMessage?.let { message ->
+            Text(
+                text = message,
+                style = OrtType.cardBody,
+                color = OrtColors.textMuted,
+                modifier = Modifier.padding(top = OrtSpacing.sm).semantics { contentDescription = message },
+            )
+        }
+        status.lastMessage?.let { message ->
+            Text(
+                text = message,
+                style = OrtType.cardBody,
+                color = OrtColors.textMuted,
+                modifier = Modifier
+                    .padding(top = OrtSpacing.xs)
+                    .semantics { contentDescription = "Last action: $message" },
+            )
+        }
+        // R-140: a failed download used to leave `:net`'s raw exception text sitting in the same
+        // plain-body slot a success message uses — this is the amber `FailedState` every other
+        // operator-facing failure in this build gets, with a real `Retry`.
+        status.downloadFailure?.let { failure ->
+            FailedState(
+                title = "${failure.id.label} could not be downloaded",
+                body = "The download did not complete: ${failure.reason}. The version already " +
+                    "installed, if any, is unchanged.",
+                actionLabel = "Retry",
+                onAction = { onRetryDownload(failure.id) },
+                modifier = Modifier.padding(top = OrtSpacing.sm),
             )
         }
     }
@@ -227,6 +269,165 @@ private fun AssetRow(
                 enabled = !isBusy,
                 onClick = { onSideload(row.id) },
                 modifier = Modifier.semantics { contentDescription = "Install ${row.label} from a file" },
+            )
+        }
+    }
+}
+
+/** R-154 (round 5): the Assets screen's own lexicon row — a real [LexiconAssetRowViewState],
+ * never a [ModelId]-shaped one (there is no lexicon `ModelId`). "Install a lexicon from a file" is
+ * this row's one action regardless of [LexiconAssetRowViewState.installed] — there is no download
+ * path for the lexicon (FR-LEX-30/constitution V's own "sideload only" for this asset). */
+@Composable
+private fun LexiconAssetRow(row: LexiconAssetRowViewState, onInstall: () -> Unit, modifier: Modifier = Modifier) {
+    Text(
+        text = "Callsign lexicon",
+        style = OrtType.subLine,
+        color = OrtColors.textFaint,
+        modifier = Modifier.padding(top = OrtSpacing.sm),
+    )
+    val description = "Callsign lexicon ${if (row.installed) "installed" else "not installed"}. ${row.label}"
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.sm)) {
+        Row(
+            modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = description },
+            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+        ) {
+            AssetMarker(
+                status = if (row.installed) ModelRowStatus.INSTALLED else ModelRowStatus.NOT_INSTALLED,
+                isBusy = false,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
+                    Text(text = "Callsign lexicon", style = OrtType.rowTitle, color = OrtColors.textHigh)
+                    if (row.installed) Badge(text = "active", kind = BadgeKind.TIER)
+                }
+                Text(
+                    text = row.label,
+                    style = OrtType.subLine,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+        Row(modifier = Modifier.padding(top = OrtSpacing.xs, start = MARKER_COLUMN_WIDTH)) {
+            TextAction(
+                text = "Install a lexicon from a file",
+                onClick = onInstall,
+                modifier = Modifier.semantics { contentDescription = "Install a lexicon from a file" },
+            )
+        }
+    }
+}
+
+/** `Fail-Lexicon.dc.html` (R-154, FR-LEX-12): a refused import — every check in [result.checks]
+ * with its real outcome, the real refusal [reason][LexiconImportViewState.Rejected.reason], and
+ * what remains active ([LexiconImportViewState.Rejected.stillActiveLabel]). Replaces the whole
+ * Assets screen (not an inline card) while a rejection is showing, matching the board's own
+ * full-screen presentation. */
+@Composable
+private fun FailLexiconScreen(
+    result: LexiconImportViewState.Rejected,
+    onChooseAnotherFile: () -> Unit,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        DrillInHeader(parentLabel = "Settings", onBack = onDone)
+        Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+            Text(text = "Import refused", style = OrtType.screenTitle, color = OrtColors.textHigh)
+            Text(
+                text = "${result.fileName} · the current lexicon is untouched",
+                style = OrtType.subtitle,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = OrtSpacing.xs),
+            )
+
+            FailedState(
+                title = "The file is not what its manifest says it is",
+                body = result.reason,
+                modifier = Modifier.padding(top = OrtSpacing.md),
+            )
+
+            SectionHeader(label = "What was checked", modifier = Modifier.padding(top = OrtSpacing.lg))
+            result.checks.forEach { check -> LexiconCheckRow(check = check) }
+
+            SectionHeader(label = "Still active", modifier = Modifier.padding(top = OrtSpacing.lg))
+            Text(
+                text = result.stillActiveLabel ?: "nothing — no lexicon was active before this import attempt",
+                style = OrtType.control,
+                color = OrtColors.textBody,
+                modifier = Modifier.padding(top = OrtSpacing.xs),
+            )
+
+            Text(
+                text = "Re-download the file and try again. An import only ever replaces the current " +
+                    "lexicon after every check passes.",
+                style = OrtType.cardBody,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.lg),
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+            ) {
+                SecondaryButton(
+                    text = "Choose another file",
+                    onClick = onChooseAnotherFile,
+                    modifier = Modifier.weight(1f),
+                )
+                PrimaryButton(text = "Done", onClick = onDone, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** `Fail-Lexicon.dc.html`'s "What was checked" row: a filled green check, a filled red cross, or a
+ * hollow ring for [CheckStatus.NOT_REACHED] — the guide's own text-not-colour-alone discipline
+ * (the status word is always in [org.ort.lexicon.import.LexiconCheck.detail] too, never colour-only). */
+@Composable
+private fun LexiconCheckRow(check: LexiconCheckViewRow, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.sm),
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        LexiconCheckMarker(status = check.status)
+        Column {
+            Text(
+                text = check.name,
+                style = OrtType.rowTitle,
+                color = if (check.status == CheckStatus.NOT_REACHED) OrtColors.textFaint else OrtColors.textHigh,
+            )
+            Text(
+                text = check.detail,
+                style = OrtType.subLine,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LexiconCheckMarker(status: CheckStatus, modifier: Modifier = Modifier) {
+    when (status) {
+        CheckStatus.PASSED -> Icon(
+            imageVector = OrtIcons.check,
+            contentDescription = null,
+            tint = OrtColors.accentGreen,
+            modifier = modifier.padding(top = 2.dp).size(18.dp),
+        )
+        CheckStatus.FAILED -> Icon(
+            imageVector = OrtIcons.dismiss,
+            contentDescription = null,
+            tint = OrtColors.haltFill,
+            modifier = modifier.padding(top = 2.dp).size(18.dp),
+        )
+        CheckStatus.NOT_REACHED -> Canvas(modifier = modifier.padding(top = 6.dp).size(9.dp)) {
+            drawCircle(
+                color = OrtColors.lineControl,
+                radius = size.minDimension / 2 - 0.75.dp.toPx(),
+                style = Stroke(1.5.dp.toPx()),
             )
         }
     }
