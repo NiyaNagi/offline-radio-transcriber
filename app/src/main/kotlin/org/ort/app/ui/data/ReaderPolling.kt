@@ -128,6 +128,70 @@ public object ReaderPolling {
         }
     }
 
+    /** The "Stations" list (FR-UI-9): every station ever heard, most recently heard first. */
+    public suspend fun listStationSummaries(context: Context): List<StationListEntryViewState> {
+        val db = OrtDatabase.create(context.applicationContext)
+        return db.activityDao().listStations().map { StationViewMapper.listEntry(it) }
+    }
+
+    /** The "Frequencies" list (FR-UI-10): every frequency ever recorded on a transmission. */
+    public suspend fun listFrequencySummaries(context: Context): List<FrequencyListEntryViewState> {
+        val db = OrtDatabase.create(context.applicationContext)
+        return db.activityDao().listDistinctFrequencies().map { frequencyHz ->
+            val count = db.activityDao().transmissionsForFrequency(frequencyHz).size
+            FrequencyViewMapper.listEntry(frequencyHz, count)
+        }
+    }
+
+    /**
+     * Everything heard from [stationId], across every session (FR-UI-9), plus its activity
+     * pattern (FR-UI-11), built from the *real* [org.ort.data.entity.SessionEntity] start/end and
+     * [org.ort.data.entity.CaptureGapEntity] rows every recorded session carries — FR-UI-12's "not
+     * heard" vs "not listening" distinction is structural in [ActivityPatternMapper], not decided
+     * here.
+     */
+    public suspend fun stationDetail(context: Context, stationId: String, nowMillis: Long): StationDetailViewState {
+        val db = OrtDatabase.create(context.applicationContext)
+        val entities = db.activityDao().transmissionsForStation(stationId)
+        val details = entities.map { detailFrom(context, db, it) }
+        val pattern = activityPatternForEverySession(db, entities.map { it.startedAtUtc }, nowMillis)
+        val label = db.catalogDao().getStation(stationId)?.callsign ?: stationId
+        return StationViewMapper.detail(stationId, label, details, pattern)
+    }
+
+    /** Everything heard on [frequencyHz], across every session (FR-UI-10), plus its activity pattern (FR-UI-11). */
+    public suspend fun frequencyDetail(context: Context, frequencyHz: Long, nowMillis: Long): FrequencyDetailViewState {
+        val db = OrtDatabase.create(context.applicationContext)
+        val entities = db.activityDao().transmissionsForFrequency(frequencyHz)
+        val details = entities.map { detailFrom(context, db, it) }
+        val pattern = activityPatternForEverySession(db, entities.map { it.startedAtUtc }, nowMillis)
+        return FrequencyViewMapper.detail(frequencyHz, details, pattern)
+    }
+
+    /**
+     * The [SessionWindow] for **every session ever recorded**, not only the ones a station or
+     * frequency happened to be heard in (FR-UI-12): capture does not know in advance which
+     * station or frequency the operator will later ask about, so an hour a session was capturing
+     * through but this particular station/frequency stayed quiet is genuinely
+     * [HourActivityState.SILENT_WHILE_LISTENING] — restricting to only the sessions that produced
+     * a match would wrongly turn every other, equally-real listening hour into
+     * [HourActivityState.NOT_LISTENING], which is exactly the fabricated-absence direction FR-UI-12
+     * forbids, just aimed the other way.
+     */
+    private suspend fun activityPatternForEverySession(
+        db: OrtDatabase,
+        matchingTimestamps: List<Long>,
+        nowMillis: Long,
+    ): List<HourActivityBucket> {
+        val sessions = db.sessionDao().listAll().map { session ->
+            val gaps = db.captureGapDao().listBySession(session.id).map { gap ->
+                GapWindow(startedAt = gap.startedAt, endedAt = gap.endedAt)
+            }
+            SessionWindow(startedAtUtc = session.startedAt, endedAtUtc = session.endedAt, gaps = gaps)
+        }
+        return ActivityPatternMapper.buildPattern(sessions, matchingTimestamps, nowMillis)
+    }
+
     private fun sourceId(entity: TransmissionEntity): TransmissionId? =
         entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }
 

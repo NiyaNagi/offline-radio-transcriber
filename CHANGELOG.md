@@ -32,6 +32,128 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (night, cont. — P17: station and frequency views, and FR-UI-12's not-heard/not-listening distinction)
+
+### (pending) — P17 · Station and frequency views with activity patterns
+
+**Scope:** `:app` — new `ui/data/ActivityPattern.kt`, `ui/data/StationsAndFrequencies.kt`,
+`ui/data/ReaderPolling.kt` (extended), `ui/components/ActivityPatternChart.kt`,
+`ui/screens/StationScreen.kt`, `ui/screens/FrequencyScreen.kt`, `ui/navigation/ReaderDestination.kt`
+(two `hasScreen` flags flipped) and `ui/navigation/OrtNavHost.kt` (drill-in wiring, additive).
+`:data` — new `dao/ActivityDao.kt` (read-only aggregate queries) and one accessor line in
+`OrtDatabase.kt`; `TestFixtures.kt` gained optional constructor parameters and a `station()`
+factory (additive, existing callers unaffected). No schema change, no migration, no edit to
+`TransmissionDao`/`CatalogDao` (kept conflict-free with the concurrent P15 session, per the
+prompt's instruction to add a new DAO file rather than touch existing ones). Also fixed, while
+updating this file's own checklist entry: a stray unresolved `>>>>>>> worktree-agent-a7eb9cc...`
+merge-conflict marker left in `spec/build-plan.md` by an earlier merge (harmless to any tooling
+that doesn't parse the file as a diff, but wrong prose regardless — removed in the same edit that
+checked P17 off).
+**Requirements/ACs:** FR-UI-9 (station view, everything heard from one station across sessions),
+FR-UI-10 (frequency view, everything heard on one frequency across sessions), FR-UI-11 (activity
+patterns — hour-of-day only, see "Left open" below), FR-UI-12 (the "not heard" vs "not listening"
+distinction), AC-126 (verified against a session containing a real capture gap).
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) and Principle IV (Capture Never
+  Blocks, Never Drops, Never Lies) both bear directly: FR-UI-12 is, in the prompt's own words,
+  "the requirement most likely to be silently got wrong" — presenting an hour the app was not
+  listening as though the station/frequency was simply quiet is a **fabricated absence**, the
+  same class of error Principle I forbids for a wrong callsign, applied here to an absence of
+  activity instead of a presence. Principle IV states the general rule this instantiates:
+  "Silence that was never listened to MUST be distinguishable from silence that was
+  (FR-RUN-12, FR-UI-12). A gap is data." Principle VII (structural guarantees) also bears: the
+  distinction is a closed three-state enum (`HourActivityState.HEARD` /
+  `SILENT_WHILE_LISTENING` / `NOT_LISTENING`), never a boolean with a footnote, so a caller
+  cannot collapse it back into "heard or not" by accident.
+- **`ActivityPatternMapper`** (`ui/data/ActivityPattern.kt`) — the FR-UI-12 logic, written and
+  proven first, before any of the surrounding plumbing. It classifies every real calendar hour
+  across every recorded session's `[startedAt, endedAt ?: now]` window, with every
+  `CaptureGapEntity` window subtracted, into the three states, then folds those onto 24
+  hour-of-day (UTC) buckets. Priority order matches the doc comment and the tests: a real
+  transmission timestamp always wins and marks `HEARD` — "audio is the source of truth"
+  (constitution III) — even over a gap that a data inconsistency might otherwise mark
+  not-listening; otherwise a session's own listening window (minus gaps) marks
+  `SILENT_WHILE_LISTENING`; otherwise (inside a gap, or in a real hour no session's window ever
+  touched at all) the hour is `NOT_LISTENING`. Nine tests drove this file, each written and seen
+  to fail (`Unresolved reference` on the not-yet-existing types) before the implementation:
+  covering the plain heard/silent/not-listening cases, the audio-overrides-gap case, an
+  open-ended session (`endedAtUtc = null`, must not claim anything past `nowMillis`), an
+  open-ended gap (must not claim not-listening past the session's own end), the always-24-buckets
+  invariant, and `heardCount` aggregating across multiple days into one hour-of-day bucket.
+- **`ReaderPolling` extensions** — `stationDetail`/`frequencyDetail` build the pattern from
+  **every session ever recorded**, not only the sessions that happen to contain a matching
+  transmission. This was a deliberate correction mid-implementation: an earlier draft scoped the
+  pattern to only the matching sessions, which would have wrongly turned every hour of an
+  all-quiet-for-this-station session into `NOT_LISTENING` — the fabricated-absence failure aimed
+  in the *other* direction (understating real listening coverage instead of overstating it).
+  Capture does not know in advance which station or frequency the operator will later ask about,
+  so the correct "listening" universe for any station/frequency view is every session's own
+  start/end and gaps, independent of what that session happened to hear. `listStationSummaries`/
+  `listFrequencySummaries` back the two new list screens over the new `ActivityDao` queries.
+  `ReaderPollingTest` gained six tests against a real in-memory Room database, including one that
+  inserts a real `CaptureGapEntity` and asserts the gapped hour reads `NOT_LISTENING` while an
+  adjacent, ungapped, quiet hour in the same session reads `SILENT_WHILE_LISTENING` — AC-126's
+  own scenario.
+- **`ActivityDao`** (`:data`, new file) — `transmissionsForStation`, `transmissionsForFrequency`,
+  `listStations`, `listDistinctFrequencies`, all read-only, all reading columns the existing
+  `TransmissionEntity`/`StationEntity` schema already has. `listDistinctFrequencies` excludes
+  `NULL` rather than inventing an "unknown frequency" bucket for the transmissions the rig module
+  (M7) hasn't tagged yet. Four tests, TDD (failed on `Unresolved reference 'activityDao'` before
+  the DAO and the one-line `OrtDatabase` accessor existed), then green.
+- **`ActivityPatternChart`** (`ui/components/`, reusable) — the hour-of-day strip
+  `design/canvas/Timeline.dc.html` specifies. Every state carries both colour *and* shape/texture
+  (FR-A11Y-1's floor, applied the same way `AttributionMarker` applies it to the four attribution
+  states): `HEARD` is a solid bar scaled by how much was heard, `SILENT_WHILE_LISTENING` a short
+  dim bar, and `NOT_LISTENING` a full-height **diagonally hatched** bar — textured, not just a
+  different colour, so it cannot be mistaken for "quiet" by a screen reader or a colour-blind
+  reader. A merged content description reports honest per-state hour counts, and a
+  `"▨ not listening"` legend (matching the artboard's own annotation) appears only when at least
+  one hour actually is. Three Compose tests prove the not-listening state is announced distinctly
+  from quiet, that the legend is honestly absent when there is nothing to flag, and that the
+  summary counts are correct.
+- **`StationScreen`/`FrequencyScreen`** — list screens (FR-UI-9/FR-UI-10) with honest empty
+  states ("No stations heard yet" / "No frequencies recorded yet" — real, expected states before
+  any resolver output or rig-module frequency data exists, not placeholder rows), and detail
+  screens showing the activity chart plus every transmission ever heard from that station/on that
+  frequency, across every session. Wired into `OrtNavHost` the same way the existing
+  transmission drill-in works: `openStationId`/`openFrequencyHz` state, each replacing the whole
+  scaffold with its own back control. `ReaderDestination.STATIONS`/`.FREQUENCIES` flip from
+  `hasScreen = false` to `true` — the only production change to that file. Nine Compose tests
+  across the two screens (empty states, row tap navigates, detail shows the pattern and every
+  transmission, empty detail is honest).
+- **`NowScreen`**: deliberately **not** touched. The prompt allows adding the activity component
+  there "if genuinely reusable... a small, additive change" — it is not: `Main.dc.html`'s chart is
+  a single overnight session's own hour strip, while FR-UI-11's pattern is inherently
+  cross-session history for one station/frequency. Forcing the same component onto a live,
+  single-session view would need a different (and unbuilt) per-session-only variant of the
+  mapper, which is out of scope here; P14's own named divergence for `Main.dc.html`'s chart stays
+  open rather than being half-solved by the wrong shape of data.
+**Verified:** `./gradlew :data:testDebugUnitTest --tests "org.ort.data.dao.ActivityDaoTest"` — 4/4
+green, after first failing on `Unresolved reference 'activityDao'`.
+`./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.ActivityPatternMapperTest"` — 9/9
+green, after first failing on `Unresolved reference` for the not-yet-existing types.
+`./gradlew :app:testDebugUnitTest` — full module green, 76 tests, including every pre-existing
+P8/P11/P13/P14 test unchanged. `./gradlew build dependencyRules` — full repo green (840 actionable
+tasks); `dependencyRules` confirms `:app -> :core, :data, :net, :pipeline` and `:data -> :core`,
+exactly the permitted edge sets, no new module edge anywhere. `python tools/spec-check/spec_check.py`
+— all 7 checks pass after the `build-plan.md` checklist edit.
+**Left open / not done:** FR-UI-11 also asks for "by day of week, and how that has changed" —
+only the hour-of-day half is built; day-of-week patterning and trend-over-time are a named
+follow-up, not silently dropped (the requirement is only partially settled, and this entry says
+so rather than checking it off as fully done). No device is available to this session, so
+`ActivityPatternChart`'s visual rendering (the diagonal-hatch drawing, real colour contrast) is
+proven only via Robolectric's semantics tree and layout, not an actual screen. `StationEntity`'s
+own `activityByHourDow`/`frequenciesHeard` pre-computed fields are not used — the pattern is
+computed fresh from `transmission`/`session`/`capture_gap` rows each time, which is correct
+(those `StationEntity` fields are unpopulated by any prompt yet) but means a station/frequency
+with a very long history recomputes its whole pattern on every open; acceptable at today's data
+volumes, a candidate for caching later. `frequencyHz`/`stationId` being unpopulated columns
+(rig module M7, and attribution respectively) means both list screens are honestly empty on a
+fresh install — demonstrated by the empty-state tests, not worked around with fixture-like
+placeholder content.
+
+---
+
 ## 2026-09-08 (night — P14: the reader shows real transmissions, not the v0 smoke-test stub)
 
 ### (pending) — P14 · Reader: live view and transmission detail

@@ -110,8 +110,11 @@ are individually green.*
 - [ ] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
   `:data`)* — FR-UI-6, FR-UI-8, and FR-OBS-4, the Must the implementation plan explicitly
   rehoused into M5.
-- [ ] **P17 · Station and frequency views with activity patterns** *(`:app`, `:data`)* —
-  FR-UI-9..12, including FR-UI-12's "not heard" versus "not listening" distinction.
+- [x] **P17 · Station and frequency views with activity patterns** *(`:app`, `:data`)* —
+  done 2026-09-08. FR-UI-9/FR-UI-10 (everything heard from one station/on one frequency, across
+  every session), FR-UI-11 (hour-of-day activity patterns), and FR-UI-12 (the not-heard/not-
+  listening distinction, structural as a closed three-state enum) — see CHANGELOG.md for exactly
+  how the distinction is computed and tested, and what FR-UI-11's day-of-week half leaves open.
 - [x] **P18 · Model acquisition through `:net`** *(`:net`)* — done 2026-09-08. Without a model on
   disk the app can capture but never transcribe, and P12 correctly refused to fetch one from
   `:pipeline`: **only `:net` may link an HTTP client, and never in the capture or processing
@@ -121,7 +124,6 @@ are individually green.*
   `:net -> :core` only and that neither `:capture-android` nor `:pipeline` has any edge to `:net`.
   **Not done here, by design:** the `:app` call site that mints `NetCapability.UserInitiated` and
   actually downloads the models P12 is waiting on — see CHANGELOG.md.
->>>>>>> worktree-agent-a7eb9cc6470f58b9c
 
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not
