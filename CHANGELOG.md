@@ -32,6 +32,130 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
+
+### (pending) — ui-conformance WP3 · drawer, header, live bar, drill-in header, navigation origin
+
+**Scope:** `:app` `ui/navigation/**` (`Drawer.kt`, `OrtNavHost.kt`, `StorageFooterViewState.kt`
+extended, new `DrawerSessionHeaderViewState.kt`) and their tests; new `ui/settings/ModelsContent.kt`
+(move only, per the plan's nav-host rule); new `ui/data/DrawerCounts.kt` and its test. Also touched
+`app/src/test/kotlin/org/ort/app/ui/ReaderAccessibilityTest.kt` — outside this package's literal
+`ui/navigation/**` glob, flagged below — and regenerated `results/coverage-matrix.md`
+(`coverageMatrix`, mandated gate output, not otherwise touched). Working from
+`spec/ui-conformance-plan.md` WP3 and `results/ui-audit/register.md` rows R-003, R-004, R-010
+through R-017.
+
+**Requirements/ACs:** R-003, R-004, R-010, R-011, R-012, R-013, R-014, R-015, R-016, R-017
+(register rows — status below); FR-UI-7 (drawer badges real, never fabricated); FR-A11Y-2 (44dp
+targets, selection semantics that announce); FR-STO-5 (storage footer never claims a budget that
+does not exist).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content): the drawer's new Stations/
+  Frequencies counts, session header and live bar are every one of them a real, measured or
+  honestly-absent fact — never a fabricated stand-in (`DrawerCounts`, `DrawerSessionHeaderViewState`
+  read real DAOs/process-wide holders; the live-bar fallback leaves `level`/`partialText` empty
+  rather than inventing a meter or a partial transcript it cannot measure). Principle II
+  (Test-Backed Change): every behaviour below has a test named for the row/requirement it
+  establishes, written first. Principle VII (Boundaries Are Structural): `ui/data/ReaderPolling.kt`
+  (WP4's file) was never touched — the new Stations/Frequencies counts and the live-bar fallback
+  live in this package's own new `ui/data/DrawerCounts.kt` instead, exactly as the plan's nav-host
+  rule requires.
+- **R-010 drawer, full conformance to `Menu.dc.html`:** a real session header (`Repeater watch` /
+  `Tonight` fallback — `SessionEntity` has no label field yet, confirmed by reading its full column
+  set, so this is always `"Tonight"` today, honestly, not a fabricated one — and the real
+  `RigStatus`, `"no radio"` for `Absent`); `OrtIcons` at 18dp, `accent/green` selected /
+  `text/icon-dim` otherwise, on every row; the selected row on `bg/selected` with 8dp radius and
+  `text/bright`; mono `text/figure` counts for Log/Threads (`"—"`, unchanged)/Stations/Frequencies,
+  the last two from the new `DrawerCounts.current()`; the Capture row's live dot + elapsed; a
+  `line/default` divider before the trailing group. `ReaderDestination.SEARCH` is excluded from the
+  rendered rows (`Menu.dc.html` never lists it — R-015 moves it to every header's magnifier
+  instead), closing the gap its own doc comment had already named as the intended end state but the
+  drawer never implemented.
+- **R-011:** every row now has a real 44dp floor (`heightIn(min = 44.dp)`), not the ~31dp two-line
+  measurement the register found.
+- **R-012 storage footer:** one baseline row (`"Audio 38.2 GB"` `text/dim` left, `"of N"` mono
+  `text/figure` right) over a `ProgressBar` when a budget is real; until then (always, today —
+  nothing sets `StorageFooterViewState.budgetBytes` yet) a single honest line, `"Audio 0.8 GB · no
+  budget set"`, no bar. `StorageFooterViewState` gains `budgetBytes: Long? = null`, additive and
+  default-`null`, so `fromAudioDirectory`'s existing `hasBudget = false` behaviour is unchanged.
+- **R-013:** an unbuilt destination (`hasScreen == false`) renders its label in `text/disabled` with
+  a trailing `"not built"` sub-line — in the row itself, not only discoverable after a tap.
+- **R-014:** `DrawerRow` now uses `Role.Tab` and merges the whole row (icon, label, sub-line,
+  trailing figure) into one accessibility node via `semantics(mergeDescendants = true)`, so the
+  `selected` state `selectable()` already carries is actually announced — proven with
+  `assertIsSelected()`/`assertIsNotSelected()`, not just a content-description string match.
+- **R-003/R-004/R-015 header:** the M3 `TopAppBar` + `"="` text glyph is gone. `OrtNavHost` now
+  renders WP2's `ScreenHeader` (drawer icon, live dot + mono elapsed while a session is capturing,
+  search icon) on every non-drill-in destination, with no title text — each screen already draws
+  its own 27sp title (`NowScreen` does; confirmed by reading it before assuming so). The search icon
+  sets `current = ReaderDestination.SEARCH`.
+- **R-016 drill-in header:** one `DrillInHeader` (chevron + the origin destination's label) in the
+  host, used for all three drill-ins (transmission/station/frequency) instead of each screen's own
+  "‹ Back" row. The screens themselves are unchanged — `onBack` is still passed through exactly as
+  before, per the plan ("do not edit the screens").
+- **R-017 navigation origin:** `openedFrom` (a `rememberSaveable` `ReaderDestination`) is set to
+  `current` the moment any drill-in opens and read by `DrillInHeader`'s `parentLabel` — back always
+  names the real origin, not a hard-coded "Log". Separately, and more concretely fixing the bug the
+  register describes: Search's `input`/`result` are lifted out of `SearchContent` into `OrtNavHost`
+  itself (plain `remember`, not `rememberSaveable` — `SearchFilterInput`/`SearchResult` are WP7's
+  types and are not `Bundle`-saveable as they stand; flagged below for the lead). Before this,
+  `SearchContent` was skipped entirely while a drill-in's `if` branch rendered instead, and a
+  skipped composable's own `remember` state does not survive being skipped — opening a result from
+  Search and coming back silently reset the query and results. It no longer does.
+- **R-022 live bar:** WP2's `LiveBar` is now pinned to the bottom of every destination and drill-in
+  while a session runs. `LiveBarPolling.kt` (WP4's real read path) is not on this branch (confirmed
+  by search before writing this), so its state comes from this package's own
+  `DrawerCounts.liveBar(sessionId)` instead — `CaptureState`/`ThermalStatus`/`StorageForecast`,
+  honestly: `level` stays empty and `partialText` stays `null` (no real meter or Pass A partial this
+  package can read), `tone` is `NOMINAL` while capturing cleanly, `DEGRADED` under thermal/storage
+  warning, `HALTED` (the one red tone) only when `CaptureState` is `Failed`. The lead reconciles
+  with WP4's `LiveBarPolling` at merge, per this prompt's own brief.
+- **Capture destination:** `org.ort.app.ui.screens.CaptureStatusContent` (WP4's, built concurrently)
+  is not on this branch (confirmed by search) — `CAPTURE` still falls through to `PlaceholderScreen`
+  via the existing `else` branch, unchanged, exactly as the brief allows.
+- **Settings move (F-008's carve-out):** `ModelsContent`, `messageFor` and `copyPickedFileToCache`
+  moved out of `OrtNavHost.kt` into a new `ui/settings/ModelsContent.kt`, unchanged (same bodies,
+  `private` helpers stay `private`, `ModelsContent` itself now `public` since it is called
+  cross-package). `OrtNavHost` dispatches `SETTINGS` to `org.ort.app.ui.settings.ModelsContent(...)`.
+  Everything else under `ui/settings/` is WP10's from here on.
+- **Detekt/ktlint housekeeping forced by the above:** `OrtNavHost`'s body was extracted into a new
+  `NavHostBody` composable (plus `NavHostIds`/`NavHostCallbacks`/`SearchHostState` parameter
+  bundles, the same pattern `DrawerLiveState`/`CaptureNotificationExpandedFacts` already use in this
+  codebase) to stay under detekt's function-length and parameter-count limits.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `dependencyRules:
+  checked 17 modules ... OK`. `platformGuards: checked 17 modules' external dependencies and 17
+  manifests ... OK.`
+- `.\gradlew.bat :app:testDebugUnitTest` — **329 of 329 passing**, 0 failures, 0 errors (summed
+  from `app/build/test-results/testDebugUnitTest/*.xml`), including the 29 new/changed tests in
+  `DrawerContentTest` (14), `DrawerCountsTest` (8) and `DrawerSessionHeaderViewStateTest` (7).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`; `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — `up to date (181 covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- `LiveBarPolling.kt` and `CaptureStatusContent` (WP4) were not on this branch when this landed;
+  `DrawerCounts.liveBar` and the `CAPTURE` placeholder dispatch are this package's honest fallback,
+  named for the lead to reconcile at merge.
+- Search's lifted `input`/`result` state survives the drill-in branch-swap within one composition
+  (the actual, observed bug) but is not `rememberSaveable` — a process death mid-search still loses
+  it, since `SearchFilterInput`/`SearchResult` (WP7's `ui/data/SearchViewData.kt`) are not
+  `Bundle`-saveable as they stand. Not fixed here — that file is outside this package's ownership
+  row.
+- `app/src/test/kotlin/org/ort/app/ui/ReaderAccessibilityTest.kt` was edited even though it sits
+  outside the literal `ui/navigation/**` glob — its two `OrtNavHost` assertions directly encoded the
+  pre-conformance "=" glyph's content description and a ten-row (including Search) drawer, both of
+  which this change deliberately makes false. Flagged per the plan's "stop and report" rule rather
+  than left to fail.
+- `ReaderDestination.trailingGroup`'s divider placement, the drawer sheet's own width (M3's
+  `ModalDrawerSheet` default, not `Menu.dc.html`'s 306dp), and the Improve-records count pill
+  (`improveRecordsCount`, wired but always `null` — WP10 has not landed a real count) are all
+  unchanged/deferred, none named by this package's register rows.
+
 ## 2026-09-08 (ui-conformance WP2: shared components)
 
 ### (pending) — ui-conformance WP2 · legacy marker keeps confidence until callers migrate

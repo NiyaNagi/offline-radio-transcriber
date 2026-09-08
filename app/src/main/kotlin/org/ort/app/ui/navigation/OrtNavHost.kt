@@ -1,15 +1,14 @@
 package org.ort.app.ui.navigation
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,10 +26,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.status.StatusViewState
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
+import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.LiveBar
+import org.ort.app.ui.components.LiveBarViewState
+import org.ort.app.ui.components.ScreenHeader
+import org.ort.app.ui.data.DrawerCounts
+import org.ort.app.ui.data.DrawerCountsViewState
 import org.ort.app.ui.data.FrequencyListEntryViewState
-import org.ort.app.ui.data.ModelActionResult
-import org.ort.app.ui.data.ModelId
-import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.NowSummaryMapper
 import org.ort.app.ui.data.NowSummaryViewState
 import org.ort.app.ui.data.ReaderPolling
@@ -46,7 +48,6 @@ import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.screens.FrequenciesListScreen
 import org.ort.app.ui.screens.FrequencyDetailScreen
 import org.ort.app.ui.screens.LogScreen
-import org.ort.app.ui.screens.ModelsScreen
 import org.ort.app.ui.screens.NowScreen
 import org.ort.app.ui.screens.PlaceholderScreen
 import org.ort.app.ui.screens.SearchScreen
@@ -56,13 +57,17 @@ import org.ort.app.ui.screens.ThreadScreen
 import org.ort.app.ui.screens.TransmissionDetailScreen
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
-import java.io.IOException
+import org.ort.pipeline.capture.RigStatus
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
 
 /**
- * The navigation host (build-plan P13, extended by P14 and P17): the drawer `Menu.dc.html`
- * specifies, wrapping whichever destination is current. `Now` (`Main.dc.html`), `Log`
+ * The navigation host (build-plan P13, extended by P14, P17 and ui-conformance-plan WP3): the
+ * drawer `Menu.dc.html` specifies, wrapping whichever destination is current, under WP2's
+ * [ScreenHeader] (R-003/R-004/R-015 — drawer icon, live dot + elapsed, search icon; no title text,
+ * each screen owns its own) and, for a drill-in, [DrillInHeader] instead (R-016 — a chevron plus
+ * the destination it was opened from). WP2's [LiveBar] is pinned to the bottom of every destination
+ * and drill-in while a session runs (R-022's consumer). `Now` (`Main.dc.html`), `Log`
  * (`Log.dc.html`), `Stations` and `Frequencies` are real screens reading real `:data` state (see
  * `ui/data/ReaderPolling.kt`); tapping a Log row, a station row or a frequency row opens that
  * item's own full-screen drill-in over whichever destination was current. Every other destination
@@ -79,103 +84,236 @@ public fun OrtNavHost(sessionId: String?) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var current by rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
+    // R-017: the destination a drill-in was opened from, so back returns there — set only when a
+    // drill-in opens, read only while one is showing (`current` itself never changes meanwhile, see
+    // `onOpenDrillIn` below, but this makes the origin an explicit, testable fact rather than an
+    // implicit property of that invariant).
+    var openedFrom by rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
     var openTransmissionId by rememberSaveable { mutableStateOf<String?>(null) }
     var openStationId by rememberSaveable { mutableStateOf<String?>(null) }
     var openFrequencyHz by rememberSaveable { mutableStateOf<Long?>(null) }
+    // R-017 / `Flow-Search.dc.html`: Search's input and results live here, in the host, not inside
+    // `SearchContent` — that composable is skipped entirely while a drill-in is showing (see
+    // `NavHostBody` below), and a skipped composable's own `remember` state does not survive being
+    // skipped; lifting it here is what makes "back from a detail opened from Search returns to
+    // Search with its filters intact" true rather than aspirational. Plain `remember`, not
+    // `rememberSaveable`: `SearchFilterInput`/`SearchResult` are `ui/data/SearchViewData.kt` types
+    // (WP7's file, out of this package's ownership row) and are not `Bundle`-saveable as they
+    // stand — this still fixes the actual, observed bug (state lost across the drill-in branch
+    // within one composition), just not a process-death restore; flagged in this package's report
+    // for the lead to reconcile if WP7 later makes the types `Parcelable`.
+    var searchInput by remember { mutableStateOf(SearchFilterInput()) }
+    var searchResult by remember { mutableStateOf<SearchResult?>(null) }
     val drawerLive = rememberDrawerLiveState(sessionId, context)
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
+
+    fun closeDrillIns() {
+        openTransmissionId = null
+        openStationId = null
+        openFrequencyHz = null
+    }
+
+    fun onOpenDrillIn(setter: () -> Unit) {
+        openedFrom = current
+        setter()
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ReaderDrawerContent(
                 current = current,
+                sessionHeader = drawerLive.sessionHeader,
                 storage = drawerLive.storage,
                 badges = drawerLive.badges,
+                counts = drawerLive.counts,
                 onSelect = { destination ->
                     current = destination
-                    openTransmissionId = null
-                    openStationId = null
-                    openFrequencyHz = null
+                    closeDrillIns()
                     scope.launch { drawerState.close() }
                 },
             )
         },
     ) {
-        val transmissionId = openTransmissionId
-        val stationId = openStationId
-        val frequencyHz = openFrequencyHz
-        if (transmissionId != null) {
-            // The detail drill-in replaces the whole scaffold (including the top bar) — its own
-            // back control is the way out, mirroring `Detail.dc.html`'s full-screen presentation.
-            TransmissionDetailContent(
-                context = context,
-                transmissionId = transmissionId,
-                player = audioPlayer,
-                onBack = { openTransmissionId = null },
-            )
-            return@ModalNavigationDrawer
-        }
-        if (stationId != null) {
-            StationDetailContent(context = context, stationId = stationId, onBack = { openStationId = null })
-            return@ModalNavigationDrawer
-        }
-        if (frequencyHz != null) {
-            FrequencyDetailContent(context = context, frequencyHz = frequencyHz, onBack = { openFrequencyHz = null })
-            return@ModalNavigationDrawer
-        }
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text(current.label) },
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Text(
-                                text = "=", // plain glyph stand-in for a hamburger icon (see class doc)
-                                modifier = Modifier.semantics {
-                                    contentDescription = "Open navigation drawer"
-                                },
-                            )
-                        }
+        Scaffold { padding ->
+            NavHostBody(
+                modifier = Modifier.padding(padding).fillMaxSize(),
+                ids = NavHostIds(current, openedFrom, openTransmissionId, openStationId, openFrequencyHz),
+                callbacks = NavHostCallbacks(
+                    onOpenDrawer = { scope.launch { drawerState.open() } },
+                    onSearchDestination = { current = ReaderDestination.SEARCH },
+                    onCloseDrillIns = ::closeDrillIns,
+                    onOpenCapture = {
+                        current = ReaderDestination.CAPTURE
+                        closeDrillIns()
                     },
-                )
-            },
-        ) { padding ->
-            DestinationContent(
-                current = current,
+                    onOpenTransmission = { id -> onOpenDrillIn { openTransmissionId = id } },
+                    onOpenStation = { id -> onOpenDrillIn { openStationId = id } },
+                    onOpenFrequency = { hz -> onOpenDrillIn { openFrequencyHz = hz } },
+                ),
                 sessionId = sessionId,
                 context = context,
-                onOpenTransmission = { openTransmissionId = it },
-                onOpenStation = { openStationId = it },
-                onOpenFrequency = { openFrequencyHz = it },
-                modifier = Modifier.padding(padding),
+                drawerLive = drawerLive,
+                audioPlayer = audioPlayer,
+                search = SearchHostState(
+                    input = searchInput,
+                    onInputChange = { searchInput = it },
+                    result = searchResult,
+                    onResultChange = { searchResult = it },
+                ),
             )
         }
     }
 }
 
-/** [StorageFooterViewState] and [DrawerBadgeViewState] bundled, so [rememberDrawerLiveState] returns one value. */
-private data class DrawerLiveState(val storage: StorageFooterViewState, val badges: DrawerBadgeViewState)
+/** [NavHostBody]'s destination/drill-in identity, bundled to keep that composable's own parameter count down. */
+private data class NavHostIds(
+    val current: ReaderDestination,
+    val openedFrom: ReaderDestination,
+    val transmissionId: String?,
+    val stationId: String?,
+    val frequencyHz: Long?,
+)
+
+/** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
+private data class NavHostCallbacks(
+    val onOpenDrawer: () -> Unit,
+    val onSearchDestination: () -> Unit,
+    val onCloseDrillIns: () -> Unit,
+    val onOpenCapture: () -> Unit,
+    val onOpenTransmission: (String) -> Unit,
+    val onOpenStation: (String) -> Unit,
+    val onOpenFrequency: (Long) -> Unit,
+)
+
+/** R-017: [SearchContent]'s input/result, owned by [OrtNavHost] — see that function's doc comment. */
+private data class SearchHostState(
+    val input: SearchFilterInput,
+    val onInputChange: (SearchFilterInput) -> Unit,
+    val result: SearchResult?,
+    val onResultChange: (SearchResult?) -> Unit,
+)
 
 /**
- * FR-STO-5 / FR-UI-7 (audit F-020): the footer and the drawer's Log/Capture badges, polled the
- * same way `NowContent`/`LogContent` already poll status — real figures recomputed on the same
- * cadence, never a value fixed at the moment the drawer first composed. Extracted out of
- * [OrtNavHost] purely to keep that function under detekt's length limit; there is no other reason
- * this couldn't be inline.
+ * The header (R-003/R-004/R-015/R-016), the current destination or drill-in's content, and the
+ * live bar (R-022), stacked in one column filling [OrtNavHost]'s `Scaffold`. Extracted out of
+ * [OrtNavHost] purely to keep that function under detekt's length limit — the same reason
+ * [DestinationContent] was already extracted before this prompt.
+ */
+@Composable
+private fun NavHostBody(
+    modifier: Modifier,
+    ids: NavHostIds,
+    callbacks: NavHostCallbacks,
+    sessionId: String?,
+    context: android.content.Context,
+    drawerLive: DrawerLiveState,
+    audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
+    search: SearchHostState,
+) {
+    Column(modifier = modifier) {
+        val isDrillIn = ids.transmissionId != null || ids.stationId != null || ids.frequencyHz != null
+        if (isDrillIn) {
+            // R-016: one header for every drill-in — chevron + the origin destination's label —
+            // rather than each screen's own "‹ Back" text row (WP5/6/8 remove those from
+            // `TransmissionDetailScreen`/`StationDetailScreen`/`FrequencyDetailScreen` themselves;
+            // `onBack` is still passed through unchanged so those screens keep working either way
+            // in the meantime).
+            DrillInHeader(parentLabel = ids.openedFrom.label, onBack = callbacks.onCloseDrillIns)
+        } else {
+            // R-003/R-004/R-015: drawer icon, live dot + elapsed while a session is capturing,
+            // search icon — no title, the destination content below draws its own (`Main.dc.html`'s
+            // 27sp title is `NowScreen`'s, not the header's).
+            ScreenHeader(
+                onDrawer = callbacks.onOpenDrawer,
+                liveElapsedLabel = drawerLive.badges.captureElapsedLabel,
+                onSearch = callbacks.onSearchDestination,
+            )
+        }
+
+        Box(modifier = Modifier.weight(1f)) {
+            when {
+                ids.transmissionId != null -> TransmissionDetailContent(
+                    context = context,
+                    transmissionId = ids.transmissionId,
+                    player = audioPlayer,
+                    onBack = callbacks.onCloseDrillIns,
+                )
+
+                ids.stationId != null -> StationDetailContent(
+                    context = context,
+                    stationId = ids.stationId,
+                    onBack = callbacks.onCloseDrillIns,
+                )
+
+                ids.frequencyHz != null -> FrequencyDetailContent(
+                    context = context,
+                    frequencyHz = ids.frequencyHz,
+                    onBack = callbacks.onCloseDrillIns,
+                )
+
+                else -> DestinationContent(
+                    current = ids.current,
+                    sessionId = sessionId,
+                    context = context,
+                    search = search,
+                    onOpenTransmission = callbacks.onOpenTransmission,
+                    onOpenStation = callbacks.onOpenStation,
+                    onOpenFrequency = callbacks.onOpenFrequency,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+
+        // R-022: pinned to the bottom of every destination and drill-in alike, while a session
+        // runs — `null` (nothing pinned) covers both "no session" and "session idle", never a bar
+        // with nothing real to show.
+        drawerLive.liveBar?.let { liveBarState ->
+            LiveBar(state = liveBarState, onClick = callbacks.onOpenCapture)
+        }
+    }
+}
+
+/** Everything [rememberDrawerLiveState] polls, bundled so it returns one value. */
+private data class DrawerLiveState(
+    val storage: StorageFooterViewState,
+    val badges: DrawerBadgeViewState,
+    val counts: DrawerCountsViewState,
+    val sessionHeader: DrawerSessionHeaderViewState,
+    val liveBar: LiveBarViewState?,
+)
+
+/**
+ * FR-STO-5 / FR-UI-7 (audit F-020, extended by ui-conformance-plan WP3's R-010/R-022): the footer,
+ * the drawer's Log/Threads/Stations/Frequencies/Capture badges, the session/rig header and the
+ * live bar's fallback state, polled the same way `NowContent`/`LogContent` already poll status —
+ * real figures recomputed on the same cadence, never a value fixed at the moment the drawer first
+ * composed. Extracted out of [OrtNavHost] purely to keep that function under detekt's length
+ * limit; there is no other reason this couldn't be inline.
  */
 @Composable
 private fun rememberDrawerLiveState(sessionId: String?, context: android.content.Context): DrawerLiveState {
     var storage by remember { mutableStateOf(StorageFooterViewState.fromAudioDirectory(context)) }
     var badges by remember { mutableStateOf(DrawerBadgeViewState.NONE) }
+    var counts by remember { mutableStateOf(DrawerCountsViewState.ZERO) }
+    var sessionHeader by remember {
+        mutableStateOf(DrawerSessionHeaderViewState.from(sessionLabel = null, rigState = RigStatus.state))
+    }
+    var liveBar by remember { mutableStateOf(DrawerCounts.liveBar(sessionId)) }
     LaunchedEffect(sessionId) {
         while (true) {
             storage = StorageFooterViewState.fromAudioDirectory(context)
             badges = ReaderPolling.drawerBadges(context, sessionId)
+            counts = DrawerCounts.current(context)
+            // No prompt has ever given `SessionEntity` a label field (see
+            // `DrawerSessionHeaderViewState`'s own doc comment) — `sessionLabel` stays `null`
+            // until one exists, rather than this fabricating one.
+            sessionHeader = DrawerSessionHeaderViewState.from(sessionLabel = null, rigState = RigStatus.state)
+            liveBar = DrawerCounts.liveBar(sessionId)
             delay(POLL_INTERVAL_MILLIS)
         }
     }
-    return DrawerLiveState(storage, badges)
+    return DrawerLiveState(storage, badges, counts, sessionHeader, liveBar)
 }
 
 /**
@@ -191,6 +329,7 @@ private fun DestinationContent(
     current: ReaderDestination,
     sessionId: String?,
     context: android.content.Context,
+    search: SearchHostState,
     onOpenTransmission: (String) -> Unit,
     onOpenStation: (String) -> Unit,
     onOpenFrequency: (Long) -> Unit,
@@ -205,7 +344,14 @@ private fun DestinationContent(
             LogContent(sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
 
         ReaderDestination.SEARCH ->
-            SearchContent(onOpen = onOpenTransmission, modifier = content)
+            SearchContent(
+                input = search.input,
+                onInputChange = search.onInputChange,
+                result = search.result,
+                onResultChange = search.onResultChange,
+                onOpen = onOpenTransmission,
+                modifier = content,
+            )
 
         ReaderDestination.THREADS ->
             ThreadContent(sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
@@ -217,7 +363,7 @@ private fun DestinationContent(
             FrequenciesContent(context = context, onOpen = onOpenFrequency, modifier = content)
 
         ReaderDestination.SETTINGS ->
-            ModelsContent(context = context, modifier = content)
+            org.ort.app.ui.settings.ModelsContent(context = context, modifier = content)
 
         else -> PlaceholderScreen(destinationLabel = current.label, modifier = content)
     }
@@ -260,21 +406,27 @@ private fun LogContent(sessionId: String?, onOpen: (String) -> Unit, modifier: M
 /**
  * FR-UI-3 (build-plan P15): search runs on an explicit action, not on every keystroke — a search
  * screen has no session-tied poll, unlike Now/Log, since it queries on demand rather than showing
- * a live session's state.
+ * a live session's state. R-017 (ui-conformance-plan WP3): [input]/[result] are the host's own
+ * state, not this composable's — see [OrtNavHost]'s own doc comment on why.
  */
 @Composable
-private fun SearchContent(onOpen: (String) -> Unit, modifier: Modifier) {
+private fun SearchContent(
+    input: SearchFilterInput,
+    onInputChange: (SearchFilterInput) -> Unit,
+    result: SearchResult?,
+    onResultChange: (SearchResult?) -> Unit,
+    onOpen: (String) -> Unit,
+    modifier: Modifier,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var input by remember { mutableStateOf(SearchFilterInput()) }
-    var result by remember { mutableStateOf<SearchResult?>(null) }
     SearchScreen(
         input = input,
         result = result,
-        onInputChange = { input = it },
+        onInputChange = onInputChange,
         onSearch = {
             val params = SearchFilterParser.parse(input)
-            scope.launch { result = SearchPolling.search(context, params) }
+            scope.launch { onResultChange(SearchPolling.search(context, params)) }
         },
         onOpen = onOpen,
         modifier = modifier,
@@ -349,84 +501,6 @@ private fun FrequenciesContent(context: android.content.Context, onOpen: (Long) 
     LaunchedEffect(Unit) { frequencies = ReaderPolling.listFrequencySummaries(context) }
     FrequenciesListScreen(frequencies = frequencies, onOpen = onOpen, modifier = modifier)
 }
-
-/**
- * Audit F-008: the "Models" destination (`Settings` in the drawer). Owns its own busy/last-message
- * state — [ModelsController] itself is stateless — and drives [ModelsController.download]/
- * [ModelsController.sideload] from a tap, off the main dispatcher (both already hop to
- * [kotlinx.coroutines.Dispatchers.IO] internally), refreshing [ModelsController.currentState]
- * after either finishes so the row's installed/not-installed fact always reflects what
- * `ModelAcquisition` itself verified, not an optimistic guess.
- */
-@Composable
-private fun ModelsContent(context: android.content.Context, modifier: Modifier) {
-    val scope = rememberCoroutineScope()
-    var state by remember { mutableStateOf(ModelsController.currentState(context)) }
-    var busy by remember { mutableStateOf(emptySet<ModelId>()) }
-    var lastMessage by remember { mutableStateOf<String?>(null) }
-    var pendingSideloadId by remember { mutableStateOf<ModelId?>(null) }
-
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val id = pendingSideloadId
-        pendingSideloadId = null
-        if (uri == null || id == null) return@rememberLauncherForActivityResult
-        busy = busy + id
-        scope.launch {
-            val source = copyPickedFileToCache(context, uri, id)
-            val result = if (source != null) {
-                ModelsController.sideload(context, id, source)
-            } else {
-                ModelActionResult.Failure("could not read the picked file")
-            }
-            busy = busy - id
-            lastMessage = messageFor(id, result)
-            state = ModelsController.currentState(context)
-        }
-    }
-
-    ModelsScreen(
-        state = state,
-        busy = busy,
-        lastMessage = lastMessage,
-        onDownload = { id ->
-            busy = busy + id
-            scope.launch {
-                val result = ModelsController.download(context, id)
-                busy = busy - id
-                lastMessage = messageFor(id, result)
-                state = ModelsController.currentState(context)
-            }
-        },
-        onSideload = { id ->
-            pendingSideloadId = id
-            filePicker.launch(arrayOf("*/*"))
-        },
-        modifier = modifier,
-    )
-}
-
-private fun messageFor(id: ModelId, result: ModelActionResult): String = when (result) {
-    is ModelActionResult.Success ->
-        "${id.label}: installed, checksum verified. Requeued ${result.requeuedCount} previously failed transmission(s)."
-    is ModelActionResult.Failure -> "${id.label}: ${result.reason}"
-}
-
-/**
- * [ModelAcquisition][org.ort.net.ModelAcquisition].sideload takes a [java.io.File], not a content
- * [android.net.Uri] — the system picker only ever hands back the latter, so this copies the picked
- * document into app-private cache storage first. No network call either way (constitution V).
- */
-private fun copyPickedFileToCache(context: android.content.Context, uri: android.net.Uri, id: ModelId): java.io.File? =
-    try {
-        val dest = java.io.File(context.cacheDir, "sideload-${id.name}.tmp")
-        val opened = context.contentResolver.openInputStream(uri)?.use { input ->
-            dest.outputStream().use { output -> input.copyTo(output) }
-            true
-        }
-        if (opened == true) dest else null
-    } catch (e: IOException) {
-        null
-    }
 
 @Composable
 private fun StationDetailContent(context: android.content.Context, stationId: String, onBack: () -> Unit) {

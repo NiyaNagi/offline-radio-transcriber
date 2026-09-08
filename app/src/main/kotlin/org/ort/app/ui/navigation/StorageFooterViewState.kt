@@ -19,12 +19,20 @@ import java.io.File
  * on the volume the app's private storage lives on ([StatFs], unchanged from before). [hasBudget]
  * stays `false` — and the footer must show "no budget set" rather than any "of N GB" — until
  * FR-STO-3's budget setting exists to make that denominator real.
+ *
+ * R-012 (ui-conformance-plan WP3): [budgetBytes] is the field FR-STO-3's eventual setting (WP10)
+ * fills in — `null` today, always, since nothing sets it yet. [hasBudget] stays its own explicit
+ * field (rather than derived from [budgetBytes]) so an existing `hasBudget = false` call site
+ * keeps compiling unchanged; the two are expected to agree once WP10 lands
+ * (`hasBudget == (budgetBytes != null)`), but this type does not enforce that itself.
  */
 public data class StorageFooterViewState(
     public val audioUsedBytes: Long,
     public val freeBytes: Long,
     /** `true` once FR-STO-3's per-category budget setting exists and a budget has actually been set. */
     public val hasBudget: Boolean = false,
+    /** The budget itself, once FR-STO-3 exists — `null` (never fabricated) until then. */
+    public val budgetBytes: Long? = null,
 ) {
     public companion object {
         public fun fromAudioDirectory(context: Context): StorageFooterViewState {
