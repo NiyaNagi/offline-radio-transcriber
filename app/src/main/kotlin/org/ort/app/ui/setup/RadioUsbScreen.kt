@@ -35,10 +35,18 @@ import org.ort.pipeline.capture.RigStatus
  * this file's own `report` note in this package's final message for exactly what "reachable" means
  * for S10/S11 today: neither is reachable with real hardware (no rig module exists to drive them),
  * and only S11's *rendering* (not its entry path) is exercisable at all, via that simulator.
+ *
+ * R-344 (validator pass 4, halt): also the destination for S09's third row ("No radio — I will
+ * enter the frequency"), routed here rather than straight to S12 so a real value is actually
+ * collected — [SetupActivity.onChooseRadio]'s own doc comment has the full account. The button
+ * below is disabled until [parseMegahertzToHz] would accept the current text, so neither entry
+ * path can proceed with a blank or unparseable frequency (constitution I: never silently lose a
+ * fact) — [SetupActivity.onEnterFrequency] guards the same thing again, belt and suspenders.
  */
 @Composable
 public fun RadioUsbScreen(rigStatus: RigStatus.State, onBack: () -> Unit, onEnterFrequency: (Long?) -> Unit) {
     var frequencyText by remember { mutableStateOf("") }
+    val enteredHz = parseMegahertzToHz(frequencyText)
     SetupScaffold(
         step = SetupStep.RADIO_USB,
         title = "Connect the radio",
@@ -47,7 +55,8 @@ public fun RadioUsbScreen(rigStatus: RigStatus.State, onBack: () -> Unit, onEnte
         bottomActions = {
             PrimaryButton(
                 text = "Enter the frequency instead",
-                onClick = { onEnterFrequency(parseMegahertzToHz(frequencyText)) },
+                onClick = { onEnterFrequency(enteredHz) },
+                enabled = enteredHz != null,
                 modifier = Modifier.fillMaxWidth().testTag("setup-radio-usb-enter-frequency"),
             )
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {

@@ -22,15 +22,40 @@ public data class UnitScore(val unit: PhoneticUnit, val logProb: Float) {
  * One time-ordered slot of the acoustic hypothesis. **Alternatives are retained with their
  * scores** (FR-LEX-5) — the lattice is never collapsed to a single best path, because the
  * downstream ranking (P7) depends on having alternatives to choose between.
+ *
+ * [charStart]/[charEnd] (R-182, FR-UI-4) are a half-open `[charStart, charEnd)` range into the
+ * source transcript text this slot's unit was matched against — set only by *text-anchored*
+ * lattice construction ([TextDerivedLatticeBuilder.buildAnchored]); `null`/`null` (the default)
+ * for every other slot, including every acoustic one, which has no transcript-text relationship
+ * to offer (constitution I: never fabricate what was not computed). See [SlotDetail] for how this
+ * reaches [CallsignGrammar.parse]'s output.
  */
-public data class LatticeSlot(val startMs: Int, val endMs: Int, val alts: List<UnitScore>) {
+public data class LatticeSlot(
+    val startMs: Int,
+    val endMs: Int,
+    val alts: List<UnitScore>,
+    val charStart: Int? = null,
+    val charEnd: Int? = null,
+) {
     init {
         require(startMs <= endMs) { "slot start after end" }
         require(alts.isNotEmpty()) { "a slot with no alternatives is not a hypothesis" }
+        require((charStart == null) == (charEnd == null)) {
+            "charStart and charEnd must be both null or both set, got charStart=$charStart charEnd=$charEnd"
+        }
+        if (charStart != null && charEnd != null) {
+            require(charStart <= charEnd) { "charStart ($charStart) must not be after charEnd ($charEnd)" }
+        }
     }
 
     /** The single highest-scoring alternative. A convenience for display — never the stored form. */
     public val top: UnitScore get() = alts.maxByOrNull { it.logProb } ?: alts.first()
+
+    /**
+     * The second-highest-scoring alternative kept for this slot, or `null` when only one was
+     * (R-320: "if a slot's alternate is not computed today, return null, do not invent one").
+     */
+    public val runnerUp: UnitScore? get() = alts.sortedByDescending { it.logProb }.getOrNull(1)
 }
 
 /**

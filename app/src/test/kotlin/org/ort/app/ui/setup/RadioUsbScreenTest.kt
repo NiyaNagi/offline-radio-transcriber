@@ -1,6 +1,8 @@
 package org.ort.app.ui.setup
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -38,8 +40,11 @@ class RadioUsbScreenTest {
         composeTestRule.onNodeWithText("No rig support in this build yet").assertIsDisplayed()
     }
 
+    /** R-344 (validator pass 4, halt): a blank/unparseable frequency must never be submittable at
+     * all -- "Enter the frequency instead" is disabled, not merely reporting `null` if tapped
+     * (constitution I: never silently lose a fact). `onBack` stays reachable either way. */
     @Test
-    fun `R_084 Enter the frequency instead with a blank field reports null, never a fabricated frequency`() {
+    fun `R_344 Enter the frequency instead is disabled while the field is blank, never a fabricated frequency`() {
         var entered: Long? = -1L // sentinel distinct from both null and any real value
         var back = false
         composeTestRule.setContent {
@@ -52,8 +57,8 @@ class RadioUsbScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").performClick()
-        assertNull(entered)
+        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").assertIsNotEnabled()
+        assertEquals(-1L, entered) // untouched -- never invoked
         composeTestRule.onNodeWithTag("setup-radio-usb-back").performClick()
         assert(back)
     }
@@ -68,9 +73,21 @@ class RadioUsbScreenTest {
         }
 
         composeTestRule.onNodeWithTag("setup-radio-usb-frequency-field").performTextInput("145.230")
-        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").performClick()
+        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").assertIsEnabled().performClick()
 
         assertEquals(145_230_000L, entered)
+    }
+
+    /** R-344: a zero/negative/unparseable entry must keep the button disabled the same as a blank
+     * one -- [parseMegahertzToHz] already refuses these; this proves the button tracks it live. */
+    @Test
+    fun `R_344 Enter the frequency instead stays disabled for an unparseable or non-positive value`() {
+        composeTestRule.setContent {
+            OrtTheme { RadioUsbScreen(rigStatus = RigStatus.State.Absent, onBack = {}, onEnterFrequency = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-radio-usb-frequency-field").performTextInput("not a number")
+        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").assertIsNotEnabled()
     }
 
     @Test

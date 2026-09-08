@@ -2,7 +2,7 @@ package org.ort.app.ui.setup
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,14 +16,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
-import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.RigStatus
@@ -62,35 +61,23 @@ public data class ReadyViewState(val rows: List<ReadyRow>)
  * R-265 (validator finding, halt): each row's marker/[KeyValueRow]/trailing status-or-action were
  * three separate, non-merged `Text`/marker nodes with no focus action of their own, so TalkBack's
  * linear swipe traversal skipped every one of S12's five facts entirely (there was no accessibility
- * node to land on). First worked around here by wrapping each row's own outer `Row` in
- * `Modifier.focusable()` + `Modifier.semantics(mergeDescendants = true) { contentDescription = ... }`
- * — but WP2 has since made [KeyValueRow] itself exactly that merge boundary/focus stop natively
- * (`Rows.kt`, its own R-265 test). Nesting this screen's own merge boundary *around* that native one
- * double-announced the row (two overlapping `contentDescription` entries land in the same merged
- * list — confirmed directly, not assumed), so that outer wrapper is gone; every row now relies on
- * [KeyValueRow]'s own merge alone.
+ * node to land on).
  *
- * [KeyValueRow]'s explicit `contentDescription` is built from `key`/`value`/`subLine` only — its
- * `trailingMarker` slot (which this screen uses, correctly per `Setup-Done.dc.html`'s *trailing*
- * placement of "verified"/`Fix`/`Install`, not a `subLine` beneath the value) never reaches it on its
- * own. Rather than misplace the status against the board by moving it into `subLine`, this screen
- * treats its two `trailingMarker` shapes differently, confirmed by directly inspecting the semantics
- * tree each produces (not assumed):
- * - **[ReadyRow.statusText]** (non-interactive — "verified"/"in band") carries its own lone,
- *   non-merging `Modifier.semantics { contentDescription = ... }`. That is a plain descendant
- *   property, not a new merge boundary, so it is swallowed cleanly into [KeyValueRow]'s existing
- *   merge as one further `contentDescription` list entry alongside its own — "Overnight, Battery
- *   exemption skipped" and "verified" read as one TalkBack announcement, the fact this row exists to
- *   state.
- * - **[ReadyRow.actionLabel]** ("Fix"/"Install", via [TextAction]) is left alone. `TextAction`
- *   carries its own `Modifier.clickable` + `Modifier.semantics(mergeDescendants = true) {}`
- *   (`Rows.kt`) — a genuine merge boundary of its own, which stays a distinct child semantics node
- *   even nested inside [KeyValueRow]'s merge rather than being absorbed by it (confirmed: the row's
- *   own merged node reports one child, and does not gain "Fix" in its `ContentDescription`). Forcing
- *   it into the row's own description would only misattribute the button's click action to the
- *   whole row's announcement; leaving it separate is the correct shape — the row reads its facts as
- *   one stop, `Fix`/`Install` is reached and activated as its own real button stop straight after,
- *   exactly the two-stop pattern a screen reader needs to tell "information" from "action."
+ * R-342 (validator pass 4, halt): the first fix here (wrapping each row's own outer `Row` in
+ * `Modifier.focusable()` + a lone `Modifier.semantics { contentDescription = ... }` on the trailing
+ * status `Text`, relying on it merging up into [KeyValueRow]'s own native R-265 merge boundary)
+ * passed every Robolectric test written for it, then reproduced on a real device anyway
+ * (`setup-verified/S12-done-pass4.png`: `content-desc="Input, USB Audio Device"` with `verified` as
+ * its *own separate* node, not folded in) — confirmed directly that `ComposeTestRule`'s own semantics
+ * queries read Compose's internal `SemanticsNode` tree, a different representation from the real
+ * `AccessibilityNodeInfo` tree Android's own accessibility bridge builds, and the two disagree on
+ * whether a lone-`contentDescription` leaf with no `mergeDescendants` of its own gets absorbed by an
+ * ancestor's merge. [ReadySetupRow] is the real fix, re-dumped and confirmed on-device after
+ * changing it: [KeyValueRow]'s own explicit `contentDescription` (built from `key`/`value`/`subLine`
+ * only) cannot see into its `trailingMarker` slot at all, on Robolectric or a real device alike, so
+ * this screen never relies on that merge seeing [ReadyRow.statusText] — see [ReadySetupRow]'s own
+ * doc comment for the three concrete shapes (no action, an action alone, both together) and exactly
+ * which parts of the tree each one clears and rebuilds versus leaves to [KeyValueRow] natively.
  */
 @Composable
 public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
@@ -107,61 +94,7 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
             )
         },
     ) {
-        state.rows.forEach { row ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("setup-ready-row-${row.label.lowercase()}"),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (row.ok) {
-                    Box(modifier = Modifier.size(9.dp).background(OrtColors.accentGreen, CircleShape))
-                } else {
-                    AmberHalfMarker()
-                }
-                KeyValueRow(
-                    key = row.label,
-                    value = row.value,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp),
-                    trailingMarker = {
-                        // R-285: the radio row's Connected branch is the one case where both are
-                        // set together ([radioRow]'s own doc comment) -- a Row wraps both rather
-                        // than picking only one, the same "R-265's status text merges in, the
-                        // action stays its own separate button stop" split below, just side by side
-                        // instead of alone.
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            row.statusText?.let { statusText ->
-                                Text(
-                                    text = statusText,
-                                    style = OrtType.signal,
-                                    color = OrtColors.accentGreenDim,
-                                    // R-265: a lone, non-merging content description -- swallowed
-                                    // into KeyValueRow's own merge as one further list entry, not a
-                                    // second merge boundary (this screen's class doc explains why).
-                                    modifier = Modifier.semantics { contentDescription = statusText },
-                                )
-                            }
-                            row.actionLabel?.let { actionLabel ->
-                                // R-265: deliberately NOT given the same lone-contentDescription
-                                // treatment as statusText above -- TextAction's own clickable is a
-                                // genuine separate merge boundary (`Rows.kt`, `Modifier.clickable`
-                                // + `Modifier.semantics(mergeDescendants = true) {}`), confirmed by
-                                // running it: it stays its own child semantics node even nested
-                                // inside KeyValueRow's merge, not absorbed. That is the *correct*
-                                // shape for an actionable element, not a bug to route around: the
-                                // row reads its facts as one stop, "Fix"/"Change" is reached and
-                                // activated as its own real button stop straight after, exactly as
-                                // this file's class doc now explains.
-                                TextAction(text = actionLabel, onClick = { row.onAction?.invoke() })
-                            }
-                        }
-                    },
-                )
-            }
-        }
+        state.rows.forEach { row -> ReadySetupRow(row) }
         Text(
             text = "Capture works without a model — audio is kept, and every over already " +
                 "recorded is transcribed once one is installed. The two amber items are worth " +
@@ -173,20 +106,109 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
     }
 }
 
-/** A verified row's full announcement, e.g. `"Input, USB Audio Device, verified"` — [ReadyRow.label],
- * [ReadyRow.value] and [ReadyRow.statusText] joined exactly as [KeyValueRow]'s merge announces them
- * (this file's class doc explains why). **Not** what an amber row with [ReadyRow.actionLabel] set
- * announces — that row's own merged `contentDescription` stops at `"$label, $value"`; the action
- * itself ([TextAction]) is a separate real button stop the row's own announcement never includes, by
- * design (this file's class doc). Callers that build a row with an [ReadyRow.actionLabel] should
- * compare against `"$label, $value"` directly rather than this function, whose result would silently
- * include text that is never actually part of the row's own announcement. */
-internal fun readyRowDescription(row: ReadyRow): String = listOfNotNull(
-    row.label,
-    row.value,
-    row.statusText,
-    row.actionLabel,
-).joinToString(", ")
+/**
+ * R-342 (validator pass 4, halt): one real device dump (`setup-verified/S12-done-pass4.png`)
+ * confirmed a lone `Modifier.semantics { contentDescription = ... }` on a plain descendant `Text`
+ * does **not** fold into an ancestor's own merged `AccessibilityNodeInfo` — only
+ * `Modifier.clearAndSetSemantics` on the row's own outer node, replacing its whole subtree's
+ * accessibility surface outright, actually produced one clean merged node there (re-dumped and
+ * confirmed after this fix, not assumed). Three shapes, by [ReadyRow.statusText]/
+ * [ReadyRow.actionLabel] presence:
+ * - **Neither or [ReadyRow.statusText] alone** — the whole row (marker + [KeyValueRow]) is wrapped
+ *   in [Modifier.focusable] + [Modifier.clearAndSetSemantics], announcing [readyRowFactsDescription]
+ *   as one real, focusable node — `KeyValueRow`'s own native merge (R-265) is bypassed entirely, not
+ *   relied on, since it cannot see [ReadyRow.statusText] at all (it is composed inside
+ *   `trailingMarker`, a plain slot [KeyValueRow]'s own explicit `contentDescription` never reaches).
+ * - **[ReadyRow.actionLabel] alone** — left on [KeyValueRow]'s own native merge (R-265) unchanged:
+ *   proven correct on the same real device dump (`Overnight`/`Model` rows) — the row reads its facts
+ *   as one stop, the action is reached and activated as its own separate real button stop straight
+ *   after.
+ * - **Both together** (only [radioRow]'s `Connected` reading today) — the one case that cannot use
+ *   either shape whole: clearing the whole row would swallow [TextAction]'s own separate button stop
+ *   (the previous bullet's own correct behaviour); leaving it on [KeyValueRow]'s native merge alone
+ *   would reproduce the exact R-342 defect for [ReadyRow.statusText] again ([KeyValueRow]'s own
+ *   `contentDescription` still cannot see into `trailingMarker`). So the marker + [KeyValueRow] (with
+ *   *only* [ReadyRow.statusText] passed to its `trailingMarker`) are wrapped in their own
+ *   `clearAndSetSemantics` announcing [readyRowFactsDescription], and [ReadyRow.actionLabel] renders
+ *   as a genuine sibling *outside* that boundary — the same "facts as one stop, action as its own
+ *   separate stop straight after" shape as the second bullet, just with the facts assembled by hand
+ *   instead of left to [KeyValueRow]'s own merge, because this is the one row where that merge alone
+ *   cannot see everything the row needs to say.
+ */
+@Composable
+private fun ReadySetupRow(row: ReadyRow) {
+    val marker: @Composable () -> Unit = {
+        if (row.ok) {
+            Box(modifier = Modifier.size(9.dp).background(OrtColors.accentGreen, CircleShape))
+        } else {
+            AmberHalfMarker()
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().testTag("setup-ready-row-${row.label.lowercase()}"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (row.actionLabel != null && row.statusText != null) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .focusable()
+                    .clearAndSetSemantics { contentDescription = readyRowFactsDescription(row) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                marker()
+                KeyValueRow(
+                    key = row.label,
+                    value = row.value,
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                    trailingMarker = {
+                        Text(text = row.statusText, style = OrtType.signal, color = OrtColors.accentGreenDim)
+                    },
+                )
+            }
+            TextAction(text = row.actionLabel, onClick = { row.onAction?.invoke() })
+        } else {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (row.actionLabel == null) {
+                            Modifier
+                                .focusable()
+                                .clearAndSetSemantics { contentDescription = readyRowFactsDescription(row) }
+                        } else {
+                            Modifier
+                        },
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                marker()
+                KeyValueRow(
+                    key = row.label,
+                    value = row.value,
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                    trailingMarker = {
+                        // R-265: TextAction's own clickable is a genuine separate merge boundary
+                        // (`Rows.kt`) that stays its own child semantics node even nested inside
+                        // KeyValueRow's merge, not absorbed -- the *correct* shape for an
+                        // actionable element: the row reads its facts as one stop, the action is
+                        // reached and activated as its own real button stop straight after.
+                        row.actionLabel?.let { actionLabel ->
+                            TextAction(text = actionLabel, onClick = { row.onAction?.invoke() })
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** The row's own facts alone, e.g. `"Input, USB Audio Device, verified"` or `"Overnight, Battery
+ * exemption skipped"` — never [ReadyRow.actionLabel], which is always its own separate real button
+ * stop, never part of a row's own announcement ([ReadySetupRow]'s own doc comment has the full
+ * account). What [ReadySetupRow] actually announces for every row shape. */
+internal fun readyRowFactsDescription(row: ReadyRow): String =
+    listOfNotNull(row.label, row.value, row.statusText).joinToString(", ")
 
 @Composable
 private fun AmberHalfMarker() {

@@ -353,6 +353,16 @@ class ReaderActivityDestinationSmokeTest {
             rule.waitForIdle()
 
             rule.waitUntilChipSelected(OVERS_FREQUENCY_LABEL)
+
+            // Round 10 (WP8 shipped `FrequencyDetailContent.initialView`): system back from here
+            // reopens the frequency drill-in landing directly on `Frequency-Change` — FQ03 itself,
+            // not FQ02's plain detail root — via `OrtNavHost`'s own `BackHandler`. Invoked through
+            // the real `OnBackPressedDispatcher` every `ComponentActivity` (this one included)
+            // installs, the same mechanism a device's system back gesture ultimately reaches — not
+            // `Espresso.pressBack()`, which this module carries no dependency on.
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
+            rule.waitUntilContentDescriptionExists("Back to $OVERS_FREQUENCY_LABEL")
         }
     }
 

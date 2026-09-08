@@ -1,7 +1,9 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import org.junit.Rule
@@ -49,5 +51,17 @@ class RadioScreenTest {
 
         composeTestRule.onNodeWithTag("setup-radio-not-now").performClick()
         assert(notNow)
+    }
+
+    /** R-343 (validator pass 4, design): `Setup-Rig.dc.html`'s own "optional" tag beside "Radio" --
+     * absent from the built screen before this. */
+    @Test
+    fun `R_343 the title carries an optional tag, the one step in the sequence that genuinely is`() {
+        composeTestRule.setContent {
+            OrtTheme { RadioScreen(onChoose = {}, onNotNow = {}) }
+        }
+
+        composeTestRule.onNodeWithText("Radio").assertIsDisplayed()
+        composeTestRule.onNodeWithText("optional").assertIsDisplayed()
     }
 }

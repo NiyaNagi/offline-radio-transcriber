@@ -178,4 +178,27 @@ class SessionsContentTest {
 
         assert(tapped == "TX1") { "expected onOpenTransmission(\"TX1\"), got $tapped" }
     }
+
+    @Test
+    @Requirement("R-133")
+    fun `R_133_review_seeds_session lands directly on the detail, never the list first`() {
+        // `Settings-Storage`'s "Next deletion" `Review` link (R-133) needs to open a specific
+        // session's own `Session` (DG04) detail directly — this proves `initialSessionId` reaches
+        // exactly that page on first composition, without ever rendering the `Sessions` list.
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1"))
+        }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent {
+            OrtTheme { SessionsContent(context = context, onDrawer = {}, initialSessionId = "S1") }
+        }
+
+        // "Export" is the detail screen's own action-bar chip (confirmed unique to it, above) — its
+        // presence with no prior tap on "Tonight" is exactly what proves the seed landed directly.
+        composeTestRule.waitUntilTextExists("Export")
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Export"))
+        composeTestRule.onNodeWithText("Export").assertExists()
+    }
 }
