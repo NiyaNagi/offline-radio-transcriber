@@ -32,6 +32,90 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: text field keeps its editable semantics on the inner node)
+
+### (pending) — ui-conformance WP2 · text field keeps its editable semantics on the inner node
+
+**Scope:** `:app` `ui/components/Controls.kt` and `ControlsTest.kt` only. Follow-up to the
+previous commit (`a036b2d`, below), which broke `main`: 737 tests, 8 failed, every one of them a
+caller driving `TextField` through its content description or a caller-supplied `testTag` —
+`CorrectionSheetTest` (3), `SearchFiltersSheetTest` (1), `SearchScreenTest` (1),
+`TransmissionDetailContentTest` (1), `TransmissionDetailScreenCorrectionTest` (1),
+`RadioUsbScreenTest` (1). `main` fast-forward merged first (`git merge --ff-only main`; this
+branch already an ancestor; no rebase, no stash) — no other package's files touched.
+
+**Requirements/ACs:** none new — a regression fix restoring the contract R-060's fields (and every
+caller built before it) depend on: a caller queries the field the same simple way it queries any
+other component, without an unmerged-tree trick.
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) governs this directly: the
+  wrapper contract is a structural property of the component, not an implementation detail a test
+  workaround can paper over on the caller's side — the previous commit's `mergeDescendants = true`
+  fix was exactly that kind of paper-over, and it broke six real callers outside this package the
+  moment `main` re-ran their tests.
+- **Root cause, confirmed by this run's own numbers.** `a036b2d` moved the caller's `modifier`
+  (needed on the outermost node for `Modifier.weight(1f)` to have any effect — see that entry)
+  onto an outer `Column`, and additionally set `contentDescription` there via
+  `semantics(mergeDescendants = true)`, reasoning that merging would carry the inner
+  `BasicTextField`'s `RequestFocus`/`SetText` actions up to that same outer node. It does not, in
+  this Compose version — confirmed again here, now against real production callers rather than a
+  package-local test, by the exact 8-test failure the coordinator reported after merging it.
+- **The actual fix: collapse "outer" and "inner" into the same node**, the way Material3's own
+  `TextField` is built. `BasicTextField` is now this composable's *only* emitted node — `label`,
+  the bordered box, `leadingIcon`, `trailingAction` and `errorText` all move inside its
+  `decorationBox`, rather than living in a wrapping `Column` above it. The caller's `modifier`
+  (carrying `weight`, a `testTag`, or both) and the `contentDescriptionText` semantics both land on
+  that one `BasicTextField` node directly — no merging, no ancestor/descendant relationship to
+  reason about. This gives every property at once, with no special case:
+  `Modifier.weight(1f)` works (this node is the composable's own root, the one node a `Row` sees
+  as its direct child); `onNodeWithContentDescription(x).performTextInput(...)` /
+  `.performImeAction()` work (the description sits on the actual focusable, editable node — the
+  same node that natively owns `RequestFocus`/`SetText`, not a copy of the property on some other
+  node hoping an action merges over); and `onNodeWithTag(callerTag).performTextInput(...)` works
+  for a caller (like `RadioUsbScreen`) that identifies the field by `testTag` instead of content
+  description, for the identical reason.
+- Label, the bordered `Row` (icon / text / trailing action), and `errorText` render in a `Column`
+  *inside* `decorationBox` now, rather than around `BasicTextField` — visually identical (same
+  order, same spacing, same colours), the only change is which Compose node is the parent of which.
+- `ControlsTest`'s two text-input tests (`a text field shows its label, placeholder, error text and
+  reports edits`, `R_060_keyboard_search_action_reaches_the_caller`) go back to the simple form the
+  coordinator asked for: `composeTestRule.onNodeWithContentDescription("Typed callsign")
+  .performTextInput(...)` / `onNodeWithContentDescription("Search text").performImeAction()` — no
+  `hasSetTextAction()`/`hasAnyAncestor()`/`useUnmergedTree = true`, matching exactly how the six
+  real callers this broke already query the field. `hasAnyAncestor`, `hasSetTextAction` and
+  `hasTestTag` are no longer imported (no remaining use in this file).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite, no `--tests` filter) — **737 of 737
+  passing, 0 failed** (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml`
+  report's `tests`/`failures` totals: `Total: 737, Failures: 0`). Isolated run of
+  `org.ort.app.ui.components.ControlsTest` and `org.ort.app.ui.setup.RadioUsbScreenTest` together
+  first (the exact test that was failing on `main`) — all PASSED, including
+  `R_084 typing a frequency and confirming reports its exact Hz value`, the `RadioUsbScreenTest`
+  case that drives the field by `testTag` rather than content description.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `dependencyRules:
+  checked 17 modules ... OK — every edge is permitted by the design graph.` `platformGuards:
+  checked 17 modules' external dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`
+  (unchanged — no requirement ids added or removed by this fix).
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (181 covered of 419)`.
+  `.\gradlew.bat :app:assembleDebug` — included in and passed as part of the `build` run above
+  (`BUILD SUCCESSFUL`, `:app:assembleDebug` executed).
+
+**Left open / not done:**
+- **No screenshot/emulator verification** against `Search.dc.html`/`Search-Unavailable.dc.html` —
+  Robolectric semantics-tree assertions only, per the plan (Phase E/Validators own that);
+  unchanged from the previous entry, since this fix is structural (which node owns which
+  semantics), not visual.
+- The previous entry's placeholder commit hash (`(pending)`) is corrected below to `a036b2d`, the
+  hash the coordinator confirmed after merging it — a small accuracy fix to this file's own record,
+  not a restatement of that entry's content.
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP10: settings root and sub-screens, assets presentation, improve, sessions, digest)
 
 ### (pending) — ui-conformance WP10 · settings root and sub-screens, assets presentation, improve, sessions, digest
@@ -180,10 +264,9 @@ not a convention.
 
 ---
 
-
 ## 2026-09-08 (ui-conformance WP2: text field icon slots, keyboard actions, degraded error tone, outer modifier)
 
-### (pending) — ui-conformance WP2 · text field icon slots, keyboard actions, degraded error tone, outer modifier
+### a036b2d — ui-conformance WP2 · text field icon slots, keyboard actions, degraded error tone, outer modifier
 
 **Scope:** `:app` `ui/components/Controls.kt` and `ControlsTest.kt` only. Follow-up to this
 package's `TextField` (landed two commits ago, merged as `e935a83`), fixing three regressions and

@@ -482,15 +482,18 @@ public enum class FieldTone { Halt, Degraded }
  * `Search.dc.html` — not outside it, which was R-060's gap. [keyboardOptions]/[keyboardActions]
  * reach the underlying [BasicTextField] directly (a search field's IME action, for one).
  *
- * The wrapper contract: [modifier] lands on the **outer** `Column` — the one node this composable
- * emits as a direct child of whatever `Row`/`Column` calls it — specifically so a caller's
- * `Modifier.weight(1f)` inside a `Row` is honoured (it was silently dropped when `modifier`
- * instead landed on an inner grandchild, R-060's other gap). The outer `Column` merges its
- * descendants' semantics, so `testTag`/`performTextInput`/content-description assertions on that
- * same tagged node still reach the real text-input field underneath. `fillMaxWidth()` is applied
- * *after* the caller's `modifier` (not instead of it) so the default (no modifier given) still
- * fills the width exactly as before, while `Modifier.weight(1f).fillMaxWidth()` composes exactly
- * as it does for any other Compose child — take the weighted share, then fill it.
+ * This composable's one emitted node **is** the [BasicTextField] itself — [label], the bordered
+ * box, [leadingIcon], [trailingAction] and [errorText] are all rendered inside its
+ * `decorationBox`, the same architecture Material3's own `TextField` uses, precisely so [modifier]
+ * and [contentDescriptionText] land on the one real, focusable, editable node rather than on a
+ * wrapping layer above it. That gives every caller both things at once, on the same node, with no
+ * special-case query: `Modifier.weight(1f)` inside a `Row` is honoured (this is the composable's
+ * own root, the direct child the `Row` measures — R-060's weight gap), and
+ * `onNodeWithContentDescription(x).performTextInput(...)` / `performImeAction()` — and
+ * `onNodeWithTag(callerTag).performTextInput(...)` for a caller that tags via [modifier] instead —
+ * work exactly as `RequestFocus`/`SetText` on a plain `BasicTextField` always have, because
+ * semantics merging an ancestor's way into a descendant's `RequestFocus`/`SetText` is not reliable
+ * in this Compose version (verified by experiment), so this field never depends on it.
  */
 @Suppress("LongParameterList") // every parameter is an independent, optional field concern.
 @Composable
@@ -510,77 +513,75 @@ public fun TextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     errorTone: FieldTone = FieldTone.Halt,
 ) {
-    Column(
+    val degraded = errorText != null && errorTone == FieldTone.Degraded
+    val borderColor = when {
+        degraded -> OrtColors.bannerAmberBorder
+        errorText != null -> OrtColors.haltBorder
+        value.isNotEmpty() -> OrtColors.accentGreen
+        else -> OrtColors.lineStrong
+    }
+    val textStyle = (if (mono) OrtType.control.copy(fontFamily = FontFamily.Monospace) else OrtType.control)
+        .copy(color = OrtColors.textHigh)
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = singleLine,
+        textStyle = textStyle,
+        cursorBrush = SolidColor(OrtColors.accentGreen),
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         modifier = modifier
             .fillMaxWidth()
-            .semantics(mergeDescendants = true) {
+            .semantics {
                 contentDescription = contentDescriptionText ?: label ?: placeholder.orEmpty()
             },
-    ) {
-        label?.let {
-            Text(
-                text = it,
-                style = OrtType.sectionLabel,
-                color = OrtColors.textFaint,
-                modifier = Modifier.padding(bottom = OrtSpacing.xs),
-            )
-        }
-        val degraded = errorText != null && errorTone == FieldTone.Degraded
-        val borderColor = when {
-            degraded -> OrtColors.bannerAmberBorder
-            errorText != null -> OrtColors.haltBorder
-            value.isNotEmpty() -> OrtColors.accentGreen
-            else -> OrtColors.lineStrong
-        }
-        val textStyle = (if (mono) OrtType.control.copy(fontFamily = FontFamily.Monospace) else OrtType.control)
-            .copy(color = OrtColors.textHigh)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 44.dp)
-                .background(OrtColors.bgCurrent, RoundedCornerShape(8.dp))
-                .border(1.dp, borderColor, RoundedCornerShape(8.dp))
-                .padding(horizontal = 13.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            if (leadingIcon != null) {
-                Icon(
-                    imageVector = leadingIcon,
-                    contentDescription = null,
-                    tint = OrtColors.textDim,
-                    modifier = Modifier.size(15.dp),
-                )
-            }
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                singleLine = singleLine,
-                textStyle = textStyle,
-                cursorBrush = SolidColor(OrtColors.accentGreen),
-                keyboardOptions = keyboardOptions,
-                keyboardActions = keyboardActions,
-                modifier = Modifier.weight(1f),
-                decorationBox = { innerTextField ->
-                    Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.fillMaxWidth()) {
+        decorationBox = { innerTextField ->
+            Column {
+                label?.let {
+                    Text(
+                        text = it,
+                        style = OrtType.sectionLabel,
+                        color = OrtColors.textFaint,
+                        modifier = Modifier.padding(bottom = OrtSpacing.xs),
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                        .background(OrtColors.bgCurrent, RoundedCornerShape(8.dp))
+                        .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    if (leadingIcon != null) {
+                        Icon(
+                            imageVector = leadingIcon,
+                            contentDescription = null,
+                            tint = OrtColors.textDim,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                    Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.weight(1f)) {
                         if (value.isEmpty() && placeholder != null) {
                             Text(text = placeholder, style = OrtType.control, color = OrtColors.textSignal)
                         }
                         innerTextField()
                     }
-                },
-            )
-            trailingAction?.invoke()
-        }
-        errorText?.let {
-            Text(
-                text = it,
-                style = OrtType.subLine,
-                color = if (degraded) OrtColors.accentAmberText else OrtColors.haltText,
-                modifier = Modifier.padding(top = OrtSpacing.xs),
-            )
-        }
-    }
+                    trailingAction?.invoke()
+                }
+                errorText?.let {
+                    Text(
+                        text = it,
+                        style = OrtType.subLine,
+                        color = if (degraded) OrtColors.accentAmberText else OrtColors.haltText,
+                        modifier = Modifier.padding(top = OrtSpacing.xs),
+                    )
+                }
+            }
+        },
+    )
 }
 
 @Composable
