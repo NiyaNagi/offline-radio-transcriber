@@ -34,15 +34,40 @@ public object LiveBarPolling {
     public suspend fun current(context: Context, sessionId: String?): LiveBarViewState {
         val (tone, label) = toneAndLabel()
         return LiveBarViewState(
-            // R-039: no level signal exists in `:pipeline` yet (see
-            // `org.ort.app.ui.data.LevelViewState`'s own kdoc) — four bars at their floor height is
-            // the honest "idle" rendering guide §6.6 itself shows for "nothing to hear" (`Now-First.dc.html`'s
-            // live bar), never a fabricated waveform.
-            level = List(LEVEL_BAR_COUNT) { 0f },
+            level = levelBars(),
             partialText = sessionId?.let { newestPassAPartial(context, it) },
             label = label,
             tone = tone,
         )
+    }
+
+    /**
+     * `Main.dc.html`'s footer bars, now real (R-112 closed this — see the prior "not measured"
+     * doc comment this replaced): [LevelStatus.State.NotMeasured] keeps the honest floor-height
+     * placeholder (guide §6.6's "nothing to hear" rendering, never a fabricated waveform); once
+     * measured, every bar is one of the two real numbers a single meter tick actually carries —
+     * [LevelStatus.State.Measured.rmsDbfs] and [LevelStatus.State.Measured.peakDbfs], each
+     * normalised against [LevelViewState.CHART_FLOOR_DBFS]/[LevelViewState.CHART_CEILING_DBFS] (the
+     * same scale [LevelMeterScreen]'s own chart uses, so the two surfaces never disagree about what
+     * "loud" means) and alternated `rms, peak, rms, peak` — never a fabricated 4-band spectrum this
+     * one signal cannot honestly support. `clipped` needs no separate bar treatment: it already
+     * routes `toneAndLabel()` to [LiveBarTone.DEGRADED] ("Hot"), and
+     * [org.ort.app.ui.components.LiveBar]'s own palette colours a `DEGRADED` meter amber on that
+     * tone alone (guide §6.6) — colour follows tone, not a second, redundant per-bar flag here.
+     */
+    private fun levelBars(): List<Float> = when (val level = LevelStatus.state) {
+        LevelStatus.State.NotMeasured -> List(LEVEL_BAR_COUNT) { 0f }
+        is LevelStatus.State.Measured -> {
+            val rmsFraction = normalizedFraction(level.rmsDbfs)
+            val peakFraction = normalizedFraction(level.peakDbfs)
+            listOf(rmsFraction, peakFraction, rmsFraction, peakFraction)
+        }
+    }
+
+    private fun normalizedFraction(dbfs: Float): Float {
+        val floor = LevelViewState.CHART_FLOOR_DBFS
+        val ceiling = LevelViewState.CHART_CEILING_DBFS
+        return ((dbfs - floor) / (ceiling - floor)).coerceIn(0f, 1f)
     }
 
     /**

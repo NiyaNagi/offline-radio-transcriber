@@ -32,6 +32,58 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round four: live-bar level bars from LevelStatus)
+
+### (pending) — ui-conformance WP4 · live-bar level bars from LevelStatus
+
+**Scope:** `:app` only, this package's own row — fourth addendum to the WP4 entries below, after
+merging `main` at `10544eb` (WP5's round-three follow-up; WP11b's failure-variant additions to
+`ui/data/LiveBarPolling.kt`/its test, which this package's row now owns again, per the coordinator).
+Files touched: `ui/data/LiveBarPolling.kt`, `ui/data/LiveBarPollingTest.kt`.
+
+**Requirements/ACs:** R-022, R-112, guide §6.6 (the live bar's 4-bar meter; colour follows tone,
+never a second per-bar signal), constitution I (every bar value is one of the two real numbers a
+meter tick actually carries — [State.Measured.rmsDbfs]/`peakDbfs` — never a fabricated 4-band
+spectrum this one signal cannot honestly support).
+
+**What changed:**
+- **Constitution Check.** Principle I: `levelBars()` reads exactly two real fields per tick
+  (`rmsDbfs`, `peakDbfs`) and tiles them `rms, peak, rms, peak` across the four bars — documented
+  in its own kdoc as a deliberate choice against inventing four independent values. `NotMeasured`
+  is unchanged: still the honest floor-height placeholder guide §6.6 already established. Principle
+  VII: the amber-on-clip requirement needed no new code — `toneAndLabel()` already routes a clipped
+  tick to `LiveBarTone.DEGRADED` ("Hot"), and `LiveBar`'s own palette (WP2) already colours a
+  `DEGRADED` meter amber on tone alone; adding a second, redundant per-bar clip flag would have
+  been exactly the kind of two-sources-of-truth bug the rest of this file's priority-order comment
+  already warns against.
+- **`LiveBarPolling.current`** now calls a new private `levelBars()` instead of the old fixed
+  `List(LEVEL_BAR_COUNT) { 0f }` literal. Each bar is `normalizedFraction(dbfs)` — the same
+  `[LevelViewState.CHART_FLOOR_DBFS, CHART_CEILING_DBFS]` scale `LevelMeterScreen`'s own chart uses
+  (R-039), so the live bar and the full meter never disagree about what "loud" means for the same
+  reading.
+- **`LiveBarPollingTest`**: WP11b's nine existing cases (tone/label priority order, `Gap`/`Hot`/
+  `Quiet`/`Low storage`/`N behind`/`Rig lost`) are untouched and still pass unmodified — none of
+  them asserted on `.level`, so the mapping change could not affect them. Three new cases added.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded from `53ac23a` to `10544eb` cleanly (this branch was
+  an ancestor); confirmed via `git log --oneline -1`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 181 covered**; `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` — **714 of 714 passing**, 0 failed (full `:app` suite,
+  including every WP11b `LiveBarPollingTest` case, confirmed still green by name in the run output).
+  New: `R_022_live_bar_level_bars_follow_LevelStatus` (the named test), `R_022 NotMeasured keeps
+  the honest floor-height placeholder, never a fabricated waveform`, `R_022 a clipped tick still
+  reports its real peak and RMS bars, colour comes from tone alone`.
+
+**Left open / not done:** none for this round — R-022's live-bar level bars are now real on every
+path (`NowScreen`/`CaptureStatusScreen`, both of which already render whatever `LiveBarPolling`
+returns).
+
 ## 2026-09-08 (ui-conformance WP9 follow-up: setup rows, notification preview and fields on shared components; route and level checks read the pipeline holders)
 
 ### (pending) — ui-conformance WP9 · setup rows, notification preview and fields on shared components; route and level checks read the pipeline holders
@@ -163,7 +215,6 @@ narrow, `String`-typed door through it was opened, pipeline-side, outside this p
   this brief; noted so a future pass does not assume it is already handled.
 
 ## 2026-09-08 (ui-conformance WP4, round three: the Level row opens the live level meter)
-
 ### (pending) — ui-conformance WP4 · Level row opens the live level meter
 
 **Scope:** `:app` only, this package's own row — third addendum to the WP4 entries below, after
