@@ -26,37 +26,33 @@ import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
-import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.LiveBar
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.components.ScreenHeader
 import org.ort.app.ui.data.DrawerCounts
 import org.ort.app.ui.data.DrawerCountsViewState
-import org.ort.app.ui.data.FrequencyListEntryViewState
 import org.ort.app.ui.data.LiveBarPolling
 import org.ort.app.ui.data.ReaderPolling
-import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.SearchFacetFilter
 import org.ort.app.ui.data.SearchFilterInput
 import org.ort.app.ui.data.SearchFilterParser
 import org.ort.app.ui.data.SearchPolling
 import org.ort.app.ui.data.SearchResult
 import org.ort.app.ui.data.SearchTimeFilter
-import org.ort.app.ui.data.StationListEntryViewState
-import org.ort.app.ui.data.ThreadGroupViewState
+import org.ort.app.ui.data.ThreadDetailViewState
 import org.ort.app.ui.data.ThreadPolling
-import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.screens.CaptureStatusContent
-import org.ort.app.ui.screens.FrequenciesListScreen
-import org.ort.app.ui.screens.FrequencyDetailScreen
-import org.ort.app.ui.screens.LogScreen
+import org.ort.app.ui.screens.FrequenciesContent
+import org.ort.app.ui.screens.FrequencyDetailContent
+import org.ort.app.ui.screens.LogContent
 import org.ort.app.ui.screens.NowContent
 import org.ort.app.ui.screens.PlaceholderScreen
 import org.ort.app.ui.screens.SearchContent
-import org.ort.app.ui.screens.StationDetailScreen
-import org.ort.app.ui.screens.StationsListScreen
-import org.ort.app.ui.screens.ThreadScreen
-import org.ort.app.ui.screens.TransmissionDetailScreen
+import org.ort.app.ui.screens.StationDetailContent
+import org.ort.app.ui.screens.StationsContent
+import org.ort.app.ui.screens.ThreadContent
+import org.ort.app.ui.screens.ThreadDetailScreen
+import org.ort.app.ui.screens.TransmissionDetailContent
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
@@ -121,13 +117,15 @@ private val SearchFilterInputSaver: Saver<SearchFilterInput, String> = Saver(
  * The navigation host (build-plan P13, extended by P14, P17 and ui-conformance-plan WP3): the
  * drawer `Menu.dc.html` specifies, wrapping whichever destination is current, under WP2's
  * [ScreenHeader] (R-003/R-004/R-015 — drawer icon, live dot + elapsed, search icon; no title text,
- * each screen owns its own) and, for a drill-in, [DrillInHeader] instead (R-016 — a chevron plus
- * the destination it was opened from). WP2's [LiveBar] is pinned to the bottom of every destination
- * and drill-in while a session runs (R-022's consumer). `Now` (`Main.dc.html`), `Log`
- * (`Log.dc.html`), `Stations` and `Frequencies` are real screens reading real `:data` state (see
- * `ui/data/ReaderPolling.kt`); tapping a Log row, a station row or a frequency row opens that
- * item's own full-screen drill-in over whichever destination was current. Every other destination
- * is a [PlaceholderScreen] until its own prompt builds it.
+ * each screen owns its own). A drill-in draws its own header instead (R-016) — every real
+ * drill-in content composable WP5/6/8 shipped already renders WP2's `DrillInHeader` internally,
+ * so this host does not add a second one (see [NavHostBody]'s own comment). WP2's [LiveBar] is
+ * pinned to the bottom of every destination and drill-in while a session runs (R-022's consumer),
+ * except `Now`/`Capture`, which pin their own the same way. Every real destination and drill-in
+ * dispatches to the package that owns it (`Now`/`Capture`/live-bar feed → WP4; `Search` → WP7;
+ * `Log`/`Threads`/transmission and thread drill-ins → WP5/WP6; `Stations`/`Frequencies` and their
+ * drill-ins → WP8); `Earlier nights`/`Improve records` are a [PlaceholderScreen] until their own
+ * prompt builds them.
  *
  * [sessionId] is null when the host is opened with no active or prior capture session (for
  * example, opened directly rather than from the status flow) - `Now`/`Log` then show their
@@ -148,6 +146,10 @@ public fun OrtNavHost(sessionId: String?) {
     var openTransmissionId by rememberSaveable { mutableStateOf<String?>(null) }
     var openStationId by rememberSaveable { mutableStateOf<String?>(null) }
     var openFrequencyHz by rememberSaveable { mutableStateOf<Long?>(null) }
+    // R-017: WP5's `ThreadDetailScreen` (its own file's doc comment: "not yet reachable ... ready
+    // for whichever package wires that route") — this is that route, ready to open once WP5/WP7
+    // expose a callback into it (see this package's report on why nothing does yet).
+    var openThreadId by rememberSaveable { mutableStateOf<String?>(null) }
     // R-017 / `Flow-Search.dc.html`: Search's input and results live here, in the host, not inside
     // WP7's `SearchContent` — that composable is skipped entirely while a drill-in is showing (see
     // `NavHostBody` below), and a skipped composable's own `remember` state does not survive being
@@ -165,6 +167,7 @@ public fun OrtNavHost(sessionId: String?) {
         openTransmissionId = null
         openStationId = null
         openFrequencyHz = null
+        openThreadId = null
     }
 
     fun onOpenDrillIn(setter: () -> Unit) {
@@ -192,7 +195,7 @@ public fun OrtNavHost(sessionId: String?) {
         Scaffold { padding ->
             NavHostBody(
                 modifier = Modifier.padding(padding).fillMaxSize(),
-                ids = NavHostIds(current, openedFrom, openTransmissionId, openStationId, openFrequencyHz),
+                ids = NavHostIds(current, openedFrom, openTransmissionId, openStationId, openFrequencyHz, openThreadId),
                 callbacks = NavHostCallbacks(
                     onOpenDrawer = { scope.launch { drawerState.open() } },
                     onSearchDestination = { current = ReaderDestination.SEARCH },
@@ -204,6 +207,7 @@ public fun OrtNavHost(sessionId: String?) {
                     onOpenTransmission = { id -> onOpenDrillIn { openTransmissionId = id } },
                     onOpenStation = { id -> onOpenDrillIn { openStationId = id } },
                     onOpenFrequency = { hz -> onOpenDrillIn { openFrequencyHz = hz } },
+                    onOpenThread = { id -> onOpenDrillIn { openThreadId = id } },
                 ),
                 sessionId = sessionId,
                 context = context,
@@ -233,6 +237,7 @@ private data class NavHostIds(
     val transmissionId: String?,
     val stationId: String?,
     val frequencyHz: Long?,
+    val threadId: String?,
 )
 
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
@@ -244,6 +249,7 @@ private data class NavHostCallbacks(
     val onOpenTransmission: (String) -> Unit,
     val onOpenStation: (String) -> Unit,
     val onOpenFrequency: (Long) -> Unit,
+    val onOpenThread: (String) -> Unit,
 )
 
 /**
@@ -276,15 +282,9 @@ private fun NavHostBody(
     search: SearchHostState,
 ) {
     Column(modifier = modifier) {
-        val isDrillIn = ids.transmissionId != null || ids.stationId != null || ids.frequencyHz != null
-        if (isDrillIn) {
-            // R-016: one header for every drill-in — chevron + the origin destination's label —
-            // rather than each screen's own "‹ Back" text row (WP5/6/8 remove those from
-            // `TransmissionDetailScreen`/`StationDetailScreen`/`FrequencyDetailScreen` themselves;
-            // `onBack` is still passed through unchanged so those screens keep working either way
-            // in the meantime).
-            DrillInHeader(parentLabel = ids.openedFrom.label, onBack = callbacks.onCloseDrillIns)
-        } else {
+        val drillInIds = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId)
+        val isDrillIn = drillInIds.any { it != null }
+        if (!isDrillIn) {
             // R-003/R-004/R-015: drawer icon, live dot + elapsed while a session is capturing,
             // search icon — no title, the destination content below draws its own (`Main.dc.html`'s
             // 27sp title is `NowScreen`'s, not the header's).
@@ -294,6 +294,17 @@ private fun NavHostBody(
                 onSearch = callbacks.onSearchDestination,
             )
         }
+        // R-016: no generic host-level `DrillInHeader` when a drill-in is open — every real
+        // drill-in content composable WP5/6/8 shipped (`TransmissionDetailContent`,
+        // `StationDetailContent`→`StationDetailScreen`, `FrequencyDetailContent`→
+        // `FrequencyDetailScreen`, `ThreadDetailScreen`) already draws its own `DrillInHeader`
+        // internally (confirmed by reading all four before writing this) — rendering a second one
+        // here would stack two, the same double-render this package's WP4 live-bar reconciliation
+        // already found and fixed once. See this package's report/CHANGELOG for the R-017
+        // consequence: every one of those headers hardcodes its own parent label ("Log"/
+        // "Stations"/"Frequencies"/"Threads") rather than accepting this host's real
+        // `ids.openedFrom.label`, so the header text is not always the true origin even though
+        // `onBack` still returns there correctly.
 
         Box(modifier = Modifier.weight(1f)) {
             when {
@@ -302,18 +313,29 @@ private fun NavHostBody(
                     transmissionId = ids.transmissionId,
                     player = audioPlayer,
                     onBack = callbacks.onCloseDrillIns,
+                    onOpenTransmission = callbacks.onOpenTransmission,
                 )
 
                 ids.stationId != null -> StationDetailContent(
                     context = context,
                     stationId = ids.stationId,
                     onBack = callbacks.onCloseDrillIns,
+                    onOpenTransmission = callbacks.onOpenTransmission,
                 )
 
                 ids.frequencyHz != null -> FrequencyDetailContent(
                     context = context,
                     frequencyHz = ids.frequencyHz,
                     onBack = callbacks.onCloseDrillIns,
+                    onOpenStation = callbacks.onOpenStation,
+                )
+
+                ids.threadId != null -> ThreadDetailContent(
+                    context = context,
+                    sessionId = sessionId,
+                    threadId = ids.threadId,
+                    onBack = callbacks.onCloseDrillIns,
+                    onOpenOver = callbacks.onOpenTransmission,
                 )
 
                 else -> DestinationContent(
@@ -427,7 +449,7 @@ private fun DestinationContent(
         )
 
         ReaderDestination.LOG ->
-            LogContent(sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
+            LogContent(context = context, sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
 
         ReaderDestination.SEARCH -> SearchContent(
             input = search.input,
@@ -439,7 +461,7 @@ private fun DestinationContent(
         )
 
         ReaderDestination.THREADS ->
-            ThreadContent(sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
+            ThreadContent(context = context, sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
 
         ReaderDestination.STATIONS ->
             StationsContent(context = context, onOpen = onOpenStation, modifier = content)
@@ -457,125 +479,43 @@ private fun DestinationContent(
     }
 }
 
+/**
+ * R-017: a poll-and-render wrapper for WP5's [ThreadDetailScreen] — that screen is a pure function
+ * of [ThreadDetailViewState] with no poller of its own (its own doc comment: "ready for whichever
+ * package wires that route"), so this package supplies the same shape every other drill-in's
+ * `*Content` composable has, feeding it from [ThreadPolling.threadDetail]. Currently unreachable
+ * from any user action — see this package's report/CHANGELOG for why (neither `LogContent` nor
+ * `ThreadContent` exposes a callback into it), kept here ready for the moment one does.
+ */
 @Composable
-private fun LogContent(sessionId: String?, onOpen: (String) -> Unit, modifier: Modifier) {
-    val context = LocalContext.current
-    var details by remember { mutableStateOf(emptyList<TransmissionDetail>()) }
-    if (sessionId != null) {
-        LaunchedEffect(sessionId) {
-            while (true) {
-                details = ReaderPolling.currentTransmissionDetails(context, sessionId)
-                delay(POLL_INTERVAL_MILLIS)
-            }
-        }
-    }
-    val entries = details.map { ReaderTransmissionViewStateMapper.listEntry(it) }
-    LogScreen(entries = entries, onOpen = onOpen, modifier = modifier)
-}
-
-@Composable
-private fun ThreadContent(sessionId: String?, onOpen: (String) -> Unit, modifier: Modifier) {
-    val context = LocalContext.current
-    var groups by remember { mutableStateOf(emptyList<ThreadGroupViewState>()) }
-    if (sessionId != null) {
-        LaunchedEffect(sessionId) {
-            while (true) {
-                groups = ThreadPolling.currentThreadGroups(context, sessionId)
-                delay(POLL_INTERVAL_MILLIS)
-            }
-        }
-    }
-    ThreadScreen(groups = groups, onOpen = onOpen, modifier = modifier)
-}
-
-@Composable
-private fun TransmissionDetailContent(
+private fun ThreadDetailContent(
     context: android.content.Context,
-    transmissionId: String,
-    player: org.ort.app.ui.audio.TransmissionAudioPlayer,
+    sessionId: String?,
+    threadId: String,
     onBack: () -> Unit,
+    onOpenOver: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
-    suspend fun refresh() {
-        detail = ReaderPolling.transmissionDetail(context, transmissionId)
+    var detail by remember(threadId, sessionId) { mutableStateOf<ThreadDetailViewState?>(null) }
+    LaunchedEffect(threadId, sessionId) {
+        val session = sessionId
+        if (session != null) {
+            detail = ThreadPolling.threadDetail(context, session, threadId)
+        }
     }
-    LaunchedEffect(transmissionId) { refresh() }
     val current = detail
     if (current != null) {
-        TransmissionDetailScreen(
-            state = ReaderTransmissionViewStateMapper.detailView(current),
-            player = player,
+        ThreadDetailScreen(
+            state = current,
             onBack = onBack,
-            onCorrect = { request ->
-                ReaderPolling.applyCorrection(context, request)
-                refresh()
-            },
-            onSearchLexicon = { query -> ReaderPolling.searchLexicon(query) },
-            onRecordLabel = { sample ->
-                org.ort.app.ui.data.LabelledSampleWriter.append(
-                    java.io.File(context.filesDir, "labelled-samples.tsv"),
-                    sample,
-                )
-            },
+            onOpenOver = onOpenOver,
+            onOpenSourceOver = onOpenOver,
+            modifier = modifier,
         )
     } else {
         Text(
             text = "Loading…",
-            modifier = Modifier
-                .padding(OrtSpacing.lg)
-                .semantics { contentDescription = "Loading transmission detail" },
-        )
-    }
-}
-
-@Composable
-private fun StationsContent(context: android.content.Context, onOpen: (String) -> Unit, modifier: Modifier) {
-    var stations by remember { mutableStateOf(emptyList<StationListEntryViewState>()) }
-    LaunchedEffect(Unit) { stations = ReaderPolling.listStationSummaries(context) }
-    StationsListScreen(stations = stations, onOpen = onOpen, modifier = modifier)
-}
-
-@Composable
-private fun FrequenciesContent(context: android.content.Context, onOpen: (Long) -> Unit, modifier: Modifier) {
-    var frequencies by remember { mutableStateOf(emptyList<FrequencyListEntryViewState>()) }
-    LaunchedEffect(Unit) { frequencies = ReaderPolling.listFrequencySummaries(context) }
-    FrequenciesListScreen(frequencies = frequencies, onOpen = onOpen, modifier = modifier)
-}
-
-@Composable
-private fun StationDetailContent(context: android.content.Context, stationId: String, onBack: () -> Unit) {
-    var detail by remember(stationId) {
-        mutableStateOf<org.ort.app.ui.data.StationDetailViewState?>(null)
-    }
-    LaunchedEffect(stationId) {
-        detail = ReaderPolling.stationDetail(context, stationId, nowMillis = SystemClock.wallMillis())
-    }
-    val current = detail
-    if (current != null) {
-        StationDetailScreen(state = current, onBack = onBack)
-    } else {
-        Text(
-            text = "Loading…",
-            modifier = Modifier.padding(OrtSpacing.lg).semantics { contentDescription = "Loading station detail" },
-        )
-    }
-}
-
-@Composable
-private fun FrequencyDetailContent(context: android.content.Context, frequencyHz: Long, onBack: () -> Unit) {
-    var detail by remember(frequencyHz) {
-        mutableStateOf<org.ort.app.ui.data.FrequencyDetailViewState?>(null)
-    }
-    LaunchedEffect(frequencyHz) {
-        detail = ReaderPolling.frequencyDetail(context, frequencyHz, nowMillis = SystemClock.wallMillis())
-    }
-    val current = detail
-    if (current != null) {
-        FrequencyDetailScreen(state = current, onBack = onBack)
-    } else {
-        Text(
-            text = "Loading…",
-            modifier = Modifier.padding(OrtSpacing.lg).semantics { contentDescription = "Loading frequency detail" },
+            modifier = modifier.padding(OrtSpacing.lg).semantics { contentDescription = "Loading thread detail" },
         )
     }
 }

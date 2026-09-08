@@ -708,6 +708,143 @@ FR-UI-3.
 
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · host dispatches to WP5, WP6 and WP8 content; thread, pattern, identity and frequency-change routes
+
+**Scope:** `:app` `ui/navigation/**` only (`OrtNavHost.kt` — `ReaderDestination.kt`/`Drawer.kt`
+untouched this round; `ReaderDestination.CAPTURE.hasScreen` was already flipped in the WP4/WP7
+addendum below) and its test (`OrtNavHostDestinationDispatchTest.kt`, new). Second reconciliation
+addendum to the WP3 entry two below, after merging `integrate-2` (WP5 + WP6 + WP8, HEAD `285e0d0`,
+a descendant of the WP4/WP7 addendum's `47d5a7e`).
+
+**Requirements/ACs:** R-016, R-017 (both refined by this addendum, not reopened — see "What
+changed" for the R-016 architectural finding this round surfaced), R-013, FR-UI-2.
+
+**What changed:**
+- **Constitution Check.** Principle I: every drill-in reachable now reads real `:data` state
+  through the package that owns it (WP5/WP6/WP8's own `*Polling` objects), never this package's
+  own guess at the shape. Principle VII: `ui/screens/**`, `ui/data/LogViewData.kt`/
+  `ThreadViewData.kt`/`StationPolling.kt`/`DetailViewState.kt` (WP5/WP6/WP8's files) are
+  untouched — every change is `OrtNavHost.kt`'s own dispatch.
+- **`git merge --ff-only integrate-2`** — fast-forward, `47d5a7e..285e0d0`, clean.
+- **LOG → WP5's real `LogContent(context, sessionId, onOpen, modifier)`.** THREADS → WP5's real
+  `ThreadContent(context, sessionId, onOpen, modifier)`. Both replace this package's own inline
+  copies, which called the now-superseded 3-arg `LogScreen(entries, onOpen, modifier)`/
+  `ThreadScreen(groups, onOpen, modifier)` overloads directly against `ReaderPolling`.
+  **`LogContent` exposes no group-header callback** (confirmed by reading the file: `LogGroupHeader`
+  is called with no `onClick` at all) — the brief's conditional "wire the Log group header tap to
+  it if `LogContent` exposes such a callback" therefore could not be wired; reported here rather
+  than edited into WP5's file.
+- **Thread-detail drill-in (R-017):** a new `ThreadDetailContent` poll-and-render wrapper (this
+  package's own file, `OrtNavHost.kt`) feeds WP5's pure `ThreadDetailScreen` from
+  `ThreadPolling.threadDetail(context, sessionId, threadId)`, wired the same way every other
+  drill-in is (`openThreadId`, `onOpenThread`, remembers `openedFrom` on open, cleared by
+  `closeDrillIns`). **Currently unreachable from any user action** — confirmed by reading both
+  `LogContent.kt` (no group-header callback, above) and `ThreadContent.kt` (its own doc comment:
+  "not yet wired into navigation... intentionally unused until a route exists" — `ThreadScreen`'s
+  real `onOpenThread: (String) -> Unit` per-card callback is hard-wired to `{}` inside
+  `ThreadContent`, with no parameter exposed to override it). The route exists and is ready; the
+  lead or WP5 needs to add a callback parameter to `LogContent`/`ThreadContent` before it is
+  reachable.
+- **Transmission drill-in → WP6's real `TransmissionDetailContent(context, transmissionId, player,
+  onBack, onOpenTransmission, modifier)`**, replacing the call into the `@Deprecated`
+  `TransmissionDetailScreen(state: TransmissionDetailViewState, ...)` overload this package used
+  before (its own deprecation notice: "Compile-compat only until WP3 deletes its pre-WP6 inline
+  `TransmissionDetailContent`" — done).
+- **STATIONS/FREQUENCIES → WP8's real `StationsContent`/`FrequenciesContent`**; their drill-ins →
+  WP8's real `StationDetailContent`/`FrequencyDetailContent`, both wired with the cross-navigation
+  callbacks they expose (`onOpenTransmission` on the station side, `onOpenStation` on the frequency
+  side) so a related entity opened from within one drill-in still remembers the original
+  `openedFrom` (R-017) — it replaces which single drill-in id is set, so `onBack` from a nested
+  open returns to the *original* list destination, not to the intermediate drill-in; a real,
+  documented simplification of this host's single-level drill-in model, not a full navigation
+  stack (see "Left open").
+- **R-016, revised by an architectural finding this round, not by new design:** the coordinator's
+  brief asked for routes to `StationPatternScreen`, `StationIdentityScreen` and
+  `FrequencyChangeScreen`, each with "the right `DrillInHeader` parent label". Reading
+  `StationDetailContent.kt`/`FrequencyDetailContent.kt` first found that WP8 already built these as
+  **internal sub-navigation** inside those two content composables (`StationDetailContent`'s own
+  `sub: StationSubScreen` state opens `StationPatternScreen`/`StationIdentityScreen`;
+  `FrequencyDetailContent`'s own `sub: FrequencySubScreen` state opens `FrequencyChangeScreen`;
+  `StationDetailScreen`'s kebab icon is `onOpenIdentity`) — so no separate host-level route is
+  needed or possible without duplicating WP8's own state machine. The same reading found that
+  **every** real drill-in screen this round dispatches to (`TransmissionDetailContent`,
+  `StationDetailScreen`, `FrequencyDetailScreen`, `StationPatternScreen`, `StationIdentityScreen`,
+  `ThreadDetailScreen`) already renders its own WP2 `DrillInHeader` internally, each with its own
+  hardcoded parent label ("Log"/"Stations"/"Frequencies"/"Threads") — none accepts this host's real
+  `ids.openedFrom.label`. `NavHostBody` therefore **no longer renders a generic host-level
+  `DrillInHeader` at all** for these four drill-in kinds — doing so would stack two, the same
+  double-render class the WP4/WP7 addendum already found and fixed once for the live bar. R-017's
+  origin-tracking (`openedFrom`, back returning to the true origin) still works correctly — only
+  the header's *displayed text* does not always name the true origin, since it is now WP5/6/8's
+  own hardcoded string; noted for the lead, not fixed here (outside this package's ownership row).
+- New `OrtNavHostDestinationDispatchTest.kt`: proves `LOG` reaches WP5's real `LogContent`
+  (`LogScreen`'s own title renders with `sessionId = null`, since `LogContent`'s poll — and its
+  real "No transmissions yet" empty state — only runs for a real session). Deeper click-through
+  tests for `THREADS`/`STATIONS`/`FREQUENCIES`/`CAPTURE`/a station drill-in were attempted and
+  removed — see "Left open" for the full, honest account of why.
+
+**Verified:**
+- `git log --oneline -1` — `285e0d0` after the fast-forward merge, before this addendum's own
+  commit.
+- `.\gradlew.bat :app:compileDebugKotlin` / `:app:compileDebugUnitTestKotlin` — both **BUILD
+  SUCCESSFUL**.
+- `.\gradlew.bat :app:detekt`, `:app:ktlintMainSourceSetCheck`, `:app:ktlintTestSourceSetCheck` —
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules`/`platformGuards`
+  **OK** (17 modules, every edge permitted; no analytics/telemetry, `INTERNET` only in `:net`).
+  `build` itself **fails** — `:app:testDebugUnitTest` reports **542 tests, 6 failed, 536 passing**.
+  Every failure is the same pre-existing `SearchContentTest`/`SearchFiltersSheetTest` pair named
+  in the WP4/WP7 addendum below, confirmed unchanged (WP7's agent is fixing those concurrently, in
+  its own files, per the lead's own note this round — not touched here).
+  `.\gradlew.bat :app:assembleDebug` run standalone — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`; `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — `up to date (181 covered of 419)`.
+
+**Left open / not done:**
+- The thread-detail drill-in this round adds is **not reachable from any user action** — see "What
+  changed" for the exact two gaps (`LogContent`'s group header, `ThreadContent`'s hard-wired
+  `onOpenThread = {}`), both in `ui/screens/**`, outside this package's ownership row. Flagged for
+  the lead to route to WP5, or to add the missing callback parameters directly.
+- Every drill-in header's displayed parent-label text is WP5/6/8's own hardcoded string, not this
+  host's real `ids.openedFrom.label` — R-017's back-navigation *behaviour* is unaffected (it still
+  returns to the true origin, including Search with its filters intact), but a transmission opened
+  from Search, for example, shows "Log" in its header rather than "Search". Fixing this would need
+  each of those five screens to accept a `parentLabel: String` parameter instead of a hardcoded
+  one — a `ui/screens/**` change, outside this package's row.
+- Opening a related entity from within a drill-in (a station from a frequency, a transmission from
+  a station or thread) replaces the single drill-in id this host tracks rather than pushing a real
+  navigation stack — `onBack` from that nested drill-in returns to the *original* list destination,
+  skipping the intermediate one. A known, documented simplification of the existing single-level
+  model, not a new gap this round introduced.
+- `OrtNavHostDestinationDispatchTest`'s deeper tests (`THREADS`/`STATIONS`/`FREQUENCIES`/`CAPTURE`
+  dispatch, a station drill-in's single-header proof) were attempted and removed after an
+  unresolved Robolectric+Compose issue: `performScrollTo()` then `performClick()` on a drawer row
+  past the second position timed out waiting for that destination's own content, with no thrown
+  exception, while the identical pattern works for the second row (`Log`) and while
+  `ReaderAccessibilityTest`'s own drawer test (scroll-to-and-assert-displayed, never click) passes
+  for all nine rows. Not diagnosed further within this round's budget; correctness for the
+  untested destinations rests on the exact signatures read from each real file (cited in
+  `OrtNavHost.kt`'s own comments) and on WP5/WP6/WP8's own test suites, which exercise
+  `LogContent`/`ThreadContent`/`StationsContent`/`FrequenciesContent`/`StationDetailContent`/
+  `FrequencyDetailContent`/`CaptureStatusContent` directly and all pass in the 542-test run above.
+- The legacy overloads/functions this round's rewiring leaves unreferenced from the host, named
+  here so their owners can delete them (not deleted by this package, per the coordinator's own
+  instruction):
+  - WP5's 3-arg `LogScreen(entries, onOpen, modifier)` and `ThreadScreen(groups, onOpen, modifier)`
+    overloads (`ui/screens/LogScreen.kt`, `ui/screens/ThreadScreen.kt`), and
+    `ThreadPolling.currentThreadGroups`/`ThreadGroupViewState` (`ui/data/ThreadViewData.kt`) — this
+    host's own last caller of all three is gone.
+  - WP6's `@Deprecated TransmissionDetailScreen(state: TransmissionDetailViewState, ...)` overload
+    (`ui/screens/TransmissionDetailScreen.kt`) — its own doc comment already named this host as its
+    only caller.
+  - WP4's `ReaderPolling.stationDetail`, `ReaderPolling.frequencyDetail`,
+    `ReaderPolling.listStationSummaries`, `ReaderPolling.listFrequencySummaries`
+    (`ui/data/ReaderPolling.kt`) — this host now reads `StationPolling`/`FrequencyPolling` (WP8's
+    own file) instead; `ReaderPolling.currentTransmissionDetails` remains referenced (`NowContent`,
+    WP4's own file, still calls it) so it is not in this list.
+
 ### (pending) — ui-conformance WP3 · host dispatches to WP4 and WP7 content; live bar fed by LiveBarPolling
 
 **Scope:** `:app` `ui/navigation/**` only (`OrtNavHost.kt`, `ReaderDestination.kt`,
