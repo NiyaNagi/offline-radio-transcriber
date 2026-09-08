@@ -38,8 +38,8 @@ an identical second AVD for port 5556; at most two AVDs run at once
 |---|---|
 | `boot.ps1 -Avd <name> -Port <n>` | Boots the named AVD headless and waits for `sys.boot_completed`. |
 | `create-avd.ps1 -Name <name>` | Creates a Pixel 6 / API 34 / x86_64 / google_apis AVD (`ort_audit_2` for port 5556). |
-| `install.ps1 -Port <n>` | `:app:assembleDebug`, installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`. |
-| `scenario.ps1 -Port <n> -Name <scenario> [-NoRestart]` | Force-stops the app (unless `-NoRestart`), broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`. |
+| `install.ps1 -Port <n> [-Clear]` | `:app:assembleDebug`, installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`. `-Clear` runs `adb shell pm clear org.ort.app` right after install and re-grants both permissions — see "Known gaps / hygiene" below for why. |
+| `scenario.ps1 -Port <n> -Name <scenario> [-NoRestart]` | Force-stops the app (unless `-NoRestart`), broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`, then a best-effort warning if a real (non-scenario) session is still in the app's own database (see "Known gaps / hygiene"). |
 | `shoot.ps1 -Port <n> -Scenario <s> -Screen <name>` | `screencap -p` to a device file, then `adb pull` — to `results/ui-audit/<s>/<name>.png`. |
 | `nav.ps1 -Port <n> -Screen <name>` | Replays the tap sequence for `<name>` from `screens.json`. |
 | `run-set.ps1 -Port <n> -Set <V3\|V5>` | Runs every (scenario, screen) pair of one phase-E set from `sets.json`, end to end. |
@@ -281,8 +281,22 @@ own trigger requires). The seven scenarios this table's last block adds
 `calibration`) are the ones with no real signal at all — `org.ort.app.ui.failures.
 DebugFailureOverride`'s own kdoc says precisely what each would need and from which package.
 
-### Known gaps (report to the lead, not fixed here)
+### Known gaps / hygiene (report to the lead, not fixed here)
 
+- **Scenario reloads never delete a real (non-scenario) capture session.**
+  `Scenarios.clearPriorScenarioData` only ever deletes rows whose id starts with `scenario-` — a
+  genuine session an earlier mis-tap started (`Now`'s own "Start capture", pressed by accident
+  while poking around a scenario) or one the OS killed mid-capture is never touched by any scenario
+  load from then on, and persists in the app's own database across every scenario switch on a
+  shared AVD. Because it is real (`endedAt = null`, possibly a more recent `startedAt` than
+  whatever the current scenario just seeded), it can outrank the scenario's own fixture session on
+  `Now`. `install.ps1 -Clear` (`adb shell pm clear org.ort.app`, re-granting
+  `RECORD_AUDIO`/`POST_NOTIFICATIONS` afterward) is the reliable fix — it wipes the app's entire
+  on-device state, this stray session included; `scenario.ps1` also prints a best-effort warning
+  when it can query the device's own database for one (via `adb shell run-as` + the device's own
+  `sqlite3` binary, degrading to a printed reminder when either is unavailable — not verified
+  against a live device this round, since both shared AVD ports were in use; a validator exercises
+  both flags on the next pass).
 - **F2's disconnect banner and F6's hard-floor takeover have no scenario that seeds them
   directly.** Both are real, mapped signals (`InputStatus.State.Lost`,
   `StorageForecast.State.AtFloor` + `CaptureState.State.Failed`) — `FailureMapperTest` proves the
