@@ -49,15 +49,41 @@ plugins {
 //    *reason* is visible in `--info` output and in `taskOutcome` diagnostics, and so a future,
 //    genuinely relocatable version of either plugin only has to remove this block, not rediscover
 //    why it exists.
-private fun isUnderClaudeDirectory(path: String): Boolean = path.contains("${File.separator}.claude${File.separator}")
+//
+// 3. (Root-caused a third time — the defensive exclude from (1) above was itself wrong, and it
+//    was not defensive.) `isUnderClaudeDirectory` originally matched a bare absolute-path
+//    substring: any file whose *whole* path contained a `.claude` segment, anywhere. But every
+//    worktree-isolated builder's own checkout root **is itself** `.../.claude/worktrees/<name>/`
+//    — `spec/ui-conformance-plan.md`'s own "Concurrency and safety" section, quoted at the top of
+//    this file, says so directly. An absolute-path substring match against `.claude` therefore
+//    matched *every* real source file in *every* checkout doing the building, not only a sibling
+//    worktree's files nested inside it — `:app:detekt` and every `:app:*ktlint*` task silently
+//    saw zero input files for every builder (`NO-SOURCE`, confirmed with a fresh daemon and
+//    `--rerun-tasks`, ruling out a stale daemon or the build cache), and a task with no inputs
+//    reports success vacuously — not because there was nothing to flag. Every "clean" ktlint/
+//    detekt result from any worktree since (1) landed was this, not a real check.
+//    Fixed by relativizing each file against **this build's own** `rootProject.projectDir` before
+//    testing for a `.claude` segment: a file under this checkout's own module directories
+//    (`app/src/main/kotlin/...`) relativizes to a path with no `.claude` segment in it at all —
+//    the `.claude/worktrees/<name>/` prefix is exactly the part `relativeTo` strips away, since
+//    it is the base being relativized against, not part of the result — while a file actually
+//    nested *inside* this checkout under a `.claude` directory (a stray sibling-worktree artifact,
+//    or the throwaway proof file (1)'s own comment describes) still relativizes to a path that
+//    does contain one, and is still excluded. Proven both ways as part of landing this fix — see
+//    this package's own `CHANGELOG.md` entry for the exact commands and file counts.
+private fun isUnderClaudeDirectory(file: File): Boolean {
+    val relativePath = file.relativeToOrNull(rootProject.projectDir)?.path ?: return false
+    return relativePath.contains("${File.separator}.claude${File.separator}") ||
+        relativePath.startsWith(".claude${File.separator}")
+}
 
-// Matched against each `FileTreeElement`'s own absolute `file.path` (not a `PatternFilterable`
-// glob) precisely because a glob is evaluated *relative to whichever base directory the plugin
-// chose* — `.claude` is an ancestor of every module's real source directory, never a descendant of
-// it, so a relative `**/.claude/**` pattern can never match there even when a plugin's file
-// resolution does reach outside the module (verified: it does not, for ktlint, today — see above).
-// An absolute-path predicate matches regardless of which base directory a plugin measures from.
-private fun excludeClaudeDirectory(element: FileTreeElement): Boolean = isUnderClaudeDirectory(element.file.path)
+// Matched against each `FileTreeElement`'s own file, relativized against **this build's own**
+// root project directory (not a `PatternFilterable` glob, and not the file's bare absolute path —
+// see (3) above for why either of those gets this wrong) precisely so the same predicate reads
+// correctly regardless of where on disk *this* checkout happens to sit, including when — as every
+// worktree-isolated builder's checkout does — that location is itself nested under
+// `.claude/worktrees/<name>/`.
+private fun excludeClaudeDirectory(element: FileTreeElement): Boolean = isUnderClaudeDirectory(element.file)
 
 extensions.configure<KtlintExtension> {
     version.set("1.3.1")
