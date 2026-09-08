@@ -30,6 +30,7 @@ import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.FrequencyMeanwhileEntry
 import org.ort.app.ui.data.ThreadCardViewState
 import org.ort.app.ui.data.ThreadListViewState
+import org.ort.app.ui.data.pluralize
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -146,24 +147,26 @@ private fun UngroupedThreads(
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
         Text(text = "Threads", style = OrtType.screenTitle)
         Text(
-            text = "${state.totalOvers} overs · not yet grouped",
+            text = "${pluralize(state.totalOvers, "over")} · not yet grouped",
             style = OrtType.subtitle,
             color = OrtColors.textDim,
             modifier = Modifier.padding(top = 3.dp),
         )
     }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg)) {
-        AttributionRow(attribution = Attribution.ambiguous(), callsign = null)
-        Text(
-            text = "Conversations are not built on this phone yet",
-            style = OrtType.bodyProse,
-            color = OrtColors.textHigh,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
+        // R-163: the marker sits inline with the headline it qualifies, not on its own line above it.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AttributionRow(attribution = Attribution.ambiguous(), callsign = null)
+            Text(
+                text = "Conversations are not built on this phone yet",
+                style = OrtType.bodyProse,
+                color = OrtColors.textHigh,
+            )
+        }
         Text(
             text = "Grouping overs into QSOs needs speaker identity, which runs at tier 2 and above. " +
-                "This phone is at the tier it is currently running, so every over is here individually " +
-                "and nothing has been guessed about who was talking to whom.",
+                "This phone is at tier ${state.currentTier}, so every over is here individually and " +
+                "nothing has been guessed about who was talking to whom.",
             style = OrtType.cardBody,
             color = OrtColors.textMuted,
             modifier = Modifier.padding(top = 6.dp),
@@ -172,12 +175,12 @@ private fun UngroupedThreads(
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
             modifier = Modifier.padding(top = OrtSpacing.xs),
         ) {
-            TextAction(text = "What tier 1 can and cannot do", onClick = onLearnMoreAboutTier)
+            TextAction(text = "What tier ${state.currentTier} can and cannot do", onClick = onLearnMoreAboutTier)
             TextAction(text = "Improve at home", onClick = onImproveAtHome)
         }
     }
     Text(
-        text = "By frequency, meanwhile",
+        text = "By frequency, meanwhile".uppercase(),
         style = OrtType.sectionLabel,
         color = OrtColors.textFaint,
         modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
@@ -191,7 +194,9 @@ private fun UngroupedThreads(
 
 @Composable
 private fun FrequencyMeanwhileRow(entry: FrequencyMeanwhileEntry, onClick: () -> Unit) {
-    val description = "${entry.frequencyLabel}, ${entry.overCount} overs, ${entry.stationCount} stations heard"
+    val overs = pluralize(entry.overCount, "over")
+    val stations = pluralize(entry.stationCount, "station")
+    val description = "${entry.frequencyLabel}, $overs, $stations heard"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -204,7 +209,7 @@ private fun FrequencyMeanwhileRow(entry: FrequencyMeanwhileEntry, onClick: () ->
     ) {
         Text(text = entry.frequencyLabel, style = OrtType.callsignRow, color = OrtColors.textHigh)
         Text(
-            text = "${entry.overCount} overs · ${entry.stationCount} stations heard",
+            text = "$overs · $stations heard",
             style = OrtType.transcript,
             color = OrtColors.textTime,
             modifier = Modifier.weight(1f),

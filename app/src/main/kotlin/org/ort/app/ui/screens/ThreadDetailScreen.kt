@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,10 +22,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.AttributionRow
-import org.ort.app.ui.components.ColumnHeaderRow
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.LOG_TIME_COLUMN
 import org.ort.app.ui.data.ThreadAttributionExplanationLine
 import org.ort.app.ui.data.ThreadDetailOverViewState
 import org.ort.app.ui.data.ThreadDetailViewState
@@ -57,9 +57,12 @@ public fun ThreadDetailScreen(
         DrillInHeader(parentLabel = backLabel, onBack = onBack)
 
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+            // R-161: "QSO · 145.230 · FM" — kind and mode render only when the data supports them
+            // (never guessed); the frequency always anchors the line.
             val kindPrefix = state.kindLabel?.let { "$it · " }.orEmpty()
+            val modeSuffix = state.modeLabel?.let { " · $it" }.orEmpty()
             Text(
-                text = "$kindPrefix${state.frequencyLabel}".uppercase(),
+                text = "$kindPrefix${state.frequencyLabel}$modeSuffix".uppercase(),
                 style = OrtType.columnHeader,
                 color = OrtColors.textLow,
             )
@@ -74,7 +77,11 @@ public fun ThreadDetailScreen(
 
         HowAttributedCard(lines = state.howAttributed)
 
-        ColumnHeaderRow(stationLabel = "over", signalLabel = "")
+        // R-161: this table has no FREQ column (`Thread-Detail.dc.html`: TIME / OVER only) — every
+        // over in a thread already shares the header's own frequency, so `ColumnHeaderRow`'s fixed
+        // 4-column shape (time/freq/station/sig, guide §6.5) would only ever show it blank here;
+        // this is a genuinely different, 2-column header, not a look-alike of that component.
+        ThreadDetailColumnHeader()
 
         LazyColumn(modifier = Modifier.fillMaxSize().testTag("thread-detail-overs")) {
             items(state.overs, key = { it.transmissionId }) { over ->
@@ -85,6 +92,23 @@ public fun ThreadDetailScreen(
                 )
             }
         }
+    }
+}
+
+/** R-161: the per-over table's own 2-column header — `time` / `over`, no `freq` slot. */
+@Composable
+private fun ThreadDetailColumnHeader(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = "time".uppercase(),
+            style = OrtType.columnHeader,
+            color = OrtColors.textDisabled,
+            modifier = Modifier.width(LOG_TIME_COLUMN),
+        )
+        Text(text = "over".uppercase(), style = OrtType.columnHeader, color = OrtColors.textDisabled)
     }
 }
 
@@ -110,7 +134,11 @@ private fun HowAttributedCard(lines: List<ThreadAttributionExplanationLine>, mod
                     horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
                     modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                 ) {
-                    AttributionMarker(attribution = line.attribution, showConfidence = false)
+                    // R-162: `callsign = null` — `line.text` already names the station in prose
+                    // ("W7NPC heard in overs 1 and 3"), so the marker's own merged description
+                    // stays shape + state only; never a confidence figure on CONFIRMED, which the
+                    // legacy `AttributionMarker(showConfidence = false)` path still announced.
+                    AttributionRow(attribution = line.attribution, callsign = null)
                     Text(text = line.text, style = OrtType.chip, color = OrtColors.textBody)
                 }
             }

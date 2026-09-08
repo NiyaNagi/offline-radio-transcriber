@@ -2679,6 +2679,124 @@ left open), P9, guide §9.
 **Left open:**
 - The other "Left open" items from the two WP5 entries above are unchanged by this follow-up.
 
+### (pending) — ui-conformance WP5 · Log savers and real-activity smoke test; thread kind, duration, plurals, attribution rows
+
+**Scope:** `ui/screens/LogContent.kt`, `ui/screens/ThreadDetailScreen.kt`, `ui/screens/ThreadScreen.kt`,
+`ui/data/ThreadViewData.kt`, and their tests — plus a new `LogAndThreadContentActivityTest.kt`. One
+commit later, now that `main` carries the V3 Reader validation run (merged `main` fast-forward,
+`1f98b6f`, with `e66728b` — "ui-conformance · V3 Reader validation at 3e2d4ee" — confirmed an ancestor).
+
+**Requirements/ACs:** R-129 (halt), R-160, R-161, R-162, R-163, register.md rows read in full before
+starting.
+
+**Constitution Check.** Principle I (Uncertainty Is Content): `deriveKind` only ever returns "QSO" or
+"Activity" for the two patterns the data can support honestly (a clean two-station alternation, or one
+station repeating) — three-plus stations, a non-alternating pair, or any unresolved over in the thread
+all fall through to `null`, never a guessed label. Principle II (Test-Backed Change): the R-129 fix ships
+with `LogAndThreadContentActivityTest`, an `ActivityScenario`-hosted regression guard proven to fail
+(confirmed by deliberately reverting the `Saver` and re-running it, then restoring the fix) exactly the
+way Robolectric's `createComposeRule` could not catch, plus dedicated tests for every `deriveKind`
+boundary, `deriveMode`, the span-duration formatter, and `pluralize` itself.
+
+**What changed:**
+- **R-129 (halt).** `LogContent.kt`'s `quickFilter` (`LogQuickFilterId`, a plain `sealed interface`) and
+  `selection` (`LogFilterSelection`, a plain data class) were held in `rememberSaveable` with no `Saver`
+  — Compose's default `Saver` cannot handle either type, so the *first* composition inside a real
+  `SaveableStateRegistry` (any real Activity; Robolectric's `createComposeRule` installs none) threw
+  `IllegalArgumentException: MutableState containing All cannot be saved…`, crashing the app before Log
+  ever rendered. Fixed with two purpose-built savers: `LogQuickFilterIdSaver` (a `Saver<LogQuickFilterId,
+  String>` encoding `"All"`/`"Named"`/`"Rejected"`/`"Frequency:<hz>"`, falling back to `All` on an
+  unrecognised saved value rather than crashing restore) and `LogFilterSelectionSaver` (a `listSaver`
+  joining `attributionStates` into one delimited string alongside the selection's already-primitive
+  fields). Grepped every WP5-owned file for other non-primitive `rememberSaveable` use — none found;
+  `ThreadContent.kt` and `LogFilterSheet.kt` hold no `rememberSaveable` at all, and `LogContent.kt`'s
+  remaining `sheetOpen` is a plain `Boolean` the default `Saver` already handles.
+- **New `LogAndThreadContentActivityTest.kt`** (`R_129_log_and_threads_compose_inside_a_real_activity`):
+  composes `LogContent` and `ThreadContent` as siblings inside one `createAndroidComposeRule<ComponentActivity>().setContent`
+  call (a real Activity, a real `SaveableStateRegistry`) — the exact environment the crash needed and
+  Robolectric's plain `createComposeRule` never installs. Verified this test genuinely catches the
+  regression: reverting the `Saver` fix reproduces the real crash stack trace under this test; restoring
+  the fix passes it again.
+- **R-160 (`ThreadViewData.kt`, `ThreadListMapper.deriveKind`).** A thread card's kind token now renders
+  when — and only when — the data honestly supports one: every over in the thread names a resolved
+  station (an unresolved over makes the whole pattern uncertain, so this returns `null` rather than
+  classify around the gap) AND either exactly one distinct station repeats (**"Activity"**) or exactly
+  two distinct stations alternate with no two consecutive overs from the same one (**"QSO"**). Three or
+  more stations, two stations *not* alternating, or a single over all fall through to `null` — the card
+  then leads with the frequency alone, per the register's stated fallback rule.
+- **R-161 (`ThreadViewData.kt` + `ThreadDetailScreen.kt`).**
+  - `TransmissionDetail` gains `mode: String?` (the real `transmission.mode` column;
+    `ui/data/ReaderPolling.kt`'s `detailFrom`, WP4's file, does not set it, so `ThreadPolling.threadDetail`
+    re-attaches it from a direct `entity.mode` read via a new private `attachModes`, called only on the
+    detail path to avoid an extra query on the frequently-polled list path).
+    `ThreadDetailViewState.modeLabel` and `ThreadListMapper.deriveMode` (the first recorded mode among the
+    thread's overs, `null` when none recorded one) carry it through.
+  - `ThreadListMapper.spanDurationLabel` renders "1 m 55 s" / "38 s" (first over start to last over
+    start), appended to `detailState`'s `metaText`.
+  - `ThreadDetailScreen`'s header line is now `"$kindPrefix${frequencyLabel}$modeSuffix"` — kind and mode
+    each render only when the data has them, the frequency always anchors the line.
+  - The per-over table's own header is a new, genuinely 2-column `ThreadDetailColumnHeader` (`time` /
+    `over`, no `freq` slot) rather than the shared 4-column `ColumnHeaderRow` — every over in a thread
+    already shares the header's own frequency, so that component's fixed shape would only ever show it
+    blank here; a doc comment explains why this is a different component, not a look-alike of it.
+- **R-162 (`ThreadDetailScreen.kt`).** `HowAttributedCard`'s marker switched from the legacy
+  `AttributionMarker(attribution = line.attribution, showConfidence = false)` — whose
+  `legacyMarkerDescription` appended a confidence figure to the accessibility description *regardless* of
+  `showConfidence`, so a CONFIRMED line still announced one — to `AttributionRow(attribution =
+  line.attribution, callsign = null)`, whose own description only ever states a confidence for INFERRED.
+  `callsign = null` because `line.text` already names the station in prose ("W7NPC heard in overs 1 and
+  3"); the marker's merged description stays shape + state only.
+- **R-163 (`ThreadListMapper.listState`/`ThreadScreen.kt`).**
+  - New shared `pluralize(count, singular, plural = "${singular}s")` (`ThreadViewData.kt`) replaces the
+    ad hoc pluralisation that had drifted into "1 overs" (audit V3) — used by the Ungrouped summary, the
+    Grouped summary, the by-frequency rows, and `detailState`'s `metaText`.
+  - `ThreadListViewState.Ungrouped` gains `currentTier: Int` (the real
+    `(3 - ShedStatus.currentLevel).coerceIn(0, 3)` formula `RealCaptureService.tierFromShedLevel()` /
+    `CaptureStatusViewState.tierFacts` already use — duplicated with a citing doc comment, not imported,
+    since both of those are `private` in files/packages this one does not own); `ThreadPolling` computes
+    it via a new private `currentTier()` and threads it into `ThreadListMapper.listState`'s now-required
+    third parameter. `UngroupedThreads`'s paragraph ("This phone is at tier N…") and its "What tier N can
+    and cannot do" link now read this same number, so they can never disagree.
+  - The ambiguous marker in `UngroupedThreads` now sits inline with its headline inside one `Row`
+    (`Arrangement.spacedBy(8.dp)`), not on its own line above it.
+  - "By frequency, meanwhile" renders in `OrtType.sectionLabel` style, matching every other section label
+    in the app.
+
+**Verified:**
+- Read `R-129`, `R-160`..`R-163` in `results/ui-audit/register.md` in full before starting; all five
+  fixes above map directly to that text.
+- Fast-forward merge: `git merge --ff-only main` — `Updating e66728b..1f98b6f, Fast-forward` (77 files
+  changed); `git merge-base --is-ancestor HEAD main` — exit 0 before merging (confirmed the branch was
+  already an ancestor); HEAD after merge is `1f98b6f`, with `e66728b` (the V3 validation commit) in its
+  history.
+- Targeted run first — `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.ThreadViewDataTest"
+  --tests "org.ort.app.ui.screens.ThreadScreenTest" --tests "org.ort.app.ui.screens.ThreadDetailScreenTest"
+  --tests "org.ort.app.ui.screens.LogAndThreadContentActivityTest"` — BUILD SUCCESSFUL, 34/34 `PASSED`,
+  including `R_129_log_and_threads_compose_inside_a_real_activity`.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL in 2m 18s (845 actionable
+  tasks, 348 executed, 347 from cache, 150 up-to-date); `:app:ktlintMainSourceSetCheck` and
+  `:app:ktlintTestSourceSetCheck` both passed (no line-length/signature-formatting violations);
+  `:app:assembleDebug`, `:app:assembleRelease`, `:app:lint` all succeeded; every `:app` test `PASSED`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]` (including "no mojibake"), `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 183 covered -> results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (183
+  covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL (also covered by the combined run above).
+- New/changed tests, all `PASSED`: `LogAndThreadContentActivityTest` (new file, 1 test) ·
+  `ThreadViewDataTest` (18 tests, +9 new: three `R_160` alternation/repetition/never-guess cases beyond
+  the two already covered, `R_161` mode-present/absent, `R_161` span duration under/over a minute, `R_163`
+  `pluralize`) · `ThreadScreenTest` (6 tests, +2 new: `R_163` tier-consistent paragraph/link/section-label,
+  `R_163` singular by-frequency row) · `ThreadDetailScreenTest` (13 tests, +5 new: `R_161` frequency-only
+  header, `R_161` kind+mode header, `R_161` span duration, `R_161` no FREQ column, `R_162` no confidence on
+  a CONFIRMED marker).
+
+**Left open:**
+- The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- `results/ui-audit/register.md`'s own `open`/`fixed` status column for R-129/R-160/R-161/R-162/R-163 is
+  the auditor's ledger, not this package's file — not edited here; the next validator pass reads this
+  CHANGELOG entry and the diff to close them out.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)

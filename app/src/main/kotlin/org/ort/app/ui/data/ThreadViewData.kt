@@ -4,6 +4,7 @@ import android.content.Context
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.ort.data.OrtDatabase
+import org.ort.pipeline.capture.ShedStatus
 
 /**
  * FR-UI-2: explains an attribution — "which transmission confirmed a callsign, and which
@@ -36,9 +37,19 @@ public object ThreadGroupingMapper {
 // R-044 (ui-conformance WP5): `Threads.dc.html`/`Thread-Detail.dc.html`/`Threads-Ungrouped.dc.html`.
 // -------------------------------------------------------------------------------------------
 
-/** One card in the grouped Threads list (`Threads.dc.html`). [kindLabel] is `null` until a real
- * classification column exists — never guessed from the entry count or attribution mix (guide §9,
- * "never fabricate"). */
+/**
+ * R-163: one shared plural rule ("1 over", "2 overs") so the several spots that need a
+ * word-count string can't drift apart into "1 overs" — audit V3 @3e2d4ee found exactly that in
+ * `Threads-Ungrouped.dc.html`'s rendering before this existed.
+ */
+public fun pluralize(count: Int, singular: String, plural: String = "${singular}s"): String =
+    "$count " + if (count == 1) singular else plural
+
+/** One card in the grouped Threads list (`Threads.dc.html`). [kindLabel] is `null` until the data
+ * supports deriving one — never guessed. See [ThreadListMapper]'s `deriveKind` for the two rules
+ * that do apply (R-160): two stations strictly alternating on the thread = "QSO"; one station
+ * repeating = "Activity". Anything else (a third station, an unresolved over, a single over)
+ * stays `null` and the card leads with the frequency instead. */
 public data class ThreadCardViewState(
     val threadId: String,
     val timeLabel: String,
@@ -68,8 +79,19 @@ public data class FrequencyMeanwhileEntry(
 public sealed interface ThreadListViewState {
     public data object Empty : ThreadListViewState
 
-    public data class Ungrouped(val totalOvers: Int, val byFrequency: List<FrequencyMeanwhileEntry>) :
-        ThreadListViewState
+    /**
+     * [currentTier] (R-163): the real shed tier — `(3 - ShedStatus.currentLevel).coerceIn(0, 3)`,
+     * the exact formula `RealCaptureService.tierFromShedLevel()`/`CaptureStatusViewState`'s own
+     * `tierFacts` already use (duplicated here, not imported: `:pipeline`'s copy is `private`, and
+     * `:app`'s own copy lives in a different package) — so the paragraph explaining why grouping
+     * is not available and the "What tier N can and cannot do" link below it always name the same
+     * number, never a hardcoded "tier 1" independent of what the phone is actually running.
+     */
+    public data class Ungrouped(
+        val totalOvers: Int,
+        val byFrequency: List<FrequencyMeanwhileEntry>,
+        val currentTier: Int,
+    ) : ThreadListViewState
 
     public data class Grouped(val summary: String, val cards: List<ThreadCardViewState>, val ungroupedOvers: Int) :
         ThreadListViewState
@@ -88,10 +110,13 @@ public data class ThreadDetailOverViewState(
     val sourceTransmissionId: String?,
 )
 
+/** [modeLabel] (R-161) is `null` when no transmission in the thread ever had a recorded mode —
+ * never guessed from the frequency/band. */
 public data class ThreadDetailViewState(
     val threadId: String,
     val kindLabel: String?,
     val frequencyLabel: String,
+    val modeLabel: String?,
     val titleText: String,
     val metaText: String,
     val howAttributed: List<ThreadAttributionExplanationLine>,
@@ -101,17 +126,24 @@ public data class ThreadDetailViewState(
 /** Builds [ThreadListViewState] and [ThreadDetailViewState] from real [TransmissionDetail]s — pure, DB-free. */
 public object ThreadListMapper {
 
-    public fun listState(details: List<TransmissionDetail>, firstHeardIds: Set<String>): ThreadListViewState {
+    public fun listState(
+        details: List<TransmissionDetail>,
+        firstHeardIds: Set<String>,
+        currentTier: Int,
+    ): ThreadListViewState {
         if (details.isEmpty()) return ThreadListViewState.Empty
         val (grouped, ungrouped) = details.partition { it.threadId != null }
         if (grouped.isEmpty()) {
-            return ThreadListViewState.Ungrouped(totalOvers = details.size, byFrequency = byFrequency(details))
+            return ThreadListViewState.Ungrouped(
+                totalOvers = details.size,
+                byFrequency = byFrequency(details),
+                currentTier = currentTier,
+            )
         }
         val cards = grouped.groupBy { it.threadId }
             .map { (threadId, group) -> cardFor(threadId!!, group, firstHeardIds) }
             .sortedByDescending { it.timeLabel }
-        val conversationWord = if (cards.size == 1) "conversation" else "conversations"
-        val summary = "${cards.size} $conversationWord · ${grouped.size} overs · newest first"
+        val summary = "${pluralize(cards.size, "conversation")} · ${pluralize(grouped.size, "over")} · newest first"
         return ThreadListViewState.Grouped(summary = summary, cards = cards, ungroupedOvers = ungrouped.size)
     }
 
@@ -144,7 +176,7 @@ public object ThreadListMapper {
         val title = when {
             stationIds.isNotEmpty() -> joinWithAnd(stationIds)
             ambiguousCount > 0 -> "Ambiguous stations"
-            else -> "${sorted.size} unidentified voice${if (sorted.size == 1) "" else "s"}"
+            else -> pluralize(sorted.size, "unidentified voice")
         }
         val counts = buildList {
             if (confirmedCount > 0) add("$confirmedCount confirmed")
@@ -158,7 +190,7 @@ public object ThreadListMapper {
         return ThreadCardViewState(
             threadId = threadId,
             timeLabel = ReaderTransmissionViewStateMapper.timeLabelFor(first),
-            kindLabel = null,
+            kindLabel = deriveKind(sorted),
             frequencyLabel = ReaderTransmissionViewStateMapper.frequencyLabel(first.frequencyHz),
             overCount = sorted.size,
             titleText = title,
@@ -166,6 +198,43 @@ public object ThreadListMapper {
             ambiguous = ambiguousCount > 0,
             isNew = sorted.any { it.id in firstHeardIds },
         )
+    }
+
+    /**
+     * R-160: derived only from the two patterns the data can support honestly, never a third
+     * guessed case — "Net"/"Activation" need real facts (a net-control role, a POTA/SOTA
+     * reference) this schema does not carry yet, so this never emits either.
+     *
+     * - Every over in the thread names a resolved station (an unresolved over means the pattern
+     *   itself is uncertain, so this returns `null` rather than classify around the gap), AND
+     * - exactly one distinct station repeating → **"Activity"**, or
+     * - exactly two distinct stations, with no two consecutive overs from the same one (a clean
+     *   A-B-A-B exchange) → **"QSO"**.
+     *
+     * Anything else (three or more stations, two stations *not* alternating, a single over) → `null`.
+     */
+    private fun deriveKind(sorted: List<TransmissionDetail>): String? {
+        val stationSequence = sorted.map { it.attribution.stationId }
+        if (stationSequence.any { it == null } || stationSequence.size < 2) return null
+        @Suppress("UNCHECKED_CAST")
+        val sequence = stationSequence as List<String>
+        val distinctStations = sequence.distinct()
+        return when {
+            distinctStations.size == 1 -> "Activity"
+            distinctStations.size == 2 && sequence.zipWithNext().all { (a, b) -> a != b } -> "QSO"
+            else -> null
+        }
+    }
+
+    /** R-161: the first mode any transmission in the thread actually recorded — `null` when none did. */
+    private fun deriveMode(sorted: List<TransmissionDetail>): String? = sorted.firstNotNullOfOrNull { it.mode }
+
+    /** R-161: "1 m 55 s" / "38 s" — `Thread-Detail.dc.html`'s span line, first over start to last over start. */
+    private fun spanDurationLabel(firstStartMillis: Long, lastStartMillis: Long): String {
+        val totalSeconds = ((lastStartMillis - firstStartMillis) / 1000).coerceAtLeast(0)
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        return if (minutes > 0) "$minutes m $seconds s" else "$seconds s"
     }
 
     public fun detailState(threadId: String, details: List<TransmissionDetail>): ThreadDetailViewState? {
@@ -185,14 +254,18 @@ public object ThreadListMapper {
                 sourceTransmissionId = detail.attribution.sourceTransmissionId?.toString(),
             )
         }
+        val first = sorted.first()
+        val last = sorted.last()
+        val span = spanDurationLabel(first.startedAtUtcMillis, last.startedAtUtcMillis)
         return ThreadDetailViewState(
             threadId = threadId,
             kindLabel = card.kindLabel,
             frequencyLabel = card.frequencyLabel,
+            modeLabel = deriveMode(sorted),
             titleText = card.titleText,
-            metaText = "${sorted.size} overs · " +
-                "${ReaderTransmissionViewStateMapper.timeLabelFor(sorted.first())} – " +
-                ReaderTransmissionViewStateMapper.timeLabelFor(sorted.last()),
+            metaText = "${pluralize(sorted.size, "over")} · " +
+                "${ReaderTransmissionViewStateMapper.timeLabelFor(first)} – " +
+                "${ReaderTransmissionViewStateMapper.timeLabelFor(last)} · $span",
             howAttributed = howAttributed,
             overs = overs,
         )
@@ -239,21 +312,44 @@ public object ThreadListMapper {
 /**
  * The real read path for the Threads destination (build-plan P15, extended R-044). Reuses
  * `ui/data/ReaderPolling.kt`'s existing detail mapping (this package's own row does not restrict
- * `ThreadViewData.kt` to a direct `:data` read the way it does `LogViewData.kt`), plus one direct
- * [OrtDatabase] query of its own for the `NEW`-badge cross-session "first ever heard" fact
- * `ReaderPolling` has no query for.
+ * `ThreadViewData.kt` to a direct `:data` read the way it does `LogViewData.kt`), plus two direct
+ * reads of its own: [OrtDatabase] for the `NEW`-badge cross-session "first ever heard" fact
+ * `ReaderPolling` has no query for, and [ShedStatus] (a process-wide holder, not `:data` — see its
+ * own doc comment) for the real shed tier R-163's Threads-Ungrouped paragraph names.
  */
 public object ThreadPolling {
+
+    /** R-163: the exact `(3 - ShedStatus.currentLevel).coerceIn(0, 3)` formula
+     * `RealCaptureService.tierFromShedLevel()`/`CaptureStatusViewState`'s `tierFacts` already use —
+     * duplicated, not imported, since both of those are `private` in their own files/packages. */
+    private const val MAX_TIER: Int = 3
+
+    private fun currentTier(): Int = (MAX_TIER - ShedStatus.currentLevel).coerceIn(0, MAX_TIER)
 
     public suspend fun currentThreadListState(context: Context, sessionId: String): ThreadListViewState {
         val details = ReaderPolling.currentTransmissionDetails(context, sessionId)
         val firstHeardIds = firstHeardTransmissionIds(context)
-        return ThreadListMapper.listState(details, firstHeardIds)
+        return ThreadListMapper.listState(details, firstHeardIds, currentTier())
     }
 
     public suspend fun threadDetail(context: Context, sessionId: String, threadId: String): ThreadDetailViewState? {
-        val details = ReaderPolling.currentTransmissionDetails(context, sessionId)
+        val details = attachModes(context, sessionId, ReaderPolling.currentTransmissionDetails(context, sessionId))
         return ThreadListMapper.detailState(threadId, details)
+    }
+
+    /**
+     * R-161: `ui/data/ReaderPolling.kt`'s `detailFrom` (WP4's file) does not set
+     * [TransmissionDetail.mode] — re-attached here from a direct `entity.mode` read rather than
+     * either fabricating it or editing a file this package does not own.
+     */
+    private suspend fun attachModes(
+        context: Context,
+        sessionId: String,
+        details: List<TransmissionDetail>,
+    ): List<TransmissionDetail> {
+        val db = OrtDatabase.create(context.applicationContext)
+        val modeById = db.transmissionDao().listBySession(sessionId).associate { it.id to it.mode }
+        return details.map { detail -> detail.copy(mode = modeById[detail.id]) }
     }
 
     private suspend fun firstHeardTransmissionIds(context: Context): Set<String> {
