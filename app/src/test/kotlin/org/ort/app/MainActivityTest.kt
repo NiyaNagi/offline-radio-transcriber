@@ -2,6 +2,7 @@ package org.ort.app
 
 import android.Manifest
 import android.app.Application
+import android.content.Intent
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -13,6 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.pipeline.capture.CaptureState
@@ -61,6 +63,12 @@ class MainActivityTest {
 
     private fun buildAndResume(): MainActivity {
         val controller = Robolectric.buildActivity(MainActivity::class.java)
+        controllerUnderTest = controller
+        return controller.create().start().resume().get()
+    }
+
+    private fun buildAndResume(intent: Intent): MainActivity {
+        val controller = Robolectric.buildActivity(MainActivity::class.java, intent)
         controllerUnderTest = controller
         return controller.create().start().resume().get()
     }
@@ -133,6 +141,37 @@ class MainActivityTest {
         assertTrue(activity.isFinishing)
         val nextActivity = shadowOf(activity).nextStartedActivity
         assertEquals(ReaderActivity::class.java.name, nextActivity?.component?.className)
+    }
+
+    /**
+     * ui-conformance-plan WP9 round 3: forward wiring, not a fix to an observed bug — see
+     * `MainActivity.startCaptureAndShowStatus`'s own doc comment for why `RealCaptureService`'s
+     * notification does not exercise this path today (it targets `ReaderActivity` directly).
+     */
+    @Test
+    fun `R_080 MainActivity passes through a destination extra from its own launching intent`() {
+        markSetupComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra(ReaderActivity.EXTRA_DESTINATION, ReaderDestination.SETTINGS.name)
+
+        buildAndResume(intent)
+
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val nextActivity = shadowOf(app).nextStartedActivity
+        assertEquals(ReaderActivity::class.java.name, nextActivity?.component?.className)
+        assertEquals(ReaderDestination.SETTINGS.name, nextActivity?.getStringExtra(ReaderActivity.EXTRA_DESTINATION))
+    }
+
+    @Test
+    fun `R_080 MainActivity sends no destination extra when its own launching intent carried none`() {
+        markSetupComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val activity = buildAndResume()
+
+        val nextActivity = shadowOf(activity).nextStartedActivity
+        assertNull(nextActivity?.getStringExtra(ReaderActivity.EXTRA_DESTINATION))
     }
 
     // --- F-022 / FR-UI-7: same-process session-routing (unchanged from before WP9) --------------

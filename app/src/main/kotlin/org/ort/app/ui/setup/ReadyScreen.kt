@@ -119,16 +119,15 @@ private fun AmberHalfMarker() {
 }
 
 /** The five "Fix"/"Install" callbacks S12's rows can carry, bundled so [readyRowsFor] stays under
- * detekt's parameter-count threshold — each is a real navigation, not a placeholder, except
- * [onInstallModel] (see that parameter's own doc comment for why). */
+ * detekt's parameter-count threshold. */
 public data class ReadyActions(
     val onFixInput: () -> Unit,
     val onFixLevel: () -> Unit,
     val onFixOvernight: () -> Unit,
     val onFixRadio: () -> Unit,
-    /** No destination exists from setup for this today — the Models destination lives inside
-     * `OrtNavHost` (WP3's file), reachable only once `ReaderActivity` exists after capture starts.
-     * See this package's report for this gap. */
+    /** Opens `ReaderActivity` at its `SETTINGS` destination (WP9 round 3) — see
+     * [SetupActivity.onInstallModel]'s own doc comment for exactly where it lands and why (Settings'
+     * root, not its `Assets` sub-screen directly — no entry point for that exists yet). */
     val onInstallModel: () -> Unit,
 )
 

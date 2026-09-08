@@ -22,6 +22,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import org.ort.app.MainActivity
 import org.ort.app.permissions.PermissionsState
+import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.capture.android.AndroidAudioIo
@@ -36,6 +38,23 @@ import org.ort.pipeline.capture.RigStatus
  * [SetupStateMachine.isComplete] is false and hands back to it once `Start capture` is tapped
  * ([onStartCapture]), so the "start capture + launch the reader" logic stays exactly where
  * `MainActivity`'s own doc comment says it does (register R-080's router split).
+ *
+ * [EXTRA_STEP] (ui-conformance-plan WP9, round 3): the name of a [SetupStep] to open on directly,
+ * read once in [onCreate] ([tryOpenAtRequestedStep]) — WP3's
+ * `ReaderNavigator.openSetupInput()` names `INPUT` for F1's "Choose another input" and
+ * `Settings-Capture`'s "Re-verify", both fired *during a running session*, when
+ * [SetupStateMachine.isComplete] is already true and the ordinary [refreshStep] would hand
+ * straight back to `MainActivity` without ever showing anything (exactly the gap that function's
+ * own doc comment reported before this extra existed). Honored only "when the store allows it": a
+ * requested step is opened only if every gate *before* it in [SetupStep]'s own declaration order
+ * is already satisfied — i.e. it is at or before [SetupStateMachine.stepFor]'s own natural resume
+ * point (or that point is `null`, meaning every gate has cleared). A request to skip ahead of an
+ * unmet gate (e.g. `RADIO` while the microphone is still unresolved) is silently ignored in favour
+ * of the ordinary resume flow — this extra can only offer a *reconfiguration* entry point into an
+ * already-valid sequence, never a way around a verification the guide requires. Checked once, at
+ * cold start, not on every [refreshStep] call: after the initial jump, normal forward/back
+ * navigation and any later `onResume` re-check behave exactly as they did before this extra
+ * existed.
  *
  * Every screen composable this class dispatches to stays a pure function of a view-state (guide's
  * own rule) — all `Context`/coroutine/IO work lives here, in the one place allowed to touch it.
@@ -74,7 +93,20 @@ public class SetupActivity : ComponentActivity() {
         setContent {
             OrtTheme { RenderStep() }
         }
-        refreshStep()
+        if (!tryOpenAtRequestedStep(intent?.getStringExtra(EXTRA_STEP))) refreshStep()
+    }
+
+    /** See [EXTRA_STEP]'s own doc comment. Returns `true` (consuming the request) only when the
+     * named step is honored; `false` leaves [step] untouched so the caller falls back to the
+     * ordinary [refreshStep]. */
+    private fun tryOpenAtRequestedStep(requestedStepName: String?): Boolean {
+        val requested = requestedStepName?.let { name -> SetupStep.entries.firstOrNull { it.name == name } }
+            ?: return false
+        val naturalNext = SetupStateMachine.stepFor(currentPermissionsState(), micPermanentlyDenied(), store.snapshot())
+        if (naturalNext != null && requested.ordinal > naturalNext.ordinal) return false
+        step = requested
+        if (requested == SetupStep.INPUT && inputRoutes.isEmpty()) refreshInputRoutes()
+        return true
     }
 
     override fun onResume() {
@@ -301,6 +333,25 @@ public class SetupActivity : ComponentActivity() {
         handBackToMainActivity()
     }
 
+    /**
+     * S12's `Install` (`Setup-Done.dc.html`): opens [ReaderActivity] at its `SETTINGS` destination
+     * (`ReaderActivity.EXTRA_DESTINATION`, WP3 round 3) rather than blocking on `Start capture`
+     * first — asset installation is a general app concern, reachable regardless of whether this
+     * session has started yet. **Lands on Settings' root, not its `Assets` sub-screen directly**:
+     * confirmed by reading `ui/settings/SettingsContent.kt` before writing this — it takes no
+     * `initialScreen`/equivalent parameter yet (its `screen` state is entirely internal, the same
+     * gap `ReaderNavigator.openSettingsStorage()`'s own doc comment already reports for the
+     * identical reason), and WP3 defines no second extra to name a sub-screen. Does not `finish()`
+     * this activity — the operator returns to `Ready` normally (the platform back stack), since
+     * this is a lateral look-something-up, not setup completing.
+     */
+    internal fun onInstallModel() {
+        startActivity(
+            Intent(this, ReaderActivity::class.java)
+                .putExtra(ReaderActivity.EXTRA_DESTINATION, ReaderDestination.SETTINGS.name),
+        )
+    }
+
     private fun batteryExempt(): Boolean {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         return pm.isIgnoringBatteryOptimizations(packageName)
@@ -445,15 +496,16 @@ public class SetupActivity : ComponentActivity() {
             onFixLevel = { step = SetupStep.LEVEL },
             onFixOvernight = { step = SetupStep.OVERNIGHT },
             onFixRadio = { step = SetupStep.RADIO },
-            // No destination exists from setup for this today -- see this package's report
-            // ("Install" has nowhere to navigate to before capture starts).
-            onInstallModel = {},
+            onInstallModel = ::onInstallModel,
         )
         val rows = readyRowsFor(store, batteryExempt(), rigStatusSnapshot, AsrAvailability.state, actions)
         ReadyScreen(state = ReadyViewState(rows), onStartCapture = ::onStartCapture)
     }
 
     internal companion object {
+        /** See this class's own doc comment. The name of a [SetupStep] entry, e.g. `"INPUT"`. */
+        const val EXTRA_STEP: String = "step"
+
         const val TAG = "SetupActivity"
         const val REQUEST_CODE = 1002
 
