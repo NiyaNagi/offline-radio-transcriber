@@ -32,8 +32,96 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (ui-conformance WP4, round four: live-bar level bars from LevelStatus)
+## 2026-09-08 (ui-conformance WP2: text field icon slots, keyboard actions, degraded error tone, outer modifier)
 
+### (pending) — ui-conformance WP2 · text field icon slots, keyboard actions, degraded error tone, outer modifier
+
+**Scope:** `:app` `ui/components/Controls.kt` and `ControlsTest.kt` only. Follow-up to this
+package's `TextField` (landed two commits ago, merged as `e935a83`), fixing three regressions and
+one bug WP7 hit migrating to it from its own hand-rolled field. `main` fast-forward merged first
+(`git merge --ff-only main`; this branch already an ancestor; no rebase, no stash) — no other
+package's files touched.
+
+**Requirements/ACs:** R-060 (leading icon / trailing action slot inside the bordered box, and the
+keyboard's IME action reaching the caller — `Search.dc.html`), R-063 (a degraded field error is
+amber, not `halt/*` — guide §3 reserves the halt family for capture stopped,
+`Search-Unavailable.dc.html`'s "text not applied" is not that). Plus the `weight`-dropping bug
+WP7 found, which has no register id of its own (a structural defect in the wrapper, not a design
+gap).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-063 directly: `halt` means
+  capture has stopped and the operator must act — using it for an ordinary field-validation miss
+  overstates what actually happened, which is exactly the kind of silent-but-wrong signal the
+  constitution calls out. Principle VII (Boundaries Are Structural) governs the `weight` fix: the
+  wrapper contract (which node gets the caller's `modifier`) is now stated in the KDoc and proven
+  by a dedicated regression test, not left as an implicit detail a future edit could reintroduce.
+- **R-060 — `leadingIcon: ImageVector? = null` and `trailingAction: (@Composable () -> Unit)? =
+  null`.** Both now render *inside* the bordered box itself, in a `Row` (leading icon, then the
+  weighted `BasicTextField`, then the trailing slot) — `Search.dc.html`'s search glyph and clear
+  `×` sit inside the field's own border, not outside it as the WP7 regression had it. `null` by
+  default, so every field from before this landed is visually unchanged.
+- **R-060 — `keyboardOptions: KeyboardOptions = KeyboardOptions.Default` and `keyboardActions:
+  KeyboardActions = KeyboardActions.Default`.** Both now reach the underlying `BasicTextField`
+  directly, so a caller can set `ImeAction.Search` and receive `onSearch` — the search field's IME
+  action, gone when WP7 first migrated, is restorable by any caller now.
+- **R-063 — `errorTone: FieldTone = FieldTone.Halt`.** New `FieldTone { Halt, Degraded }`.
+  `Degraded` renders the border in `bannerAmberBorder` and the error text in `accentAmberText`
+  instead of `haltBorder`/`haltText`. The default stays `Halt`, matching every field's behaviour
+  before this parameter existed (an error was always rendered halt-red) — additive, not a silent
+  re-colouring of existing callers; WP7 opts in to `Degraded` for its "text not applied" case.
+- **The `weight`-dropping bug.** `TextField`'s `modifier` previously landed on the `BasicTextField`
+  itself — a *grandchild* of the node the composable actually emits as a direct child of its
+  caller (a `Column` wrapping the optional label, the bordered box, and the optional error text).
+  `Modifier.weight(1f)` only has an effect on the immediate child of the `Row`/`Column` that reads
+  it, so a caller's `weight` was silently a no-op. Fixed by moving `modifier` onto that outer
+  `Column` (chained *before* `fillMaxWidth()`, so `Modifier.weight(1f).fillMaxWidth()` composes
+  exactly as it does for any other Compose child — take the weighted share, then fill it; the
+  no-modifier default is unaffected). The outer `Column` also now carries
+  `semantics(mergeDescendants = true)` with the field's content description, so a caller's
+  `testTag` on that outer node is still a sensible target for structural/visibility assertions —
+  but **not** for `performTextInput`/`performImeAction`, which need the real editable node's own
+  `RequestFocus`/`SetText` actions; merging did not carry those two specific actions upward in this
+  Compose version even with `mergeDescendants = true` (it did carry `SetTextSubstitution` and
+  others) — a real, verified-by-experiment limit of semantics merging here, not an assumption. This
+  package's own tests now find the editable node via `hasSetTextAction() and
+  hasAnyAncestor(hasTestTag(...))` with `useUnmergedTree = true` rather than the tag directly;
+  any caller doing `performTextInput` against `TextField`'s tag will need the same pattern.
+- Bordered-box padding changed from `Modifier.padding(horizontal = 13.dp)` applied to the
+  `BasicTextField` (guide value, unaffected) to the same padding applied to the new `Row` that now
+  contains the icon/field/action trio — the field's own horizontal inset is unchanged, only which
+  layout node owns it.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` — **719 of 719 passing** (was 628 before this commit; the
+  rest are from other packages' concurrent work already merged via `main`). New tests by name (all
+  in `ControlsTest`): `R_060_text_field_carries_a_leading_icon_and_trailing_clear`,
+  `R_060_keyboard_search_action_reaches_the_caller`, `R_063_degraded_error_tone_is_amber_not_halt`,
+  `a_weight_modifier_on_the_field_is_honoured_in_a_row`. The pre-existing `a text field shows its
+  label, placeholder, error text and reports edits` was updated to locate the editable node via
+  `hasSetTextAction() and hasAnyAncestor(hasTestTag("field"))` (see "What changed" above) and still
+  passes.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `dependencyRules:
+  OK — every edge is permitted by the design graph.` `platformGuards: OK.`
+- `.\gradlew.bat -p buildSrc test`, `python tools\spec-check\spec_check.py` (8/8 PASS),
+  `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered, no diff from the last run — no new
+  requirement ids introduced), `.\gradlew.bat coverageMatrixCheck` (separate invocation, up to
+  date), `.\gradlew.bat :app:assembleDebug` — all **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- **WP7's own field call sites and tests are not migrated by this commit** — they are outside this
+  package (`ui/screens/**`). WP7 should switch to `leadingIcon`/`trailingAction`/
+  `keyboardOptions`/`keyboardActions`/`errorTone = FieldTone.Degraded` next round, and its own
+  `performTextInput` calls (if any target `TextField`'s outer tag directly) will need the
+  `hasSetTextAction() and hasAnyAncestor(...)` pattern documented above.
+- **No screenshot/emulator verification** against `Search.dc.html`/`Search-Unavailable.dc.html` —
+  Robolectric semantics-tree assertions only, per the plan (Phase E/Validators own that).
+
+---
+
+## 2026-09-08 (ui-conformance WP4, round three: the Level row opens the live level meter)
+
+## 2026-09-08 (ui-conformance WP4, round four: live-bar level bars from LevelStatus)
 ### (pending) — ui-conformance WP4 · live-bar level bars from LevelStatus
 
 **Scope:** `:app` only, this package's own row — fourth addendum to the WP4 entries below, after

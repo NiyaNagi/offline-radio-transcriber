@@ -1,24 +1,39 @@
 package org.ort.app.ui.components
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Icon
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
@@ -248,7 +263,120 @@ class ControlsTest {
         composeTestRule.onNodeWithText("Not a known callsign").assertIsDisplayed()
         composeTestRule.onNodeWithTag("field").assertHeightIsAtLeast(44.dp)
 
-        composeTestRule.onNodeWithTag("field").performTextInput("K7LWH")
+        // `modifier` (carrying the testTag) lands on TextField's outer wrapper, not on the
+        // BasicTextField itself (so `weight` works in a Row — see the dedicated test below);
+        // `RequestFocus`/text-editing actions live on the real editable node underneath, found via
+        // `hasAnyAncestor` rather than the tag directly.
+        composeTestRule
+            .onNode(hasSetTextAction() and hasAnyAncestor(hasTestTag("field")), useUnmergedTree = true)
+            .performTextInput("K7LWH")
         assert(value == "K7LWH") { "expected onValueChange to report the typed text, got '$value'" }
+    }
+
+    @Test
+    fun `R_060_text_field_carries_a_leading_icon_and_trailing_clear`() {
+        var cleared = false
+        composeTestRule.setContent {
+            OrtTheme {
+                TextField(
+                    value = "park activation",
+                    onValueChange = {},
+                    leadingIcon = OrtIcons.search,
+                    trailingAction = {
+                        Icon(
+                            imageVector = OrtIcons.dismiss,
+                            contentDescription = "Clear",
+                            tint = OrtColors.textChipX,
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clickable(role = Role.Button, onClickLabel = "Clear", onClick = { cleared = true }),
+                        )
+                    },
+                    modifier = Modifier.testTag("search-field"),
+                )
+            }
+        }
+
+        // The leading icon and trailing clear both sit inside the bordered box, per Search.dc.html
+        // — proven here by the field still rendering its value plus a working trailing action.
+        composeTestRule.onNodeWithText("park activation").assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription("Clear")).assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription("Clear")).performClick()
+        assert(cleared) { "expected the trailing action's click to reach the caller" }
+    }
+
+    @Test
+    fun `R_060_keyboard_search_action_reaches_the_caller`() {
+        var searched = false
+        composeTestRule.setContent {
+            OrtTheme {
+                TextField(
+                    value = "",
+                    onValueChange = {},
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { searched = true }),
+                    modifier = Modifier.testTag("search-field"),
+                )
+            }
+        }
+
+        composeTestRule
+            .onNode(hasSetTextAction() and hasAnyAncestor(hasTestTag("search-field")), useUnmergedTree = true)
+            .performImeAction()
+        assert(searched) { "expected the keyboard's Search IME action to reach the caller's onSearch" }
+    }
+
+    @Test
+    fun `R_063_degraded_error_tone_is_amber_not_halt`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    TextField(
+                        value = "",
+                        onValueChange = {},
+                        errorText = "Text not applied",
+                        errorTone = FieldTone.Degraded,
+                        modifier = Modifier.testTag("degraded"),
+                    )
+                    TextField(
+                        value = "",
+                        onValueChange = {},
+                        errorText = "Not a known callsign",
+                        modifier = Modifier.testTag("halt"),
+                    )
+                }
+            }
+        }
+
+        // guide §3: `halt` is reserved for capture stopped — a degraded field error is a distinct,
+        // named tone, not the default. Both render their own text; the default stays FieldTone.Halt
+        // so every caller from before this parameter existed is unaffected.
+        composeTestRule.onNodeWithText("Text not applied").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Not a known callsign").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a_weight_modifier_on_the_field_is_honoured_in_a_row`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Row(modifier = Modifier.width(300.dp)) {
+                    Box(modifier = Modifier.width(100.dp).testTag("sibling"))
+                    TextField(
+                        value = "",
+                        onValueChange = {},
+                        modifier = Modifier.weight(1f).testTag("weighted-field"),
+                    )
+                }
+            }
+        }
+
+        // Before this fix, `modifier` (carrying `weight`) landed on an inner grandchild rather
+        // than the outer node TextField emits as a direct Row child, so `weight` had no effect and
+        // the field either filled the whole row or collapsed — neither is the ~200dp (300 - 100)
+        // remaining share weight correctly produces.
+        val width = composeTestRule.onNodeWithTag("weighted-field").fetchSemanticsNode().size.width
+        assert(width in 150..250) {
+            "expected the field to take its weighted share of the row (~200dp of 300dp), got ${width}px"
+        }
     }
 }
