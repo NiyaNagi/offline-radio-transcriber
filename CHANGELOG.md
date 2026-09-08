@@ -308,6 +308,41 @@ delivered), not a hardware-reported overrun counter — `AudioRecord` does not e
 `RealCaptureService`/`GapPersister` at all (`RealCaptureService` does not currently invoke either —
 a separate, pre-existing wiring gap, not introduced or fixed here), are `:pipeline`/`:data`
 follow-ups outside this fix's ownership.
+## 2026-09-07 (audit — F-024)
+
+### (pending) — audit F-024 · RealHttpRangeClient gets a loopback test and a real bug fix
+
+**Scope:** `:net` — `real/RealHttpRangeClient.kt`, new `real/LoopbackHttpFixture.kt` and
+`real/RealHttpRangeClientTest.kt` under `net/src/test`, `net/README.md`.
+**Requirements/ACs:** FR-AST-1, FR-AST-3; constitution II (test-backed change), V (`:net` is the
+only declared outbound channel and must be correct because it is the only one).
+**What changed:** `RealHttpRangeClient` — the `HttpURLConnection`/`Range`-header wiring behind
+`ModelAcquisition` — had no automated test (F-024); a prior attempt at a loopback
+`com.sun.net.httpserver.HttpServer` fixture was rejected because `jdk.httpserver` is not on this
+Android-library module's unit-test classpath (JPMS module visibility). Replaced that approach
+with a minimal `java.net.ServerSocket`-based HTTP/1.1 fixture (`LoopbackHttpFixture`, binds only
+to `127.0.0.1` on an ephemeral port) and a new `RealHttpRangeClientTest` covering: a full fetch
+returning the exact bytes; a resumed fetch sending `Range: bytes=<offset>-` and receiving only
+the tail (206); a non-2xx status surfacing as `HttpRangeResult.Failure` rather than a thrown
+exception; and a connection that closes mid-body. The last case failed against the real client
+before any fix — `AssertionFailedError: Expected java.io.IOException to be thrown, but nothing
+was thrown` — revealing a genuine divergence from `FakeHttpRangeClient`'s documented contract:
+`HttpURLConnection` does not throw when the peer closes the socket short of its own
+`Content-Length`, so a dropped connection read to a silent, truncated success instead of an
+exception. That would have made a mid-transfer drop indistinguishable from a complete-but-corrupt
+download to `ModelAcquisition`, defeating FR-AST-3 resumability (the caller only preserves the
+`.part` file for resume when the read throws). Fixed `RealHttpRangeClient` by wrapping the
+response body in a length-validating `InputStream` that throws `IOException` on a short EOF,
+bringing it in line with the fake's `dropAfterBytes` semantics exactly. `net/README.md`'s "what is
+genuinely verified vs. fake-verified" section is updated to reflect that `RealHttpRangeClient` is
+now covered.
+**Verified:** test written first and seen to fail for the truncation case specifically (quoted
+above) against the pre-fix client; all four cases green after the fix under
+`./gradlew :net:test` (`RealHttpRangeClientTest`, 4/4 passing). Full gate green:
+`./gradlew build dependencyRules` and `python tools/spec-check/spec_check.py` (all 8 checks
+PASS). JVM-only (Robolectric/desktop), no on-device verification claimed.
+**Left open / not done:** none for this finding. The other clustered F-027 gaps (FR-AST-4/7/9,
+etc.) are out of this change's scope.
 
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
