@@ -22,7 +22,7 @@ class ThresholdDerivationTest {
     }
 
     @Test
-    fun `AC_56 raising the precision target moves the CONFIRMED threshold upward`() {
+    fun `FR_LEX_19 AC_56 raising the precision target moves the CONFIRMED threshold upward`() {
         val (scores, labels) = syntheticCalibratedSample(20_000, seed = 11)
         val low = ThresholdDerivation.forPrecisionTarget(scores, labels, precisionTarget = 0.7f)
         val high = ThresholdDerivation.forPrecisionTarget(scores, labels, precisionTarget = 0.95f)
@@ -33,7 +33,7 @@ class ThresholdDerivationTest {
     }
 
     @Test
-    fun `AC_56 the achieved recall falls as the precision target rises`() {
+    fun `NFR_1a AC_56 the achieved recall falls as the precision target rises`() {
         val (scores, labels) = syntheticCalibratedSample(20_000, seed = 12)
         val loose = ThresholdDerivation.forPrecisionTarget(scores, labels, precisionTarget = 0.6f)!!
         val strict = ThresholdDerivation.forPrecisionTarget(scores, labels, precisionTarget = 0.97f)!!

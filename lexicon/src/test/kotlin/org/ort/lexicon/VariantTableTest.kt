@@ -45,4 +45,34 @@ class VariantTableTest {
         assertEquals("lexicon-phonetic-variants", table.version.assetId)
         assertTrue(table.version.version.isNotBlank())
     }
+
+    @Test
+    fun `FR_A11Y_6 a regional or legacy variant set is addable as plain data, with no code or translation change`() {
+        // A hypothetical regional variant absent from the bundled table (e.g. a legacy British
+        // phonetic word for "V"). Adding it is only ever a new TSV row (technical design §9.1):
+        // no code change, and definitely no localization/translation pass, since this is content.
+        val extended = VariantTable.parse(
+            """
+            #<spoken form>	<PhoneticUnit>
+            victor	V
+            vimto	V
+            """.trimIndent(),
+            org.ort.core.AssetRef("test-regional-variants", "1"),
+        )
+        assertEquals(PhoneticUnit.V, extended.require("vimto"))
+        assertEquals(PhoneticUnit.V, extended.require("victor"))
+    }
+
+    @Test
+    fun `FR_A11Y_6 the variant set is independent of the JVM default locale`() {
+        val original = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR")) // the classic I/i trap
+            val reloaded = VariantTable.bundled()
+            assertEquals(PhoneticUnit.K, reloaded.require("kilo"))
+            assertEquals(PhoneticUnit.X, reloaded.require("X RAY"))
+        } finally {
+            java.util.Locale.setDefault(original)
+        }
+    }
 }

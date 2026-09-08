@@ -73,9 +73,69 @@ class PlattCalibratorTest {
     }
 
     @Test
-    fun `every calibrator carries its versioned asset reference`() {
+    fun `FR_LEX_18 every calibrator carries its versioned asset reference`() {
         val (scores, labels) = syntheticSample(50, seed = 3)
         val calibrator = PlattCalibrator.fit(scores, labels, AssetRef("prod-calibration", "7"))
         assertEquals(AssetRef("prod-calibration", "7"), calibrator.version)
+    }
+
+    /** A second, differently-shaped generating process — a much steeper decision boundary than
+     * [syntheticSample]'s — standing in for a different tier/model's differently-shaped score
+     * distribution (FR-LEX-21). */
+    private fun steepSyntheticSample(n: Int, seed: Int): Pair<List<Float>, List<Boolean>> {
+        val rnd = Random(seed)
+        val scores = ArrayList<Float>()
+        val labels = ArrayList<Boolean>()
+        repeat(n) {
+            val s = rnd.nextDouble(-3.0, 3.0)
+            val p = 1.0 / (1.0 + kotlin.math.exp(-(8.0 * s + 4.0)))
+            scores += s.toFloat()
+            labels += rnd.nextDouble() < p
+        }
+        return scores to labels
+    }
+
+    @Test
+    fun `FR_LEX_21 fitting separately per tier-model produces a distinct calibration matched to that distribution`() {
+        val (gentleScores, gentleLabels) = syntheticSample(4000, seed = 100)
+        val (steepScores, steepLabels) = steepSyntheticSample(4000, seed = 101)
+
+        val gentleCalibrator = PlattCalibrator.fit(gentleScores, gentleLabels, AssetRef("tier-t2-model-a", "1"))
+        val steepCalibrator = PlattCalibrator.fit(steepScores, steepLabels, AssetRef("tier-t0-model-b", "1"))
+
+        assertTrue(
+            abs(steepCalibrator.a) > abs(gentleCalibrator.a) * 2,
+            "the steeper generating process must fit a visibly steeper calibration curve " +
+                "(gentle a=${gentleCalibrator.a}, steep a=${steepCalibrator.a})",
+        )
+        org.junit.jupiter.api.Assertions.assertNotEquals(gentleCalibrator.version, steepCalibrator.version)
+    }
+
+    @Test
+    fun `FR_LEX_21 applying the wrong tier-model's calibrator miscalibrates a held-out sample from the other`() {
+        val (gentleScores, gentleLabels) = syntheticSample(4000, seed = 200)
+        val (steepScores, steepLabels) = steepSyntheticSample(4000, seed = 201)
+        val gentleCalibrator = PlattCalibrator.fit(gentleScores, gentleLabels, AssetRef("tier-t2-model-a", "1"))
+        val steepCalibrator = PlattCalibrator.fit(steepScores, steepLabels, AssetRef("tier-t0-model-b", "1"))
+
+        val (evalSteepScores, evalSteepLabels) = steepSyntheticSample(20_000, seed = 202)
+
+        // Calibrated correctly, near-0.9 predictions should be observed correct ~90% of the time.
+        val correctlyCalibrated = evalSteepScores.map { steepCalibrator.calibrate(it) }
+        val correctNear90 = correctlyCalibrated.indices.filter { abs(correctlyCalibrated[it] - 0.9f) < 0.03f }
+        val correctObserved = correctNear90.count { evalSteepLabels[it] }.toDouble() / correctNear90.size
+
+        // The same near-0.9 predictions, produced instead by the *other* tier/model's calibrator
+        // fitted on a differently-shaped distribution, must not match observed accuracy as well.
+        val wronglyCalibrated = evalSteepScores.map { gentleCalibrator.calibrate(it) }
+        val wrongNear90 = wronglyCalibrated.indices.filter { abs(wronglyCalibrated[it] - 0.9f) < 0.03f }
+        assertTrue(wrongNear90.size > 20, "need enough samples to measure, got ${wrongNear90.size}")
+        val wrongObserved = wrongNear90.count { evalSteepLabels[it] }.toDouble() / wrongNear90.size
+
+        assertTrue(
+            abs(correctObserved - 0.9) < abs(wrongObserved - 0.9),
+            "the matched-tier calibrator ($correctObserved) must track 0.9 better than the " +
+                "mismatched one ($wrongObserved) — calibration does not transfer across tiers/models",
+        )
     }
 }

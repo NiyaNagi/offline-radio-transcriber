@@ -16,7 +16,7 @@ class HarnessCallsignPrecisionRecallTest {
     )
 
     @Test
-    fun `the harness reports nonzero precision and recall on a mostly-resolvable synthetic set`() {
+    fun `FR_TST_5 the harness reports nonzero precision and recall on a mostly-resolvable synthetic set`() {
         val occurrences = (1..20).map { positive("p$it", "VK3MMM") } + (1..5).map { negative("n$it") }
         val harness = Harness(bundledGrammar(), bundledCombiner())
         val report = harness.run(occurrences, occurrences, testConfig())
