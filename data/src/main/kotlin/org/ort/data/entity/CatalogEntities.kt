@@ -200,3 +200,63 @@ public data class StationSummaryEntity(
     val sourceTransmissionIds: List<String>,
     val generatedAt: Long,
 )
+
+/**
+ * R-073 (`Station-Identity.dc.html`, FR-SPK-10, constitution III): every previous value of
+ * [StationEntity.userName] or [StationEntity.notes] stays reachable after a rename or a note
+ * edit. The write path — [org.ort.data.dao.StationIdentityDao.renameStation] /
+ * [org.ort.data.dao.StationIdentityDao.updateStationNote] — always inserts one of these before
+ * overwriting the column, the same append-then-overwrite shape [org.ort.data.dao.TranscriptDao]
+ * uses for transcripts. User content only (FR-SPK-25) — never contributed, same as the column
+ * it shadows.
+ */
+@Entity(tableName = "station_identity_history", indices = [Index("stationId")])
+public data class StationIdentityHistoryEntity(
+    @PrimaryKey val id: String,
+    val stationId: String,
+    /** [org.ort.data.dao.StationIdentityDao.FIELD_NAME] or `.FIELD_NOTE`. */
+    val field: String,
+    val previousValue: String?,
+    val newValue: String?,
+    val changedAt: Long,
+)
+
+/**
+ * R-052 (`Detail-Propagated.dc.html`, FR-UI-6, constitution III): the binding a [VoiceprintEntity]
+ * held *before* [org.ort.data.dao.StationIdentityDao.bindVoiceprintToStation] moved it. "1
+ * voiceprint now belongs to `<callsign>`" on the propagated screen is only honest if the previous
+ * owner (or the absence of one) stays inspectable rather than being overwritten in place.
+ */
+@Entity(tableName = "voiceprint_binding_history", indices = [Index("voiceprintId")])
+public data class VoiceprintBindingHistoryEntity(
+    @PrimaryKey val id: String,
+    val voiceprintId: String,
+    val previousStationId: String?,
+    val previousBindingConfidence: Double?,
+    val previousBindingSource: VoiceprintBindingSource?,
+    val newStationId: String?,
+    val newBindingConfidence: Double?,
+    val newBindingSource: VoiceprintBindingSource?,
+    val changedAt: Long,
+)
+
+/**
+ * R-052 (`Detail-Propagated.dc.html`, FR-LEX-9, constitution I): a named prior's current weight
+ * for a station — e.g. the repeater-match or the recency/conversation-context priors FR-LEX-9
+ * lists — versioned the same way [TranscriptEntity] is: [isCurrent] marks the row a resolution
+ * should read, and the row it replaces is kept, never deleted, so "priors updated" on the
+ * propagated screen is auditable rather than merely asserted.
+ */
+@Entity(
+    tableName = "prior_adjustment",
+    indices = [Index(value = ["stationId", "name", "isCurrent"])],
+)
+public data class PriorAdjustmentEntity(
+    @PrimaryKey val id: String,
+    val stationId: String,
+    val name: String,
+    val weight: Double,
+    val reason: String?,
+    val isCurrent: Boolean,
+    val updatedAt: Long,
+)

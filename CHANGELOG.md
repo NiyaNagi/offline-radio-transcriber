@@ -32,6 +32,103 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance data: station identity and correction propagation write paths)
+
+### (pending) — ui-conformance data · station given name and note, voiceprint rebinding and prior weight history for correction propagation
+
+**Scope:** `:data` only — `data/src/main/kotlin/org/ort/data/entity/CatalogEntities.kt` (three new
+entities), new `data/src/main/kotlin/org/ort/data/dao/StationIdentityDao.kt`,
+`data/src/main/kotlin/org/ort/data/OrtDatabase.kt` (schema v2 → v3, `MIGRATION_2_3`), new
+`data/schemas/org.ort.data.OrtDatabase/3.json`, `data/src/test/kotlin/org/ort/data/MigrationTest.kt`,
+new `data/src/test/kotlin/org/ort/data/dao/StationIdentityDaoTest.kt`. A lead-approved exception:
+two UI packages (WP6, WP8) found `:data` had no write path for what their artboards require.
+
+**Requirements/ACs:** R-052 (`Detail-Propagated`, FR-UI-6), R-073 (`Station-Identity`, FR-SPK-10),
+FR-LEX-9 (named priors), FR-SPK-25 (user-supplied names never inferred, never contributed),
+constitution I ("every machine conclusion MUST be inspectable"), constitution III ("nothing is
+deleted quietly"), FR-AST-5/FR-AST-6 → AC-53 (migration preserves existing rows).
+
+**What changed:**
+
+*Constitution Check.* Principle III is the one this whole unit exists to satisfy: a station rename,
+a voiceprint rebinding and a prior-weight change must each leave what they replaced reachable, not
+overwritten in place — the same append-then-supersede shape `TranscriptDao.supersede` already uses
+for transcripts, and the same "insert an audit row + apply the write in one transaction" shape
+`CorrectionDao.recordCorrection` already uses for attribution corrections. Principle I: a prior's
+weight history stays queryable (`priorWeightHistoryFor`), not just its current value, so "priors
+updated" on the propagated screen is auditable rather than merely asserted. Principle V/FR-SPK-25:
+the new `station_identity_history` table holds the same user-supplied-only content
+(`StationEntity.userName`/`.notes`) the column it shadows already holds — nothing new leaves the
+device-local boundary. Principle VII: a new DAO file, not edits to `CatalogDao`'s existing
+insert/read or to `CorrectionDao` — each write here pairs a mutation with a history row in one
+`@Transaction`, a different shape from either existing DAO, and keeping it separate avoids
+conflicting with the builders who own `:app`.
+
+- **New entities** (`CatalogEntities.kt`): `StationIdentityHistoryEntity` (stationId, field,
+  previousValue, newValue, changedAt) for R-073's rename/note; `VoiceprintBindingHistoryEntity`
+  (the full previous and new binding — station, confidence, source) for R-052's voiceprint
+  reassignment; `PriorAdjustmentEntity` (stationId, name, weight, reason, `isCurrent`, updatedAt),
+  versioned exactly like `TranscriptEntity` — `isCurrent` marks the row a resolution should read,
+  and `StationIdentityDao.updatePriorWeight` clears the old current row before inserting the new
+  one, in one transaction, so the weight a correction replaced is superseded, never deleted.
+- **New `StationIdentityDao`**: `renameStation`/`updateStationNote` (R-073 — write
+  `station.userName`/`.notes`, requiring `history.field` match `FIELD_NAME`/`FIELD_NOTE`) plus
+  `stationIdentityHistoryFor`; `bindVoiceprintToStation` (R-052 — writes
+  `voiceprint.boundStationId`/`.bindingConfidence`/`.bindingSource`/`.lastConfirmedAt`, recording
+  the pre-call binding first) plus `voiceprintBindingHistoryFor`; `updatePriorWeight` (R-052) plus
+  `currentPriorWeight`/`priorWeightHistoryFor`; and `splitVoiceprint` (R-073's "Split" affordance —
+  the entity model already supports cluster membership via `transmission.voiceprintId`, so this was
+  built rather than deferred: it moves a chosen set of transmissions to a fresh, unbound voiceprint,
+  sets their attribution to `UNKNOWN`/no station, marks them `corrected`, records the old
+  `stationId` as a `CorrectionEntity` row — reusing `CorrectionDao`'s existing mechanism rather than
+  inventing a second history shape for the same fact — and recomputes both voiceprints'
+  `memberCount`). `CorrectionEntity.newValue` is non-null everywhere else it's used (it always names
+  a callsign); `StationIdentityDao.UNIDENTIFIED` (`""`) marks "became unidentified" for a split
+  rather than overloading null.
+- **Migration `MIGRATION_2_3`** (schema v2 → v3): adds the three tables above, touching nothing
+  existing. Deliberately does **not** create the `idx_prior_adjustment_one_current` partial unique
+  index inside the `Migration` — that index lives only in `createHandWrittenSchema` (fresh installs),
+  the same pre-existing choice already made for `idx_transcript_one_current`: Room's migration-test
+  schema validation compares only against what `@Entity`/`@Index` annotations declare, so a
+  hand-written index created *by* a `Migration` fails validation as an "unexpected" index. The
+  accepted consequence, unchanged from the existing `idx_transcript_one_current` situation, is that
+  the one-current-per-`(stationId, name)` constraint is enforced on a fresh install but not yet on a
+  database upgraded from v2 — a pre-existing gap this change extends consistently rather than fixes.
+- **What was left for a schema decision rather than built:** nothing under R-052/R-073 — the two
+  named write paths the row descriptions require (`bindVoiceprintToStation`, `updatePriorWeight`)
+  and the `splitVoiceprint`-shaped write were all buildable against the entity model as it stands.
+
+**Verified:**
+- `.\gradlew.bat :data:test` — 60 tests, 0 failed (`StationIdentityDaoTest`'s five new tests —
+  `R_073_station_given_name_and_note_are_updatable`,
+  `R_073_renaming_keeps_the_previous_name_reachable`,
+  `R_052_voiceprint_rebinding_records_the_previous_binding`,
+  `R_052_prior_weight_update_is_versioned`,
+  `R_073_splitting_a_voiceprint_moves_membership_and_keeps_the_old_attribution_reachable` — plus
+  `MigrationTest`'s new `migration_from_v2_to_v3_preserves_existing_rows_and_adds_the_identity_history_tables`,
+  all PASSED; the two pre-existing `MigrationTest` cases and every other `:data` test still PASSED).
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules: checked 17 modules …
+  OK`; `platformGuards: checked 17 modules' external dependencies and 17 manifests … OK`; `app:build`
+  reached, BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `coverageMatrix: 419 requirements, 181 covered`; `coverageMatrixCheck: up to date (181 covered of
+  419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- WP6's `CorrectionPolling` and WP8's `StationPolling` still need to call these DAOs — out of this
+  package's ownership (`:app`), per the lead's brief.
+- `idx_prior_adjustment_one_current`'s upgrade-path gap (above) is pre-existing behaviour extended,
+  not newly introduced, but it is still open: a v2-to-v3-upgraded install does not get the
+  one-current-per-prior constraint at the SQL level (application code enforces it structurally
+  through `updatePriorWeight`'s transaction either way).
+- `splitVoiceprint` does not adjust `VoiceprintEntity.enrolmentObservationCount`/
+  `.enrolmentSessionIds`/`.centroidUpdatedAt` for either voiceprint — those describe the acoustic
+  model's own state (M4/identity pipeline territory) and recomputing them correctly needs that
+  pipeline's own logic, not a data-layer guess.
+
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
 ### (pending) — ui-conformance WP8 · stations and frequencies: lists, detail, hour-by-day pattern, identity, departure
