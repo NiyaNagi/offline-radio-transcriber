@@ -122,6 +122,48 @@ class FrequencyScreenTest {
     }
 
     @Test
+    fun `R_311 the list's closing caption renders as a real footer item, not merely off-screen`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FrequenciesListScreen(
+                    frequencies = listOf(
+                        FrequencyListEntryViewState(145_230_000L, "145.230 MHz", transmissionCount = 1),
+                    ),
+                    onOpen = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText(
+                "Sparkline is overs per night, 14 nights. Hatched nights: not listening on that frequency.",
+            )
+            .assertExists()
+    }
+
+    @Test
+    fun `R_312 a row's own summary goes through the shared plural helper, not a hardcoded plural`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FrequenciesListScreen(
+                    frequencies = listOf(
+                        FrequencyListEntryViewState(
+                            frequencyHz = 145_230_000L,
+                            label = "145.230 MHz",
+                            transmissionCount = 1,
+                            tonightCount = 1,
+                            tonightStationCount = 1,
+                        ),
+                    ),
+                    onOpen = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("1 over tonight · 1 station").assertExists()
+    }
+
+    @Test
     fun `R_074 frequency detail shows the facts table, the typical-night chart and REGULARS`() {
         val pattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L)
         val state = FrequencyDetailViewState(

@@ -5521,6 +5521,72 @@ conflicting with the builders who own `:app`.
 
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
+### (pending) — ui-conformance WP8 · Frequencies caption and row plurals
+
+**Scope:** `:app` `ui/screens/FrequencyScreen.kt`; test beside it. Addendum to this package's own
+WP8 entry directly below, filed against V5's third validation pass at `0455401` — register R-311,
+R-312.
+
+**Requirements/ACs:** R-074, FR-UI-10, constitution III.
+
+**What changed:**
+
+*Constitution Check.* Principle III (nothing deleted quietly, nothing left unreachable) bears on
+R-311: `Frequencies.dc.html`'s own closing caption was not merely scrolled out of view — it was
+never built at all, so nothing on the screen ever pointed a reader at what the sparkline glyphs
+mean. Principle VII (Boundaries Are Structural) governs R-312: rather than hand-writing a second
+`if (count == 1) ... else ...` branch, the row now calls the same shared `pluralize` helper
+`FrequencyRegularViewState.countContext` (this package's own REGULARS list) already uses, so the
+two places in this screen that say "N of a thing" agree by construction.
+
+- **R-311 (polish) — the sparkline caption renders as a real footer item.** `FrequenciesListScreen`'s
+  `LazyColumn` gained a trailing `item(key = "sparkline-caption")` rendering a new private
+  `SparklineCaption()` composable — the board's own text verbatim ("Sparkline is overs per night,
+  14 nights. Hatched nights: not listening on that frequency.") in the list's muted style
+  (`OrtType.subLine`/`OrtColors.textFaint`), a real node in the tree rather than an omission that a
+  screenshot at a taller viewport would have hidden either way.
+- **R-312 (design) — the row summary and its content description go through `pluralize`.**
+  `FrequencyRow` previously hardcoded `"$tonightCount overs tonight · $tonightStationCount
+  stations"`, which read "1 overs tonight · 1 stations" at the counts that matter most (a quiet
+  frequency, one over, one station). Replaced with `pluralize(entry.tonightCount, "over")` and
+  `pluralize(entry.tonightStationCount, "station")` — the same helper (`ui/data/ThreadViewData.kt`)
+  `FrequencyRegularViewState.countContext` already uses, so this row's visible sub-line and its
+  merged content description (the same fact, said twice) both now read "1 over tonight · 1
+  station" correctly.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded to `a038128` (V5 pass 3's own validation commit,
+  R-270/273/274/275/277 and R-192 confirmed closed on device; R-311/R-312 filed).
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:testDebugUnitTest --tests
+  "org.ort.app.ui.screens.FrequencyScreenTest" --tests
+  "org.ort.app.ui.screens.FrequencyChangeScreenTest" --tests
+  "org.ort.app.ui.screens.StationDetailContentTest"` — all passed, including new `R_311` (the
+  caption text exists in the rendered tree) and `R_312` (a count-of-1 fixture renders "1 over
+  tonight · 1 station", not the old hardcoded plural).
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — **1104 tests, 0 failures.** The
+  two `org.ort.app.ui.setup.ReadyScreenTest` (`R_265`) failures flagged as pre-existing/unrelated
+  in the prior addendum below no longer reproduce — resolved upstream by another package's merge
+  to `main`, not by anything in this addendum.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL outright, including
+  `:app:detekt` and `:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` and
+  `:app:assembleDebug`/`:app:assembleRelease`. The `ui/components/Rows.kt` ktlint finding flagged
+  in the prior addendum below is also gone — resolved upstream, not touched by this package.
+- `git status --short` after the full gate — only this package's own two files
+  (`FrequencyScreen.kt`, `FrequencyScreenTest.kt`) show modified; no collateral `ktlintFormat`
+  edits to files outside WP8 ownership this round.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` unchanged (185 of 419 covered both before and
+  after — this round adds test coverage under requirements already tracked, no new row needed).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- R-276 is no longer this package's concern — the coordinator confirmed it moved to WP3 once WP5
+  shipped `LogContent.initialFilter`; no action taken here.
+- R-310 (`DayOfWeekGrid` legend at 2.0 scale) is WP2's, not touched.
+
 ### (pending) — ui-conformance WP8 · pass-2 fixes: split empty state and DB reuse, row widths, chip rows, frequency-change chart and copy
 
 **Scope:** `:app` `ui/data/StationPolling.kt`, `ui/data/StationsAndFrequencies.kt`,

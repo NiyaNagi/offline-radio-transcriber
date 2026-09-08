@@ -90,15 +90,35 @@ public fun FrequenciesListScreen(
         }
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(frequencies, key = { it.frequencyHz }) { entry -> FrequencyRow(entry = entry, onOpen = onOpen) }
+            // R-311 (register, polish, V5 pass 3 @0455401): `Frequencies.dc.html`'s own closing
+            // caption — absent before, not merely off-screen (this package's earlier report on
+            // R-211/R-277 root-caused that exact distinction for other rows; this one was simply
+            // never built). A real footer item in the same `LazyColumn`, not a separate overlay.
+            item(key = "sparkline-caption") { SparklineCaption() }
         }
     }
 }
 
 @Composable
+private fun SparklineCaption(modifier: Modifier = Modifier) {
+    Text(
+        text = "Sparkline is overs per night, 14 nights. Hatched nights: not listening on that frequency.",
+        style = OrtType.subLine,
+        color = OrtColors.textFaint,
+        modifier = modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
+    )
+}
+
+@Composable
 private fun FrequencyRow(entry: FrequencyListEntryViewState, onOpen: (Long) -> Unit) {
+    // R-312 (register, design, V5 pass 3 @0455401, cf. R-212): the shared plural helper, not a
+    // literal "N overs"/"N stations" that reads wrong at 1 — FQ02's own REGULARS list already
+    // gets this right (`FrequencyRegularViewState.countContext`, built with `pluralize`); this
+    // row's own summary and its content description (the same fact, said twice) now match it.
+    val summary = "${pluralize(entry.tonightCount, "over")} tonight · " +
+        "${pluralize(entry.tonightStationCount, "station")}"
     val busyNote = if (entry.busierThanUsual) ", busier than usual" else ""
-    val description = "${entry.label}, ${entry.whatItIs}, ${entry.tonightCount} overs tonight, " +
-        "${entry.tonightStationCount} stations$busyNote"
+    val description = "${entry.label}, ${entry.whatItIs}, $summary$busyNote"
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -119,7 +139,7 @@ private fun FrequencyRow(entry: FrequencyListEntryViewState, onOpen: (Long) -> U
             }
             val busyLabel = if (entry.busierThanUsual) " · busier than usual" else ""
             Text(
-                text = "${entry.tonightCount} overs tonight · ${entry.tonightStationCount} stations$busyLabel",
+                text = "$summary$busyLabel",
                 style = OrtType.subLine,
                 color = if (entry.busierThanUsual) OrtColors.accentAmber else OrtColors.textFaint,
             )
