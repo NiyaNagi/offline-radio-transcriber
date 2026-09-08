@@ -10,6 +10,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -25,6 +27,56 @@ private sealed interface SessionsPage {
     data class DigestItem(val sessionId: String, val item: DigestItemViewState) : SessionsPage
     data class Log(val sessionId: String, val label: String) : SessionsPage
 }
+
+/** R-133 (register, WP10 small round): [SessionsPage] is a `private sealed interface` — not
+ * itself Bundle-safe (`DigestItem` carries a whole [DigestItemViewState]) — so [rememberSaveable]
+ * needs an explicit [Saver] rather than the automatic one, to survive a configuration change the
+ * same way this package's every other saveable state already does. Encodes to one delimiter-joined
+ * `String` (always Bundle-safe via the default `autoSaver()` path, unlike a raw `List<String?>`,
+ * which is not guaranteed to be) — [PAGE_FIELD_SEPARATOR] is a control character no real headline/
+ * sub-line/reason prose in this app ever produces. */
+private const val PAGE_FIELD_SEPARATOR = ""
+
+private val SessionsPageSaver: Saver<SessionsPage, String> = Saver(
+    save = { page ->
+        when (page) {
+            SessionsPage.List -> "list"
+            is SessionsPage.Detail -> listOf("detail", page.sessionId).joinToString(PAGE_FIELD_SEPARATOR)
+            is SessionsPage.Digest -> listOf("digest", page.sessionId).joinToString(PAGE_FIELD_SEPARATOR)
+            is SessionsPage.DigestItem -> listOf(
+                "digest_item",
+                page.sessionId,
+                page.item.id,
+                page.item.headline,
+                page.item.subLine,
+                page.item.reason,
+                page.item.ambiguousTone.toString(),
+                page.item.transmissionIds.joinToString(","),
+            ).joinToString(PAGE_FIELD_SEPARATOR)
+            is SessionsPage.Log -> listOf("log", page.sessionId, page.label).joinToString(PAGE_FIELD_SEPARATOR)
+        }
+    },
+    restore = { saved ->
+        val parts = saved.split(PAGE_FIELD_SEPARATOR)
+        when (parts[0]) {
+            "detail" -> SessionsPage.Detail(parts[1])
+            "digest" -> SessionsPage.Digest(parts[1])
+            "digest_item" -> SessionsPage.DigestItem(
+                sessionId = parts[1],
+                item = DigestItemViewState(
+                    id = parts[2],
+                    headline = parts[3],
+                    subLine = parts[4],
+                    reason = parts[5],
+                    ambiguousTone = parts[6].toBoolean(),
+                    transmissionIds = if (parts[7].isEmpty()) emptyList() else parts[7].split(","),
+                ),
+            )
+            "log" -> SessionsPage.Log(parts[1], parts[2])
+            else -> SessionsPage.List
+        }
+    },
+)
 
 /**
  * R-092/R-107 (register): the stateful entry point `OrtNavHost` dispatches `EARLIER_NIGHTS` to.
@@ -43,6 +95,17 @@ private sealed interface SessionsPage {
  * every existing caller (`OrtNavHost.kt`, not edited by this change) keeps compiling unchanged;
  * `Digest-Item` hands up the first id in [DigestItemViewState.transmissionIds] (there is no
  * filtered-to-a-set Log view to open for the general case of more than one).
+ *
+ * [initialSessionId] (round, register R-133): `Settings-Storage`'s "Next deletion" row `Review`
+ * link needs to land directly on that session's own `Session` (DG04) detail — this composable had
+ * no external seed for its internal [page] state at all before this. A fresh `rememberSaveable`
+ * seeded once (matching [org.ort.app.ui.settings.SettingsContent.initialScreen]'s own "opens there
+ * on launch" contract — a later change to this parameter after first composition has no effect);
+ * `null` (the default, so every existing caller keeps compiling unchanged) opens the list, exactly
+ * as before this parameter existed. `Back` from the seeded detail returns to the `Sessions` list,
+ * the same as reaching that detail any other way — a host that needs "back to `Settings-Storage`"
+ * instead wraps this composable with its own header/back at the call site, not something this
+ * package's own internal navigation state can express.
  */
 @Composable
 public fun SessionsContent(
@@ -50,8 +113,11 @@ public fun SessionsContent(
     onDrawer: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenTransmission: (String) -> Unit = {},
+    initialSessionId: String? = null,
 ) {
-    var page by remember { mutableStateOf<SessionsPage>(SessionsPage.List) }
+    var page by rememberSaveable(stateSaver = SessionsPageSaver) {
+        mutableStateOf(initialSessionId?.let { SessionsPage.Detail(it) } ?: SessionsPage.List)
+    }
     var list by remember { mutableStateOf<SessionsViewState?>(null) }
     LaunchedEffect(page) { if (page is SessionsPage.List) list = DigestPolling.sessions(context) }
 

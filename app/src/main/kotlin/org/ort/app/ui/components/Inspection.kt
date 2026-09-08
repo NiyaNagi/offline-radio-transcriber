@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -309,6 +310,12 @@ public data class PriorBarViewState(
     val arguedAgainst: Boolean = false,
 )
 
+/** R-323: past this font scale, `PriorBar`'s own 118–122dp label column is narrower than a typical
+ * prior name renders at, and the label wrapped mid-word with the bar sitting beside the fragment
+ * (D05's own validator finding, `2.0×` scale) — the same threshold `FailStorageWarningBanner.kt`/
+ * `LevelScreen.kt`/`ActivityPatternChart.kt` already use for "stack instead of cram". */
+private const val LARGE_FONT_SCALE_THRESHOLD = 1.3f
+
 @Composable
 public fun PriorBar(state: PriorBarViewState, modifier: Modifier = Modifier) {
     val description = buildString {
@@ -320,47 +327,90 @@ public fun PriorBar(state: PriorBarViewState, modifier: Modifier = Modifier) {
             state.valueLabel?.let { append(it) }
         }
     }
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .semantics(mergeDescendants = true) { contentDescription = description },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            text = state.name,
-            style = OrtType.cardBody,
-            color = if (state.arguedAgainst) OrtColors.textDim else OrtColors.textPrior,
-            modifier = Modifier.widthIn(min = 118.dp, max = 122.dp),
-        )
-        Box(modifier = Modifier.weight(1f).height(5.dp).background(OrtColors.bgScore, RoundedCornerShape(3.dp))) {
-            if (state.fillFraction != null) {
-                val fraction = state.fillFraction.coerceIn(0f, 1f)
-                val color = if (state.arguedAgainst) OrtColors.meterWarn else OrtColors.accentGreen
-                val alignment = if (state.arguedAgainst) Alignment.CenterEnd else Alignment.CenterStart
-                Box(
-                    modifier = Modifier
-                        .align(alignment)
-                        .fillMaxHeight()
-                        .fillMaxWidth(fraction)
-                        .background(color, RoundedCornerShape(3.dp)),
-                )
+    val rowModifier = modifier
+        .fillMaxWidth()
+        .semantics(mergeDescendants = true) { contentDescription = description }
+    // R-323: below the threshold, the label/bar/value share one row exactly as before — above it,
+    // the label gets the row's full width on its own line (still never wrapping mid-word) and the
+    // bar+value reflow onto a second line beneath it, rather than a cramped label column forcing a
+    // mid-word wrap the bar then sits beside.
+    if (LocalDensity.current.fontScale >= LARGE_FONT_SCALE_THRESHOLD) {
+        Column(modifier = rowModifier) {
+            PriorBarLabel(state, modifier = Modifier.fillMaxWidth())
+            Row(
+                modifier = Modifier.padding(top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                PriorBarMeter(state, modifier = Modifier.weight(1f))
+                PriorBarValue(state)
             }
         }
-        if (state.valueLabel != null) {
-            Text(
-                text = state.valueLabel,
-                style = OrtType.signal,
-                color = if (state.arguedAgainst) OrtColors.accentAmberText else OrtColors.textDim,
-                textAlign = TextAlign.End,
-                modifier = Modifier.widthIn(min = 30.dp, max = 34.dp),
-            )
-        } else {
-            Text(
-                text = "cold start",
-                style = OrtType.signal.copy(fontStyle = FontStyle.Italic),
-                color = OrtColors.textLow,
+    } else {
+        Row(
+            modifier = rowModifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            PriorBarLabel(state, modifier = Modifier.widthIn(min = 118.dp, max = 122.dp))
+            PriorBarMeter(state, modifier = Modifier.weight(1f))
+            PriorBarValue(state)
+        }
+    }
+}
+
+/** [Text.softWrap] `false`/`maxLines = 1`: a prior's name never wraps mid-word — R-323's own fix,
+ * true regardless of font scale (only the surrounding layout reflows). */
+@Composable
+private fun PriorBarLabel(state: PriorBarViewState, modifier: Modifier = Modifier) {
+    Text(
+        text = state.name,
+        style = OrtType.cardBody,
+        color = if (state.arguedAgainst) OrtColors.textDim else OrtColors.textPrior,
+        softWrap = false,
+        maxLines = 1,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun PriorBarMeter(state: PriorBarViewState, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.height(5.dp).background(OrtColors.bgScore, RoundedCornerShape(3.dp))) {
+        if (state.fillFraction != null) {
+            val fraction = state.fillFraction.coerceIn(0f, 1f)
+            val color = if (state.arguedAgainst) OrtColors.meterWarn else OrtColors.accentGreen
+            val alignment = if (state.arguedAgainst) Alignment.CenterEnd else Alignment.CenterStart
+            Box(
+                modifier = Modifier
+                    .align(alignment)
+                    .fillMaxHeight()
+                    .fillMaxWidth(fraction)
+                    .background(color, RoundedCornerShape(3.dp)),
             )
         }
+    }
+}
+
+@Composable
+private fun PriorBarValue(state: PriorBarViewState, modifier: Modifier = Modifier) {
+    if (state.valueLabel != null) {
+        Text(
+            text = state.valueLabel,
+            style = OrtType.signal,
+            color = if (state.arguedAgainst) OrtColors.accentAmberText else OrtColors.textDim,
+            textAlign = TextAlign.End,
+            softWrap = false,
+            maxLines = 1,
+            modifier = modifier.widthIn(min = 30.dp, max = 34.dp),
+        )
+    } else {
+        Text(
+            text = "cold start",
+            style = OrtType.signal.copy(fontStyle = FontStyle.Italic),
+            color = OrtColors.textLow,
+            softWrap = false,
+            maxLines = 1,
+            modifier = modifier,
+        )
     }
 }

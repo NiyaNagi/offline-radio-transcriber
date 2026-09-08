@@ -34,6 +34,20 @@
   .\scenario.ps1 -Port 5554 -Name thermal
   adb -s emulator-5554 shell am start -n org.ort.app/.ui.ReaderActivity
   .\scenario.ps1 -Port 5554 -Name empty -NoRestart
+
+.NOTES
+  Hygiene (round-nine tooling): a *real* capture session an earlier mis-tap started (or the OS
+  killed mid-capture) is never touched by `Scenarios.clearPriorScenarioData` — it only ever deletes
+  rows whose id starts with `scenario-` — so it persists in the app's own database across every
+  scenario switch from then on, and `Now` can read it (real, `endedAt = null`, possibly more
+  recently started) over whatever this scenario itself just seeded. After loading, this script
+  makes a best-effort attempt to check for exactly that on the device's own database, via
+  `adb shell run-as` (debug builds are debuggable, so `run-as` reaches this package's private app
+  data) and the device's own `sqlite3` binary; if either is missing this degrades to a printed
+  reminder instead of failing the script — not every system image ships `sqlite3`, and this check
+  was never run against a live device to confirm it works on `ort_audit`'s own image (see this
+  package's own report). Either way, `install.ps1 -Clear` is the reliable fix: it wipes the app's
+  entire on-device state, this stray real session included.
 #>
 param(
     [Parameter(Mandatory = $true)][int]$Port,
@@ -107,4 +121,34 @@ if ($sessionId) {
 }
 else {
     Write-Output "session=<none>"
+}
+
+# Hygiene (see this script's own .NOTES): best-effort check for a real, non-scenario session with
+# endedAt = null still sitting in the app's own database from an earlier mis-tap or an unclean OS
+# kill -- never blocks or fails this script either way, since neither `run-as` nor `sqlite3` on the
+# device is guaranteed to exist. The SQL text must reach the device's own shell as ONE argument
+# (adb shell joins its own argv with spaces before the device shell ever sees it, so an unquoted
+# multi-word string would otherwise be split apart) -- wrapped in embedded double quotes here, in
+# the single command-line string handed to `adb shell`, for exactly that reason.
+$strayQuery = "SELECT id FROM session WHERE endedAt IS NULL AND id NOT LIKE 'scenario-%';"
+$remoteCommand = "run-as $packageId sqlite3 databases/ort.db `"$strayQuery`""
+$strayOutput = & $adb -s $serial shell $remoteCommand 2>$null
+$strayExitCode = $LASTEXITCODE
+$strayIds = @($strayOutput | Where-Object { $_ -and $_.Trim() -ne "" })
+if ($strayExitCode -eq 0 -and $strayIds.Count -gt 0) {
+    Write-Warning (
+        "Real (non-scenario) session(s) with endedAt = null are still in $serial's own database: " +
+        "$($strayIds -join ', '). An earlier mis-tap or unclean kill likely started one of these, " +
+        "and it can outrank this scenario's own fixture session on Now. Re-run " +
+        "'.\install.ps1 -Port $Port -Clear' to wipe the app's on-device data and start clean."
+    )
+}
+elseif ($strayExitCode -ne 0) {
+    Write-Output (
+        "(could not check $serial's own database for a stray real session -- run-as/sqlite3 may " +
+        "not be available on this device image. If Now looks wrong (a session you did not expect, " +
+        "or one that outranks this scenario's own), run '.\install.ps1 -Port $Port -Clear' to wipe " +
+        "the app's on-device data and start clean; see this repo's results/ui-audit/README.md, " +
+        "'Known gaps / hygiene'.)"
+    )
 }

@@ -24,10 +24,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.theme.OrtColors
@@ -68,7 +70,29 @@ import org.ort.app.ui.theme.OrtType
  *   Removed; `SetupScaffoldTest`'s own R-123 test (scroll to the last item, assert displayed)
  *   still passes on the plain `weight(1f)` + `verticalScroll` layout alone, confirming the extra
  *   mechanism was solving a problem `Column` had already solved.
+ *
+ * **R-341 (validator pass 4, spec, reopened R-123/R-281/R-282/R-283):** the `weight(1f)` account
+ * above is correct for *where things end up once settled*, but wrong about the *first frame* at a
+ * large font scale — `Column`'s `weight(1f)` sibling is measured with `minHeight = 0`, so on the
+ * very first composition (before `verticalScroll`'s own internal state has anything to report back)
+ * the scrollable content is measured and placed at its *natural, unconstrained* height, which
+ * exceeds the space actually left for it; only after a real user scroll (or a recomposition
+ * triggered some other way) does the layout settle where it visually belongs. `migration-failed`'s
+ * own R-292 finding (`FailureActionBarScaffold`, WP11b, b40f659) was the identical defect one layer
+ * over: same fix here, `SubcomposeLayout` measuring the header and the bar first (both loose,
+ * natural height), then handing the content slot a **hard** `maxHeight` of
+ * `screenHeight − headerHeight − barHeight` — content cannot be placed into the bar's region at
+ * *any* scroll offset, first frame included, because the layout system never gives it that space to
+ * measure into in the first place. [SetupScaffoldTest]'s own new `R_341` test asserts this on the
+ * unscrolled first frame specifically (`SetupScaffoldTest`'s existing `R_123` test only ever scrolls
+ * first, which is exactly why it did not catch this).
  */
+// R-343 added the one new parameter (titleOptional) that pushed this over detekt's 9-parameter
+// threshold -- every existing one already earns its place in this shared, deliberately flexible
+// scaffold (this file's own class doc), so widened rather than restructured every call site's
+// title/subtitle pair into a wrapper type; matches this codebase's own established convention for
+// a shared composable with real, load-bearing variety (`Rows.kt`, `Controls.kt`, `TransmissionDetailScreen.kt`).
+@Suppress("LongParameterList")
 @Composable
 public fun SetupScaffold(
     step: SetupStep,
@@ -76,53 +100,118 @@ public fun SetupScaffold(
     subtitle: String,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    titleOptional: Boolean = false,
     titleTrailing: (@Composable () -> Unit)? = null,
     bottomActions: @Composable ColumnScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(
+    SubcomposeLayout(
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
             .windowInsetsPadding(WindowInsets.statusBars)
             .testTag("setup-screen-${step.name}"),
-    ) {
-        ScaffoldHeaderRow(step = step, onBack = onBack)
-        step.indicatorIndex()?.let { index ->
-            SegmentBars(
-                steps = SETUP_TOTAL_STEPS,
-                currentStep = index,
-                haltedStep = if (step.isHalted()) index else null,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = OrtSpacing.lg),
-            )
-        }
-        Row(
-            modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = title, style = OrtType.screenTitle, color = OrtColors.textHigh)
-                Text(text = subtitle, style = OrtType.subtitle, color = OrtColors.textDim)
+    ) { constraints ->
+        val looseConstraints = Constraints(
+            minWidth = constraints.maxWidth,
+            maxWidth = constraints.maxWidth,
+            minHeight = 0,
+            maxHeight = constraints.maxHeight,
+        )
+
+        val headerPlaceables = subcompose(SetupScaffoldSlot.Header) {
+            Column {
+                ScaffoldHeaderRow(step = step, onBack = onBack)
+                step.indicatorIndex()?.let { index ->
+                    SegmentBars(
+                        steps = SETUP_TOTAL_STEPS,
+                        currentStep = index,
+                        haltedStep = if (step.isHalted()) index else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = OrtSpacing.lg),
+                    )
+                }
+                ScaffoldTitleRow(title, subtitle, titleOptional, titleTrailing)
             }
-            titleTrailing?.invoke()
+        }.map { it.measure(looseConstraints) }
+        val headerHeightPx = headerPlaceables.maxOfOrNull { it.height } ?: 0
+
+        val barPlaceables = subcompose(SetupScaffoldSlot.Bar) {
+            Column(
+                modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+                verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+                content = bottomActions,
+            )
+        }.map { it.measure(looseConstraints) }
+        val barHeightPx = barPlaceables.maxOfOrNull { it.height } ?: 0
+
+        val contentHeightPx = (constraints.maxHeight - headerHeightPx - barHeightPx).coerceAtLeast(0)
+        val contentConstraints = Constraints(
+            minWidth = constraints.maxWidth,
+            maxWidth = constraints.maxWidth,
+            minHeight = contentHeightPx,
+            maxHeight = contentHeightPx,
+        )
+        val contentPlaceables = subcompose(SetupScaffoldSlot.Content) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = OrtSpacing.lg)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(OrtSpacing.md),
+                content = content,
+            )
+        }.map { it.measure(contentConstraints) }
+
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            headerPlaceables.forEach { it.placeRelative(0, 0) }
+            contentPlaceables.forEach { it.placeRelative(0, headerHeightPx) }
+            barPlaceables.forEach { it.placeRelative(0, constraints.maxHeight - barHeightPx) }
         }
-        Column(
-            modifier = Modifier
-                .padding(horizontal = OrtSpacing.lg)
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(OrtSpacing.md),
-        ) {
-            content()
+    }
+}
+
+private enum class SetupScaffoldSlot { Header, Content, Bar }
+
+/** The title/subtitle pair (+ optional trailing composable) — split out of [SetupScaffold] itself
+ * purely to keep it under detekt's `LongMethod` threshold, the same reason [ScaffoldHeaderRow]/
+ * [SegmentBars] already are (this file's own precedent); no state or behaviour of its own. */
+@Composable
+private fun ScaffoldTitleRow(
+    title: String,
+    subtitle: String,
+    titleOptional: Boolean,
+    titleTrailing: (@Composable () -> Unit)?,
+) {
+    Row(
+        modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = title,
+                    style = OrtType.screenTitle,
+                    color = OrtColors.textHigh,
+                    modifier = Modifier.alignByBaseline(),
+                )
+                // R-343: S09's own "optional" tag beside "Radio" (`Setup-Rig.dc.html`) --
+                // baseline-aligned with the title, not the row's own bottom-aligned titleTrailing
+                // slot (a separate composable at the row's far end, the wrong position for a tag
+                // that sits directly beside the title text itself).
+                if (titleOptional) {
+                    Text(
+                        text = "optional",
+                        style = OrtType.signal,
+                        color = OrtColors.textFaint,
+                        modifier = Modifier.alignByBaseline(),
+                    )
+                }
+            }
+            Text(text = subtitle, style = OrtType.subtitle, color = OrtColors.textDim)
         }
-        Column(
-            modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
-            verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-        ) {
-            bottomActions()
-        }
+        titleTrailing?.invoke()
     }
 }
 

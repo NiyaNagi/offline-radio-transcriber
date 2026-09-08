@@ -292,12 +292,26 @@ public class SetupActivity : ComponentActivity() {
 
     // --- S09-S11 Radio --------------------------------------------------------------------------
 
+    /**
+     * R-344 (validator pass 4, halt): the third row ("No radio — I will enter the frequency") used
+     * to write [SetupStore.radioChoice] and call [refreshStep] immediately, the same instant as the
+     * tap — since that alone satisfies [SetupStateMachine.stepFor]'s `radioChoice == null -> RADIO`
+     * gate, setup advanced straight past S12 with `manualFrequencyHz` still `null`, having never
+     * asked for a frequency at all (confirmed reproduced 3× by the validator). Routed to the same
+     * frequency-entry screen ([RadioUsbScreen], S10) the CAT-rig-with-no-support fallback already
+     * uses instead — [store] is deliberately **not** written here for [RadioChoice.NONE]; only
+     * [onEnterFrequency] writes it, and only once a real value is confirmed, the same gate that
+     * already protects the CAT-rig fallback path.
+     */
     internal fun onChooseRadio(choice: RadioChoice) {
-        store.radioChoice = choice
         radioAbsentBanner = null
         when (choice) {
-            RadioChoice.NONE -> refreshStep(pushCurrent = true)
+            RadioChoice.NONE -> {
+                rigStatusSnapshot = RigStatus.state
+                navigateForward(SetupStep.RADIO_USB)
+            }
             RadioChoice.TH_D75A, RadioChoice.OTHER_CAT_RIG -> {
+                store.radioChoice = choice
                 rigStatusSnapshot = RigStatus.state
                 val next = if (rigStatusSnapshot is RigStatus.State.Absent) {
                     SetupStep.RADIO_USB
@@ -315,11 +329,16 @@ public class SetupActivity : ComponentActivity() {
         refreshStep(pushCurrent = true)
     }
 
-    /** S10's "Enter the frequency instead" (also reachable straight from a chosen CAT rig with no
-     * real support — see [RadioUsbScreen]'s own doc comment). [hz] is `null` for a blank or
-     * unparseable entry ([parseMegahertzToHz]) — never fabricated (constitution I); the operator
-     * can still proceed and set it later from Settings. */
+    /**
+     * S10's "Enter the frequency instead" — reached both from S09's third row (R-344) and straight
+     * from a chosen CAT rig with no real support (see [RadioUsbScreen]'s own doc comment). [hz] is
+     * `null` for a blank or unparseable entry ([parseMegahertzToHz]) — [RadioUsbScreen] itself now
+     * disables this action's own button until [hz] would be real, but this function guards it too
+     * (constitution I: never silently lose a fact) rather than trusting the UI alone — a `null` here
+     * is a no-op, not a proceed-with-nothing.
+     */
     internal fun onEnterFrequency(hz: Long?) {
+        if (hz == null) return
         store.radioChoice = RadioChoice.NONE
         store.manualFrequencyHz = hz
         refreshStep(pushCurrent = true)
