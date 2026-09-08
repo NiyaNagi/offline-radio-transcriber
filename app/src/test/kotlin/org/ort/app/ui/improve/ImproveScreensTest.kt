@@ -2,6 +2,7 @@ package org.ort.app.ui.improve
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -108,5 +109,70 @@ class ImproveScreensTest {
 
         composeTestRule.onNodeWithText("transcripts changed", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Nothing is deleted", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("R-350")
+    fun `R_350 every item failed names the real reason and offers Install for a missing model`() {
+        var installTapped = false
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveDoneScreen(
+                    state = ImproveDoneViewState(
+                        headline = "Field, Thu 3 Sep",
+                        clearedCount = 12,
+                        summary = ReprocessStatus.Summary(
+                            total = 12,
+                            transcriptsChanged = 0,
+                            attributionsChanged = 0,
+                            rejected = 0,
+                            failed = 12,
+                            failureReasons = listOf(
+                                "ASR unavailable: no ASR model installed at /data/.../models " +
+                                    "(expected tiny.en-encoder.int8.onnx)",
+                            ),
+                        ),
+                    ),
+                    onDone = {},
+                    onInstallModel = { installTapped = true },
+                )
+            }
+        }
+
+        // The real, single distinct reason (WorkQueue's own `lastError`, never fabricated) is
+        // reworded to `F13`'s already-established board phrase for this exact fact — the same
+        // count `summary.failed` already carries is real too (every failure shares this one reason).
+        composeTestRule.onNodeWithText("12 failed — No transcription model installed").assertExists()
+        composeTestRule.onNodeWithText("Install").performClick()
+        assert(installTapped) { "expected onInstallModel to fire for a missing-model reason" }
+    }
+
+    @Test
+    @Requirement("R-350")
+    fun `R_350 a non-model failure reason is shown real, with no Install action offered`() {
+        var installTapped = false
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveDoneScreen(
+                    state = ImproveDoneViewState(
+                        headline = "Field, Thu 3 Sep",
+                        clearedCount = 3,
+                        summary = ReprocessStatus.Summary(
+                            total = 3,
+                            failed = 3,
+                            failureReasons = listOf("expected retained audio at …/scenario-field-tier1-tx1.flac"),
+                        ),
+                    ),
+                    onDone = {},
+                    onInstallModel = { installTapped = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "3 failed — expected retained audio at …/scenario-field-tier1-tx1.flac",
+        ).assertExists()
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
+        assert(!installTapped)
     }
 }

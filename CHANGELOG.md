@@ -32,6 +32,90 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 round 10: R-350 Improve-Done failure reasons, R-351 Settings-Storage usage bar)
+
+### (pending) — ui-conformance WP10 · Improve-Done names why items failed (R-350); Settings-Storage's usage bar actually renders (R-351)
+
+**Scope:** `ui/improve/{ImproveScreens,ImproveContent}.kt`, `ui/settings/SettingsStorageScreen.kt`,
+and tests beside each. `git merge main` (local `main`) — fast-forwarded cleanly to the coordinator's
+named `0aa2243`, no conflict.
+
+**Requirements/ACs:** R-350 (spec, FR-REP, cf. R-143/R-290), R-351 (design, guide §6.3, cf. R-133).
+Constitution I (never fabricate a number).
+
+**What changed:**
+
+*Constitution Check.* Principle I governs both rows directly: R-350's per-reason breakdown is
+exactly as granular as `ReprocessStatus.Summary.failureReasons` actually is (deduplicated, not
+per-reason-counted) — never a fabricated split across distinct reasons this build never measured.
+R-351's fix is layout-only, no new fact rendered — the bar and its data were always real; only the
+`Row`s that were supposed to show them measured to zero.
+
+- **R-350 — `Improve-Done` names why, not just how many.** `summary.failed` used to be the whole
+  story even though `ReprocessStatus.Summary.failureReasons` (real, per-item, carried since R-290's
+  `SafePass` work) has held the *why* since round 6 — `ImproveDoneScreen` simply never read it. Now,
+  when `failureReasons.size == 1` (every failure shares that one real cause), the real `failed`
+  count is labelled with it directly: `"<N> failed — <reason>"`. A recognised missing-model reason
+  (the real `:pipeline` message contains `"ASR unavailable"`/`"no ASR model"` — `AsrEngineProvisioning`'s
+  own text, checked before writing this, never guessed) is reworded to `F13`'s already-established
+  board phrase for the identical fact (`ModelsScreen.kt`'s own `FailedState` title — never a second,
+  differently-worded claim about the same thing) and gains an `Install` action routing to
+  `Settings-Assets`, the same `initialScreen` route R-139's "Install a model" already uses.
+  `ImproveContent` gains `onOpenModels: () -> Unit = {}` (R-132/R-133's own established pattern
+  this session) — `OrtNavHost.kt`'s wiring, outside this round's file ownership, mirrors
+  `NowScreen`'s own `onOpenModels` exactly. When more than one distinct reason exists, the real
+  reasons are joined (`"; "`) rather than inventing a per-reason count split this build cannot
+  measure — the honest limit `ReprocessStatus.Summary`'s own doc comment already names
+  ("distinct messages only").
+- **R-351 — the four-segment usage bar actually renders now.** Root cause: neither the outer nor
+  the per-segment `Row` in `StorageCategoryBreakdown` carried an explicit height, and an empty-
+  content child `Row` (`weight` alone gives a share of *width*, never height) has no intrinsic size
+  to fall back to — the whole bar measured to zero height regardless of data, at every budget.
+  A first fix attempt (`.height(8.dp)` then `.padding(top = sm)`, in that order) still measured
+  zero — `padding` placed *after* a fixed `height()` in a modifier chain does not add space above
+  the sized box, it *consumes* the box's own fixed budget, and `OrtSpacing.sm` is itself `8.dp` —
+  exactly the bar's own height, entirely eaten by its own top margin. Reordered (`padding` before
+  `height`) fixes it for real. The bar now carries the board's own 8dp height, one shared rounded-
+  rect `clip` on the whole bar (the board's `overflow: hidden` on the *outer* element, not a
+  rounded corner on every segment individually — the previous round's own approach), and the
+  legend draws the board's own 10×10 colour swatch beside each label (text-only before this round).
+  A zero-byte category still gets a real, visible hairline share of the bar (unchanged
+  `coerceAtLeast(1L)` weighting) — never dropped, its real `0.0 GB` legend entry unchanged.
+
+**Verified** (per the coordinator's revised load policy — scoped tests, `ktlintCheck`/`detekt`,
+`dependencyRules`/`platformGuards`, `:app:assembleDebug`, `spec_check.py`, `coverageMatrix`/
+`coverageMatrixCheck`; no whole-project `build`, no full unfiltered `:app:testDebugUnitTest` —
+main's own gate runs that after every merge):
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — `BUILD SUCCESSFUL in
+  26s`, 11 tests, all `PASSED`, including the two new `R_350` tests (missing-model reason ⇒
+  `Install` fires `onInstallModel`; a non-model reason shown real with no `Install` offered) and
+  every pre-existing `R-143`/`FR-REP-6` test unaffected.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.*"` — `BUILD SUCCESSFUL in
+  16s`, all `PASSED`, including the new `R_351` test (real, non-zero measured bar height; exactly
+  four real segment nodes) and every `R-133`/`R-291` test from the last two rounds unaffected.
+- `.\gradlew.bat :app:ktlintFormat` then `:app:ktlintCheck` — both clean, no violations this round;
+  `git status --porcelain` afterward showed only files this round legitimately touched, no
+  foreign-file pollution.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, no findings.
+- `.\gradlew.bat dependencyRules platformGuards` — both `OK` (17 modules).
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL in 7s`.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`, 8/8 `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `419 requirements, 191 covered` (unchanged from the post-merge count); `coverageMatrixCheck: up
+  to date`.
+
+**Left open / not done:**
+- `OrtNavHost.kt` must wire `ImproveContent`'s new `onOpenModels` the same way it already wires
+  `NowScreen`'s — outside this round's file ownership.
+- R-350's per-reason count breakdown only ever names one real, combined `failed` figure when
+  multiple distinct reasons exist (never invents a per-reason split `ReprocessStatus.Summary`
+  itself cannot supply) — reported, not silently narrowed to "the board's exact wording" for that
+  case, since no such multi-reason wording is drawn on the board to match in the first place.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP11c/d follow-up: R-182's pipeline half — Pass B transcript spans)
 
 ### (pending) — ui-conformance WP11c/d · PassB.resolveFromText builds a text-anchored lattice, so real transcript spans reach the sink
@@ -234,7 +318,6 @@ carries a second action (S02b, S03, S05, S06, S09, S11), never on S12 (lone `Pri
   validator/coordinator's own bookkeeping, same as every prior round in this package.
 
 ---
-
 
 ## 2026-09-08 (ui-conformance WP10 small round: SessionsContent.initialSessionId, for WP3's Review link)
 
