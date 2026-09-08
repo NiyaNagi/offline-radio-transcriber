@@ -385,6 +385,93 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 · correction sheet scrim, origin back labels, deprecated overload removed
+
+**Scope:** `:app`, this package's files only — `ui/screens/TransmissionDetailScreen.kt`,
+`TransmissionDetailContent.kt`, `CorrectionSheet.kt`; `app/src/test/.../ui/screens/TransmissionDetailContentTest.kt`.
+Addendum to the WP6 entry directly below, same package, a follow-up commit at the coordinator's
+request after the merge to `main` (`8d28e80` → fast-forwarded here to `ffd4e1e`) landed WP3's host
+rewiring to `TransmissionDetailContent`.
+
+**Requirements/ACs:** R-052 (the correction sheet's presentation, refining — not reopening — the
+fix below), R-017 (origin-aware back navigation — the `backLabel` seam only; WP3 wires the real
+origin separately), constitution VII (structural boundaries).
+
+**What changed:**
+
+**Constitution Check.** Principle II (Test-Backed Change): the scrim/dismiss behaviour and the
+`backLabel` seam are each proven by a new, named test, not just left working by construction.
+Principle VII (structural, not conventional): file ownership held exactly — `OrtNavHost.kt` (WP3)
+and `SearchScreen.kt` (WP7) were read for their patterns and neither was edited.
+
+1. **Deprecated overload removed.** `TransmissionDetailScreen(state: TransmissionDetailViewState,
+   ...)` and its `DetailViewStateMapper`/`CorrectionRequest`/`LexiconMatch` imports are gone —
+   confirmed via `git log` that no commit touched `OrtNavHost.kt`'s call site since WP3's merge
+   moved it onto the real `TransmissionDetailContent`, and a repo-wide search found no other
+   caller.
+2. **`backLabel: String = "Log"` (R-017).** `TransmissionDetailContent` gained this parameter,
+   threaded into both `DrillInHeader` calls (`MainDestination`, `PropagatedDestination`) in place
+   of the literal `"Log"`. Defaulted so `OrtNavHost.kt`'s existing all-named-argument call
+   (confirmed by reading it) compiles unchanged; WP3 passes the real origin once R-017's tracking
+   lands. `DetailWhyScreen`/`DetailRevisionsScreen` were checked and already take a caller-supplied
+   label (`callsignLabel`/`parentLabel`) — nothing hardcoded there to fix.
+3. **The correction sheet gets the scrim/dim choreography** `Detail-Correct-A/B/C.dc.html` shows.
+   Read `SearchScreen.kt`'s `FiltersSheetOverlay`/`SearchFiltersSheet` (WP7, not edited) for the
+   pattern and mirrored it exactly: a `Column`, not two `fillMaxSize()` siblings in a `Box` (so the
+   scrim's clickable area is exactly the strip actually exposed above the sheet, never the area the
+   sheet itself covers), scrim first with `weight(1f)` and `background(bgPage 78%)`, `CorrectionSheet`
+   second now self-capped at `fillMaxHeight(0.85f)` with its own `verticalScroll` (matching why
+   `SearchFiltersSheet` owns its own scroll rather than `Sheet` gaining one). Restructured
+   `TransmissionDetailContent`'s destination model so `Correcting` renders the underlying `Main`
+   screen (dimmed, not replaced — the callsign stays visible through the scrim, matching the
+   artboard) plus a new `CorrectingOverlay` composable (scrim + `CorrectionSheet`) stacked in one
+   `Box`, replacing the old `CorrectingDestination` that swapped the whole screen out.
+   **Regression caught by this change, fixed in the same commit:** capping the sheet's height
+   means its content can now scroll below the fold — `TransmissionDetailContentTest`'s existing
+   correction-flow test started failing (a click on `Save unverified correction` landed nowhere,
+   silently) until `.performScrollTo()` was added before it, matching this codebase's own
+   established convention for scrollable-sheet tests.
+4. **`AttributionRow` title-size check (item 4).** Read `ui/components/AttributionMarker.kt` on
+   `main` after the merge: still no parameter for the callsign text's size — `size` only scales the
+   marker shape (`AttributionShape`), the callsign `Text` is unconditionally `OrtType.callsignRow`
+   (13.5sp). No title-size variant has landed. Left as-is, per WP6's original report — the header
+   still uses `AttributionRow` at `MARKER_CARD_SIZE`, not at 27sp.
+
+**New/changed tests:**
+- `TransmissionDetailContentTest`: `` `R_052 the correction sheet sits over a dimmed detail screen,
+  dismissed on scrim tap` `` (new — proves the header callsign and the scrim/sheet coexist while
+  correcting, that tapping `correction-sheet-scrim` dismisses back to `Main`, and that the sheet's
+  content is gone afterward); `` `R_017 a caller-supplied backLabel names the header's origin
+  instead of the default` `` (new — proves the seam directly, not only that the default stays
+  green); `` `R_052 correcting via Not right applies and reaches the propagated screen` `` (existing
+  — updated with `.performScrollTo()` per the regression above, behaviour unchanged).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.TransmissionDetailContentTest"
+  --tests "org.ort.app.ui.screens.CorrectionSheetTest" --tests "org.ort.app.ui.screens.TransmissionDetailScreenTest"
+  --tests "org.ort.app.ui.screens.TransmissionDetailScreenCorrectionTest"` — **BUILD SUCCESSFUL**, all
+  green (6 tests in `TransmissionDetailContentTest`, up from 3).
+- `.\gradlew.bat :app:testDebugUnitTest` (whole module) — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**;
+  `dependencyRules: OK`; `platformGuards: OK` (confirmed as separate invocations too).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged, same reason as the
+  entry below) and `.\gradlew.bat coverageMatrixCheck` (separate invocation, up to date) — both
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- Item 4's gap (no `AttributionRow` title-size variant) is unchanged from the entry below — still
+  WP2's to close.
+- The correction sheet's scrim is visually correct (dim + tap-to-dismiss) but, like WP7's own
+  filters sheet, has no enter/exit motion — this program's own rule ("no motion beyond state
+  transitions") treats a sheet's arrival as a state transition, so this is a plain instant
+  show/hide, matching `FiltersSheetOverlay`'s own behaviour exactly, not a shortfall specific to
+  this change.
+
+---
+
 ### (pending) — ui-conformance WP6 · detail states, inspection surface, correction sheet and propagation, playback, revisions
 
 **Scope:** `:app` `ui/screens/TransmissionDetailScreen.kt`, new `DetailWhyScreen.kt`,

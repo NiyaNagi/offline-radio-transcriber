@@ -34,7 +34,6 @@ import org.ort.app.ui.components.ActionBar
 import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
-import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.MARKER_CARD_SIZE
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.PriorBar
@@ -45,10 +44,8 @@ import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.WaveformCard
 import org.ort.app.ui.components.WaveformViewState
 import org.ort.app.ui.data.AmbiguousCandidateViewState
-import org.ort.app.ui.data.CorrectionRequest
 import org.ort.app.ui.data.DetailBodyViewState
 import org.ort.app.ui.data.DetailViewState
-import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.LabelCertainty
 import org.ort.app.ui.data.LabelOutcome
 import org.ort.app.ui.data.LabelledSample
@@ -58,7 +55,6 @@ import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.AttributionState
-import org.ort.pipeline.passb.LexiconMatch
 
 /**
  * The transmission detail drill-in (ui-conformance WP6, R-050/R-051/R-053/R-054/R-055/R-056/R-057;
@@ -124,41 +120,6 @@ public fun TransmissionDetailScreen(
             onLeaveAmbiguous = onLeaveAmbiguous,
             onIKnowWhoThisIs = onIKnowWhoThisIs,
             onRecordLabel = { labelExpanded = true },
-        )
-    }
-}
-
-/**
- * **Compile-compat shim, not a second implementation.** `OrtNavHost.kt` (WP3's file — not edited
- * here, per this package's file-ownership boundary) still has its own pre-WP6 inline
- * `TransmissionDetailContent` calling this screen's *old* P14/P16 signature; deleting that inline
- * copy and switching to the real [org.ort.app.ui.screens.TransmissionDetailContent] this package
- * now ships is explicitly WP3's job (`ui-conformance-plan.md` §D's nav-host rule: "WP3 deletes the
- * inline copies from the host and calls those"). Removing the old signature outright would leave
- * `main` red for every worktree until WP3's change merges — this overload keeps it green in the
- * meantime by adapting straight into the real screen; [onCorrect] and [onSearchLexicon] have no
- * equivalent in the new correction-sheet flow and are intentionally unused (the sheet needs a
- * scope choice and an affected-over count no synchronous lambda here can supply) — WP3's merge
- * deletes this overload's only caller, and it should be deleted in the same change.
- */
-@Deprecated("Compile-compat only until WP3 deletes its pre-WP6 inline TransmissionDetailContent.")
-@Composable
-public fun TransmissionDetailScreen(
-    state: TransmissionDetailViewState,
-    player: TransmissionAudioPlayer,
-    onBack: () -> Unit,
-    @Suppress("UNUSED_PARAMETER") onCorrect: suspend (CorrectionRequest) -> Unit = {},
-    @Suppress("UNUSED_PARAMETER") onSearchLexicon: suspend (String) -> List<LexiconMatch> = { emptyList() },
-    onRecordLabel: suspend (LabelledSample) -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = "Log", onBack = onBack)
-        TransmissionDetailScreen(
-            state = DetailViewStateMapper.from(state),
-            player = player,
-            onRecordLabel = onRecordLabel,
-            modifier = Modifier.weight(1f),
         )
     }
 }

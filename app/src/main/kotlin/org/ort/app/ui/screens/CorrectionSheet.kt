@@ -2,9 +2,12 @@ package org.ort.app.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -39,6 +42,15 @@ import org.ort.pipeline.passb.LexiconMatch
  * resolver's candidates" → "6 overs re-attributed"), propagate to every over sharing the
  * corrected over's voice by default. Tier C is a weaker signal, so it asks for scope explicitly —
  * `Detail-Correct-C.dc.html` is the only board that shows the "Apply to" radio choice.
+ *
+ * Height-capped and independently scrollable, the same pattern `SearchScreen.kt`'s
+ * `SearchFiltersSheet` (WP7) uses: `Sheet` (WP2) is the static surface only — "not the scaffold
+ * around it" — so the scrollable, height-capped container wraps the `Sheet(...)` call here rather
+ * than being added to the shared component. `fillMaxHeight(0.85f)`, not `fillMaxSize()`, is guide
+ * §6.9's "never taller than the screen minus 120px" cap in fraction form, so the scrim a caller
+ * draws above this sheet (`TransmissionDetailContent`'s `CorrectionSheetOverlay`) stays visible and
+ * tappable to dismiss — an uncapped scrollable column would expand to the full height and silently
+ * cover the scrim, swallowing its tap.
  */
 @Composable
 public fun CorrectionSheet(
@@ -52,33 +64,35 @@ public fun CorrectionSheet(
 ) {
     var tier by remember { mutableStateOf(CorrectionTierStep.MAIN) }
 
-    Sheet(title = "Who was it?", modifier = modifier) {
-        when (tier) {
-            CorrectionTierStep.MAIN -> MainTier(
-                currentCallsign = currentCallsign,
-                candidates = candidates,
-                onPick = { callsign ->
-                    onApply(callsign, CorrectionTier.PICK_CANDIDATE, CorrectionScope.EVERY_OVER_SAME_VOICE)
-                },
-                onOpenSearch = { tier = CorrectionTierStep.SEARCH },
-                onOpenType = { tier = CorrectionTierStep.TYPE },
-            )
+    Column(modifier = modifier.fillMaxHeight(0.85f).verticalScroll(rememberScrollState())) {
+        Sheet(title = "Who was it?") {
+            when (tier) {
+                CorrectionTierStep.MAIN -> MainTier(
+                    currentCallsign = currentCallsign,
+                    candidates = candidates,
+                    onPick = { callsign ->
+                        onApply(callsign, CorrectionTier.PICK_CANDIDATE, CorrectionScope.EVERY_OVER_SAME_VOICE)
+                    },
+                    onOpenSearch = { tier = CorrectionTierStep.SEARCH },
+                    onOpenType = { tier = CorrectionTierStep.TYPE },
+                )
 
-            CorrectionTierStep.SEARCH -> SearchTier(
-                onSearchLexicon = onSearchLexicon,
-                onPick = { callsign ->
-                    onApply(callsign, CorrectionTier.SEARCH_LEXICON, CorrectionScope.EVERY_OVER_SAME_VOICE)
-                },
-                onBack = { tier = CorrectionTierStep.MAIN },
-            )
+                CorrectionTierStep.SEARCH -> SearchTier(
+                    onSearchLexicon = onSearchLexicon,
+                    onPick = { callsign ->
+                        onApply(callsign, CorrectionTier.SEARCH_LEXICON, CorrectionScope.EVERY_OVER_SAME_VOICE)
+                    },
+                    onBack = { tier = CorrectionTierStep.MAIN },
+                )
 
-            CorrectionTierStep.TYPE -> TypeTier(
-                everyOverSameVoiceCount = everyOverSameVoiceCount,
-                onApply = { callsign, scope -> onApply(callsign, CorrectionTier.FREE_TEXT, scope) },
-                onBack = { tier = CorrectionTierStep.MAIN },
-            )
+                CorrectionTierStep.TYPE -> TypeTier(
+                    everyOverSameVoiceCount = everyOverSameVoiceCount,
+                    onApply = { callsign, scope -> onApply(callsign, CorrectionTier.FREE_TEXT, scope) },
+                    onBack = { tier = CorrectionTierStep.MAIN },
+                )
+            }
+            TextAction(text = "Cancel", onClick = onDismiss, modifier = Modifier.padding(top = OrtSpacing.sm))
         }
-        TextAction(text = "Cancel", onClick = onDismiss, modifier = Modifier.padding(top = OrtSpacing.sm))
     }
 }
 

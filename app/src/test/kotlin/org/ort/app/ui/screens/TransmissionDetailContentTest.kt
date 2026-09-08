@@ -5,8 +5,10 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
@@ -123,6 +125,37 @@ class TransmissionDetailContentTest {
         composeTestRule.onNodeWithContentDescription("K7LWH", substring = true).assertExists()
     }
 
+    /**
+     * R-017: [TransmissionDetailContent.backLabel] defaults to `"Log"` (today's only real entry
+     * point, so `OrtNavHost.kt` compiles unchanged), but a caller that knows the true origin (a
+     * station's overs, a thread, a search result) can name it — proven directly rather than only by
+     * the default staying green.
+     */
+    @Test
+    fun `R_017 a caller-supplied backLabel names the header's origin instead of the default`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                    backLabel = "Search",
+                )
+            }
+        }
+        composeTestRule.waitUntilDescriptionExists("Back to Search")
+
+        composeTestRule.onNodeWithContentDescription("Back to Search").assertExists()
+        composeTestRule.onNodeWithText("Search").assertExists()
+    }
+
     @Test
     fun `R_052 correcting via Not right applies and reaches the propagated screen`() {
         runBlocking {
@@ -145,14 +178,56 @@ class TransmissionDetailContentTest {
 
         composeTestRule.onNodeWithText("Not right?").performClick()
         composeTestRule.waitUntilTextExists("Type a callsign")
-        composeTestRule.onNodeWithText("Type a callsign").performClick()
-        composeTestRule.onNodeWithContentDescription("Typed callsign").performTextInput("KA7LWH")
-        composeTestRule.onNodeWithText("Save unverified correction").performClick()
+        composeTestRule.onNodeWithText("Type a callsign").performScrollTo().performClick()
+        composeTestRule.onNodeWithContentDescription("Typed callsign").performScrollTo().performTextInput("KA7LWH")
+        composeTestRule.onNodeWithText("Save unverified correction").performScrollTo().performClick()
         composeTestRule.waitUntilTextExists("Corrected to KA7LWH")
 
         composeTestRule.onNodeWithText("Corrected to KA7LWH", substring = true).assertExists()
         val corrected = runBlocking { db.transmissionDao().getById("TX1") }
         assert(corrected!!.stationId == "KA7LWH")
+    }
+
+    /**
+     * R-052, `Detail-Correct-A/B/C.dc.html`: the sheet sits over a dimmed backdrop within the
+     * detail screen — not a second full screen — and tapping the scrim dismisses back to it
+     * (the identical pattern `SearchScreen.kt`'s `FiltersSheetOverlay`, WP7, uses for its filters
+     * sheet). Both the underlying callsign and the scrim/sheet coexist in the tree while
+     * correcting, and dismissing removes the sheet, leaving the underlying detail unchanged.
+     */
+    @Test
+    fun `R_052 the correction sheet sits over a dimmed detail screen, dismissed on scrim tap`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Not right?")
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        composeTestRule.waitUntilTextExists("Who was it?")
+
+        // The detail screen underneath is still in the tree (dimmed, not replaced) while the sheet
+        // is up — the header callsign remains findable, and the scrim exists at its own tag.
+        composeTestRule.onNodeWithContentDescription("K7LWH", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("correction-sheet-scrim").assertExists()
+        composeTestRule.onNodeWithTag("correction-sheet").assertExists()
+
+        composeTestRule.onNodeWithTag("correction-sheet-scrim").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Who was it?").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Not right?").assertExists()
     }
 
     @Test
