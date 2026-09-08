@@ -36,6 +36,7 @@ public fun FailReconcileScreen(
     onImport: () -> Unit,
     onLeaveAsIs: () -> Unit,
     modifier: Modifier = Modifier,
+    onPlay: ((ReconcileFile) -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -70,8 +71,12 @@ public fun FailReconcileScreen(
             "File, no record · ${state.filesNoRecord.size}",
             modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = 12.dp),
         )
-        state.filesNoRecord.forEach { file ->
-            ReconcileRow(title = "${file.path} · ${file.durationLabel}", note = file.note)
+        state.filesNoRecord.forEachIndexed { index, file ->
+            ReconcileFileRow(
+                file = file,
+                onPlay = onPlay,
+                modifier = Modifier.testTag("failure-reconcile-play-$index"),
+            )
         }
         SectionLabel("Likely cause", modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = 12.dp))
         Text(
@@ -99,6 +104,36 @@ public fun FailReconcileScreen(
             modifier = Modifier
                 .padding(horizontal = OrtSpacing.lg, vertical = 12.dp)
                 .testTag("failure-reconcile-leave"),
+        )
+    }
+}
+
+/** Register R-148: `Fail-Reconcile.dc.html`'s own `Play` action per orphan file — disabled
+ * (never a fabricated tap target) unless a real player is wired in, which none is today: see
+ * [ReconcileFile.playable]'s own kdoc for exactly why. */
+@Composable
+private fun ReconcileFileRow(file: ReconcileFile, onPlay: ((ReconcileFile) -> Unit)?, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(modifier = Modifier.padding(top = 5.dp).size(9.dp).background(OrtColors.accentGapDim, CircleShape))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = "${file.path} · ${file.durationLabel}", style = OrtType.control, color = OrtColors.textHigh)
+            file.note?.let {
+                Text(
+                    text = it,
+                    style = OrtType.subLine,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+        TextAction(
+            text = "Play",
+            onClick = { onPlay?.invoke(file) },
+            enabled = file.playable && onPlay != null,
         )
     }
 }

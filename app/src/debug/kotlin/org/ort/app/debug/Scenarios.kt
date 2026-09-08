@@ -1,11 +1,15 @@
 package org.ort.app.debug
 
 import android.content.Context
+import org.ort.app.ui.failures.AssetSwapOption
 import org.ort.app.ui.failures.AssetSwapViewState
 import org.ort.app.ui.failures.CalibrationViewState
+import org.ort.app.ui.failures.ClockLogRow
 import org.ort.app.ui.failures.ClockViewState
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
+import org.ort.app.ui.failures.FailureSignalsPolling
+import org.ort.app.ui.failures.InterruptedOverRow
 import org.ort.app.ui.failures.InterruptedViewState
 import org.ort.app.ui.failures.MigrationStep
 import org.ort.app.ui.failures.MigrationViewState
@@ -223,6 +227,7 @@ public object Scenarios {
         LevelStatus.reset()
         InputStatus.reset()
         DebugFailureOverride.clear()
+        FailureSignalsPolling.reset()
     }
 
     // ---------------------------------------------------------------------------------------
@@ -857,6 +862,13 @@ public object Scenarios {
                     ranForLabel = "8 h 30 m",
                     startedLabel = "23:10",
                     endedLabel = "06:40",
+                    nightLabel = "Overnight, Sat 31 Oct",
+                    windowLabel = "23:10 – 06:40 · 8 h 30 m · the clock went back at 02:00",
+                    logRows = listOf(
+                        ClockLogRow("01:58:40", "before", "W7NPC", "copy on the repeater, seven three"),
+                        ClockLogRow("01:01:12", "after (was 02:01:12)", "KJ7ABC", "back to you, seven three"),
+                        ClockLogRow("01:04:03", "after (was 02:04:03)", null, "break, break — anyone on frequency"),
+                    ),
                 ),
             ),
         )
@@ -886,7 +898,18 @@ public object Scenarios {
         )
         ScenarioFixtures.markCapturing(context, sessionId)
         DebugFailureOverride.show(
-            FailurePresentation.Interrupted(InterruptedViewState(overCount = 3, gapLabel = "03:12 – 06:48")),
+            FailurePresentation.Interrupted(
+                InterruptedViewState(
+                    overCount = 3,
+                    gapLabel = "03:12 – 06:48",
+                    backlogLabel = "3 overs waiting",
+                    overs = listOf(
+                        InterruptedOverRow("03:12:31", "audio only", "no transcript — the pass never started"),
+                        InterruptedOverRow("03:12:08", "partial", "a Pass A partial, superseded by nothing yet"),
+                        InterruptedOverRow("03:11:40", "audio only", "no transcript — the pass never started"),
+                    ),
+                ),
+            ),
         )
         return LoadResult(0, 1, sessionId)
     }
@@ -978,9 +1001,17 @@ public object Scenarios {
                     activeLabel = "2026.08 · active · this session · 1,104,208 records",
                     stagedLabel = "2026.09 · staged · next session · 1,122,410 records",
                     options = listOf(
-                        "Wait for the session to end",
-                        "Stop capture, swap, start a new session",
-                        "Afterwards, re-run tonight on 2026.09",
+                        AssetSwapOption("Wait for the session to end", "the default · nothing else to do"),
+                        AssetSwapOption(
+                            "Stop capture, swap, start a new session",
+                            "tonight's log ends here · a second session begins on 2026.09 · both stay in " +
+                                "Earlier nights",
+                        ),
+                        AssetSwapOption(
+                            "Afterwards, re-run tonight on 2026.09",
+                            "Improve records will offer it · 12 ambiguous overs might resolve with the new " +
+                                "prefixes",
+                        ),
                     ),
                     selectedOption = 0,
                 ),

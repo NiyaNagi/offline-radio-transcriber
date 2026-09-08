@@ -23,6 +23,17 @@ import org.ort.pipeline.capture.ThermalStatus
  */
 public object FailureSignalsPolling {
 
+    /** Register R-149: how far back [current] keeps a `ShedStatus.backlog` sample — `Fail-Backlog.dc.html`'s
+     * own "last 30 minutes" chart. */
+    public const val BACKLOG_HISTORY_WINDOW_MILLIS: Long = 30 * 60_000L
+
+    /** A defensive cap on [storageHistory]'s size — one transition per stage, so this never grows
+     * unbounded even across an implausibly long process lifetime. */
+    private const val STORAGE_HISTORY_MAX_ENTRIES = 20
+
+    private val storageHistory = mutableListOf<StorageForecastSample>()
+    private val backlogHistory = mutableListOf<BacklogSample>()
+
     public suspend fun current(context: Context, sessionId: String?): FailureSignals {
         var newestGap: CaptureGapEntity? = null
         var sessionStartedAtMillis: Long? = null
@@ -33,21 +44,55 @@ public object FailureSignalsPolling {
             sessionStartedAtMillis = db.sessionDao().getById(sessionId)?.startedAt
             sessionTransmissionCount = db.transmissionDao().listBySession(sessionId).size
         }
+        val now = SystemClock.wallMillis()
+        val storageState = StorageForecast.state
+        val backlog = ShedStatus.backlog
+        recordStorageTransition(storageState, now)
+        recordBacklogSample(backlog, now)
         return FailureSignals(
             captureState = CaptureState.state,
             inputStatus = InputStatus.state,
             levelStatus = LevelStatus.state,
             thermalStatus = ThermalStatus.state,
             rigStatus = RigStatus.state,
-            storageForecast = StorageForecast.state,
+            storageForecast = storageState,
             shedLevel = ShedStatus.currentLevel,
-            shedBacklog = ShedStatus.backlog,
+            shedBacklog = backlog,
             newestGap = newestGap,
-            nowMillis = SystemClock.wallMillis(),
+            nowMillis = now,
             debugOverride = DebugFailureOverride.activeOverride,
             sessionStartedAtMillis = sessionStartedAtMillis,
             sessionTransmissionCount = sessionTransmissionCount,
+            storageForecastHistory = storageHistory.toList(),
+            backlogHistory = backlogHistory.toList(),
         )
+    }
+
+    /** Register R-149: one entry per distinct `StorageForecast.State` subtype actually observed,
+     * never a repeat of the same stage on every tick — `Fail-Storage.dc.html`'s own timeline is a
+     * list of *moments something changed*, not a sample per second. */
+    private fun recordStorageTransition(state: StorageForecast.State, atMillis: Long) {
+        val last = storageHistory.lastOrNull()
+        if (last == null || last.state::class != state::class) {
+            storageHistory += StorageForecastSample(state, atMillis)
+        }
+        while (storageHistory.size > STORAGE_HISTORY_MAX_ENTRIES) storageHistory.removeAt(0)
+    }
+
+    /** Register R-149: one sample per tick, trimmed to [BACKLOG_HISTORY_WINDOW_MILLIS] — a real,
+     * bounded rolling window, never a fabricated full 30 minutes before the process has run one. */
+    private fun recordBacklogSample(backlog: Int, atMillis: Long) {
+        backlogHistory += BacklogSample(backlog, atMillis)
+        backlogHistory.removeAll { atMillis - it.atMillis > BACKLOG_HISTORY_WINDOW_MILLIS }
+    }
+
+    /** This object's own history is process-lifetime state, the same shape as every holder it
+     * reads (`ShedStatus.reset()`, `StorageForecast.reset()`, ...) — a scenario reload
+     * (`Scenarios.kt`'s `resetProcessWideFacets`) must clear it too, or a previous scenario's
+     * timeline would leak into the next one's F6/F8 boards. */
+    public fun reset() {
+        storageHistory.clear()
+        backlogHistory.clear()
     }
 
     /** [RecoveryAnnouncer]'s "N overs can be improved" figure — read only at the moment a tier

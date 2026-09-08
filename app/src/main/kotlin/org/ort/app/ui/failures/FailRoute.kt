@@ -13,9 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,71 +51,73 @@ public fun FailRouteScreen(
 ) {
     var showWhyThisHalts by remember { mutableStateOf(false) }
 
-    // FR-A11Y-3/guide §4: at maximum font scale this content can outgrow the screen, so it scrolls
-    // — but `weight` and `verticalScroll` cannot share one Column (Compose throws), so the scroll
-    // lives on the inner content Column and `weight` stays on the outer, non-scrolling one; the
-    // button bar this way always stays reachable, never pushed off either end.
     // R-126/R-127: the 44dp status-bar inset every Setup screen already carries
     // (`SetupScaffold.kt`'s own `.windowInsetsPadding(WindowInsets.statusBars)`) — a takeover is a
     // full-bleed screen exactly like those, so it needs the same inset or "Halted" collides with
-    // the clock.
-    Column(
+    // the clock. R-151: `FailureActionBarScaffold` (not a plain `weight(1f)` split) keeps the
+    // action bar reachable and the content able to scroll clear of it at any font scale.
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
             .failureScreenInset()
             .testTag("failure-route-screen"),
     ) {
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Row(
-                modifier = Modifier.padding(start = OrtSpacing.lg, top = 10.dp, end = OrtSpacing.lg),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                HaltDot()
-                Text(text = "Halted", style = OrtType.screenTitle, color = OrtColors.textHigh)
-            }
-            Text(
-                text = routeSubtitle(state),
-                style = OrtType.subtitle,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(start = OrtSpacing.lg, top = 3.dp, end = OrtSpacing.lg),
-            )
-            Banner(
-                title = "Audio switched to the built-in microphone",
-                body = "At ${state.sinceLabel} the route changed from ${state.expectedLabel} to " +
-                    "${state.actualLabel}. Capture stopped in the same second. Nothing from this mic was recorded.",
-                tone = BannerTone.HALTING,
-                primaryActionLabel = "Choose the input again",
-                onPrimaryAction = onChooseInputAgain,
-                secondaryActionLabel = "Why this halts",
-                onSecondaryAction = { showWhyThisHalts = true },
-                modifier = Modifier.padding(horizontal = OrtSpacing.lg).padding(top = 16.dp),
-            )
-            Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = 16.dp)) {
-                SectionLabel("Audio")
-                InfoRow(key = "Input", value = state.expectedLabel, sub = "chosen · not currently routed")
-                InfoRow(key = "Routed to", value = state.actualLabel)
-            }
-            NotRecordedSection(state)
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = OrtSpacing.lg, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PrimaryButton(
-                text = "Choose the input again",
-                onClick = onChooseInputAgain,
-                modifier = Modifier.fillMaxWidth().testTag("failure-route-choose-input"),
-            )
-            TextAction(
-                text = "End the session here",
-                onClick = onEndSession,
-                modifier = Modifier.fillMaxWidth().testTag("failure-route-end-session"),
-            )
-        }
+        FailureActionBarScaffold(
+            content = {
+                Row(
+                    modifier = Modifier.padding(start = OrtSpacing.lg, top = 10.dp, end = OrtSpacing.lg),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    HaltDot()
+                    Text(text = "Halted", style = OrtType.screenTitle, color = OrtColors.textHigh)
+                }
+                Text(
+                    text = routeSubtitle(state),
+                    style = OrtType.subtitle,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(start = OrtSpacing.lg, top = 3.dp, end = OrtSpacing.lg),
+                )
+                Banner(
+                    title = "Audio switched to the built-in microphone",
+                    body = "At ${state.sinceLabel} the route changed from ${state.expectedLabel} to " +
+                        "${state.actualLabel}. Capture stopped in the same second. Nothing from this mic " +
+                        "was recorded.",
+                    tone = BannerTone.HALTING,
+                    primaryActionLabel = "Choose the input again",
+                    onPrimaryAction = onChooseInputAgain,
+                    secondaryActionLabel = "Why this halts",
+                    onSecondaryAction = { showWhyThisHalts = true },
+                    modifier = Modifier.padding(horizontal = OrtSpacing.lg).padding(top = 16.dp),
+                )
+                Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = 16.dp)) {
+                    SectionLabel("Audio")
+                    InfoRow(key = "Input", value = state.expectedLabel, sub = "chosen · not currently routed")
+                    InfoRow(key = "Routed to", value = state.actualLabel)
+                }
+                NotRecordedSection(state)
+            },
+            actionBar = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = OrtSpacing.lg, vertical = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PrimaryButton(
+                        text = "Choose the input again",
+                        onClick = onChooseInputAgain,
+                        modifier = Modifier.fillMaxWidth().testTag("failure-route-choose-input"),
+                    )
+                    TextAction(
+                        text = "End the session here",
+                        onClick = onEndSession,
+                        modifier = Modifier.fillMaxWidth().testTag("failure-route-end-session"),
+                    )
+                }
+            },
+        )
     }
 
     if (showWhyThisHalts) {
