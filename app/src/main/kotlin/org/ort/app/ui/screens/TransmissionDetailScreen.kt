@@ -1,15 +1,21 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -56,6 +63,7 @@ import org.ort.app.ui.data.LabelCertainty
 import org.ort.app.ui.data.LabelOutcome
 import org.ort.app.ui.data.LabelledSample
 import org.ort.app.ui.data.PassFailureViewState
+import org.ort.app.ui.data.RankedCandidateViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.data.TriedStepViewState
 import org.ort.app.ui.theme.OrtColors
@@ -118,9 +126,17 @@ public fun TransmissionDetailScreen(
             }
             PlaybackSection(state.detail, player)
             TranscriptSection(state.detail)
-            AmbiguousChooserSection(state.body, onChooseCandidate, onNeither)
-            UnknownTriedSection(state.body)
-            WhySection(state, onOpenWhy)
+            // R-196 (halt): a failed pass carries an UNKNOWN attribution (no pass ever finished to
+            // resolve one), so `state.body` is genuinely `DetailBodyViewState.Unknown` — but the
+            // over's problem is that a *pass* errored, not that the resolver came up empty. These
+            // three sections all speak to the attribution-state branch (`AttributionState.UNKNOWN`'s
+            // "what was tried"/"why this callsign") and must not render over
+            // [FailedPassHeaderSection]'s own "what went wrong" account of the same over.
+            if (passFailure == null) {
+                AmbiguousChooserSection(state.body, onChooseCandidate, onNeither)
+                UnknownTriedSection(state.body)
+                WhySection(state, onOpenWhy)
+            }
             RevisionsLinkSection(state.detail, onOpenRevisions)
             LabelSampleSection(
                 detail = state.detail,
@@ -145,10 +161,17 @@ public fun TransmissionDetailScreen(
 @Composable
 private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -> Unit) {
     val detail = state.detail
-    val alternate = (state.body as? DetailBodyViewState.Ambiguous)?.alternateCallsign
+    val ambiguous = state.body as? DetailBodyViewState.Ambiguous
+    val alternate = ambiguous?.alternateCallsign
+    // R-186: `Attribution.ambiguous()` carries no `stationId` at all (constitution I — nothing is
+    // asserted for AMBIGUOUS), so `detail.attribution.stationId` is always null here; the primary
+    // candidate `Detail-Ambiguous.dc.html`'s own header names ("KE7QRS or KE7QRF") comes from the
+    // resolver's own top-ranked candidate instead — the same list `AmbiguousChooserSection` below
+    // already renders, never a second, drifting source for the same fact.
+    val primaryCallsign = ambiguous?.candidates?.firstOrNull()?.callsign ?: detail.attribution.stationId
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TitleAttributionRow(attribution = detail.attribution, callsign = detail.attribution.stationId)
+            TitleAttributionRow(attribution = detail.attribution, callsign = primaryCallsign)
             // TitleAttributionRow has no `alternate` param — the AMBIGUOUS "or QRF" runner-up is
             // added here, in AttributionRow's own style for the same fact (guide §6.1).
             if (alternate != null) {
@@ -397,20 +420,35 @@ private fun AmbiguousChooserSection(
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
         SectionHeader(label = "Choose, if you heard it")
         body.candidates.forEach { candidate: AmbiguousCandidateViewState ->
+            // R-187: one evidence-bearing, clickable row — not a display row plus a separate
+            // "Choose X" link (a past correction-sheet regression in this same package: a
+            // non-interactive display row beside an interactive one with no distinguishing marker
+            // sends a real tap to the wrong node; see `MainTier`/`SearchTier`'s own history).
             Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+                    .clickable(
+                        role = Role.Button,
+                        onClick = { onChooseCandidate(candidate.callsign) },
+                    )
                     .padding(vertical = OrtSpacing.sm)
                     .semantics(mergeDescendants = true) {
                         contentDescription =
-                            "${candidate.callsign}, ${candidate.evidence}, score ${candidate.scoreLabel}"
+                            "Choose ${candidate.callsign}, ${candidate.evidence}, score ${candidate.scoreLabel}"
                     },
             ) {
                 Text(text = candidate.callsign, style = OrtType.callsignRow, color = OrtColors.textHigh)
                 Spacer(modifier = Modifier.width(OrtSpacing.md))
-                Text(text = candidate.evidence, style = OrtType.cardBody, color = OrtColors.textDim)
+                Text(
+                    text = candidate.evidence,
+                    style = OrtType.cardBody,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(text = candidate.scoreLabel, style = OrtType.signal, color = OrtColors.textDim)
             }
-            TextAction(text = "Choose ${candidate.callsign}", onClick = { onChooseCandidate(candidate.callsign) })
         }
         TextAction(text = "Neither — it was something else", onClick = onNeither)
     }
@@ -438,11 +476,29 @@ private fun UnknownTriedSection(body: DetailBodyViewState) {
     }
 }
 
-/** R-051, FR-UI-8: the inline "why this callsign" preview + a link to the exhaustive [DetailWhyScreen]. */
+/**
+ * R-051/R-180, FR-UI-8: the inline "why this callsign" preview + a link to the exhaustive
+ * [DetailWhyScreen]. Real components throughout, not raw text lines: each candidate is a marker +
+ * mono-callsign + score row (the same shape `DetailWhyScreen`'s own `CandidatesSection` uses, so
+ * the preview and the exhaustive screen read as one system), and every [PriorBar] name is guide
+ * §9 prose from [DetailViewStateMapper]'s own translation table, not the raw stored key.
+ *
+ * **Honest gap, unchanged from this package's earlier revision:** `Detail-Why.dc.html`'s per-slot
+ * phonetic-lattice boxes (`K .96`, `7 .99`, ...) cannot be rendered — `:data`'s
+ * [org.ort.data.entity.PhoneticLatticeEntity.unitsBlob] is an opaque blob with no defined per-unit
+ * shape yet (that entity's own doc comment), so [WP2's LatticeSlot][org.ort.app.ui.components.LatticeSlot]
+ * has no real per-letter score to draw from. [why.latticeSummary] (source + model) is shown instead,
+ * with an explicit line saying per-slot detail is not recorded — never a fabricated slot.
+ */
 @Composable
 private fun WhySection(state: DetailViewState, onOpenWhy: () -> Unit) {
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
-        SectionHeader(label = "Why this callsign", trailingActionLabel = "Full lattice", onTrailingAction = onOpenWhy)
+        SectionHeader(
+            label = "Why this callsign",
+            trailingActionLabel = "Full lattice",
+            onTrailingAction = onOpenWhy,
+            modifier = Modifier.testTag("open-full-lattice"),
+        )
         val why = state.why
         if (!why.hasData) {
             Text(
@@ -458,16 +514,16 @@ private fun WhySection(state: DetailViewState, onOpenWhy: () -> Unit) {
                 text = "Lattice: $it",
                 style = OrtType.cardBody,
                 color = OrtColors.textFaint,
-                modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
+                modifier = Modifier.padding(top = OrtSpacing.xs),
             )
-        }
-        why.candidates.forEach { candidate ->
             Text(
-                text = "${candidate.callsign} — ${candidate.scoreLabel}${if (candidate.chosen) " · chosen" else ""}",
-                style = OrtType.control,
-                color = if (candidate.chosen) OrtColors.textHigh else OrtColors.textDim,
+                text = "Per-slot detail (each unit's score and kept alternate) is not recorded yet.",
+                style = OrtType.subLine,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = 2.dp, bottom = OrtSpacing.sm),
             )
         }
+        why.candidates.forEach { candidate -> WhyCandidateRow(candidate) }
         why.priors.forEach { prior -> PriorBar(state = prior, modifier = Modifier.padding(top = OrtSpacing.xs)) }
         why.runnerUp?.let {
             Text(
@@ -477,6 +533,46 @@ private fun WhySection(state: DetailViewState, onOpenWhy: () -> Unit) {
                 modifier = Modifier.padding(top = OrtSpacing.sm),
             )
         }
+    }
+}
+
+/** One candidate row: a marker dot (filled for the chosen one, hollow otherwise) + mono callsign +
+ * score, merged into one semantics node — the same shape `Detail-Why.dc.html`'s own rows use. */
+@Composable
+private fun WhyCandidateRow(candidate: RankedCandidateViewState) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${candidate.callsign}, ${candidate.scoreLabel}" +
+                    if (candidate.chosen) ", chosen" else ""
+            },
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .then(
+                    if (candidate.chosen) {
+                        Modifier.background(OrtColors.accentGreen, CircleShape)
+                    } else {
+                        Modifier.border(1.5.dp, OrtColors.textFaint, CircleShape)
+                    },
+                ),
+        )
+        Spacer(modifier = Modifier.width(OrtSpacing.sm))
+        Text(
+            text = candidate.callsign,
+            style = OrtType.callsignRow,
+            color = if (candidate.chosen) OrtColors.textHigh else OrtColors.textBody,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = candidate.scoreLabel + if (candidate.chosen) " · chosen" else "",
+            style = OrtType.cardBody,
+            color = if (candidate.chosen) OrtColors.scoreGood else OrtColors.textDim,
+        )
     }
 }
 

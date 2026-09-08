@@ -110,17 +110,26 @@ public object DetailViewStateMapper {
      * [passFailure] is optional and defaults to `null` so every existing call site (built before
      * R-153) compiles unchanged; a caller that has looked one up (`:app`'s
      * [org.ort.app.ui.screens.TransmissionDetailContent], gated on `processingState == FAILED`)
-     * passes it through.
+     * passes it through. [sourceOverTimeLabel] is R-183's own fix, the same way — `Detail.dc.html`'s
+     * INFERRED explanation names the source over's real time ("to 02:14:07, where the callsign was
+     * heard clearly"), which needs a second `:data` read this pure mapper cannot make itself; a
+     * caller that has looked it up ([org.ort.app.ui.data.CorrectionPolling.sourceOverTimeLabel])
+     * passes it through, and its absence (still possible — a source id [TransmissionId.parse] cannot
+     * resolve, or a caller that has not looked it up yet) falls back to the honest generic phrasing
+     * rather than fabricating a time.
      */
-    public fun from(detail: TransmissionDetailViewState, passFailure: PassFailureViewState? = null): DetailViewState =
-        DetailViewState(
-            detail = detail,
-            body = bodyFor(detail),
-            why = whyFor(detail.inspection),
-            passFailure = passFailure,
-        )
+    public fun from(
+        detail: TransmissionDetailViewState,
+        passFailure: PassFailureViewState? = null,
+        sourceOverTimeLabel: String? = null,
+    ): DetailViewState = DetailViewState(
+        detail = detail,
+        body = bodyFor(detail, sourceOverTimeLabel),
+        why = whyFor(detail.inspection),
+        passFailure = passFailure,
+    )
 
-    private fun bodyFor(detail: TransmissionDetailViewState): DetailBodyViewState {
+    private fun bodyFor(detail: TransmissionDetailViewState, sourceOverTimeLabel: String? = null): DetailBodyViewState {
         val attribution = detail.attribution
         return when (attribution.state) {
             AttributionState.CONFIRMED -> DetailBodyViewState.Confirmed(
@@ -132,8 +141,13 @@ public object DetailViewStateMapper {
             AttributionState.INFERRED -> {
                 val sourceId = attribution.sourceTransmissionId?.toString()
                 val confidenceClause = attribution.confidence?.let { " Confidence %.2f.".format(it) }.orEmpty()
+                // R-183: names the source over's real time when it is known, `Detail.dc.html`'s own
+                // wording ("to 02:14:07, where the callsign was heard clearly") — the honest generic
+                // fallback ("to the source over") is kept for a source id whose time this mapper's
+                // caller has not (yet, or cannot) resolved, never a fabricated time.
                 val explanation = if (sourceId != null) {
-                    "Not heard in this over. Matched by voice to the source over, where the callsign was " +
+                    val whereClause = sourceOverTimeLabel?.let { "to $it" } ?: "to the source over"
+                    "Not heard in this over. Matched by voice $whereClause, where the callsign was " +
                         "heard clearly.$confidenceClause"
                 } else {
                     "Not heard in this over. Matched by voice.$confidenceClause"
@@ -164,11 +178,23 @@ public object DetailViewStateMapper {
             candidates = topTwo.map { candidate ->
                 AmbiguousCandidateViewState(
                     callsign = candidate.callsign,
-                    evidence = if (candidate.databaseHit) "a known station" else "never heard before",
+                    evidence = ambiguousEvidence(candidate),
                     scoreLabel = "%.2f".format(candidate.score),
                 )
             },
         )
+    }
+
+    /**
+     * R-187: `Detail-Ambiguous.dc.html`'s own evidence line ("heard on this repeater 3 times ·
+     * Oregon" / "never heard before · Oregon") — this mapper cannot honestly back the repeater- or
+     * region-heard-count half (no per-repeater heard-count reaches [CandidateInspectionViewState]),
+     * so [CandidateInspectionViewState.databaseHit] still carries the known/unknown half, joined
+     * with the real ITU country when the candidate has one — never a fabricated count.
+     */
+    private fun ambiguousEvidence(candidate: CandidateInspectionViewState): String {
+        val known = if (candidate.databaseHit) "a known station" else "never heard before"
+        return candidate.ituCountry?.let { "$known · $it" } ?: known
     }
 
     /**
@@ -245,14 +271,50 @@ public object DetailViewStateMapper {
      * the opposite side; [PRIOR_BAR_SCALE] only ever *scales* the real `logOdds`, never invents one.
      */
     private fun priorBar(prior: PriorContributionViewState): PriorBarViewState = if (prior.isColdStart) {
-        PriorBarViewState(name = prior.priorName, fillFraction = null, valueLabel = null, arguedAgainst = false)
+        PriorBarViewState(
+            name = priorLabel(prior.priorName),
+            fillFraction = null,
+            valueLabel = null,
+            arguedAgainst = false,
+        )
     } else {
         val fraction = (kotlin.math.abs(prior.logOdds) / PRIOR_BAR_SCALE).coerceIn(0.0, 1.0).toFloat()
         PriorBarViewState(
-            name = prior.priorName,
+            name = priorLabel(prior.priorName),
             fillFraction = fraction,
             valueLabel = "%+.1f".format(prior.logOdds),
             arguedAgainst = prior.logOdds < 0.0,
         )
+    }
+
+    /**
+     * R-180: `Detail-Why.dc.html`'s prior rows read as guide §9 prose ("On this repeater", "In the
+     * FCC database") — [CallsignCandidateEntity.priorBreakdown]'s real keys (confirmed directly in
+     * `OvernightScenario.kt`, the fixture the validator's screenshot came from: `"callsign-history"`,
+     * `"database"`, `"propagation"`) are kebab/snake identifiers, not prose, and were rendered
+     * verbatim before this fix. [PRIOR_LABELS] translates the keys this codebase has real evidence
+     * for — [org.ort.app.ui.data.CorrectionPolling]'s own two named priors
+     * (`on_this_repeater`/`recent_corrections`) use the artboard's exact wording; `database` is the
+     * artboard's own "In the FCC database" for the same signal. A key with no curated entry (a
+     * resolver signal this mapper cannot cross-reference to a specific board phrase) still reads as
+     * real, sentence-case prose — its own name, dashes/underscores replaced with spaces, first letter
+     * capitalised — never the raw key, and never an invented meaning for a key this mapper cannot
+     * verify.
+     */
+    private val PRIOR_LABELS: Map<String, String> = mapOf(
+        "on_this_repeater" to "On this repeater",
+        "recent_corrections" to "Recent corrections",
+        "database" to "In the FCC database",
+        "heard_this_session" to "Heard this session",
+        "heard_acoustically" to "Heard acoustically",
+        "time_of_day" to "Time of day",
+    )
+
+    private fun priorLabel(key: String): String {
+        val normalized = key.replace('-', '_').replace(' ', '_').lowercase(java.util.Locale.ROOT)
+        return PRIOR_LABELS[normalized] ?: key
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replaceFirstChar { it.uppercaseChar() }
     }
 }

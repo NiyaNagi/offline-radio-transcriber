@@ -2,6 +2,7 @@ package org.ort.app.ui.data
 
 import android.content.Context
 import androidx.room.withTransaction
+import org.ort.core.Attribution
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
@@ -96,6 +97,12 @@ public data class PropagationOutcome(
     val priorAdjustments: List<PriorAdjustmentOutcome>,
     val deletedCount: Int,
     val affected: List<AffectedOverViewState>,
+    /** R-191: `Detail-Propagated.dc.html`'s subtitle clause ("picked from the resolver's
+     * candidates · 06:20") — the real [CorrectionRequest.tier]/`.correctedAtMillis` this
+     * propagation was applied with. Defaulted so every call site built before R-191 compiles
+     * unchanged (`undoAll`'s own synthetic outcome never surfaces on screen — see that function). */
+    val tier: CorrectionTier? = null,
+    val correctedAtMillis: Long? = null,
 ) {
     public val voiceprintReassigned: Boolean get() = voiceprintRebind != null
     public val priorsUpdatedCount: Int get() = priorAdjustments.size
@@ -110,6 +117,24 @@ public data class TranscriptVersionViewState(
     val who: String,
     val isCurrent: Boolean,
 )
+
+/**
+ * R-185 (halt), `Detail-Correct-B.dc.html`: one station this phone has heard, matched against a
+ * Tier B search query. [evidence] is built only from real, computed facts (never the board's own
+ * "Tuesday net regular" day-of-week narrative, which this package cannot honestly derive from what
+ * `:data` exposes without a real per-day-of-week query) — see [CorrectionPolling.searchHeardStations]'s
+ * own doc comment for exactly what is and is not represented.
+ */
+public data class StationSearchRow(
+    val stationId: String,
+    val evidence: String,
+    val hasVoiceOnFile: Boolean,
+    val userName: String?,
+)
+
+/** R-185: [rows] already filtered to [query]; [matchCount]/[totalCount] are `Detail-Correct-B.dc.html`'s
+ * own "Matches · N of M" — every station this phone has ever heard, not a callsign database. */
+public data class StationSearchOutcome(val rows: List<StationSearchRow>, val matchCount: Int, val totalCount: Int)
 
 public object CorrectionPolling {
 
@@ -131,6 +156,120 @@ public object CorrectionPolling {
     /** `Flow-Correct.dc.html`'s "the count is shown before applying" — computed without writing. */
     public suspend fun affectedOverCount(context: Context, transmissionId: String, scope: CorrectionScope): Int =
         affectedTransmissions(OrtDatabase.create(context.applicationContext), transmissionId, scope).size
+
+    /**
+     * R-185 (halt), `Detail-Correct-B.dc.html`. "A station heard before" **used to be true lexicon
+     * search** — audit F-018 (see this file's own class doc for R-052) replaced Tier B's original
+     * "stations known" search with [ReaderPolling.searchLexicon] (a callsign search over the
+     * bundled ITU allocation table, `:pipeline`'s `LexiconLookup`), reasoning Q8 names only three
+     * tiers and the known-stations version was a substitute for one that did not exist yet. This
+     * round's validator (and `Detail-Correct-B.dc.html` itself: "Only stations this phone has heard
+     * appear here — it is not a callsign database") makes clear that reasoning does not hold: Tier
+     * B and Tier C need to search genuinely different things — Tier B *this device's own heard
+     * history*, Tier C *the grammar/ITU table* — not the same lexicon lookup wearing two labels.
+     * F-018's lexicon search stays exactly where it landed ([ReaderPolling.searchLexicon]); this is
+     * Tier B's own, separate read, back where the board has always shown it.
+     *
+     * **No `:data` query for this exists** (`:data` is not this package's to extend) — every
+     * station this device has heard is only reachable by walking every transmission, exactly the
+     * pattern already established elsewhere in this codebase (`org.ort.app.ui.data.StationPolling`,
+     * WP8's file, derives its own station list the same way rather than a dedicated query). Real,
+     * not fabricated, for every field returned: [StationSearchRow.evidence] is built from the
+     * actual count of transmissions carrying that `stationId` (never the board's own
+     * "on this repeater"/"Tuesday net regular" narrative — this package has no frequency- or
+     * day-of-week-specific query to honestly back that), and [StationSearchRow.hasVoiceOnFile]
+     * from [org.ort.data.dao.CatalogDao.voiceprintsForStation] actually returning a row.
+     */
+    public suspend fun searchHeardStations(context: Context, query: String): StationSearchOutcome {
+        val db = OrtDatabase.create(context.applicationContext)
+        val heardCounts: Map<String, Int> = db.transmissionDao().listAll()
+            .mapNotNull { it.stationId }
+            .groupingBy { it }
+            .eachCount()
+        val q = query.trim().uppercase(Locale.ROOT)
+        val matchingIds = if (q.isBlank()) {
+            heardCounts.keys
+        } else {
+            heardCounts.keys.filter { it.uppercase(Locale.ROOT).startsWith(q) }
+        }
+        val rows = matchingIds.sorted().map { stationId ->
+            val heardCount = heardCounts.getValue(stationId)
+            val hasVoice = db.catalogDao().voiceprintsForStation(stationId).isNotEmpty()
+            val station = db.catalogDao().getStation(stationId)
+            val heardClause = if (heardCount == 1) "heard once" else "heard $heardCount times"
+            val voiceClause = if (hasVoice) "voice on file" else "no voice on file yet"
+            StationSearchRow(
+                stationId = stationId,
+                evidence = "$heardClause · $voiceClause",
+                hasVoiceOnFile = hasVoice,
+                userName = station?.userName,
+            )
+        }
+        return StationSearchOutcome(rows = rows, matchCount = rows.size, totalCount = heardCounts.size)
+    }
+
+    /**
+     * R-183, `Detail.dc.html`: an INFERRED explanation names the source over's real time ("to
+     * 02:14:07, where the callsign was heard clearly"), not the generic "to the source over" this
+     * package fell back to before this fix. Real, honest, and non-throwing for a source id that
+     * does not resolve — a stale/deleted source, or a source id from before it was recorded
+     * ([sourceTransmissionId] is always the raw stored string, no cross-module `TransmissionId.parse`
+     * required here since this reads the *same* `transmission` table directly by primary key).
+     */
+    public suspend fun sourceOverTimeLabel(context: Context, sourceTransmissionId: String?): String? {
+        if (sourceTransmissionId == null) return null
+        val db = OrtDatabase.create(context.applicationContext)
+        val source = db.transmissionDao().getById(sourceTransmissionId) ?: return null
+        return ReaderTransmissionViewStateMapper.timeLabelFor(
+            TransmissionDetail(
+                id = source.id,
+                startedAtUtcMillis = source.startedAtUtc,
+                frequencyHz = source.frequencyHz,
+                durationMs = source.durationMs,
+                signalStrength = source.signalStrength,
+                attribution = org.ort.core.Attribution.unknown(),
+                currentTranscriptText = null,
+                supersededTranscriptTexts = emptyList(),
+                hasAudio = false,
+            ),
+        )
+    }
+
+    /**
+     * R-189 (halt): the real root cause behind two separately-filed reports — a detail rendering
+     * UNKNOWN after `Undo all` even though the row genuinely reverted, *and* the same reversion
+     * roughly 2s after applying a fresh typed correction, no `Undo` involved. Both go through the
+     * identical write path, [org.ort.data.dao.CorrectionDao.recordCorrection] →
+     * `applyCorrectedAttribution`, which — correctly, per [Attribution.withCorrection]'s own
+     * contract — sets `attributionState = 'INFERRED'` with `attributionConfidence = NULL` (there is
+     * no calibrated number for "a human said so"). [org.ort.app.ui.data.ReaderPolling]'s own
+     * attribution derivation (WP4's file, not this package's to edit) requires a non-null
+     * confidence for every INFERRED row and silently downgrades anything missing one to
+     * [Attribution.unknown] — so the very next poll after a correction (or an undo-as-correction)
+     * read the row back as UNKNOWN, discarding the real, just-written `stationId` along with it.
+     *
+     * Fixed here, not in `ReaderPolling.kt`: this package's own read path re-derives the attribution
+     * directly from the real `transmission.corrected`/`stationId` columns whenever `corrected` is
+     * set — "current attribution = latest correction if any, else the resolver's" (the coordinator's
+     * own framing, verbatim) — returning [fallback] (whatever `ReaderPolling` already computed, which
+     * is correct for every *uncorrected* row) unchanged otherwise. [Attribution.withCorrection] is
+     * used exactly the way [org.ort.data.dao.CorrectionDao.applyCorrectedAttribution]'s own write
+     * shapes it — never a confidence this row does not have.
+     */
+    public suspend fun currentAttribution(
+        context: Context,
+        transmissionId: String,
+        fallback: Attribution,
+    ): Attribution {
+        val db = OrtDatabase.create(context.applicationContext)
+        val entity = db.transmissionDao().getById(transmissionId) ?: return fallback
+        val stationId = entity.stationId
+        return if (entity.corrected && stationId != null) {
+            Attribution.unknown().withCorrection(stationId)
+        } else {
+            fallback
+        }
+    }
 
     /**
      * Applies [request] to every transmission [scope] selects, each as its own
@@ -182,6 +321,8 @@ public object CorrectionPolling {
             priorAdjustments = priorAdjustments,
             deletedCount = 0,
             affected = affected,
+            tier = request.tier,
+            correctedAtMillis = request.correctedAtMillis,
         )
     }
 

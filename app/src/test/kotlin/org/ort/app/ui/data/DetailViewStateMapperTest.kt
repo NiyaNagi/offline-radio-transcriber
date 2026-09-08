@@ -141,10 +141,13 @@ class DetailViewStateMapperTest {
         assertTrue(why.candidates.single { it.callsign == "K7LWH" }.chosen)
         assertEquals("KA7LWH", why.runnerUp?.callsign)
 
+        // R-180: `DetailViewStateMapper.priorLabel` now translates a stored prior key into guide
+        // §9 sentence-case prose ("Recent corrections", not "recent corrections") — the map's own
+        // keys reflect that, not this fixture's original (pre-R-180) verbatim-passthrough casing.
         val priors = why.priors.associateBy { it.name }
-        assertEquals(null, priors.getValue("recent corrections").fillFraction)
-        assertEquals(null, priors.getValue("recent corrections").valueLabel)
-        assertTrue(priors.getValue("time of day").arguedAgainst)
-        assertFalse(priors.getValue("heard acoustically").arguedAgainst)
+        assertEquals(null, priors.getValue("Recent corrections").fillFraction)
+        assertEquals(null, priors.getValue("Recent corrections").valueLabel)
+        assertTrue(priors.getValue("Time of day").arguedAgainst)
+        assertFalse(priors.getValue("Heard acoustically").arguedAgainst)
     }
 }

@@ -47,6 +47,12 @@ public data class CandidateInspectionViewState(
     val databaseHit: Boolean,
     val selected: Boolean,
     val priorContributions: List<PriorContributionViewState>,
+    /** R-187: `Detail-Ambiguous.dc.html`'s own evidence line ("... · Oregon") names the candidate's
+     * real ITU allocation, not just whether it is a known station — carried through from
+     * [org.ort.data.entity.CallsignCandidateEntity]'s own columns (already recorded for Tier B's
+     * lexicon search; this mapper simply had not read them before this fix). */
+    val ituPrefix: String? = null,
+    val ituCountry: String? = null,
 )
 
 public data class LatticeInspectionViewState(val source: String, val modelId: String?, val createdAt: Long)
@@ -86,6 +92,8 @@ public object InspectionViewStateMapper {
                 priorContributions = (entity.priorBreakdown ?: emptyMap()).map { (name, logOdds) ->
                     PriorContributionViewState(priorName = name, logOdds = logOdds, isColdStart = logOdds == 0.0)
                 }.sortedBy { it.priorName },
+                ituPrefix = entity.ituPrefix,
+                ituCountry = entity.ituCountry,
             )
         },
     )

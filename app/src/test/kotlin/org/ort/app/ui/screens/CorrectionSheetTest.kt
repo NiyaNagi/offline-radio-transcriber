@@ -11,12 +11,13 @@ import org.junit.runner.RunWith
 import org.ort.app.ui.data.CorrectionScope
 import org.ort.app.ui.data.CorrectionTier
 import org.ort.app.ui.data.RankedCandidateViewState
+import org.ort.app.ui.data.StationSearchOutcome
+import org.ort.app.ui.data.StationSearchRow
 import org.ort.app.ui.theme.OrtTheme
-import org.ort.pipeline.passb.LexiconMatch
 import org.robolectric.RobolectricTestRunner
 
 /**
- * R-052/R-058, `Detail-Correct-A/B/C.dc.html`: the three tiers in order. Tier A/B name an
+ * R-052/R-058/R-185, `Detail-Correct-A/B/C.dc.html`: the three tiers in order. Tier A/B name an
  * already-known identity and propagate by default (`Flow-Correct.dc.html`'s own example); tier C
  * is recorded unverified and asks for scope explicitly.
  */
@@ -25,6 +26,8 @@ class CorrectionSheetTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    private val noStations: suspend (String) -> StationSearchOutcome = { StationSearchOutcome(emptyList(), 0, 0) }
 
     @Test
     fun `R_052 picking a resolver candidate applies PICK_CANDIDATE, propagated by default`() {
@@ -38,7 +41,7 @@ class CorrectionSheetTest {
                         RankedCandidateViewState("K7LVH", "score 3.1", chosen = false),
                     ),
                     everyOverSameVoiceCount = 6,
-                    onSearchLexicon = { emptyList() },
+                    onSearchStations = noStations,
                     onApply = { callsign, tier, scope -> applied = Triple(callsign, tier, scope) },
                     onDismiss = {},
                 )
@@ -52,8 +55,15 @@ class CorrectionSheetTest {
         }
     }
 
+    /**
+     * R-185 (halt): Tier B searches stations *this device has heard* — distinct from Tier C's
+     * grammar validator, and from the true lexicon search audit F-018 gave the old call site (see
+     * `CorrectionPolling.searchHeardStations`'s own doc comment). The board's own evidence
+     * ("heard N times", "voice on file") and "Matches · N of M" both render from the real
+     * `StationSearchOutcome`, never a placeholder.
+     */
     @Test
-    fun `R_052 searching the lexicon and picking a result applies SEARCH_LEXICON`() {
+    fun `R_185 searching heard stations shows real evidence and applies SEARCH_LEXICON`() {
         var applied: Triple<String, CorrectionTier, CorrectionScope>? = null
         var searched: String? = null
         composeTestRule.setContent {
@@ -62,9 +72,20 @@ class CorrectionSheetTest {
                     currentCallsign = "K7LWH",
                     candidates = emptyList(),
                     everyOverSameVoiceCount = 1,
-                    onSearchLexicon = { query ->
+                    onSearchStations = { query ->
                         searched = query
-                        listOf(LexiconMatch("K9ZZZ", ituPrefix = "K", ituCountry = "United States", ituIso = "US"))
+                        StationSearchOutcome(
+                            rows = listOf(
+                                StationSearchRow(
+                                    stationId = "K9ZZZ",
+                                    evidence = "heard 4 times · voice on file",
+                                    hasVoiceOnFile = true,
+                                    userName = null,
+                                ),
+                            ),
+                            matchCount = 1,
+                            totalCount = 112,
+                        )
                     },
                     onApply = { callsign, tier, scope -> applied = Triple(callsign, tier, scope) },
                     onDismiss = {},
@@ -73,12 +94,39 @@ class CorrectionSheetTest {
         }
 
         composeTestRule.onNodeWithText("A station heard before").performClick()
-        composeTestRule.onNodeWithContentDescription("Search the lexicon").performTextInput("K9")
+        composeTestRule.waitForIdle()
+        // SectionHeader uppercases its label — matched case-insensitively rather than assuming the exact case.
+        composeTestRule.onNodeWithText("Matches", substring = true, ignoreCase = true).assertExists()
+        composeTestRule.onNodeWithText("1 of 112", substring = true, ignoreCase = true).assertExists()
+        composeTestRule.onNodeWithText("heard 4 times", substring = true).assertExists()
+        composeTestRule.onNodeWithContentDescription("Search stations heard").performTextInput("K9")
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithContentDescription("Correct to K9ZZZ", substring = true).performClick()
 
         assert(searched == "K9")
         assert(applied == Triple("K9ZZZ", CorrectionTier.SEARCH_LEXICON, CorrectionScope.EVERY_OVER_SAME_VOICE))
+    }
+
+    @Test
+    fun `R_185 not here routes from Tier B to Tier C`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                CorrectionSheet(
+                    currentCallsign = "K7LWH",
+                    candidates = emptyList(),
+                    everyOverSameVoiceCount = 1,
+                    onSearchStations = noStations,
+                    onApply = { _, _, _ -> },
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("A station heard before").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Not here — type a callsign instead").performClick()
+
+        composeTestRule.onNodeWithContentDescription("Typed callsign").assertExists()
     }
 
     @Test
@@ -90,7 +138,7 @@ class CorrectionSheetTest {
                     currentCallsign = "K7LWH",
                     candidates = emptyList(),
                     everyOverSameVoiceCount = 6,
-                    onSearchLexicon = { emptyList() },
+                    onSearchStations = noStations,
                     onApply = { callsign, tier, scope -> applied = Triple(callsign, tier, scope) },
                     onDismiss = {},
                 )
@@ -113,7 +161,7 @@ class CorrectionSheetTest {
                     currentCallsign = "K7LWH",
                     candidates = emptyList(),
                     everyOverSameVoiceCount = 6,
-                    onSearchLexicon = { emptyList() },
+                    onSearchStations = noStations,
                     onApply = { callsign, tier, scope -> applied = Triple(callsign, tier, scope) },
                     onDismiss = {},
                 )
