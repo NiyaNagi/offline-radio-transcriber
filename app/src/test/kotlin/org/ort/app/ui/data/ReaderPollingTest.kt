@@ -466,6 +466,17 @@ class ReaderPollingTest {
         assertTrue(state.canGetBetter!!.headline.contains("1 overs"))
     }
 
+    @Test
+    @Requirement("R-266")
+    fun `R_266 Can get better reads the shared tier label, never the raw T1 enum token`(): Unit = runTest {
+        db.sessionDao().insert(session("S1").copy(deviceTier = Tier.T1.name))
+        db.transmissionDao().insert(transmission("TX1", sessionId = "S1", samplePosition = 1L))
+
+        val state = ReaderPolling.nowViewState(context, null) as NowViewState.Idle
+
+        assertEquals("captured at tier 1 · open Improve to reprocess", state.canGetBetter!!.subLine)
+    }
+
     // ---------------------------------------------------------------------------------------
     // Starting capture (ui-conformance-plan WP4, R-036).
     // ---------------------------------------------------------------------------------------

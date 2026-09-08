@@ -324,7 +324,12 @@ public object CaptureStatusMapper {
     }
 
     private fun radioFacts(rig: RigStatus.State): KeyValueFacts = when (rig) {
-        RigStatus.State.Absent -> KeyValueFacts(value = "No rig configured", subLine = "FR-RIG is not built yet")
+        // R-263: guide §9 — operator copy never carries a spec id. "FR-RIG" named the requirement,
+        // not a fact this screen's own operator would recognise; "no radio support in this build
+        // yet" says the same real thing (the rig module is genuinely unbuilt — register R-084)
+        // without it.
+        RigStatus.State.Absent ->
+            KeyValueFacts(value = "No rig configured", subLine = "no radio support in this build yet")
         is RigStatus.State.Connected -> KeyValueFacts(
             value = rig.descriptor,
             subLine = rig.bands.joinToString(" · ") { band ->

@@ -266,10 +266,30 @@ private fun legacyMarkerDescription(attribution: Attribution, showConfidence: Bo
     }
 }
 
-private fun attributionRowDescription(attribution: Attribution, callsign: String?, alternate: String?): String =
+/** [AttributionRow]'s own merged description ("filled circle, Confirmed, W7NPC") — built from
+ * [shapeDescription] plus [attributionStateDescription], the latter `internal` (not `private`) in
+ * its own right so `Rows.kt`'s `LogRow` can fold *those* words specifically into its own explicit
+ * merged description (R-244's side finding: a nested `semantics(mergeDescendants = true)`
+ * boundary, like [AttributionRow]'s own, does not reliably bubble its `contentDescription` up
+ * through a second, outer one in this Compose version — proven again in `LogRow` itself, not just
+ * the earlier `TextField` finding this mirrors) without reimplementing the same state-prose/
+ * callsign/alternate composition a second time. `LogRow` deliberately reuses only the
+ * shape-*less* half: prefixing its own copy with "filled circle, " too would make it an exact
+ * substring duplicate of [AttributionRow]'s own separate node's *entire* description, and a
+ * caller that finds "the row" by searching for that full phrase (a real one already did,
+ * `ui/screens/LogScreenTest.kt`, outside this package) would suddenly match two nodes instead of
+ * one — `AttributionRow`'s own, correct, unrelated to this fix, and `LogRow`'s new one. Dropping
+ * the shape word from `LogRow`'s own copy keeps both queries unambiguous: `AttributionRow`'s own
+ * full description (shape included) still uniquely identifies *it*, and `LogRow`'s own composed
+ * description (state prose, callsign, alternate — no shape word, plus everything else `LogRow`
+ * itself owns: time, frequency, transcript, signal, badge) uniquely identifies *the row*. */
+internal fun attributionRowDescription(attribution: Attribution, callsign: String?, alternate: String?): String =
+    "${shapeDescription(attribution.state)}, ${attributionStateDescription(attribution, callsign, alternate)}"
+
+/** [attributionRowDescription] without the leading [shapeDescription] — see that function's own
+ * doc for why `LogRow` needs exactly this half, not the whole thing. */
+internal fun attributionStateDescription(attribution: Attribution, callsign: String?, alternate: String?): String =
     buildString {
-        append(shapeDescription(attribution.state))
-        append(", ")
         append(stateProse(attribution.state))
         val identity = callsign ?: if (attribution.state == AttributionState.UNKNOWN) "unknown station" else null
         identity?.let {

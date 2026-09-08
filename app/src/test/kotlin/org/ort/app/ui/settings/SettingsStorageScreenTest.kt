@@ -15,12 +15,14 @@ import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
 /**
- * R-133/R-150 (register, round 4 System validator): the storage screen's new "when space runs
- * low" rows read real signals, and its budget-chip and category-legend rows scroll rather than
- * wrap intra-word at font scale 2.0 — see [SettingsStorageScreen]'s own doc comments for the
- * mechanism. Font-scale-2.0 is applied via `LocalDensity` (`RowsTest.kt`'s own established idiom
- * — `@Config(qualifiers = "fontscale-2.0")` is not a valid Robolectric qualifier string; this
- * project's font-scale coverage has never used it).
+ * R-133/R-150/R-251 (register, rounds 4 and 6 System validator): the storage screen's new "when
+ * space runs low" rows read real signals; its budget-chip row scrolls (WP2's `FilterChipRow`,
+ * proven on-device — round 4's own hand-rolled `horizontalScroll` clipped instead of scrolling on
+ * a real device, R-251) and its category legend wraps (a `FlowRow`) rather than either wrapping
+ * intra-word or clipping at font scale 2.0 — see [SettingsStorageScreen]'s own doc comments for
+ * the mechanism. Font-scale-2.0 is applied via `LocalDensity` (`RowsTest.kt`'s own established
+ * idiom — `@Config(qualifiers = "fontscale-2.0")` is not a valid Robolectric qualifier string;
+ * this project's font-scale coverage has never used it).
  */
 @RunWith(RobolectricTestRunner::class)
 class SettingsStorageScreenTest {
@@ -56,7 +58,7 @@ class SettingsStorageScreenTest {
     }
 
     @Test
-    fun `R_150 the budget chip row scrolls rather than wraps at font scale 2-0`() {
+    fun `R_150_R_251 the budget chip row (FilterChipRow) scrolls rather than wraps at font scale 2-0`() {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
                 OrtTheme {
@@ -74,7 +76,7 @@ class SettingsStorageScreenTest {
     }
 
     @Test
-    fun `R_150 the category legend row scrolls rather than wraps at font scale 2-0`() {
+    fun `R_150_R_251 the category legend wraps (FlowRow) rather than clipping at font scale 2-0`() {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
                 OrtTheme {
@@ -83,8 +85,9 @@ class SettingsStorageScreenTest {
             }
         }
 
-        composeTestRule
-            .onNode(hasText("Records 0.0 GB").and(hasAnyAncestor(hasScrollAction())))
-            .assertExists()
+        // The full label survives as one intact node — R-251's own screenshot showed it clipped
+        // to "Reco"/"U" with no way to reach the rest; a `FlowRow` wraps the whole entry onto its
+        // own line instead of clipping or splitting it.
+        composeTestRule.onNodeWithText("Records 0.0 GB").assertExists()
     }
 }

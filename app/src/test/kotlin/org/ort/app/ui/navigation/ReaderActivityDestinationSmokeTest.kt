@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -21,6 +22,7 @@ import org.junit.runner.Description
 import org.junit.runner.RunWith
 import org.junit.runners.model.Statement
 import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -32,6 +34,9 @@ import org.robolectric.RobolectricTestRunner
 /** Shorthand for this file's one specific [AndroidComposeTestRule] instantiation — keeps later
  * receiver-type usages under ktlint's line-length limit without wrapping generics awkwardly. */
 private typealias ReaderComposeTestRule = AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>, ReaderActivity>
+
+/** Round 5's helpers were written against this shorter name; both spellings name the same rule type. */
+private typealias ReaderComposeRule = ReaderComposeTestRule
 
 /**
  * R-129 (V3 Reader validation @3e2d4ee, `results/ui-audit/register.md`): the drawer's own report
@@ -191,8 +196,13 @@ class ReaderActivityDestinationSmokeTest {
     @Test
     fun `R_129_LOG_composes_and_survives_recreation`() = assertComposesAndSurvives(ReaderDestination.LOG)
 
+    // Round 5 (R-200): `SEARCH` no longer shows the host's `ScreenHeader` ("Open navigation") —
+    // `SearchContent` now draws its own back chevron instead (`SearchScreen.kt`'s
+    // `search-back-chevron`, `contentDescription = "Back"`) — so this case checks for that marker,
+    // not the default `assertComposesAndSurvives` every other destination still uses.
     @Test
-    fun `R_129_SEARCH_composes_and_survives_recreation`() = assertComposesAndSurvives(ReaderDestination.SEARCH)
+    fun `R_129_SEARCH_composes_and_survives_recreation`() =
+        assertComposesAndSurvives(ReaderDestination.SEARCH, expectedContentDescription = "Back")
 
     @Test
     fun `R_129_THREADS_composes_and_survives_recreation`() = assertComposesAndSurvives(ReaderDestination.THREADS)
@@ -217,6 +227,56 @@ class ReaderActivityDestinationSmokeTest {
 
     @Test
     fun `R_129_SETTINGS_composes_and_survives_recreation`() = assertComposesAndSurvives(ReaderDestination.SETTINGS)
+
+    // Round 5 (R-090/R-139/F6/F9): `EXTRA_DESTINATION=SETTINGS` with `EXTRA_SETTINGS_SCREEN` set
+    // lands directly on a sub-screen — `SettingsContent.initialScreen`'s real target now — rather
+    // than the root every other `SETTINGS` case in this class exercises. `RIG` chosen arbitrarily
+    // among the eight non-`ASSETS` sub-screens (`ASSETS` dispatches to `ModelsContent`, a different
+    // package's own file, already covered by its own tests); every sub-screen shares
+    // `SettingsSubScreen`'s one dispatch and the same `DrillInHeader(parentLabel = "Settings", ...)`
+    // this asserts on, so this one case stands for all eight.
+    //
+    // Found by writing this case, reported rather than silently worked around (out of this row's
+    // file to fix — see this round's own report): the host still renders its own `ScreenHeader`
+    // ("Open navigation") for every `SETTINGS` case, sub-screen included — `OrtNavHost.kt` has no
+    // way to know a sub-screen is showing, since that state is entirely internal to
+    // `SettingsContent` (confirmed by reading that file). `SettingsRootScreen` needs the host's
+    // header (R-130, it draws none of its own); every *sub*-screen draws its own `DrillInHeader`
+    // too, so a sub-screen reached this way shows both at once — a real, live double-header this
+    // assertion deliberately does not (and structurally cannot, without editing `ui/settings/**`)
+    // guard against; it only proves the sub-screen itself renders and survives `recreate()`.
+    @Test
+    fun `R_129_SETTINGS_RIG_initialScreen_composes_and_survives_recreation`() {
+        runReaderActivity(ReaderDestination.SETTINGS, settingsScreen = SettingsScreenId.RIG) { rule ->
+            rule.waitUntilContentDescriptionExists("Back to Settings")
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            rule.waitUntilContentDescriptionExists("Back to Settings")
+        }
+    }
+
+    // Round 6 (register R-132): `Settings-Capture`'s `Meter` action (`SettingsCaptureScreen.kt`'s
+    // `TextAction(text = "Meter", onClick = onOpenLevelMeter)`) now has a real target —
+    // `NavHostCallbacks.onOpenLevelMeter` switches to `Capture` and asks `CaptureStatusContent` to
+    // land directly on `LevelMeterScreen` (`openLevelMeter`, this round's own new parameter on that
+    // file). Landing on `Settings-Capture` via `initialScreen` first (round 5's own seam) is what
+    // makes `Meter` reachable without a real tap sequence through the `Settings` root.
+    @Test
+    fun `R_132_settings_capture_meter_opens_the_level_meter`() {
+        runReaderActivity(ReaderDestination.SETTINGS, settingsScreen = SettingsScreenId.CAPTURE) { rule ->
+            rule.waitUntilContentDescriptionExists("Back to Settings")
+            rule.onNode(hasText("Meter") and hasClickAction()).performClick()
+            // `LevelMeterScreen.kt`'s own `DrillInHeader(parentLabel = "Capture", ...)`.
+            rule.waitUntilContentDescriptionExists("Back to Capture")
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            rule.waitUntilContentDescriptionExists("Back to Capture")
+        }
+    }
 
     // -- drill-ins ------------------------------------------------------------------------------
 
@@ -306,19 +366,25 @@ class ReaderActivityDestinationSmokeTest {
 
     // -- shared plumbing ------------------------------------------------------------------------
 
-    private fun assertComposesAndSurvives(destination: ReaderDestination) {
+    private fun assertComposesAndSurvives(
+        destination: ReaderDestination,
+        // Round 5: every destination but `SEARCH` still shows the host's `ScreenHeader`, whose
+        // drawer icon is this marker — `SEARCH`'s own case passes "Back" instead (see its own
+        // comment above).
+        expectedContentDescription: String = "Open navigation",
+    ) {
         runReaderActivity(destination) { rule ->
             // `waitUntil`, not an immediate `assertIsDisplayed()`: `SettingsContent`'s own root
             // state (`SettingsRootScreen`) is not `rememberSaveable` — every fresh composition,
             // `recreate()`'s included, shows `LoadingSettings()` first while its own `LaunchedEffect`
             // reads `SettingsPolling.root` asynchronously (found by this exact assertion timing out
             // right after `recreate()` before this was added).
-            rule.waitUntilContentDescriptionExists("Open navigation")
+            rule.waitUntilContentDescriptionExists(expectedContentDescription)
 
             rule.activityRule.scenario.recreate()
             rule.waitForIdle()
 
-            rule.waitUntilContentDescriptionExists("Open navigation")
+            rule.waitUntilContentDescriptionExists(expectedContentDescription)
         }
     }
 
@@ -336,9 +402,11 @@ class ReaderActivityDestinationSmokeTest {
     private fun runReaderActivity(
         destination: ReaderDestination,
         sessionId: String? = null,
-        body: (rule: AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>, ReaderActivity>) -> Unit,
+        settingsScreen: SettingsScreenId? = null,
+        body: (rule: ReaderComposeTestRule) -> Unit,
     ) {
-        val activityRule = ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId))
+        val activityRule =
+            ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId, settingsScreen))
         val rule = AndroidComposeTestRule(activityRule) { r ->
             var activity: ReaderActivity? = null
             r.scenario.onActivity { activity = it }
@@ -392,10 +460,14 @@ class ReaderActivityDestinationSmokeTest {
      * [org.ort.app.ui.ReaderActivityTest]'s own five cases already do — R-129's crash itself is
      * unconditional on `LogContent.kt`'s own `rememberSaveable` line, so this costs nothing there.
      */
-    private fun destinationIntent(destination: ReaderDestination, sessionId: String?): Intent =
-        Intent(context, ReaderActivity::class.java)
-            .apply { sessionId?.let { putExtra(ReaderActivity.EXTRA_SESSION_ID, it) } }
-            .putExtra(ReaderActivity.EXTRA_DESTINATION, destination.name)
+    private fun destinationIntent(
+        destination: ReaderDestination,
+        sessionId: String?,
+        settingsScreen: SettingsScreenId? = null,
+    ): Intent = Intent(context, ReaderActivity::class.java)
+        .apply { sessionId?.let { putExtra(ReaderActivity.EXTRA_SESSION_ID, it) } }
+        .apply { settingsScreen?.let { putExtra(ReaderActivity.EXTRA_SETTINGS_SCREEN, it.name) } }
+        .putExtra(ReaderActivity.EXTRA_DESTINATION, destination.name)
 
     /**
      * `StationsContent`/`FrequenciesContent`/`ThreadContent` all populate their list from a real

@@ -368,10 +368,14 @@ public object ReaderPolling {
         }
         if (qualifyingWithTier.isEmpty()) return null
         val overCount = qualifyingWithTier.sumOf { (session, _) -> db.transmissionDao().listBySession(session.id).size }
-        val lowestTier = qualifyingWithTier.map { (_, tier) -> tier }.minByOrNull { it.ordinal }
+        // R-266: never the raw enum token ("T1") — the same "tier <ordinal>" shape
+        // `ImprovePolling.root`'s own headline uses (`"Captured at tier ${tier.ordinal}"`), so Now's
+        // digest item and Improve's own screen never disagree about how a tier reads out loud.
+        // `qualifyingWithTier` is non-empty (checked above), so `minByOrNull` here always finds one.
+        val lowestTier = qualifyingWithTier.map { (_, tier) -> tier }.minBy { it.ordinal }
         return CanGetBetterRow(
             headline = "$overCount overs were processed below this phone's capability",
-            subLine = "captured at ${lowestTier?.name ?: "a lower"} tier · open Improve to reprocess",
+            subLine = "captured at tier ${lowestTier.ordinal} · open Improve to reprocess",
         )
     }
 

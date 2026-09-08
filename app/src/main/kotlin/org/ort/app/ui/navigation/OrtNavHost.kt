@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalNavigationDrawer
@@ -12,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,11 +22,15 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
@@ -54,6 +60,7 @@ import org.ort.app.ui.screens.StationsContent
 import org.ort.app.ui.screens.ThreadContent
 import org.ort.app.ui.screens.ThreadDetailScreen
 import org.ort.app.ui.screens.TransmissionDetailContent
+import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
@@ -152,42 +159,9 @@ public fun OrtNavHost(
     // Hoisted into `navigator` (round 3) so `ReaderActivity`'s `FailureHostActions`, mounted above
     // this composable, can also switch destinations — see `ReaderNavigator.kt`'s own doc comment.
     var current by navigator.currentState
-    // R-017: the destination a drill-in was opened from, so back returns there — set only when a
-    // drill-in opens, read only while one is showing (`current` itself never changes meanwhile, see
-    // `onOpenDrillIn` below, but this makes the origin an explicit, testable fact rather than an
-    // implicit property of that invariant).
-    var openedFrom by rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
-    var openTransmissionId by rememberSaveable { mutableStateOf<String?>(null) }
-    var openStationId by rememberSaveable { mutableStateOf<String?>(null) }
-    var openFrequencyHz by rememberSaveable { mutableStateOf<Long?>(null) }
-    // R-017: WP5's `ThreadDetailScreen` (its own file's doc comment: "not yet reachable ... ready
-    // for whichever package wires that route") — this is that route, ready to open once WP5/WP7
-    // expose a callback into it (see this package's report on why nothing does yet).
-    var openThreadId by rememberSaveable { mutableStateOf<String?>(null) }
-    // R-017 / `Flow-Search.dc.html`: Search's input and results live here, in the host, not inside
-    // WP7's `SearchContent` — that composable is skipped entirely while a drill-in is showing (see
-    // `NavHostBody` below), and a skipped composable's own `remember` state does not survive being
-    // skipped; lifting it here is what makes "back from a detail opened from Search returns to
-    // Search with its filters intact" true rather than aspirational. `searchInput` is
-    // `rememberSaveable` via [SearchFilterInputSaver] (built in this file, no edit to WP7's own
-    // types); `searchResult` stays plain `remember` — see [SearchFilterInputSaver]'s own doc
-    // comment for why `SearchResult` gets no equivalent Saver.
-    var searchInput by rememberSaveable(stateSaver = SearchFilterInputSaver) { mutableStateOf(SearchFilterInput()) }
-    var searchResult by remember { mutableStateOf<SearchResult?>(null) }
+    val navState = rememberNavHostNavState()
     val drawerLive = rememberDrawerLiveState(sessionId, context)
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
-
-    fun closeDrillIns() {
-        openTransmissionId = null
-        openStationId = null
-        openFrequencyHz = null
-        openThreadId = null
-    }
-
-    fun onOpenDrillIn(setter: () -> Unit) {
-        openedFrom = current
-        setter()
-    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -201,7 +175,7 @@ public fun OrtNavHost(
                 improveRecordsCount = drawerLive.improveRecordsCount,
                 onSelect = { destination ->
                     current = destination
-                    closeDrillIns()
+                    navState.closeDrillIns()
                     scope.launch { drawerState.close() }
                 },
             )
@@ -213,47 +187,185 @@ public fun OrtNavHost(
                     modifier = Modifier.padding(padding).fillMaxSize(),
                     contentTopPadding = contentTopPadding,
                 ),
-                ids = NavHostIds(current, openedFrom, openTransmissionId, openStationId, openFrequencyHz, openThreadId),
-                callbacks = NavHostCallbacks(
-                    onOpenDrawer = { scope.launch { drawerState.open() } },
-                    onSearchDestination = { current = ReaderDestination.SEARCH },
-                    onCloseDrillIns = ::closeDrillIns,
-                    onOpenCapture = {
-                        current = ReaderDestination.CAPTURE
-                        closeDrillIns()
-                    },
-                    onOpenTransmission = { id -> onOpenDrillIn { openTransmissionId = id } },
-                    onOpenStation = { id -> onOpenDrillIn { openStationId = id } },
-                    onOpenFrequency = { hz -> onOpenDrillIn { openFrequencyHz = hz } },
-                    onOpenThread = { id -> onOpenDrillIn { openThreadId = id } },
-                    onOpenStations = { current = ReaderDestination.STATIONS },
-                    // R-090's `Assets` sub-screen has no external "land here" entry (WP10's
-                    // `SettingsContent` own its `screen` state entirely internally — confirmed by
-                    // reading that file before wiring this) — this opens the `Settings` root, same
-                    // limitation as `ReaderNavigator.openSettingsStorage`; reported, not silently
-                    // pretended to be the real Assets screen.
-                    onOpenModels = { current = ReaderDestination.SETTINGS },
+                ids = NavHostIds(
+                    current,
+                    navState.openedFrom.value,
+                    navState.openTransmissionId.value,
+                    navState.openStationId.value,
+                    navState.openFrequencyHz.value,
+                    navState.openThreadId.value,
+                    navigator.settingsScreenState.value,
+                    navState.openCaptureLevelMeter.value,
                 ),
+                callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
                 sessionId = sessionId,
                 context = context,
                 drawerLive = drawerLive,
                 audioPlayer = audioPlayer,
-                search = SearchHostState(
-                    input = searchInput,
-                    onInputChange = { searchInput = it },
-                    result = searchResult,
-                    onSearch = {
-                        scope.launch {
-                            val params = SearchFilterParser.parse(searchInput, SystemClock.wallMillis())
-                            val facetFilter = SearchFacetFilter.from(searchInput)
-                            searchResult = SearchPolling.search(context, params, facetFilter)
-                        }
-                    },
-                ),
+                search = searchHostState(navigator, context, scope, navState),
             )
         }
     }
 }
+
+/**
+ * Every piece of navigation state [OrtNavHost] owns beyond `navigator`'s own `current`/
+ * `settingsScreenState` — drill-in ids, each one's `openedFrom`/`searchOpenedFrom` origin, and
+ * WP7's lifted `Search` input/result (see that field's own doc comment on [OrtNavHost] for why it
+ * lives here and not inside `SearchContent`). Bundled into one [MutableState]-holding object,
+ * rather than left as separate `var ... by remember` locals in [OrtNavHost] itself, purely so
+ * [navHostCallbacks] and [searchHostState] can be pulled out to their own top-level functions —
+ * the same reason [DrawerLiveState] and [NavHostIds]/[NavHostCallbacks] already exist — and so
+ * keep [OrtNavHost] itself under detekt's `LongMethod` limit.
+ */
+private data class NavHostNavState(
+    val openedFrom: MutableState<ReaderDestination>,
+    val searchOpenedFrom: MutableState<ReaderDestination>,
+    val openTransmissionId: MutableState<String?>,
+    val openStationId: MutableState<String?>,
+    val openFrequencyHz: MutableState<Long?>,
+    val openThreadId: MutableState<String?>,
+    val searchInput: MutableState<SearchFilterInput>,
+    val searchResult: MutableState<SearchResult?>,
+    // Round 6, register R-132: whether `Capture` should land directly on `LevelMeterScreen` the
+    // next time it is freshly composed — see `CaptureStatusContent.openLevelMeter`'s own doc
+    // comment for the "opens there on launch" contract this mirrors.
+    val openCaptureLevelMeter: MutableState<Boolean>,
+) {
+    fun closeDrillIns() {
+        openTransmissionId.value = null
+        openStationId.value = null
+        openFrequencyHz.value = null
+        openThreadId.value = null
+        // Reset here too, not only where it is set true: this runs on every ordinary way of
+        // reaching `Capture` (the drawer row, the live bar's own tap target) and must not leave a
+        // stale `true` from an earlier `Settings-Capture` "Meter" tap open the meter again.
+        openCaptureLevelMeter.value = false
+    }
+
+    /** R-017: records which destination a drill-in opened from before running [setter], so a
+     * drill-in header can say "Back to <that destination>" instead of an implicit invariant. */
+    fun onOpenDrillIn(current: ReaderDestination, setter: () -> Unit) {
+        openedFrom.value = current
+        setter()
+    }
+}
+
+@Composable
+private fun rememberNavHostNavState(): NavHostNavState {
+    // R-017: the destination a drill-in was opened from, so back returns there — set only when a
+    // drill-in opens, read only while one is showing.
+    val openedFrom = rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
+    // R-200 (round 5): the destination `Search` was opened from, so `SearchContent`'s own
+    // back-chevron (`SearchScreen.kt`'s `search-back-chevron`) returns there instead of stranding
+    // the operator with no way back except the drawer, now that the host no longer draws
+    // `ScreenHeader` for `SEARCH` (see `NavHostBody`). Kept separate from `openedFrom` because
+    // `Search` is not a drill-in (it has its own drawer row) and reusing `openedFrom` here would
+    // wrongly imply a drill-in opened under `Search` should say "Back to <wherever Search itself
+    // came from>" rather than "Back to Search".
+    val searchOpenedFrom = rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
+    val openTransmissionId = rememberSaveable { mutableStateOf<String?>(null) }
+    val openStationId = rememberSaveable { mutableStateOf<String?>(null) }
+    val openFrequencyHz = rememberSaveable { mutableStateOf<Long?>(null) }
+    // R-017: WP5's `ThreadDetailScreen` (its own file's doc comment: "not yet reachable ... ready
+    // for whichever package wires that route") — this is that route, ready to open once WP5/WP7
+    // expose a callback into it (see this package's report on why nothing does yet).
+    val openThreadId = rememberSaveable { mutableStateOf<String?>(null) }
+    // R-017 / `Flow-Search.dc.html`: Search's input and results live here, in the host, not inside
+    // WP7's `SearchContent` — that composable is skipped entirely while a drill-in is showing (see
+    // `NavHostBody`), and a skipped composable's own `remember` state does not survive being
+    // skipped; lifting it here is what makes "back from a detail opened from Search returns to
+    // Search with its filters intact" true rather than aspirational. `searchInput` is
+    // `rememberSaveable` via [SearchFilterInputSaver] (built in this file, no edit to WP7's own
+    // types); `searchResult` stays plain `remember` — see [SearchFilterInputSaver]'s own doc
+    // comment for why `SearchResult` gets no equivalent Saver.
+    val searchInput = rememberSaveable(stateSaver = SearchFilterInputSaver) { mutableStateOf(SearchFilterInput()) }
+    val searchResult = remember { mutableStateOf<SearchResult?>(null) }
+    val openCaptureLevelMeter = rememberSaveable { mutableStateOf(false) }
+    return NavHostNavState(
+        openedFrom,
+        searchOpenedFrom,
+        openTransmissionId,
+        openStationId,
+        openFrequencyHz,
+        openThreadId,
+        searchInput,
+        searchResult,
+        openCaptureLevelMeter,
+    )
+}
+
+/** Builds [NavHostBody]'s [NavHostCallbacks] — split out of [OrtNavHost] purely to keep that
+ * function under detekt's `LongMethod` limit, the same reason [NavHostBody]/[DestinationContent]
+ * were themselves split out before this round. */
+private fun navHostCallbacks(
+    navigator: ReaderNavigator,
+    scope: CoroutineScope,
+    drawerState: DrawerState,
+    navState: NavHostNavState,
+): NavHostCallbacks {
+    val currentState = navigator.currentState
+    return NavHostCallbacks(
+        onOpenDrawer = { scope.launch { drawerState.open() } },
+        onSearchDestination = {
+            navState.searchOpenedFrom.value = currentState.value
+            currentState.value = ReaderDestination.SEARCH
+        },
+        onCloseDrillIns = navState::closeDrillIns,
+        onOpenCapture = {
+            currentState.value = ReaderDestination.CAPTURE
+            navState.closeDrillIns()
+        },
+        onOpenTransmission = { id ->
+            navState.onOpenDrillIn(currentState.value) { navState.openTransmissionId.value = id }
+        },
+        onOpenStation = { id ->
+            navState.onOpenDrillIn(currentState.value) { navState.openStationId.value = id }
+        },
+        onOpenFrequency = { hz ->
+            navState.onOpenDrillIn(currentState.value) { navState.openFrequencyHz.value = hz }
+        },
+        onOpenThread = { id ->
+            navState.onOpenDrillIn(currentState.value) { navState.openThreadId.value = id }
+        },
+        onOpenStations = { currentState.value = ReaderDestination.STATIONS },
+        // R-139 (round 5): `SettingsContent.initialScreen` is real now (WP10 merged it —
+        // confirmed by reading `ui/settings/SettingsContent.kt` before wiring this), so `Now`'s
+        // "Install a model" lands directly on `Assets` instead of the root the operator used to
+        // have to tap through themselves.
+        onOpenModels = { navigator.openSettings(SettingsScreenId.ASSETS) },
+        // Round 6, register R-132: `SettingsContent`'s own `onOpenLevelMeter` (its doc comment:
+        // "the host is expected to wire it the same way it wires every other cross-package
+        // drill-in") — `Settings-Capture`'s `Meter` action switches to `Capture` and asks
+        // `CaptureStatusContent` to land directly on `LevelMeterScreen`.
+        onOpenLevelMeter = {
+            currentState.value = ReaderDestination.CAPTURE
+            navState.openCaptureLevelMeter.value = true
+        },
+    )
+}
+
+/** Builds [DestinationContent]'s [SearchHostState] — same reason as [navHostCallbacks]. */
+private fun searchHostState(
+    navigator: ReaderNavigator,
+    context: android.content.Context,
+    scope: CoroutineScope,
+    navState: NavHostNavState,
+): SearchHostState = SearchHostState(
+    input = navState.searchInput.value,
+    onInputChange = { navState.searchInput.value = it },
+    result = navState.searchResult.value,
+    onSearch = {
+        scope.launch {
+            val params = SearchFilterParser.parse(navState.searchInput.value, SystemClock.wallMillis())
+            val facetFilter = SearchFacetFilter.from(navState.searchInput.value)
+            navState.searchResult.value = SearchPolling.search(context, params, facetFilter)
+        }
+    },
+    // R-200: `SearchContent`'s own back-chevron returns to wherever `Search` was opened from —
+    // see `NavHostNavState.searchOpenedFrom`'s own doc comment.
+    onBack = { navigator.currentState.value = navState.searchOpenedFrom.value },
+)
 
 /** [NavHostBody]'s own `modifier` (from [OrtNavHost]'s `Scaffold` inner padding) and, register
  * R-178, the banner-height top padding [org.ort.app.ui.failures.FailureHost] reports — bundled,
@@ -269,6 +381,12 @@ private data class NavHostIds(
     val stationId: String?,
     val frequencyHz: Long?,
     val threadId: String?,
+    // Round 5: the sub-screen `SettingsContent` should land on the next time it is freshly
+    // composed — see `settingsInitialScreen`'s own doc comment in `OrtNavHost`.
+    val settingsInitialScreen: SettingsScreenId?,
+    // Round 6, register R-132: whether `Capture` should land on `LevelMeterScreen` the next time
+    // it is freshly composed — see `NavHostNavState.openCaptureLevelMeter`'s own doc comment.
+    val openCaptureLevelMeter: Boolean,
 )
 
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
@@ -283,18 +401,22 @@ private data class NavHostCallbacks(
     val onOpenThread: (String) -> Unit,
     val onOpenStations: () -> Unit,
     val onOpenModels: () -> Unit,
+    val onOpenLevelMeter: () -> Unit,
 )
 
 /**
  * R-017: WP7's [SearchContent]'s `input`/`result`, owned by [OrtNavHost] — see that function's doc
  * comment. [onSearch] is the host's own trigger (WP7's `SearchContent` takes `onSearch: () ->
- * Unit`, not a result setter — the host runs the query and writes [result] itself).
+ * Unit`, not a result setter — the host runs the query and writes [result] itself). [onBack]
+ * (round 5, R-200) is the second half of that same file's own doc comment on its `onBack`
+ * parameter — see `searchOpenedFrom` in `OrtNavHost`.
  */
 private data class SearchHostState(
     val input: SearchFilterInput,
     val onInputChange: (SearchFilterInput) -> Unit,
     val result: SearchResult?,
     val onSearch: () -> Unit,
+    val onBack: () -> Unit,
 )
 
 /**
@@ -314,6 +436,16 @@ private fun NavHostBody(
     audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
     search: SearchHostState,
 ) {
+    // Register R-262 (accessibility validator): the same real-measured-height mechanism
+    // [org.ort.app.ui.failures.FailureHost] built for the banner's `contentTopPadding` (that
+    // file's own R-178 doc comment), mirrored for [LiveBar]'s own pinned bottom placement — without
+    // this, a destination's own scrollable content (`ModelsContent`/`Settings-Assets`, where this
+    // was found) sizes itself to the full content column height and the live bar then pins on top
+    // of its last row rather than the column making room for it. `0.dp` (density-converted from
+    // the measured px) whenever the live bar is not currently shown — mirrors `FailurePresentation
+    // .None -> onBannerHeightChanged(0.dp)` in that same file.
+    var liveBarHeight by remember { mutableStateOf(0.dp) }
+    val density = LocalDensity.current
     Column(modifier = layout.modifier) {
         val drillInIds = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId)
         val isDrillIn = drillInIds.any { it != null }
@@ -330,7 +462,15 @@ private fun NavHostBody(
         // "Open navigation" to ever exist. `SETTINGS` is an ordinary destination again, exactly like
         // every other non-drill-in one; the two fixes cannot both stand, and the later, more specific
         // one (`ui/settings/**`'s own file, stating outright what it now expects the host to do) wins.
-        if (!isDrillIn) {
+        //
+        // Round 5 (register R-200): `SEARCH` gets the identical treatment, for a different reason
+        // than `SETTINGS`'s own — `Search.dc.html`'s header is a back chevron plus the inline query
+        // field, not the generic drawer/search bar every other destination gets, and `SearchContent`
+        // (WP7's file, confirmed by reading its own doc comment before this) now draws exactly that
+        // itself. Unlike `SETTINGS`'s root, `SEARCH` has no state where nothing draws a header of its
+        // own — it always does — so there is no analogous "zero-header" failure mode to guard here.
+        val isSearch = ids.current == ReaderDestination.SEARCH
+        if (!isDrillIn && !isSearch) {
             // R-003/R-004/R-015: drawer icon, live dot + elapsed while a session is capturing,
             // search icon — no title, the destination content below draws its own (`Main.dc.html`'s
             // 27sp title is `NowScreen`'s, not the header's).
@@ -350,7 +490,7 @@ private fun NavHostBody(
         // passes `ids.openedFrom.label`, so the header names the true origin (R-017), e.g. "Back to
         // Search" for a transmission opened from a search result.
 
-        Box(modifier = Modifier.weight(1f).padding(top = layout.contentTopPadding)) {
+        Box(modifier = Modifier.weight(1f).padding(top = layout.contentTopPadding, bottom = liveBarHeight)) {
             when {
                 ids.transmissionId != null -> TransmissionDetailContent(
                     context = context,
@@ -388,6 +528,8 @@ private fun NavHostBody(
 
                 else -> DestinationContent(
                     current = ids.current,
+                    settingsInitialScreen = ids.settingsInitialScreen,
+                    openCaptureLevelMeter = ids.openCaptureLevelMeter,
                     sessionId = sessionId,
                     context = context,
                     search = search,
@@ -404,10 +546,25 @@ private fun NavHostBody(
         // assuming otherwise); rendering the host's bar there too would stack two.
         val embedsOwnLiveBar = !isDrillIn &&
             (ids.current == ReaderDestination.NOW || ids.current == ReaderDestination.CAPTURE)
-        if (!embedsOwnLiveBar) {
-            drawerLive.liveBar?.let { liveBarState ->
-                LiveBar(state = liveBarState, onClick = callbacks.onOpenCapture)
+        val shownLiveBar = if (!embedsOwnLiveBar) drawerLive.liveBar else null
+        if (shownLiveBar != null) {
+            // Wrapped, not passed as `LiveBar`'s own `modifier` (that param reaches only its
+            // inner clickable `Row`, not the 1dp top-edge strip above it — `ui/components/
+            // LiveBar.kt` is outside this row to edit for a more precise seam) — measures this
+            // bar's whole real footprint as pinned in this `Column`. `testTag` (register R-262):
+            // a stable node for a test to read this wrapper's own `boundsInRoot`, independent of
+            // `LiveBar`'s own runtime-varying label text.
+            Box(
+                modifier = Modifier
+                    .testTag("live-bar-clearance")
+                    .onGloballyPositioned { coordinates ->
+                        liveBarHeight = with(density) { coordinates.size.height.toDp() }
+                    },
+            ) {
+                LiveBar(state = shownLiveBar, onClick = callbacks.onOpenCapture)
             }
+        } else {
+            liveBarHeight = 0.dp
         }
     }
 }
@@ -477,6 +634,8 @@ private fun rememberDrawerLiveState(sessionId: String?, context: android.content
 @Composable
 private fun DestinationContent(
     current: ReaderDestination,
+    settingsInitialScreen: SettingsScreenId?,
+    openCaptureLevelMeter: Boolean,
     sessionId: String?,
     context: android.content.Context,
     search: SearchHostState,
@@ -521,6 +680,7 @@ private fun DestinationContent(
             onSearch = search.onSearch,
             onOpen = onOpenTransmission,
             modifier = content,
+            onBack = search.onBack,
         )
 
         // Round 3: `ThreadContent` gained a real `onOpenThread` too — a thread card now opens the
@@ -539,18 +699,46 @@ private fun DestinationContent(
         ReaderDestination.FREQUENCIES ->
             FrequenciesContent(context = context, onOpen = onOpenFrequency, modifier = content)
 
-        ReaderDestination.CAPTURE ->
-            CaptureStatusContent(context = context, sessionId = sessionId, modifier = content)
+        // Round 6, register R-132: `openLevelMeter` is real now — `Settings-Capture`'s `Meter`
+        // action (via `NavHostCallbacks.onOpenLevelMeter`) lands here directly on the level meter.
+        ReaderDestination.CAPTURE -> CaptureStatusContent(
+            context = context,
+            sessionId = sessionId,
+            modifier = content,
+            openLevelMeter = openCaptureLevelMeter,
+        )
 
         // ui-conformance-plan WP10 (register R-090/R-091/R-092/R-107): all three dispatch to
         // WP10's own real content composables now that they are on this branch. `Earlier nights`
         // and `Improve records` no longer fall through to `PlaceholderScreen` — see
         // `ReaderDestination`'s own doc comment for what each one now is.
+        // Round 5 (R-090/R-139/F6/F9): `initialScreen` is real now — `navigator.openSettings`
+        // (`NavHostCallbacks.onOpenModels` above, and `ReaderActivity.kt`'s `FailureHostActions`)
+        // writes `settingsInitialScreen`, read fresh here every time `SETTINGS` becomes `current`.
         ReaderDestination.SETTINGS ->
-            org.ort.app.ui.settings.SettingsContent(context = context, onDrawer = onOpenDrawer, modifier = content)
+            org.ort.app.ui.settings.SettingsContent(
+                context = context,
+                onDrawer = onOpenDrawer,
+                modifier = content,
+                initialScreen = settingsInitialScreen,
+                // Round 6, register R-132: real now — see `NavHostCallbacks.onOpenLevelMeter`'s
+                // own comment above.
+                onOpenLevelMeter = callbacks.onOpenLevelMeter,
+            )
 
+        // Round 5 (R-092/R-107): `onOpenTransmission` is real now — WP10 merged it (confirmed by
+        // reading `ui/digest/SessionsContent.kt` before wiring this). `onOpenDrillIn` (this file's
+        // `OrtNavHost`, where `callbacks.onOpenTransmission` is built) records `openedFrom = current`
+        // at the moment the tap fires, which is `EARLIER_NIGHTS` for every tap this dispatch can
+        // ever produce — so the transmission drill-in's `backLabel` reads `ReaderDestination
+        // .EARLIER_NIGHTS.label`, "Earlier nights", with no extra state needed here.
         ReaderDestination.EARLIER_NIGHTS ->
-            org.ort.app.ui.digest.SessionsContent(context = context, onDrawer = onOpenDrawer, modifier = content)
+            org.ort.app.ui.digest.SessionsContent(
+                context = context,
+                onDrawer = onOpenDrawer,
+                modifier = content,
+                onOpenTransmission = onOpenTransmission,
+            )
 
         ReaderDestination.IMPROVE_RECORDS ->
             org.ort.app.ui.improve.ImproveContent(context = context, onDrawer = onOpenDrawer, modifier = content)

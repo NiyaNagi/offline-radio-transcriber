@@ -17,12 +17,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.ui.theme.OrtSpacing
+import org.ort.pipeline.reprocess.ReprocessStatus
 
 private sealed interface ImprovePage {
     data object Root : ImprovePage
     data class Select(val group: ImproveGroupViewState) : ImprovePage
     data class Running(val transmissionIds: List<String>, val headline: String) : ImprovePage
-    data class Done(val headline: String, val clearedCount: Int) : ImprovePage
+    data class Done(val headline: String, val clearedCount: Int, val summary: ReprocessStatus.Summary?) : ImprovePage
 }
 
 /**
@@ -30,10 +31,17 @@ private sealed interface ImprovePage {
  * navigation across `Improve` → `Improve-Select` → `Improve-Running` → `Improve-Done`
  * (`Flow-Improve.dc.html`) as local state, the same pattern [org.ort.app.ui.settings.SettingsContent]
  * uses for its own sub-screens.
+ *
+ * WP11d addendum (round 5): drives [RealImproveRunner] now that `:pipeline`'s reprocessing engine
+ * exists — [FakeImproveRunner] stays only for tests and the debug scenario simulator (neither goes
+ * through this composable). `ReprocessStatus.state` (a process-wide holder [ReprocessRunner]
+ * publishes to as a side effect of the very `Flow` [runner]`.run` returns) is polled separately
+ * while [ImprovePage.Running] is showing, both for the engine's own capture-priority auto-pause
+ * (FR-REP-6) and for the real `Summary` [ImprovePage.Done] renders (R-143).
  */
 @Composable
 public fun ImproveContent(context: Context, onDrawer: () -> Unit, modifier: Modifier = Modifier) {
-    val runner = remember { FakeImproveRunner(context) }
+    val runner = remember { RealImproveRunner(context) }
     var page by remember { mutableStateOf<ImprovePage>(ImprovePage.Root) }
     var root by remember { mutableStateOf<ImproveRootViewState?>(null) }
     var refreshToken by remember { mutableStateOf(0) }
@@ -74,48 +82,89 @@ public fun ImproveContent(context: Context, onDrawer: () -> Unit, modifier: Modi
             }
         }
 
-        is ImprovePage.Running -> {
-            var done by remember(current.transmissionIds) { mutableStateOf(0) }
-            var paused by remember(current.transmissionIds) { mutableStateOf(false) }
-            var job by remember(current.transmissionIds) { mutableStateOf<Job?>(null) }
-            val total = current.transmissionIds.size
-
-            LaunchedEffect(current.transmissionIds) {
-                job = launch {
-                    // A cold flow's `emit` suspends until this block returns, so pausing here
-                    // genuinely pauses `FakeImproveRunner`'s work, not just this screen's display.
-                    runner.run(current.transmissionIds).collect { progress ->
-                        while (paused) delay(120L)
-                        done = progress.done
-                    }
-                    refreshToken++
-                    page = ImprovePage.Done(current.headline, done)
-                }
-            }
-
-            ImproveRunningScreen(
-                state = ImproveRunningViewState(
-                    headline = current.headline,
-                    doneCount = done,
-                    totalCount = total,
-                    paused = paused,
-                ),
-                onPause = { paused = !paused },
-                onCancel = {
-                    job?.cancel()
-                    refreshToken++
-                    page = ImprovePage.Done(current.headline, done)
-                },
-                modifier = modifier,
-            )
-        }
+        is ImprovePage.Running -> RunningPage(
+            current = current,
+            runner = runner,
+            modifier = modifier,
+            onDone = { headline, done, summary ->
+                refreshToken++
+                page = ImprovePage.Done(headline, done, summary)
+            },
+        )
 
         is ImprovePage.Done -> ImproveDoneScreen(
-            state = ImproveDoneViewState(headline = current.headline, clearedCount = current.clearedCount),
+            state = ImproveDoneViewState(
+                headline = current.headline,
+                clearedCount = current.clearedCount,
+                summary = current.summary,
+            ),
             onDone = { page = ImprovePage.Root },
             modifier = modifier,
         )
     }
+}
+
+/**
+ * [ImprovePage.Running]'s own body, split out of [ImproveContent] purely to keep that function
+ * under detekt's length limit. [onDone] takes `(headline, doneCount, summary)` rather than
+ * building an [ImprovePage.Done] itself — that type is `private` to the caller's file scope, and
+ * the token-bump `ImproveContent` does alongside it stays there, one call site, not duplicated for
+ * both the natural-completion and Cancel exits below.
+ */
+@Composable
+private fun RunningPage(
+    current: ImprovePage.Running,
+    runner: ImproveRunner,
+    modifier: Modifier,
+    onDone: (headline: String, doneCount: Int, summary: ReprocessStatus.Summary?) -> Unit,
+) {
+    var done by remember(current.transmissionIds) { mutableStateOf(0) }
+    var paused by remember(current.transmissionIds) { mutableStateOf(false) }
+    var autoPausedReason by remember(current.transmissionIds) { mutableStateOf<String?>(null) }
+    var job by remember(current.transmissionIds) { mutableStateOf<Job?>(null) }
+    val total = current.transmissionIds.size
+
+    LaunchedEffect(current.transmissionIds) {
+        job = launch {
+            // A cold flow's `emit` suspends until this block returns, so pausing here genuinely
+            // pauses the run, not just this screen's display.
+            runner.run(current.transmissionIds).collect { progress ->
+                while (paused) delay(120L)
+                done = progress.done
+            }
+            val summary = (ReprocessStatus.state as? ReprocessStatus.State.Done)?.summary
+            onDone(current.headline, done, summary)
+        }
+    }
+    // FR-REP-6: the engine's own capture-priority yield, read separately from the collector above
+    // so it updates even while that coroutine is itself parked in the `while (paused) delay(...)`
+    // loop above — see ImproveViewData.kt's own doc comment.
+    LaunchedEffect(current.transmissionIds) {
+        while (true) {
+            autoPausedReason = if (ReprocessStatus.state is ReprocessStatus.State.Paused) {
+                "waiting — capture is busy"
+            } else {
+                null
+            }
+            delay(AUTO_PAUSE_POLL_INTERVAL_MILLIS)
+        }
+    }
+
+    ImproveRunningScreen(
+        state = ImproveRunningViewState(
+            headline = current.headline,
+            doneCount = done,
+            totalCount = total,
+            paused = paused,
+            autoPausedReason = autoPausedReason,
+        ),
+        onPause = { paused = !paused },
+        onCancel = {
+            job?.cancel()
+            onDone(current.headline, done, null)
+        },
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -124,3 +173,5 @@ private fun Loading(modifier: Modifier = Modifier) {
         Text(text = "Loading…", modifier = Modifier.semantics { contentDescription = "Loading improve records" })
     }
 }
+
+private const val AUTO_PAUSE_POLL_INTERVAL_MILLIS = 200L

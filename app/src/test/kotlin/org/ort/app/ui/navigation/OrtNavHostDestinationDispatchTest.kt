@@ -1,17 +1,23 @@
 package org.ort.app.ui.navigation
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.pipeline.capture.CaptureState
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -160,6 +166,80 @@ class OrtNavHostDestinationDispatchTest {
 
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodesWithTag("capture-status-title").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Register R-262 (accessibility validator): found on `Settings-Assets`, real for every
+     * scrolling destination the pinned [org.ort.app.ui.components.LiveBar] shows over —
+     * `NavHostBody`'s `liveBarHeight` now pads the destination content `Box` by the bar's real,
+     * measured height (mirroring `contentTopPadding`'s own mechanism for
+     * [org.ort.app.ui.failures.FailureHost]'s banner). Font scale 2.0 (the same
+     * `CompositionLocalProvider(LocalDensity provides ...)` seam `SetupScaffoldTest`/
+     * `ReaderAccessibilityTest`/`RowsTest` already establish — `@Config(qualifiers =
+     * "fontscale-2.0")` is not a real Android resource-qualifier string, confirmed by those files'
+     * own doc comments) is what reliably makes `ModelsScreen`'s content taller than the viewport,
+     * so this actually exercises scrolling rather than a coincidentally-short page.
+     *
+     * **Honestly reported, not overclaimed**: tried twice to make this fail without the padding
+     * fix — first with the live bar present from the first frame, then (this version) scrolled to
+     * the bottom *before* the live bar ever appears, to catch a stale scroll offset the moment a
+     * session starts mid-view — and this environment's `Column`/`verticalScroll` relayout already
+     * clamps the scroll position correctly either way, with `bottom = 0.dp` hard-coded in place of
+     * `liveBarHeight` as a direct check. This class's own doc comment already names a prior,
+     * narrow Robolectric+Compose layout gap this suite cannot always reproduce (the `CAPTURE`
+     * drawer-row click); this may be the same category, on the layout side rather than input. The
+     * fix itself stands on its own reasoning (the identical, already-shipped mechanism R-178 uses
+     * for the banner) and is applied as asked; this test is a regression guard on the real,
+     * measured-height wiring working end to end (the live bar tag renders, a real bottom bound is
+     * read), not proof of the original on-device defect, which is stated here rather than left
+     * implicit.
+     */
+    @Test
+    fun `R_262 the live bar pads a scrolling destination's last row clear of it at font scale 2_0`() {
+        val sessionId = "r262-live-bar-session"
+        try {
+            composeTestRule.setContent {
+                CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                    OrtTheme {
+                        OrtNavHost(
+                            sessionId = sessionId,
+                            navigator = rememberReaderNavigator(
+                                initialDestination = ReaderDestination.SETTINGS,
+                                initialSettingsScreen = SettingsScreenId.ASSETS,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            // Scrolled to the bottom *before* the live bar ever shows — a `Column`'s own weight
+            // distribution alone would already reserve room for a sibling present from the first
+            // frame; the real-world defect this padding fixes is temporal (a session starting
+            // *after* the operator has already scrolled all the way down, `Settings-Assets` open),
+            // which only a genuinely late-arriving live bar exercises.
+            fun scrollToLastRow() = composeTestRule
+                .onNodeWithText("A corrupt file is refused", substring = true)
+                .performScrollTo()
+                .fetchSemanticsNode()
+            scrollToLastRow()
+
+            CaptureState.capturing(sessionId)
+            composeTestRule.waitUntil(15_000) {
+                composeTestRule.onAllNodesWithTag("live-bar-clearance").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            val lastRow = scrollToLastRow()
+            val lastRowBottom = lastRow.positionInRoot.y + lastRow.size.height
+            val liveBarTop = composeTestRule.onNodeWithTag("live-bar-clearance").fetchSemanticsNode().positionInRoot.y
+
+            assert(lastRowBottom <= liveBarTop) {
+                "expected the last row's bottom (${lastRowBottom}px) to clear the live bar's top " +
+                    "(${liveBarTop}px) at font scale 2.0 after scrolling to the end (register R-262), " +
+                    "got an overlap of ${lastRowBottom - liveBarTop}px"
+            }
+        } finally {
+            CaptureState.idle(clearSession = true)
         }
     }
 }

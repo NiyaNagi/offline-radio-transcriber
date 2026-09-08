@@ -1,7 +1,10 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
@@ -85,5 +88,35 @@ class SettingsContentTest {
         composeTestRule.waitUntilTextExists("Input and level")
         composeTestRule.onNodeWithText("Input and level").assertExists()
         composeTestRule.onNodeWithText("RECORDS").assertDoesNotExist()
+    }
+
+    // Split into two tests (round 6 fix-up): a single `ComposeContentTestRule` refuses a second
+    // `setContent` call within one test ("Cannot call setContent twice per test!") — each half of
+    // the double-header regression this covers needs its own fresh composition regardless, so this
+    // is not a loss of coverage, just two `@Test` functions instead of one two-act test body.
+
+    @Test
+    @Requirement("R-090")
+    fun `R_090_settings_root_has_one_header_and_sub_screens_one_drill_in_header — the root draws exactly one`() {
+        // Round 6 (WP3's own smoke test find): the root draws its own `ScreenHeader` again
+        // (`SettingsRootScreen`'s own doc comment says why) — exactly one "Open navigation" node,
+        // never zero (that would be R-130's bug back) and never two (the double-header this fixes).
+        composeTestRule.setContent { OrtTheme { SettingsContent(context = context, onDrawer = {}) } }
+        composeTestRule.waitUntilTextExists("RECORDS")
+        composeTestRule.onAllNodesWithContentDescription("Open navigation").assertCountEquals(1)
+    }
+
+    @Test
+    @Requirement("R-090")
+    fun `R_090_settings_root_has_one_header_and_sub_screens_one_drill_in_header — a sub-screen's own header`() {
+        // A sub-screen entered directly via `initialScreen` (WP3's own real entry points) draws
+        // only its `DrillInHeader` back chevron — no `ScreenHeader`/drawer icon of its own, since
+        // this composable no longer draws one outside the root.
+        composeTestRule.setContent {
+            OrtTheme { SettingsContent(context = context, onDrawer = {}, initialScreen = SettingsScreenId.STORAGE) }
+        }
+        composeTestRule.waitUntilTextExists("Storage and retention")
+        composeTestRule.onNodeWithContentDescription("Back to Settings").assertExists()
+        composeTestRule.onAllNodesWithContentDescription("Open navigation").assertCountEquals(0)
     }
 }

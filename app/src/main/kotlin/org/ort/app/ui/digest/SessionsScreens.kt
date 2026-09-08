@@ -30,6 +30,7 @@ import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.drawHatchRegion
 import org.ort.app.ui.improve.Plurals
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -155,7 +156,26 @@ private fun SessionRowSubLine(session: SessionRowViewState, modifier: Modifier =
         if (session.gapCount > 0) {
             Text(text = " · ", style = OrtType.subLine, color = bodyColor)
             androidx.compose.foundation.Canvas(modifier = Modifier.padding(end = 4.dp).size(7.dp, 6.dp)) {
-                drawGapHatch(color = OrtColors.accentAmber)
+                // R-250 (register, round 6 System validator pass 2, halt): this used to compute its
+                // own stripe pitch as a fraction of the canvas width (`size.width / 3f`) — a canvas
+                // laid out at zero width during a font-scale-2.0 relayout made that pitch zero too,
+                // so the loop's own `x += stripeWidth * 2` never advanced and the draw pass spun
+                // forever on the main thread (an ANR, never recovering). Reuses
+                // `org.ort.app.ui.components.drawHatchRegion` — the same shared, fixed-dp-pitch
+                // hatch `ActivityPatternChart`'s own not-listening texture already draws with,
+                // which cannot degenerate this way since its pitch is a caller-supplied constant,
+                // never derived from the canvas size.
+                if (size.width > 0f && size.height > 0f) {
+                    drawHatchRegion(
+                        left = 0f,
+                        top = 0f,
+                        width = size.width,
+                        height = size.height,
+                        color = OrtColors.accentAmber,
+                        pitchPx = 4.dp.toPx(),
+                        strokeWidthPx = 2.dp.toPx(),
+                    )
+                }
             }
             Text(
                 text = Plurals.count(session.gapCount, "gap"),
@@ -163,22 +183,6 @@ private fun SessionRowSubLine(session: SessionRowViewState, modifier: Modifier =
                 color = OrtColors.accentAmber,
             )
         }
-    }
-}
-
-/** `Sessions.dc.html`'s `.hatch` swatch — a 45° repeating diagonal stripe, the same visual language
- * [ActivityPatternChart]'s own not-listening hatch uses (guide §7: never a font glyph for this). */
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGapHatch(color: androidx.compose.ui.graphics.Color) {
-    val stripeWidth = size.width / 3f
-    var x = -size.height
-    while (x < size.width) {
-        drawLine(
-            color = color,
-            start = androidx.compose.ui.geometry.Offset(x, size.height),
-            end = androidx.compose.ui.geometry.Offset(x + size.height, 0f),
-            strokeWidth = stripeWidth,
-        )
-        x += stripeWidth * 2
     }
 }
 
