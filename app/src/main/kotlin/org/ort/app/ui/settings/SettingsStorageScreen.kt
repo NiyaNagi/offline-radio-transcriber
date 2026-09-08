@@ -1,9 +1,10 @@
 package org.ort.app.ui.settings
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
@@ -65,15 +67,14 @@ public fun SettingsStorageScreen(
                 value = state.budgetGb?.let { "$it GB" } ?: "not set",
                 subLine = state.nightsLeftLabel ?: "not enough data to project nights left",
             )
-            // R-150 (round 4, System validator): at font scale 2.0 a fixed-width `Row` squeezes
-            // each chip's `Text` below its own intrinsic width, wrapping "Unlimited" one letter per
-            // line rather than the whole word. `horizontalScroll` keeps every chip at its natural
-            // width and lets the row scroll instead — guide §4/AC-63's "reflow or scroll, never
-            // wrap intra-word".
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
-            ) {
+            // R-150/R-251 (register, rounds 4 and 6 System validator): at font scale 2.0 a
+            // fixed-width `Row` squeezed each chip's `Text` below its own intrinsic width,
+            // wrapping "Unlimited" one letter per line. A hand-rolled `Modifier.horizontalScroll`
+            // fix (round 4) then clipped at the right edge on the real device with no way to swipe
+            // to it — R-251 asked for WP2's own `FilterChipRow`, already proven to scroll
+            // correctly on-device elsewhere in this app, instead of a second, independent
+            // implementation of the same idea.
+            FilterChipRow {
                 listOf(10, 20, 30, 60).forEach { gb ->
                     TextAction(text = "$gb GB", onClick = { onSetBudgetGb(gb) })
                 }
@@ -144,6 +145,7 @@ private fun LowSpaceRows(warnAtNightsLeft: Int, hardFloorLabel: String, modifier
 
 /** The storage-category bar + legend, split out of [SettingsStorageScreen] purely to keep that
  * function under detekt's length limit. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StorageCategoryBreakdown(
     categories: List<SettingsStorageCategoryViewState>,
@@ -162,11 +164,14 @@ private fun StorageCategoryBreakdown(
                 ) {}
             }
         }
-        // R-150: same fix as the budget chips above — the legend wrapped "Records / 0.0 / GB"
-        // across separate lines at font scale 2.0 when each label was squeezed into a fixed share
-        // of the row's width; scrolling keeps every legend entry intact.
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm).horizontalScroll(rememberScrollState()),
+        // R-150/R-251: the legend wrapped "Records / 0.0 / GB" across separate lines at font
+        // scale 2.0 when each label was squeezed into a fixed share of the row's width (round 4);
+        // a `horizontalScroll` fix for this specific row was never reported broken on-device
+        // (unlike the chip row above), but R-251 asked for "a wrapping legend" specifically — a
+        // `FlowRow` wraps whole entries onto a second line rather than requiring a swipe to read
+        // the ones that do not fit, which reads better for a legend the operator is not tapping.
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
         ) {
             categories.forEach { category ->

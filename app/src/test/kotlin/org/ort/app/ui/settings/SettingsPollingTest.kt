@@ -102,6 +102,31 @@ class SettingsPollingTest {
     }
 
     @Test
+    fun `R_131_R_253 the root Tier row is Settings-dc-html verbatim at the real max tier, no override`(): Unit =
+        runTest {
+            ShedStatus.update(level = 0, backlog = 0)
+            val root = SettingsPolling.root(context, InMemorySettingsStore())
+
+            val tierRow = root.sections.flatMap { it.rows }.first { it.screen == SettingsScreenId.TIER }
+            assert(tierRow.subLine == "Tier 3 of 3 · this phone's best · what it does not know") {
+                "expected the board's verbatim copy at the real max tier, got ${tierRow.subLine}"
+            }
+        }
+
+    @Test
+    fun `R_131_R_253 the root Tier row never claims this phone's best while an override is held`(): Unit = runTest {
+        ShedStatus.update(level = 0, backlog = 0)
+        val root = SettingsPolling.root(context, InMemorySettingsStore(tierOverrideName = "T2"))
+
+        val tierRow = root.sections.flatMap { it.rows }.first { it.screen == SettingsScreenId.TIER }
+        assert(!tierRow.subLine.contains("this phone's best")) {
+            "held at a lower tier is not this phone's best — must not claim it, got ${tierRow.subLine}"
+        }
+        assert(tierRow.subLine.contains("what it does not know"))
+        assert(tierRow.subLine.contains("held at T2"))
+    }
+
+    @Test
     fun `R_090 contribute reports every category off when the store is off`() {
         val state = SettingsPolling.contribute(InMemorySettingsStore())
         assert(!state.contributionEnabled)

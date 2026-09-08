@@ -88,14 +88,25 @@ public data class ModelCatalogEntry(
 
 public object ModelCatalog {
 
-    private const val ASR_TOKENS_UNKNOWN_REASON =
-        "tiny.en-tokens.txt is not Git-LFS-tracked on HuggingFace: the repository's file-listing " +
-            "API reports only a 40-hex-character git blob id for it (a SHA-1 from git's own blob " +
-            "hashing, not a SHA-256), and no sha256 for this individual file is published anywhere " +
-            "else found (checked 2026-09-07: HuggingFace's raw/API endpoints for this path, and " +
-            "sherpa-onnx's own `checksum.txt` release manifest, which covers whole .tar.bz2 archives " +
-            "only, not files extracted from them). Side-load this file yourself; it cannot be " +
-            "checksum-verified against a known-good value."
+    /**
+     * R-267 (register, round 6/7 System validator): [ASR_TOKENS_UNKNOWN_REASON] is
+     * [ModelRowViewState.detail] for the `ASR_TOKENS` row when [ModelRowStatus.NOT_INSTALLED] —
+     * an operator-facing sub-line fragment (`Settings-Assets.dc.html`'s "size · checksum prefix ·
+     * tier" shape, guide §9), never a maintainer's research trail. It used to *be* that trail
+     * verbatim (SHA-1-vs-SHA-256 git-internals, which HuggingFace/sherpa-onnx endpoints were
+     * checked, the date checked) — real and cited, but the wrong audience: this developer note
+     * belongs in a code comment, not read aloud to an operator deciding whether to sideload a
+     * file. That full note now lives here instead:
+     *
+     * tiny.en-tokens.txt is not Git-LFS-tracked on HuggingFace: the repository's file-listing API
+     * reports only a 40-hex-character git blob id for it (a SHA-1 from git's own blob hashing, not
+     * a SHA-256), and no sha256 for this individual file is published anywhere else found (checked
+     * 2026-09-07: HuggingFace's raw/API endpoints for this path, and sherpa-onnx's own
+     * `checksum.txt` release manifest, which covers whole .tar.bz2 archives only, not files
+     * extracted from them). Side-load this file yourself; it cannot be checksum-verified against a
+     * known-good value.
+     */
+    private const val ASR_TOKENS_UNKNOWN_REASON = "not on the published manifest"
 
     /**
      * Individual, flat file URLs — confirmed to exist as of this change (HuggingFace mirrors the

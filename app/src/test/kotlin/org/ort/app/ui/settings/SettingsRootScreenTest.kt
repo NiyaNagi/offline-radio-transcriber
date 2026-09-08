@@ -67,9 +67,33 @@ class SettingsRootScreenTest {
     }
 
     @Test
-    fun `R_130 draws no drawer icon of its own — the host's ScreenHeader is the only one`() {
+    fun `R_130 round 6 draws exactly one drawer icon of its own again — see the file's own kdoc`() {
+        // Round 4's R-130 fix removed this screen's own `ScreenHeader` on the premise that
+        // `OrtNavHost`'s host header always covers the whole `SETTINGS` destination — true only
+        // while entry always started here. Round 6 (WP3's `initialScreen` smoke test) found that
+        // premise broken for a *sub*-screen entered directly, so the root now draws its own header
+        // again — exactly one, never zero (that regression) and never two (the original bug).
         composeTestRule.setContent { OrtTheme { SettingsRootScreen(state = state(), onDrawer = {}, onOpen = {}) } }
 
-        composeTestRule.onAllNodesWithContentDescription("Open navigation").assertCountEquals(0)
+        composeTestRule.onAllNodesWithContentDescription("Open navigation").assertCountEquals(1)
+    }
+
+    @Test
+    fun `R_253 every settings-root row has a real, distinct leading icon, not a null fallback`() {
+        // `iconFor` (internal, this file's own doc comment) is what `SettingsRootScreen`'s `NavRow`
+        // calls for each row's `icon` — asserted directly rather than through the Compose semantics
+        // tree, since `NavRow`'s icon is decorative (`contentDescription = null`, per the guide's
+        // own "icon + real text, never icon-only" rule) and so carries no queryable semantics node
+        // to assert against.
+        val icons = SettingsScreenId.entries.associateWith(::iconFor)
+
+        // TIER and ABOUT are the two documented fallbacks (this file's own kdoc); every other row
+        // gets its own distinct glyph.
+        val distinctExcludingFallbacks = icons.filterKeys {
+            it != SettingsScreenId.TIER && it != SettingsScreenId.ABOUT
+        }
+        assert(distinctExcludingFallbacks.values.toSet().size == distinctExcludingFallbacks.size) {
+            "expected every non-fallback row to carry its own distinct icon, got $icons"
+        }
     }
 }

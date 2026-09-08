@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.NavRow
 import org.ort.app.ui.components.OrtIcons
+import org.ort.app.ui.components.ScreenHeader
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -27,22 +28,26 @@ import org.ort.app.ui.theme.OrtType
  * at all (R-090's `what is wrong`) — every row here now drills into its own screen with WP2's
  * [org.ort.app.ui.components.DrillInHeader].
  *
- * R-130 (round 4, System validator): this screen draws no `ScreenHeader` of its own — `OrtNavHost`'s
- * `NavHostBody` already renders one for the whole `SETTINGS` destination (root and every sub-screen
- * alike) before dispatching to `SettingsContent`, so a second one here stacked two bare drawer-icon
- * rows and pushed every section down. [onDrawer] stays a parameter (unused in this file) only so
- * `SettingsContent`'s own signature — and `OrtNavHost.kt`'s call site, outside this package's row —
- * need no edit.
+ * R-130 (round 4)/round 6 (WP3's smoke test find): this screen drew no `ScreenHeader` of its own
+ * for one round, on the premise that `OrtNavHost`'s `NavHostBody` always draws one for the whole
+ * `SETTINGS` destination — true only while entry always started at this root. Once WP3's
+ * `initialScreen` began landing directly on a *sub*-screen, the host's `ScreenHeader` and that
+ * sub-screen's own `DrillInHeader` rendered stacked, since the host header is keyed on the drawer
+ * destination, not on this composable's internal state. This root now draws its own `ScreenHeader`
+ * again (drawer icon via [onDrawer], search via [onSearch]) and `OrtNavHost.kt`'s own header for
+ * `SETTINGS` must be removed to match — outside this round's file ownership, see this package's
+ * report.
  */
-@Suppress("UnusedParameter") // onDrawer: kept only so SettingsContent's signature needs no edit — see kdoc above.
 @Composable
 public fun SettingsRootScreen(
     state: SettingsRootViewState,
     onDrawer: () -> Unit,
     onOpen: (SettingsScreenId) -> Unit,
     modifier: Modifier = Modifier,
+    onSearch: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
+        ScreenHeader(onDrawer = onDrawer, onSearch = onSearch)
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Text(
                 text = "Settings",
@@ -76,7 +81,7 @@ public fun SettingsRootScreen(
  * this round's file ownership to add one to), so this reuses the closest existing `OrtIcons` glyph
  * for each — `TIER`/`ABOUT` both fall back to [OrtIcons.settings] and `CONTRIBUTE` to
  * [OrtIcons.lock] (a privacy-consent screen), rather than drawing no icon at all. */
-private fun iconFor(screen: SettingsScreenId): ImageVector = when (screen) {
+internal fun iconFor(screen: SettingsScreenId): ImageVector = when (screen) {
     SettingsScreenId.CAPTURE -> OrtIcons.capture
     SettingsScreenId.RIG -> OrtIcons.rig
     SettingsScreenId.TIER -> OrtIcons.settings
