@@ -15,6 +15,10 @@ detektPlugin = "1.23.7"
 room = "2.6.1"
 ksp = "2.0.21-1.0.28"
 sherpaOnnx = "1.13.7"
+# P13: Compose foundation (D15). The compiler plugin is pinned to the exact Kotlin version above
+# (buildSrc/build.gradle.kts), so it has no version entry of its own here.
+composeBom = "2024.09.03"
+activityCompose = "1.9.3"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -35,6 +39,16 @@ room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
 sherpa-onnx-jvm = { module = "com.github.k2-fsa.sherpa-onnx:sherpa-onnx-jvm", version.ref = "sherpaOnnx" }
 sherpa-onnx-native-win-x64 = { module = "com.github.k2-fsa.sherpa-onnx:sherpa-onnx-native-lib-win-x64", version.ref = "sherpaOnnx" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-foundation = { module = "androidx.compose.foundation:foundation" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -43,3 +57,4 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 android-library = { id = "com.android.library", version.ref = "agp" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

@@ -14,6 +14,9 @@ ktlint_code_style = intellij_idea
 # Scaffold marker files (package-info.kt) carry only a doc comment for now.
 ktlint_standard_no-empty-file = disabled
 ktlint_standard_filename = disabled
+# P13 (D15 — Compose): a @Composable function is PascalCase by convention (it stands in for the
+# widget it emits), not a violation of normal function-naming — ktlint's own exemption for this.
+ktlint_function_naming_ignore_when_annotated_with = Composable
 
 [**/src/{test,androidTest}/**/*.kt]
 # Test names encode the requirement id they establish: `AC_91_...`, `FR_RUN_10a_...`.

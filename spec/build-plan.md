@@ -92,12 +92,11 @@ are individually green.*
   Defects 1 and 2 fixed 2026-09-08 morning. Defect 3 (the drain loop) and the VAD question fixed
   2026-09-08 afternoon: `PassDrainRunner`/`PassB`/`RealSherpaDecoder` are now constructed and wired
   into `RealCaptureService`, proven against `FakeAsrEngine` on Robolectric; a real Silero VAD
-  binding was located and wrapped (`RealSileroVad`), gated on a model file this session could not
-  fetch (constitution V: no network in the capture/processing path). **Still not checked off**: not
-  verified on a real device (none available), no ASR/VAD model was actually run for real in this
-  session, and the `:net` asset-fetch action itself is not built — see CHANGELOG for exactly what
-  remains.
-- [ ] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
+  binding was located and wrapped (`RealSileroVad`), gated on a model file P18 now fetches.
+  **Still not checked off**: not verified on a real device (none available), and no ASR/VAD model
+  was actually run for real in this session — see CHANGELOG for exactly what remains.
+- [x] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
+  done 2026-09-08.
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
   Compose wiring at all.
 - [ ] **P14 · Reader: live view and transmission detail** *(`:app`)* — FR-UI-1, FR-UI-4, FR-UI-5,

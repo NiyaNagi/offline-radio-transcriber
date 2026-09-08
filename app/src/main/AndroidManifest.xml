@@ -28,5 +28,11 @@
              point an attribution reaches a screen. A full reader (live view, threads, playback,
              correction) is M5; not yet the app's launcher for the same reason as StatusActivity. -->
         <activity android:name=".transmissions.TransmissionListActivity" android:exported="false" />
+
+        <!-- The Compose navigation host (build-plan P13, D15): theme, drawer and nav graph made
+             real, with the status and transmission-list surfaces above ported to it as Compose
+             screens. Not yet the app's launcher — the switchover is a deliberate follow-up once
+             P12's concurrent capture-wiring work lands; see ui/ReaderActivity.kt. -->
+        <activity android:name=".ui.ReaderActivity" android:exported="false" />
     </application>
 </manifest>
