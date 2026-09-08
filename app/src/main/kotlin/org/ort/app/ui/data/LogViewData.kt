@@ -55,6 +55,10 @@ public sealed interface LogListItem {
         val timeLabel: String,
         val frequencyLabel: String,
         val reason: String,
+        // R-043 (`Log-Rejected.dc.html`'s `.why` line): the rejection record's own elaboration in
+        // prose, e.g. "Too short, segment is 120 ms, below the 250 ms floor" — never the raw rule
+        // token. `null` exactly when the record carries nothing beyond [reason] itself.
+        val why: String? = null,
     ) : LogListItem {
         override val key: String get() = "rejected-$id"
     }
@@ -142,6 +146,12 @@ public data class LogFilterSheetViewState(
  */
 public object LogItemsMapper {
 
+    // NoSpeechProbRule/CompressionRatioRule (asr-api) write "no_speech_prob=$p exceeds ceiling=$c" /
+    // "compression ratio=$r exceeds ceiling=$c" — the two rejection details that are a raw
+    // key=value pair rather than a sentence; [whyFor] reformats them via these two patterns.
+    private val NO_SPEECH_PROB_PATTERN = Regex("""no_speech_prob=([\d.]+) exceeds ceiling=([\d.]+)""")
+    private val COMPRESSION_RATIO_PATTERN = Regex("""compression ratio=([\d.]+) exceeds ceiling=([\d.]+)""")
+
     /** guide §6.14: a row carries at most one badge; a human correction always outranks a machine fact. */
     public fun badgeFor(detail: TransmissionDetail, isFirstHeard: Boolean, isPartial: Boolean): LogRowBadge? = when {
         isPartial -> null
@@ -224,6 +234,51 @@ public object LogItemsMapper {
         AttributionState.UNKNOWN -> "Unknown"
     }
 
+    /**
+     * R-043 (`Log-Rejected.dc.html`'s `.why` line): [org.ort.pipeline.passb.DataPassBResultSink]
+     * writes `transmission.rejectionReason` as `"$rule: $detail"` (the six §8.2 rejection rules,
+     * `org.ort.asrapi.rules.RejectionRuleId` — not imported here, since `:app`'s allowed edges do
+     * not include `:asr-api`; matched by the enum's own name string instead). This turns that raw
+     * record into operator prose — a category (never the raw `TOO_SHORT`/`NO_SPEECH_PROB`/… token)
+     * plus the rule's own elaboration, reformatted where the rule wrote a technical `key=value`
+     * detail rather than a sentence. `null` when [rejectionReason] carries no `": "` separator at
+     * all (nothing beyond the short reason shown already) or an unrecognised rule token (never a
+     * guessed category for a value this mapping does not know).
+     */
+    public fun whyFor(rejectionReason: String?): String? {
+        val record = rejectionReason ?: return null
+        val separator = record.indexOf(": ")
+        if (separator < 0) return null
+        val ruleToken = record.substring(0, separator)
+        val detail = record.substring(separator + 2).trim()
+        val category = rejectionCategoryProse(ruleToken) ?: return null
+        val elaboration = rejectionDetailProse(ruleToken, detail)
+        return if (elaboration.isBlank()) category else "$category, $elaboration"
+    }
+
+    private fun rejectionCategoryProse(ruleToken: String): String? = when (ruleToken) {
+        "TOO_SHORT" -> "Too short"
+        "VAD_NO_SPEECH" -> "No speech detected"
+        "NO_SPEECH_PROB" -> "Low speech confidence"
+        "REPETITION" -> "Repeated text"
+        "BLOCKLIST" -> "Known hallucination phrase"
+        "COMPRESSION_RATIO" -> "Unusual compression ratio"
+        else -> null // an unrecognised token never gets a guessed category.
+    }
+
+    /** [TOO_SHORT_PATTERN] etc. reformat the two rules that wrote a `key=value` detail rather than a sentence. */
+    private fun rejectionDetailProse(ruleToken: String, detail: String): String = when (ruleToken) {
+        "NO_SPEECH_PROB" -> NO_SPEECH_PROB_PATTERN.find(detail)?.let { match ->
+            val (score, ceiling) = match.destructured
+            "no-speech score $score, above the $ceiling ceiling"
+        } ?: detail
+        "COMPRESSION_RATIO" -> COMPRESSION_RATIO_PATTERN.find(detail)?.let { match ->
+            val (ratio, ceiling) = match.destructured
+            "compression ratio $ratio, above the $ceiling ceiling"
+        } ?: detail
+        else -> detail
+    }
+
     private fun matchesAttribution(detail: TransmissionDetail, selection: LogFilterSelection): Boolean =
         detail.attribution.state in selection.attributionStates
 
@@ -248,6 +303,7 @@ public object LogItemsMapper {
                 timeLabel = ReaderTransmissionViewStateMapper.timeLabel(detail.startedAtUtcMillis),
                 frequencyLabel = ReaderTransmissionViewStateMapper.frequencyLabel(detail.frequencyHz),
                 reason = detail.rejectionReason ?: "no reason recorded",
+                why = whyFor(detail.rejectionReason),
             )
         }
 
@@ -286,6 +342,7 @@ public object LogItemsMapper {
                         timeLabel = ReaderTransmissionViewStateMapper.timeLabel(detail.startedAtUtcMillis),
                         frequencyLabel = ReaderTransmissionViewStateMapper.frequencyLabel(detail.frequencyHz),
                         reason = detail.rejectionReason ?: "no reason recorded",
+                        why = whyFor(detail.rejectionReason),
                     ),
                     null,
                 )

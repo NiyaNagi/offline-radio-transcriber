@@ -94,14 +94,24 @@ public fun LogScreen(
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(state.items, key = { it.key }) { item ->
-                LogListItemRow(item = item, onOpen = onOpen, onOpenThread = onOpenThread)
+                LogListItemRow(
+                    item = item,
+                    onOpen = onOpen,
+                    onOpenThread = onOpenThread,
+                    showWhy = state.rejectedFocus,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun LogListItemRow(item: LogListItem, onOpen: (String) -> Unit, onOpenThread: (String) -> Unit) {
+private fun LogListItemRow(
+    item: LogListItem,
+    onOpen: (String) -> Unit,
+    onOpenThread: (String) -> Unit,
+    showWhy: Boolean,
+) {
     when (item) {
         is LogListItem.Group -> LogGroupHeader(label = item.label, onClick = { onOpenThread(item.threadId) })
         is LogListItem.Row -> LogRow(state = item.state, onClick = { onOpen(item.state.id) })
@@ -111,6 +121,10 @@ private fun LogListItemRow(item: LogListItem, onOpen: (String) -> Unit, onOpenTh
             frequencyLabel = item.frequencyLabel,
             reason = item.reason,
             onClick = { onOpen(item.id) },
+            // R-043 (`Log-Rejected.dc.html`'s `.why` line): only the dedicated Rejected view shows
+            // it — a rejected row merely interleaved into the normal chronological list (the
+            // sheet's "Also show" toggle) stays the compact one-line row it always was.
+            why = if (showWhy) item.why else null,
         )
     }
 }

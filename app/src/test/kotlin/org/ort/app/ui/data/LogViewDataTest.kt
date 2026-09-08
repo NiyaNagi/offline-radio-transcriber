@@ -255,6 +255,50 @@ class LogViewDataTest {
         assertEquals("squelch tail", focus[0].reason)
     }
 
+    @Test
+    fun `R_043_rejected_rows_explain_why_when_the_record_says`() {
+        // The real write path (DataPassBResultSink) stores "$rule: $detail" — never the raw rule
+        // token alone, and never guessed for a rule this mapping does not recognise.
+        assertEquals(
+            "Too short, segment is 120 ms, below the 250 ms floor",
+            LogItemsMapper.whyFor("TOO_SHORT: segment is 120 ms, below the 250 ms floor"),
+        )
+        assertEquals(
+            "No speech detected, VAD did not detect speech in this segment",
+            LogItemsMapper.whyFor("VAD_NO_SPEECH: VAD did not detect speech in this segment"),
+        )
+        assertEquals(
+            "Low speech confidence, no-speech score 0.94, above the 0.6 ceiling",
+            LogItemsMapper.whyFor("NO_SPEECH_PROB: no_speech_prob=0.94 exceeds ceiling=0.6"),
+        )
+        assertEquals(
+            "Unusual compression ratio, compression ratio 2.65, above the 2.40 ceiling",
+            LogItemsMapper.whyFor("COMPRESSION_RATIO: compression ratio=2.65 exceeds ceiling=2.40"),
+        )
+
+        // Nothing beyond the short reason -- no ": " separator at all -- is honestly null, not a
+        // repeat of the short reason.
+        assertNull(LogItemsMapper.whyFor("squelch tail"))
+        assertNull(LogItemsMapper.whyFor(null))
+
+        // An unrecognised rule token never gets a guessed category.
+        assertNull(LogItemsMapper.whyFor("SOME_FUTURE_RULE: a detail this mapping has never seen"))
+
+        // Wired through to the dedicated Rejected view's rows, never a raw enum name in the result.
+        val focusWithDetail = LogItemsMapper.buildRejectedFocus(
+            listOf(
+                detail(
+                    id = "TX9",
+                    processingState = TransmissionState.REJECTED,
+                    rejectionReason = "TOO_SHORT: segment is 120 ms, below the 250 ms floor",
+                ),
+            ),
+        )
+        val why = focusWithDetail.single().why
+        assertEquals("Too short, segment is 120 ms, below the 250 ms floor", why)
+        assertTrue(why != null && !why.contains("TOO_SHORT"))
+    }
+
     // -- R-042 filtering ------------------------------------------------------------------------
 
     @Test
