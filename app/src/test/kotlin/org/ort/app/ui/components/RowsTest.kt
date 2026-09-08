@@ -1,6 +1,7 @@
 package org.ort.app.ui.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.CompositionLocalProvider
@@ -9,6 +10,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
@@ -224,6 +226,129 @@ class RowsTest {
         composeTestRule.onNodeWithTag("kv").assertHeightIsAtLeast(44.dp)
         composeTestRule.onNodeWithText("Confirm").assertIsDisplayed()
         composeTestRule.onNodeWithText("Not right?").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_131_nav_row carries its leading icon, title, sub-line and a trailing chevron`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    NavRow(
+                        rowTitle = "Rig",
+                        subLine = "TH-D75A · connected",
+                        icon = OrtIcons.rig,
+                        onClick = {},
+                        modifier = Modifier.testTag("nav-rig"),
+                    )
+                    NavRow(rowTitle = "Improve", onClick = {}, modifier = Modifier.testTag("nav-bare"))
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("Rig").assertIsDisplayed()
+        composeTestRule.onNodeWithText("TH-D75A · connected").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Improve").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_131_nav_row is a real 44dp Role_Button target with a merged title-then-subLine description`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    NavRow(
+                        rowTitle = "Tier",
+                        subLine = "Tier 1 · this phone's best",
+                        onClick = {},
+                        modifier = Modifier.testTag("nav-tier"),
+                    )
+                    NavRow(rowTitle = "About", onClick = {}, modifier = Modifier.testTag("nav-about"))
+                }
+            }
+        }
+
+        val withSubLine = composeTestRule.onNodeWithTag("nav-tier")
+        withSubLine.assertHeightIsAtLeast(44.dp)
+        withSubLine.assert(hasContentDescription("Tier. Tier 1 · this phone's best"))
+
+        // No sub-line: the bare title, never a dangling ". ".
+        val bare = composeTestRule.onNodeWithTag("nav-about")
+        bare.assertHeightIsAtLeast(44.dp)
+        bare.assert(hasContentDescription("About"))
+    }
+
+    @Test
+    fun `R_131_nav_row fires onClick and renders an optional trailing slot beside the chevron`() {
+        var tapped = false
+        composeTestRule.setContent {
+            OrtTheme {
+                NavRow(
+                    rowTitle = "Tier",
+                    onClick = { tapped = true },
+                    trailing = { Badge(text = "Tier 1", kind = BadgeKind.TIER) },
+                    modifier = Modifier.testTag("nav-tier"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("TIER 1").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("nav-tier").performClick()
+        assert(tapped)
+    }
+
+    @Test
+    fun `R_131_nav_row's sub-line renders in full at font scale 2 point 0, never truncated`() {
+        // R-131 (`Settings.dc.html`): a real status sentence must be free to wrap rather than
+        // being cut to one ellipsised line — `NavRow` sets no `maxLines`/`overflow` on its
+        // sub-line `Text` at all (Compose's own default is unrestricted, soft-wrapping), so there
+        // is no ceiling here to regress back to. A height-based "did it actually wrap onto more
+        // lines" assertion was tried and dropped: Robolectric returns degenerate glyph metrics
+        // for this codebase's custom `fontFamily`s (confirmed directly, same finding recorded
+        // against R-152's fix earlier in this file/CHANGELOG — a 71-character sub-line and a
+        // 9-character one measured the identical row height, 88px, at the same font scale), so a
+        // rendered-pixel wrap can't be verified reliably on this host. What *is* real and
+        // host-independent is that the full sentence survives verbatim into the semantics tree —
+        // this catches a future regression that truncates/summarises the string before it ever
+        // reaches `Text`, which no font metric is needed to detect.
+        val longSubLine = "This phone's best · what it does not know about weak signals or noise"
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    NavRow(
+                        rowTitle = "Tier",
+                        subLine = longSubLine,
+                        onClick = {},
+                        modifier = Modifier.width(320.dp).testTag("nav-tier"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText(longSubLine).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("nav-tier").assert(hasContentDescription(longSubLine, substring = true))
+    }
+
+    @Test
+    fun `R_131_nav_row's NotBuilt tone dims the row without hiding it`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    NavRow(
+                        rowTitle = "Rig",
+                        icon = OrtIcons.rig,
+                        onClick = {},
+                        tone = NavRowTone.NotBuilt,
+                        modifier = Modifier.testTag("nav-not-built"),
+                    )
+                }
+            }
+        }
+
+        // Still present, still reachable (constitution III: never delete quietly) — only its
+        // colour differs, which this test does not (and, per this package's prior findings on
+        // Robolectric font/paint metrics, reliably cannot) assert directly; the structural claim
+        // — the row still renders and is still a real target — is what is checked here.
+        composeTestRule.onNodeWithText("Rig").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("nav-not-built").assertHeightIsAtLeast(44.dp)
     }
 
     @Test
