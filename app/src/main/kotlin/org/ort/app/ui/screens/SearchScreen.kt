@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -19,9 +20,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -91,7 +96,28 @@ public fun SearchScreen(
     onSearch: () -> Unit,
     onOpen: (String) -> Unit,
     modifier: Modifier = Modifier,
+    // R-202: the filter sheet's own live counts (computed by the caller from the real corpus at
+    // the current filters — never `result?.facetCounts`, which is `EMPTY` before any search has
+    // run at all). R-203: the exact frequencies this corpus has actually heard, for the
+    // frequency/band chip row. Both default to "nothing yet" so a caller mid-load renders honestly
+    // rather than crashing on a missing argument.
+    filterFacetCounts: SearchFacetCounts = SearchFacetCounts.EMPTY,
+    heardFrequenciesHz: List<Long> = emptyList(),
+    // R-200: `Search.dc.html`'s header is a back chevron, not the drawer/search `ScreenHeader`
+    // every other destination gets — see [SearchHeaderRow]. No-op by default; see
+    // [org.ort.app.ui.screens.SearchContent]'s own doc comment on this same parameter.
+    onBack: () -> Unit = {},
 ) {
+    val queryFocusRequester = remember { FocusRequester() }
+    // R-200: focused, keyboard up, on entry to the *untouched* initial screen only — never on
+    // every recomposition (which would steal focus back and pop the keyboard while the operator is
+    // reading results) and never once a search has actually run.
+    LaunchedEffect(Unit) {
+        if (result == null && input == SearchFilterInput()) {
+            queryFocusRequester.requestFocus()
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -99,7 +125,14 @@ public fun SearchScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = OrtSpacing.lg),
         ) {
-            SearchHeaderRow(input = input, result = result, onInputChange = onInputChange, onSearch = onSearch)
+            SearchHeaderRow(
+                input = input,
+                result = result,
+                onInputChange = onInputChange,
+                onSearch = onSearch,
+                onBack = onBack,
+                focusRequester = queryFocusRequester,
+            )
             QuickFilterChipsRow(
                 input = input,
                 onInputChange = onInputChange,
@@ -133,7 +166,8 @@ public fun SearchScreen(
         if (filtersSheetOpen) {
             FiltersSheetOverlay(
                 input = input,
-                result = result,
+                facetCounts = filterFacetCounts,
+                heardFrequenciesHz = heardFrequenciesHz,
                 onInputChange = onInputChange,
                 onSearch = onSearch,
                 onDismissFilters = onDismissFilters,
@@ -152,6 +186,8 @@ private fun SearchHeaderRow(
     result: SearchResult?,
     onInputChange: (SearchFilterInput) -> Unit,
     onSearch: () -> Unit,
+    onBack: () -> Unit,
+    focusRequester: FocusRequester,
 ) {
     Row(
         modifier = Modifier
@@ -161,6 +197,19 @@ private fun SearchHeaderRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
+        // R-200: `Search.dc.html`'s own header is a back chevron directly beside the inline
+        // field, not the generic drawer/search icon row every other destination's `ScreenHeader`
+        // draws — WP3's host still renders that generic header above this content today (it does
+        // not yet know to suppress it for `SEARCH`; see this package's CHANGELOG entry).
+        Icon(
+            imageVector = OrtIcons.back,
+            contentDescription = "Back",
+            tint = OrtColors.accentGreen,
+            modifier = Modifier
+                .size(20.dp)
+                .clickable(role = Role.Button, onClickLabel = "Back", onClick = onBack)
+                .testTag("search-back-chevron"),
+        )
         val mono = isCallsignLike(input.text) || isFrequencyLike(input.text)
         val notApplied = result?.textSearchUnavailable == true
         // R-060/R-063 (WP2 follow-up, round two): the shared `TextField` now takes the search
@@ -198,7 +247,7 @@ private fun SearchHeaderRow(
             keyboardActions = KeyboardActions(onSearch = { onSearch() }),
             errorText = if (notApplied) "Not applied" else null,
             errorTone = FieldTone.Degraded,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).focusRequester(focusRequester),
         )
         if (input.text.isNotBlank()) {
             PrimaryButton(
@@ -320,12 +369,21 @@ private fun InitialState(
 
         SearchSectionLabel("Try")
         listOf(
-            "A callsign, or part of one — " to "K7L",
-            "A frequency — " to "146.96",
-            "Words from a transcript — " to "park activation",
-            "A POTA reference — " to "K-4412",
-        ).forEachIndexed { index, (prefix, example) ->
-            TryHintRow(prefix = prefix, example = example, modifier = Modifier.testTag("search-try-hint-$index"))
+            // R-201: the board keeps prose examples in sans — mono is reserved for the three
+            // exact-syntax examples (a callsign, a frequency, a POTA reference), never for the
+            // free-text "words from a transcript" example, which is prose like anything else a
+            // full-text search would match.
+            Triple("A callsign, or part of one — ", "K7L", true),
+            Triple("A frequency — ", "146.96", true),
+            Triple("Words from a transcript — ", "park activation", false),
+            Triple("A POTA reference — ", "K-4412", true),
+        ).forEachIndexed { index, (prefix, example, mono) ->
+            TryHintRow(
+                prefix = prefix,
+                example = example,
+                mono = mono,
+                modifier = Modifier.testTag("search-try-hint-$index"),
+            )
         }
 
         Text(
@@ -380,7 +438,7 @@ private fun RecentRow(entry: RecentSearchEntry, modifier: Modifier = Modifier, o
 }
 
 @Composable
-private fun TryHintRow(prefix: String, example: String, modifier: Modifier = Modifier) {
+private fun TryHintRow(prefix: String, example: String, mono: Boolean, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier.fillMaxWidth().heightIn(min = 44.dp).padding(horizontal = OrtSpacing.lg),
         verticalAlignment = Alignment.CenterVertically,
@@ -388,7 +446,9 @@ private fun TryHintRow(prefix: String, example: String, modifier: Modifier = Mod
         Text(
             text = buildAnnotatedString {
                 withStyle(SpanStyle(color = OrtColors.textSecondary)) { append(prefix) }
-                withStyle(SpanStyle(color = OrtColors.textBody, fontFamily = OrtType.mono)) { append(example) }
+                withStyle(
+                    SpanStyle(color = OrtColors.textBody, fontFamily = if (mono) OrtType.mono else OrtType.sans),
+                ) { append(example) }
             },
             style = OrtType.subtitle,
         )
@@ -633,7 +693,8 @@ private fun UnavailableState(
 @Composable
 private fun FiltersSheetOverlay(
     input: SearchFilterInput,
-    result: SearchResult?,
+    facetCounts: SearchFacetCounts,
+    heardFrequenciesHz: List<Long>,
     onInputChange: (SearchFilterInput) -> Unit,
     onSearch: () -> Unit,
     onDismissFilters: () -> Unit,
@@ -656,7 +717,8 @@ private fun FiltersSheetOverlay(
         )
         SearchFiltersSheet(
             input = input,
-            facetCounts = result?.facetCounts ?: SearchFacetCounts.EMPTY,
+            facetCounts = facetCounts,
+            heardFrequenciesHz = heardFrequenciesHz,
             onInputChange = onInputChange,
             onShowResults = {
                 onSearch()

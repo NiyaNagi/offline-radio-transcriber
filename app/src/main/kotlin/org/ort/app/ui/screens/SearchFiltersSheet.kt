@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.CheckboxRow
@@ -31,6 +32,7 @@ import org.ort.app.ui.theme.OrtType
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.ort.data.Band
+import java.util.Locale
 
 /**
  * `Search-Filters.dc.html` (R-061/R-062/R-064): every closed set here is a visible list the
@@ -48,6 +50,9 @@ import org.ort.data.Band
 public fun SearchFiltersSheet(
     input: SearchFilterInput,
     facetCounts: SearchFacetCounts,
+    // R-203: the frequencies this corpus has actually heard (Hz) — the chip row offers these
+    // plus their derived bands, never a generic fixed HF/VHF/UHF table.
+    heardFrequenciesHz: List<Long> = emptyList(),
     onInputChange: (SearchFilterInput) -> Unit,
     onShowResults: () -> Unit,
     onClearAll: () -> Unit,
@@ -69,7 +74,7 @@ public fun SearchFiltersSheet(
         Sheet(title = "Filters", onClearAll = onClearAll) {
             Column(modifier = Modifier.padding(top = OrtSpacing.xs)) {
                 CallsignSection(input, onInputChange)
-                FrequencyAndBandSection(input, onInputChange)
+                FrequencyAndBandSection(input, heardFrequenciesHz, onInputChange)
                 TimeSection(input, onInputChange)
                 AttributionSection(input, facetCounts, onInputChange)
                 IncludeSection(input, facetCounts, onInputChange)
@@ -92,28 +97,62 @@ private fun CallsignSection(input: SearchFilterInput, onInputChange: (SearchFilt
     )
 }
 
+/**
+ * R-203: chips for the frequencies and bands this corpus has actually heard
+ * (`Search-Filters.dc.html`'s "145.230 / 146.960" plus "2 m" / "70 cm") — never
+ * [Band.entries], the full, always-the-same amateur band table, most of which the corpus has
+ * never heard a single over on. `All`, an exact-frequency chip and a band chip are mutually
+ * exclusive (picking one clears the other two) since the DAO ANDs `frequencyHz`/band-range
+ * together — selecting a specific frequency plus an unrelated band would just as-constrain to
+ * zero results, which is not what tapping a single chip should do. The exact-MHz field below the
+ * chips stays for a frequency the corpus has *not* heard, or one to prepare a filter for in
+ * advance.
+ */
 @Composable
-private fun FrequencyAndBandSection(input: SearchFilterInput, onInputChange: (SearchFilterInput) -> Unit) {
+private fun FrequencyAndBandSection(
+    input: SearchFilterInput,
+    heardFrequenciesHz: List<Long>,
+    onInputChange: (SearchFilterInput) -> Unit,
+) {
     SectionLabel("Frequency and band", topPadding = OrtSpacing.md)
+    val heardBands = heardFrequenciesHz.mapNotNull { Band.of(it) }.distinct()
     FilterChipRow(modifier = Modifier.padding(top = OrtSpacing.sm, bottom = OrtSpacing.xs).fillMaxWidth()) {
-        FilterChip(label = "All", selected = input.band == null, onClick = { onInputChange(input.copy(band = null)) })
-        Band.entries.forEach { band ->
+        FilterChip(
+            label = "All",
+            selected = input.band == null && input.frequencyMhz.isBlank(),
+            onClick = { onInputChange(input.copy(band = null, frequencyMhz = "")) },
+            // Distinct from the Time section's own "All" chip (`SearchTimeFilter.ALL.label()` is
+            // also literally "All") — a validator or test reaching this specific chip needs a tag,
+            // not the ambiguous shared text.
+            modifier = Modifier.testTag("search-filter-band-all"),
+        )
+        heardFrequenciesHz.forEach { hz ->
+            val label = formatMhz(hz)
+            FilterChip(
+                label = label,
+                selected = input.frequencyMhz == label,
+                onClick = { onInputChange(input.copy(frequencyMhz = label, band = null)) },
+            )
+        }
+        heardBands.forEach { band ->
             FilterChip(
                 label = band.prose(),
                 selected = input.band == band,
-                onClick = { onInputChange(input.copy(band = band)) },
+                onClick = { onInputChange(input.copy(band = band, frequencyMhz = "")) },
             )
         }
     }
     TextField(
         value = input.frequencyMhz,
-        onValueChange = { onInputChange(input.copy(frequencyMhz = it)) },
+        onValueChange = { onInputChange(input.copy(frequencyMhz = it, band = null)) },
         mono = true,
         placeholder = "exact MHz",
         contentDescriptionText = "Exact frequency filter",
         modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.xs),
     )
 }
+
+private fun formatMhz(hz: Long): String = "%.3f".format(Locale.ROOT, hz / 1_000_000.0)
 
 @Composable
 private fun TimeSection(input: SearchFilterInput, onInputChange: (SearchFilterInput) -> Unit) {

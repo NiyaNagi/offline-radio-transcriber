@@ -2,6 +2,7 @@ package org.ort.app.ui.screens
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -29,9 +30,15 @@ class SearchFiltersSheetTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
+    // R-203: 145.230/146.960 MHz are both inside VHF_2M's 144-148MHz allocation, matching the
+    // register's own worked example — the default here keeps every pre-existing chip/band test
+    // below meaningful without each one having to restate it.
+    private val defaultHeardFrequenciesHz = listOf(145_230_000L, 146_960_000L)
+
     private fun sheet(
         input: SearchFilterInput = SearchFilterInput(),
         facetCounts: SearchFacetCounts = SearchFacetCounts.EMPTY,
+        heardFrequenciesHz: List<Long> = defaultHeardFrequenciesHz,
         onInputChange: (SearchFilterInput) -> Unit = {},
         onShowResults: () -> Unit = {},
         onClearAll: () -> Unit = {},
@@ -41,6 +48,7 @@ class SearchFiltersSheetTest {
                 SearchFiltersSheet(
                     input = input,
                     facetCounts = facetCounts,
+                    heardFrequenciesHz = heardFrequenciesHz,
                     onInputChange = onInputChange,
                     onShowResults = onShowResults,
                     onClearAll = onClearAll,
@@ -57,6 +65,52 @@ class SearchFiltersSheetTest {
         composeTestRule.onNodeWithText("2M").performScrollTo().performClick()
 
         assert(current.band == Band.VHF_2M) { "expected VHF_2M but was ${current.band}" }
+    }
+
+    @Test
+    fun `R_203 the frequency and band chips come from what this corpus actually heard, not a fixed table`() {
+        sheet(heardFrequenciesHz = listOf(145_230_000L, 146_960_000L))
+
+        // 2m (145.230/146.960) and 70cm both heard in the register's own example — the generic
+        // HF chips (160M, 80M, 60M, ...) this replaced must not render at all.
+        composeTestRule.onNodeWithText("145.230").assertExists()
+        composeTestRule.onNodeWithText("146.960").assertExists()
+        composeTestRule.onNodeWithText("2M").assertExists()
+        composeTestRule.onNodeWithText("160M").assertDoesNotExist()
+        composeTestRule.onNodeWithText("80M").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_203 an unheard corpus offers no frequency or band chips beyond All`() {
+        sheet(heardFrequenciesHz = emptyList())
+
+        // Tagged, not text — the Time section has its own, separate "All" chip
+        // (`SearchTimeFilter.ALL.label()` is also literally "All").
+        composeTestRule.onNodeWithTag("search-filter-band-all").assertExists()
+        composeTestRule.onNodeWithText("2M").assertDoesNotExist()
+        composeTestRule.onNodeWithText("160M").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_203 tapping an exact heard-frequency chip sets frequencyMhz and clears band`() {
+        var current = SearchFilterInput(band = Band.UHF_70CM)
+        sheet(input = current, heardFrequenciesHz = listOf(145_230_000L), onInputChange = { current = it })
+
+        composeTestRule.onNodeWithText("145.230").performScrollTo().performClick()
+
+        assert(current.frequencyMhz == "145.230") { "expected frequencyMhz 145.230 but was ${current.frequencyMhz}" }
+        assert(current.band == null) { "expected band to clear but was ${current.band}" }
+    }
+
+    @Test
+    fun `R_203 tapping a heard-band chip sets band and clears the exact frequency`() {
+        var current = SearchFilterInput(frequencyMhz = "145.230")
+        sheet(input = current, heardFrequenciesHz = listOf(145_230_000L), onInputChange = { current = it })
+
+        composeTestRule.onNodeWithText("2M").performScrollTo().performClick()
+
+        assert(current.band == Band.VHF_2M) { "expected VHF_2M but was ${current.band}" }
+        assert(current.frequencyMhz == "") { "expected frequencyMhz to clear but was ${current.frequencyMhz}" }
     }
 
     @Test
