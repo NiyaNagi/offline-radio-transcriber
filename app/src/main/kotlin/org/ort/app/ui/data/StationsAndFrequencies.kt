@@ -211,6 +211,13 @@ public data class FrequencyDetailViewState(
 public data class FrequencyChangeCause(val label: String, val isUnidentified: Boolean = false)
 
 /**
+ * A real, honestly-derived time window (R-276, register) — `FrequencyChangeScreen`'s "The N
+ * overs" action hands this to `onOpenOvers` alongside the frequency, so the host (WP3) can filter
+ * the Log to just this frequency and this window rather than everything ever heard on it.
+ */
+public data class TimeWindow(val startMillis: Long, val endMillis: Long)
+
+/**
  * `Frequency-Change.dc.html`'s state (R-074): tonight's per-hour counts plotted as bars over the
  * usual per-hour average as a line, and the causes this package can honestly derive — a first-time
  * station heard tonight on this frequency, and any weak/unidentified activity. Cross-frequency
@@ -223,9 +230,16 @@ public data class FrequencyChangeViewState(
     val subtitleLabel: String,
     val tonightHourly: List<Int>,
     val usualHourly: List<Double>,
+    /** "usual, N nights" (R-274) — how many prior nights the usual-hourly average was folded over. */
+    val usualNightsCount: Int = 0,
     val causes: List<FrequencyChangeCause>,
     val overCount: Int,
-    val explanationSentence: String,
+    /** The board's full closing paragraph (R-275) — never just its first sentence. */
+    val explanationParagraph: String,
+    /** Tonight's own session window (R-276) — real, not the narrower departure window
+     * [subtitleLabel] names; "The N overs" opens the Log to everything this frequency heard in
+     * this window, not just the hours that spiked. */
+    val window: TimeWindow = TimeWindow(0L, 0L),
 )
 
 // -------------------------------------------------------------------------------------------
