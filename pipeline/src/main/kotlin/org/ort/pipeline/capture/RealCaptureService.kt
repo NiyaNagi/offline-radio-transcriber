@@ -404,7 +404,11 @@ public class RealCaptureService : Service() {
         source?.stop()
         source = null
         segmenter = null
-        CaptureState.idle()
+        // audit F-022: only a clean stop (ACTION_STOP) clears CaptureState.sessionId -- an
+        // unclean stop (onDestroy without a prior ACTION_STOP, e.g. the OS killing the process)
+        // leaves it in place so a Failed/Idle read still names the session that was running. See
+        // CaptureState.idle()'s kdoc.
+        CaptureState.idle(clearSession = markClean)
         if (markClean && sessionId.isNotEmpty()) heartbeatStore.markCleanShutdown(sessionId)
     }
 

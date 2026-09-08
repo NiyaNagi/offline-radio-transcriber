@@ -16,6 +16,7 @@ import org.ort.app.permissions.PermissionsFlow
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
 import org.ort.core.Ulid
+import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.RealCaptureService
 
 /**
@@ -109,18 +110,35 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * audit F-022: a foreground service is a singleton per process, and
+     * `RealCaptureService.onStartCommand` already ignores a second start command while one is
+     * live -- but before this, nothing here knew that, so relaunching this activity while capture
+     * was already running always minted a fresh [sessionId] and handed it to [ReaderActivity],
+     * which then polled a session nothing was capturing into (constitution IV, "never lies";
+     * FR-UI-7). [CaptureState.sessionId] is published by `RealCaptureService.startCapture()` the
+     * moment capture actually starts, so it is the one place in-process that knows which session,
+     * if any, is genuinely live right now -- checked here instead of trusting this activity's own
+     * freshly-generated [sessionId].
+     */
     private fun startCaptureAndShowStatus() {
-        val intent = Intent(
-            this,
-            RealCaptureService::class.java,
-        ).putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+        val liveSessionId = CaptureState.sessionId.takeIf { CaptureState.isCapturing }
+        val effectiveSessionId = liveSessionId ?: sessionId
+        if (liveSessionId == null) {
+            val intent = Intent(
+                this,
+                RealCaptureService::class.java,
+            ).putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+        }
         // P13's Compose navigation host is now the reader (build-plan P13's "done when" switchover,
         // deliberately deferred out of P13 itself because P12 owned this file at the time).
         // StatusActivity/TransmissionListActivity remain registered and working — their Compose
         // ports live behind this nav host, and removing the originals belongs to P14, which
         // replaces the screens rather than merely re-hosting them.
-        startActivity(Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_SESSION_ID, sessionId))
+        startActivity(
+            Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_SESSION_ID, effectiveSessionId),
+        )
         finish()
     }
 

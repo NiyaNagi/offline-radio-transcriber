@@ -286,6 +286,51 @@ this fix only stops the footer from fabricating a number against a budget that w
 Threads' "—" is a fixed marker, not yet reachable through any other UI signal that threading is
 unbuilt — acceptable since P15's `ThreadScreen` already documents the same limitation.
 Robolectric-only verification throughout; no on-device check was performed.
+## 2026-09-07 (audit — F-022)
+
+### (pending) — audit F-022 · relaunching `MainActivity` during a running capture no longer hands the reader a phantom session
+
+**Scope:** `:app` — `app/src/main/kotlin/org/ort/app/MainActivity.kt` (`startCaptureAndShowStatus`
+only), `app/src/main/kotlin/org/ort/app/ui/ReaderActivity.kt` (session-id selection only);
+`:pipeline` — `pipeline/src/main/kotlin/org/ort/pipeline/capture/CaptureState.kt` (`idle` gains a
+`clearSession` parameter), `RealCaptureService.kt` (`stopCaptureInternal` passes it through); new
+test `app/src/test/kotlin/org/ort/app/MainActivityTest.kt`; extended
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/CaptureStateTest.kt` and
+`RealCaptureServiceTest.kt`.
+**Requirements/ACs:** FR-UI-7 (capture status surface must always reflect the real running state);
+constitution IV ("never lies") — a live capture session reading as empty in the reader is exactly
+the silent failure this principle forbids.
+**What changed:** `RealCaptureService.onStartCommand` already ignored a second start command while
+one was live (a prior on-device fix), but nothing on the `:app` side knew that: `MainActivity`
+always minted a fresh ULID session id in `onCreate` and handed it straight to `ReaderActivity`
+regardless, so relaunching the app during an active capture showed the reader polling a session
+nothing was capturing into (zero overs, live capture). Fixed by publishing the live session id
+where it was already half-published: `CaptureState.sessionId` (set by
+`RealCaptureService.startCapture()` since F-002/F-007) is now the source of truth `MainActivity`
+consults before deciding whether to start the service at all, and before choosing which session id
+to hand `ReaderActivity`. `CaptureState.idle()` gained a `clearSession: Boolean = false` parameter
+so only a deliberate `ACTION_STOP` clears the published session id — an unclean stop (`onDestroy`
+without a prior `ACTION_STOP`, e.g. the OS killing the process) leaves it in place, since that is a
+different situation (nothing to hand off to) and clearing it there would just be a second way to
+lose the "which session was this" fact for no benefit. `ReaderActivity.onCreate` also now prefers
+`CaptureState.sessionId` over its intent extra whenever capture is genuinely live, as defence in
+depth for any path back into it other than `MainActivity`'s own fix.
+**Verified:** `RealCaptureServiceTest`'s new case
+`FR_UI_7 CaptureState publishes the running session id and clears it only on a clean stop` — seen
+to fail first (`AssertionError: a deliberate stop must clear the session id ... expected null, but
+was:<TEST-SESSION-22>`) with `CaptureState.idle`'s clearing line commented out, then passed once
+restored. `CaptureStateTest`'s new cases similarly seen to fail first
+(`AssertionFailedError: ... expected: <null> but was: <SESSION01>`). `MainActivityTest` (new file,
+Robolectric) — 2 of its 3 cases seen to fail first with the old unconditional
+`startService`/fresh-id logic restored, then passed after the fix. `./gradlew :app:testDebugUnitTest
+:pipeline:testDebugUnitTest` — full green (all pre-existing cases plus the new ones). Full gate:
+`./gradlew build dependencyRules` and `python tools/spec-check/spec_check.py` — see this session's
+final report for the tail.
+**Left open / not done:** everything here is Robolectric/JVM only, never verified on a physical
+device — the underlying singleton-service guard this builds on was itself found on-device but its
+`:app`-side consequence (this finding) was reasoned from code reading, not reproduced on hardware.
+`MainActivity`'s own doc comment still refers to the deleted `StatusActivity` (stale from an
+earlier prompt) — out of this finding's scope, left as found.
 
 ## 2026-09-08 (audit — F-008 follow-up)
 
