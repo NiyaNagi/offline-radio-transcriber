@@ -34,6 +34,9 @@ public fun RadioScreen(onChoose: (RadioChoice) -> Unit, onNotNow: () -> Unit, ba
         title = "Radio",
         subtitle = "Read the frequency and squelch from the rig itself",
         onBack = null,
+        // R-343: `Setup-Rig.dc.html`'s own "optional" tag beside the title -- the one step in the
+        // sequence a radio genuinely is optional (S09's own third row, "No radio").
+        titleOptional = true,
         bottomActions = {
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 TextAction(
