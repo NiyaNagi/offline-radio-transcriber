@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -191,16 +193,36 @@ private fun EarlierNightRowContent(row: EarlierNightRow) {
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(text = row.title, style = OrtType.rowTitle, color = OrtColors.textHigh)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(text = row.subLine, style = OrtType.subLine, color = OrtColors.textDim)
-                row.gapsLabel?.let {
-                    Text(
-                        text = " · $it",
-                        style = OrtType.subLine,
-                        color = OrtColors.accentAmberText,
-                    )
-                }
-            }
+            EarlierNightMetaLine(subLine = row.subLine, gapsLabel = row.gapsLabel)
+        }
+    }
+}
+
+/**
+ * R-260 (`overnight/N01-now@2x.png`): at font scale 2.0 a plain `Row` gave the trailing " · 1 gap"
+ * whatever sliver of width was left over after [subLine] claimed the line, so it wrapped one
+ * character per line rather than as a whole token — the same collapsed-column defect
+ * [org.ort.app.ui.components.LogRowMarkerLine] (R-244) already fixed for a badge, by the same fix:
+ * a `FlowRow` (never a plain `Row`, which cannot wrap at all) lets [gapsLabel] drop to its own line
+ * as one unit whenever it does not fit next to [subLine], instead of being squeezed into whatever
+ * width remains on the current one. `softWrap = false` on the gap token itself is belt-and-braces —
+ * even if a future layout change ever handed it a narrower slot than a `FlowRow` item should get, it
+ * would clip as a whole token rather than stack into single characters, since a truncated count is
+ * still readable and a vertical stack of one character per line is not.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EarlierNightMetaLine(subLine: String, gapsLabel: String?) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(0.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(text = subLine, style = OrtType.subLine, color = OrtColors.textDim)
+        gapsLabel?.let {
+            Text(
+                text = " · $it",
+                style = OrtType.subLine,
+                color = OrtColors.accentAmberText,
+                softWrap = false,
+                modifier = Modifier.testTag("now-earlier-night-gap"),
+            )
         }
     }
 }

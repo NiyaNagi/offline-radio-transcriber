@@ -169,6 +169,14 @@ class CaptureStatusMapperTest {
     }
 
     @Test
+    @Requirement("R-263")
+    fun `R_263 the no-rig sub-line reads in operator language, never a bare spec id`() {
+        val view = state(rig = RigStatus.State.Absent)
+        assertEquals("no radio support in this build yet", view.radio.subLine)
+        assertFalse(view.radio.subLine!!.contains("FR-"))
+    }
+
+    @Test
     fun `R_113 input reads Not measured before any device has been opened this session`() {
         val view = state(input = InputStatus.State.None)
         assertEquals("Not measured", view.input.value)
