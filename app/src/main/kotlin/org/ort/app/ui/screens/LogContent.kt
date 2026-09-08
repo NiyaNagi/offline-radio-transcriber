@@ -101,6 +101,16 @@ private val LogFilterSelectionSaver: Saver<LogFilterSelection, Any> = listSaver(
  * [onOpenThread] (R-017, default a no-op so `OrtNavHost.kt` compiles unchanged until it passes a
  * real one) opens the QSO a [org.ort.app.ui.data.LogListItem.Group] header names — `Rows.dc.html`:
  * "Tapping opens the thread."
+ *
+ * [initialFilter] (R-276, `Frequency.dc.html`'s "The N overs" stat: Log filtered to that frequency
+ * and window) seeds the filter sheet's own selection on first composition — `null` (every existing
+ * caller) is exactly today's unfiltered behaviour. A seeded [LogFilterSelection.frequencyHz] also
+ * seeds [quickFilter] to that same frequency, not just [selection]: [LogPolling.screenState]'s own
+ * `LogItemsMapper.selectionFor` treats the quick-filter chip as authoritative and forces
+ * `frequencyHz` back to `null` whenever it is `All` (guide: the quick chip and the sheet are one
+ * filter, not two independent ones) — seeding only `selection` would have the frequency silently
+ * overridden back out on the very first poll. Seeding the matching chip also satisfies "renders as
+ * an active filter chip" directly, for free.
  */
 @Composable
 public fun LogContent(
@@ -109,6 +119,7 @@ public fun LogContent(
     onOpen: (String) -> Unit,
     modifier: Modifier = Modifier,
     onOpenThread: (String) -> Unit = {},
+    initialFilter: LogFilterSelection? = null,
 ) {
     // R-247: `sessionId == null` (no session has ever started) never polls below, so this initial
     // value is the screen's actual, final state for that case — a real, fully-drawn empty Log
@@ -116,9 +127,13 @@ public fun LogContent(
     // behind. Once a session exists the first poll below replaces it immediately.
     var screenState by remember(sessionId) { mutableStateOf(LogPolling.noSessionState()) }
     var quickFilter by rememberSaveable(stateSaver = LogQuickFilterIdSaver) {
-        mutableStateOf<LogQuickFilterId>(LogQuickFilterId.All)
+        mutableStateOf<LogQuickFilterId>(
+            initialFilter?.frequencyHz?.let { LogQuickFilterId.Frequency(it) } ?: LogQuickFilterId.All,
+        )
     }
-    var selection by rememberSaveable(stateSaver = LogFilterSelectionSaver) { mutableStateOf(LogFilterSelection()) }
+    var selection by rememberSaveable(stateSaver = LogFilterSelectionSaver) {
+        mutableStateOf(initialFilter ?: LogFilterSelection())
+    }
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
     var sheetState by remember { mutableStateOf<LogFilterSheetViewState?>(null) }
 
