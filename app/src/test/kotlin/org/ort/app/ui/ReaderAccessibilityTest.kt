@@ -17,6 +17,7 @@ import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.screens.StatusScreen
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -84,16 +85,33 @@ class ReaderAccessibilityTest {
             }
         }
 
-        composeTestRule.onNodeWithContentDescription("Open navigation drawer").assertIsDisplayed().performClick()
+        // R-003/R-004 (ui-conformance-plan WP3): the M3 TopAppBar's "=" glyph is gone — the drawer
+        // control is WP2's `ScreenHeader`, whose own description is "Open navigation" (see
+        // `ui/components/Rows.kt`'s `ScreenHeader` and its own `RowsTest`).
+        composeTestRule.onNodeWithContentDescription("Open navigation").assertIsDisplayed().performClick()
 
-        // build-plan P15 grew the drawer to ten destinations (Search, Threads) — more than fit
-        // in the drawer's fixed height at once, so it scrolls (see ReaderDrawerContent). Each row
+        // build-plan P15 grew the drawer's destination set past nine real rows; R-015 (WP3) then
+        // moved `Search` out of the drawer entirely — it is reached from every header's magnifier
+        // instead (`Menu.dc.html` never lists it as a row) — so every destination *except* Search
         // must still be reachable and displayed once scrolled to; the drawer is not allowed to
         // silently clip a destination that overflows it.
-        ReaderDestination.entries.forEach { destination ->
+        ReaderDestination.entries.filter { it != ReaderDestination.SEARCH }.forEach { destination ->
             composeTestRule.onNodeWithContentDescription("Open ${destination.label}")
                 .performScrollTo()
                 .assertIsDisplayed()
         }
+    }
+
+    @Test
+    @Requirement("R-015")
+    fun `R_015 the search icon in the header opens the Search destination`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(sessionId = null)
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Search").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithContentDescription("Open navigation").assertIsDisplayed()
     }
 }
