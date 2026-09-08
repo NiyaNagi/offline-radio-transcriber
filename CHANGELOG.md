@@ -32,6 +32,135 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9: pass-4 fixes)
+
+### (pending) — ui-conformance WP9 · pass-4 fixes: radio frequency-entry routing, real-device row semantics, first-frame scaffold clipping, S09 optional tag
+
+**Scope:** `:app` `ui/setup/**` (`ReadyScreen.kt`, `SetupScaffold.kt`, `SetupActivity.kt`,
+`RadioScreen.kt`, `RadioUsbScreen.kt` and their tests), `debug/**` (unchanged this round — the
+`setup-radio` scenario already existed). Builds on the previous two commits in this same worktree.
+
+**Requirements/ACs:** R-341, R-342, R-343, R-344 fixed and re-verified on a real device
+(`emulator-5556`), not only Robolectric. R-340 investigated at length on the same device — root
+cause narrowed, not yet fixed (see "Left open" below); left `open` in the register, not claimed
+fixed.
+
+**What changed:**
+- **R-344 (halt).** S09's third row ("No radio — I will enter the frequency") used to write
+  `SetupStore.radioChoice = NONE` and call `refreshStep()` in the same tap, which alone satisfies
+  `SetupStateMachine.stepFor`'s `radioChoice == null -> RADIO` gate — setup advanced straight to S12
+  having never collected a frequency. `SetupActivity.onChooseRadio(NONE)` now routes to
+  `SetupStep.RADIO_USB` (the same frequency-entry screen the CAT-rig-with-no-support fallback
+  already uses) instead, and does **not** write `radioChoice` itself — only
+  `SetupActivity.onEnterFrequency` does, and only once a real value is confirmed (it now also
+  refuses a `null` `hz` outright, a no-op rather than a fabricated proceed). `RadioUsbScreen`'s own
+  "Enter the frequency instead" button is disabled until `parseMegahertzToHz` would accept the
+  current text, for both entry paths. Two new `SetupActivityTest` cases walk S09 → third row → S10's
+  field → S12 with a real `Activity`/`SharedPreferences`, confirming the row tap alone does not skip
+  the gate and that the frequency actually typed is what `SetupStore` (and so S12's Radio row) ends
+  up with; two `RadioUsbScreenTest` cases replace the old "blank field reports null" test with
+  "blank/unparseable field disables the button outright."
+- **R-341 (spec, reopened R-123/R-281/R-282/R-283).** Every one of those regression tests
+  `performScrollTo()` before asserting, proving content is *reachable*, never that it does not
+  overlap the bar on the *first*, unscrolled frame — exactly what the validator's own @2x
+  screenshots showed clipped. `SetupScaffold` rebuilt on `SubcomposeLayout`, the same pattern
+  WP11b's `FailureActionBarScaffold` fix (R-292, b40f659) already establishes: the header and the
+  bottom bar are measured first (loose constraints), then the scrollable content slot gets a
+  **hard** `maxHeight` of `screenHeight − headerHeight − barHeight` — it cannot be placed into the
+  bar's region at any scroll offset, first frame included, because the layout system never gives it
+  that space to measure into. New `SetupScaffoldTest`'s `R_341` asserts on the raw first composition
+  (no scroll) with content long enough to overflow at font scale 2.0. **Honestly reported, not
+  glossed over**: run against the *previous* `weight(1f)` implementation (checked directly before
+  keeping this test), the same assertion also passed there — `ComposeTestRule.setContent` drives to
+  a fully idle, settled layout before any query runs, so Robolectric cannot observe the transient
+  pre-settle frame the validator's real-device screenshots caught. The fix is kept because it is the
+  architecturally correct, `R-292`-proven pattern the coordinator asked for and a hard constraint is
+  strictly stronger than an unenforced `weight(1f)`, not because this test can itself prove the old
+  code wrong.
+- **R-342 (halt).** The R-265 fix from the previous two commits (a lone
+  `Modifier.semantics { contentDescription = ... }` on the trailing status `Text`, relying on it
+  merging into `KeyValueRow`'s own native merge boundary) passed every Robolectric test written for
+  it, then reproduced on a real device anyway: `uiautomator dump` on `emulator-5556` after loading
+  the `setup-verified` scenario showed `content-desc="Input, USB Audio Device"` with `verified` as
+  its *own separate* accessibility node, bounds and all — not folded in. Confirmed directly (not
+  assumed) that `ComposeTestRule`'s own semantics queries read Compose's internal `SemanticsNode`
+  tree, a different representation from the real `AccessibilityNodeInfo` tree Android's own
+  accessibility bridge builds from it, and the two disagree on whether a lone-`contentDescription`
+  leaf with no `mergeDescendants` of its own gets absorbed by an ancestor's merge. New composable
+  `ReadySetupRow` replaces the inline per-row rendering: a row with no action (or `statusText` alone)
+  is wrapped in `Modifier.focusable()` + `Modifier.clearAndSetSemantics { contentDescription =
+  readyRowFactsDescription(row) }`, replacing its whole subtree's accessibility surface outright — no
+  merge left to Android's own undocumented heuristics; a row with only an action is left on
+  `KeyValueRow`'s native merge (already correct, confirmed on the same device dump); the one row
+  where both coexist (`radioRow`'s `Connected` reading) gets the `clearAndSetSemantics` treatment
+  around the marker + `KeyValueRow` (`statusText` only), with the action rendered as a genuine
+  sibling *outside* that boundary so it stays its own separate real button stop. Re-dumped on
+  `emulator-5556` after the fix: `content-desc="Input, USB Audio Device, verified"` and
+  `content-desc="Level, Peaks -14 dBFS, in band"`, each one real node, `focusable="true"`, no
+  separate child. `readyRowDescription` removed (superseded by `readyRowFactsDescription`, which
+  never included `actionLabel` in the first place — the old function's own doc comment already said
+  callers should not trust it for an action row). Tests renamed `R_342` where they assert the fixed
+  behaviour; `RowsTest`/`ReadyRowsForTest` untouched.
+- **R-343 (design).** `Setup-Rig.dc.html`'s own 11px "optional" tag beside "Radio", baseline-aligned
+  — absent from the built S09 title before this. `SetupScaffold` gained `titleOptional: Boolean =
+  false` (widened past detekt's 9-parameter threshold; `@Suppress("LongParameterList")` added with
+  the same justification this codebase already uses for `Rows.kt`/`Controls.kt`); the title/subtitle
+  Row extracted into its own `ScaffoldTitleRow` composable to keep `SetupScaffold` itself under
+  detekt's `LongMethod` threshold at the same time (the `LongMethod` finding `SubcomposeLayout`
+  itself pushed it over). `RadioScreen` is the one caller that passes `titleOptional = true`. New
+  `RadioScreenTest`.
+- **R-340 (design) — investigated at length on `emulator-5556`, not fixed.** Confirmed the ghost is
+  **not** a window-transition artefact (WP9's own earlier hypothesis, refuted): reproduces on a
+  fresh `pm clear` + cold `am start` with `window_animation_scale`/`transition_animation_scale`/
+  `animator_duration_scale` all set to `0`, is pixel-identical after a swipe-triggered redraw, and
+  the accessibility tree (`uiautomator dump`) carries exactly one node for the secondary action's
+  text every time — confirmed this is a pure compositing/drawing artefact, invisible to accessibility
+  and unaffected by animation or recomposition. Ruled out by direct inspection: no
+  `AnimatedContent`/`Crossfade`/`AnimatedVisibility`/`graphicsLayer` anywhere in `:app` (grepped the
+  whole module); the literal string that ghosts (S09's "Not now — you can connect one later from
+  Settings") appears exactly once in source (`RadioScreen.kt`); `dumpsys window windows` shows
+  exactly one window attached to the task (no leftover Dialog/Popup/second Activity). **The one
+  strong, reproducible correlation found**: S12 (`ReadyScreen`, `bottomActions` is a lone
+  `PrimaryButton`) shows no ghost at all on the same device, same session; every screen the register
+  names (S02b/S03/S05/S06/S09/S11) has a *second* `bottomActions` child — a `Box(fillMaxWidth,
+  contentAlignment = Center) { TextAction(...) }` — and every one of those ghosts. This isolates the
+  defect to that second-child shape, not to `SetupScaffold` itself (S12 uses the exact same
+  `SubcomposeLayout` this round's own R-341 fix introduced, and stayed clean) and not to font scale
+  or scroll state. Handed to the coordinator rather than guessed at further: `TextAction`
+  (`Controls.kt`, WP2's file) carries `Modifier.heightIn(min = 44.dp)` followed later in the same
+  chain by `.background(...).clickable(...).padding(...).semantics(mergeDescendants = true) {}` — the
+  identical chain *shape* (`heightIn` then more modifiers on the same node) `KeyValueRow`'s own doc
+  comment already names as a real, repeated Compose/Robolectric measurement defect fixed elsewhere in
+  that file (`LogRow`/`GapRow`/`RejectedRow`/`LogGroupHeader`/`DrillInHeader`/`ScreenHeader`, Box
+  wrapping Row rather than one node carrying both) — worth checking on a real device as the next
+  step, but `Controls.kt` is outside this package's owned files.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL**, **1172 tests, 0 failures, 0
+  errors** (aggregated from `app/build/test-results/testDebugUnitTest/TEST-*.xml`).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, 190 of 419
+  requirements covered (up from 185), matrix up to date.
+- `.\gradlew.bat :app:assembleDebug` (via the `build` task above) — **BUILD SUCCESSFUL**.
+- R-342's fix and R-340's investigation were both verified/conducted directly on `emulator-5556`
+  (`.\tools\ui-audit\install.ps1 -Port 5556`, `pm clear`, `uiautomator dump`, `screencap`) — real
+  `AccessibilityNodeInfo` dumps and screenshots, not Robolectric alone, per this entry's own account
+  of where Robolectric and the real device disagreed.
+
+**Left open / not done:**
+- **R-340 is not fixed** — see above for the full investigation and the specific `TextAction`
+  hypothesis handed to the coordinator/WP2. Left `open` in the register, not claimed fixed.
+- **R-342's dual-slot fix (`radioRow`'s `Connected` reading) was not independently re-dumped on the
+  real device** in this exact combined state — no existing debug scenario reaches S12 with
+  `RigStatus.Connected` and every other gate satisfied simultaneously. It uses the identical,
+  on-device-proven `clearAndSetSemantics` mechanism as the single-slot case (verified), just with a
+  narrower `Row` scope, so confidence is high but not itself device-confirmed for this one shape.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: DayOfWeekGrid's legend wraps whole swatches instead of squeezing the last one to a sliver)
 
 ### (pending) — ui-conformance WP2 · R-310
