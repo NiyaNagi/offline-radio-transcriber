@@ -2,6 +2,7 @@ package org.ort.app.ui.setup
 
 import android.Manifest
 import android.app.Application
+import android.content.Intent
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -10,6 +11,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.MainActivity
+import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.robolectric.RobolectricTestRunner
@@ -65,6 +68,22 @@ class SetupActivityTest {
             "denyPermissions",
             ReflectionHelpers.ClassParameter(Array<String>::class.java, arrayOf(*permissions)),
         )
+    }
+
+    /** Every gate except [SharedPreferencesSetupStore.KEY_SETUP_COMPLETE] itself satisfied — the
+     * natural resume point is [SetupStep.READY]. Shared by the round-3 tests below so each states
+     * only what it adds. */
+    private fun storeEverySetupGateExceptComplete() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
+            .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
+            .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.NONE.name)
+            .apply()
     }
 
     @Test
@@ -129,6 +148,69 @@ class SetupActivityTest {
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> assertEquals(SetupStep.MICROPHONE_DENIED, activity.currentStepForTest) }
+        }
+    }
+
+    // --- WP9 round 3: EXTRA_STEP entry point, S12 Install, MainActivity destination pass-through --
+
+    /**
+     * WP3's `ReaderNavigator.openSetupInput()` needs this for F1's "Choose another input" and
+     * `Settings-Capture`'s "Re-verify" — both fired *during a running session*, when every gate is
+     * already satisfied and the ordinary resume flow would hand straight back to `MainActivity`.
+     */
+    @Test
+    fun R_080_setup_opens_at_the_requested_step() {
+        storeEverySetupGateExceptComplete()
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true).apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val intent = Intent(context, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, SetupStep.INPUT.name)
+        ActivityScenario.launch<SetupActivity>(intent).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.INPUT, activity.currentStepForTest) }
+        }
+    }
+
+    @Test
+    fun `R_080 a requested step ahead of an unmet gate is ignored, never skipping a verification`() {
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val intent = Intent(context, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, SetupStep.RADIO.name)
+        ActivityScenario.launch<SetupActivity>(intent).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.WELCOME, activity.currentStepForTest) }
+        }
+    }
+
+    @Test
+    fun `R_080 an unrecognised requested step is ignored, falling back to the ordinary resume`() {
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val intent = Intent(context, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, "NOT_A_REAL_STEP")
+        ActivityScenario.launch<SetupActivity>(intent).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.WELCOME, activity.currentStepForTest) }
+        }
+    }
+
+    /** S12's `Install` (`Setup-Done.dc.html`) opens `ReaderActivity` at its `SETTINGS` destination
+     * rather than blocking on `Start capture` first. */
+    @Test
+    fun R_080_ready_install_opens_the_reader_at_settings() {
+        storeEverySetupGateExceptComplete() // KEY_SETUP_COMPLETE left unset -- natural resume is READY.
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.READY, activity.currentStepForTest)
+                activity.onInstallModel()
+            }
+            val app = ApplicationProvider.getApplicationContext<Application>()
+            val next = shadowOf(app).nextStartedActivity
+            assertEquals(ReaderActivity::class.java.name, next?.component?.className)
+            assertEquals(ReaderDestination.SETTINGS.name, next?.getStringExtra(ReaderActivity.EXTRA_DESTINATION))
         }
     }
 }

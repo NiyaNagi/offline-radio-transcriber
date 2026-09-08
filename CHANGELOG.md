@@ -32,6 +32,109 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)
+
+### (pending) — ui-conformance WP9 · setup step entry and Install destination
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**`, `app/src/main/kotlin/org/ort/app/MainActivity.kt`
+and their tests only — the same row this package's two earlier WP9 entries (below) own. `main`
+fast-forward merged twice first (`git merge --ff-only main`, this branch already an ancestor of
+both): to `6f5c21b` (this package's own round-2 merge), then on to `3e2d4ee`, the "ui-conformance
+WP3 round 3" merge the brief named explicitly — its own local `main` ref was stale in this worktree
+(the commit already existed in the shared object database, the same situation the round-2 report
+also hit), so the second `--ff-only` targeted that hash directly, confirmed an ancestor of `HEAD`
+first (`git merge-base --is-ancestor`). No rebase, no stash, no file outside this row touched.
+
+**Requirements/ACs:** R-080 (S12's `Install`, `MainActivity`'s destination pass-through), R-081
+(`SetupActivity`'s new step-entry point, which WP3's `ReaderNavigator.openSetupInput()` — read
+directly before writing this — names as the missing piece for F1's "Choose another input" and
+`Settings-Capture`'s "Re-verify").
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) governs
+  [SetupActivity.tryOpenAtRequestedStep]'s own gate: a requested step is honored only when every
+  step *before* it in [SetupStep]'s declaration order is already satisfied
+  ([SetupStateMachine.stepFor]'s own natural resume point, or `null` meaning every gate cleared) —
+  the new entry point can only offer a *reconfiguration* door into an already-valid sequence, never
+  a way to skip a verification the guide requires (a request naming `RADIO` while the microphone is
+  still unresolved is silently ignored, proven by a new test). Principle I (Uncertainty Is Content)
+  is why `S12`'s `Install` and `MainActivity`'s destination pass-through are both documented as
+  exactly what they are and are not — see "What changed" below and the doc comments landed with
+  each — never described as complete when a real limitation (no `Assets`-sub-screen entry point,
+  no live caller of the pass-through today) remains.
+- **`SetupActivity` gained `EXTRA_STEP`** (a new `internal const val` on its companion, documented
+  in the class's own doc comment): the name of a [SetupStep] to open on directly, read once in
+  `onCreate` via the new `tryOpenAtRequestedStep`, before the ordinary `refreshStep()` ever runs.
+  Solves the exact gap `ReaderNavigator.openSetupInput()`'s own doc comment already reported (read
+  before writing this): that function fires *during a running session*, when setup is already
+  complete and the ordinary resume flow hands straight back to `MainActivity` without showing
+  anything. WP3 itself is not touched — `ReaderNavigator.kt` is that package's file; this entry
+  point is landed for WP3 to wire into `openSetupInput()` in its own future round. Four new tests
+  (`SetupActivityTest`): the required `R_080_setup_opens_at_the_requested_step` (every gate already
+  satisfied, `EXTRA_STEP=INPUT` opens there instead of bouncing to `MainActivity`); a request ahead
+  of an unmet gate is ignored (lands on the ordinary resume step instead); an unrecognised step name
+  is ignored the same way `ReaderActivity.resolveInitialDestination` already treats one (never a
+  crash on a future enum entry, an old pending intent, or a typo).
+- **S12's `Install` now opens `ReaderActivity` at its `SETTINGS` destination**
+  (`ReaderActivity.EXTRA_DESTINATION` — WP3 round 3's own addition, read directly before writing
+  this) via a new `SetupActivity.onInstallModel`, replacing the no-op the previous entry left
+  (`ReadyActions.onInstallModel = {}`, because no destination existed from setup at all at the
+  time). **Lands on Settings' root, not its `Assets` sub-screen** — confirmed by reading
+  `ui/settings/SettingsContent.kt` directly before writing this: it takes no `initialScreen` (or
+  equivalent) parameter yet, and WP3 defines no second extra naming a sub-screen (the identical gap
+  `ReaderNavigator.openSettingsStorage()`'s own doc comment already reports, for the same reason).
+  Does not `finish()` `SetupActivity` — tapping `Install` is a lateral look-something-up before
+  `Start capture`, not setup completing, so the operator returns to `Ready` normally on the
+  platform back stack. Required test `R_080_ready_install_opens_the_reader_at_settings` (every gate
+  but `setupComplete` satisfied, so the natural resume point is `READY`; tapping `Install` starts
+  `ReaderActivity` with `EXTRA_DESTINATION = "SETTINGS"`).
+- **`MainActivity.startCaptureAndShowStatus` passes through any `ReaderActivity.EXTRA_DESTINATION`
+  its own launching intent carried.** **No live caller exercises this today** — confirmed by reading
+  `RealCaptureService`'s notification `Open` action directly before writing this (`:pipeline` is
+  not this package's file to edit, brief-confirmed): its `PendingIntent` already targets
+  `ReaderActivity` by explicit component name (`R-102`'s own comment there), bypassing
+  `MainActivity` entirely, and carries only `EXTRA_SESSION_ID`, no destination. This is forward
+  wiring for whenever that changes, or any other future caller of `MainActivity`, documented as
+  such in the method's own doc comment rather than presented as a fix to an observed bug. Two new
+  tests (`MainActivityTest`): a destination extra on `MainActivity`'s own intent reaches the
+  `ReaderActivity` intent it builds; no extra in means no extra out (never a stray `null`-string
+  written where nothing was asked for).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.MainActivityTest"` — **97 of 97 passing**, zero failures (up from the round-2
+  entry's 91: the two required tests plus two supporting `SetupActivityTest` cases and two
+  `MainActivityTest` cases).
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **all passing**, zero failures
+  (`main`'s incoming WP3-round-3/WP10/failures/digest/improve/settings work landing via the two
+  `--ff-only` merges accounts for the count growing well past round two's 641; this package's own
+  six new tests are the only ones this entry adds).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `ktlintCheck` needed
+  one real fix: an unexpected blank line before a closing brace in the new
+  `SetupActivityTest.kt` tests, removed. `detekt` clean on the first run this time.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both **BUILD SUCCESSFUL**; `results/coverage-matrix.md` unchanged this round (no new
+  requirement/AC ids introduced).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open / not done:**
+- **`ReaderNavigator.openSetupInput()` itself is unchanged** — WP3's file, not this package's to
+  edit. `EXTRA_STEP` exists for that function to pass `SetupStep.INPUT.name` in a future WP3 round;
+  today it still launches `SetupActivity` with no extra, so its own documented no-op limitation
+  stands until WP3 picks this up.
+- **S12's `Install` still lands on Settings' root, not `Assets` directly** — unchanged limitation,
+  now stated against the real `EXTRA_DESTINATION` mechanism instead of "no destination at all".
+- **`MainActivity`'s destination pass-through has no live caller** — see "What changed" above; this
+  is genuinely untested-by-production-traffic forward wiring, not a fix, and is reported as such
+  rather than implied to close a real gap today.
+- Every register row this package owns (R-080, R-081, R-082, R-083, R-084) remains
+  Robolectric-verified only, per this program's own rule; no on-device or emulator confirmation is
+  claimed here.
+
+---
+
 ## 2026-09-08 (build tooling: lint/detekt ignore nested worktrees under .claude)
 
 ### (pending) — build · lint and analysis ignore nested worktrees under .claude

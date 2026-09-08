@@ -85,6 +85,17 @@ public class MainActivity : ComponentActivity() {
      * has actually been killed. Nothing in this package queries `:data` for "the most recently
      * open session" to recover from that case, and building that is outside WP1's owned files.
      */
+    /**
+     * ui-conformance-plan WP9 round 3: passes through whatever [ReaderActivity.EXTRA_DESTINATION]
+     * this activity's own launching intent carried, so a caller that reaches `MainActivity` with a
+     * destination in mind does not lose it just because setup happened to already be complete.
+     * **No live caller sends one today** — confirmed by reading `RealCaptureService`'s notification
+     * `Open` action directly before writing this: its `PendingIntent` targets `ReaderActivity` by
+     * explicit component name already (`R-102`'s own comment there), bypassing `MainActivity`
+     * entirely, and carries only `EXTRA_SESSION_ID`, no destination. This is therefore forward
+     * wiring for whenever that changes (or any other future caller of `MainActivity` itself), not a
+     * fix to an observed bug — `:pipeline` is not this package's file to edit regardless.
+     */
     private fun startCaptureAndShowStatus() {
         val liveSessionId = CaptureState.sessionId.takeIf { CaptureState.isCapturing }
         val effectiveSessionId = liveSessionId ?: sessionId
@@ -100,9 +111,12 @@ public class MainActivity : ComponentActivity() {
         // StatusActivity/TransmissionListActivity remain registered and working — their Compose
         // ports live behind this nav host, and removing the originals belongs to P14, which
         // replaces the screens rather than merely re-hosting them.
-        startActivity(
-            Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_SESSION_ID, effectiveSessionId),
-        )
+        val readerIntent = Intent(this, ReaderActivity::class.java)
+            .putExtra(ReaderActivity.EXTRA_SESSION_ID, effectiveSessionId)
+        intent?.getStringExtra(ReaderActivity.EXTRA_DESTINATION)?.let { destination ->
+            readerIntent.putExtra(ReaderActivity.EXTRA_DESTINATION, destination)
+        }
+        startActivity(readerIntent)
         finish()
     }
 
