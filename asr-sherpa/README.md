@@ -134,6 +134,35 @@ in this session's environment** — no `.onnx` file was actually downloaded here
 downloading assets is deliberately kept out of the capture/processing path per constitution V);
 `RealSileroVadRealModelTest` documents exactly what a future session needs to do so for real.
 
+## Published checksums for the app's Models screen (audit F-008 follow-up)
+
+`app/.../ui/data/ModelsViewData.kt`'s `ModelCatalog` — the "Models" screen's declared,
+user-initiated download/side-load channel (constitution V, FR-ASR-1) — installs the same four
+files this module's tests use, fetched as flat files rather than the `.tar.bz2` archive above.
+Before this fix every entry carried a placeholder, non-hex checksum string, so a real fetch or
+side-load would correctly fail closed but the catalog could not say *why* a digest was missing.
+The table below is the source-of-truth record for each entry's real state, read from published
+metadata — **no file was downloaded or hashed by this change to produce these values**:
+
+| File | URL | Size (bytes) | SHA-256 | Read from |
+|---|---|---|---|---|
+| `tiny.en-encoder.int8.onnx` | `https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-encoder.int8.onnx` | 12,937,772 | `0ce578b827c94a961aacb8fa14b02f096504b337e5c94be37c36238cbe3e8bc6` | The HuggingFace Git-LFS pointer text at `.../raw/main/tiny.en-encoder.int8.onnx` (`oid sha256:...`, `size ...`) — read 2026-09-07. |
+| `tiny.en-decoder.int8.onnx` | `https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-decoder.int8.onnx` | 89,853,865 | `06c0e6ff6348d427e51839219d1c886c18cfdf411e629e33f5e1679bff9c1527` | Same LFS pointer mechanism, `.../raw/main/tiny.en-decoder.int8.onnx` — read 2026-09-07. |
+| `tiny.en-tokens.txt` | `https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-tokens.txt` | 835,554 | **Unknown — sideload only.** | Not LFS-tracked: HuggingFace's file-listing API reports only a 40-hex git blob id (`3480e077d2fc94c521e1cadb2e66cde18138b3ef`) for this path — a SHA-1 from git's own blob hashing, not a SHA-256. Checked and not found elsewhere: sherpa-onnx's own `checksum.txt` release manifest (below) covers whole `.tar.bz2` archives only, not files extracted from them. `ModelCatalog` marks this entry `ChecksumState.UnknownSideloadOnly` rather than inventing a value. |
+| `silero_vad.onnx` | `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx` | not confirmed by this change (see note) | `9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6` | The `checksum.txt` asset published in the same GitHub release (`k2-fsa/sherpa-onnx`, tag `asr-models`) — a tab-separated `<asset filename>\tsha256` manifest listing `silero_vad.onnx` by its exact name (distinct from the unrelated `silero_vad_v5.onnx` asset in the same release, whose Releases-API `digest` field is null). Read 2026-09-07. |
+
+Note on `silero_vad.onnx`'s size: the GitHub Releases API for this tag paginates its asset list
+(100+ assets) and the specific `silero_vad.onnx` entry (as opposed to `silero_vad_v5.onnx`, whose
+size the API did surface) was not located within the pages fetched in this session; only its
+checksum manifest line was read directly. This does not affect verification — `ModelFetchSpec`
+carries no size field, only a `Checksum` — but a future session downloading it for real should
+expect to confirm the size empirically rather than from this table.
+
+**No on-device install, and no real download of any of these four files, was performed in this
+change.** The three `Known` checksums above are what a genuine download must match before
+`ModelAcquisition` will install it; `tiny.en-tokens.txt` remains side-load-only until an
+authoritative sha256 for that specific file is published somewhere and can be cited the same way.
+
 ## What remains for AC-6
 
 This proves the `SherpaDecoder` seam has a real, working implementation — a real JVM binding, a

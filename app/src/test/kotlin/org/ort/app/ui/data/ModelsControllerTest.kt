@@ -152,6 +152,54 @@ class ModelsControllerTest {
         assertNull(state.requeuedMessage)
     }
 
+    @Test
+    @Requirement("FR-AST-1")
+    fun `FR_AST_1 download refuses with no network call at all for an unknown-checksum entry`(): Unit = runTest {
+        // A client that throws if it is ever invoked — proves ModelAcquisition.fetch (and
+        // therefore the network) is never reached for ASR_TOKENS, whose catalog checksum is
+        // ChecksumState.UnknownSideloadOnly, using the REAL ModelCatalog::specFor default.
+        val neverCalled = object : org.ort.net.HttpRangeClient {
+            override fun get(url: String, rangeStart: Long): org.ort.net.HttpRangeResult =
+                error("download() must never make a network call for an unknown-checksum entry")
+        }
+
+        val result = ModelsController.download(context, ModelId.ASR_TOKENS, client = neverCalled)
+
+        assertTrue("expected a Failure, got $result", result is ModelActionResult.Failure)
+        assertTrue(
+            (result as ModelActionResult.Failure).reason.contains("no published checksum"),
+        )
+    }
+
+    @Test
+    @Requirement("FR-AST-1")
+    fun `FR_AST_1 sideloading an unknown-checksum entry installs it unverified, never claiming verified`(): Unit =
+        runTest {
+            // Real ModelCatalog::specFor default (ASR_TOKENS has no known checksum) with a real
+            // temp filesDir so ModelCatalog.entry's own destination function is exercised.
+            val tempFilesDir = Files.createTempDirectory("models-controller-tofu-test").toFile()
+            val fakeContext = object : android.content.ContextWrapper(context) {
+                override fun getFilesDir(): File = tempFilesDir
+            }
+            val sourceFile = File(tempFilesDir, "user-picked-tokens.txt")
+            sourceFile.writeBytes(body)
+
+            val before = ModelsController.currentState(fakeContext)
+            assertEquals(
+                ModelRowStatus.NOT_INSTALLED,
+                before.rows.first { it.id == ModelId.ASR_TOKENS }.status,
+            )
+            assertFalse(before.rows.first { it.id == ModelId.ASR_TOKENS }.checksumKnown)
+
+            val result = ModelsController.sideload(fakeContext, ModelId.ASR_TOKENS, sourceFile)
+
+            assertTrue("expected a Success, got $result", result is ModelActionResult.Success)
+            val after = ModelsController.currentState(fakeContext)
+            val row = after.rows.first { it.id == ModelId.ASR_TOKENS }
+            assertEquals(ModelRowStatus.INSTALLED_UNVERIFIED, row.status)
+            assertFalse(row.checksumKnown)
+        }
+
     private fun session(id: String) = SessionEntity(
         id = id,
         startedAt = 0L,

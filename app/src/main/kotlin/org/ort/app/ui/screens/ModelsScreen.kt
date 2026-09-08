@@ -77,6 +77,8 @@ private fun ModelRow(
         val statusText = when {
             isBusy -> "Downloading…"
             row.status == ModelRowStatus.INSTALLED -> "Installed (checksum verified)"
+            row.status == ModelRowStatus.INSTALLED_UNVERIFIED ->
+                "Installed (checksum unknown — not verified against a published value)"
             else -> "Not installed"
         }
         Text(
@@ -86,6 +88,15 @@ private fun ModelRow(
                 .padding(top = OrtSpacing.xs)
                 .semantics { contentDescription = "${row.label} status: $statusText" },
         )
+        if (!row.checksumKnown) {
+            Text(
+                text = "No published checksum for this file — Download is disabled.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .padding(top = OrtSpacing.xs)
+                    .semantics { contentDescription = "${row.label} checksum state: unknown, sideload only" },
+            )
+        }
         row.detail?.let { detail ->
             Text(
                 text = detail,
@@ -98,7 +109,7 @@ private fun ModelRow(
         Row(modifier = Modifier.padding(top = OrtSpacing.sm)) {
             Button(
                 onClick = { onDownload(row.id) },
-                enabled = !isBusy,
+                enabled = !isBusy && row.checksumKnown,
                 modifier = Modifier.semantics { contentDescription = "Download ${row.label}" },
             ) { Text("Download") }
             Button(

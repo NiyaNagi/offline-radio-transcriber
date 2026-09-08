@@ -32,6 +32,87 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (audit — F-008 follow-up)
+
+### (pending) — audit F-008 follow-up · real, cited sha256 checksums replace the placeholder in `ModelCatalog`
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (new:
+`ChecksumState`; `ModelCatalogEntry`/`ModelCatalog.specFor` now checksum-aware;
+`ModelsController.download`/`.sideload`/`rowFor` react to it), `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`
+(unknown-checksum state text and disabled Download button only); tests
+`app/src/test/kotlin/org/ort/app/ui/data/ModelCatalogTest.kt` (new),
+`ModelsControllerTest.kt`, `ModelsScreenTest.kt`; `asr-sherpa/README.md` (new checksum table).
+No `:net` file touched.
+
+**Requirements/ACs:** FR-AST-1, constitution V/VII (asset integrity checked before activation),
+constitution I (an installed state without its verification confidence is a bug, same discipline
+as an attribution without its state), constitution VI (no number without its provenance, applied
+to a checksum).
+
+**What changed:** The previous F-008 `:app`-half change (2026-09-07, this file) shipped every
+`ModelCatalog` entry with `UNPINNED_CHECKSUM`, a deliberately non-hex placeholder string, because
+no network egress was available to actually download a model and hash it. This change obtains the
+*real* published digests without downloading any binary, using `WebFetch` against small,
+non-binary metadata endpoints, and records exactly where each was read (KDoc on `ModelCatalog`,
+table in `asr-sherpa/README.md`):
+
+- `tiny.en-encoder.int8.onnx` and `tiny.en-decoder.int8.onnx` are Git-LFS-tracked on HuggingFace:
+  fetching `.../raw/main/<file>` for an LFS path returns the small LFS pointer text itself
+  (`oid sha256:<hex>`, `size <bytes>`) rather than the binary. Both are now `ChecksumState.Known`
+  with the sha256 read from that pointer.
+- `tiny.en-tokens.txt` is *not* LFS-tracked: HuggingFace's file-listing API gives only a 40-hex git
+  blob id for it (a SHA-1, not a SHA-256), and no sha256 for this specific extracted file is
+  published anywhere else found (checked: HF's raw/API endpoints, and sherpa-onnx's own
+  `checksum.txt` release manifest, which covers whole `.tar.bz2` archives only). Rather than invent
+  a value, this entry is `ChecksumState.UnknownSideloadOnly` with a reason string.
+- `silero_vad.onnx` has no per-asset `digest` field on GitHub's Releases API (confirmed null even
+  for the differently-named `silero_vad_v5.onnx` asset in the same release), but the release
+  itself publishes a `checksum.txt` manifest asset — a tab-separated `<filename>\tsha256` line per
+  asset — which lists `silero_vad.onnx` by its exact name. Now `ChecksumState.Known` from that line.
+
+`ModelCatalog.specFor` now returns `ModelFetchSpec?`, null exactly for an
+`UnknownSideloadOnly` entry. `ModelsController.download()` refuses such an entry with a `Failure`
+and **no network call at all** (proven by a test client that throws if invoked) — there is nothing
+to verify a downloaded file against. `ModelsController.sideload()` still works for such an entry:
+since there is no known-good digest to check the user's file against, it computes
+`sha256Of(source)` itself and installs against that self-referential value — a plain
+trust-on-first-use of the exact bytes supplied, entirely within `:app` (no `:net` change), never
+presented as "checksum verified" (a new `ModelRowStatus.INSTALLED_UNVERIFIED`, distinct from
+`INSTALLED`, and a new `ModelRowViewState.checksumKnown` flag the screen uses to disable Download
+and show "No published checksum for this file — Download is disabled.").
+
+**Verified:**
+- `ModelCatalogTest` (new, 6 tests) seen to fail for the right reason first: before `ChecksumState`
+  existed, `./gradlew :app:compileDebugUnitTestKotlin` failed with `Unresolved reference
+  'checksumState'` / `'ChecksumState'` (18 errors) against the test file; after the implementation,
+  the same command is clean and all 6 tests pass.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.ModelCatalogTest" --tests
+  "org.ort.app.ui.data.ModelsControllerTest" --tests "org.ort.app.ui.screens.ModelsScreenTest"`:
+  green, including two new `ModelsControllerTest` cases (download refuses with no network call for
+  `ASR_TOKENS`; sideload installs it `INSTALLED_UNVERIFIED`) and two new `ModelsScreenTest` cases
+  (unknown-checksum text + disabled Download; unverified-install status text).
+- `./gradlew :app:testDebugUnitTest` (full module): green.
+- `./gradlew build dependencyRules` (full gate): green (after fixing two detekt findings —
+  `MaxLineLength`, `MayBeConst` — surfaced by this same run).
+- `python tools/spec-check/spec_check.py`: all 8 checks PASS.
+- Every digest above was read from published metadata via `WebFetch`, never computed from a
+  download this change performed, and never typed from memory — see the per-entry KDoc and the
+  `asr-sherpa/README.md` table for the exact source of each. No on-device install and no real
+  network fetch against these URLs was run in this session (everything above is Robolectric/JVM
+  against fakes, same as the original F-008 `:app`-half change).
+
+**Left open / not done:**
+- `tiny.en-tokens.txt` still has no known-good sha256 to pin — genuinely unresolved, not merely
+  unpinned by omission: no authoritative sha256 for this exact file was found anywhere published.
+  It installs only via the trust-on-first-use side-load path now built for exactly this case.
+- `silero_vad.onnx`'s exact size in bytes was not confirmed (GitHub's paginated asset list was not
+  fully walked to find that one entry — see `asr-sherpa/README.md`'s note); this does not affect
+  checksum verification, since `ModelFetchSpec` carries no size field.
+- The `:net` half of F-008 (the `INTERNET` manifest grant) remains a separate agent's already-landed
+  work, per the previous entry; not touched here.
+- No real download against any of these four URLs, and no on-device install, has been run in any
+  session to date.
+
 ## 2026-09-07 (audit — F-008)
 
 ### (pending) — audit F-008 (`:app` half) · a "Models" screen is the declared, user-initiated channel through which an ASR/VAD model reaches the device

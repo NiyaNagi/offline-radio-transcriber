@@ -1,5 +1,7 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -27,6 +29,9 @@ class ModelsScreenTest {
     val composeTestRule = createComposeRule()
 
     private fun row(id: ModelId, status: ModelRowStatus) = ModelRowViewState(id, id.label, status, detail = null)
+
+    private fun unknownChecksumRow(id: ModelId, status: ModelRowStatus, detail: String) =
+        ModelRowViewState(id, id.label, status, detail = detail, checksumKnown = false)
 
     @Test
     @Requirement("FR-ASR-1")
@@ -118,5 +123,59 @@ class ModelsScreenTest {
 
         composeTestRule.onNodeWithText("Requeued 3 previously failed transmission(s).").assertExists()
         composeTestRule.onNodeWithText("Silero VAD: installed, checksum verified.").assertExists()
+    }
+
+    @Test
+    @Requirement("FR-AST-1")
+    fun `FR_AST_1 an unknown-checksum row shows that state as text and disables Download`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            unknownChecksumRow(
+                                ModelId.ASR_TOKENS,
+                                ModelRowStatus.NOT_INSTALLED,
+                                detail = "no sha256 is published for this file",
+                            ),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithContentDescription("Whisper tiny.en — tokens checksum state: unknown, sideload only")
+            .assertExists()
+        composeTestRule.onNodeWithContentDescription("Download Whisper tiny.en — tokens").assertIsNotEnabled()
+        composeTestRule.onNodeWithContentDescription("Side-load Whisper tiny.en — tokens").assertIsEnabled()
+    }
+
+    @Test
+    @Requirement("FR-AST-1")
+    fun `FR_AST_1 an unverified install says checksum unknown, never checksum verified`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            unknownChecksumRow(
+                                ModelId.ASR_TOKENS,
+                                ModelRowStatus.INSTALLED_UNVERIFIED,
+                                detail = "no sha256 is published for this file",
+                            ),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription(
+            "Whisper tiny.en — tokens status: Installed (checksum unknown — not verified against a published value)",
+        ).assertExists()
     }
 }
