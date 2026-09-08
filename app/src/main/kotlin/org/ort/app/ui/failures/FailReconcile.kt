@@ -41,6 +41,7 @@ public fun FailReconcileScreen(
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
+            .failureScreenInset()
             .verticalScroll(rememberScrollState())
             .testTag("failure-reconcile-screen"),
     ) {

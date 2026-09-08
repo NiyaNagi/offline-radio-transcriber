@@ -35,6 +35,7 @@ public fun FailAssetSwapScreen(
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
+            .failureScreenInset()
             .testTag("failure-asset-swap-screen"),
     ) {
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {

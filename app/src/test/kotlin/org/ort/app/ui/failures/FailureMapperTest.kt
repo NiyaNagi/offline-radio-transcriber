@@ -41,9 +41,12 @@ class FailureMapperTest {
         newestGap: CaptureGapEntity? = null,
         nowMillis: Long = 1_000_000L,
         debugOverride: FailurePresentation? = null,
+        sessionStartedAtMillis: Long? = null,
+        sessionTransmissionCount: Int = 0,
     ) = FailureSignals(
         captureState, inputStatus, levelStatus, thermalStatus, rigStatus, storageForecast,
         shedLevel, shedBacklog, newestGap, nowMillis, debugOverride,
+        sessionStartedAtMillis, sessionTransmissionCount,
     )
 
     @Test
@@ -59,6 +62,38 @@ class FailureMapperTest {
         presentation as FailurePresentation.Route
         assertEquals("USB Audio Device", presentation.state.expectedLabel)
         assertEquals("Built-in microphone", presentation.state.actualLabel)
+    }
+
+    @Test
+    @Requirement("R-126")
+    fun `R_126 a route mismatch computes the session's elapsed time and overs kept`() {
+        val presentation = FailureMapper.map(
+            signals(
+                inputStatus = InputStatus.State.Mismatch(usbDevice, builtInMic),
+                nowMillis = 1_000_000L + (3 * 3_600_000L + 9 * 60_000L + 40_000L),
+                sessionStartedAtMillis = 1_000_000L,
+                sessionTransmissionCount = 188,
+            ),
+        )
+        assertTrue(presentation is FailurePresentation.Route)
+        presentation as FailurePresentation.Route
+        assertEquals("3:09:40", presentation.state.elapsedLabel)
+        assertEquals(188, presentation.state.oversKeptCount)
+        assertTrue(presentation.state.sessionElapsedKnown)
+    }
+
+    @Test
+    @Requirement("R-126")
+    fun `R_126 a route mismatch with no session to measure against reports elapsed as unknown, never invented`() {
+        val presentation = FailureMapper.map(
+            signals(
+                inputStatus = InputStatus.State.Mismatch(usbDevice, builtInMic),
+                sessionStartedAtMillis = null,
+            ),
+        )
+        assertTrue(presentation is FailurePresentation.Route)
+        presentation as FailurePresentation.Route
+        assertTrue(!presentation.state.sessionElapsedKnown)
     }
 
     @Test

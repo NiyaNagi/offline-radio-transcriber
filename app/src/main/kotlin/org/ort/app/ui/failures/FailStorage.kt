@@ -40,6 +40,7 @@ public fun FailStorageHaltScreen(
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
+            .failureScreenInset()
             .testTag("failure-storage-halt-screen"),
     ) {
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {

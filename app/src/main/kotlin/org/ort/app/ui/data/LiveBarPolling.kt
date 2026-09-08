@@ -3,6 +3,8 @@ package org.ort.app.ui.data
 import android.content.Context
 import org.ort.app.ui.components.LiveBarTone
 import org.ort.app.ui.components.LiveBarViewState
+import org.ort.app.ui.failures.DebugFailureOverride
+import org.ort.app.ui.failures.FailurePresentation
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.CaptureState
@@ -32,10 +34,11 @@ public object LiveBarPolling {
     private const val LEVEL_BAR_COUNT = 4
 
     public suspend fun current(context: Context, sessionId: String?): LiveBarViewState {
-        val (tone, label) = toneAndLabel()
+        val override = failureOverrideToneLabelAndPartial()
+        val (tone, label) = if (override != null) override.first to override.second else toneAndLabel()
         return LiveBarViewState(
             level = levelBars(),
-            partialText = sessionId?.let { newestPassAPartial(context, it) },
+            partialText = override?.third ?: sessionId?.let { newestPassAPartial(context, it) },
             label = label,
             tone = tone,
         )
@@ -69,6 +72,34 @@ public object LiveBarPolling {
         val ceiling = LevelViewState.CHART_CEILING_DBFS
         return ((dbfs - floor) / (ceiling - floor)).coerceIn(0f, 1f)
     }
+
+    /**
+     * Register R-128: the live bar must follow every failure `FailureMapper` can raise, including
+     * a debug override — `DebugFailureOverride.activeOverride` wins outright in `FailureMapper`'s
+     * own priority (see that object's kdoc), so it is consulted here too, ahead of every
+     * real-signal branch in [toneAndLabel]. Exhaustive over every `FailurePresentation` id this
+     * project owns, so the mapping is documented and testable per F-id (this package's brief) —
+     * two ids genuinely need an override here (`Fail-Usb.dc.html`'s live bar reads "audio fine ·
+     * radio needs permission" in `halt/text` red — F16 has no real signal at all, only the debug
+     * override; `Fail-Storage.dc.html`'s "text only" stage the same way, register R-100's own
+     * "Left open" note on `StorageAudioPausedViewState`). Every other id falls through (`null`) to
+     * [toneAndLabel]'s real-signal computation, either because its own board shows no live bar at
+     * all (F14/F19/F20/F21/F22 are not Now/session screens) or because its board explicitly keeps
+     * the live bar nominal while the informational card shows (F5/F15 both read "Live") — nothing
+     * here invents a label a board never specified.
+     */
+    private fun failureOverrideToneLabelAndPartial(): Triple<LiveBarTone, String, String?>? =
+        when (DebugFailureOverride.activeOverride) {
+            is FailurePresentation.Usb -> Triple(LiveBarTone.HALTED, "Act", "audio fine · radio needs permission")
+            is FailurePresentation.StorageAudioPaused -> Triple(LiveBarTone.DEGRADED, "Text only", null)
+            is FailurePresentation.Route, is FailurePresentation.Disconnect, is FailurePresentation.Level,
+            is FailurePresentation.Killed, is FailurePresentation.StorageWarning, is FailurePresentation.StorageHalt,
+            is FailurePresentation.Thermal, is FailurePresentation.Backlog, is FailurePresentation.Rig,
+            is FailurePresentation.Call, is FailurePresentation.Clock, is FailurePresentation.Interrupted,
+            is FailurePresentation.Reconcile, is FailurePresentation.Migration, is FailurePresentation.AssetSwap,
+            is FailurePresentation.Calibration, FailurePresentation.None, null,
+            -> null
+        }
 
     /**
      * `Flow-Degrade.dc.html`'s own priority order: capture actually stopped outranks every

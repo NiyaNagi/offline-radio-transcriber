@@ -1,10 +1,13 @@
 package org.ort.app.ui.failures
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -39,7 +42,13 @@ class FailureScreensTest {
         composeTestRule.setContent {
             OrtTheme {
                 FailRouteScreen(
-                    state = RouteViewState("USB Audio Device", "Built-in microphone", "02:41:12"),
+                    state = RouteViewState(
+                        expectedLabel = "USB Audio Device",
+                        actualLabel = "Built-in microphone",
+                        sinceLabel = "02:41:12",
+                        elapsedLabel = "3:09:40",
+                        oversKeptCount = 188,
+                    ),
                     onChooseInputAgain = { chosenInput = true },
                     onEndSession = { endedSession = true },
                 )
@@ -61,7 +70,13 @@ class FailureScreensTest {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
                 OrtTheme {
                     FailRouteScreen(
-                        state = RouteViewState("USB Audio Device", "Built-in microphone", "02:41:12"),
+                        state = RouteViewState(
+                            expectedLabel = "USB Audio Device",
+                            actualLabel = "Built-in microphone",
+                            sinceLabel = "02:41:12",
+                            elapsedLabel = "3:09:40",
+                            oversKeptCount = 188,
+                        ),
                         onChooseInputAgain = {},
                         onEndSession = {},
                     )
@@ -71,6 +86,112 @@ class FailureScreensTest {
 
         composeTestRule.onNodeWithTag("failure-route-choose-input").assertIsDisplayed().assertHeightIsAtLeast(44.dp)
         composeTestRule.onNodeWithTag("failure-route-end-session").assertIsDisplayed().assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `R_126 the subtitle follows Fail-Route's HH_MM_SS after H_MM_SS N overs kept pattern`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRouteScreen(
+                    state = RouteViewState(
+                        expectedLabel = "USB Audio Device",
+                        actualLabel = "Built-in microphone",
+                        sinceLabel = "02:41:12",
+                        elapsedLabel = "3:09:40",
+                        oversKeptCount = 188,
+                    ),
+                    onChooseInputAgain = {},
+                    onEndSession = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("02:41:12 · after 3:09:40 · 188 overs kept").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_126 with no session to measure against, the subtitle never invents an elapsed time`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRouteScreen(
+                    state = RouteViewState(
+                        expectedLabel = "USB Audio Device",
+                        actualLabel = "Built-in microphone",
+                        sinceLabel = "02:41:12",
+                        elapsedLabel = "0:00:00",
+                        oversKeptCount = 0,
+                        sessionElapsedKnown = false,
+                    ),
+                    onChooseInputAgain = {},
+                    onEndSession = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("02:41:12 · capture will not continue on this route").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_126 Why this halts opens a sheet citing the halt rule, and closes`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRouteScreen(
+                    state = RouteViewState(
+                        expectedLabel = "USB Audio Device",
+                        actualLabel = "Built-in microphone",
+                        sinceLabel = "02:41:12",
+                        elapsedLabel = "3:09:40",
+                        oversKeptCount = 188,
+                    ),
+                    onChooseInputAgain = {},
+                    onEndSession = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("failure-route-why-this-halts-sheet").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Why this halts").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("failure-route-why-this-halts-sheet").assertIsDisplayed()
+        composeTestRule.onNodeWithText(
+            "A route that is not the selected device halts capture (FR-CAP-3) — recording the room " +
+                "instead of the radio is the highest-consequence silent failure in the system. The built-in " +
+                "mic is a legitimate choice on its own (FR-CAP-3a), but never a silent substitute for a USB " +
+                "device that dropped off the bus. Every retained recording carries the exact input rate and " +
+                "resampler identity that produced it (FR-CAP-2a); a route swapped mid-session would make " +
+                "that identity a lie for whatever came after. Route changes are re-verified against this " +
+                "same rule for the rest of the session (FR-RUN-13).",
+        ).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-route-why-this-halts-close").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("failure-route-why-this-halts-sheet").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_127 every takeover and banner in this package compiles the status-bar inset without crashing`() {
+        // Robolectric's WindowInsets.statusBars resolves to zero in this harness (no real system
+        // bar to measure), so the pixel offset V1 caught by screenshot cannot be asserted here —
+        // this proves the modifier chain is valid and every screen still renders its content with
+        // it applied, the same way `SetupScaffold.kt`'s own (already-correct) screens do.
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    FailRouteScreen(
+                        state = RouteViewState("USB Audio Device", "Built-in microphone", "02:41:12", "0:00:01", 1),
+                        onChooseInputAgain = {},
+                        onEndSession = {},
+                    )
+                    FailStorageHaltScreen(state = StorageHaltViewState("50 MB free", "100 MB"), onFreeUpSpace = {})
+                    FailUsbScreen(
+                        state = UsbViewState("03:44", "03:47", 4),
+                        onGrantPermission = {},
+                        onContinueWithoutRadio = {},
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onAllNodesWithTag("failure-route-screen").assertCountEquals(1)
+        composeTestRule.onAllNodesWithTag("failure-storage-halt-screen").assertCountEquals(1)
+        composeTestRule.onAllNodesWithTag("failure-usb-screen").assertCountEquals(1)
     }
 
     @Test
@@ -287,7 +408,7 @@ class FailureScreensTest {
     fun `F14_clock and F17_interrupted render as informational, non-amber cards`() {
         composeTestRule.setContent {
             OrtTheme {
-                androidx.compose.foundation.layout.Column {
+                Column {
                     FailClockCard(state = ClockViewState("PDT → PST", "8 h 30 m", "23:10", "06:40"))
                     FailInterruptedCard(state = InterruptedViewState(3, "03:12 – 06:48"))
                 }

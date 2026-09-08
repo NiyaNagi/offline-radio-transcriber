@@ -3,6 +3,7 @@ package org.ort.app.ui.failures
 import android.content.Context
 import org.ort.core.SystemClock
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.CaptureGapEntity
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
@@ -15,17 +16,22 @@ import org.ort.pipeline.capture.ThermalStatus
  * [FailureHost]'s own read path (guide's "polling and I/O stay in `ui/data`" rule — this package
  * owns the whole `ui/failures` directory, so its polling stays here rather than reaching into
  * `ui/data`, which WP4 owns; see this package's report). A snapshot, not a stream: every
- * process-wide holder plus,
- * at most, the newest [org.ort.data.entity.CaptureGapEntity] for the current session, read once
- * per tick so [FailureMapper.map] sees one consistent instant (matching `LiveBarPolling.current`'s
- * own shape and cadence).
+ * process-wide holder plus, at most, the newest [org.ort.data.entity.CaptureGapEntity], the
+ * current session's own start time and transmission count (register R-126) for the current
+ * session, read once per tick so [FailureMapper.map] sees one consistent instant (matching
+ * `LiveBarPolling.current`'s own shape and cadence).
  */
 public object FailureSignalsPolling {
 
     public suspend fun current(context: Context, sessionId: String?): FailureSignals {
-        val newestGap = sessionId?.let { id ->
+        var newestGap: CaptureGapEntity? = null
+        var sessionStartedAtMillis: Long? = null
+        var sessionTransmissionCount = 0
+        if (sessionId != null) {
             val db = OrtDatabase.create(context.applicationContext)
-            db.captureGapDao().listBySession(id).maxByOrNull { it.startedAt }
+            newestGap = db.captureGapDao().listBySession(sessionId).maxByOrNull { it.startedAt }
+            sessionStartedAtMillis = db.sessionDao().getById(sessionId)?.startedAt
+            sessionTransmissionCount = db.transmissionDao().listBySession(sessionId).size
         }
         return FailureSignals(
             captureState = CaptureState.state,
@@ -39,6 +45,8 @@ public object FailureSignalsPolling {
             newestGap = newestGap,
             nowMillis = SystemClock.wallMillis(),
             debugOverride = DebugFailureOverride.activeOverride,
+            sessionStartedAtMillis = sessionStartedAtMillis,
+            sessionTransmissionCount = sessionTransmissionCount,
         )
     }
 

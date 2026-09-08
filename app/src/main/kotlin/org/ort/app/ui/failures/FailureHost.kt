@@ -135,10 +135,19 @@ private fun ToastSlot(toasts: List<RecoveryToast>, onToastShown: () -> Unit, mod
     )
 }
 
-/** Every banner/card renders pinned near the top of the current destination — see class kdoc for why. */
+/** Every banner/card renders pinned near the top of the current destination — see class kdoc for
+ * why. R-127: the same 44dp status-bar inset every takeover carries ([failureScreenInset]) —
+ * without it a banner starts at y=0 and its icon/title collide with the clock, exactly what V1
+ * found (register R-127, `level-low/F03-fail-level-banner.png`). */
 @Composable
 private fun BoxScope.BannerOverlay(content: @Composable () -> Unit) {
-    Box(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(OrtSpacing.lg)) {
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .fillMaxWidth()
+            .failureScreenInset()
+            .padding(OrtSpacing.lg),
+    ) {
         content()
     }
 }

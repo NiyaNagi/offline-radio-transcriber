@@ -32,6 +32,11 @@ public data class FailureSignals(
     public val newestGap: CaptureGapEntity?,
     public val nowMillis: Long,
     public val debugOverride: FailurePresentation?,
+    /** Register R-126: the current session's own start time, for F1's "after H:MM:SS" subtitle —
+     * `null` when there is no session to measure against (never fabricated). */
+    public val sessionStartedAtMillis: Long? = null,
+    /** Register R-126: the current session's transmission count, for F1's "N overs kept". */
+    public val sessionTransmissionCount: Int = 0,
 )
 
 /**
@@ -91,11 +96,19 @@ public object FailureMapper {
     private fun mapTakeover(signals: FailureSignals): FailurePresentation? {
         val input = signals.inputStatus
         if (input is InputStatus.State.Mismatch) {
+            val startedAt = signals.sessionStartedAtMillis
             return FailurePresentation.Route(
                 RouteViewState(
                     expectedLabel = input.expected.label,
                     actualLabel = input.actual?.label ?: "an unrecognised device",
                     sinceLabel = clockLabel(signals.nowMillis),
+                    elapsedLabel = if (startedAt != null) {
+                        hoursMinutesSecondsLabel(signals.nowMillis - startedAt)
+                    } else {
+                        "0:00:00"
+                    },
+                    oversKeptCount = signals.sessionTransmissionCount,
+                    sessionElapsedKnown = startedAt != null,
                 ),
             )
         }
@@ -219,6 +232,17 @@ public object FailureMapper {
             m > 0 -> "$m m $s s"
             else -> "$s s"
         }
+    }
+
+    /** `Fail-Route.dc.html`'s subtitle: "H:MM:SS" (hours unpadded, minutes/seconds zero-padded) —
+     * `"6:42"` below an hour is never produced here on purpose, register R-126's cited pattern
+     * always carries all three components, unlike [LiveBarPolling]'s shorter elapsed label. */
+    internal fun hoursMinutesSecondsLabel(millis: Long): String {
+        val totalSeconds = (millis / 1000).coerceAtLeast(0)
+        val h = totalSeconds / 3600
+        val m = (totalSeconds % 3600) / 60
+        val s = totalSeconds % 60
+        return "%d:%02d:%02d".format(Locale.ROOT, h, m, s)
     }
 
     internal fun bytesLabel(bytes: Long): String {
