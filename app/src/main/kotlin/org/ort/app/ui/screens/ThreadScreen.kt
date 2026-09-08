@@ -29,10 +29,7 @@ import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.FrequencyMeanwhileEntry
 import org.ort.app.ui.data.ThreadCardViewState
-import org.ort.app.ui.data.ThreadEntryViewState
-import org.ort.app.ui.data.ThreadGroupViewState
 import org.ort.app.ui.data.ThreadListViewState
-import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -213,55 +210,5 @@ private fun FrequencyMeanwhileRow(entry: FrequencyMeanwhileEntry, onClick: () ->
             modifier = Modifier.weight(1f),
         )
         Icon(imageVector = OrtIcons.chevron, contentDescription = null, tint = OrtColors.textLow)
-    }
-}
-
-/**
- * Compile-compatibility overload only. `OrtNavHost.kt` (WP3's file, not this package's — see
- * `ThreadContent.kt`'s doc comment) still calls this exact 3-argument shape from its own,
- * still-inline `ThreadContent` until WP3 deletes that copy and wires the nav host to this
- * package's own [org.ort.app.ui.screens.ThreadContent] instead.
- */
-@Composable
-public fun ThreadScreen(groups: List<ThreadGroupViewState>, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
-    if (groups.isEmpty()) {
-        EmptyState(message = "No transmissions yet", modifier = modifier.fillMaxSize().padding(OrtSpacing.lg))
-        return
-    }
-    Column(modifier = modifier.fillMaxSize()) {
-        groups.forEach { group ->
-            Text(
-                text = group.label,
-                style = OrtType.sectionLabel,
-                color = OrtColors.textFaint,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
-            )
-            group.entries.forEach { entry -> LegacyThreadEntryRow(entry = entry, onOpen = onOpen) }
-        }
-    }
-}
-
-@Composable
-private fun LegacyThreadEntryRow(entry: ThreadEntryViewState, onOpen: (String) -> Unit) {
-    val listEntry: TransmissionListEntryViewState = entry.listEntry
-    val description = "Transmission at ${listEntry.timeLabel}. ${entry.reasoning}"
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 44.dp)
-            .clickable(role = Role.Button, onClick = { onOpen(listEntry.id) })
-            .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) { contentDescription = description },
-    ) {
-        Column {
-            AttributionRow(attribution = listEntry.attribution)
-            Text(
-                text = listEntry.transcriptText,
-                style = OrtType.transcript,
-                color = OrtColors.textSecondary,
-                modifier = Modifier.padding(top = 3.dp),
-            )
-            Text(text = entry.reasoning, style = OrtType.subLine, color = OrtColors.textDim)
-        }
     }
 }

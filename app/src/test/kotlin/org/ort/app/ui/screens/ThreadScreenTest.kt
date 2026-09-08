@@ -8,12 +8,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.data.FrequencyMeanwhileEntry
 import org.ort.app.ui.data.ThreadCardViewState
-import org.ort.app.ui.data.ThreadEntryViewState
-import org.ort.app.ui.data.ThreadGroupViewState
 import org.ort.app.ui.data.ThreadListViewState
-import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.theme.OrtTheme
-import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -111,52 +107,5 @@ class ThreadScreenTest {
         composeTestRule.onNodeWithText("W7NPC and K7LWH").performClick()
 
         assert(opened == "T1") { "expected T1 to be opened but was $opened" }
-    }
-
-    // -- legacy 3-arg overload — compile-compatibility bridge for OrtNavHost.kt (see ThreadScreen.kt) --
-
-    @Test
-    fun `legacy overload -- no transmissions at all shows an honest empty state`() {
-        composeTestRule.setContent {
-            OrtTheme { ThreadScreen(groups = emptyList(), onOpen = {}) }
-        }
-
-        composeTestRule.onNodeWithText("No transmissions yet").assertExists()
-    }
-
-    @Test
-    fun `legacy overload -- tapping an entry opens that transmission`() {
-        var opened: String? = null
-        composeTestRule.setContent {
-            OrtTheme {
-                ThreadScreen(
-                    groups = listOf(
-                        ThreadGroupViewState(
-                            threadId = null,
-                            label = "Not yet grouped into threads",
-                            entries = listOf(
-                                ThreadEntryViewState(
-                                    listEntry = TransmissionListEntryViewState(
-                                        id = "TX1",
-                                        timeLabel = "02:14:07",
-                                        frequencyLabel = "145.230",
-                                        transcriptText = "roger that",
-                                        attribution = Attribution.unknown(),
-                                        revisionNote = null,
-                                        signalLabel = null,
-                                    ),
-                                    reasoning = "no callsign resolved",
-                                ),
-                            ),
-                        ),
-                    ),
-                    onOpen = { opened = it },
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("roger that").performClick()
-
-        assert(opened == "TX1") { "expected TX1 to be opened but was $opened" }
     }
 }

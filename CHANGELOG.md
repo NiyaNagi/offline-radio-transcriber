@@ -492,6 +492,85 @@ FR-UI-4, FR-UI-12, FR-RUN-12, P5, P7, P9; audit F-012 (superseded by this entry 
   simplified mapper does not carry per-thread; the Log row itself (which does have per-transmission
   inspection data) shows the real "or QRF" alternate correctly.
 
+### (pending) — ui-conformance WP5 · thread and group-header callbacks, origin back labels, legacy overloads removed
+
+**Scope:** same files as the WP5 entry directly above (`ui/screens/LogScreen.kt`, `LogContent.kt`,
+`ThreadScreen.kt`, `ThreadContent.kt`, `ThreadDetailScreen.kt`, `ui/data/ThreadViewData.kt`) plus their
+tests, one commit later at the coordinator's request now that WP3's host and WP10 landed on `main`
+(merged `main` into this branch first, fast-forward, confirmed at `8d28e80` — main had already moved to
+`ffd4e1e` by the time the merge ran; both are register-only commits, `8d28e80` still an ancestor).
+
+**Requirements/ACs:** R-017 (drill-in chevron names the true navigation origin), R-040, R-044 (register).
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural): the new callbacks are added with
+  defaults (`= {}`) specifically so `OrtNavHost.kt` (WP3's file, edited concurrently by WP10) keeps
+  compiling unchanged — the wiring itself is the host's to add, not asserted here as already connected.
+  Principle II (Test-Backed Change): every new callback and the new `backLabel` parameter has a test
+  proving it fires/renders; `ThreadGroupingMapper.reasoningFor`, kept for `ThreadListMapper.detailState`
+  after its own dedicated test file was removed with the API it tested, gets a replacement test here
+  covering the CONFIRMED/AMBIGUOUS/UNKNOWN branches so removing that file did not silently drop coverage.
+- **`LogContent`/`ThreadContent` gain `onOpenThread: (String) -> Unit = {}`** (trailing, defaulted, per
+  the coordinator's exact request) and forward it into `LogScreen`/`ThreadScreen`. `LogScreen` itself
+  gained the same parameter, wired to `LogGroupHeader`'s existing `onClick` slot (`Rows.dc.html`:
+  "Tapping opens the thread" — the R-040 gap this package's own CHANGELOG entry above left open).
+  `ThreadScreen` already had `onOpenThread` wired to its cards from the original WP5 pass; `ThreadContent`
+  now actually forwards it instead of hardcoding `{}`.
+- **`ThreadDetailScreen` gains `backLabel: String = "Threads"`**, replacing the hardcoded `DrillInHeader`
+  parent label (R-017: the chevron names where the operator came from). WP3's own `ThreadDetailContent`
+  wrapper (`OrtNavHost.kt`, confirmed already present and polling `ThreadPolling.threadDetail` on this
+  merge) can now pass the real `ids.openedFrom.label`; until it does, the default keeps today's behaviour
+  identical. Every other drill-in screen with a hardcoded parent label (`TransmissionDetailScreen`'s
+  "Log", etc.) belongs to other packages, not touched here.
+- **Legacy overloads removed**, confirmed unreferenced first (`grep` across the whole tree, not just this
+  package): `LogScreen(entries: List<TransmissionListEntryViewState>, onOpen, modifier)` and its
+  `LogListItemRow`-building body; `ThreadScreen(groups: List<ThreadGroupViewState>, onOpen, modifier)`
+  and its private `LegacyThreadEntryRow`; `ThreadPolling.currentThreadGroups`; `ThreadGroupViewState`
+  and `ThreadEntryViewState`; `ThreadGroupingMapper.from`. `ThreadGroupingMapper.reasoningFor` is kept —
+  `ThreadListMapper.detailState` still calls it for each over's reasoning line. The now-orphaned
+  `ThreadGroupingMapperTest.kt` (a build-plan P15-era file predating this package's own R-044 work,
+  testing exactly the removed `from`/`ThreadGroupViewState` surface) is deleted with it; its four
+  attribution-state branches of `reasoningFor` are re-covered by a new test in `ThreadViewDataTest`
+  instead of losing coverage. `LogScreenTest`/`ThreadScreenTest` lose their "legacy overload" smoke tests
+  correspondingly (their own subject no longer exists).
+- **Legacy `AttributionMarker(showConfidence = true)` check (task item 4): none survive.** Every
+  `AttributionMarker` call in this package's own files (`LogFilterSheet.kt`'s checkbox marker,
+  `ThreadDetailScreen.kt`'s how-attributed line) already passes `showConfidence = false` — the correct
+  shape-only form — from the original WP5 pass; neither needs `AttributionRow` since both contexts
+  render the callsign as their own separate `Text`, not through the marker. `TransmissionListScreen.kt`
+  is the only remaining default-`showConfidence` call in the tree; it is not one of this package's files.
+
+**Verified:**
+- Fast-forward merge: `git merge --ff-only main` — `Updating 6166ab0..ffd4e1e, Fast-forward` (147 files
+  changed). `git merge-base --is-ancestor 8d28e80 HEAD` — exit 0 (ancestor confirmed).
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL in 1m 17s (841 actionable
+  tasks, 85 executed, 50 from cache, 706 up-to-date); `dependencyRules: checked 17 modules ... OK`;
+  `platformGuards: checked 17 modules' external dependencies and 17 manifests ... OK`; every `:app` test
+  `PASSED`, none failed.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]` (including "no mojibake" — a stray
+  PowerShell re-encode briefly corrupted `ThreadScreen.kt`'s non-ASCII punctuation while trimming a
+  trailing blank line; caught by inspection before this check ran and fixed by rewriting the file with
+  the correct characters, not by further shell text-munging), `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 181 covered -> results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (181
+  covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Tests by name, all `PASSED`: `LogScreenTest` (15, +1 new: `R_017 tapping a QSO group header opens its
+  thread`), `ThreadScreenTest` (4, legacy-overload tests removed), `ThreadDetailScreenTest` (6, +1 new:
+  `R_017 the chevron names the real navigation origin, not a hardcoded Threads`), `ThreadViewDataTest` (9,
+  +1 new: `R_044 each over's reasoning names its real attribution state, not a generic label`).
+  `ThreadGroupingMapperTest` deleted (6 tests removed with the API they tested).
+
+**Left open:**
+- `OrtNavHost.kt` itself is not edited here (not this package's file) — the new `onOpenThread` params
+  and `backLabel` are ready but the host still calls `LogContent`/`ThreadContent`/`ThreadDetailContent`
+  without passing them (confirmed by reading the current `OrtNavHost.kt` on this merge); wiring them is
+  the coordinator's/WP3's next step, consistent with the defaults existing precisely so this package
+  does not have to make that edit itself.
+- The other "Left open" items from the WP5 entry above (live bar, `Log-Rejected.dc.html`'s per-row "why"
+  line, the real tier number, per-thread ambiguous candidate naming) are unchanged by this follow-up.
+
 ---
 
 
