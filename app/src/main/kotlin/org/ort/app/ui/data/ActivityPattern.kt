@@ -22,7 +22,14 @@ public interface ActivityBucket {
     public val heardCount: Int
 }
 
-/** One hour-of-day bucket (UTC) of an activity pattern (FR-UI-11), aggregated across every session/day recorded. */
+/**
+ * One hour-of-day bucket of an activity pattern (FR-UI-11), aggregated across every session/day
+ * recorded. [hourOfDayUtc] keeps its original name (other packages already reference it) but is,
+ * as of R-075, the hour in whichever `ZoneId` [ActivityPatternMapper.buildPattern]'s caller
+ * requested — `ZoneId.of("UTC")` by [ActivityPatternMapper.buildPattern]'s own default (kept only
+ * so `ReaderPolling`, out of this package's ownership, does not silently change behaviour) or
+ * `ZoneId.systemDefault()` from [org.ort.app.ui.data.StationPolling]'s real read path.
+ */
 public data class HourActivityBucket(
     val hourOfDayUtc: Int,
     override val state: HourActivityState,
@@ -32,6 +39,17 @@ public data class HourActivityBucket(
      */
     override val heardCount: Int,
 ) : ActivityBucket
+
+/** One (day-of-week, local hour-of-day) cell of `Station-Pattern.dc.html`'s hour x day grid (R-072). */
+public data class HourByDayActivityCell(
+    val dayOfWeek: DayOfWeek,
+    val hourOfDay: Int,
+    val state: HourActivityState,
+    val heardCount: Int,
+)
+
+/** One calendar night of `Frequencies.dc.html`'s 14-night sparkline (R-074), oldest first. */
+public data class NightActivity(val epochDay: Long, val state: HourActivityState, val heardCount: Int)
 
 /**
  * One day-of-week bucket (Monday-first, ISO — [java.time.DayOfWeek]'s own order) of an activity
@@ -111,6 +129,7 @@ public object ActivityPatternMapper {
         sessions: List<SessionWindow>,
         matchingTransmissionTimestamps: List<Long>,
         nowMillis: Long,
+        zone: ZoneId = ZoneId.of("UTC"),
     ): List<HourActivityBucket> {
         val heardRealHours = matchingTransmissionTimestamps.map { epochHour(it) }.toSet()
         val listeningRealHours = mutableSetOf<Long>()
@@ -134,10 +153,10 @@ public object ActivityPatternMapper {
         notListeningRealHours.removeAll(listeningRealHours)
 
         val heardCountByHourOfDay = IntArray(HOURS_PER_DAY)
-        matchingTransmissionTimestamps.forEach { heardCountByHourOfDay[hourOfDay(epochHour(it))]++ }
+        matchingTransmissionTimestamps.forEach { heardCountByHourOfDay[hourOfDayLocal(epochHour(it), zone)]++ }
 
-        val heardHoursOfDay = heardRealHours.map { hourOfDay(it) }.toSet()
-        val listeningHoursOfDay = listeningRealHours.map { hourOfDay(it) }.toSet()
+        val heardHoursOfDay = heardRealHours.map { hourOfDayLocal(it, zone) }.toSet()
+        val listeningHoursOfDay = listeningRealHours.map { hourOfDayLocal(it, zone) }.toSet()
 
         return (0 until HOURS_PER_DAY).map { hod ->
             val state = when {
@@ -217,6 +236,106 @@ public object ActivityPatternMapper {
                 previousHeardCount = previousState.heardCount,
             )
         }
+    }
+
+    /**
+     * `Station-Pattern.dc.html`'s hour x day grid (R-072, FR-UI-11/12): the same three-state
+     * heard/listened-silent/not-listening classification as [buildPattern], folded onto **168**
+     * (day-of-week, local hour-of-day) cells instead of 24 hour-of-day-only ones, in [zone]. A
+     * (day, hour) combination [buildPattern] would call [HourActivityState.NOT_LISTENING] because
+     * no session ever touched it stays [HourActivityState.NOT_LISTENING] here too — absence of
+     * data is never promoted to "quiet" just because it is finer-grained (constitution I).
+     */
+    public fun buildHourByDayPattern(
+        sessions: List<SessionWindow>,
+        matchingTransmissionTimestamps: List<Long>,
+        nowMillis: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<HourByDayActivityCell> {
+        val heardRealHours = matchingTransmissionTimestamps.map { epochHour(it) }.toSet()
+        val listeningRealHours = mutableSetOf<Long>()
+
+        for (session in sessions) {
+            val sessionEnd = session.endedAtUtc ?: nowMillis
+            if (sessionEnd <= session.startedAtUtc) continue
+            val listeningIntervals = subtractGaps(session.startedAtUtc, sessionEnd, session.gaps)
+            listeningIntervals.forEach { (start, end) -> addRealHours(start, end, listeningRealHours) }
+        }
+        listeningRealHours.removeAll(heardRealHours)
+
+        val heardCountByCell = mutableMapOf<Pair<DayOfWeek, Int>, Int>()
+        matchingTransmissionTimestamps.forEach { ts ->
+            val key = dowHourLocal(ts, zone)
+            heardCountByCell[key] = (heardCountByCell[key] ?: 0) + 1
+        }
+        val heardCells = heardRealHours.map { dowHourLocalFromEpochHour(it, zone) }.toSet()
+        val listeningCells = listeningRealHours.map { dowHourLocalFromEpochHour(it, zone) }.toSet()
+
+        val result = mutableListOf<HourByDayActivityCell>()
+        for (dow in DayOfWeek.values()) {
+            for (hour in 0 until HOURS_PER_DAY) {
+                val key = dow to hour
+                val state = when {
+                    key in heardCells -> HourActivityState.HEARD
+                    key in listeningCells -> HourActivityState.SILENT_WHILE_LISTENING
+                    else -> HourActivityState.NOT_LISTENING
+                }
+                result.add(HourByDayActivityCell(dow, hour, state, heardCountByCell[key] ?: 0))
+            }
+        }
+        return result
+    }
+
+    /**
+     * `Frequencies.dc.html`'s per-row 14-night sparkline and `Frequency-Change.dc.html`'s "usual"
+     * comparison (R-074): one [NightActivity] per calendar day in [zone], oldest first, over the
+     * most recent [nights] days ending on the calendar day [nowMillis] falls in (inclusive — the
+     * last element is "tonight"). A night with no session touching it is
+     * [HourActivityState.NOT_LISTENING], never a fabricated quiet night (FR-UI-12).
+     */
+    public fun buildNightlySequence(
+        sessions: List<SessionWindow>,
+        matchingTransmissionTimestamps: List<Long>,
+        nowMillis: Long,
+        nights: Int = 14,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<NightActivity> {
+        val today = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate().toEpochDay()
+        val heardDays = matchingTransmissionTimestamps.map { epochDay(it, zone) }.toSet()
+        val listeningDays = mutableSetOf<Long>()
+        for (session in sessions) {
+            val sessionEnd = session.endedAtUtc ?: nowMillis
+            if (sessionEnd <= session.startedAtUtc) continue
+            val listeningIntervals = subtractGaps(session.startedAtUtc, sessionEnd, session.gaps)
+            listeningIntervals.forEach { (start, end) -> addRealDays(start, end, zone, listeningDays) }
+        }
+        listeningDays.removeAll(heardDays)
+
+        val heardCountByDay = mutableMapOf<Long, Int>()
+        matchingTransmissionTimestamps.forEach { ts ->
+            val day = epochDay(ts, zone)
+            heardCountByDay[day] = (heardCountByDay[day] ?: 0) + 1
+        }
+
+        return ((nights - 1) downTo 0).map { offset ->
+            val day = today - offset
+            val state = when {
+                day in heardDays -> HourActivityState.HEARD
+                day in listeningDays -> HourActivityState.SILENT_WHILE_LISTENING
+                else -> HourActivityState.NOT_LISTENING
+            }
+            NightActivity(epochDay = day, state = state, heardCount = heardCountByDay[day] ?: 0)
+        }
+    }
+
+    private fun dowHourLocalFromEpochHour(epochHour: Long, zone: ZoneId): Pair<DayOfWeek, Int> {
+        val zdt = Instant.ofEpochMilli(epochHour * HOUR_MILLIS).atZone(zone)
+        return zdt.dayOfWeek to zdt.hour
+    }
+
+    private fun dowHourLocal(millis: Long, zone: ZoneId): Pair<DayOfWeek, Int> {
+        val zdt = Instant.ofEpochMilli(millis).atZone(zone)
+        return zdt.dayOfWeek to zdt.hour
     }
 
     private data class DayState(val state: HourActivityState, val heardCount: Int)
@@ -301,7 +420,15 @@ public object ActivityPatternMapper {
 
     private fun epochHour(millis: Long): Long = Math.floorDiv(millis, HOUR_MILLIS)
 
-    private fun hourOfDay(epochHour: Long): Int = Math.floorMod(epochHour, HOURS_PER_DAY.toLong()).toInt()
+    /**
+     * R-075: [epochHour]'s hour-of-day in [zone] rather than UTC — the start instant of the
+     * hour-long block, converted to [zone]'s local wall-clock hour. For a whole-hour-offset zone
+     * this is exact; a half/quarter-hour zone (rare among this product's reference market) still
+     * assigns the block to the local hour its start falls in, which is the same "elementary block"
+     * compromise [buildDayOfWeekPattern] already makes at day granularity via [epochDay].
+     */
+    private fun hourOfDayLocal(epochHour: Long, zone: ZoneId): Int =
+        Instant.ofEpochMilli(epochHour * HOUR_MILLIS).atZone(zone).hour
 
     private fun epochDay(millis: Long, zone: ZoneId): Long =
         Instant.ofEpochMilli(millis).atZone(zone).toLocalDate().toEpochDay()
@@ -338,5 +465,107 @@ public object ActivityPatternMapper {
         }
         if (cursor < end) result.add(cursor to end)
         return result
+    }
+}
+
+/**
+ * `Frequencies.dc.html`'s "busier than usual" amber test and `Frequency-Change.dc.html`'s
+ * departure detection (R-074) — **the same test**, so a frequency the list calls "busier than
+ * usual" is exactly the one whose detail opens `Frequency-Change` rather than `Frequency`.
+ */
+public object NightlyDeparture {
+
+    /**
+     * Tonight (the last element of [nights]) is busier than usual when it was actually listened
+     * to and its heard-count is more than double the mean of every other night in [nights] that
+     * was itself listened to (not-listening nights carry no "usual" information — constitution I:
+     * never let an unmeasured night pull the average toward zero and manufacture a departure).
+     * `false` — never a fabricated departure — when there is no other listened night to compare
+     * against.
+     */
+    public fun isBusierThanUsual(nights: List<NightActivity>): Boolean {
+        val tonight = nights.lastOrNull() ?: return false
+        if (tonight.state == HourActivityState.NOT_LISTENING) return false
+        val usualNights = nights.dropLast(1).filter { it.state != HourActivityState.NOT_LISTENING }
+        if (usualNights.isEmpty()) return false
+        val usualAverage = usualNights.map { it.heardCount }.average()
+        return usualAverage > 0 && tonight.heardCount > usualAverage * 2
+    }
+
+    /** The plain "N where the usual is M" figure `Frequency-Change.dc.html`'s subtitle states. */
+    public fun usualAverage(nights: List<NightActivity>): Double {
+        val usualNights = nights.dropLast(1).filter { it.state != HourActivityState.NOT_LISTENING }
+        if (usualNights.isEmpty()) return 0.0
+        return usualNights.map { it.heardCount }.average()
+    }
+}
+
+/**
+ * `Station-Pattern.dc.html`'s "What this says" list (R-072): a short, honest reading of an
+ * hour-of-day/day-of-week pattern that never claims more than the data supports — the busiest
+ * real window, plus every day and every hour-of-day range that is *entirely* unknown, named
+ * explicitly rather than folded silently into "quiet" (FR-UI-12, constitution I).
+ */
+public object PatternInsights {
+
+    public fun build(
+        hourPattern: List<HourActivityBucket>,
+        dayOfWeekPattern: List<DayOfWeekActivityBucket>,
+    ): List<String> {
+        val lines = mutableListOf<String>()
+        peakSentence(hourPattern)?.let { lines.add(it) }
+        unknownDaysSentence(dayOfWeekPattern)?.let { lines.add(it) }
+        unknownHoursSentence(hourPattern)?.let { lines.add(it) }
+        if (lines.isEmpty()) lines.add("Not enough listening yet to say when this station is around.")
+        return lines
+    }
+
+    /** The busiest contiguous run of [HourActivityState.HEARD] hours, if any hour was ever heard. */
+    private fun peakSentence(hourPattern: List<HourActivityBucket>): String? {
+        val heard = hourPattern.filter { it.state == HourActivityState.HEARD && it.heardCount > 0 }
+        if (heard.isEmpty()) return null
+        val peakHour = heard.maxBy { it.heardCount }.hourOfDayUtc
+        val startHour = peakHour
+        val endHour = (peakHour + 1) % 24
+        return "Peaks %02d:00–%02d:00.".format(startHour, endHour)
+    }
+
+    /** Every weekday this phone has never listened on, named — not folded into "quiet" (FR-UI-12). */
+    private fun unknownDaysSentence(dayOfWeekPattern: List<DayOfWeekActivityBucket>): String? {
+        val unknownDays = dayOfWeekPattern
+            .filter { it.state == HourActivityState.NOT_LISTENING }
+            .map { dayOfWeekShortLabel(it.dayOfWeek) }
+        if (unknownDays.isEmpty()) return null
+        val joined = unknownDays.joinToString(", ")
+        val verb = if (unknownDays.size == 1) "is" else "are"
+        val pronoun = if (unknownDays.size == 1) "it" else "them"
+        return "$joined $verb unknown — this phone has never listened then. Nothing is claimed about $pronoun."
+    }
+
+    /** Every hour-of-day this phone has never listened through, on any day (FR-UI-12). */
+    private fun unknownHoursSentence(hourPattern: List<HourActivityBucket>): String? {
+        val unknownHours = hourPattern.filter { it.state == HourActivityState.NOT_LISTENING }.map { it.hourOfDayUtc }
+        if (unknownHours.isEmpty()) return null
+        val ranges = contiguousRanges(unknownHours.sorted())
+        val joined = ranges.joinToString(", ") { (start, end) -> "%02d:00–%02d:00".format(start, (end + 1) % 24) }
+        return "$joined is unknown — the phone was not listening then. Nothing is claimed about it."
+    }
+
+    private fun contiguousRanges(sortedHours: List<Int>): List<Pair<Int, Int>> {
+        if (sortedHours.isEmpty()) return emptyList()
+        val ranges = mutableListOf<Pair<Int, Int>>()
+        var start = sortedHours.first()
+        var prev = start
+        for (h in sortedHours.drop(1)) {
+            if (h == prev + 1) {
+                prev = h
+            } else {
+                ranges.add(start to prev)
+                start = h
+                prev = h
+            }
+        }
+        ranges.add(start to prev)
+        return ranges
     }
 }

@@ -97,4 +97,52 @@ class StationsAndFrequenciesTest {
         assertEquals(1, view.transmissionCount)
         assertEquals(pattern, view.activityPattern)
     }
+
+    // --- R-070: the honest count-context text, never a fabricated "net control" ---
+
+    @Test
+    fun `R_070 countContext reads the confirmed-inferred split honestly`() {
+        val mixed = StationViewMapper.countContext(confirmedCount = 3, inferredCount = 12)
+        assertEquals("12 by voice match · 3 heard", mixed)
+        assertEquals("1 over", StationViewMapper.countContext(confirmedCount = 1, inferredCount = 0))
+        assertEquals("5 by voice match", StationViewMapper.countContext(confirmedCount = 0, inferredCount = 5))
+        assertEquals("0 overs", StationViewMapper.countContext(confirmedCount = 0, inferredCount = 0))
+    }
+
+    // --- R-071: the frequency-usage summary ("145.230 almost always · 146.960 twice") ---
+
+    @Test
+    fun `R_071 frequencySummary reads the real split, most-used first`() {
+        val summary = StationViewMapper.frequencySummary(listOf(146_960_000L to 2, 145_230_000L to 96))
+
+        assertEquals("145.230 almost always · 146.960 twice", summary)
+    }
+
+    @Test
+    fun `R_071 frequencySummary is empty with no frequency data, never a fabricated one`() {
+        assertEquals("", StationViewMapper.frequencySummary(emptyList()))
+    }
+
+    // --- R-074: band/mode "what it is", never a guessed repeater/simplex claim ---
+
+    @Test
+    fun `R_074 whatItIs reads the real band and the most common mode`() {
+        val label = FrequencyViewMapper.whatItIs(146_960_000L, listOf("FM", "FM", "FM", "USB"))
+
+        assertEquals("2 m · FM", label)
+    }
+
+    @Test
+    fun `R_074 whatItIs never claims a mode this frequency has no data for`() {
+        val label = FrequencyViewMapper.whatItIs(146_960_000L, emptyList())
+
+        assertEquals("2 m", label)
+    }
+
+    @Test
+    fun `R_074 whatItIs is empty for a frequency outside every known amateur band`() {
+        val label = FrequencyViewMapper.whatItIs(99_999_999_999L, emptyList())
+
+        assertEquals("", label)
+    }
 }

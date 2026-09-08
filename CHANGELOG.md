@@ -32,6 +32,123 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP8: stations and frequencies)
+
+### (pending) — ui-conformance WP8 · stations and frequencies: lists, detail, hour-by-day pattern, identity, departure
+
+**Scope:** `:app` `ui/screens/StationScreen.kt`, `FrequencyScreen.kt`, new `StationPatternScreen.kt`,
+`StationIdentityScreen.kt`, `FrequencyChangeScreen.kt`, new `StationsContent.kt`,
+`FrequenciesContent.kt`, `StationDetailContent.kt`, `FrequencyDetailContent.kt`; `ui/data/StationsAndFrequencies.kt`,
+`ui/data/ActivityPattern.kt`, new `ui/data/StationPolling.kt`; tests beside each.
+
+**Requirements/ACs:** R-070 (Stations list), R-071 (Station detail), R-072 (Station-Pattern hour x
+day grid), R-073 (Station-Identity), R-074 (Frequencies list/detail/Frequency-Change), R-075
+(local-time bucketing), FR-UI-9, FR-UI-10, FR-UI-11, FR-UI-12, FR-SPK-10, constitution I/III.
+
+**What changed:**
+
+*Constitution Check.* Principle I (Uncertainty Is Content): every station-list row carries its
+real dominant attribution through `AttributionRow` — never a bare count; the trailing "N
+unidentified voices" figure is `null`, never a fabricated count, when no `voiceprintId` clustering
+data exists yet. Principle III (Audio Is The Source Of Truth) and constitution V: the
+Station-Identity "nearest other station" distance is rendered honestly absent (`StationVoiceViewState.nearestOtherStationId
+= null`) rather than computed from an undocumented voiceprint-embedding byte layout — the identity
+pipeline (M4) has not shipped one. Principle VII: every new read path lives in this package's own
+`StationPolling.kt`/`FrequencyPolling`, never in `ReaderPolling.kt` (WP4's file).
+
+- **R-070 Stations list** (`StationsListScreen`): the four chips (Tonight/All time/Named/Unidentified,
+  filtered client-side by `StationsContent`), a `ColumnHeaderRow`, `AttributionRow` at 9dp showing
+  the station's *dominant tonight* attribution (real confirmed/inferred/ambiguous/unknown split
+  from the most recent session's transmissions), an honest count context
+  (`StationViewMapper.countContext`: "12 by voice match · 3 heard", never a fabricated "net
+  control" — no `:data` column supports it), `NEW` (first heard within tonight's session) and
+  `CORRECTED` badges, the given name beside the callsign (`StationEntity.userName`), and the
+  trailing "N unidentified voices · M overs" row as a real aggregate (`StationPolling.unidentifiedSummary`,
+  counting distinct `transmission.voiceprintId` values among `UNKNOWN` overs).
+- **R-071 Station detail** (`StationDetailScreen`): a facts table via `KeyValueRow` (overs with a
+  `Log` action, confirmed/inferred/corrected split, frequency-usage summary, first/last heard with
+  signal), the "When they are around" chart with a one-sentence summary derived from the real
+  buckets (`PatternInsights`), and `RECENT OVERS` with `All N` and tappable rows that open the over.
+- **R-072/R-075 Station-Pattern** (new `StationPatternScreen`): `By hour`/`Hour × day`/`Change over
+  time` `FilterChip`s, WP2's `DayOfWeekGrid` for the hour x day grid, the week-over-week lines
+  under "Change over time", and a "What this says" list (`PatternInsights.build`) that names
+  unknown days and unknown hour ranges explicitly rather than folding them into "quiet". Every
+  bucket is local time: `ActivityPatternMapper.buildPattern` gained a `zone` parameter (new
+  `buildHourByDayPattern`, `buildNightlySequence` too) — the *default* stays UTC only because
+  `ReaderPolling` (WP4's file, out of this package's ownership) still calls the old three-arg
+  overload and its own `ReaderPollingTest` asserts UTC bucketing byte-for-byte; `StationPolling`'s
+  real read path always passes `zone = ZoneId.systemDefault()`. The hour chart's title carries no
+  `(UTC)` at any of this package's call sites.
+- **R-073 Station-Identity** (new `StationIdentityScreen`): Heard (callsign, lexicon allocation
+  from `StationEntity.ituRegionFromPrefix`), Voice (real cluster-over count from
+  `CatalogDao.voiceprintsForStation`, confirmed/inferred split, `Split` action), Given by you
+  (`userName`/`notes`, `Rename`/`Add` actions), and the never-leaves-the-device card. `Rename`/`Add
+  note`/`Split` fire their callbacks (the affordance is reachable and tested) but do not persist —
+  `CatalogDao` has no update query for `StationEntity`, and adding one is a `:data` change outside
+  this package's ownership (see Left open).
+- **R-074 Frequencies** (`FrequenciesListScreen`/`FrequencyDetailScreen`/new
+  `FrequencyChangeScreen`): list rows show what it is (band from `Band.of`, mode from the most
+  common real `transmission.mode` — **never** a guessed repeater/simplex claim, since no `:data`
+  column carries one), tonight's count/stations, WP2's `Sparkline` over a real 14-night sequence
+  (`ActivityPatternMapper.buildNightlySequence`) with hatched not-listening nights, "busier than
+  usual" in amber text (never colour alone) using the shared `NightlyDeparture.isBusierThanUsual`
+  test (tonight's count more than double the mean of the other real listened nights — never a
+  fabricated departure with no comparison data). `Frequency` detail adds the facts table, the
+  typical-night chart, and `REGULARS` (real per-station over/session counts). `Frequency-Change`
+  plots tonight's real per-hour counts as bars over the prior sessions' per-hour average as a line,
+  and lists the causes this package can honestly derive (a station heard for the first time
+  tonight; unidentified/weak activity) — cross-frequency migration ("5 regulars moved here from
+  145.230") needs a thread/session correlation this package's read path does not build, left out
+  rather than guessed.
+- New `ui/data/StationPolling.kt`: `StationPolling`/`FrequencyPolling`, this package's own read
+  path, lifted from `ReaderPolling.stationDetail`/`frequencyDetail`/`listStationSummaries`/`listFrequencySummaries`
+  (left untouched in `ReaderPolling.kt` per the brief — WP4 deletes its copies once `OrtNavHost` is
+  wired to this package's new `*Content.kt` composables) plus every new aggregation above.
+  `ReaderPolling.detailFromEntity` is reused for transmission-detail mapping (the same pattern
+  `SearchPolling`/`ThreadPolling` already use).
+- New `StationsContent.kt`/`FrequenciesContent.kt`/`StationDetailContent.kt`/`FrequencyDetailContent.kt`:
+  the polling wrappers `OrtNavHost` (WP3) will dispatch to once it deletes its inline copies.
+  `StationDetailContent`/`FrequencyDetailContent` own the local "which sub-screen" state for
+  `Station-Pattern`/`Station-Identity`/`Frequency-Change`, reached as full-screen presentations
+  over the same subject rather than separate drawer destinations.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — BUILD SUCCESSFUL, no failures.
+  New/changed tests: `ActivityPatternMapperTest` (+10, R-075/R-072/R-074), `StationsAndFrequenciesTest`
+  (+6, R-070/R-071/R-074 mappers), `StationPollingTest` (new, 7 tests against a real file-backed
+  `:data` DB), `StationScreenTest` (+6), `FrequencyScreenTest` (rewritten, 8 tests),
+  `StationPatternScreenTest` (new, 5), `StationIdentityScreenTest` (new, 4), `FrequencyChangeScreenTest`
+  (new, 4).
+
+**Left open / not done:**
+- `Rename`/`Add note`/`Split` on Station-Identity are reachable, tested affordances that do not
+  persist — `CatalogDao` (`:data`) has no update query for `StationEntity` and no write path for
+  reassigning a voiceprint's members; adding either is outside this package's ownership.
+- `StationVoiceViewState.nearestOtherStationId`/`nearestOtherDistance` are always `null` — no
+  cross-station voice-distance comparison exists in `:data`/`:pipeline` today (M4 not built); this
+  package will not compute one from `VoiceprintEntity.embedding`'s undocumented byte layout.
+- `Frequency-Change`'s "What made it busy" list covers a first-time station and unidentified
+  activity only; cross-frequency migration causes ("5 regulars moved here from 145.230") are not
+  derived — no thread/session correlation exists for it yet.
+- `OrtNavHost` (WP3's file) still calls `ReaderPolling`'s inline `Stations`/`Frequencies` content
+  directly; this package's new `*Content.kt` composables are unwired until WP3 merges and swaps
+  the dispatch, per the brief's ownership split.
+- `ActivityPatternChart`'s `title` parameter has no way to render blank without leaving an empty
+  `Text` row in the layout — every call site in this package that wants its own `SectionHeader`
+  instead passes `title = ""`, a minor WP2 component gap reported, not worked around by a
+  look-alike.
+- Emulator/scenario validation (phase E) not run — out of a builder's scope per the plan.
+
+---
+
+## 2026-09-08 (ui-conformance WP2: shared components)
+
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
 ### (pending) — ui-conformance WP6 · detail states, inspection surface, correction sheet and propagation, playback, revisions
@@ -815,7 +932,6 @@ does not exist).
   `ModalDrawerSheet` default, not `Menu.dc.html`'s 306dp), and the Improve-records count pill
   (`improveRecordsCount`, wired but always `null` — WP10 has not landed a real count) are all
   unchanged/deferred, none named by this package's register rows.## 2026-09-08 (ui-conformance WP2: shared components)
-
 ### (pending) — ui-conformance WP2 · legacy marker keeps confidence until callers migrate
 
 **Scope:** `:app` `ui/components/**` only (`AttributionMarker.kt`, `AttributionMarkerTest.kt`).
