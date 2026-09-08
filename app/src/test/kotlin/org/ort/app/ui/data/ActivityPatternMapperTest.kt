@@ -10,6 +10,16 @@ import org.junit.jupiter.api.Test
  * the session's own start/end are consulted — presenting a not-listening hour as though the
  * frequency/station was simply quiet is a fabricated absence (constitution I). The three states
  * are structural ([HourActivityState], a closed enum), never a boolean with a footnote.
+ *
+ * AC-126 ("station and frequency views show activity patterns that distinguish 'not heard' from
+ * 'not listening', verified against a session containing a capture gap") is the same requirement
+ * exercised from the acceptance-criteria side: the `FR_UI_12 an hour covered entirely by a
+ * capture gap` test below is that verification — a real [GapWindow] on a [SessionWindow] read
+ * back as [HourActivityState.NOT_LISTENING]. This mapper output only reaches the station/frequency
+ * views through [org.ort.app.ui.components.ActivityPatternChart], proven separately by
+ * `ActivityPatternChartTest`; only the day-of-week half of FR-UI-11 is not built (this mapper
+ * buckets by hour-of-day only — no `dayOfWeek` field or bucketing exists anywhere in this file or
+ * `HourActivityBucket`).
  */
 class ActivityPatternMapperTest {
 
@@ -42,7 +52,7 @@ class ActivityPatternMapperTest {
     }
 
     @Test
-    fun `FR_UI_12 an hour covered entirely by a capture gap is NOT_LISTENING, never presented as silence`() {
+    fun `AC_126_FR_UI_12 an hour covered entirely by a capture gap is NOT_LISTENING, never presented as silence`() {
         val session = SessionWindow(
             startedAtUtc = 0L,
             endedAtUtc = hour,

@@ -95,6 +95,86 @@ larger system (see F-020). `AndroidShedSignals.refreshBacklog()`'s one honest ga
 leaves the cached backlog unchanged, so an unread value and a genuinely-empty queue are both `0`
 and indistinguishable from each other — documented in its KDoc, not fixed, since a `Int` cannot
 carry a third "unread" state without changing the `ShedSignals` interface's contract.
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · `:app` half: seven built-but-untested requirement ids get named tests
+
+**Scope:** `app/src/test/**` only (`ActivityPatternMapperTest.kt`, `ReaderAccessibilityTest.kt`,
+`TransmissionDetailScreenTest.kt`, new `OrtColorsContrastTest.kt`), `results/coverage-matrix.md`.
+
+**Requirements/ACs:** AC-14, AC-126, FR-A11Y-2, FR-A11Y-3, FR-A11Y-4, FR-PLT-6 (font-scale clause
+only) established. FR-A11Y-5, FR-ASR-10, FR-UI-11 (day-of-week half), and FR-PLT-6's per-app
+language/system-contrast/reduced-motion clauses investigated and confirmed genuinely unbuilt — see
+below. Constitution I ("every machine conclusion MUST be inspectable") and VII ("every user-visible
+surface obeys the accessibility floor").
+
+**What changed:** F-027 flagged eight `:app`-owned id groups as built-but-untested, or (AC-126)
+mislabelled unbuilt. Rebased this worktree onto `main` first (51 commits behind — picked up P17,
+F-017's search filters, F-021's migration, and the F-027 `:data`/`:lexicon` slices already merged).
+Per id:
+- **AC-14** — `InspectionSection` (`TransmissionDetailScreen.kt`) already renders the candidate
+  list and phonetic lattice; only `InspectionViewStateMapperTest` tested the mapping, nothing
+  tested the render. Added `AC_14 the candidate list and phonetic lattice are viewable on the
+  detail screen` to `TransmissionDetailScreenTest`, asserting the lattice line, a candidate's score
+  line and a prior-contribution line are all `onNodeWithText`-findable.
+- **AC-126** — the auditor's own correction: P17 built exactly this. Renamed
+  `ActivityPatternMapperTest`'s capture-gap test to
+  `AC_126_FR_UI_12 an hour covered entirely by a capture gap is NOT_LISTENING...` (unchanged
+  assertions) and added a KDoc paragraph pointing at `ActivityPatternChartTest` as the render-side
+  proof, and stating plainly that FR-UI-11's day-of-week half is not built (`HourActivityBucket` and
+  this mapper only ever bucket by hour-of-day; grepped for `dayOfWeek`/`DayOfWeek` in `:app` — no
+  match anywhere).
+- **FR-A11Y-2, FR-A11Y-3** — both already established by `ReaderAccessibilityTest`'s two existing
+  tests (content descriptions across the nav host; no clipping at 2x font scale) under the `AC_63`
+  name only. Renamed to `AC_63_FR_A11Y_2_...` and `AC_63_FR_A11Y_3_FR_PLT_6_...` respectively,
+  assertions unchanged.
+- **FR-A11Y-4** — no test computed an actual contrast ratio anywhere. Added
+  `OrtColorsContrastTest`: a genuine WCAG 2.2 relative-luminance/contrast-ratio implementation run
+  against `OrtColors`' real sRGB values, checked at the threshold that actually applies to each
+  colour's real call site — 4.5:1 for `textHigh`/`textMedium`/`textMuted` (all used to render
+  `Text`) and 3:1 for `accentGreen`/`accentAmber`/`textLow` (used only to fill graphical shapes in
+  `AttributionMarker`/`ActivityPatternChart`, never text). All five pairs pass with the palette as
+  it stands today (ratios 4.29–15.19); no palette change was needed.
+- **FR-PLT-6** — only the font-scale clause is established, by the same `ReaderAccessibilityTest`
+  evidence as FR-A11Y-3 (nothing in `:app` overrides `LocalDensity.fontScale`, so "respecting" it is
+  the same fact as "does not clip when it is honoured"). Its other three clauses — per-app language
+  preference, system contrast, reduced motion — are recorded in the test's own KDoc as **not
+  established, because not built**: no per-app language config, no contrast-mode handling, no
+  reduced-motion check exists anywhere in `:app` (confirmed by grep, not assumed).
+- **FR-A11Y-5** — checked whether user-visible strings are resourced. `app/src/main/res/values/strings.xml`
+  holds exactly one string (`placeholder_running`), used nowhere (`MainActivity.kt` is its only
+  `stringResource`/`R.string` reference in the whole module, and it doesn't reference that key).
+  Every `Text(...)` in every screen and component is a hardcoded Kotlin string literal. **Not
+  established here, because it is not built** — no test was added; a test asserting "strings are
+  resourced" would need the resourcing to exist first, and that is a `:app/src/main` UI change well
+  beyond this finding's scope (every screen file). Left open, filed honestly rather than as a false
+  test.
+- **FR-ASR-10** — grepped `:app` for model-metadata fields (`isFineTuned`, `fineTune`, stock/tuned
+  labelling) — no match anywhere. **Not established here, because it is not built.** No settings
+  screen and no per-transcript model-metadata field exist in `:app` at all yet.
+
+**Verified:** `./gradlew :app:test` — all tests green including the 1 new `TransmissionDetailScreenTest`
+case, 2 renamed `ReaderAccessibilityTest` cases, 1 renamed `ActivityPatternMapperTest` case, and 5
+new `OrtColorsContrastTest` cases (all passing on the first run — no palette or main-source change
+was needed for any of the six established ids). `./gradlew coverageMatrix` — regenerated;
+`results/coverage-matrix.md` now names AC-14, AC-126, FR-A11Y-2, FR-A11Y-3, FR-A11Y-4 and FR-PLT-6
+under "Covered" and they no longer appear in "Not yet covered"; FR-A11Y-5, FR-ASR-10 and FR-UI-11
+remain listed there, correctly. `./gradlew coverageMatrixCheck` green. `./gradlew build
+dependencyRules` green (two `detekt` `MaxLineLength` findings in the new/edited test files fixed
+along the way). `python tools/spec-check/spec_check.py` — all 8 checks PASS. All Robolectric/JVM
+only, per constitution — no on-device verification is claimed; `OrtColorsContrastTest` is plain
+JVM (no Robolectric needed — `androidx.compose.ui.graphics.Color` is pure Kotlin math).
+
+**Left open / not done:** FR-A11Y-5 (no string-resourcing anywhere in `:app`'s UI), FR-ASR-10 (no
+model-metadata surface exists), and FR-UI-11's day-of-week bucketing are genuinely unbuilt, not
+merely untested — each would need a `:app/src/main` change (and, for FR-ASR-10, upstream metadata
+this module has no source for yet) outside this finding's `app/src/test/**`-only scope. FR-PLT-6's
+non-font-scale clauses (language preference, system contrast, reduced motion) are the same: unbuilt,
+not untested. `:capture-android`/`:capture-api`, `:pipeline`, `:lexicon`/`:eval`, `corpus/` and
+`:asr-*`/`:onnx` slices of F-027 are out of this session's scope (owns `app/src/test/**` only) and
+remain as the register describes them.
+
+---
 
 ## 2026-09-07 (audit — F-028)
 
