@@ -39,6 +39,32 @@ public data class CallsignCandidateEntity(
     val selected: Boolean,
 )
 
+/**
+ * Schema v5, register R-320/R-182: the persisted form of one [org.ort.lexicon.SlotDetail] from a
+ * [CallsignCandidateEntity]'s own `slotDetails` (`CallsignCandidate.slotDetails` on the lexicon
+ * side) — D05's `Detail-Why.dc.html` "each unit's score and kept alternate" list needs every
+ * slot for every candidate, in order, not just the winner's; D01/D03's transcript highlight needs
+ * the winning candidate's overall `[charStart, charEnd)` span, computed from these rows rather
+ * than stored redundantly on the candidate itself. [transmissionId] is denormalized from
+ * [candidateId] on purpose — every read this table serves (`CatalogDao.slotDetailsFor`,
+ * `.winningCandidateCharSpan`) is scoped by transmission first, and duplicating the (cheap,
+ * immutable) foreign key avoids a join through `callsign_candidate` for the common case.
+ * [keptAlternate]/[charStart]/[charEnd] are `null` exactly when [org.ort.lexicon.SlotDetail]'s own
+ * doc comment says they are — never fabricated to fill the column.
+ */
+@Entity(tableName = "lattice_slot", indices = [Index("transmissionId", "candidateId", "index")])
+public data class LatticeSlotEntity(
+    @PrimaryKey val id: String,
+    val transmissionId: String,
+    val candidateId: String,
+    val index: Int,
+    val unit: String,
+    val score: Double,
+    val keptAlternate: String?,
+    val charStart: Int?,
+    val charEnd: Int?,
+)
+
 @Entity(tableName = "station")
 public data class StationEntity(
     @PrimaryKey val id: String,

@@ -29,6 +29,7 @@ import org.ort.data.entity.CallsignCandidateEntity
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.ContributionItemEntity
 import org.ort.data.entity.CorrectionEntity
+import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.LexiconVersionEntity
 import org.ort.data.entity.OperatorLocationEntity
 import org.ort.data.entity.PhoneticLatticeEntity
@@ -52,9 +53,12 @@ import org.ort.data.entity.WorkQueueItemEntity
  * (register R-052, R-073; FR-SPK-10, FR-UI-6) so a station rename, a voiceprint rebinding and a
  * prior weight change each leave what they replaced reachable, not overwritten in place; v4 adds
  * [TransmissionEntity.processedTier] (register R-204 follow-up, FR-REP-2/9) so a reprocess run's
- * outcome tier is queryable per record, not just per session; v5 adds
+ * outcome tier is queryable per record, not just per session; v5 also adds
  * [CorrectionEntity.previousAttributionState] and its three siblings (register R-321) so
- * `Undo all` can restore a correction's exact prior attribution, not just its prior callsign.
+ * `Undo all` can restore a correction's exact prior attribution, not just its prior callsign,
+ * and [LatticeSlotEntity] (register R-320, R-182) so each candidate's per-slot lattice detail
+ * and transcript char span are queryable per candidate, not just opaque inside
+ * [PhoneticLatticeEntity.unitsBlob].
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -81,6 +85,7 @@ import org.ort.data.entity.WorkQueueItemEntity
         StationIdentityHistoryEntity::class,
         VoiceprintBindingHistoryEntity::class,
         PriorAdjustmentEntity::class,
+        LatticeSlotEntity::class,
     ],
     version = OrtDatabase.SCHEMA_VERSION,
     exportSchema = true,
@@ -186,14 +191,18 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
-         * v4 → v5 (register R-321): adds `correction.previousAttributionState`,
-         * `.previousAttributionConfidence`, `.previousAttributionSourceTransmissionId` and
-         * `.previousCorrected` — see [org.ort.data.entity.CorrectionEntity]'s own doc comment. No
-         * existing column is touched or dropped; every v4 row survives with all four new columns
-         * `NULL` (FR-AST-5/6 → AC-53), verified by `MigrationTest`. Also the schema v5 round's
-         * lexicon-side addition once that lands (register R-320, R-182): a `lattice_slot` table
-         * for [org.ort.lexicon.SlotDetail] per candidate — the coordinator's own instruction was
-         * to share this one version bump rather than mint a v5→v6 for it.
+         * v4 → v5, shared by two independent register items (the lead's own instruction: one
+         * version bump, not a v5→v6 for the second):
+         *
+         * - **R-321**: adds `correction.previousAttributionState`, `.previousAttributionConfidence`,
+         *   `.previousAttributionSourceTransmissionId` and `.previousCorrected` — see
+         *   [org.ort.data.entity.CorrectionEntity]'s own doc comment.
+         * - **R-320, R-182**: adds the `lattice_slot` table for [org.ort.data.entity.LatticeSlotEntity]
+         *   (one row per [org.ort.lexicon.SlotDetail] per candidate) — see that entity's own doc
+         *   comment.
+         *
+         * No existing table or column is touched or dropped; every v4 row survives, the four new
+         * `correction` columns `NULL` (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
          */
         public val MIGRATION_4_5: Migration = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -201,6 +210,16 @@ public abstract class OrtDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousAttributionConfidence` REAL")
                 db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousAttributionSourceTransmissionId` TEXT")
                 db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousCorrected` INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `lattice_slot` (" +
+                        "`id` TEXT NOT NULL, `transmissionId` TEXT NOT NULL, `candidateId` TEXT NOT NULL, " +
+                        "`index` INTEGER NOT NULL, `unit` TEXT NOT NULL, `score` REAL NOT NULL, " +
+                        "`keptAlternate` TEXT, `charStart` INTEGER, `charEnd` INTEGER, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_lattice_slot_transmissionId_candidateId_index` " +
+                        "ON `lattice_slot` (`transmissionId`, `candidateId`, `index`)",
+                )
             }
         }
 

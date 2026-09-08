@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 5,
-    "identityHash": "1daf647f6db3e57afb955f6ea0ca54c7",
+    "identityHash": "482242e03e7180c97986114f5200fef1",
     "entities": [
       {
         "tableName": "session",
@@ -1580,11 +1580,87 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_prior_adjustment_stationId_name_isCurrent` ON `${TABLE_NAME}` (`stationId`, `name`, `isCurrent`)"
           }
         ]
+      },
+      {
+        "tableName": "lattice_slot",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `transmissionId` TEXT NOT NULL, `candidateId` TEXT NOT NULL, `index` INTEGER NOT NULL, `unit` TEXT NOT NULL, `score` REAL NOT NULL, `keptAlternate` TEXT, `charStart` INTEGER, `charEnd` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transmissionId",
+            "columnName": "transmissionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "candidateId",
+            "columnName": "candidateId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "index",
+            "columnName": "index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unit",
+            "columnName": "unit",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "score",
+            "columnName": "score",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "keptAlternate",
+            "columnName": "keptAlternate",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "charStart",
+            "columnName": "charStart",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "charEnd",
+            "columnName": "charEnd",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_lattice_slot_transmissionId_candidateId_index",
+            "unique": false,
+            "columnNames": [
+              "transmissionId",
+              "candidateId",
+              "index"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_lattice_slot_transmissionId_candidateId_index` ON `${TABLE_NAME}` (`transmissionId`, `candidateId`, `index`)"
+          }
+        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '1daf647f6db3e57afb955f6ea0ca54c7')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '482242e03e7180c97986114f5200fef1')"
     ]
   }
 }
