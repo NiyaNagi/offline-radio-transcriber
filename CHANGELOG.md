@@ -32,9 +32,115 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (ui-conformance WP2: line length)
+## 2026-09-08 (build: lint exclusion is relative to the project root)
 
-### (pending) — ui-conformance WP2 · line length
+### (pending) — build · lint exclusion is relative to the project root, so worktree builders lint their own sources
+
+**Scope:** `buildSrc/src/main/kotlin/ort.common.gradle.kts` only — lead-approved for this file
+specifically, outside this branch's normal `ui/components/**` boundary (the previous commit,
+`4a794c4`, found and reported the bug this one fixes). `git merge --ff-only main` could not be
+completed before this commit — see "Left open" below — but `buildSrc/` is byte-identical between
+this branch and `main`'s current tip, confirmed by `git diff --stat HEAD main -- buildSrc/`
+returning no output, so that gap does not affect this fix's correctness.
+
+**Requirements/ACs:** none new — a build-tooling correctness fix, not a product behaviour change.
+Cites `spec/ui-conformance-plan.md`'s "Concurrency and safety" section (every builder runs in
+`isolation: worktree`), the same section this file's own doc comment already cited before this
+fix.
+
+**What changed:**
+- **Root cause, confirmed.** `isUnderClaudeDirectory` matched a bare absolute-path substring:
+  any file whose path contained a `.claude` directory segment *anywhere*. Every worktree-isolated
+  builder's own checkout root is itself `.../.claude/worktrees/<name>/`, so that substring test
+  matched *every* real source file in *every* checkout doing the building — not only a sibling
+  worktree's files nested inside it, which is all the original defensive exclude was ever meant to
+  catch. `:app:detekt` and every `:app:*ktlint*` task therefore saw zero input files for any
+  worktree builder (`NO-SOURCE`), which reports success vacuously, not because nothing needed
+  flagging. Confirmed directly, before this fix: `.\gradlew.bat :app:detekt --rerun-tasks` (a
+  fresh daemon, `--rerun-tasks` ruling out both a stale daemon and the build cache) — `NO-SOURCE`.
+- **The fix.** `isUnderClaudeDirectory` now takes the `File` itself (not a bare path string),
+  relativizes it against **this build's own** `rootProject.projectDir` via
+  `file.relativeToOrNull(rootProject.projectDir)`, and tests the *relative* path for a `.claude`
+  segment — both mid-path (`contains("${File.separator}.claude${File.separator}")`, the general
+  case) and as the relative path's own first segment
+  (`startsWith(".claude${File.separator}")`, needed because a relative path never starts with a
+  leading separator, so the mid-path form alone would miss a file placed directly under
+  `<root>/.claude/...`, e.g. the throwaway proof file below). A file under this checkout's own
+  module directories (`app/src/main/kotlin/...`) relativizes to a path with no `.claude` segment
+  at all — `rootProject.projectDir` (`.../.claude/worktrees/<name>/`) is exactly the prefix
+  `relativeTo` strips away, since it is the base being relativized against, not part of the
+  result — while a file actually nested *inside* this checkout under a `.claude` directory still
+  relativizes to a path that contains one, and is still excluded. `excludeClaudeDirectory` (the
+  `FileTreeElement`-facing wrapper both plugins register) is otherwise unchanged; `doNotCacheIf`
+  on both the `Detekt` task type and every `*ktlint*`-named task is untouched, per the coordinator's
+  explicit instruction, since that fix (build-cache poisoning across worktrees, the file's own
+  documented failure mode 2) is unrelated and still correct.
+- **The file's own doc comment** gained a third numbered failure mode alongside the two already
+  there, recording this bug and its fix the same way the first two are recorded, rather than
+  silently replacing the reasoning that led to the (wrong) absolute-path version — a future reader
+  hitting a fourth variant of this problem should be able to see why the first two fixes weren't
+  enough either.
+
+**Verified:**
+- **Before, confirmed NO-SOURCE:** `.\gradlew.bat :app:detekt --rerun-tasks` (fresh daemon) —
+  `:app:detekt` reported `NO-SOURCE`; every `:app:*ktlint*SourceSet*` task reported `NO-SOURCE`/
+  `SKIPPED` the same way, both invoked directly and reached through the full `build` graph
+  (recorded in the previous commit's own `CHANGELOG.md` entry, `4a794c4`, which reports 0 as the
+  effective "before" source count from that investigation).
+- **After, confirmed real sources, via `--info`:** `.\gradlew.bat :app:detekt --rerun-tasks` —
+  executed for real (31s of actual work, not an instant no-op) and produced
+  `app/build/reports/detekt/detekt.md` reporting **256 number of kt files** analyzed, **0 number
+  of total code smells** — a genuine clean result, not a vacuous one.
+  `.\gradlew.bat :app:ktlintMainSourceSetCheck --rerun-tasks --info` — `:app:
+  runKtlintCheckOverMainSourceSet`/`:app:ktlintMainSourceSetCheck` both executed for real (40s,
+  a worker daemon started to do the work) and passed; cross-checked independently (not from
+  Gradle's own accounting) that `app/src/main/kotlin/**/*.kt` contains **144 files** — the actual
+  count `ktlintMainSourceSetCheck` scans over. Both before/after pairs — `0` → `256` for detekt,
+  `NO-SOURCE` → real 144-file pass for ktlint's main source set — are the requested before/after
+  source counts.
+- **The throwaway-file proof, both ways.** Created
+  `<this worktree>/.claude/worktrees/zz-test/app/src/main/kotlin/Broken.kt`, deliberately
+  unparseable Kotlin (`class Broken( {{{ this is not valid kotlin at all ###`) — the exact shape
+  the file's own doc comment describes. Ran `.\gradlew.bat :app:detekt :app:
+  ktlintMainSourceSetCheck --rerun-tasks` with it present — **BUILD SUCCESSFUL**, and
+  `detekt.md` still reported exactly **256 kt files, 0 findings** (unchanged from the run without
+  the throwaway file), confirming it was not read, not merely that it happened not to fail
+  anything. Deleted `.claude/worktrees/zz-test/` afterward; `git status --short` shows no
+  throwaway artefact left behind.
+- **Full gate from a fresh, non-daemon build** (`--no-daemon`, per the coordinator's own
+  instruction, to avoid a build daemon another process might stop mid-run — one *did* get stopped
+  by another process during the previous commit's own investigation, not by this session):
+  `.\gradlew.bat build dependencyRules platformGuards --no-daemon` — **BUILD SUCCESSFUL** (845
+  actionable tasks: 736 executed, 75 from cache, 34 up-to-date). `.\gradlew.bat dependencyRules
+  platformGuards --no-daemon` (isolated re-run) — `dependencyRules: checked 17 modules ... OK.`
+  `platformGuards: checked 17 modules' external dependencies and 17 manifests ... OK.`
+  `.\gradlew.bat :app:testDebugUnitTest` — **923 of 923 passing, 0 failed** (summed from every
+  `app/build/test-results/testDebugUnitTest/*.xml` report; unchanged from before this fix — this
+  is a build-tooling fix, not a product change, so no test count movement is expected).
+  `.\gradlew.bat -p buildSrc test --no-daemon` — BUILD SUCCESSFUL. `python tools\spec-check
+  \spec_check.py` — 8/8 `[PASS]`. `.\gradlew.bat coverageMatrix --no-daemon` — `419 requirements,
+  183 covered` (unchanged). `.\gradlew.bat coverageMatrixCheck --no-daemon` (separate invocation)
+  — `up to date (183 covered of 419)`.
+- **No `gradlew --stop` was run at any point in this work**, per the coordinator's explicit
+  instruction.
+
+**Left open / not done:**
+- **`git merge --ff-only main` could not be completed before this commit.** `main`'s current tip
+  (`7dd229a` at the time of this commit) is not a descendant of this branch's HEAD (`4a794c4`) —
+  it has advanced with other builders' unrelated work (WP10/WP11b/audit rounds) that this branch
+  does not have, while this branch's own last commit (`4a794c4`) has not yet been merged back into
+  `main` by the coordinator's own integration process, so neither branch is a fast-forward of the
+  other; a true fast-forward is not possible without a rebase, which is against this branch's
+  standing rule. Confirmed the one file this commit touches is unaffected by that divergence
+  (`git diff --stat HEAD main -- buildSrc/` — no output, i.e. byte-identical on `main`), so this
+  fix's own correctness does not depend on resolving it, but the divergence itself is the
+  coordinator's own merge process to reconcile, not something resolved here.
+- **Every other worktree builder's "clean" ktlint/detekt result since the bug landed is still
+  unverified** — this fix only takes effect once each builder's own checkout picks it up (via
+  the coordinator's next merge into each branch, or once merged to `main` and pulled forward);
+  nothing here retroactively re-checks another package's files.
+
+### 4a794c4 — ui-conformance WP2 · line length
 
 **Scope:** `:app` `ui/components/ActivityPatternChart.kt` and `RowsTest.kt` only — a follow-up to
 this package's previous commit (`34385e8`, merged as `68f84bc`). `main` fast-forward merged first
