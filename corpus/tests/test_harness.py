@@ -45,7 +45,7 @@ def _transcripts():
     }
 
 
-def test_evaluate_reports_per_source_and_aggregate():
+def test_FR_TST_8_evaluate_reports_per_source_and_aggregate():
     report = evaluate(_manifest(), "dev", _transcripts())
     assert report.fold == "dev"
     assert set(report.per_source) == {"hf", "atc"}

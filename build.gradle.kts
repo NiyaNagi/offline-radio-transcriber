@@ -30,19 +30,26 @@ gradle.projectsEvaluated {
     dependencyRules.configure { actualGraph.set(actual) }
 }
 
+/**
+ * Test source roots the coverage matrix scans (test-plan §9). `corpus/tests` is Python
+ * (`corpus/` has its own `pyproject.toml` and CI job — AGENTS.md), not a Gradle subproject, so
+ * it is added alongside the per-module Kotlin roots rather than discovered from `subprojects`.
+ * A `val` shared by every task that needs the same roots (F-027).
+ */
+val coverageMatrixTestRoots =
+    subprojects.flatMap {
+        listOf(
+            it.layout.projectDirectory.dir("src/test/kotlin"),
+            it.layout.projectDirectory.dir("src/androidTest/kotlin"),
+        )
+    } + layout.projectDirectory.dir("corpus/tests")
+
 /** `coverageMatrix` — regenerates results/coverage-matrix.md (test-plan §9). */
 tasks.register<CoverageMatrixTask>("coverageMatrix") {
     group = "documentation"
     description = "Regenerates results/coverage-matrix.md from spec ids and test sources."
     specDir.set(layout.projectDirectory.dir("spec"))
-    testRoots.setFrom(
-        subprojects.flatMap {
-            listOf(
-                it.layout.projectDirectory.dir("src/test/kotlin"),
-                it.layout.projectDirectory.dir("src/androidTest/kotlin"),
-            )
-        },
-    )
+    testRoots.setFrom(coverageMatrixTestRoots)
     output.set(layout.projectDirectory.file("results/coverage-matrix.md"))
 }
 

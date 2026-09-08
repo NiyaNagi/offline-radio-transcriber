@@ -38,7 +38,7 @@ underlying breakdown each prompt draws on.
 - [x] **P3 · Lexicon: grammar** — units, ITU trie, FSA, confusion scoring *(`:lexicon`)* — done 2026-09-07
 - [x] **P4 · Capture and segmentation** — source, resampler, ring, VAD *(`:capture-api`, `:segment`)* — done 2026-09-07
 - [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07
-- [x] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)* — done 2026-09-07; both probes NOT RUN (no Fearless Steps / no LoRA+sherpa-onnx toolchain or GPU in this environment) — see `results/r4-speaker-separation.md`, `results/r1-lora-export.md`
+- [x] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)* — done 2026-09-07; both probes NOT RUN (no Fearless Steps / no LoRA+sherpa-onnx toolchain or GPU in this environment) — see `results/r4-speaker-separation.md`, `results/r1-lora-export.md`. **FR-TST-6 (audit F-027, 2026-09-07): the D22 callsign generator built here is not the FR-TST-6 load/endurance synthetic traffic generator (activity fraction, transmission length distribution, SNR) — that is unbuilt, not just untested.**
 
 **Wave C — composition.**
 
