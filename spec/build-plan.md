@@ -129,6 +129,10 @@ are individually green.*
   `AsrAvailability`/`VadAvailability` at all — the reader gave no reason transcripts never appear.
   Fixed: `StatusViewState` now carries real ASR/VAD status labels and an honest
   "no transcription model installed" header message; see CHANGELOG.md's F-004 entry.
+  **Correction (2026-09-07, audit F-012):** FR-UI-4's confidence number was reachable only via
+  `AttributionMarker`'s merged `contentDescription`, never as visible text in the Log row or
+  Detail header — fixed in `AttributionMarker.kt`; see the 2026-09-07 (audit — F-012) CHANGELOG
+  entry.
 - [x] **P15 · Search and threads** *(`:app`, `:data`)* — done 2026-09-08. `SearchDao` (a new DAO
   file, per the prompt, to stay conflict-free with concurrent P17) queries the FTS5 index P5 built
   and nothing queried until now, with callsign/frequency/date filters; `SearchScreen`/`ThreadScreen`

@@ -465,6 +465,41 @@ existing TX1/TX2 seed rows in `SearchDaoFilterTest` were silently `UNKNOWN` rath
 filters to the user, e.g. a band picker, attribution-state chips, rejected/accepted toggle) is
 untouched — out of scope for this change per the finding's own split into two briefs. No new
 Room migration was needed (no schema change; the new filters read existing columns).
+## 2026-09-07 (audit — F-012)
+
+### (pending) — audit F-012 · attribution confidence becomes visible text, not screen-reader-only
+
+**Scope:** `:app` — `ui/components/AttributionMarker.kt`, `ui/screens/LogScreen.kt` (no code
+change needed there, it renders `AttributionMarker` already), `ui/screens/TransmissionDetailScreen.kt`
+(no code change needed there either), and their tests (`AttributionMarkerTest.kt` unchanged/still
+green, `LogScreenTest.kt`, `TransmissionDetailScreenTest.kt`).
+**Requirements/ACs:** FR-UI-4, constitution I.
+**What changed:** `results/audit-2026-09-07.md` finding F-012: `AttributionMarker` put the
+numeric confidence only into its merged `contentDescription`, so a sighted user reading the Log
+rows or the Transmission Detail header never saw the number FR-UI-4 requires ("SHALL never be
+omitted"), even though `Log.dc.html`/`Detail.dc.html` both show a visible `0.82`-style badge.
+Added a visible `Text` inside `AttributionMarker`, rendered beside the state label whenever
+`attribution.confidence` is non-null, formatted `%.2f` to match the artboards and the existing
+content-description wording. `UNKNOWN` (and any `AMBIGUOUS` without a confidence) render no
+number — `confidence?.let { }` renders nothing rather than fabricating a placeholder, per
+constitution I. Because `LogScreen` and `TransmissionDetailScreen` already delegate to
+`AttributionMarker` for every rendering of an attribution, no change was needed in either screen
+file itself — the fix is entirely in the shared component, which is also why P13's "prove it once
+here" reuse note in `AttributionMarker`'s own doc comment made this a one-file fix rather than two.
+**Verified:** Strict TDD — added `FR_UI_4 the confidence value is shown as visible text...` and
+`FR_UI_4 an UNKNOWN row/attribution shows no confidence number...` to both `LogScreenTest.kt` and
+`TransmissionDetailScreenTest.kt`; confirmed both "visible text" tests failed first with
+`Expected exactly '1' node but could not find any node that satisfies: (Text + EditableText
+contains '0.95' ...)` against the pre-fix component (verified by stashing the component change
+and re-running), then made the fix and reran green. `./gradlew :app:testDebugUnitTest --tests
+org.ort.app.ui.screens.LogScreenTest --tests org.ort.app.ui.screens.TransmissionDetailScreenTest
+--tests org.ort.app.ui.components.AttributionMarkerTest --tests
+org.ort.app.ui.ReaderAccessibilityTest` (all green); `./gradlew :app:test` (green, full module);
+full gate `./gradlew build dependencyRules` (green) and `python tools/spec-check/spec_check.py`
+(`spec-check: OK`, all 8 checks pass). All Robolectric/JVM — no on-device verification performed
+or claimed.
+**Left open / not done:** none for this finding. Other open findings in
+`results/audit-2026-09-07.md` (e.g. F-013, F-014) are out of scope and untouched.
 
 ---
 
