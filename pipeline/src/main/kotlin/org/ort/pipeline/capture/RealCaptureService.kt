@@ -114,10 +114,18 @@ public class RealCaptureService : Service() {
         val db = OrtDatabase.create(applicationContext)
         val queue = WorkQueue(db, SystemClock)
         val io = AndroidAudioIo(applicationContext)
-        val device = AndroidAudioIo.builtInMicDescriptor()
+        // A real enumerated device — never a fabricated descriptor, which RouteVerifier would
+        // (correctly) reject on the first read, halting capture. See defaultInputDevice()'s kdoc.
+        val device = io.defaultInputDevice()
+        if (device == null) {
+            CaptureState.failed("no audio input device is available")
+            updateNotification("Failed: no audio input device")
+            return
+        }
         io.select(device)
         val audioSource = AudioRecordSource(io, device)
         source = audioSource
+        CaptureState.capturing(sessionId)
 
         scope.launch {
             db.sessionDao().insert(
@@ -152,13 +160,25 @@ public class RealCaptureService : Service() {
                             onHeartbeat()
                         }
                     }
-                    is CaptureEvent.Failed -> updateNotification("Failed: ${event.error}")
+                    is CaptureEvent.Failed -> {
+                        CaptureState.failed(event.error)
+                        updateNotification("Failed: ${event.error}")
+                    }
                     CaptureEvent.RouteChanged -> Unit
-                    is CaptureEvent.Interrupted -> updateNotification("Interrupted")
-                    CaptureEvent.Resumed -> updateNotification("Capturing")
+                    is CaptureEvent.Interrupted -> {
+                        CaptureState.interrupted(event.cause)
+                        updateNotification("Interrupted")
+                    }
+                    CaptureEvent.Resumed -> {
+                        CaptureState.capturing(sessionId)
+                        updateNotification("Capturing")
+                    }
                     CaptureEvent.EndOfStream -> Unit
                 }
             }
+            // The flow completing means the source stopped for good — halted on a route mismatch
+            // or an unrecoverable failure. Never leave the surface claiming "Capturing".
+            if (CaptureState.isCapturing) CaptureState.failed("capture stopped unexpectedly")
         }
     }
 
@@ -177,6 +197,8 @@ public class RealCaptureService : Service() {
 
     private fun stopCaptureInternal(markClean: Boolean) {
         source?.stop()
+        source = null
+        CaptureState.idle()
         if (markClean && sessionId.isNotEmpty()) heartbeatStore.markCleanShutdown(sessionId)
     }
 

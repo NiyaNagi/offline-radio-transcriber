@@ -77,10 +77,37 @@ on disk, a session can wire it into `corpus/src/corpus/probes/speaker_separation
 `probe_r4` and install a real WeSpeaker/3D-Speaker embedder to get R4's actual verdict — see
 `results/r4-speaker-separation.md` for what's blocked pending this.
 
-**After the fork.** M5 reader · M6 identity and voice library · M7 rig · M8 streaming · M9
-digest, station knowledge, contribution · M10 tiers and reprocessing · M11 reference levers.
-**Deliberately not decomposed** — M4 can delete Pass C, which changes what several of them
-contain.
+**Wave E — make it an app.** *Added 2026-09-08, after the first real on-device test of the v0
+smoke build. Waves A–D produced eleven green modules and a debug APK that starts a real
+foreground capture service — and a user who installed it correctly observed "I see no UI." That
+is not a missed phase: **the plan through Wave D deliberately covered M0–M4 only**, and every
+user-facing screen lives in M5, parked below as "deliberately not decomposed." This wave
+decomposes it, and first fixes the three defects that on-device testing surfaced — none of which
+any test suite here could have caught, because all three live in the glue between modules that
+are individually green.*
+
+- [ ] **P12 · Make capture actually work end to end on a device** *(`:capture-android`,
+  `:pipeline`, `:app`)* — the three on-device defects, then the processing loop that turns a
+  captured segment into a transcript. **This is the one that makes the app do its job at all.**
+- [ ] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
+  `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
+  Compose wiring at all.
+- [ ] **P14 · Reader: live view and transmission detail** *(`:app`)* — FR-UI-1, FR-UI-4, FR-UI-5,
+  FR-A11Y-1..4.
+- [ ] **P15 · Search and threads** *(`:app`, `:data`)* — FR-UI-2, FR-UI-3 over the FTS5 index P5
+  already built and nothing yet queries.
+- [ ] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
+  `:data`)* — FR-UI-6, FR-UI-8, and FR-OBS-4, the Must the implementation plan explicitly
+  rehoused into M5.
+- [ ] **P17 · Station and frequency views with activity patterns** *(`:app`, `:data`)* —
+  FR-UI-9..12, including FR-UI-12's "not heard" versus "not listening" distinction.
+
+**After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
+knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not
+decomposed** — M4 can delete Pass C, which changes what several of them contain. (M5 was on this
+list until Wave E decomposed it: the reader is not actually fork-dependent — only FR-UI-8's
+inspection surface is, and it renders whichever lattice source survives, one screen either way,
+as implementation-plan M5 already says.)
 
 ---
 
@@ -405,6 +432,131 @@ P5 II, III, IV · P6 VI · P7 I, VI · P8 IV, V, VII · P9 II, IV · P10 I, II �
 > written into the functional spec before M5 begins** — proceed as specified, collapse to the
 > text path and delete Pass C, or tier-gate Pass C to T2+. Implementation plan M4 has the
 > consequences of each.
+
+### P12 · Make capture actually work end to end on a device
+
+> Read `spec/technical-design.md` §5–7, the `CHANGELOG.md` entries for the v0 smoke build, and
+> `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt` in full. Requires
+> P8, P10, P11 (all done).
+>
+> **Owns:** `:capture-android`, `:pipeline`, `:app`'s capture wiring. **Do not touch:** the
+> reader UI (P13–P17 own that), `:lexicon`, `:data`'s schema.
+>
+> Three defects that on-device testing found and no test suite here could, then the loop that
+> makes a captured segment become a transcript:
+>
+> 1. **Route selection fabricates a device id, so capture halts on its first read.**
+>    `AndroidAudioIo.builtInMicDescriptor()` returns id `"builtin"`; a real
+>    `AudioDeviceInfo.getId()` is a number, so `RouteVerifier` correctly reports a mismatch
+>    (AC-2 working exactly as designed) and `AudioRecordSource` halts. Select a **real**
+>    enumerated device. Write first: a test over `AndroidAudioIo`'s enumeration→selection path
+>    proving the selected descriptor's id is one `availableDevices()` actually returned.
+> 2. **The status surface asserts `isCapturing = true` unconditionally**, so a halted capture
+>    still reads "Capturing" — the exact silent failure constitution IV forbids, in the one
+>    screen whose job is to report it. Track real state and surface the failure reason. Write
+>    first: capture fails → the status surface says so, naming the reason.
+> 3. **Nothing drains the queue and nothing runs ASR**, so a captured transmission can never
+>    become a transcript. `PassDrainRunner` (P8), `PassB` (P11) and `RealSherpaDecoder` (P10
+>    follow-up) all exist and none is constructed in the running app. Wire them, with the model
+>    fetched to app-private storage (`asr-sherpa/README.md` documents the URL and cache layout)
+>    rather than committed. Write first: a Robolectric test that a queued transmission reaches
+>    `COMPLETE` with a transcript row, using `FakeAsrEngine`.
+>
+> Also: **replace `EnergyVadModel`**, the RMS-threshold stand-in, with the real Silero VAD, or —
+> if no usable Silero ONNX build can be resolved for Android — say so plainly and leave the
+> stand-in clearly labelled, exactly as the R4/R1 probes did. Do not quietly ship an energy
+> threshold as if it were the specified VAD.
+>
+> **Done when:** a debug APK captures on a real device, the status surface tells the truth about
+> whether it is capturing, and a spoken callsign produces a transmission row with a transcript.
+> **If the device work cannot be verified because no device is available to the session, say so
+> and stop** — this prompt's whole point is behaviour no fake can establish.
+
+### P13 · Compose foundation: theme, navigation, the design canvas made real
+
+> Read `design/canvas/` (seven designed screens: Main, Log, Detail, Menu, Timeline, States,
+> Editorial), `spec/functional-spec.md` §13 (interaction principles) and FR-A11Y-1..6.
+>
+> **Owns:** `:app` UI infrastructure, `buildSrc`'s `ort.android-app` convention plugin (Compose
+> wiring). **Do not touch:** `:pipeline`, `:capture-*`, `:data`.
+>
+> The stack decision (D15) says Compose and the app has none — P8 and P11 both shipped plain
+> `TextView`s with an explicit note that Compose was out of their scope. Land it: the Compose
+> dependency and compiler in the convention plugin, a theme derived from the canvas (dark-first),
+> a navigation host with the drawer the canvas specifies, and the four-state attribution markers
+> as a **reusable component**, not a string built per screen.
+>
+> Write first: **AC-62** — every attribution state is distinguishable in greyscale (render each
+> and assert distinct non-colour content); **AC-63** — the reader survives maximum system font
+> scale without clipping (FR-A11Y-3) and every interactive element carries a content description
+> (FR-A11Y-2). These are cheap now and expensive once six screens exist.
+>
+> **Done when:** the app's existing status and transmission-list surfaces are Compose screens
+> behind the navigation host, with no behaviour change and their existing tests still passing or
+> honestly rewritten, and AC-62/AC-63 hold.
+
+### P14 · Reader: live view and transmission detail
+
+> Read `spec/functional-spec.md` §7.9 (FR-UI-1..8), `design/canvas/Main.dc.html`,
+> `Log.dc.html`, `Detail.dc.html`, `States.dc.html`. Requires P13.
+>
+> **Owns:** `:app` reader screens. **Do not touch:** `:data`'s schema, `:pipeline`.
+>
+> Write first: **FR-UI-1** — a transmission appears in the live view as it is captured, newest
+> first, and a superseded partial is *visibly* superseded rather than silently replaced;
+> **FR-UI-4** — all four attribution states are visually distinct and never colour-only (reusing
+> P13's component); **FR-UI-5** — playback of a transmission's retained audio alongside its
+> transcript.
+>
+> **Done when:** capturing with the app open shows transmissions arriving live, each openable to
+> a detail view with its audio, transcript, attribution state and confidence.
+
+### P15 · Search and threads
+
+> Read `spec/functional-spec.md` FR-UI-2, FR-UI-3, `spec/technical-design.md` §12.1 (the FTS5
+> index), `design/canvas/Log.dc.html`. Requires P14.
+>
+> **Owns:** `:app` search/thread screens, `:data` query surface (new DAO queries only — **no
+> schema change**; P5's FTS5 table and triggers already exist and nothing queries them yet).
+>
+> Write first: full-text search returns a transmission by a word in its transcript and filters by
+> callsign, frequency and date (FR-UI-3); a thread view groups transmissions into conversations
+> showing why each was attributed (FR-UI-2).
+>
+> **Done when:** the FTS5 index P5 built is actually reachable from the app, with filters, and
+> threads render.
+
+### P16 · Correction, the inspection surface, and labelled-sample capture
+
+> Read `spec/functional-spec.md` FR-UI-6, FR-UI-8, FR-OBS-4, Q8 (tiered correction),
+> `spec/implementation-plan.md` M5. Requires P14, P7.
+>
+> **Owns:** `:app` correction and inspection screens, `:data`'s `CorrectionEntity` write path.
+>
+> Write first: one-tap correction of an attribution propagates per FR-SPK-7 and sets the
+> `CORRECTED` lock (a correction must never be re-propagated over); the inspection surface renders
+> the phonetic lattice, the candidate list **and the per-prior breakdown** `PriorCombiner` already
+> produces (FR-UI-8) — this is the surface that makes the resolver auditable, and P7 built the
+> data for it with nothing yet displaying it. Then **FR-OBS-4**: record a labelled sample from a
+> live session into the format `corpus/`'s harness already reads, per
+> `docs/reference/labelling-protocol.md`.
+>
+> **Done when:** a wrong attribution can be corrected in one tap, the reasoning behind any
+> attribution is inspectable, and a session can contribute a labelled sample to the corpus.
+
+### P17 · Station and frequency views with activity patterns
+
+> Read `spec/functional-spec.md` FR-UI-9..12, `design/canvas/Timeline.dc.html`. Requires P15.
+>
+> **Owns:** `:app` station/frequency screens, `:data` aggregate queries.
+>
+> Write first: **FR-UI-12** — a pattern display distinguishes "not heard" from "not listening",
+> using the `CaptureGap` rows P5 and P8 already record. This is the requirement most likely to be
+> silently got wrong: an empty hour looks identical either way unless the gap data is consulted,
+> and presenting "not listening" as "not heard" is a fabricated absence.
+>
+> **Done when:** everything heard from one station and everything heard on one frequency each
+> have a view, with activity patterns that never present a capture gap as silence.
 
 ---
 

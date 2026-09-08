@@ -14,6 +14,7 @@ import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.SystemClock
 import org.ort.data.OrtDatabase
 import org.ort.pipeline.CaptureStatusRepository
+import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.shed.ShedController
 import org.ort.pipeline.shed.ShedSignals
 import java.io.File
@@ -120,15 +121,20 @@ public class StatusActivity : Activity() {
                         db.captureGapDao().listBySession(sessionId).size
                 }
                 val pm = getSystemService(POWER_SERVICE) as PowerManager
+                // Real state, never an optimistic constant: the v0 version hardcoded `true` here,
+                // so a halted capture still read "Capturing" — the silent failure constitution IV
+                // forbids, in the screen whose job is to report it. Found on a real device.
                 val status = repository.current(
                     sessionId = sessionId,
-                    isCapturing = true,
+                    isCapturing = CaptureState.isCapturing,
                     elapsedMillis = SystemClock.wallMillis() - startedAtWallMillis,
                     transmissionCount = count,
                     gapCount = gaps,
                     isIgnoringBatteryOptimizationsDiagnosticOnly = pm.isIgnoringBatteryOptimizations(packageName),
                 ).let { if (uncleanEnd != null) it.copy(uncleanEndFromPreviousLaunch = uncleanEnd) else it }
                 render(StatusViewStateMapper.from(status))
+                // A stopped capture must say *why*, not just stop saying "Capturing".
+                CaptureState.failureReason?.let { stateView.text = "${stateView.text} — $it" }
                 pollHandler.postDelayed(this, POLL_INTERVAL_MILLIS)
             }
         }

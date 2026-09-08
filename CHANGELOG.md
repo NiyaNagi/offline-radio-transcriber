@@ -32,6 +32,55 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (morning, cont. — Wave E added; P12's first two defects fixed)
+
+### (pending) — Decompose M5 into the build plan, and fix the two defects that made capture a lie
+
+**Scope:** `spec/build-plan.md` (new Wave E, prompts P12–P17),
+`capture-android/src/main/kotlin/org/ort/capture/android/AndroidAudioIo.kt`,
+`capture-android/src/test/.../DefaultInputDeviceSelectionTest.kt` (new),
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/CaptureState.kt` (new),
+`pipeline/src/test/.../CaptureStateTest.kt` (new),
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`,
+`app/src/main/kotlin/org/ort/app/status/StatusActivity.kt`.
+**Requirements/ACs:** AC-2 (route verification — the mechanism was correct; the *selection handed
+to it* was not), constitution IV (capture never lies about its own state).
+**What changed:** the user installed the fixed smoke build, got past the battery-exemption hang,
+and sent a screenshot: "Capturing / 00:00:16 / 0 transmissions / **Not responding (heartbeat
+stale)**", plus "I see no UI — did you miss a phase?" Both observations were right, and neither is
+what it first looks like:
+- **No phase was skipped.** Waves A–D covered M0–M4 by design; every user-facing screen lives in
+  M5, which the build plan parked as "deliberately not decomposed" and the implementation plan
+  marks "outline only". Meanwhile `design/canvas/` holds **seven fully designed screens** nothing
+  implements, and the spec carries **12 `FR-UI-*` + 6 `FR-A11Y-*`** requirements of which the app
+  implements roughly one and a half. Added **Wave E (P12–P17)** decomposing exactly that, with
+  P12 first because the app does not yet do its job at all.
+- **Defect 1 — capture halted on its first read, and had since the wiring shipped.**
+  `AndroidAudioIo.builtInMicDescriptor()` fabricated the device id `"builtin"`; `RouteVerifier`
+  compares ids and a real `AudioDeviceInfo.getId()` is a number, so every real device reported a
+  route mismatch immediately and `AudioRecordSource` halted — AC-2 working exactly as designed,
+  against a selection constructed so it could never match. Replaced with `defaultInputDevice()`,
+  which returns a **real enumerated** device (preferring the built-in mic) or `null`, which the
+  caller reports as a capture failure rather than inventing something. This is why the heartbeat
+  was stale and the transmission count zero.
+- **Defect 2 — the status surface asserted `isCapturing = true` unconditionally**, so a halted
+  capture still read "Capturing" indefinitely: the exact silent failure constitution IV exists to
+  forbid, in the one screen whose entire job is to report it. Added `CaptureState` (a process-wide
+  holder, deliberately not persisted — a stale row outliving its process claiming capture is
+  running would be strictly worse, and cross-process liveness is the heartbeat's job, AC-65), fed
+  by every `CaptureEvent` branch **and** by flow completion, so a source that stops for any reason
+  can never leave the surface claiming success. The status screen now reports the real state and
+  names the failure reason.
+**Verified:** 11 new tests (`CaptureStateTest`, `DefaultInputDeviceSelectionTest`) green, including
+one that documents the fabricated-descriptor shape as a mismatch precisely because it can never be
+selected again; `./gradlew build dependencyRules` full green. **Not yet verified on the reporting
+user's device** — same standing caveat as the last on-device fix, and the reason P12 exists.
+**Left open / not done:** P12's third defect — **nothing drains the queue and nothing runs ASR**,
+so a captured transmission still cannot become a transcript (`PassDrainRunner`, `PassB` and
+`RealSherpaDecoder` all exist; none is constructed in the running app, and no model is fetched to
+the device). Also still open: `EnergyVadModel` remains an RMS-threshold stand-in, not Silero. Both
+are P12's remaining scope, and P13–P17 (the entire reader UI) have not started.
+
 ## 2026-09-08 (morning — a real device catches two real bugs neither CI nor Robolectric could)
 
 ### (pending) — Fix the on-device hang at the battery-exemption step, found by the user's own phone

@@ -124,12 +124,24 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
         else -> AudioDeviceKind.UNKNOWN
     }
 
+    /**
+     * The device to select when the user has not picked one: a **real** enumerated input,
+     * preferring the built-in mic.
+     *
+     * Returns `null` when the OS enumerates no inputs at all, which the caller must treat as a
+     * capture failure — not as licence to invent a descriptor. The first version of this class
+     * did exactly that (a fabricated id `"builtin"`), and because [RouteVerifier] compares ids,
+     * every real device reported a route mismatch on its first read and capture halted
+     * immediately — AC-2 working precisely as designed, against a selection that could never
+     * match anything. Found on a real phone; no fake could have surfaced it.
+     */
+    public fun defaultInputDevice(): AudioDeviceDescriptor? {
+        val devices = availableDevices()
+        return devices.firstOrNull { it.kind == AudioDeviceKind.BUILT_IN_MIC } ?: devices.firstOrNull()
+    }
+
     public companion object {
         public const val DEFAULT_SAMPLE_RATE: Int = 48_000
         private const val BUFFER_SIZE_MULTIPLIER: Int = 4
-
-        /** The built-in mic, as a fallback default selection before the user picks a device. */
-        public fun builtInMicDescriptor(): AudioDeviceDescriptor =
-            AudioDeviceDescriptor(id = "builtin", kind = AudioDeviceKind.BUILT_IN_MIC, label = "Built-in microphone")
     }
 }
