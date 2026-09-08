@@ -22,6 +22,21 @@ extensions.configure<BaseAppModuleExtension> {
     }
 }
 
+// WP0 (spec/ui-conformance-plan.md, register R-110/R-111): `app/src/debug` is a default source
+// set AGP picks up on its own — no line was needed for that (checked first, per this package's
+// brief). This is a different, pre-existing gap `ort.android-app.gradle.kts` (buildSrc, outside
+// this package's ownership) already half-addressed: it disables the *`testReleaseUnitTest`*
+// task (Compose's `ui-test-manifest` stub is debug-only, so the release variant's tests fail for a
+// reason unrelated to the code under test) but not `compileReleaseUnitTestKotlin`, which compiles
+// the *same* `app/src/test/kotlin` source set against the release variant's classpath — one that
+// never carries `app/src/debug` (`ScenarioReceiver`, `Scenarios`, `ScenarioFixtures`,
+// `ScenarioReaderActivity`...). That compile task still runs as part of `./gradlew build`/`check`
+// regardless of the disabled test-execution task, and fails the moment a test file needs a
+// debug-only symbol for the first time — found by actually running `./gradlew build`, not by
+// inspection. No release artifact consumes this task's output; disabled here for the identical
+// reason its sibling already is.
+tasks.matching { it.name == "compileReleaseUnitTestKotlin" }.configureEach { enabled = false }
+
 // build-plan P8 adds the capture status surface and permissions flow (plain Android views —
 // Compose is not yet wired into ort.android-app.gradle.kts, and pulling it in is out of this
 // prompt's scope). The reader UI and Hilt graph remain for a later session.

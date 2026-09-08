@@ -1,0 +1,11 @@
+{
+  "V3": [
+    { "scenario": "overnight", "screens": ["now", "drawer", "log", "threads"] },
+    { "scenario": "pass-a-partial", "screens": ["log"] },
+    { "scenario": "gap-call", "screens": ["log"] }
+  ],
+  "V5": [
+    { "scenario": "search-corpus", "screens": ["search"] },
+    { "scenario": "stations-14-nights", "screens": ["stations", "frequencies"] }
+  ]
+}
