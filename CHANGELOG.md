@@ -32,6 +32,48 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-028)
+
+### (pending) — audit F-028 · RealCaptureService now joins GapTracker to GapPersister, so a capture gap is actually a row
+
+**Scope:** `:pipeline` — `RealCaptureService.kt` (`startCapture`'s event-collect loop, the new
+`CaptureGapRelay` class), `GapPersister.kt` (`causeFor`), `RealCaptureServiceGapTest.kt`,
+`GapPersisterTest.kt`.
+**Requirements/ACs:** FR-RUN-12, FR-UI-12, AC-48; constitution IV ("silence that was never
+listened to MUST be distinguishable from silence that was").
+**What changed:** `RealCaptureService` constructed neither `GapTracker` nor `GapPersister` — the
+`AudioRecordSource` event stream it already collects (`Interrupted`/`Resumed`, and, since F-010, a
+dropped-span cause) went nowhere but `CaptureState`/the notification. `captureGapDao` was
+therefore always empty in production, so P17's not-listening distinction (FR-UI-12) could never
+show a real gap regardless of how correct `GapTracker`/`GapPersister` themselves were (each already
+had its own passing unit test). Fixed by constructing a `GapTracker(SystemClock)` and a
+`GapPersister(db.captureGapDao(), SystemClock)` in `startCapture()`, and feeding every
+`CaptureEvent` the collect loop already receives through a new `CaptureGapRelay` (mirrors F-005's
+`buildHeartbeatRecord` extraction: a plain, non-Android class ahead of the exhaustive `when`, so no
+`ServiceController` harness is needed to test it — F-011 is still open). `CaptureGapRelay` watches
+`GapTracker.gaps` grow and persists each new record, in order, exactly once. Separately,
+`GapPersister.causeFor` mapped F-010's `DroppedSpanCause` string ("dropped samples: N samples over
+Xms (stalled consumer or read shortfall)") to `UNKNOWN` — it matched none of the existing
+substring checks (neither "device" nor "read error" appears in it) — so it now matches the stable
+"dropped samples:" prefix directly to `DEVICE_LOST`, the cause it actually is. No new
+`CaptureGapCause` value was needed.
+**Verified:** `./gradlew :pipeline:test` — 3 new `RealCaptureServiceGapTest` cases (an
+Interrupted/Resumed pair, a dropped-span Interrupted with no persisted duplicate from its
+following no-op Resumed, and Frames/RouteChanged/EndOfStream producing no persist) plus a new
+`GapPersisterTest` case (`AC_48 F-010's dropped-span cause is mapped to DEVICE_LOST, not UNKNOWN`,
+seen failing against `UNKNOWN` before the `causeFor` fix) all pass; `./gradlew build
+dependencyRules` green; `python tools/spec-check/spec_check.py` — all 8 checks PASS. All
+Robolectric/JVM only, per constitution — no on-device verification is claimed.
+**Left open / not done:** F-011 (no `ServiceController` test starts the real `Service`) is
+unchanged and still open — this fix is verified at the extracted `CaptureGapRelay` seam, not by
+observing `captureGapDao` populate from an actually-running `RealCaptureService`. The dropped-span
+mapping is a substring match on a string `:capture-android` treats as free text (`DroppedSpanCause`
+is `internal`, so `:pipeline` cannot reference its prefix constant directly); if that string's
+wording ever changes, this mapping silently reverts to `UNKNOWN` again with no compile-time link
+between the two.
+
+---
+
 ## 2026-09-07 (audit — F-005)
 
 ### (pending) — audit F-005 · heartbeat now carries the segmenter's real sample position, not a fabricated 0

@@ -1,0 +1,27 @@
+audit F-028 · RealCaptureService now joins GapTracker to GapPersister
+
+RealCaptureService constructed neither GapTracker nor GapPersister, so the
+CaptureEvent.Interrupted/Resumed stream AudioRecordSource already emitted (and, since F-010, a
+dropped-span cause) went nowhere but CaptureState/the notification. captureGapDao was therefore
+always empty in production, and P17's not-listening distinction (FR-UI-12) could never show a
+real gap no matter how correct GapTracker/GapPersister themselves were.
+
+Fixed by constructing a GapTracker(SystemClock) and a GapPersister(db.captureGapDao(),
+SystemClock) in startCapture(), and feeding every CaptureEvent the collect loop already receives
+through a new CaptureGapRelay, extracted as a plain non-Android class ahead of the exhaustive
+`when` (mirrors F-005's buildHeartbeatRecord seam, so it is testable without a ServiceController
+harness for the whole Service, which still doesn't exist -- F-011 remains open). Considered
+starting the Service under Robolectric instead; rejected because that harness is a separate,
+larger fix (F-011's own scope) and the relay is the exact new logic this finding adds.
+
+Also fixed GapPersister.causeFor: F-010's DroppedSpanCause encoding ("dropped samples: N samples
+over Xms (stalled consumer or read shortfall)") matched none of the existing substring checks --
+neither "device" nor "read error" appears in it -- so every dropped-span gap silently fell to
+UNKNOWN instead of DEVICE_LOST. Matched the stable "dropped samples:" prefix directly; no new
+CaptureGapCause value was needed (:pipeline cannot reference capture-android's internal
+DroppedSpanCause object, so this is a duplicated string match rather than a shared constant --
+noted as a known fragility in the changelog).
+
+Requirements/ACs: FR-RUN-12, FR-UI-12, AC-48; constitution IV.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>

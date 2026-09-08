@@ -17,6 +17,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.ort.capture.android.AndroidAudioIo
 import org.ort.capture.android.AudioRecordSource
+import org.ort.capture.android.GapRecord
+import org.ort.capture.android.GapTracker
 import org.ort.capture.android.codec.DeflatePredictiveCodec
 import org.ort.capture.android.codec.FlacStore
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
@@ -34,6 +36,7 @@ import org.ort.data.WorkQueue
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureProcessingLoop
+import org.ort.pipeline.GapPersister
 import org.ort.pipeline.PassDrainRunner
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
@@ -149,6 +152,14 @@ public class RealCaptureService : Service() {
         source = audioSource
         CaptureState.capturing(sessionId)
 
+        // audit F-028: before this, nothing in the running service constructed a GapTracker or a
+        // GapPersister -- AudioRecordSource emitted Interrupted/Resumed (and, after F-010, a
+        // dropped-span cause) but no one joined them to CaptureGapDao, so captureGapDao was always
+        // empty in production and P17's not-listening distinction (FR-UI-12) could never show a
+        // real gap (FR-RUN-12, AC-48; constitution IV).
+        val gapPersister = GapPersister(db.captureGapDao(), SystemClock)
+        val gapRelay = CaptureGapRelay(GapTracker(SystemClock)) { gap -> gapPersister.persist(sessionId, gap) }
+
         // The processing loop (build-plan P12, defect 3): drains whatever RealSegmentSink
         // enqueues, independent of the capture flow above -- a stalled or unavailable ASR engine
         // must never block capture (constitution IV: "capture MUST proceed with every processing
@@ -176,6 +187,9 @@ public class RealCaptureService : Service() {
 
             var lastHeartbeatAt = 0L
             audioSource.start().collect { event ->
+                // Fed through unconditionally, ahead of the exhaustive `when` below -- GapTracker
+                // itself ignores every CaptureEvent shape it doesn't care about (audit F-028).
+                gapRelay.onEvent(event)
                 when (event) {
                     is CaptureEvent.Frames -> {
                         builtSegmenter.onAudio(shortsToFloats(event.pcm))
@@ -353,6 +367,32 @@ public class RealCaptureService : Service() {
  */
 internal fun buildHeartbeatRecord(sessionId: String, samplePosition: () -> Long): HeartbeatRecord =
     HeartbeatRecord(sessionId, SystemClock.monotonicNanos(), SystemClock.wallMillis(), samplePosition())
+
+/**
+ * audit F-028: the seam that joins `:capture-android`'s [GapTracker] output to
+ * [GapPersister][org.ort.pipeline.GapPersister], which nothing in the running service used to
+ * construct -- `captureGapDao` was always empty in production regardless of how faithfully
+ * [GapTracker] itself modelled a gap (FR-RUN-12, FR-UI-12, AC-48). Extracted as a plain,
+ * non-Android class -- same approach F-005 used for [buildHeartbeatRecord] -- so it is testable
+ * without starting the whole [RealCaptureService] under Robolectric (no `ServiceController`
+ * harness exists yet for it; see F-011, still open).
+ *
+ * [tracker] already de-duplicates the two shapes a gap can arrive in (an open/close
+ * `Interrupted`/`Resumed` pair, or a dropped-span `Interrupted` that closes itself immediately --
+ * F-010); this only has to notice when [GapTracker.gaps] has grown and persist what's new, once,
+ * in the order it appeared.
+ */
+internal class CaptureGapRelay(private val tracker: GapTracker, private val persist: suspend (GapRecord) -> Unit) {
+    private var persistedCount = 0
+
+    suspend fun onEvent(event: CaptureEvent) {
+        tracker.onEvent(event)
+        while (persistedCount < tracker.gaps.size) {
+            persist(tracker.gaps[persistedCount])
+            persistedCount++
+        }
+    }
+}
 
 /**
  * A simple RMS-energy voice-activity model — explicitly not Silero (see [RealCaptureService]'s

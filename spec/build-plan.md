@@ -160,6 +160,9 @@ are individually green.*
   every session), FR-UI-11 (hour-of-day activity patterns), and FR-UI-12 (the not-heard/not-
   listening distinction, structural as a closed three-state enum) — see CHANGELOG.md for exactly
   how the distinction is computed and tested, and what FR-UI-11's day-of-week half leaves open.
+  Note (audit F-028, fixed 2026-09-07): P17's `:app`/`:data` half was correct, but nothing upstream
+  in `:pipeline` had ever populated `captureGapDao` in production — `RealCaptureService` built no
+  `GapTracker`/`GapPersister`, so FR-UI-12's distinction had no real gap to show. See CHANGELOG.md.
 - [x] **P18 · Model acquisition through `:net`** *(`:net`)* — done 2026-09-08. Without a model on
   disk the app can capture but never transcribe, and P12 correctly refused to fetch one from
   `:pipeline`: **only `:net` may link an HTTP client, and never in the capture or processing
