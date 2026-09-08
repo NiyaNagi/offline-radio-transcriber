@@ -6,11 +6,14 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
@@ -48,6 +51,41 @@ class SettingsStorageScreenTest {
     )
 
     @Test
+    fun `R_133 the what-will-be-deleted banner is absent with no budget set, never a standing Nothing yet notice`() {
+        composeTestRule.setContent {
+            OrtTheme { SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {}) }
+        }
+
+        composeTestRule.onNodeWithText("What will be deleted, now that the budget is reached", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_133 the what-will-be-deleted banner appears only once the real used bytes reach the real budget`() {
+        val reached = state().copy(budgetGb = 1, usedBytes = 1_000_000_000L)
+        composeTestRule.setContent {
+            OrtTheme { SettingsStorageScreen(state = reached, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {}) }
+        }
+
+        composeTestRule.onNodeWithText("What will be deleted, now that the budget is reached", substring = true)
+            .assertExists()
+    }
+
+    @Test
+    fun `R_133 the what-will-be-deleted banner stays absent while auto-prune is on, even at budget`() {
+        val reachedAutoPruned = state().copy(budgetGb = 1, usedBytes = 1_000_000_000L, autoPruneEnabled = true)
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsStorageScreen(state = reachedAutoPruned, onBack = {
+                }, onSetBudgetGb = {}, onToggleAutoPrune = {})
+            }
+        }
+
+        composeTestRule.onNodeWithText("What will be deleted, now that the budget is reached", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
     fun `R_133 Warn at and Hard floor rows show the real values this state carries`() {
         composeTestRule.setContent {
             OrtTheme { SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {}) }
@@ -73,6 +111,36 @@ class SettingsStorageScreenTest {
         composeTestRule
             .onNode(hasText("Unlimited").and(hasAnyAncestor(hasScrollAction())))
             .assertExists()
+    }
+
+    @Test
+    fun `R_291 the budget chip row is given the root's real width, not its own unconstrained content width`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+                }
+            }
+        }
+
+        // R-291 (register, round 7 System validator pass 3, cf. R-277's identical fix on
+        // `StationScreen.kt`): the round-6 fix moved to `FilterChipRow` but never called
+        // `fillMaxWidth()` on it, so `horizontalScroll`'s own viewport measured the row's
+        // unconstrained content width instead of the screen's — nothing overflowed the viewport it
+        // measured against, so there was nothing to scroll to and "Unli…" stayed clipped on a real
+        // device (Robolectric alone never reproduced the clipping either round). `fillMaxWidth()`
+        // makes the row's own measured width equal the root's real available width — the direct,
+        // structural proof of the fix.
+        val rowWidth = composeTestRule.onNodeWithTag(BUDGET_CHIP_ROW_TEST_TAG).fetchSemanticsNode().size.width
+        val rootWidth = composeTestRule.onRoot().fetchSemanticsNode().size.width
+        // The row sits inside this screen's own `horizontal = OrtSpacing.lg` content padding
+        // (density 1f here, so 1dp == 1px — `lg` subtracts cleanly on both sides).
+        val expectedWidth = rootWidth - 2 * OrtSpacing.lg.value.toInt()
+        assert(rowWidth == expectedWidth) {
+            "expected the budget chip row's width ($rowWidth) to equal the padded content width " +
+                "($expectedWidth) — fillMaxWidth() not reaching FilterChipRow (leaving it sized to " +
+                "its own unconstrained content instead) is exactly R-291's bug"
+        }
     }
 
     @Test

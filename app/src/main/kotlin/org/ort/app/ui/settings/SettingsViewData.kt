@@ -109,6 +109,13 @@ public data class SettingsAboutViewState(
     val appVersionLabel: String,
     val androidVersionLabel: String,
     val minSdkLabel: String,
+    /** R-138 (register, round 7): the real sherpa-onnx version this build depends on
+     * (`gradle/libs.versions.toml`'s `sherpaOnnx` entry, via `BuildConfig.SHERPA_ONNX_VERSION` —
+     * never hardcoded here). ONNX Runtime and usb-serial-for-android have no version-catalog entry
+     * of their own to read this same way — neither is an actual Gradle dependency of this build
+     * yet (confirmed against `gradle/libs.versions.toml` before writing this) — so their rows stay
+     * the honest, version-free statements they already were rather than inventing a number. */
+    val sherpaOnnxVersionLabel: String,
 )
 
 /** One row of [NEVER_LEAVES_DEVICE] — a title and, where `Settings-Contribute.dc.html` gives one,

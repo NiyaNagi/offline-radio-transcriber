@@ -167,6 +167,50 @@ class SettingsPollingTest {
     }
 
     @Test
+    fun `R_138 round 7 the version label's commit hash and the Models row version are BuildConfig's real values`() {
+        val state = SettingsPolling.about(context)
+        // BuildConfig.GIT_SHORT_COMMIT is injected by app/build.gradle.kts from a real
+        // `git rev-parse` — this asserts the view-state carries that exact value (appended only
+        // when it is a real hash), never a second, independently-computed one.
+        val commit = org.ort.app.BuildConfig.GIT_SHORT_COMMIT
+        if (commit.isNotBlank() && commit != "unknown") {
+            assert(state.appVersionLabel.endsWith("· $commit")) {
+                "expected the version label to end with the real commit hash, got ${state.appVersionLabel}"
+            }
+        }
+        assert(state.sherpaOnnxVersionLabel == org.ort.app.BuildConfig.SHERPA_ONNX_VERSION)
+        assert(state.sherpaOnnxVersionLabel.isNotBlank())
+    }
+
+    @Test
+    fun `R_137 every bundle file's trailing clause is Settings-Diagnostics-dc-html verbatim`() {
+        val state = SettingsPolling.diagnostics()
+        val descriptionByName = state.files.associate { it.name to it.description }
+
+        assert(descriptionByName["lifecycle.log"] == "service start, stop, heartbeat gaps, OS kills — the F5 evidence")
+        assert(
+            descriptionByName["capture.log"] ==
+                "route verifications, input device changes, level warnings, overruns",
+        )
+        assert(
+            descriptionByName["pipeline.log"] ==
+                "per-pass timings, tier changes with their cause, queue depth over time",
+        )
+        assert(
+            descriptionByName["rig.log"] ==
+                "CAT traffic, band changes, disconnects · frequencies included, they are not private",
+        )
+        assert(
+            descriptionByName["device.json"] ==
+                "SoC, RAM, Android version, OEM, thermal history · no serial, no IMEI, no account",
+        )
+        assert(
+            descriptionByName["counts.json"] ==
+                "overs by state, rejections by reason, corrections by tier · numbers only",
+        )
+    }
+
+    @Test
     fun `R_090 storage sums real categories from the audio directory and installed model files`(): Unit = runTest {
         val state = SettingsPolling.storage(context, InMemorySettingsStore())
         assert(state.categories.any { it.label == "Audio" })

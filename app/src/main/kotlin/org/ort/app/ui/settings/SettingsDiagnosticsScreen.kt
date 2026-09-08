@@ -77,9 +77,15 @@ public fun SettingsDiagnosticsScreen(
             }
 
             SectionHeader(label = "Never included", modifier = Modifier.padding(top = OrtSpacing.lg))
+            // R-137 (round 7, register): `Settings-Diagnostics.dc.html`'s own scrubbing example —
+            // "resolved [callsign] at 0.94" — names the exact shape a scrubbed log line takes, not
+            // a real logged value (there is no producer yet to log one, see this screen's own
+            // top doc comment); it stays inside the same illustrative sentence the board uses it
+            // in, never presented as a captured fact.
             Text(
-                text = "Audio. Transcripts. Callsigns. Voiceprints. Names. Location. Every log line above " +
-                    "would be scrubbed of callsigns before it is written.",
+                text = "Audio. Transcripts. Callsigns. Voiceprints. Names. Location. The logs above would " +
+                    "be scrubbed of callsigns before they are written — a line reads " +
+                    "\"resolved [callsign] at 0.94\", never the callsign itself.",
                 style = OrtType.cardBody,
                 color = OrtColors.textBody,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
