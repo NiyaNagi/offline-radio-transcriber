@@ -25,6 +25,11 @@ public data class ModelDescriptor(
     init {
         require(memoryFootprintBytes > 0) { "declared memory footprint must be positive" }
         require(providerBinaries.isNotEmpty()) { "a model must declare at least one provider binary" }
+        // FR-ACC-2 / NFR-5b: a CPU path must exist for every model the product ships, so the app
+        // is fully functional with no accelerator present. Type-level, not a review convention
+        // (constitution VII) — a descriptor that only ever declares an accelerator binary cannot
+        // be constructed.
+        require("cpu" in providerBinaries) { "a model must declare a \"cpu\" provider binary (FR-ACC-2, NFR-5b)" }
         if (isFineTuned) {
             require(!fineTuneId.isNullOrBlank()) { "a fine-tuned model must declare its fine-tune id" }
         }
