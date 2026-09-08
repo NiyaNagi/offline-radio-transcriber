@@ -121,6 +121,52 @@ class AudioRecordSourceTest {
     }
 
     @Test
+    @Requirement("AC-3", "FR-RUN-12")
+    fun `AC_3 a stalled consumer or short read produces an explicit dropped span event rather than silent loss`() =
+        runTest {
+            val io = FakeAudioIo(deviceSampleRate = 16_000)
+            io.enqueueFrames(tone(160))
+            io.forceRoutedDevice(usb)
+            val clock = TestClock()
+            val source = AudioRecordSource(io, selection = usb, clock = clock)
+            val tracker = GapTracker(clock)
+
+            val collected = mutableListOf<CaptureEvent>()
+            val job = this.launch {
+                source.start().collect { ev ->
+                    collected.add(ev)
+                    tracker.onEvent(ev)
+                    if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 1) {
+                        // A slow downstream collector: real time passes while this coroutine is
+                        // suspended here inside `collect`, before the producer loop gets to read
+                        // again — exactly the window in which a real device would silently overrun.
+                        clock.advance(10_000)
+                        io.enqueueFrames(tone(160))
+                    }
+                    if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 2) {
+                        source.stop()
+                    }
+                }
+            }
+            job.join()
+
+            assertTrue(
+                collected.any { it is CaptureEvent.Interrupted && it.cause.startsWith("dropped samples:") },
+                "a stalled consumer must be reported explicitly, never lost silently (constitution IV)",
+            )
+            assertTrue(
+                collected.any { it is CaptureEvent.Resumed },
+                "capture must be reported as resumed, not stuck interrupted",
+            )
+            assertEquals(1, tracker.gaps.size, "the stall must be recorded as exactly one gap")
+            val gap = tracker.gaps.single()
+            assertTrue(
+                gap.endWallMillis - gap.startWallMillis > 0,
+                "the recorded span must reflect the real elapsed time lost, not a zero-length placeholder",
+            )
+        }
+
+    @Test
     @Requirement("AC-49", "FR-RUN-12")
     fun `AC_49 a gap is distinguishable from genuine captured silence`() = runTest {
         // Genuine silence: real Frames events full of zeros, no interruption at all.

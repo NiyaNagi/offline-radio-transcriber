@@ -193,6 +193,51 @@ this smoke-test wiring. Two adjacent issues in the same file were left untouched
 scope: the too-short-segment deletion path (`staged.delete()` on `REJECTED_TOO_SHORT`, which
 contradicts "real product retains it") and the heartbeat's use of a placeholder `0L` sample
 position, both owned by other audit agents.
+## 2026-09-07 (audit — F-010)
+
+### (pending) — audit F-010 · a stalled consumer or `AudioRecord` shortfall now produces an explicit dropped-span event on the real capture path
+
+**Scope:** `:capture-android` (`AudioRecordSource.kt`, `GapTracker.kt`, new `DroppedSpanCause.kt`),
+`AudioRecordSourceTest.kt`; `CHANGELOG.md`, `spec/build-plan.md` notes.
+**Requirements/ACs:** AC-3, constitution IV ("silence that was never listened to MUST be
+distinguishable from silence that was").
+**What changed:** `results/audit-2026-09-07.md` F-010 found that `:capture-api`'s `RingBuffer`
+(`hasOverrun()`/`droppedSamples()`, credited for AC-3 in the coverage matrix) is constructed
+nowhere in `src/main` — the real `AudioRecordSource` → `Segmenter` path had no mechanism at all
+for detecting a producer overrun or a stalled downstream collector; such a stall would lose audio
+silently, with no gap record. `AudioRecordSource` now takes an injected `Clock` (default
+`SystemClock`) and, on every successful read, compares the real wall time elapsed since the
+previous read against the audio actually delivered. When the gap exceeds
+`OVERRUN_TOLERANCE_READ_BUFFERS` (4) read-buffers' worth of slack — generous, to avoid false
+positives from ordinary scheduling jitter — the shortfall is reported as dropped samples via a new
+`DroppedSpanCause` encoding, carried through the *existing* `CaptureEvent.Interrupted`/`Resumed`
+pair rather than a new `CaptureEvent` variant: `:pipeline`'s `RealCaptureService` switches over
+`CaptureEvent` exhaustively with no `else`, and this fix does not own `:pipeline` (build-plan
+boundary), so a new sealed case there was not an option without crossing it. `GapTracker`
+recognises the `DroppedSpanCause` prefix and closes the gap immediately from its encoded duration
+(the whole span is already known at detection time, unlike a real interruption which opens on
+`Interrupted` and closes on the later `Resumed`); the paired `Resumed` that follows is a no-op for
+it. `RingBuffer` itself is untouched — it remains correct, tested code that nothing in `src/main`
+constructs; this fix does not route audio through it, so **AC-3 is now established on the real
+`AudioRecordSource` path independently of `RingBuffer`**, which stays available for a future
+producer/consumer split (technical design §5.3) if one is ever built.
+**Verified:** New test
+`AudioRecordSourceTest.AC_3_a_stalled_consumer_or_short_read_produces_an_explicit_dropped_span_event_rather_than_silent_loss`,
+seen to fail first with a compile error (`No parameter with name 'clock' found`) before
+`AudioRecordSource` gained the `clock` parameter — then green.
+`./gradlew :capture-android:test :capture-api:test --console=plain -q` — green (7/7 in
+`AudioRecordSourceTest`, `RingBufferTest` unchanged and still green). Full gate:
+`./gradlew build dependencyRules --console=plain -q` — green (after `ktlintFormat` fixed test
+indentation); `python tools/spec-check/spec_check.py` — all 8 checks PASS. JVM/Robolectric only;
+no on-device verification claimed.
+**Left open / not done:** The detection is a wall-clock heuristic (elapsed time vs. samples
+delivered), not a hardware-reported overrun counter — `AudioRecord` does not expose one directly.
+`GapPersister` (`:pipeline`, not touched) will currently file this cause under
+`CaptureGapCause.UNKNOWN` since it does not recognise the `"dropped samples:"` prefix; a
+`CaptureGapCause.DROPPED_SAMPLES` category, and wiring `GapTracker`'s output into
+`RealCaptureService`/`GapPersister` at all (`RealCaptureService` does not currently invoke either —
+a separate, pre-existing wiring gap, not introduced or fixed here), are `:pipeline`/`:data`
+follow-ups outside this fix's ownership.
 
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 

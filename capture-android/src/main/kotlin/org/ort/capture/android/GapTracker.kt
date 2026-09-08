@@ -28,8 +28,18 @@ public data class GapRecord(
  * [GapRecord] with a nonzero duration and a cause — structurally different from genuine captured
  * silence, which is ordinary [CaptureEvent.Frames] (however low their amplitude) with no
  * [GapRecord] at all (AC-49).
+ *
+ * One [CaptureEvent.Interrupted] shape is closed immediately instead of waiting for a paired
+ * [CaptureEvent.Resumed]: a [DroppedSpanCause]-encoded cause from [AudioRecordSource], reporting
+ * a stalled downstream collector or an `AudioRecord` shortfall it has already measured in full by
+ * the time it is reported (AC-3). The [CaptureEvent.Resumed] that follows it is a no-op here —
+ * nothing was left open for it to close.
  */
 public class GapTracker(private val clock: Clock) {
+
+    private companion object {
+        private const val NANOS_PER_MILLI: Long = 1_000_000L
+    }
 
     private var openStartMonotonic: Long? = null
     private var openStartWall: Long = 0L
@@ -41,7 +51,24 @@ public class GapTracker(private val clock: Clock) {
     public fun onEvent(event: CaptureEvent) {
         when (event) {
             is CaptureEvent.Interrupted -> {
-                if (openStartMonotonic == null) {
+                val droppedSpanMillis = DroppedSpanCause.durationMillisOrNull(event.cause)
+                if (droppedSpanMillis != null) {
+                    // AudioRecordSource already knows the whole span by the time it reports
+                    // this — it is detected after the fact, not observed as it opens — so the
+                    // gap is recorded closed immediately rather than waiting for a paired
+                    // Resumed (AC-3).
+                    val endWall = clock.wallMillis()
+                    val endMonotonic = clock.monotonicNanos()
+                    mutableGaps.add(
+                        GapRecord(
+                            startMonotonicNanos = endMonotonic - droppedSpanMillis * NANOS_PER_MILLI,
+                            endMonotonicNanos = endMonotonic,
+                            startWallMillis = endWall - droppedSpanMillis,
+                            endWallMillis = endWall,
+                            cause = event.cause,
+                        ),
+                    )
+                } else if (openStartMonotonic == null) {
                     openStartMonotonic = clock.monotonicNanos()
                     openStartWall = clock.wallMillis()
                     openCause = event.cause
