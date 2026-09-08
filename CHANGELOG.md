@@ -7594,6 +7594,83 @@ honestly (`keptCandidateFor`, `RejectedItem.durationLabel`) in the prior commit;
   fixed — outside this package's row.
 - The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
 
+### (pending) — ui-conformance WP5 · seed Log's filter from outside (R-276)
+
+**Scope:** `ui/screens/LogContent.kt`, `ui/data/LogViewData.kt`, and their tests
+(`LogScreenTest`, `LogPollingTest`) — a small round unblocking WP3's host route for R-276
+(`Frequency.dc.html`'s "The N overs" stat → Log filtered to that frequency and window).
+
+**Requirements/ACs:** R-276 (register.md).
+
+**Constitution Check.** Principle I (Uncertainty Is Content): the filter-sheet's "Show N overs"
+count must never claim more than what actually renders once tapped — the bug this round also
+fixes (see below) is exactly a case of a displayed number silently disagreeing with the real
+data. Principle II (Test-Backed Change): `LogScreenTest`'s new `R_276` test exercises the real
+production `LogItemsMapper.selectionFor`/`buildItems`/`quickFilters` call chain (the same one
+`LogPolling.screenState` makes), not a hand-fabricated already-filtered state; `LogPollingTest`'s
+new `R_276` test is a real Room-backed regression guard for the count-honesty fix.
+
+**What changed:**
+- **`LogContent(..., initialFilter: LogFilterSelection? = null)`** — new, defaulted param; every
+  existing caller (`OrtNavHost.kt` passes every argument by name) compiles unchanged. Seeds
+  `selection`'s initial `rememberSaveable` value from `initialFilter ?: LogFilterSelection()`, per
+  the coordinator's exact snippet — `LogFilterSelectionSaver` already existed (added in the R-129
+  halt fix), so nothing new needed there.
+- **`quickFilter` is also seeded**, not just `selection` — a seeded `frequencyHz` alone would have
+  been silently discarded on the very first poll: `LogPolling.screenState` always runs the
+  selection through `LogItemsMapper.selectionFor(activeQuickFilter, selection)`, which forces
+  `frequencyHz` back to `null` whenever the active quick filter is `All` (the quick chip and the
+  sheet are one filter, not two independent ones — `Frequency`/`Named`/`All` each override part of
+  the sheet's own selection). Seeding `quickFilter` to `LogQuickFilterId.Frequency(hz)` when
+  `initialFilter.frequencyHz != null` keeps the frequency alive through that pass *and* satisfies
+  "renders as an active filter chip" for free, since the chip list's `selected` flag is driven by
+  the same `quickFilter` value.
+- **`fromMillis`/`toMillis` needed no extra wiring** — every branch of `selectionFor` passes the
+  sheet selection's time bounds through unchanged, and `LogItemsMapper.buildItems`'s `matchesTime`
+  already respects them; a seeded window narrows the rendered rows and the filter sheet's own
+  `fromLabel`/`toLabel` (`LogItemsMapper.filterSheetState`) the moment `selection` carries them.
+- **Fixed a real count-honesty gap found while verifying this**: `LogItemsMapper.filterSheetState`'s
+  `matchingCount` ("Show N overs") counted every transmission matching frequency and attribution
+  but silently ignored `fromMillis`/`toMillis` entirely — a window-seeded filter would have shown a
+  number larger than what `buildItems` (the actual rendered list) produces. Added the same
+  `matchesTime` check the row-list path already uses.
+- **"Clear all"/chip dismissal**: needed no change — both already operate on `selection`/`quickFilter`
+  state generically (`onClearAll = { selection = LogFilterSelection() }` in `LogContent.kt`,
+  unchanged), so they work on a seeded selection exactly as they do on any other.
+
+**Verified:**
+- `git merge --ff-only main` — `Updating <prior>..dec6c0b, Fast-forward`; `git merge-base
+  --is-ancestor HEAD main` exit 0 before merging (no divergence this round).
+- `.\gradlew.bat :app:ktlintFormat :app:detekt` — BUILD SUCCESSFUL, ktlint clean, detekt clean (0
+  issues in `:app`).
+- `.\gradlew.bat build dependencyRules platformGuards` — `:app:testDebugUnitTest`: 1078 tests, 2
+  failed, both still `org.ort.app.ui.setup.ReadyScreenTest` (the WP9/WP2 regression this package
+  flagged and left open in the prior entry, untouched by this round's diff — `git status` confirms
+  only `LogContent.kt`/`LogViewData.kt`/their tests changed). Every other `:app` test `PASSED`
+  (1076/1078). Ran `dependencyRules`/`platformGuards` standalone instead — both `OK` — and
+  `:app:assembleDebug` standalone — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 185 covered ->
+  results\coverage-matrix.md` (unchanged — no new requirement ids added to the matrix's own
+  tracking this round).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (185
+  covered of 419)`.
+- New/changed tests, all `PASSED`: `LogScreenTest` (+1 new: `R_276 a seeded frequency and time
+  window narrows rows and the frequency chip renders active` — real `LogItemsMapper` calls, three
+  fixture transmissions where only one matches both frequency and window, plus a `Role.Checkbox`
+  semantics-matcher assertion that the frequency chip itself renders selected) · `LogPollingTest`
+  (+1 new: `R_276 the sheet's matching count respects a seeded time window, not just frequency` —
+  proves the `matchingCount` fix against a real Room database, two transmissions where only one is
+  inside the seeded window).
+
+**Left open:**
+- **The `ReadyScreenTest` regression** (WP9/WP2 interaction): still unfixed, still outside this
+  package's row — unchanged from the prior entry.
+- The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- WP3 wires `OrtNavHost.kt`'s host route to pass a real `initialFilter` the moment this lands on
+  main — not this package's file, per the coordinator's own message.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)

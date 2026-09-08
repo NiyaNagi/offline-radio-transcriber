@@ -243,6 +243,28 @@ class LogPollingTest {
     }
 
     @Test
+    fun `R_276 the sheet's matching count respects a seeded time window, not just frequency`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(
+            transmission("TX-in-window", sessionId = "S1", samplePosition = 1L, startedAtUtc = 1_000L),
+        )
+        db.transmissionDao().insert(
+            transmission("TX-out-of-window", sessionId = "S1", samplePosition = 2L, startedAtUtc = 50_000L),
+        )
+
+        val sheet = LogPolling.filterSheetState(
+            context,
+            "S1",
+            LogFilterSelection(fromMillis = 0L, toMillis = 10_000L),
+        )
+
+        // Before this fix, `matchingCount` ignored `fromMillis`/`toMillis` entirely and would have
+        // reported 2 — a number larger than what `buildItems` (and thus the actual rendered list)
+        // shows once "Show N overs" is tapped.
+        assertEquals(1, sheet.matchingCount)
+    }
+
+    @Test
     fun `R_249 a gap duration renders with a space before its unit, through the shared formatter`(): Unit = runTest {
         db.sessionDao().insert(session("S1"))
         db.captureGapDao().insert(

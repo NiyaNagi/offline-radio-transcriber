@@ -552,7 +552,15 @@ public object LogItemsMapper {
             )
         }
         val gapsCount = gaps.size
-        val matchingCount = nonRejected.count { matchesAttribution(it, selection) && matchesFrequency(it, selection) } +
+        // R-276: the count must be honest for a seeded time window too, not only frequency/
+        // attribution — "Show N overs" previously ignored `fromMillis`/`toMillis` entirely, so a
+        // window-seeded filter (Frequency.dc.html's "The N overs" stat) would have shown a number
+        // larger than what actually renders once `Show` is tapped.
+        val matchingCount = nonRejected.count {
+            matchesAttribution(it, selection) &&
+                matchesFrequency(it, selection) &&
+                matchesTime(it.startedAtUtcMillis, selection)
+        } +
             (if (selection.showRejected) rejectedCount else 0) +
             (if (selection.showGaps) gapsCount else 0)
         return LogFilterSheetViewState(
