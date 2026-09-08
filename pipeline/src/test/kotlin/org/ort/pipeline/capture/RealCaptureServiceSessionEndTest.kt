@@ -173,4 +173,61 @@ public class RealCaptureServiceSessionEndTest {
             // Already destroyed above.
         }
     }
+
+    /**
+     * register R-302: `LevelStatus`/`InputStatus` are live-session facts, same as `CaptureState`
+     * (R-173) -- before this, [stopCaptureInternal] cleared `CaptureState` and the heartbeat on
+     * every ending path but left these two at their last live value, so a stale "too quiet" or
+     * input-mismatch reading survived a stop and read as current on the post-stop Capture-Status/
+     * Now-Idle boards. A quiet (silent) block is fed so `LevelStatus` reaches a genuine `Measured`
+     * reading -- the "level Low" case named in the register row -- before stop, proving the
+     * post-stop assertion clears something actually live, not an already-empty default.
+     */
+    @Test
+    @Requirement("R-302")
+    public fun `R_302_stop_resets_level_and_input_status_to_not_capturing`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        repeat(20) { fakeIo.enqueueFrames(ShortArray(1_600) { 0 }) }
+        val sessionId = "TEST-SESSION-R302"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Unavailable("no model in this test") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            // A real Frames event must have published a live level and input reading before stop
+            // -- otherwise the post-stop assertion below would pass trivially against a default
+            // that was never live in the first place.
+            waitUntil(10_000) { LevelStatus.state is LevelStatus.State.Measured }
+            waitUntil(10_000) { InputStatus.state is InputStatus.State.Opened }
+
+            val stopIntent = Intent(context, RealCaptureService::class.java).setAction(RealCaptureService.ACTION_STOP)
+            controller.withIntent(stopIntent).startCommand(0, 0)
+
+            assertEquals(
+                "R-302: a stale level reading must not survive a stop",
+                LevelStatus.State.NotMeasured,
+                LevelStatus.state,
+            )
+            assertEquals(
+                "R-302: a stale input reading must not survive a stop",
+                InputStatus.State.None,
+                InputStatus.state,
+            )
+        } finally {
+            controller.destroy()
+        }
+    }
 }

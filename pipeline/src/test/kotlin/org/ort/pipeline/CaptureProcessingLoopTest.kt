@@ -18,6 +18,7 @@ import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.pipeline.passb.PassBFactory
+import org.ort.pipeline.reprocess.SafePass
 import org.ort.testing.Requirement
 import org.ort.testing.TestClock
 import org.robolectric.RobolectricTestRunner
@@ -178,5 +179,70 @@ public class CaptureProcessingLoopTest {
 
             assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX-A")!!.processingState)
             assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX-B")!!.processingState)
+        }
+
+    /**
+     * register R-290, live-capture round: `RealCaptureService.startProcessingLoop` hands its real
+     * pass to this same [CaptureProcessingLoop]/[PassDrainRunner]/[org.ort.data.WorkQueue.runLeased]
+     * machinery, uncaught. Deliberately not "a [FakeAsrEngine] that throws" as first suggested: that
+     * exact scenario is already safe without any fix here -- the `FR_RUN_9` test above proves
+     * `RejectionPipeline.process` already catches an engine throw and returns `PassBOutcome.Failed`,
+     * so a test built on it would pass whether or not [SafePass] wraps the live pass, proving
+     * nothing about this gap. The actual unprotected throw is
+     * `org.ort.pipeline.passb.FlacSegmentAudioProvider.forItem`'s bare `check()` when a
+     * transmission's retained audio file is missing -- it runs *before* `RejectionPipeline` is ever
+     * reached, so second item's fixture is deliberately never staged.
+     *
+     * Three transmissions are enqueued and drained in one batch; the loop must reach the third
+     * despite the second's pass throwing -- proving the exception does not abort the batch (which
+     * is what an uncaught exception through `WorkQueue.runLeased`'s `.map` would otherwise do,
+     * confirmed by the temporary-revert technique this file's other R-290 sibling test in
+     * `ReprocessRunnerTest` used).
+     */
+    @Test
+    @Requirement("R-290")
+    public fun `R_290_live a missing retained audio file fails that item without stopping the batch`(): Unit =
+        runBlocking {
+            db.sessionDao().insert(PipelineTestFixtures.session())
+            db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-BEFORE"))
+            db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-MISSING"))
+            db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-AFTER"))
+            stageAudio("TX-BEFORE")
+            // TX-MISSING is deliberately never staged: FlacSegmentAudioProvider.forItem's check()
+            // is the genuinely unprotected throw R-290's live round covers.
+            stageAudio("TX-AFTER")
+
+            val queue = WorkQueue(db, clock, maxAttempts = 1)
+            queue.enqueue("TX-BEFORE", PassId.B_OFFLINE)
+            queue.enqueue("TX-MISSING", PassId.B_OFFLINE)
+            queue.enqueue("TX-AFTER", PassId.B_OFFLINE)
+
+            val engine = FakeAsrEngine(
+                FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "all stations this is a test")),
+            )
+            val realPass = PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"), provider = "cpu")
+            // The same wrap RealCaptureService.startProcessingLoop applies to its own real pass.
+            val pass = SafePass(realPass)
+            val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
+
+            val leased = loop.drainOnce()
+
+            assertEquals("all three leased items were attempted", 3, leased)
+            assertEquals(
+                "the item before the failure still completes",
+                TransmissionState.COMPLETE,
+                db.transmissionDao().getById("TX-BEFORE")!!.processingState,
+            )
+            val missing = db.transmissionDao().getById("TX-MISSING")!!
+            assertEquals(
+                "R-290: missing retained audio fails the item, it does not crash the loop",
+                TransmissionState.FAILED,
+                missing.processingState,
+            )
+            assertEquals(
+                "the item after the failure still runs -- the batch was not aborted",
+                TransmissionState.COMPLETE,
+                db.transmissionDao().getById("TX-AFTER")!!.processingState,
+            )
         }
 }

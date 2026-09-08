@@ -346,8 +346,18 @@ public class ReprocessRunner(
  * here would silently defeat `run`'s own cooperative-cancellation contract (a collector that stops
  * collecting must actually stop the run, not have this class convert the resulting cancellation
  * into a fake "failed" item and carry on).
+ *
+ * **`internal`, not `private` (R-290, live-capture round):** the exact same gap exists in the live
+ * path — `RealCaptureService.startProcessingLoop` hands a real `Pass` to `CaptureProcessingLoop`/
+ * `PassDrainRunner` through the identical `WorkQueue.runLeased` machinery this class already
+ * protects, and `RealCaptureService`'s own `scope` is a plain `CoroutineScope(Dispatchers.IO +
+ * Job())` — **not** a `SupervisorJob`, confirmed by reading it — so an uncaught exception in the
+ * processing-loop coroutine cancels the whole `Job`, including the sibling coroutine actually
+ * recording audio. A missing retained-audio file must never take live capture down any more than
+ * it may take a reprocess run down; `RealCaptureService.startProcessingLoop` wraps its own real
+ * pass in this same class rather than duplicating the catch/convert logic.
  */
-private class SafePass(private val delegate: Pass) : Pass {
+internal class SafePass(private val delegate: Pass) : Pass {
     override suspend fun run(item: WorkQueueItemEntity): PassRunOutcome = try {
         delegate.run(item)
     } catch (e: CancellationException) {

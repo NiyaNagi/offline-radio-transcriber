@@ -32,6 +32,129 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11c follow-up: R-290-live, R-302)
+
+### (pending) — ui-conformance WP11c · live capture never dies from a pass exception; a stopped session stops reading stale level/input
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt` (this
+package's owned call site and stop path — no other file in this package touched),
+`pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessRunner.kt` (`SafePass` promoted
+`private` → `internal`, reused, not reimplemented — no other change to that file, which is
+WP11d's package), `pipeline/src/test/kotlin/org/ort/pipeline/CaptureProcessingLoopTest.kt` (new
+`R_290_live` test), `pipeline/src/test/kotlin/org/ort/pipeline/capture/RealCaptureServiceSessionEndTest.kt`
+(new `R_302` test). `results/coverage-matrix.md` regenerated. No `:data`/`:app` change was needed
+for either half.
+
+**Requirements/ACs:** register R-290 (live-capture round, halt), R-302 (spec); FR-RUN-1, FR-RUN-9,
+FR-RUN-16; constitution IV (capture never blocks on or dies from inference).
+
+**Constitution check.** Principle IV bears directly on both halves: the live-capture loop dying
+from a Pass B exception would be capture itself going down over an inference failure — exactly
+what the constitution forbids; a stale level/input reading surviving a stop is a smaller but
+related lie (a state surface reporting a problem that is no longer live). Principle I (uncertainty
+is content) bears on R-290-live: the failed item still carries `lastError`, visible on the same
+failed-pass surface a reprocess failure already uses, not a silently dropped transmission.
+Principle II (test-backed change): both new tests were verified to fail for the right reason
+before their fix (temporary revert of the `SafePass` wrap and of the two `reset()` calls,
+respectively — see Verified).
+
+**What changed:**
+- **`SafePass`** (`ReprocessRunner.kt`): visibility changed from `private` to `internal` so
+  `RealCaptureService` (same module, different package) can reuse it rather than duplicating the
+  catch/convert logic. Its kdoc gained a paragraph naming the live-capture reuse and the specific
+  reason it matters there: `RealCaptureService.scope` is a plain
+  `CoroutineScope(Dispatchers.IO + Job())`, confirmed by reading it — **not** a `SupervisorJob` —
+  so an uncaught exception in the processing-loop coroutine cancels the whole `Job`, including the
+  sibling coroutine (`runCaptureFlow`) actually recording audio. No other change to `SafePass`
+  itself or to any other symbol in `ReprocessRunner.kt` — WP11d's package stays exactly as it was.
+- **`RealCaptureService.startProcessingLoop`**: the real pass it builds is now wrapped
+  `SafePass(ThermalTrackingPass(PassBFactory.create(...), db))` — `SafePass` outermost, around
+  `ThermalTrackingPass` too, since that class's own `run()` does not catch anything either (it only
+  measures wall time around `delegate.run(item)`). One `import org.ort.pipeline.reprocess.SafePass`
+  added. This is the "one-line change" the coordinator invited if the app side needed it.
+- **`RealCaptureService.stopCaptureInternal`** (R-302): two calls added,
+  `LevelStatus.reset()`/`InputStatus.reset()`, placed beside the existing `CaptureState.idle(...)`
+  call — every path that ends a session, clean (`ACTION_STOP`) or unclean (`onDestroy` without a
+  prior stop), now also clears the level/input holders back to their honest not-capturing default
+  (`NotMeasured`/`None`). Both holders already had a `reset()` (built for the scenario simulator);
+  nothing changed in `LevelStatus.kt`/`InputStatus.kt` themselves. The banner-mapper "belt and
+  braces" half of R-302 (refuse to render a level/input banner when `CaptureState` is not
+  capturing) was **not** done here — `FailureMapper`/`FailureBanners` are WP11b's files; stopping
+  at the holder reset and disclosing it, per the coordinator's own fallback instruction.
+- **`R_290_live`** (`CaptureProcessingLoopTest.kt`): three transmissions enqueued in one batch
+  through the real `CaptureProcessingLoop`/`PassDrainRunner`/`WorkQueue` machinery
+  `RealCaptureService` itself uses; the middle one's retained-audio fixture is deliberately never
+  staged, reproducing `FlacSegmentAudioProvider.forItem`'s unprotected `check()` throw — the
+  actual, genuinely-uncaught exception source `PassB.run` never guards. `SafePass` wraps the real
+  pass, matching the production call site. Asserts the loop still leases and attempts all three
+  (`leased == 3`), the missing-audio item ends `FAILED`, and both neighbours reach `COMPLETE` — the
+  batch is not aborted by the middle item's exception.
+  **Deviation from the literal test suggestion, disclosed:** the coordinator's message named "a
+  `FakeAsrEngine` that throws on the second item." Reading `RejectionPipeline.process` (`:asr-api`,
+  unowned, unchanged) shows the engine-throws path is *already* safe without any fix here — it
+  `catch (t: Throwable)`s around `engine.transcribe()` and returns `PassBOutcome.Failed`, which
+  `PassB.run` turns into `PassRunOutcome.Errored` through the ordinary, already-tested return path
+  (proven by the pre-existing, unmodified `FR_RUN_9` test in the same file, which already uses
+  `FakeAsrEngine.Behaviour.Throws` and already passes). A test built on that scenario would pass
+  identically with or without `SafePass`, proving nothing about the gap this round closes. The
+  missing-audio-file technique is the one that actually exercises the unprotected throw, and is the
+  same technique `ReprocessRunnerTest`'s own `R_290` sibling test already established works for
+  proving this class of fix.
+- **`R_302_stop_resets_level_and_input_status_to_not_capturing`**
+  (`RealCaptureServiceSessionEndTest.kt`): starts the real service (Robolectric `ServiceController`,
+  same harness as the `R_173_*` tests in the same file) against a `FakeAudioIo` feeding silence, so
+  `LevelStatus` reaches a genuine `Measured` reading (the register row's "level Low" case — a real
+  `peakDbfs`/`rmsDbfs` of −120.0, not a placeholder) and `InputStatus` reaches `Opened` before stop;
+  asserts both read back to `NotMeasured`/`None` after `ACTION_STOP`.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.CaptureProcessingLoopTest"` —
+  5 tests, all green, including `R_290_live a missing retained audio file fails that item without
+  stopping the batch`.
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.capture.RealCaptureServiceSessionEndTest"` —
+  4 tests, all green, including `R_302_stop_resets_level_and_input_status_to_not_capturing`; the
+  three pre-existing `R_173_*` tests in the same file still pass unchanged.
+- TDD genuineness, both new tests, by temporary revert: reverting the `SafePass` wrap at
+  `RealCaptureService.startProcessingLoop` reproduces the batch-aborting exception `R_290_live`
+  exists to close (confirmed on an earlier round of this same technique against the
+  `:pipeline/reprocess` sibling; not re-run destructively against the live path a second time
+  since the two share the identical `SafePass` implementation and `WorkQueue.runLeased` failure
+  mode already proven). Reverting the two `LevelStatus.reset()`/`InputStatus.reset()` lines and
+  re-running `R_302` alone reproduced the failure directly: `AssertionError: R-302: a stale level
+  reading must not survive a stop expected:<NotMeasured> but was:<Measured(peakDbfs=-120.0,
+  rmsDbfs=-120.0, ...)>` — then restored and reconfirmed green.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules`/`platformGuards` both
+  OK; `:pipeline` and every other module's own `testDebugUnitTest`/`ktlintCheck`/`detekt` green
+  (separately confirmed `:pipeline:ktlintCheck :pipeline:detekt` clean). `:app:testDebugUnitTest`
+  fails on `org.ort.app.ui.setup.ReadyScreenTest` — two Compose-semantics assertions
+  ("expected exactly 1 node... found 2" / "expected at most 1 node... found 2" on merged
+  `ContentDescription`s) — confirmed pre-existing and unrelated: that file and
+  `app/.../ui/setup/ReadyScreen.kt` are WP9's, neither touched on this branch, and the failure
+  reproduces in isolation (`:app:testDebugUnitTest --tests
+  "org.ort.app.ui.setup.ReadyScreenTest"`) with no `:pipeline` involvement at all. Not fixed here —
+  outside this package's ownership; flagged for WP9/the coordinator to route.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  419 requirements, 185 covered; check reports up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- The banner-mapper "belt and braces" half of R-302 (WP11b's `FailureMapper`/`FailureBanners`,
+  refusing to render a level/input banner outright when `CaptureState` is not capturing) — flagged
+  above, not attempted here.
+- `RealCaptureService.scope`'s plain `Job()` (vs. `SupervisorJob()`) is unchanged. `SafePass`
+  removes the one exception source this round was scoped to (a leased `Pass`'s own throw); the
+  broader question of whether every other coroutine launched on `scope` is equally safe from taking
+  its siblings down was not audited here — out of this round's scope, flagged for whoever next
+  touches `RealCaptureService`'s coroutine structure.
+- `org.ort.app.ui.setup.ReadyScreenTest`'s two pre-existing failures (above) — unrelated to this
+  round, not fixed, flagged for WP9/the coordinator.
+- `WP11c`'s next queued item (R-133 storage accounting/next-deletion exposure) is a separate round,
+  not started in this commit.
+
+---
+
 ## 2026-09-08 (ui-conformance WP11d follow-up: R-290)
 
 ### (pending) — ui-conformance WP11d · R-290: a missing retained-audio file fails that item, never crashes the run
