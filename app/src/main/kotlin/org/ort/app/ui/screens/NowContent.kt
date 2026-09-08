@@ -34,6 +34,11 @@ public fun NowContent(
     @Suppress("UNUSED_PARAMETER") onOpenTransmission: (String) -> Unit,
     onOpenStation: (String) -> Unit,
     modifier: Modifier = Modifier,
+    // Defaulted, not required: the host (`OrtNavHost.kt`, WP3's file) is being edited concurrently
+    // by WP10 this round and wires these afterwards — a default keeps this composable callable,
+    // unchanged, from whatever call site exists in the meantime.
+    onOpenStations: () -> Unit = {},
+    onOpenModels: () -> Unit = {},
 ) {
     var activeSessionId by remember(sessionId) { mutableStateOf(sessionId) }
     var state by remember { mutableStateOf<NowViewState>(NowViewState.Idle(null, null, null, null, emptyList(), null)) }
@@ -54,5 +59,7 @@ public fun NowContent(
         onOpenLive = {},
         onStartCapture = { activeSessionId = ReaderPolling.startCapture(context) },
         onOpenStation = onOpenStation,
+        onOpenStations = onOpenStations,
+        onOpenModels = onOpenModels,
     )
 }

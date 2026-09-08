@@ -15,10 +15,7 @@ import org.ort.core.SystemClock
 import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
-import org.ort.data.entity.CaptureGapCause
-import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.SessionEntity
-import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
@@ -331,111 +328,10 @@ class ReaderPollingTest {
         assertEquals("TX1", detail?.id)
     }
 
-    private fun hourTx(
-        id: String,
-        sessionId: String,
-        hour: Int,
-        samplePosition: Long,
-        stationId: String? = null,
-        frequencyHz: Long? = 146_960_000L,
-    ) = transmission(
-        id,
-        sessionId = sessionId,
-        samplePosition = samplePosition,
-        startedAtUtc = hour * 3_600_000L,
-        frequencyHz = frequencyHz,
-        attribution = FixtureAttribution(
-            state = if (stationId != null) AttributionState.CONFIRMED else AttributionState.UNKNOWN,
-            stationId = stationId,
-            confidence = if (stationId != null) 0.9 else null,
-        ),
-    )
-
-    @Test
-    fun `FR_UI_9 stationDetail returns every transmission heard from that station, across sessions`(): Unit = runTest {
-        db.sessionDao().insert(session("S1"))
-        db.sessionDao().insert(
-            SessionEntity("S2", 0L, 3_600_000L * 24, null, null, "test", null, null, OrtDatabase.SCHEMA_VERSION),
-        )
-        db.transmissionDao().insert(hourTx("TX1", "S1", hour = 2, samplePosition = 1L, stationId = "W7NPC"))
-        db.transmissionDao().insert(hourTx("TX2", "S2", hour = 2, samplePosition = 2L, stationId = "W7NPC"))
-        db.transmissionDao().insert(hourTx("TX3", "S1", hour = 3, samplePosition = 3L, stationId = "K7LWH"))
-
-        val detail = ReaderPolling.stationDetail(context, "W7NPC", nowMillis = 3_600_000L * 25)
-
-        assertEquals(listOf("TX1", "TX2"), detail.transmissions.map { it.id })
-        assertEquals(2, detail.transmissionCount)
-    }
-
-    @Test
-    fun `FR_UI_10 frequencyDetail returns every transmission heard on that frequency`(): Unit = runTest {
-        db.sessionDao().insert(session("S1"))
-        db.transmissionDao().insert(hourTx("TX1", "S1", hour = 2, samplePosition = 1L, frequencyHz = 146_960_000L))
-        db.transmissionDao().insert(hourTx("TX2", "S1", hour = 3, samplePosition = 2L, frequencyHz = 146_520_000L))
-
-        val detail = ReaderPolling.frequencyDetail(context, 146_960_000L, nowMillis = 3_600_000L * 4)
-
-        assertEquals(listOf("TX1"), detail.transmissions.map { it.id })
-    }
-
-    @Test
-    fun `FR_UI_12 stationDetail reads a capture gap as not-listening, never as silence`(): Unit = runTest {
-        db.sessionDao().insert(
-            SessionEntity("S1", 0L, 3_600_000L * 5, null, null, "test", null, null, OrtDatabase.SCHEMA_VERSION),
-        )
-        // A gap covering hour-of-day 1 entirely — never heard from this station in that hour
-        // because the app was not listening, not because the station was quiet.
-        db.captureGapDao().insert(
-            CaptureGapEntity(
-                id = "G1",
-                sessionId = "S1",
-                startedAt = 3_600_000L,
-                endedAt = 3_600_000L * 2,
-                cause = CaptureGapCause.INTERRUPTION,
-                recoveredAutomatically = true,
-            ),
-        )
-        db.transmissionDao().insert(hourTx("TX1", "S1", hour = 0, samplePosition = 1L, stationId = "W7NPC"))
-
-        val detail = ReaderPolling.stationDetail(context, "W7NPC", nowMillis = 3_600_000L * 5)
-
-        val hour0 = detail.activityPattern.single { it.hourOfDayUtc == 0 }
-        val hour1 = detail.activityPattern.single { it.hourOfDayUtc == 1 }
-        val hour2 = detail.activityPattern.single { it.hourOfDayUtc == 2 }
-        assertEquals(HourActivityState.HEARD, hour0.state)
-        assertEquals(HourActivityState.NOT_LISTENING, hour1.state)
-        assertEquals(HourActivityState.SILENT_WHILE_LISTENING, hour2.state)
-    }
-
-    @Test
-    fun `listStationSummaries and listFrequencySummaries surface everything ever recorded`(): Unit = runTest {
-        db.catalogDao().insert(
-            StationEntity(
-                id = "W7NPC",
-                callsign = "W7NPC",
-                firstHeardAt = 0L,
-                lastHeardAt = 0L,
-                transmissionCount = 1,
-                isUserPinned = false,
-                notes = null,
-                userName = null,
-                frequenciesHeard = null,
-                activityByHourDow = null,
-                potaRefs = null,
-                spokenGrids = null,
-                ituRegionFromPrefix = null,
-                overCountsByAttributionState = null,
-            ),
-        )
-        db.sessionDao().insert(session("S1"))
-        db.transmissionDao().insert(hourTx("TX1", "S1", hour = 1, samplePosition = 1L, frequencyHz = 146_960_000L))
-
-        val stations = ReaderPolling.listStationSummaries(context)
-        val frequencies = ReaderPolling.listFrequencySummaries(context)
-
-        assertEquals(listOf("W7NPC"), stations.map { it.stationId })
-        assertEquals(listOf(146_960_000L), frequencies.map { it.frequencyHz })
-    }
+    // R-round-two coordinator note: the stationDetail/frequencyDetail/listStationSummaries/
+    // listFrequencySummaries tests (and their shared `hourTx` fixture) moved with the functions
+    // they proved — WP8's `ui/data/StationPolling.kt` and its own `StationPollingTest` now own
+    // this coverage.
 
     // ---------------------------------------------------------------------------------------
     // Capture status (ui-conformance-plan WP4, R-031/R-032/R-034/R-035/R-038).

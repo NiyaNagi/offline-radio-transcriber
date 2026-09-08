@@ -2,6 +2,8 @@ package org.ort.app.ui.data
 
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
@@ -16,18 +18,12 @@ import java.util.Locale
  * renders directly — no screen-side string assembly left over from the old flat layout.
  *
  * **Every fact this cannot honestly measure renders "not measured", never a fabricated value**
- * (constitution I). Two rows are "not measured" on every build today, not a bug this package can
- * fix without touching a file outside its row:
- * - **Input** (device name / verified / resampler id): `RealCaptureService`
- *   (`org.ort.pipeline.capture.RealCaptureService`) knows the selected
- *   [org.ort.capture.android.AudioDeviceDescriptor] and
- *   [org.ort.capture.android.AudioRecordSource.resamplerIdentity], but neither is republished to
- *   a process-wide holder the way [CaptureState]/[ThermalStatus]/[RigStatus]/[StorageForecast]
- *   are — `RealCaptureService.kt`'s wiring is WP11a's file, not this package's, so this is named
- *   here and in this package's report rather than worked around.
- * - **Level** (peak/noise/headroom dBFS): no level signal exists in `:pipeline` at all yet —
- *   [org.ort.app.ui.data.LevelViewState] carries the same honesty for
- *   [org.ort.app.ui.screens.LevelMeterScreen] (R-039).
+ * (constitution I). Input and Level were both "not measured" on every build when this file was
+ * first written — WP11c has since added [InputStatus]/[LevelStatus] (register R-112/R-113), the
+ * same process-wide-holder pattern [CaptureState]/[ThermalStatus]/[RigStatus]/[StorageForecast]
+ * already use, and [from] now reads them for real. `LevelViewState`
+ * ([org.ort.app.ui.screens.LevelMeterScreen], R-039) carries the equivalent honesty for the full
+ * meter screen — its own kdoc covers `NotMeasured`.
  */
 public data class CaptureStatusViewState(
     val stateLabel: String,
@@ -60,29 +56,69 @@ public data class KeyValueFacts(
     val trailingText: String? = null,
 )
 
-/** `Level-Meter.dc.html`'s facts (R-039) — see [CaptureStatusViewState]'s own kdoc for why every
- * field here is `null` on every build today; [notMeasuredReason] is shown instead of fabricated
- * bars (guide §6.8: a missing capability is *failed*, not *empty*). */
+/**
+ * `Level-Meter.dc.html`'s facts (R-039/R-112). [LevelStatus] now publishes a real reading
+ * (WP11c) — [notMeasuredReason] is non-null, and every other field `null`/empty, only for the
+ * genuinely-honest case: [LevelStatus.State.NotMeasured], before the first frame this session
+ * (guide §6.8: a missing capability is *failed*, not *empty*), never fabricated bars.
+ *
+ * [TARGET_BAND_TOP_DBFS]/[TARGET_BAND_BOTTOM_DBFS] are the artboard's own fixed green band (a
+ * target zone the operator turns the radio's volume to sit inside, like a speedometer's redline)
+ * — a UI reference, not a per-session measurement, so it is a constant here rather than something
+ * [LevelViewStateMapper] derives from a reading.
+ */
 public data class LevelViewState(
     val inputLabel: String,
     val peakDbfsLabel: String?,
     val noiseFloorDbfsLabel: String?,
+    /** The raw value [noiseFloorDbfsLabel] formats — kept alongside it so the chart never has to
+     * parse display text back into a number. */
+    val noiseFloorDbfsRaw: Float?,
     val headroomLabel: String?,
-    val clippedSamplesLabel: String?,
+    val clippedLastSecondLabel: String?,
+    /** Oldest-first, up to 60 entries — [LevelStatus.peakHistoryDbfs] carried straight through. */
+    val historyDbfs: List<Float>,
     val notMeasuredReason: String?,
 ) {
     public companion object {
+        public const val TARGET_BAND_TOP_DBFS: Float = -12f
+        public const val TARGET_BAND_BOTTOM_DBFS: Float = -18f
+        public const val CHART_CEILING_DBFS: Float = 0f
+        public const val CHART_FLOOR_DBFS: Float = -60f
+
         /** The only real producer today — see this type's own kdoc for why. */
         public fun notMeasured(inputLabel: String = "No input device signal published yet"): LevelViewState =
             LevelViewState(
                 inputLabel = inputLabel,
                 peakDbfsLabel = null,
                 noiseFloorDbfsLabel = null,
+                noiseFloorDbfsRaw = null,
                 headroomLabel = null,
-                clippedSamplesLabel = null,
-                notMeasuredReason = "No level (dBFS) signal is published by :pipeline yet. Audio is still " +
+                clippedLastSecondLabel = null,
+                historyDbfs = emptyList(),
+                notMeasuredReason = "No level (dBFS) signal has been measured yet this session. Audio is still " +
                     "captured and kept — this is only the meter, not capture itself.",
             )
+    }
+}
+
+public object LevelViewStateMapper {
+
+    /** [history] is [LevelStatus.peakHistoryDbfs] — read alongside [LevelStatus.state] by the
+     * caller (never derived here), so both always belong to the same snapshot (see that object's
+     * own kdoc on why they are read together). */
+    public fun from(level: LevelStatus.State, history: List<Float>, inputLabel: String): LevelViewState = when (level) {
+        LevelStatus.State.NotMeasured -> LevelViewState.notMeasured(inputLabel)
+        is LevelStatus.State.Measured -> LevelViewState(
+            inputLabel = inputLabel,
+            peakDbfsLabel = "%.0f dBFS".format(Locale.ROOT, level.peakDbfs),
+            noiseFloorDbfsLabel = level.noiseFloorDbfs?.let { "%.0f dBFS".format(Locale.ROOT, it) },
+            noiseFloorDbfsRaw = level.noiseFloorDbfs,
+            headroomLabel = "%.0f dB".format(Locale.ROOT, LevelViewState.CHART_CEILING_DBFS - level.peakDbfs),
+            clippedLastSecondLabel = "${level.clipCountLastSecond}",
+            historyDbfs = history,
+            notMeasuredReason = null,
+        )
     }
 }
 
@@ -108,6 +144,9 @@ public object CaptureStatusMapper {
         storage: StorageForecast.State,
         asr: AsrAvailability.State,
         vad: VadAvailability.State,
+        input: InputStatus.State,
+        level: LevelStatus.State,
+        nowMillis: Long,
         sinceLabel: String?,
         elapsedLabel: String,
         heartbeatSecondsAgo: Long?,
@@ -131,10 +170,8 @@ public object CaptureStatusMapper {
             haltConfirmTitle = "Stop capture?",
             haltConfirmBody = "Audio already captured is kept. Nothing already recorded is lost, and capture " +
                 "can be started again from Now.",
-            input = notMeasuredFacts(
-                "no input device signal is published by :pipeline yet — see this package's report",
-            ),
-            level = notMeasuredFacts("no level signal is published by :pipeline yet (R-039)"),
+            input = inputFacts(input, nowMillis),
+            level = levelFacts(level),
             radio = radioFacts(rig),
             overs = overFacts(transmissionCount, rejectedCount, failedCount, gapCount),
             backlog = backlogFacts(backlog),
@@ -144,6 +181,71 @@ public object CaptureStatusMapper {
             battery = batteryFacts(batteryPercent, batteryCharging, batteryExemptionReportsIgnoring),
         )
     }
+
+    /**
+     * `Capture-Status.dc.html`'s Input row (R-113): device name, native rate and resampler id from
+     * [InputStatus.State.Opened], "verified" only once [InputStatus.State.Opened.routeVerified]
+     * is actually `true` (constitution IV — never claim a route verified before the OS has
+     * confirmed it), "mismatch — halted" for [InputStatus.State.Mismatch] (capture does not
+     * continue on it — see that state's own kdoc), and "lost Ns ago" for
+     * [InputStatus.State.Lost], computed from [InputStatus.State.Lost.sinceMillis] against the
+     * device's current wall clock at read time.
+     */
+    private fun inputFacts(input: InputStatus.State, nowMillis: Long): KeyValueFacts = when (input) {
+        InputStatus.State.None -> KeyValueFacts(value = "Not measured", subLine = "no input opened yet this session")
+
+        is InputStatus.State.Opened -> KeyValueFacts(
+            value = input.descriptor.label,
+            subLine = "${kHzLabel(input.nativeRateHz)} native · resampler ${input.resamplerId}",
+            trailingDot = if (input.routeVerified && input.routedDeviceMatches) {
+                CaptureStateTone.NOMINAL
+            } else {
+                CaptureStateTone.DEGRADED
+            },
+            trailingText = if (input.routeVerified && input.routedDeviceMatches) "verified" else "verifying…",
+        )
+
+        is InputStatus.State.Mismatch -> KeyValueFacts(
+            value = input.expected.label,
+            subLine = "routed to ${input.actual?.label ?: "an unknown device"} instead",
+            trailingDot = CaptureStateTone.HALTED,
+            trailingText = "mismatch — halted",
+        )
+
+        is InputStatus.State.Lost -> KeyValueFacts(
+            value = input.lastKnown.descriptor.label,
+            subLine = "${kHzLabel(input.lastKnown.nativeRateHz)} native · resampler ${input.lastKnown.resamplerId}",
+            trailingDot = CaptureStateTone.DEGRADED,
+            trailingText = "lost ${secondsAgo(input.sinceMillis, nowMillis)}s ago",
+        )
+    }
+
+    /**
+     * `Capture-Status.dc.html`'s Level row (R-112): peak/RMS dBFS from [LevelStatus.State.Measured],
+     * amber and named "clipping" when [LevelStatus.State.Measured.clipped] is true this tick —
+     * never silently folded into the peak number, since a clipped sample is a distinct fact from a
+     * merely loud one.
+     */
+    private fun levelFacts(level: LevelStatus.State): KeyValueFacts = when (level) {
+        LevelStatus.State.NotMeasured ->
+            KeyValueFacts(value = "Not measured", subLine = "no level signal yet this session")
+
+        is LevelStatus.State.Measured -> {
+            val noiseFloor = level.noiseFloorDbfs?.let { "noise %.0f dBFS".format(Locale.ROOT, it) }
+                ?: "noise floor not yet tracked"
+            KeyValueFacts(
+                value = "%.0f dBFS peaks".format(Locale.ROOT, level.peakDbfs),
+                subLine = "RMS %.0f dBFS · $noiseFloor".format(Locale.ROOT, level.rmsDbfs),
+                trailingDot = if (level.clipped) CaptureStateTone.DEGRADED else null,
+                trailingText = if (level.clipped) "clipping" else null,
+            )
+        }
+    }
+
+    private fun kHzLabel(rateHz: Int): String = "%.0f kHz".format(Locale.ROOT, rateHz / 1000.0)
+
+    private fun secondsAgo(sinceMillis: Long, nowMillis: Long): Long =
+        ((nowMillis - sinceMillis) / 1000).coerceAtLeast(0)
 
     /**
      * `Flow-Degrade.dc.html`'s five titles. "Capturing, text only" is the one this cannot honestly
@@ -313,7 +415,4 @@ public object CaptureStatusMapper {
     }
 
     private fun formatFrequencyMHz(hz: Long): String = "%.3f".format(Locale.ROOT, hz / 1_000_000.0)
-
-    private fun notMeasuredFacts(reason: String): KeyValueFacts =
-        KeyValueFacts(value = "Not measured", subLine = reason)
 }

@@ -66,10 +66,10 @@ public fun NowScreen(
     onOpenLive: () -> Unit = {},
     onStartCapture: () -> Unit = {},
     onOpenStation: (String) -> Unit = {},
-    // Not yet wired to a real destination: the Models screen this routes to is WP3/WP10's
-    // (ReaderDestination.SETTINGS's own content composable), out of this package's row — this
-    // parameter exists so the action is real and tappable, and a caller (NowContent) can wire it
-    // once that destination is reachable from here.
+    // Both default to a no-op so every existing caller (including the deprecated legacy overload
+    // below) keeps compiling unchanged; `NowContent` wires the real navigation once the caller
+    // (WP3's `OrtNavHost.kt`) reaches this destination for it.
+    onOpenStations: () -> Unit = {},
     onOpenModels: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -84,6 +84,7 @@ public fun NowScreen(
                 is NowViewState.Active -> ActiveContent(
                     state = state,
                     onOpenStation = onOpenStation,
+                    onOpenStations = onOpenStations,
                     onOpenModels = onOpenModels,
                 )
             }
@@ -206,7 +207,12 @@ private fun EarlierNightRowContent(row: EarlierNightRow) {
 // -------------------------------------------------------------------------------------------
 
 @Composable
-private fun ActiveContent(state: NowViewState.Active, onOpenStation: (String) -> Unit, onOpenModels: () -> Unit) {
+private fun ActiveContent(
+    state: NowViewState.Active,
+    onOpenStation: (String) -> Unit,
+    onOpenStations: () -> Unit,
+    onOpenModels: () -> Unit,
+) {
     Text(
         text = state.sessionTitle,
         style = OrtType.screenTitle,
@@ -255,7 +261,7 @@ private fun ActiveContent(state: NowViewState.Active, onOpenStation: (String) ->
         label = "Stations heard",
         modifier = Modifier.padding(top = OrtSpacing.lg),
         trailingActionLabel = if (state.stations.totalCount > 0) "All ${state.stations.totalCount}" else null,
-        onTrailingAction = {},
+        onTrailingAction = onOpenStations,
     )
     if (state.stations.rows.isEmpty() && state.stations.unidentifiedLabel == null) {
         Text(
