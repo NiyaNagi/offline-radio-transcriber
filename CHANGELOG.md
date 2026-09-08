@@ -32,6 +32,151 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11a)
+
+### (pending commit) — ui-conformance WP11a · failure signals: thermal, rig, storage forecast, gap causes, notification
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/{ThermalStatus,RigStatus,StorageForecast}.kt`
+(new), `RealCaptureService.kt` (wiring and the notification only), `pipeline/.../GapPersister.kt`,
+`capture-android/.../service/CaptureNotificationBuilder.kt`, `data/.../entity/CaptureGapEntity.kt`
+(the `CaptureGapCause` enum — the lead-approved `:data` exception), `app/src/debug/**`
+(`Scenarios.kt`, `OvernightScenario.kt`), tests beside each (new: `ThermalStatusTest.kt`,
+`RigStatusTest.kt`, `StorageForecastTest.kt`, `ThermalTrackingPassTest.kt`,
+`RealCaptureServiceUncleanEndGapTest.kt`, `CaptureNotificationBuilderTest.kt` additions,
+`GapPersisterTest.kt` additions, `ScenariosTest.kt` additions), `results/ui-audit/README.md`
+(scenario table, three "Known gaps" closed). `results/coverage-matrix.md` regenerated (gate
+side-effect, not hand-edited). No file under `app/src/main/**` touched.
+
+**Requirements/ACs:** register R-102, R-104, R-105, R-106; F5, F6, F7, F9, F15 (spec §12);
+FR-STO-3, FR-RUN-11, FR-RUN-12, FR-RUN-16, FR-SVC-1, FR-PLT-3, AC-61.
+
+**Constitution check.** Principle I (uncertainty is content) bore directly: [`ThermalStatus`] and
+[`StorageForecast`] both default to an honest "not yet measured" state rather than inventing a
+healthy-looking zero, matching `StatusViewState.backlogLabel`'s existing discipline. Principle IV
+(capture never lies) bore on `RigStatus.absent()` being called because there genuinely is no rig,
+not as a placeholder, and on `ThermalTrackingPass` measuring a real wall-clock/audio-duration ratio
+rather than estimating one. Principle VII (structural guarantees) bore on `CaptureNotificationContent`
+staying a closed, narrowly-named field set (AC-61's own test asserts it) even after gaining nine
+new fields, and on `CaptureGapCause` being extended (never renumbered) because Room stores it by
+name. The `:capture-*` → `:asr-*`/`:lexicon`/`:identity` boundary was not touched; `dependencyRules`
+passed unchanged.
+
+**What changed:**
+
+- **R-104 — `ThermalStatus`** (new): `Nominal`/`Warm`/`Hot`, each carrying the OS
+  `PowerManager`-mirrored thermal int (`THERMAL_STATUS_NONE` below API 29 — never invented) and an
+  exponentially-smoothed measured real-time factor. `recordPassTiming(rtf)` is called by the new
+  `ThermalTrackingPass` decorator (in `RealCaptureService.kt`, wrapping the real Pass B
+  `startProcessingLoop` already constructs) after every real pass run, using the transmission's
+  real `durationMs` looked up fresh via `TransmissionDao`; `sample(osThermalStatus)` republishes
+  state on the same 10 s tick `runShedMonitor` already runs. `ShedController`/`ShedSignals` were
+  deliberately left untouched (not in this package's ownership) — thermal is read directly via a
+  new `Dependencies.osThermalStatus` seam instead.
+- **R-104 — `RigStatus`** (new): `Absent`/`Connected(descriptor, per-band frequency/mode/squelch)`/
+  `Stale(lastKnown, sinceMillis)`. `RealCaptureService.startCapture()` calls `RigStatus.absent()` —
+  its one real producer today, since FR-RIG (register R-084) is unbuilt; the `rig-lost` scenario is
+  the only other producer.
+- **R-105 — `StorageForecast`** (new): `NotYetMeasured`/`Fine`/`ThreeNightsLeft`/`OneNightLeft`/
+  `AtFloor`, computed each shed tick from free bytes, the real on-disk `filesDir/audio` size, and
+  this session's own growth over its elapsed time, extrapolated to a documented (not measured or
+  configured) 8-hour "night". `AtFloor` always wins regardless of rate — never contradicts the
+  existing FR-STO-4 hard stop.
+- **R-106 — gap causes**: `CaptureGapCause` gains `CALL`, `INPUT_LOST`, `OS_STOPPED`, `ROUTE_LOST`
+  (every prior value unchanged; Room stores by name, confirmed against the exported schema).
+  `GapPersister.causeFor` maps `"call"` → `CALL`, a bare read error/device reference → `INPUT_LOST`
+  (F-010's `"dropped samples:"` span stays `DEVICE_LOST`, an established, tested mapping),
+  `"os stopped"` → `OS_STOPPED`, `"route mismatch"` → `ROUTE_LOST`. **F5**: `RealCaptureService`
+  now calls `UncleanEndDetector(heartbeatStore).detect()` synchronously at the top of
+  `startCapture()`, before this session's own heartbeat can overwrite the file, and persists an
+  `OS_STOPPED` gap on the *previous* session (its last heartbeat → the moment of detection) — never
+  on the new session, and never "reopening" the previous one (a policy left to the lead). Two
+  honesty findings, not guessed around: **`CALL` is not distinguishable from a generic focus loss
+  in real code today** — `AndroidAudioIo`'s own doc comment says its interruption detection is a
+  "v0", with no `AudioManager.OnAudioFocusChangeListener` wiring at all, so no real cause string
+  ever names a call; even once that exists, Android's own API reports *that* focus was lost, never
+  *why*, so telling a call apart needs a second signal (`TelephonyManager`) nothing here reads. The
+  `gap-call` debug scenario writes `CaptureGapCause.CALL` directly (it always bypassed
+  `GapPersister`), which is why R-106 closes for the *simulator* while this real-code gap remains
+  open and reported. **`ROUTE_LOST` is unreachable through the real service as built** —
+  `AudioRecordSource` reports a route mismatch as `CaptureEvent.Failed` (a halt), never routed
+  through `GapTracker`/`GapPersister` at all, correctly per constitution IV (a mismatch must halt,
+  never resume the way a gap does); the mapping is reserved, not exercised.
+- **R-102 — the notification**: `CaptureNotificationContent` redesigned around typed facts —
+  a `State` enum (`CAPTURING`/`INTERRUPTED`/`FAILED`/`ASR_UNAVAILABLE`) replacing free-text state
+  strings, a computed `title` (`"Capturing · 6:42 · 412 overs"`), a `SecondLine` sealed interface
+  (`Normal(frequenciesLabel, tier)` / `Degraded(reason)`), and non-transcript last-over/input/
+  storage fields for the expanded rows — still a closed field set (AC-61's structural test updated
+  and passing). `RealCaptureService` builds it via `NotificationCompat.InboxStyle`, adds an
+  explicit-component `Open` action to `org.ort.app.ui.ReaderActivity` (named by string, since
+  `:pipeline` must not depend on `:app`) carrying the session id, keeps `Stop`, always the same
+  `NOTIFICATION_ID` updated in place, no explicit sound (the channel stays `IMPORTANCE_LOW`).
+  `degradedReason()` combines `CaptureState`/`ThermalStatus`/`RigStatus`/`StorageForecast` the way
+  the board's own example does (`"Running warm — tier 2 · radio disconnected, frequency stale"`).
+  The notification build was made `suspend`-and-DB-backed (`buildNotificationContent`) dispatched
+  always through the service's own `scope` (Dispatchers.IO): the pre-existing synchronous
+  `updateNotification` would otherwise run a Room query on `onStartCommand`'s main thread in the
+  "no audio input device" early-return path — a real bug this change fixes, not a style choice.
+  **Two lines outside this package's file ownership needed a compile-preserving bridge, not an
+  edit**: `capture-android/.../service/CaptureService.kt` (a different, older service, still
+  manifest-registered) calls the old `build(state: String, elapsedMillis, transmissionCount)` and
+  reads `.text`; both are kept as a legacy overload and computed aliases on the same type
+  (`stateLabel`/`elapsedLabel`/`text`, reproducing the old `HH:MM:SS` format exactly) rather than
+  touching that file — `CaptureServiceTest.kt`'s existing five tests pass unchanged.
+- **Scenarios**: `thermal` (Warm, RTF 0.9, same shed level `backlog` uses), `rig-lost` (`Stale`
+  since 30 minutes ago, last known 145.230/146.960), `storage-warn` (now `StorageForecast
+  .ThreeNightsLeft` with capture genuinely running, replacing the old reuse of F6's exhaustion
+  string), `os-stopped` (the `unclean-end` heartbeat plus an `OS_STOPPED` gap on the previous
+  session), `gap-call`'s second gap now `CaptureGapCause.CALL`. `results/ui-audit/README.md`'s
+  scenario table updated and the three "Known gaps" this closes removed.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (841 tasks; every
+  module's tests, detekt, ktlint, lint green, including pre-existing `CaptureServiceTest`).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 180 covered. `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- On `emulator-5554`: installed, `thermal` scenario broadcast, `MainActivity` launched — the real
+  `RealCaptureService` started (real mic opened and verified: `sdk_gphone64_x86_64`), and
+  `adb shell dumpsys notification --noredact` showed the real posted notification: title
+  `"Capturing · 0:00 · 0 overs"` (later `"0:01"` after a real heartbeat), text
+  `"0 frequencies · tier 3"`, `InboxStyle` lines `"Last over: none yet"` /
+  `"Input: sdk_gphone64_x86_64 · verified"` / `"Storage: 0.0 GB · no budget set"`, actions
+  `[Open → startActivity]` `[Stop → startService]`, channel `ort.real-capture` at
+  `importance=2` (LOW) with `sound=null` on the notification itself.
+- Every new test named in Scope ran green as part of the `build` gate above; targeted reruns
+  (`:pipeline:testDebugUnitTest`, `:capture-android:testDebugUnitTest`,
+  `:app:testDebugUnitTest --tests ScenariosTest`) also green.
+
+**Left open / not done:**
+- **The notification's degraded second line could not be observed live on-device against a real
+  running service.** `runShedMonitor`'s own 10 s tick samples the emulator's real (unthrottled)
+  thermal status every 10 s, which overwrote the scenario-injected `ThermalStatus.Warm` before the
+  next natural notification refresh (`onHeartbeat`, gated at 30 s) could render it — confirmed by
+  dumping the notification twice, seeing it still read the nominal state both times. The
+  structural behaviour is proven by `CaptureNotificationBuilderTest`'s
+  `R_102_notification_second_line_switches_to_degraded_when_a_reason_is_given` and by
+  `RealCaptureService.degradedReason()`'s own logic, not by a live capture; a genuinely throttled
+  device (or a debug seam that freezes the shed tick) would be needed to see it live.
+- **`CaptureGapCause.CALL` is not producible by real running code** (`AndroidAudioIo` has no
+  audio-focus-loss wiring at all yet, and Android's own focus-change API cannot distinguish a call
+  from another app's request without a `TelephonyManager` cross-reference) — see the honesty
+  findings above. Building that wiring is `AndroidAudioIo`/`:capture-android` scope, not this
+  package's two allowed exceptions.
+- **`CaptureGapCause.ROUTE_LOST` is unreachable through the app as built** — a route mismatch halts
+  capture (`CaptureEvent.Failed`) rather than opening a resumable gap, correctly per constitution
+  IV; the enum value and mapping are reserved for if that policy ever changes.
+- **The "configured frequency" tier of R-102's second-line fallback is not implemented** — no
+  configured-frequency source exists anywhere in `RealCaptureService` today (FR-CFG/FR-RIG both
+  unbuilt), so the second line falls straight from `RigStatus.Connected` to a count of frequencies
+  actually seen this session (honestly 0 while nothing populates `TransmissionEntity.frequencyHz`).
+- **`StorageForecast`'s "night" is a documented 8-hour assumption**, not a measured or configured
+  value — FR-STO-3's own budget/retention settings screen (WP10, register R-090) is the eventual
+  source of truth.
+- Register rows R-102/R-104/R-105/R-106 are left for the lead to mark — this package does not edit
+  `results/ui-audit/register.md`.
+
 ## 2026-09-08 (ui-conformance WP0)
 
 ### (pending commit) — ui-conformance WP0 · debug scenario simulator and audit tooling

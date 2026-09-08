@@ -26,7 +26,10 @@ import org.ort.capture.android.codec.DeflatePredictiveCodec
 import org.ort.capture.android.codec.FlacStore
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.capture.android.heartbeat.HeartbeatRecord
+import org.ort.capture.android.heartbeat.UncleanEndDetector
 import org.ort.capture.android.service.CaptureNotificationBuilder
+import org.ort.capture.android.service.CaptureNotificationContent
+import org.ort.capture.android.service.CaptureNotificationExpandedFacts
 import org.ort.captureapi.CaptureEvent
 import org.ort.core.AttributionState
 import org.ort.core.PassId
@@ -41,6 +44,7 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureProcessingLoop
 import org.ort.pipeline.GapPersister
+import org.ort.pipeline.Pass
 import org.ort.pipeline.PassDrainRunner
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
@@ -61,6 +65,8 @@ import org.ort.segment.Segmenter
 import org.ort.segment.SileroVad
 import java.io.File
 import java.io.RandomAccessFile
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 /**
  * **This is a v0 smoke-test wiring, not a build-plan prompt's output.** Every piece it composes
@@ -109,6 +115,19 @@ public class RealCaptureService : Service() {
         val asrEngine: (File) -> AsrEngineAvailability = { RealAsrEngineProvider(it).provide() },
         val shedSignals: (android.content.Context, WorkQueueDao, File) -> ShedSignals =
             { ctx, dao, dir -> AndroidShedSignals(ctx, dao, dir) },
+        /**
+         * R-104/F7: `PowerManager.getThermalStatus()` is API 29+ only; below that the OS exposes
+         * nothing and [ThermalStatus.THERMAL_STATUS_NONE] is reported honestly rather than
+         * invented (constitution I). A settable seam, the same reason every other producer here is
+         * one — a Robolectric test can substitute a fixed reading without a real thermal sensor.
+         */
+        val osThermalStatus: (android.content.Context) -> Int = { ctx ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                (ctx.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager).currentThermalStatus
+            } else {
+                ThermalStatus.THERMAL_STATUS_NONE
+            }
+        },
     )
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -120,6 +139,13 @@ public class RealCaptureService : Service() {
     private var startedAtMonotonicNanos = 0L
     private var startedAtUtcOffsetMinutes = 0
     private lateinit var heartbeatStore: FileHeartbeatStore
+
+    // R-102: the notification's expanded rows need a DB read (last over, frequencies seen) and the
+    // selected device's own label -- neither is otherwise available outside startCapture()'s local
+    // scope. Nullable because both start unset (before capture ever starts, and in tests that never
+    // call startCapture()).
+    private var db: OrtDatabase? = null
+    private var selectedDeviceLabel: String? = null
 
     // audit F-005: the only way onHeartbeat() can report the real sample position instead of a
     // fabricated 0L -- the segmenter is the one thing in this class that knows how much audio has
@@ -169,35 +195,83 @@ public class RealCaptureService : Service() {
 
     private fun startCapture() {
         val db = dependencies.database(applicationContext)
+        this.db = db
         val queue = WorkQueue(db, SystemClock)
+        val gapPersister = GapPersister(db.captureGapDao(), SystemClock)
+        persistUncleanEndGapIfAny(gapPersister)
+
+        // R-104/F9: the rig module (FR-RIG) is unbuilt (register R-084) -- this is the one real
+        // producer RigStatus has today. Honest, not a placeholder: there genuinely is no rig.
+        RigStatus.absent()
+
         // A real enumerated device — never a fabricated descriptor, which RouteVerifier would
         // (correctly) reject on the first read, halting capture. See defaultInputDevice()'s kdoc.
         val (io, device) = dependencies.audioIo(applicationContext) ?: run {
             CaptureState.failed("no audio input device is available")
-            updateNotification("Failed: no audio input device")
+            updateNotification(CaptureNotificationContent.State.FAILED)
             return
         }
         io.select(device)
+        selectedDeviceLabel = device.label
         val audioSource = AudioRecordSource(io, device)
         source = audioSource
         CaptureState.capturing(sessionId)
 
-        // audit F-028: before this, nothing in the running service constructed a GapTracker or a
-        // GapPersister -- AudioRecordSource emitted Interrupted/Resumed (and, after F-010, a
-        // dropped-span cause) but no one joined them to CaptureGapDao, so captureGapDao was always
-        // empty in production and P17's not-listening distinction (FR-UI-12) could never show a
-        // real gap (FR-RUN-12, AC-48; constitution IV).
-        val gapPersister = GapPersister(db.captureGapDao(), SystemClock)
+        // audit F-028: before this, nothing in the running service constructed a GapTracker --
+        // AudioRecordSource emitted Interrupted/Resumed (and, after F-010, a dropped-span cause)
+        // but no one joined them to CaptureGapDao (FR-RUN-12, AC-48; constitution IV). Reuses the
+        // [gapPersister] constructed above for the F5 check -- one instance, two callers.
         val gapRelay = CaptureGapRelay(GapTracker(SystemClock)) { gap -> gapPersister.persist(sessionId, gap) }
 
-        // audit F-007: before this, nothing in the running service ever constructed a
-        // ShedController against a real ShedSignals -- it was only ever built (against
-        // FakeShedSignals) for :app's status display (F-002), so FR-RUN-3's shed order could
-        // never actually trigger and a full disk was discovered only when a write threw. This
-        // ticks a real ShedController every SHED_SAMPLE_INTERVAL_MILLIS, persists each level
-        // transition (FR-RUN-5) and republishes level+backlog through ShedStatus for :app to
-        // read; a free-storage floor breach stops capture loudly rather than letting a write fail
-        // silently (FR-STO-4, FR-RUN-6; constitution IV).
+        startShedMonitor(db)
+
+        // The processing loop (build-plan P12, defect 3): drains whatever RealSegmentSink
+        // enqueues, independent of the capture flow below -- a stalled or unavailable ASR engine
+        // must never block capture (constitution IV). Its own coroutine in the same service-scoped
+        // `scope`, cancelled by the same `scope.cancel()` onDestroy() already calls.
+        scope.launch { startProcessingLoop(db, queue) }
+
+        scope.launch { runCaptureFlow(db, queue, audioSource, gapRelay) }
+    }
+
+    /**
+     * F5 (register R-106, OS_STOPPED): detect an unclean end from the PREVIOUS launch's heartbeat
+     * before this session's own audio loop can write a fresh one over the same file, and persist a
+     * gap on that PREVIOUS session — never on the session about to start. Equivalent to
+     * `org.ort.pipeline.CaptureStatusRepository.uncleanEndFromPreviousLaunch()` (that class is
+     * outside this package's file ownership — see this package's report) — both are exactly
+     * `UncleanEndDetector(heartbeatStore).detect()`. Deliberately synchronous, before anything in
+     * [startCapture] can write to [heartbeatStore]. Does not "reopen" the previous session
+     * (`Fail-Killed.dc.html`'s wording); that policy call is left to the lead.
+     */
+    private fun persistUncleanEndGapIfAny(gapPersister: GapPersister) {
+        val previousLaunchGap = UncleanEndDetector(heartbeatStore).detect() ?: return
+        val detectedAtWallMillis = SystemClock.wallMillis()
+        val detectedAtMonotonicNanos = SystemClock.monotonicNanos()
+        scope.launch {
+            gapPersister.persist(
+                previousLaunchGap.sessionId,
+                GapRecord(
+                    // Monotonic bounds are not read back by GapPersister.persist (see its own
+                    // kdoc) -- carried only because GapRecord requires them.
+                    startMonotonicNanos = detectedAtMonotonicNanos,
+                    endMonotonicNanos = detectedAtMonotonicNanos,
+                    startWallMillis = previousLaunchGap.lastHeartbeatWallMillis,
+                    endWallMillis = detectedAtWallMillis,
+                    cause = OS_STOPPED_GAP_CAUSE,
+                ),
+            )
+        }
+    }
+
+    /**
+     * audit F-007: before this, nothing in the running service ever constructed a ShedController
+     * against a real ShedSignals, so FR-RUN-3's shed order could never actually trigger. Ticks a
+     * real ShedController every SHED_SAMPLE_INTERVAL_MILLIS, persists each level transition
+     * (FR-RUN-5) and republishes level+backlog through ShedStatus (FR-STO-4, FR-RUN-6); R-104/
+     * R-105 add ThermalStatus/StorageForecast to the same tick — see [runShedMonitor]'s own kdoc.
+     */
+    private fun startShedMonitor(db: OrtDatabase) {
         val shedSignals = dependencies.shedSignals(applicationContext, db.workQueueDao(), filesDir)
         val shedController = ShedController(shedSignals, SystemClock)
         val shedRelay = ShedEventRelay(
@@ -206,67 +280,70 @@ public class RealCaptureService : Service() {
             persister = ShedEventPersister(db.shedEventDao(), SystemClock),
             samplePosition = { segmenter?.position() ?: 0L },
         )
-        scope.launch { runShedMonitor(shedSignals, shedController, shedRelay) }
+        // R-105: the baseline this session's own storage growth is measured against -- taken once,
+        // here, before the tick loop starts, so StorageForecast measures only what THIS session has
+        // written, not the whole retained archive's pre-existing size.
+        val audioDirectoryBytesAtSessionStart = audioDirectoryBytes()
+        scope.launch { runShedMonitor(shedSignals, shedController, shedRelay, audioDirectoryBytesAtSessionStart) }
+    }
 
-        // The processing loop (build-plan P12, defect 3): drains whatever RealSegmentSink
-        // enqueues, independent of the capture flow above -- a stalled or unavailable ASR engine
-        // must never block capture (constitution IV: "capture MUST proceed with every processing
-        // pass stalled"). Runs as its own coroutine in the same service-scoped `scope`, so it is
-        // cancelled by the same `scope.cancel()` onDestroy() already calls.
-        scope.launch { startProcessingLoop(db, queue) }
+    /** The session row, the segmenter, and the capture-event loop that feeds both it and [gapRelay]. */
+    private suspend fun runCaptureFlow(
+        db: OrtDatabase,
+        queue: WorkQueue,
+        audioSource: AudioRecordSource,
+        gapRelay: CaptureGapRelay,
+    ) {
+        db.sessionDao().insert(
+            SessionEntity(
+                id = sessionId,
+                startedAt = startedAtWallMillis,
+                endedAt = null,
+                profileId = null,
+                deviceTier = null,
+                appVersion = "smoke-test",
+                terminationReason = null,
+                sourceId = null,
+                schemaVersion = OrtDatabase.SCHEMA_VERSION,
+            ),
+        )
 
-        scope.launch {
-            db.sessionDao().insert(
-                SessionEntity(
-                    id = sessionId,
-                    startedAt = startedAtWallMillis,
-                    endedAt = null,
-                    profileId = null,
-                    deviceTier = null,
-                    appVersion = "smoke-test",
-                    terminationReason = null,
-                    sourceId = null,
-                    schemaVersion = OrtDatabase.SCHEMA_VERSION,
-                ),
-            )
+        val builtSegmenter = buildSegmenter(db, queue)
+        segmenter = builtSegmenter
 
-            val builtSegmenter = buildSegmenter(db, queue)
-            segmenter = builtSegmenter
-
-            var lastHeartbeatAt = 0L
-            audioSource.start().collect { event ->
-                // Fed through unconditionally, ahead of the exhaustive `when` below -- GapTracker
-                // itself ignores every CaptureEvent shape it doesn't care about (audit F-028).
-                gapRelay.onEvent(event)
-                when (event) {
-                    is CaptureEvent.Frames -> {
-                        builtSegmenter.onAudio(shortsToFloats(event.pcm))
-                        val now = SystemClock.wallMillis()
-                        if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
-                            lastHeartbeatAt = now
-                            onHeartbeat()
-                        }
+        var lastHeartbeatAt = 0L
+        audioSource.start().collect { event ->
+            // Fed through unconditionally, ahead of the exhaustive `when` below -- GapTracker
+            // itself ignores every CaptureEvent shape it doesn't care about (audit F-028).
+            gapRelay.onEvent(event)
+            when (event) {
+                is CaptureEvent.Frames -> {
+                    builtSegmenter.onAudio(shortsToFloats(event.pcm))
+                    val now = SystemClock.wallMillis()
+                    if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
+                        lastHeartbeatAt = now
+                        onHeartbeat()
                     }
-                    is CaptureEvent.Failed -> {
-                        CaptureState.failed(event.error)
-                        updateNotification("Failed: ${event.error}")
-                    }
-                    CaptureEvent.RouteChanged -> Unit
-                    is CaptureEvent.Interrupted -> {
-                        CaptureState.interrupted(event.cause)
-                        updateNotification("Interrupted")
-                    }
-                    CaptureEvent.Resumed -> {
-                        CaptureState.capturing(sessionId)
-                        updateNotification("Capturing")
-                    }
-                    CaptureEvent.EndOfStream -> Unit
                 }
+                is CaptureEvent.Failed -> {
+                    CaptureState.failed(event.error)
+                    updateNotification(CaptureNotificationContent.State.FAILED)
+                }
+                CaptureEvent.RouteChanged -> Unit
+                is CaptureEvent.Interrupted -> {
+                    CaptureState.interrupted(event.cause)
+                    updateNotification(CaptureNotificationContent.State.INTERRUPTED)
+                }
+                CaptureEvent.Resumed -> {
+                    CaptureState.capturing(sessionId)
+                    updateNotification(CaptureNotificationContent.State.CAPTURING)
+                }
+                CaptureEvent.EndOfStream -> Unit
             }
-            // The flow completing means the source stopped for good — halted on a route mismatch
-            // or an unrecoverable failure. Never leave the surface claiming "Capturing".
-            if (CaptureState.isCapturing) CaptureState.failed("capture stopped unexpectedly")
         }
+        // The flow completing means the source stopped for good — halted on a route mismatch
+        // or an unrecoverable failure. Never leave the surface claiming "Capturing".
+        if (CaptureState.isCapturing) CaptureState.failed("capture stopped unexpectedly")
     }
 
     /**
@@ -331,13 +408,18 @@ public class RealCaptureService : Service() {
             }
             is AsrEngineAvailability.Unavailable -> {
                 AsrAvailability.unavailable(availability.reason)
-                updateNotification("ASR unavailable")
+                updateNotification(CaptureNotificationContent.State.ASR_UNAVAILABLE)
                 // audit F-013: no engine ran at all here, so the fingerprint's provider must say
                 // so honestly ("none") rather than repeating the real engine's "cpu".
                 Triple(UnavailableAsrEngine(availability.reason), org.ort.core.AssetRef("asr-unavailable", "0"), "none")
             }
         }
-        val pass = PassBFactory.create(filesDir, db, engine, modelRef, provider)
+        // F7 (register R-104): ThermalStatus's real-time factor must be the wall time of a real
+        // pass run over its segment's real audio duration -- never invented. Measured here, by
+        // wrapping the pass RealCaptureService already constructs, rather than inside
+        // CaptureProcessingLoop/PassDrainRunner: neither of those two files is in this package's
+        // ownership (see this package's report for why this is deliberate, not an oversight).
+        val pass = ThermalTrackingPass(PassBFactory.create(filesDir, db, engine, modelRef, provider), db)
         CaptureProcessingLoop(PassDrainRunner(queue, runId = sessionId), pass).runForever()
     }
 
@@ -349,9 +431,17 @@ public class RealCaptureService : Service() {
      * Order matters within a tick: the backlog is refreshed, then the controller is sampled (so
      * its shed-level decision sees the fresh count), then any new transitions are persisted and
      * republished, and only then is the storage floor checked — a floor breach's loud stop should
-     * reflect the same tick's shed level, not a stale one from before this tick ran.
+     * reflect the same tick's shed level, not a stale one from before this tick ran. R-104/R-105:
+     * [ThermalStatus] and [StorageForecast] are sampled/updated on this same tick, beside the
+     * existing floor check, so a caller never reads a thermal/storage reading from a different
+     * moment than the shed level next to it.
      */
-    private suspend fun runShedMonitor(signals: ShedSignals, controller: ShedController, relay: ShedEventRelay) {
+    private suspend fun runShedMonitor(
+        signals: ShedSignals,
+        controller: ShedController,
+        relay: ShedEventRelay,
+        audioDirectoryBytesAtSessionStart: Long,
+    ) {
         while (source != null) {
             // refreshBacklog() is AndroidShedSignals's own live-read step (queueBacklog() then
             // returns a cache); a test's ShedSignals fake exposes queueBacklog() directly with no
@@ -361,8 +451,19 @@ public class RealCaptureService : Service() {
             controller.sample()
             relay.drain()
             ShedStatus.update(controller.currentLevel, signals.queueBacklog())
+            ThermalStatus.sample(dependencies.osThermalStatus(applicationContext))
 
-            if (storageFloorBreached(signals.freeStorageBytes())) {
+            val freeBytes = signals.freeStorageBytes()
+            val audioBytesNow = audioDirectoryBytes()
+            StorageForecast.update(
+                freeBytes = freeBytes,
+                audioDirectoryBytes = audioBytesNow,
+                bytesWrittenThisSession = (audioBytesNow - audioDirectoryBytesAtSessionStart).coerceAtLeast(0L),
+                sessionElapsedMillis = SystemClock.wallMillis() - startedAtWallMillis,
+                floorBytes = STORAGE_FLOOR_BYTES,
+            )
+
+            if (storageFloorBreached(freeBytes)) {
                 stopForStorageExhaustion()
                 return
             }
@@ -380,7 +481,7 @@ public class RealCaptureService : Service() {
     private fun stopForStorageExhaustion() {
         val reason = "storage exhausted: free space below the ${STORAGE_FLOOR_BYTES / (1024 * 1024)} MiB floor"
         CaptureState.failed(reason)
-        updateNotification("Failed: storage exhausted")
+        updateNotification(CaptureNotificationContent.State.FAILED)
         source?.stop()
     }
 
@@ -391,7 +492,7 @@ public class RealCaptureService : Service() {
         // is honest, not fabricated, in the one case there is genuinely no sample yet: before the
         // segmenter has been built for this session (the field is only assigned once capture starts).
         heartbeatStore.write(buildHeartbeatRecord(sessionId) { segmenter?.position() ?: 0L })
-        updateNotification("Capturing")
+        updateNotification(CaptureNotificationContent.State.CAPTURING)
     }
 
     private fun stopCapture() {
@@ -412,38 +513,220 @@ public class RealCaptureService : Service() {
         if (markClean && sessionId.isNotEmpty()) heartbeatStore.markCleanShutdown(sessionId)
     }
 
-    private fun notification(elapsedMillis: Long) = buildNotification(elapsedMillis)
+    /**
+     * The one synchronous notification build — required for `startForeground`'s immediate second
+     * argument, called from [onStartCommand] on its own (main) thread, before [startCapture] has
+     * set [db]/[source]/[selectedDeviceLabel]. Deliberately the plain "just started" shape (no
+     * last-over/input row yet — nothing has happened this session) rather than the DB-backed
+     * [buildNotificationContent], which must never run on the main thread (Room forbids it) — see
+     * that function's own kdoc.
+     */
+    private fun notification(elapsedMillis: Long): android.app.Notification = renderNotification(
+        CaptureNotificationBuilder.build(
+            state = CaptureNotificationContent.State.CAPTURING,
+            elapsedMillis = elapsedMillis,
+            transmissionCount = 0,
+            facts = CaptureNotificationExpandedFacts(
+                frequenciesLabel = frequenciesLabel(0),
+                tier = tierFromShedLevel(),
+                degradedReason = degradedReason(),
+                lastOverCallsign = null,
+                lastOverAtWallMillis = null,
+                inputDeviceName = null,
+                inputVerified = false,
+                storageLabel = storageLabel(),
+            ),
+        ),
+    )
 
-    private fun buildNotification(elapsedMillis: Long): android.app.Notification {
-        val content = CaptureNotificationBuilder.build("Capturing", elapsedMillis, transmissionCount)
+    /**
+     * R-102: assembles [CaptureNotificationContent] from the same typed facts
+     * [CaptureNotificationBuilder] requires — never free text. **Suspend, and only ever called from
+     * [scope]** (Dispatchers.IO): [db]'s DAOs are suspend functions Room refuses to run on the main
+     * thread, and [updateNotification] is the one caller, which always launches on [scope] rather
+     * than running on whatever thread called it — see that function's own kdoc for why.
+     */
+    private suspend fun buildNotificationContent(
+        state: CaptureNotificationContent.State,
+        elapsedMillis: Long,
+    ): CaptureNotificationContent {
+        val sessionRows = db?.transmissionDao()?.listBySession(sessionId) ?: emptyList()
+        val lastOver = sessionRows.lastOrNull()
+        val frequenciesSeen = sessionRows.mapNotNull { it.frequencyHz }.distinct().size
+
+        return CaptureNotificationBuilder.build(
+            state = state,
+            elapsedMillis = elapsedMillis,
+            transmissionCount = transmissionCount,
+            facts = CaptureNotificationExpandedFacts(
+                frequenciesLabel = frequenciesLabel(frequenciesSeen),
+                tier = tierFromShedLevel(),
+                degradedReason = degradedReason(),
+                lastOverCallsign = lastOver?.stationId,
+                lastOverAtWallMillis = lastOver?.startedAtUtc,
+                inputDeviceName = selectedDeviceLabel,
+                inputVerified = source?.routedDevice() != null,
+                storageLabel = storageLabel(),
+            ),
+        )
+    }
+
+    /**
+     * The Android-notification half of [content] — actions, style, channel. Shared by
+     * [notification]/[updateNotification].
+     */
+    private fun renderNotification(content: CaptureNotificationContent): android.app.Notification {
         val stopIntent = PendingIntent.getService(
             this,
             0,
             Intent(this, RealCaptureService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE,
         )
+        // R-102: an explicit-component PendingIntent to org.ort.app.ui.ReaderActivity, named by
+        // string rather than ::class.java -- :pipeline must not depend on :app (module boundary,
+        // constitution VII), so this is the one legal way to target it. exported=false is fine
+        // here: a PendingIntent the app itself created runs with the creating app's own identity
+        // when the system launches it on tap, the same mechanism the Stop action above already
+        // relies on for this same service.
+        val openIntent = Intent()
+            .setClassName(packageName, READER_ACTIVITY_CLASS_NAME)
+            .putExtra(EXTRA_SESSION_ID, sessionId)
+        val openPendingIntent = PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_IMMUTABLE)
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(content.title)
-            .setContentText(content.text)
+            .setContentText(content.secondLine.text)
+            .setStyle(
+                NotificationCompat.InboxStyle()
+                    .addLine("Last over: ${lastOverLine(content)}")
+                    .addLine("Input: ${inputLine(content)}")
+                    .addLine("Storage: ${content.storageLabel}"),
+            )
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
+            // guide §6.19 / this package's brief: no sound -- the channel is already IMPORTANCE_LOW
+            // (ensureChannel()), and NotificationCompat.Builder plays none unless setSound() is
+            // called, which it never is here.
+            .addAction(0, "Open", openPendingIntent)
             .addAction(0, "Stop", stopIntent)
             .build()
     }
 
-    private fun updateNotification(state: String) {
+    private fun lastOverLine(content: CaptureNotificationContent): String {
+        if (!content.hasLastOver) return "none yet"
+        val callsign = content.lastOverCallsign ?: "unidentified"
+        val time = content.lastOverAtWallMillis?.let { formatClockTime(it) } ?: ""
+        return if (time.isEmpty()) callsign else "$callsign · $time"
+    }
+
+    private fun inputLine(content: CaptureNotificationContent): String {
+        val verified = if (content.inputVerified) "verified" else "not verified"
+        return "${content.inputDeviceName ?: "none"} · $verified"
+    }
+
+    // A new SimpleDateFormat per call, deliberately: updateNotification() can have more than one
+    // build running concurrently on Dispatchers.IO's thread pool (nothing cancels an in-flight one
+    // before launching the next), and SimpleDateFormat is not thread-safe -- a shared instance here
+    // would be a real, if rare, data-corruption bug, not a style choice.
+    private fun formatClockTime(wallMillis: Long): String =
+        SimpleDateFormat("HH:mm", Locale.US).format(java.util.Date(wallMillis))
+
+    /** "frequencies · tier" — see R-102's line in this package's report for what each half can read today. */
+    private fun frequenciesLabel(frequenciesSeenThisSession: Int): String {
+        val rig = RigStatus.state
+        if (rig is RigStatus.State.Connected) {
+            val fromRig = rig.bands.mapNotNull { it.frequencyHz }.joinToString(" and ") { formatFrequencyMHz(it) }
+            if (fromRig.isNotEmpty()) return fromRig
+        }
+        // "the configured frequency if any" (this package's brief) has no source in
+        // RealCaptureService today -- FR-CFG/FR-RIG are both unbuilt -- so this falls through
+        // straight to a count of frequencies actually seen this session, honestly 0 while nothing
+        // populates TransmissionEntity.frequencyHz (see this package's report).
+        return "$frequenciesSeenThisSession frequencies"
+    }
+
+    private fun formatFrequencyMHz(hz: Long): String = "%.3f".format(hz / 1_000_000.0)
+
+    /** "tier from the shed level for now" (this package's brief) — a placeholder pending FR-TIER's real model. */
+    private fun tierFromShedLevel(): Int = (MAX_TIER - ShedStatus.currentLevel).coerceIn(0, MAX_TIER)
+
+    /**
+     * The second line's degraded replacement (never a second notification): [CaptureState] first
+     * (a real failure/interruption is always the most important fact), then whatever combination
+     * of [ThermalStatus]/[RigStatus]/[StorageForecast] applies, joined the way
+     * `Capture-Notification.dc.html`'s own degraded example does — `"Running warm — tier 2 ·
+     * radio disconnected, frequency stale"`.
+     */
+    private fun degradedReason(): String? {
+        val fromCaptureState = when (val s = CaptureState.state) {
+            is CaptureState.State.Failed -> s.reason
+            is CaptureState.State.Interrupted -> "interrupted: ${s.cause}"
+            CaptureState.State.Capturing, CaptureState.State.Idle -> null
+        }
+        if (fromCaptureState != null) return fromCaptureState
+
+        val reasons = mutableListOf<String>()
+        when (ThermalStatus.state) {
+            is ThermalStatus.State.Warm -> reasons += "Running warm — tier ${tierFromShedLevel()}"
+            is ThermalStatus.State.Hot -> reasons += "Overheating — tier ${tierFromShedLevel()}"
+            is ThermalStatus.State.Nominal -> Unit
+        }
+        if (RigStatus.state is RigStatus.State.Stale) reasons += "radio disconnected, frequency stale"
+        when (StorageForecast.state) {
+            is StorageForecast.State.OneNightLeft -> reasons += "storage: 1 night left"
+            is StorageForecast.State.AtFloor -> reasons += "storage at the floor"
+            is StorageForecast.State.Fine,
+            is StorageForecast.State.ThreeNightsLeft,
+            is StorageForecast.State.NotYetMeasured,
+            -> Unit
+        }
+        return reasons.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
+
+    /**
+     * "38.2 of 60 GB · 16 nights left, or the forecast's honest 'no budget set'" (this package's
+     * brief). FR-STO-3's own budget/retention settings screen (WP10, register R-090) does not
+     * exist yet, so "no budget set" is always true today, not a fallback for a missing
+     * measurement — nights-left is still appended whenever [StorageForecast] has actually measured
+     * one (constitution I: both facts stated, never one silently standing in for the other).
+     */
+    private fun storageLabel(): String {
+        val forecast = StorageForecast.state
+        val gbText = "%.1f GB".format(forecast.audioDirectoryBytes / BYTES_PER_GIB)
+        val nightsLeft = when (forecast) {
+            is StorageForecast.State.Fine -> forecast.nightsLeft
+            is StorageForecast.State.ThreeNightsLeft -> forecast.nightsLeft
+            is StorageForecast.State.OneNightLeft -> forecast.nightsLeft
+            is StorageForecast.State.AtFloor, is StorageForecast.State.NotYetMeasured -> null
+        }
+        return if (nightsLeft != null) {
+            "$gbText · no budget set · ${nightsLeft.toInt().coerceAtLeast(0)} nights left"
+        } else {
+            "$gbText · no budget set"
+        }
+    }
+
+    /**
+     * Always dispatches onto [scope] (Dispatchers.IO) to build the notification, regardless of
+     * which thread calls this — some callers (the "no audio input device" early return in
+     * [startCapture]) run on [onStartCommand]'s own main thread, and Room refuses DAO access there
+     * ([buildNotificationContent] needs [db]). Fire-and-forget: the notification lands a moment
+     * later, never blocking the caller, and always the same [NOTIFICATION_ID] updated in place.
+     */
+    private fun updateNotification(state: CaptureNotificationContent.State) {
         val elapsed = SystemClock.wallMillis() - startedAtWallMillis
-        val content = CaptureNotificationBuilder.build(state, elapsed, transmissionCount)
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(
-            NOTIFICATION_ID,
-            NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle(content.title)
-                .setContentText(content.text)
-                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .setOngoing(true)
-                .build(),
-        )
+        scope.launch {
+            val content = buildNotificationContent(state, elapsed)
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIFICATION_ID, renderNotification(content))
+        }
+    }
+
+    /** R-105: the audio archive's real, on-disk size — `filesDir/audio`, recursively (`audioPath()`'s own root). */
+    private fun audioDirectoryBytes(): Long {
+        val dir = File(filesDir, "audio")
+        if (!dir.isDirectory) return 0L
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
     private fun ensureChannel() {
@@ -477,6 +760,25 @@ public class RealCaptureService : Service() {
          * loudly rather than let a write fail silently underneath the segmenter.
          */
         internal const val STORAGE_FLOOR_BYTES: Long = 100L * 1024 * 1024
+
+        /**
+         * F5 (register R-106): the literal `GapPersister.causeFor` recognises as
+         * `org.ort.data.entity.CaptureGapCause.OS_STOPPED`. Internal, not `private`, so
+         * `RealCaptureServiceUncleanEndGapTest` can assert against it directly rather than
+         * duplicating the string.
+         */
+        internal const val OS_STOPPED_GAP_CAUSE: String = "os stopped: unclean end detected on launch"
+
+        /**
+         * R-102: the explicit component this app's own notification's Open action targets — see
+         * [renderNotification]'s kdoc for why by name, not `::class.java`.
+         */
+        internal const val READER_ACTIVITY_CLASS_NAME: String = "org.ort.app.ui.ReaderActivity"
+
+        /** "tier from the shed level for now" (R-102) — the shed order's own top level (FR-RUN-3). */
+        private const val MAX_TIER: Int = 3
+
+        private const val BYTES_PER_GIB: Double = 1024.0 * 1024.0 * 1024.0
     }
 }
 
@@ -487,6 +789,41 @@ public class RealCaptureService : Service() {
  */
 internal fun storageFloorBreached(freeBytes: Long, floorBytes: Long = RealCaptureService.STORAGE_FLOOR_BYTES): Boolean =
     freeBytes < floorBytes
+
+/**
+ * F7 (register R-104): wraps whatever real Pass B [RealCaptureService.startProcessingLoop]
+ * constructs so [ThermalStatus]'s measured real-time factor is exactly the wall time of a real
+ * pass run over its segment's real audio duration — never invented, never estimated from a batch
+ * average. Deliberately placed here, as a decorator [RealCaptureService] wires in, rather than
+ * inside [CaptureProcessingLoop] or [PassDrainRunner] (the two files this package's brief itself
+ * points at as "where a pass's start/end is known"): neither of those two files is in this
+ * package's file-ownership row (WP11a owns `RealCaptureService.kt`'s wiring, not `:pipeline`'s
+ * general pass-running machinery), so the measurement is taken at the one point already inside
+ * this file's ownership that sees every real pass run — the [Pass] this class constructs and
+ * hands to [CaptureProcessingLoop]. See this package's report for this exact reasoning.
+ *
+ * [durationMs] is looked up fresh per run via [transmissionDao], the one fact [WorkQueueItemEntity]
+ * itself does not carry — a transmission with no measurable duration (not found, or `<= 0`, which
+ * should not happen but is not asserted against here) simply does not contribute a sample, rather
+ * than recording a nonsense infinite or zero real-time factor.
+ */
+internal class ThermalTrackingPass(
+    private val delegate: Pass,
+    private val db: OrtDatabase,
+    private val clock: org.ort.core.Clock = SystemClock,
+) : Pass {
+    override suspend fun run(item: org.ort.data.entity.WorkQueueItemEntity): org.ort.data.PassRunOutcome {
+        val startWallMillis = clock.wallMillis()
+        val outcome = delegate.run(item)
+        val elapsedMillis = (clock.wallMillis() - startWallMillis).coerceAtLeast(0L)
+
+        val durationMs = db.transmissionDao().getById(item.transmissionId)?.durationMs
+        if (durationMs != null && durationMs > 0) {
+            ThermalStatus.recordPassTiming(elapsedMillis.toDouble() / durationMs.toDouble())
+        }
+        return outcome
+    }
+}
 
 /**
  * audit F-005: the exact seam that used to write a fabricated `samplePosition = 0L` into every

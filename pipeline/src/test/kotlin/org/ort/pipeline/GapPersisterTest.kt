@@ -59,4 +59,80 @@ class GapPersisterTest {
         val stored = db.captureGapDao().listBySession("SESSION01").single()
         assertEquals(CaptureGapCause.DEVICE_LOST, stored.cause)
     }
+
+    @Test
+    @Requirement("F-015", "FR-RUN-11", "R-106")
+    fun `F15 a cause naming a call is mapped to CALL`() = runTest {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        val persister = GapPersister(db.captureGapDao(), TestClock())
+
+        val gap = GapRecord(
+            startMonotonicNanos = 0,
+            endMonotonicNanos = 38_000_000_000,
+            startWallMillis = 0,
+            endWallMillis = 38_000,
+            cause = "incoming call took the microphone",
+        )
+        persister.persist("SESSION01", gap)
+
+        assertEquals(CaptureGapCause.CALL, db.captureGapDao().listBySession("SESSION01").single().cause)
+    }
+
+    @Test
+    @Requirement("R-106")
+    fun `a bare read error is mapped to INPUT_LOST, the successor to DEVICE_LOST`() = runTest {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        val persister = GapPersister(db.captureGapDao(), TestClock())
+
+        val gap = GapRecord(
+            startMonotonicNanos = 0,
+            endMonotonicNanos = 1_000_000,
+            startWallMillis = 0,
+            endWallMillis = 1,
+            cause = "read error",
+        )
+        persister.persist("SESSION01", gap)
+
+        assertEquals(CaptureGapCause.INPUT_LOST, db.captureGapDao().listBySession("SESSION01").single().cause)
+    }
+
+    @Test
+    @Requirement("F-005", "R-106")
+    fun `F5 a cause naming an OS stop is mapped to OS_STOPPED`() = runTest {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        val persister = GapPersister(db.captureGapDao(), TestClock())
+
+        val gap = GapRecord(
+            startMonotonicNanos = 0,
+            endMonotonicNanos = 1_000_000,
+            startWallMillis = 0,
+            endWallMillis = 1,
+            cause = "os stopped: unclean end detected on launch",
+        )
+        persister.persist("SESSION01", gap)
+
+        assertEquals(CaptureGapCause.OS_STOPPED, db.captureGapDao().listBySession("SESSION01").single().cause)
+    }
+
+    @Test
+    @Requirement("R-106")
+    fun `a route-mismatch-shaped cause is mapped to ROUTE_LOST -- reserved, unreachable today`() = runTest {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        val persister = GapPersister(db.captureGapDao(), TestClock())
+
+        val gap = GapRecord(
+            startMonotonicNanos = 0,
+            endMonotonicNanos = 1_000_000,
+            startWallMillis = 0,
+            endWallMillis = 1,
+            cause = "route mismatch: expected usb-1, got builtin-mic",
+        )
+        persister.persist("SESSION01", gap)
+
+        assertEquals(CaptureGapCause.ROUTE_LOST, db.captureGapDao().listBySession("SESSION01").single().cause)
+    }
 }

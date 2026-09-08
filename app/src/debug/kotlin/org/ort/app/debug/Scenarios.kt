@@ -8,12 +8,17 @@ import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.dao.CorrectionDao
+import org.ort.data.entity.CaptureGapCause
+import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.capture.StorageForecast
+import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import java.io.File
 
@@ -48,16 +53,16 @@ public object Scenarios {
 
     /**
      * Every scenario name `spec/ui-conformance-plan.md` §E and `design/design-intent.md` need
-     * reachable, plus the facet scenarios this package's brief asked to be checked
-     * (`backlog`/`model-missing`/`storage-warn` are settable from `:app` without touching
-     * `:pipeline`; `thermal`/`rig-lost` are not — see this package's report for the setters each
-     * would need).
+     * reachable. WP11a (register R-104/R-105/R-106) closed the three gaps this list used to note
+     * as unreachable from `:app` — `thermal`/`rig-lost`/`os-stopped` are new; `storage-warn` now
+     * uses [StorageForecast] instead of reusing F6's exhaustion string.
      */
     public val NAMES: List<String> = listOf(
         "empty",
         "first-session",
         "overnight",
         "unclean-end",
+        "os-stopped",
         "gap-call",
         "pass-a-partial",
         "corrected",
@@ -69,6 +74,8 @@ public object Scenarios {
         "backlog",
         "model-missing",
         "storage-warn",
+        "thermal",
+        "rig-lost",
     )
 
     public suspend fun load(context: Context, name: String): LoadResult {
@@ -82,6 +89,7 @@ public object Scenarios {
             "overnight" -> OvernightScenario.overnight(context, db)
             "gap-call" -> OvernightScenario.gapCall(context, db)
             "unclean-end" -> uncleanEnd(context, db)
+            "os-stopped" -> osStopped(context, db)
             "pass-a-partial" -> passAPartial(db)
             "corrected" -> corrected(db)
             "no-audio" -> noAudio(db)
@@ -92,6 +100,8 @@ public object Scenarios {
             "backlog" -> backlog(context, db)
             "model-missing" -> modelMissing(context, db)
             "storage-warn" -> storageWarn(context, db)
+            "thermal" -> thermal(context, db)
+            "rig-lost" -> rigLost(context, db)
             else -> error("unreachable — guarded by the require() above")
         }
     }
@@ -139,17 +149,21 @@ public object Scenarios {
 
     /**
      * Every process-wide capture-facet singleton [org.ort.app.ui.data.ReaderPolling] reads
-     * ([CaptureState], [AsrAvailability], [VadAvailability], [ShedStatus]) reset to their own
-     * honest "not started" default before a scenario applies its own facts — otherwise a facet a
-     * previous scenario set (e.g. `model-missing`'s [AsrAvailability.unavailable]) would leak into
-     * the next scenario loaded in the same process, which is exactly the kind of silent
-     * cross-contamination this simulator exists to prevent.
+     * ([CaptureState], [AsrAvailability], [VadAvailability], [ShedStatus], and — WP11a, register
+     * R-104/R-105 — [ThermalStatus]/[RigStatus]/[StorageForecast]) reset to their own honest "not
+     * started" default before a scenario applies its own facts — otherwise a facet a previous
+     * scenario set (e.g. `model-missing`'s [AsrAvailability.unavailable]) would leak into the next
+     * scenario loaded in the same process, which is exactly the kind of silent cross-contamination
+     * this simulator exists to prevent.
      */
     private fun resetProcessWideFacets() {
         CaptureState.idle(clearSession = true)
         AsrAvailability.reset()
         VadAvailability.reset()
         ShedStatus.reset()
+        ThermalStatus.reset()
+        RigStatus.reset()
+        StorageForecast.reset()
     }
 
     // ---------------------------------------------------------------------------------------
@@ -193,6 +207,48 @@ public object Scenarios {
                 monotonicNanos = 0L,
                 wallMillis = staleWallMillis,
                 samplePosition = 118_000L,
+            ),
+        )
+        return LoadResult(0, 1, id)
+    }
+
+    /**
+     * `os-stopped` — F5, register R-106: the same unclean-end heartbeat [uncleanEnd] writes, plus
+     * the [CaptureGapCause.OS_STOPPED] gap [RealCaptureService][org.ort.pipeline.capture.RealCaptureService]
+     * itself now persists on relaunch (from the last heartbeat to the moment it is detected — never
+     * "reopening" the previous session, a policy the lead has not decided; see this package's
+     * report). Written directly, the same way `overnight`'s own gap rows are, rather than driving
+     * the real service end to end — this scenario proves the *rendering* path (`Fail-Killed`'s gap
+     * list, the log's gap row) is fed real data shaped exactly like the real fix produces.
+     */
+    private suspend fun osStopped(context: Context, db: OrtDatabase): LoadResult {
+        val id = ScenarioFixtures.sessionId("os-stopped")
+        val staleWallMillis = SystemClock.wallMillis() - 6 * 3_600_000L
+        val detectedAtWallMillis = SystemClock.wallMillis()
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                id,
+                startedAt = staleWallMillis - 3_600_000L,
+                endedAt = null,
+                terminationReason = TerminationReason.UNKNOWN,
+            ),
+        )
+        FileHeartbeatStore(File(context.filesDir, "heartbeat.txt")).write(
+            HeartbeatRecord(
+                sessionId = id,
+                monotonicNanos = 0L,
+                wallMillis = staleWallMillis,
+                samplePosition = 118_000L,
+            ),
+        )
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "$id-gap-os-stopped",
+                sessionId = id,
+                startedAt = staleWallMillis,
+                endedAt = detectedAtWallMillis,
+                cause = CaptureGapCause.OS_STOPPED,
+                recoveredAutomatically = false,
             ),
         )
         return LoadResult(0, 1, id)
@@ -499,22 +555,66 @@ public object Scenarios {
     }
 
     /**
-     * `storage-warn` — F6, the storage floor [org.ort.pipeline.capture.RealCaptureService] itself
-     * stops capture at (its `stopForStorageExhaustion()`, 100 MiB at the time of writing — that
-     * constant is `internal` to `:pipeline` and not reachable from here, so this reproduces its
-     * exact wording rather than importing it; if the real floor changes, this scenario's copy
-     * drifts and should be updated alongside it). [CaptureState.failed] is the same call
-     * `RealCaptureService` itself makes, so `Now`/`Capture-Status` read the identical state a real
-     * exhaustion event produces — there is no separate, earlier "warning" signal in `:pipeline`
-     * today (see this package's report).
+     * `storage-warn` — F6/FR-STO-3, register R-105. **Replaces this scenario's earlier misuse of
+     * F6's exhaustion failure string** (`CaptureState.failed(...)`) — capture is genuinely still
+     * running (never `Failed`); the early warning is now [StorageForecast.ThreeNightsLeft], the
+     * real "getting low" state WP11a added, set directly the way [ShedStatus]/[AsrAvailability]
+     * are for the same reason a scenario asserts an exact state rather than reverse-engineering the
+     * byte/time inputs that would produce it.
      */
     private suspend fun storageWarn(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("storage-warn")
         db.sessionDao().insert(
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 90 * 60_000L, endedAt = null),
         )
-        CaptureState.capturing(sessionId)
-        CaptureState.failed("storage exhausted: free space below the 100 MiB floor")
+        ScenarioFixtures.markCapturing(context, sessionId)
+        StorageForecast.set(
+            StorageForecast.State.ThreeNightsLeft(
+                freeBytes = 6L * 1024 * 1024 * 1024, // ~6 GB free
+                audioDirectoryBytes = 38L * 1024 * 1024 * 1024 + (200L * 1024 * 1024), // ~38.2 GB, matching the board
+                nightsLeft = 2.4,
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `thermal` — F7, register R-104. [ThermalStatus] warm with a measured RTF of 0.9
+     * (`Fail-Thermal.dc.html`'s own figure), the same shed level/backlog `backlog` already sets
+     * (F8's board and this one show the same degraded tier together in practice).
+     */
+    private suspend fun thermal(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("thermal")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 70 * 60_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        ShedStatus.update(level = 3, backlog = 112)
+        ThermalStatus.update(osThermalStatus = ThermalStatus.THERMAL_STATUS_MODERATE, realTimeFactor = 0.9)
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `rig-lost` — F9, register R-104. [RigStatus] stale since 30 minutes ago, last known on
+     * 145.230 (`Fail-Rig.dc.html`'s own figures) — the rig module itself (FR-RIG) is unbuilt
+     * (register R-084), so this scenario is the only producer of a `Connected`/`Stale` [RigStatus]
+     * today; [org.ort.pipeline.capture.RealCaptureService]'s own real production call is
+     * [RigStatus.absent] (see that class's kdoc).
+     */
+    private suspend fun rigLost(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("rig-lost")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 5 * 3_600_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        val lastKnown = RigStatus.State.Connected(
+            descriptor = "TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+        )
+        RigStatus.stale(lastKnown, sinceMillis = SystemClock.wallMillis() - 30 * 60_000L)
         return LoadResult(0, 1, sessionId)
     }
 }
