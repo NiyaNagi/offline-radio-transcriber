@@ -32,6 +32,123 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9 · ready rows are TalkBack stops; setup-level scenario)
+
+### (pending) — ui-conformance WP9 · ready rows are TalkBack stops; setup-level scenario
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/ReadyScreen.kt`, `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+(for R-264, as this round's brief again names explicitly), `results/ui-audit/README.md`, and their
+tests — plus two small, unrelated fixes this round's own gate required (see "What changed" below).
+`main` fast-forward merged first (`git merge --ff-only main`, this branch already an ancestor, at
+`894ac29` — "ui-conformance · V7 Accessibility at b94bb5e: R-226 closed; R-260..R-267 filed
+(R-265 halt)"); no rebase, no stash, `gradlew --stop` never used. Addresses the V7 accessibility
+validator's two findings against this row: R-265 (halt) and R-264, read against
+`results/ui-audit/setup-verified/S12-ready-via-main@2x-retry.png` (read with the `Read` tool before
+any fix, per this program's own standing rule) before writing anything.
+
+**Requirements/ACs:** R-265 (halt — FR-A11Y-2, guide §11.2), R-264 (R-227's own follow-up, plan §E).
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) governs R-265's fix: `Rows.kt`
+  (WP2's file) is where `KeyValueRow` should carry this natively — confirmed by reading it before
+  writing this, its own `Row` has neither `Modifier.semantics(mergeDescendants = true)` nor
+  `Modifier.focusable()` — but it is not this row's file to edit this round, so the fix is composed
+  around it, in `ReadyScreen.kt`, exactly as R-122's device-type icons and R-226's marker dot
+  already were, and the gap is reported to WP2 rather than patched in `Rows.kt` directly. Principle
+  I (Uncertainty Is Content) governs R-264's fix and its README rewrite: every claim about what
+  `MainActivity`/`SetupActivity`/`EXTRA_STEP` do or do not do today is stated only after reading the
+  real source, not assumed from the old recipe's intent.
+- **R-265 (halt) — each S12 row is now one merged, focusable semantics node.** Confirmed the root
+  cause first: `KeyValueRow`'s own `Row` carries no `mergeDescendants`/`focusable`, so TalkBack's
+  linear traversal had no accessibility node to land on for any of the five facts — the finding's
+  own words, "TalkBack never reads 'Input, USB Audio Device, verified'," matches exactly.
+  `ReadyScreen`'s own wrapping `Row` (marker + `KeyValueRow`, already there from R-226) now carries
+  `Modifier.focusable()` and `Modifier.semantics(mergeDescendants = true) { contentDescription =
+  readyRowDescription(row) }` — an explicit, built description (`"$label, $value[, $statusText-or-
+  actionLabel]"`) rather than left to automatic child-`Text` merging, the same pattern
+  `SetupScaffold.kt`'s own `NavigationRow` already established (`"$title. $subtitle"`) — producing
+  exactly `"Input, USB Audio Device, verified"` for a verified row, the finding's own quoted string.
+  This changes only semantics merging, never raw touch dispatch: a sighted operator's ordinary tap
+  still only activates the small `Fix`/`Install` text as before (proven by the existing, unmodified
+  `R_080 an amber row's Fix action invokes onAction` test, which still passes — `onNodeWithText
+  ("Fix").performClick()` still resolves to the same callback, forwarded up through the merge
+  exactly as Compose's own accessibility merging documents); a TalkBack user's double-tap after
+  landing on the merged row now correctly reaches the same action.
+- **R-264 — a `setup-level` scenario, and the README recipe rewritten to launch `MainActivity`.**
+  The old recipe launched `SetupActivity` directly; that activity is `android:exported="false"`
+  (confirmed by reading `AndroidManifest.xml` before writing this), so it throws a
+  `SecurityException` on a real device — `setup-verified` alone only reached S07 via S12's own `Fix`
+  row, never from a cold launch. `setupLevel` (new function, `Scenarios.kt`) shares
+  `setup-verified`'s verified-input base (extracted into `verifiedInputStore`, the two scenarios'
+  only real duplication before this) but leaves `levelInBand`/`levelPeakDbfs` at their honest unset
+  defaults, so `SetupStateMachine.stepFor` resumes at `SetupStep.LEVEL` (S07) directly. The
+  README's "Reaching S07/S12" section is rewritten to launch the actually-exported `MainActivity`
+  for both scenarios, and states plainly that `SetupActivity.EXTRA_STEP` — real, and unchanged —
+  has no adb-reachable path today: `MainActivity.route()` does not read or forward any `step` extra
+  to `SetupActivity` (confirmed by reading `MainActivity.kt` before writing this), so the extra
+  remains reachable only from an in-process caller (WP3's `ReaderNavigator`), never a bare `am
+  start`; `setup-level` reaches S07 the honest way instead, through the store's own real gate.
+- **Two small, unrelated fixes this round's own full gate required**, both mechanical, both outside
+  this row's usual files, both confirmed formatting-only before trusting them: (1)
+  `ReaderActivityDestinationSmokeTest.kt` (WP3's file) failed to compile after the merge — a name
+  drift between this row's own prior lint-round typealias (`ReaderComposeRule`) and a later,
+  independent fix on `main` that solved the identical 120-column problem under a different name
+  (`ReaderComposeTestRule`), leaving one stale reference at the `runReaderActivity` parameter type;
+  fixed by renaming that one reference to the name `main` had already standardized on, not by
+  reintroducing a second typealias. (2) `:app:ktlintFormat` (module-wide, since it must run to
+  confirm the lint gate at all) auto-fixed one real, pre-existing `standard:function-signature`
+  violation in `LogViewData.kt` (WP5's file, from this merge) — read the diff before trusting it;
+  purely a body-expression line-break, no logic changed.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.ReadyScreenTest" --tests
+  "org.ort.app.debug.ScenariosTest"` — **57 passing**, zero failures. New tests by name:
+  `ReadyScreenTest.R_265 a verified row announces label, value and status as one merged node`,
+  `R_265 an amber row with a Fix action announces label, value and the action`, `R_265 every row is
+  a real TalkBack traversal stop, not merely merged text` (asserts `SemanticsActions.RequestFocus`
+  is present in the row's own `SemanticsConfiguration`), `R_265 readyRowDescription omits whichever
+  of statusText or actionLabel is absent`; `ScenariosTest.R_264_setup-level seeds a verified input
+  with level not yet measured so stepFor resumes at LEVEL`. One existing test needed a real fix, not
+  just a re-run: `R_226 the full label renders and never collides with the value at font scale 2_0`
+  compared two `onNodeWithText(...)` node bounds that, after R-265's merge, now resolve to the *same*
+  merged row node (trivially equal bounds, proving nothing) — both queries now pass
+  `useUnmergedTree = true` to reach the individual, pre-merge label/value nodes the test actually
+  needs, restoring its original, real assertion.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **1012 PASSED, 0 failed**, BUILD
+  SUCCESSFUL (up from the lint entry's 988 — `main`'s own incoming WP2/WP3/WP5/WP8 work from this
+  merge plus this row's own ~10 new tests).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` (`ReaderActivityDestinationSmokeTest`'s own forked
+  task — see `results/ui-audit/README.md`'s "The JVM unit-test gate" section) — BUILD SUCCESSFUL,
+  every case green, including the one this class's own doc comment used to name as an expected
+  failure pending a WP5 fix landing concurrently — that fix is in this merge.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — clean on the final run; one real detekt
+  `MaxLineLength` fix needed in this row's own new `ReadyScreenTest.kt`, and one real, pre-existing
+  `main`-side ktlint violation fixed via `:app:ktlintFormat` (see "What changed" above for both).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**, all three (this is
+  the first round since the lint entry where the single `build` command itself passes clean,
+  `check`/detekt included — the lint entry's own left-open item, blocked by two unrelated WP8
+  issues, has evidently been resolved by `main`'s own incoming work in this merge).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` now 185 of 419 covered (the two new
+  `@Requirement("R-264")`-tagged tests).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL (ran as part of the `build` invocation above).
+
+**Left open / not done:**
+- **`KeyValueRow` itself still does not merge its semantics or accept focus natively** — the fix
+  above is a per-screen workaround in `ReadyScreen.kt`, not a fix in `Rows.kt`. Every other current
+  or future caller of `KeyValueRow` (`Capture-Status.dc.html`'s own facts, per that component's own
+  doc comment) has the identical accessibility gap until WP2 addresses it there.
+- **`SetupActivity.EXTRA_STEP` remains unreachable from outside the process** (`MainActivity`
+  forwards no `step` extra) — stated as a real, current limitation in the README rewrite, not
+  silently worked around; `setup-level` is the honest alternative for the one case (S07) that
+  actually needed an adb-reachable path.
+- Every register row this entry closes (R-264, R-265) remains Robolectric-verified only, per this
+  program's own rule; the next validator pass on the real device is what actually confirms them.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: log row badges wrap at large font scale; column headers never split)
 
 ### (pending) — ui-conformance WP2 · log row badges wrap at large font scale; column headers never split

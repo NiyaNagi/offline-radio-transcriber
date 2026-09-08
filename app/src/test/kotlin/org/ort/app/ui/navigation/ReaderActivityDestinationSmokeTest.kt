@@ -378,7 +378,7 @@ class ReaderActivityDestinationSmokeTest {
         destination: ReaderDestination,
         sessionId: String? = null,
         settingsScreen: SettingsScreenId? = null,
-        body: (rule: ReaderComposeRule) -> Unit,
+        body: (rule: ReaderComposeTestRule) -> Unit,
     ) {
         val activityRule =
             ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId, settingsScreen))

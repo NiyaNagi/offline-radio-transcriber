@@ -91,10 +91,10 @@ public object Scenarios {
      * R-100) adds `clock-dst`/`usb-permission`/`interrupted-pass`/`reconcile`/`migration-failed`/
      * `asset-swap`/`calibration` — the seven ids with no runtime signal today, driven through
      * `org.ort.app.ui.failures.DebugFailureOverride` (that object's own kdoc says exactly why for
-     * each). `setup-verified` (register R-227, validator pass 2) adds the one scenario this
+     * each). `setup-verified`/`setup-level` (register R-227/R-264) are the two scenarios this
      * registry seeds outside `:data` and the process-wide capture facets — see [setupVerified]'s
-     * own doc comment for why (S05's `SetupStore` gates, not a runtime signal, are what block S07/
-     * S12 from ever being reached on an emulator with no real signal to hear).
+     * and [setupLevel]'s own doc comments for why (S05's `SetupStore` gates, not a runtime signal,
+     * are what block S07/S12 from ever being reached on an emulator with no real signal to hear).
      */
     public val NAMES: List<String> = listOf(
         "empty",
@@ -125,6 +125,7 @@ public object Scenarios {
         "input-verified",
         "input-mismatch",
         "setup-verified",
+        "setup-level",
         "clock-dst",
         "usb-permission",
         "interrupted-pass",
@@ -180,6 +181,7 @@ public object Scenarios {
             "input-verified" -> inputVerified(context, db)
             "input-mismatch" -> inputMismatch(db)
             "setup-verified" -> setupVerified(context)
+            "setup-level" -> setupLevel(context)
             "clock-dst" -> clockDst(context, db)
             "usb-permission" -> usbPermission(context, db)
             "interrupted-pass" -> interruptedPass(context, db)
@@ -1045,11 +1047,19 @@ public object Scenarios {
      * (register R-110's own brief) — this seeds the *same* `org.ort.app.setup` preferences file
      * [SharedPreferencesSetupStore] itself reads and writes, through that real class (never
      * duplicated key names), landing the natural resume point at [SetupStep.READY] (S12) with the
-     * Level row already green — S07 itself is then one real, sanctioned tap away, S12's own
-     * `Fix`/`Install` rows, or `SetupActivity.EXTRA_STEP=LEVEL` (WP9 round 3): with
-     * [SetupSnapshot.setupComplete] left `false`, the natural resume point stays `READY`, and
-     * `LEVEL`'s ordinal sits before it, so the extra is honored (see that constant's own doc
-     * comment for the ordinal-gate rule this relies on).
+     * Level row already green.
+     *
+     * **R-264 (V7 accessibility pass) found the S07 path this row's own doc comment above named
+     * (`Fix`/`Install`, `EXTRA_STEP=LEVEL`) still unreachable from a cold launch**: `SetupActivity`
+     * is `android:exported="false"` (confirmed by reading `AndroidManifest.xml` before writing
+     * this), so the README's old direct-launch recipe threw a `SecurityException` on a real device,
+     * and `MainActivity` (the actually-exported entry point) routes a fully-`setup-verified` state
+     * straight to `READY` — S07 was only reachable by *also* tapping the Level row's `Fix` action
+     * once already on S12, not from a cold launch on its own. [setupLevel] is the fix: the same
+     * verified-input base as this scenario, but [SetupStore.levelInBand] genuinely left unset
+     * (`false`, the honest default — never claiming a level that was never measured), so
+     * `stepFor`'s own next check (`!snapshot.levelInBand -> SetupStep.LEVEL`) resumes there
+     * directly, through `MainActivity`, on a cold launch, no extra tap needed.
      *
      * **Not a substitute for granting the two OS permissions.** `RECORD_AUDIO`/`POST_NOTIFICATIONS`
      * are live [android.content.pm.PackageManager] state, not a preference this scenario can seed —
@@ -1060,6 +1070,34 @@ public object Scenarios {
      * equivalent, exactly as every other scenario that exercises a real screen already assumes.
      */
     private fun setupVerified(context: Context): LoadResult {
+        val store = verifiedInputStore(context)
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.manualFrequencyHz = 145_230_000L
+        store.setupComplete = false
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-level` — R-264 (V7 accessibility pass, register R-260..R-267): the same verified-input
+     * base [setupVerified] seeds, but [SetupStore.levelInBand]/[SetupStore.levelPeakDbfs] are left
+     * at their honest, unset defaults (`false`/`null` — never a fabricated measurement), so
+     * `SetupStateMachine.stepFor` resumes at [SetupStep.LEVEL] (S07) directly, reachable from a
+     * cold `MainActivity` launch with no extra tap — see [setupVerified]'s own doc comment for the
+     * full account of why S07 needed its own scenario rather than only `setup-verified`'s `Fix` row.
+     */
+    private fun setupLevel(context: Context): LoadResult {
+        verifiedInputStore(context)
+        return LoadResult(0, 0, null)
+    }
+
+    /** The one `SetupStore` state [setupVerified] and [setupLevel] share — a real, verified input
+     * selection, welcome already seen, notifications skipped (diagnostic-only — constitution: R-002
+     * never gates capture on it). Neither level, overnight, radio nor `setupComplete` is touched
+     * here; each caller decides those for itself. */
+    private fun verifiedInputStore(context: Context): SharedPreferencesSetupStore {
         val prefs = context.applicationContext.getSharedPreferences(
             SharedPreferencesSetupStore.PREFS_NAME,
             Context.MODE_PRIVATE,
@@ -1072,13 +1110,7 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
-        store.levelInBand = true
-        store.levelPeakDbfs = -14.0
-        store.overnightStepSeen = true
-        store.radioChoice = RadioChoice.NONE
-        store.manualFrequencyHz = 145_230_000L
-        store.setupComplete = false
-        return LoadResult(0, 0, null)
+        return store
     }
 
     // ---------------------------------------------------------------------------------------

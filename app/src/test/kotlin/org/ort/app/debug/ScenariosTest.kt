@@ -662,6 +662,35 @@ class ScenariosTest {
         assertEquals(SetupStep.MICROPHONE, step)
     }
 
+    /**
+     * R-264 (V7 accessibility pass, register R-260..R-267): `setup-verified` alone only reaches S07
+     * (`Setup-Level.dc.html`) via S12's own `Fix` row -- unreachable from a cold `MainActivity`
+     * launch, which is exactly the gap the README's old direct-`SetupActivity`-launch recipe was
+     * covering for (and could not, since that activity is `exported=false`). This proves
+     * `setup-level` lands `stepFor` at `SetupStep.LEVEL` directly, given fully-granted permissions --
+     * the same real decision function `MainActivity`/`SetupActivity` themselves call.
+     */
+    @Test
+    @Requirement("R-264")
+    fun `R_264_setup-level seeds a verified input with level not yet measured so stepFor resumes at LEVEL`() = runTest {
+        Scenarios.load(context, "setup-level")
+
+        val store = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+        )
+        assertTrue(store.inputVerified)
+        assertFalse("the level must be left honestly unmeasured, never fabricated", store.levelInBand)
+        assertNull(store.levelPeakDbfs)
+
+        val fullyGranted = PermissionsState(
+            recordAudioGranted = true,
+            notificationsGranted = true,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+        )
+        val step = SetupStateMachine.stepFor(fullyGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
+        assertEquals(SetupStep.LEVEL, step)
+    }
+
     // -----------------------------------------------------------------------------------------
     // WP11b (register R-100): the seven ids with no runtime signal today, driven through
     // DebugFailureOverride — each scenario's only real job is to set the exact FailurePresentation
