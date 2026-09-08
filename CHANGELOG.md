@@ -775,6 +775,92 @@ uppercase by the tool) left the "Not yet covered" block. `./gradlew build depend
   found"); `.github/workflows/ci.yml`'s `report` job still only runs `coverageMatrix` and uploads
   the artefact without diffing it. This belongs to F-014's owner, not this finding; flagged here
   rather than silently skipped.
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · name the tests that already establish capture-android/capture-api's built capability
+
+**Scope:** `capture-android/src/test/**`, `capture-api/src/test/**`, `results/coverage-matrix.md`.
+No `src/main` changes in either module.
+**Requirements/ACs:** Established here, by rename (`@Requirement` annotation) or by a new test:
+`AC-1`, `FR-CAP-1`, `FR-CAP-5`, `FR-RUN-13`, `FR-SVC-1`, `FR-SVC-2`, `FR-SVC-3`, `FR-SVC-4`,
+`FR-SVC-5c`, `NFR-9`, `NFR-10`. Left uncovered, with reasons below: `FR-CAP-2`, `FR-PLT-2`,
+`FR-PLT-4`, `FR-RUN-14`, `FR-RUN-18`, `FR-SVC-5`, `FR-SVC-6`, `NFR-4a`.
+**What changed:**
+
+- **Constitution Check.** Principle II (Test-Backed Change) is the whole point — "tests are named
+  for the requirement they establish so the coverage matrix is generated rather than maintained" —
+  this finding is exactly that discipline lapsing for one slice. Principle IV (Capture Never
+  Blocks, Never Drops, Never Lies) bears on the two genuinely new tests: FR-CAP-5's retry-with-
+  backoff and FR-RUN-13's mid-session route re-verification are both "never silently continue"
+  guarantees that had code but no test pinning them.
+- **Established by adding ids to an existing `@Requirement` annotation** (no assertion loosened):
+  `AC-1` on `RouteVerifierTest`'s matching-route case; `FR-CAP-1` on `AudioRecordSourceTest`'s two
+  resampler-identity tests (also strengthened with an explicit mono-channel assertion); `FR-SVC-4`
+  and `NFR-10` on `CaptureServiceTest`'s existing AC-5 unclean-end test (also strengthened with an
+  assertion that the report's last-heartbeat time is real, not a placeholder); `FR-SVC-3` on the
+  service's stop-action test; `FR-SVC-5c` on all three `ProveItAnalyzerTest` cases; `NFR-9` on
+  `OemGuidanceResolverTest` and `OemGuidanceTableTest` (confirmed identical in substance to the
+  already-tagged FR-SVC-5a).
+- **Established by a new, real test**, against the existing fakes:
+  - `AC-1`/`FR-CAP-5` (`AudioRecordSourceTest`): a mid-run disconnection (`raiseInterruption`
+    with the adapter refusing to reopen) is surfaced immediately as `CaptureEvent.Interrupted`,
+    retried more than once with backoff (driven via `advanceTimeBy`/`runCurrent` against the
+    virtual clock, `≥3` real `FakeAudioIo.open()` attempts), and never emits `Failed` — the
+    session stays open until the adapter reopens.
+  - `FR-RUN-13` (`AudioRecordSourceTest`): a route change raised *after* the source is already
+    running (not before `start()`, which every existing test used and which cannot exercise the
+    `AudioIoEvent.RouteChanged` branch at all) lands on a mismatch and halts exactly as FR-CAP-3 —
+    this branch of `AudioRecordSource.start()` had no test exercising it before this change.
+  - `FR-SVC-1` (`CaptureServiceTest`): parses `capture-android/src/main/AndroidManifest.xml`
+    directly (Robolectric's shadow `android.jar` for this project's configured SDK throws
+    `NoSuchMethodError` on `ServiceInfo.getForegroundServiceType()`, so `PackageManager` cannot be
+    used here) to confirm the `<service>` declares `android:foregroundServiceType="microphone"`,
+    plus a live check that starting the service posts a foreground notification.
+  - `FR-SVC-2` (`CaptureServiceTest`): the wake lock (`ShadowPowerManager.getLatestWakeLock()`) is
+    held once capture starts and released once the service is destroyed — modelled through
+    `controller.destroy()`, because `cleanStop()` only requests teardown (`stopSelf()`); release
+    happens in `onDestroy()`, matching the real Android service lifecycle, not a bug.
+- **Left uncovered, honestly, not fabricated:**
+  - `FR-CAP-2` (OS enumeration/filtering via real `AudioManager.getDevices`/`AudioDeviceInfo`) —
+    `AndroidAudioIo`'s own doc comment already states this is deliberately left to the physical
+    device; Robolectric cannot construct a real `AudioDeviceInfo`.
+  - `FR-PLT-2` (per-attachment USB permission) — no `UsbManager`/permission-request code exists
+    anywhere in `capture-android` to test; this is audio-adapter capture, not the rig-USB CAT
+    link, and nothing here implements it.
+  - `FR-PLT-4` (functioning fully with notifications denied) — no such branching exists in
+    `capture-android`; this is an `:app`-level onboarding/UI concern.
+  - `FR-RUN-14` (concurrent capture / audio focus so a phone call degrades to a gap) —
+    `AndroidAudioIo`'s doc comment confirms `AudioManager.OnAudioFocusChangeListener` is "not
+    wired yet"; the capability does not exist.
+  - `FR-RUN-18` (UTC + originating offset retained for stored wall-clock times) — capture-android
+    stores `wallMillis`/`monotonicNanos` only; the offset-retention requirement belongs to `:data`
+    entity timestamp fields, not this module.
+  - `FR-SVC-5` (on-launch detection of whether the app is subject to restriction) — only the
+    manufacturer-keyed guidance *content* (FR-SVC-5a, already tested) is built here; the
+    detection/trigger and onboarding flow live in `:app`, untested here.
+  - `FR-SVC-6` (finalise the interrupted session and process backlog on next launch) — capture-
+    android only detects the unclean end (`UncleanEndDetector`); finalisation and backlog
+    reprocessing are `:pipeline`'s job and are not built in this module.
+  - `NFR-4a` (unexpected termination loses at most the in-flight segment) — a segmenter/boundary
+    guarantee that belongs to `:pipeline`; nothing in `capture-android` bounds segment loss.
+
+**Verified:** `./gradlew :capture-android:testDebugUnitTest :capture-api:test --console=plain -q`
+green (all pre-existing tests plus 4 new tests pass; the two new `AudioRecordSourceTest` cases and
+two new `CaptureServiceTest` cases were run and observed failing first — the backoff test failed
+with "must attempt reconnection more than once… got 1" before the virtual-clock driving was
+correct, the manifest test failed with `NoSuchMethodError` on the `PackageManager` approach before
+switching to direct XML parsing, and the wake-lock test failed with "must be released" before
+`controller.destroy()` was added — then passing once each test was made to exercise the real
+behaviour correctly). `./gradlew coverageMatrix` regenerated `results/coverage-matrix.md`; all
+eleven established ids above now appear under "Covered" with the tests listed. `./gradlew build
+dependencyRules --console=plain -q` green (includes detekt, ktlint, all module tests,
+dependency-rule enforcement). `python tools/spec-check/spec_check.py` run and green.
+**Left open / not done:** `coverageMatrixCheck` (named in the standing brief's verification step)
+is not a registered Gradle task on this branch's base commit — `./gradlew tasks` confirms no such
+task exists in this worktree; only `coverageMatrix` (the generator) exists. Verified the
+regenerated matrix directly instead (diffed and grepped for the established ids). The eight ids
+listed as "left uncovered" above are unchanged in the matrix and remain honestly listed as not yet
+covered — none were fabricated as covered.
 
 ---
 
