@@ -108,6 +108,10 @@ are individually green.*
   `REJECTED_TOO_SHORT` segment's staged audio and returning without recording anything; it now
   persists a `REJECTED` row with `rejectionReason = "too_short"` and its FLAC audio retained,
   exactly as FR-SEG-6/AC-72 require, and never enqueues it for Pass B — see CHANGELOG.md.
+  Audit F-005 (2026-09-07) fixed `RealCaptureService.onHeartbeat()` writing a fabricated
+  `samplePosition = 0L` into every heartbeat record; it now reads the session's `Segmenter`'s
+  own `position()` at write time, matching the sample-position provenance the parallel
+  `capture-android.CaptureService` already had — see CHANGELOG.md.
 - [x] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
   done 2026-09-08.
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
