@@ -539,10 +539,14 @@ class FailureScreensTest {
                 )
             }
         }
-        composeTestRule.onNodeWithText("2026.08 · active · this session").assertIsDisplayed()
-        composeTestRule.onNodeWithText("2026.09 · staged · next session").assertIsDisplayed()
-        composeTestRule.onNodeWithText("the default · nothing else to do").assertIsDisplayed()
-        composeTestRule.onNodeWithText("tonight's log ends here").assertIsDisplayed()
+        // Register R-292: the scaffold's content slot is now genuinely height-constrained (never
+        // renders behind the fixed bottom bar at any scroll offset), so content past what the
+        // reduced viewport shows at rest needs a real scroll to reach — the same "content can
+        // always scroll clear" contract R-151/R-123 already established elsewhere in this file.
+        composeTestRule.onNodeWithText("2026.08 · active · this session").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("2026.09 · staged · next session").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("the default · nothing else to do").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("tonight's log ends here").performScrollTo().assertIsDisplayed()
     }
 
     @Test

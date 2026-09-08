@@ -4804,6 +4804,94 @@ stays unwired (unrelated to either fix this round; noted for whoever next touche
 own sub-line, `Fail-Backlog.dc.html`'s own "oldest 19:04 · Pass B ~11 min behind").
 ---
 
+### (pending) — ui-conformance WP11b · action bar reserved before first frame; the real fix this time
+
+**Scope:** `:app` — `ui/failures/FailureActionBarScaffold.kt` and its test
+(`FailureActionBarScaffoldTest.kt`, one new `R_292` test plus an extension to the existing `R_252`
+one), and one existing `FailureScreensTest.kt` assertion updated (`R_148 F21…`) to scroll first now
+that the scaffold's content viewport is genuinely reduced. Follow-up to the commit above, at the
+coordinator's request, after `git merge --ff-only main` (`gradlew --stop` never run). Fixes
+register row R-292 (System validator, V6 pass 3, reopened from R-252, closed against identical
+wording — `migration-failed/F20-pass3-2x-initial.png`/`-afterscroll.png`/`-fullscroll.png`).
+
+**Requirements/ACs:** R-292 (spec); constitution IV (a layout must be correct on the first frame it
+draws — this is the *second* attempt at that same guarantee; see "What changed" for exactly why the
+first one still let real content draw behind the bar).
+
+**What changed:**
+
+- **The R-252 fix was real progress (fixed the measurement-timing race) but not the actual defect
+  — R-292 is that same defect, still open.** `SubcomposeLayout` measuring the bar first and
+  synchronously was correct and stays; what was wrong is *what that measurement fed*. The R-252
+  version turned the bar's height into the scrollable content's own bottom **padding** — but
+  padding *inside* a `verticalScroll` only reserves blank space at the very *end* of the scrollable
+  content's virtual extent. The bar is a fixed overlay, redrawn every frame at a fixed screen
+  position; at *any* scroll offset other than "scrolled all the way past the real content into the
+  padding," the scrollable container's own outer bounds are still the *full* screen height, so
+  whatever real content lays out in the bar's screen region keeps being drawn there, and the bar
+  (placed second, so drawn on top) visually overlaps it. That is exactly what V6 pass 3's three
+  screenshots show: wrong at rest (cold launch, no interaction), wrong after a small scroll, right
+  only once scrolled all the way to the bottom — the register row's own wording, unchanged from
+  R-252's.
+- **The actual fix: the content slot's own *measured height* is now constrained, not just its
+  padding.** After measuring the bar, `FailureActionBarScaffold` now measures the content `Column`
+  with `maxHeight = screenHeight − barHeight` (a genuine `Constraints`, not a guess) — a real
+  `Scaffold`-style layout, per the coordinator's own suggestion. Content physically cannot be
+  placed or drawn in the bar's region at *any* scroll offset, because the layout system never gives
+  it that space to begin with — not "the padding will make room once you scroll there," but "there
+  is no drawable space there at all, ever." Every existing caller
+  (`FailRouteScreen`/`FailStorageHaltScreen`/`FailMigrationScreen`/`FailAssetSwapScreen`) is
+  unchanged — same two-slot `actionBar`/`content` API, one shared fix.
+- **Checked every other `ui/failures/**` screen with a fixed bottom bar, per the coordinator's own
+  list (F1, F5, F12, F16, F19, F20) — only F1/F20 (and F6/F21, not on their list but sharing the
+  same scaffold) actually have this bug class.** F5 (`Fail-Killed`) is a banner with its actions
+  *inside* WP2's `Banner` card, never a separate pinned bar. F12 (`Fail-Lexicon`) is not a screen
+  this package has built at all (`spec/functional-spec.md`'s own F12 row — no `Fail-Lexicon.kt`
+  exists). F16 (`FailUsbScreen`) and F19 (`FailReconcileScreen`) both already put their primary
+  action *inside* the same single scrollable `Column` as the rest of their content — there is no
+  second, independently-pinned bar to overlap anything, so neither needed touching. Confirmed by
+  reading all four files before writing this line, not assumed.
+- **Test: `R_292` reproduces the real bug with the real screen, not a synthetic stand-in.** The
+  earlier `R_252` test used a single short `Text` as content — far too little to ever overflow a
+  viewport, so it could not have caught R-292 at all (confirmed: it passed against both the broken
+  padding-only version and the corrected height-constrained one). The new
+  `R_292 no real content renders behind the fixed bar on the very first frame, cold launch, font
+  scale 2_0` composes the *real* `FailMigrationScreen` with the same four-step fixture the register
+  row's own screenshot shows, at font scale 2.0, with **no** scroll performed first ("cold launch
+  with no interaction," the row's own wording): if the closing paragraph is on screen at rest, its
+  bottom bound must clear the bar's top bound; either way, scrolling to it afterward must also
+  clear the bar (the same "content can always scroll clear" contract R-151/R-123 already establish
+  elsewhere), so the test asserts something concrete regardless of which of the two states the
+  paragraph starts in.
+- **One existing test updated, not weakened:** `R_148 F21 every option row carries its sub-line…`
+  (`FailAssetSwapScreen`, `FailureScreensTest.kt`) asserted several rows `assertIsDisplayed()` with
+  no scroll — this passed only because the *previous*, incorrect full-height-container behavior let
+  content it wasn't yet actually laid out to show (in the Robolectric test window) still count as
+  "on screen." Now that the content viewport is honestly reduced by the bar's real height, the same
+  rows need a real scroll first — `.performScrollTo()` added, matching every other scrolled
+  assertion already in this file; the rows and their copy are unchanged.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.debug.ScenariosTest" --tests
+"org.ort.app.ui.navigation.*" --tests "org.ort.app.ui.ReaderAccessibilityTest"` — BUILD SUCCESSFUL,
+all green, `R_292` and `R_252` both confirmed passing by name. `.\gradlew.bat :app:detekt` and
+`.\gradlew.bat :app:ktlintCheck` — both BUILD SUCCESSFUL, zero issues, run directly (no `subst`
+workaround needed). `.\gradlew.bat build dependencyRules platformGuards` — 1052 tests, 2 failed:
+both `org.ort.app.ui.setup.ReadyScreenTest`'s own `R_265` cases, confirmed pre-existing on `main` at
+`9c3cd7d` by running that suite alone against an unmodified checkout (`git stash` before touching
+anything, `git stash pop` after) — unrelated to `ui/failures`, not this package's row, not fixed
+here; every `ui/failures`/`ui/navigation` test in that same 1052-test run passed.
+`.\gradlew.bat dependencyRules platformGuards` (standalone) — OK. `.\gradlew.bat -p buildSrc test` —
+BUILD SUCCESSFUL. `.\gradlew.bat coverageMatrix`/`coverageMatrixCheck` — 185 of 419 covered, up to
+date (unchanged — R-292 is a register/validator id, not a `spec/functional-spec.md` requirement id,
+so it adds no new coverage-matrix row). `python tools/spec-check/spec_check.py` — OK, 8/8.
+`.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL. Never ran `gradlew --stop`.
+
+**Left open:** the pre-existing, unrelated `ReadyScreenTest`/`R_265` failures on `main`, noted above
+and out of this package's row.
+---
+
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)
 
 ### (pending) — ui-conformance WP2 · highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card
