@@ -32,6 +32,49 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-001)
+
+### d3459d7 — audit F-001 · RealSegmentSink stops fabricating transmission clock fields
+
+**Scope:** `:pipeline` — `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`
+(`RealCaptureService.startCapture`, `RealSegmentSink`); new
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/RealSegmentSinkTest.kt`.
+
+**Requirements/ACs:** FR-RUN-15, FR-RUN-16, FR-RUN-18; constitution I (never fabricate a
+healthy-looking value) and "never report a number without its fold/machine/provider" read here as
+"never persist a timestamp that was not actually derived from the clock model."
+
+**What changed:** `results/audit-2026-09-07.md` finding F-001 recorded that every real
+transmission `RealSegmentSink` persisted carried `startedAtUtc = 0L`, `endedAtUtc = null`,
+`monotonicStartNanos = 0L` and `utcOffsetMinutes = 0` — literal placeholders, not measurements —
+plus a duplicated `preRollMs = 1200`/`postRollMs = 400` that could silently drift from the
+`SegmentConfig` actually driving the `Segmenter`. `RealCaptureService.onStartCommand` now anchors
+`SystemClock.wallMillis()`, `SystemClock.monotonicNanos()` and `SystemClock.utcOffsetMinutes()`
+together, once, at session start, and builds `:core`'s `SampleClock` from that anchor at
+`FrameSpec.SAMPLE_RATE`. `RealSegmentSink` takes that `SampleClock` plus the same `SegmentConfig`
+instance as constructor parameters (no second clock invented); on `close()` it calls
+`sampleClock.timestampsAt(record.startSample)` for `startedAtUtc`/`monotonicStartNanos`/
+`utcOffsetMinutes`, `sampleClock.wallMillisAt(record.endSample)` for `endedAtUtc`, and reads
+`preRollMs`/`postRollMs` off `segmentConfig` instead of restating the defaults.
+
+**Verified:** `./gradlew :pipeline:test` (Robolectric/JVM only — no device). New test
+`RealSegmentSinkTest.a closed segment carries real wall clock and monotonic start derived from
+its sample position` (`FR-RUN-15`) constructs `RealSegmentSink` against an in-memory `OrtDatabase`
+with a `TestClock`-derived `SampleClock` anchored away from zero, closes one `SPEECH` segment
+starting 3 seconds into the session, and asserts the persisted `TransmissionEntity`'s
+`startedAtUtc`/`endedAtUtc`/`monotonicStartNanos`/`utcOffsetMinutes`/`preRollMs`/`postRollMs`
+match values derived from the anchor and `record.startSample`/`endSample` — not `0`/`null`/
+defaults. Confirmed failing first: against the pre-fix constructor/body the file did not compile
+(`Too many arguments for RealSegmentSink(...)`), the correct failure shape once the test asserts
+the new derived fields the old constructor has no way to supply. Full gate:
+`./gradlew build dependencyRules` and `python tools/spec-check/spec_check.py`, both green.
+
+**Left open / not done:** Not verified on a real device — Robolectric/JVM only, as for the rest of
+this smoke-test wiring. Two adjacent issues in the same file were left untouched per the finding's
+scope: the too-short-segment deletion path (`staged.delete()` on `REJECTED_TOO_SHORT`, which
+contradicts "real product retains it") and the heartbeat's use of a placeholder `0L` sample
+position, both owned by other audit agents.
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture

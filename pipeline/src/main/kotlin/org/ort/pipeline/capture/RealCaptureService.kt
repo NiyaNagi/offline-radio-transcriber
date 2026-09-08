@@ -25,6 +25,7 @@ import org.ort.capture.android.service.CaptureNotificationBuilder
 import org.ort.captureapi.CaptureEvent
 import org.ort.core.AttributionState
 import org.ort.core.PassId
+import org.ort.core.SampleClock
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
@@ -81,6 +82,8 @@ public class RealCaptureService : Service() {
     private var sessionId: String = ""
     private var transmissionCount = 0
     private var startedAtWallMillis = 0L
+    private var startedAtMonotonicNanos = 0L
+    private var startedAtUtcOffsetMinutes = 0
     private lateinit var heartbeatStore: FileHeartbeatStore
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -106,7 +109,12 @@ public class RealCaptureService : Service() {
         if (source != null) return START_STICKY
         sessionId = intent?.getStringExtra(EXTRA_SESSION_ID) ?: Ulid.generate().value
         wakeLock?.let { if (!it.isHeld) it.acquire(WAKE_LOCK_TIMEOUT_MILLIS) }
+        // Anchored together, once, at session start (FR-RUN-15/16): every transmission's
+        // timestamps are derived from this anchor plus its sample position, never from a fresh
+        // wall-clock read at persist time (constitution I).
         startedAtWallMillis = SystemClock.wallMillis()
+        startedAtMonotonicNanos = SystemClock.monotonicNanos()
+        startedAtUtcOffsetMinutes = SystemClock.utcOffsetMinutes()
         startForeground(NOTIFICATION_ID, notification(0))
         startCapture()
         return START_STICKY
@@ -158,25 +166,7 @@ public class RealCaptureService : Service() {
                 ),
             )
 
-            val sink = RealSegmentSink(filesDir, sessionId, db, queue) {
-                transmissionCount++
-                onHeartbeat()
-            }
-            // Real Silero VAD when a model is installed, the RMS-energy stand-in otherwise --
-            // never silently one pretending to be the other (build-plan P12; see VadAvailability).
-            val vadResult = RealVadProvider.provide(filesDir)
-            val vadModel = when (vadResult) {
-                is VadProvisionResult.Available -> {
-                    VadAvailability.real()
-                    vadResult.vad
-                }
-                is VadProvisionResult.Unavailable -> {
-                    VadAvailability.stub(vadResult.reason)
-                    EnergyVadModel()
-                }
-            }
-            val vad = SileroVad(vadModel)
-            val segmenter = Segmenter(SegmentConfig(), vad, sink)
+            val segmenter = buildSegmenter(db, queue)
 
             var lastHeartbeatAt = 0L
             audioSource.start().collect { event ->
@@ -209,6 +199,38 @@ public class RealCaptureService : Service() {
             // or an unrecoverable failure. Never leave the surface claiming "Capturing".
             if (CaptureState.isCapturing) CaptureState.failed("capture stopped unexpectedly")
         }
+    }
+
+    /**
+     * FR-RUN-15/16/18: the session's [SampleClock] is anchored once, here, from the same
+     * wall/monotonic/offset triple captured together at session start -- never re-read per
+     * segment. Real Silero VAD when a model is installed, the RMS-energy stand-in otherwise --
+     * never silently one pretending to be the other (build-plan P12; see VadAvailability).
+     */
+    private fun buildSegmenter(db: OrtDatabase, queue: WorkQueue): Segmenter {
+        val segmentConfig = SegmentConfig()
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = startedAtMonotonicNanos,
+            anchorWallMillis = startedAtWallMillis,
+            anchorUtcOffsetMinutes = startedAtUtcOffsetMinutes,
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, segmentConfig) {
+            transmissionCount++
+            onHeartbeat()
+        }
+        val vadResult = RealVadProvider.provide(filesDir)
+        val vadModel = when (vadResult) {
+            is VadProvisionResult.Available -> {
+                VadAvailability.real()
+                vadResult.vad
+            }
+            is VadProvisionResult.Unavailable -> {
+                VadAvailability.stub(vadResult.reason)
+                EnergyVadModel()
+            }
+        }
+        return Segmenter(segmentConfig, SileroVad(vadModel), sink)
     }
 
     /**
@@ -336,6 +358,8 @@ internal class RealSegmentSink(
     private val sessionId: String,
     private val db: OrtDatabase,
     private val queue: WorkQueue,
+    private val sampleClock: SampleClock,
+    private val segmentConfig: SegmentConfig,
     private val onSegmentPersisted: () -> Unit,
 ) : SegmentSink {
 
@@ -368,16 +392,20 @@ internal class RealSegmentSink(
                     return record
                 }
                 val transmissionId = "$sessionId-${record.id.index}"
+                // FR-RUN-15/16/18: derived from the session anchor plus this segment's sample
+                // position on the sample-accurate timeline -- never a fresh wall-clock read here,
+                // which would silently drift from when the audio actually happened.
+                val timestamps = sampleClock.timestampsAt(record.startSample)
                 val entity = TransmissionEntity(
                     id = transmissionId,
                     sessionId = sessionId,
                     threadId = null,
-                    startedAtUtc = 0L,
-                    endedAtUtc = null,
+                    startedAtUtc = timestamps.startedAtUtcMillis,
+                    endedAtUtc = sampleClock.wallMillisAt(record.endSample),
                     durationMs = (record.endSample - record.startSample) * 1000 / FrameSpec.SAMPLE_RATE,
                     audioFormat = "flac/16k/mono",
-                    preRollMs = 1200,
-                    postRollMs = 400,
+                    preRollMs = segmentConfig.preRollMs,
+                    postRollMs = segmentConfig.postRollMs,
                     frequencyHz = null,
                     frequencyProvenance = "unknown",
                     mode = null,
@@ -391,8 +419,8 @@ internal class RealSegmentSink(
                     processingState = TransmissionState.CAPTURED,
                     rejectionReason = null,
                     samplePosition = record.startSample,
-                    monotonicStartNanos = 0L,
-                    utcOffsetMinutes = 0,
+                    monotonicStartNanos = timestamps.monotonicStartNanos,
+                    utcOffsetMinutes = timestamps.utcOffsetMinutes,
                     calibrationId = null,
                     executionProvider = null,
                 )
