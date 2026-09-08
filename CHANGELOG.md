@@ -32,6 +32,96 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP4 · search-unavailable scenario)
+
+### e902844 — ui-conformance WP4 · search-unavailable scenario, `Retry` genuinely recovers
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (WP4's own row: new
+`search-unavailable` scenario, `NAMES` entry, `load()` dispatch, `resetProcessWideFacets()`
+addition); new `app/src/test/kotlin/org/ort/app/debug/SearchUnavailableFixtureTest.kt` (WP4's
+own row); `results/ui-audit/README.md` scenario table row (WP4's own row). **One minimal,
+flagged, out-of-row touch:** `app/src/main/kotlin/org/ort/app/ui/data/SearchViewData.kt`
+(WP7's file — see "Left open" below for why and for WP7's review). A `git merge --ff-only main`
+(`be98bcb`) preceded this unit; no conflicts.
+
+**Requirements/ACs:** register — `Search-Unavailable.dc.html`'s amber
+`search-unavailable-banner`, the field's own "Not applied" cue, and `Retry`, none of which any
+scenario had ever made reachable before this round. No FR/AC/D/R id was cited for this board by
+the coordinator's own instruction; "none new" beyond that register item.
+
+**What changed:**
+
+*Constitution Check.* Principle VI ("never report a number without its fold/machine/provider",
+generalised here to "never simulate a state the UI presents as real") is the one that bears
+directly: `Search-Unavailable`'s banner must reflect `SearchPolling.search`'s own real
+degrade/recover computation, not a hand-authored UI flag that never touches the code path the
+board claims to reflect. Principle III ("never delete quietly") is why the override is one-shot
+rather than sticky — a scenario that left the banner permanently up even after `Retry`'s own
+second call succeeded would be silently lying about recovery.
+
+- **The exact state forced.** A new one-shot `DebugSearchOverride` object
+  (`SearchViewData.kt`), modelled on the existing `DebugFailureOverride`
+  (`ui/failures/DebugFailureOverride.kt`, WP11b) and `DebugLexiconImportOverride`
+  (`ui/data/ModelsViewData.kt`) debug-override-receiver pattern: `@Volatile private var pending:
+  Boolean`, gated by the same `isDebugBuild` test seam, set by
+  `forceNextTextSearchUnavailable()` (the scenario's own call), and consumed by
+  `consumeForcedUnavailable()` — `true` at most once per call to the setter, `false` in any
+  non-debug build regardless of `pending`. `SearchPolling.search()` now checks
+  `params.text != null && DebugSearchOverride.consumeForcedUnavailable()` *before* its existing
+  try/catch and, when true, returns `buildResult(..., textSearchUnavailable = true)` — the
+  **exact same result shape and branch** the genuine fts5-missing exception handler already
+  produces, not a parallel UI-only flag. Because the check is consumed on read, the very next
+  `search()` call (i.e. `Retry`) falls through to the real query and genuinely recovers. A
+  filters-only search (`params.text == null`) never consults the override at all, since it never
+  touches `transcript_fts` either way.
+- **The scenario.** `search-unavailable` (`Scenarios.kt`) calls the existing `searchCorpus(db)`
+  seeding (the same fourteen park-activation transcripts `search-corpus` seeds) and then calls
+  `DebugSearchOverride.forceNextTextSearchUnavailable()`. Added to `NAMES`, `load()`'s `when`,
+  and to `resetProcessWideFacets()` (`DebugSearchOverride.clear()`), so a pending override never
+  leaks into whatever scenario loads next — the same cross-contamination guard every other
+  process-wide facet already gets.
+- **A real SQL-level break was tried first and rejected.** The first design dropped
+  `transcript_fts`'s own shadow tables (`transcript_fts_data`/`_idx`/`_docsize`/`_config`) via
+  raw SQL, reasoning `CREATE VIRTUAL TABLE IF NOT EXISTS` would leave the corruption in place.
+  A safety test written *before* committing to this design and run against real
+  `BundledSQLiteDriver` SQLite (Robolectric shares the exact driver production uses — see
+  `OrtDatabase.create`'s own kdoc) proved it catastrophic:
+  `android.database.SQLException: Error code: 11, message: vtable constructor failed:
+  transcript_fts`, thrown from `OrtDatabase.ensureFtsIndex` — because that function's own
+  `'rebuild'` step runs unconditionally on **every** `OrtDatabase.create()` call app-wide (not
+  just on first open), corrupting the shadow tables breaks the fts5 vtable's own *construction*,
+  not merely a later query against it, so every subsequent `OrtDatabase.create()` call anywhere
+  in the app — not just Search — would crash outright. This is why the override-flag design was
+  used instead. Documented here and in both new/changed files' own kdoc so no future
+  scenario-writer repeats it.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.*" --rerun` — 69
+tests, all passing, including the 5 new `SearchUnavailableFixtureTest` cases (seeding parity with
+`search-corpus`, genuine first-call degrade, genuine `Retry`/second-call recovery with real
+result rows, filters-only search unaffected, and no leak into a later-loaded scenario) and every
+pre-existing `org.ort.app.debug` test (no regression). `.\gradlew.bat :app:ktlintCheck
+:app:detekt` — clean (one `MaxLineLength` finding in the new test file caught and fixed before
+this run). `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules, no new edges.
+`.\gradlew.bat :app:assembleDebug` — succeeds. `python tools\spec-check\spec_check.py` — all 8
+checks PASS. `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — 191 of 419
+covered, up to date (this register item carries no FR/AC id, so the count is unchanged by this
+round). Per the coordinator's own load-policy correction mid-round, this used the scoped gate
+(`:app:testDebugUnitTest --tests`, not the whole-project `build`) — no device/emulator was used;
+both ports were busy (5554 validator, 5556 WP2 bisect) for the whole round, so every claim above
+is Gradle/Robolectric-verified, not device-verified.
+
+**Left open / not done:** `SearchViewData.kt` is WP7's file, not WP4's own row. It was touched
+anyway, deliberately and minimally (one new object placed immediately before `SearchPolling`,
+plus a four-line guard clause inside `SearchPolling.search()` itself) because (a) no existing
+real signal already exists there to key off, (b) the safer real-corruption alternative was
+empirically proven catastrophic app-wide rather than Search-scoped, and (c) the coordinator's own
+instruction explicitly named the debug-override-receiver pattern as a sanctioned third option,
+which necessarily requires a hook inside the gated file. Flagged here for WP7's own review. No
+validator screenshot was taken this round (no free device); a validator should confirm
+`search-unavailable`'s banner/`Retry` on-device on the next pass.
+
+---
+
 ## 2026-09-08 (ui-conformance data: busy timeout; processed tier per record)
 
 ### (pending) — ui-conformance data · busy timeout; processed tier per record

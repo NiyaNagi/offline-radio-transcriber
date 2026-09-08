@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import org.ort.app.ui.data.DebugLexiconImportOverride
+import org.ort.app.ui.data.DebugSearchOverride
 import org.ort.app.ui.failures.AssetSwapOption
 import org.ort.app.ui.failures.AssetSwapViewState
 import org.ort.app.ui.failures.CalibrationViewState
@@ -118,6 +119,7 @@ public object Scenarios {
         "frequency-change",
         "field-tier1",
         "search-corpus",
+        "search-unavailable",
         "backlog",
         "model-missing",
         "storage-warn",
@@ -175,6 +177,7 @@ public object Scenarios {
             "frequency-change" -> FrequencyChangeFixtures.frequencyChange(db)
             "field-tier1" -> fieldTier1(context, db)
             "search-corpus" -> searchCorpus(db)
+            "search-unavailable" -> searchUnavailable(db)
             "backlog" -> backlog(context, db)
             "model-missing" -> modelMissing(context, db)
             "storage-warn" -> storageWarn(context, db)
@@ -367,6 +370,10 @@ public object Scenarios {
         // function already exists to prevent for every other process-wide facet.
         DebugLexiconImportOverride.clear()
         ReprocessStatus.reset()
+        // round-eleven tooling: a pending search-unavailable override must not leak into whatever
+        // scenario loads next, the same cross-contamination concern every process-wide facet reset
+        // here already exists to prevent.
+        DebugSearchOverride.clear()
     }
 
     // ---------------------------------------------------------------------------------------
@@ -807,6 +814,40 @@ public object Scenarios {
             }
         }
         return LoadResult(transmissionCount, nights, primary)
+    }
+
+    /**
+     * `search-unavailable` — coordinator-reported (round-eleven tooling): the amber
+     * `Search-Unavailable.dc.html` board (`search-unavailable-banner`, the field's own "Not
+     * applied" cue, `Retry`) has never been reachable — no scenario ever put
+     * [org.ort.app.ui.data.SearchPolling.search]'s real fts5-unavailable degrade path
+     * ([org.ort.app.ui.data.SearchResult.textSearchUnavailable]) into its `true` branch.
+     *
+     * A **real SQL-level break of `transcript_fts` was tried first and rejected** — read and
+     * proved unsafe by running it, not assumed: [org.ort.data.OrtDatabase.create]'s own
+     * `ensureFtsIndex` touches `transcript_fts` unconditionally on every single call (register
+     * R-204's own `'rebuild'` step), so corrupting its shadow tables survives past that self-heal
+     * and breaks the fts5 virtual table's own *construction* — every later `OrtDatabase.create()`
+     * call anywhere in the app, not just Search, then fails outright
+     * (`vtable constructor failed: transcript_fts`, the real exception a throwaway Robolectric test
+     * against real `BundledSQLiteDriver` SQLite produced before this scenario took its current
+     * shape). That is catastrophic, not a Search-only degrade, so this scenario instead uses
+     * [org.ort.app.ui.data.DebugSearchOverride] — the exact same debug-override-receiver pattern
+     * [org.ort.app.ui.failures.DebugFailureOverride] already established for six failure boards
+     * with no real signal (WP11b's own file) and [DebugLexiconImportOverride] established for F12 —
+     * see that object's own kdoc (`app/src/main/kotlin/org/ort/app/ui/data/SearchViewData.kt`,
+     * WP7's file — the one, minimal, coordinator-anticipated touch outside this package's own row
+     * this scenario needed; flagged in this package's own report for WP7 to review) for exactly why
+     * a flag, not real corruption. One-shot, not sticky: the *first* free-text search after this
+     * scenario loads genuinely degrades; `Retry` (which only ever calls `search()` again) genuinely
+     * recovers to real results on its second call — the "index was rebuilding, now it is ready"
+     * story `Search-Unavailable.dc.html`'s own `Retry` action tells, proven end to end rather than
+     * left permanently broken.
+     */
+    private suspend fun searchUnavailable(db: OrtDatabase): LoadResult {
+        val result = searchCorpus(db)
+        DebugSearchOverride.forceNextTextSearchUnavailable()
+        return result
     }
 
     /**

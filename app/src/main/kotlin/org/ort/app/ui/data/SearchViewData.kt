@@ -219,6 +219,58 @@ public data class SearchResult(
 )
 
 /**
+ * `search-unavailable` (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, WP4's own row)'s
+ * entry point for forcing [SearchPolling.search]'s real fts5-unavailable degrade path
+ * ([SearchResult.textSearchUnavailable]) — the exact same debug-override-receiver pattern
+ * [org.ort.app.ui.failures.DebugFailureOverride] already established for six failure boards with
+ * no real signal (WP11b's own file, see its own kdoc) and [DebugLexiconImportOverride] established
+ * for F12 (this file's own sibling, `ModelsViewData.kt`).
+ *
+ * **Why a flag, not real corruption of `transcript_fts`.** A real SQL-level break was tried first
+ * and rejected: [org.ort.data.OrtDatabase.create]'s own `ensureFtsIndex` touches `transcript_fts`
+ * unconditionally on every single call it makes (an fts5 `'rebuild'`, once the virtual table's own
+ * `CREATE VIRTUAL TABLE IF NOT EXISTS` step succeeds — register R-204), so any schema-level
+ * corruption of its shadow tables survives past that self-heal and breaks the fts5 virtual table's
+ * own *construction*, not merely a query against it — every later `OrtDatabase.create()` call
+ * anywhere in the app, not just Search, then fails outright (`vtable constructor failed:
+ * transcript_fts`, confirmed directly against real `BundledSQLiteDriver` SQLite in this package's
+ * own Robolectric test before this object existed, not assumed from FTS5's own documentation).
+ * [consumeForcedUnavailable] is one-shot rather than a sticky flag specifically so `Retry` — which
+ * only ever calls [SearchPolling.search] again — genuinely recovers to real results on its second
+ * call, the same "index was rebuilding, now it is ready" story `Search-Unavailable.dc.html`'s own
+ * `Retry` action tells.
+ *
+ * **Read gated on `BuildConfig.DEBUG`**, same as every sibling override in this codebase: a release
+ * build must never consult this even in the already-impossible case that something set it.
+ */
+public object DebugSearchOverride {
+
+    @Volatile
+    private var pending: Boolean = false
+
+    /** Test seam (see class kdoc) — production code never assigns this. */
+    @Volatile
+    internal var isDebugBuild: () -> Boolean = { org.ort.app.BuildConfig.DEBUG }
+
+    /** The scenario simulator's own entry point (debug-sourceset-only caller — see class kdoc). */
+    public fun forceNextTextSearchUnavailable() {
+        pending = true
+    }
+
+    public fun clear() {
+        pending = false
+    }
+
+    /** [SearchPolling.search]'s own read — consumes the pending override so it fires at most once
+     * per [forceNextTextSearchUnavailable] call. `false` outright in any non-debug build. */
+    public fun consumeForcedUnavailable(): Boolean {
+        if (!isDebugBuild() || !pending) return false
+        pending = false
+        return true
+    }
+}
+
+/**
  * The real read path for the Search destination (build-plan P15, FR-UI-3) — over
  * [org.ort.data.dao.SearchDao], reads through [OrtDatabase] directly (never through
  * [org.ort.app.ui.data.ReaderPolling]'s own query wrappers — those are WP4's; only the shared
@@ -232,6 +284,14 @@ public object SearchPolling {
         facetFilter: SearchFacetFilter,
     ): SearchResult {
         val db = OrtDatabase.create(context.applicationContext)
+        // register (round-eleven tooling): DebugSearchOverride's own one-shot forced-unavailable
+        // check, ahead of the real query — see that object's own kdoc for why a flag, not real
+        // corruption of transcript_fts. Consulted only when there is real free text to degrade
+        // (a filters-only search never touches transcript_fts either way, forced or real).
+        if (params.text != null && DebugSearchOverride.consumeForcedUnavailable()) {
+            val entities = rawSearch(db, params, text = null)
+            return buildResult(context, entities, facetFilter, textSearchUnavailable = true)
+        }
         return try {
             val entities = rawSearch(db, params, params.text)
             buildResult(context, entities, facetFilter, textSearchUnavailable = false)
