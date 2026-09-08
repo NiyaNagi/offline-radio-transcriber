@@ -1,6 +1,7 @@
 package org.ort.app.ui.screens
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -136,6 +137,15 @@ public fun LogContent(
     }
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
     var sheetState by remember { mutableStateOf<LogFilterSheetViewState?>(null) }
+
+    // R-333 (Log half — `OrtNavHost`'s own host `BackHandler`, WP3's, closes the drawer and pops
+    // drill-ins, but has no idea this sheet exists; register: "the host simply has no `BackHandler`
+    // for the generic drill-in/sheet/drawer states"). `LogFilterSheet` is a plain composable, not a
+    // `ModalBottomSheet` (which would intercept back on its own) — without this, system back while
+    // the sheet is open fell through to the host and popped Log itself, one level too far.
+    // `enabled = sheetOpen` so this handler only claims back while the sheet is actually showing;
+    // the host's own handler (and the Activity's default finish) still apply otherwise.
+    BackHandler(enabled = sheetOpen) { sheetOpen = false }
 
     if (sessionId != null) {
         LaunchedEffect(sessionId, quickFilter, selection) {

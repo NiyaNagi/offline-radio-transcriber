@@ -10492,6 +10492,166 @@ name a different pair for the same over again.
   reaches `LogRowViewState.callsign` correctly, so a further regression would be render-side, not
   this package's mapper.
 
+### (pending) — ui-conformance WP5 · Log gap count, rejected reason/duration, inherited-line copy and link (R-330/R-331/R-332)
+
+**Scope:** `ui/data/LogViewData.kt`, `ui/data/ThreadViewData.kt`, `ui/data/TransmissionDetail.kt`,
+`ui/screens/ThreadDetailScreen.kt`, and their tests (`LogViewDataTest`, `LogPollingTest`,
+`ThreadViewDataTest`, `ThreadDetailScreenTest`) — three V3-pass-3 findings, all this package's own row.
+
+**Requirements/ACs:** R-330, R-331 (list half; WP6 owns the detail-title half), R-332 (register.md).
+
+**Constitution Check.** Principle I (Uncertainty Is Content): R-332's method word ("by voice"/"by
+callsign") and R-331's short reason are both read from real, already-recorded fields —
+`Attribution.sourceTransmissionId`/`.corrected`, and the six real rejection rule tokens — never
+guessed; every fallback (unresolvable source, unrecognised rule token, no record at all) stays
+honest rather than fabricating a plausible-looking label. Principle VII (text, not colour, carries
+meaning): R-332's link is real color+font styling, not a second, invisible-to-non-sighted-users-only
+affordance — the whole sentence stays one reachable, readable, tappable text either way.
+
+**What changed, by row:**
+
+- **R-330 (`LogItemsMapper.filterSheetState`'s `matchingCount`).** A gap is not an over (domain
+  vocabulary — "Transmission (one keying, the atomic unit)... Over (its UI synonym)"; a not-listening
+  gap is neither). The CTA's own total dropped `+ (if (selection.showGaps) gapsCount else 0)` —
+  checking "Not-listening gaps" no longer inflates "Show N overs"; the gap rows themselves still
+  interleave into the list exactly as before, unaffected.
+- **R-331, list half.**
+  - New `LogItemsMapper.shortReasonFor(rejectionReason)` — the REASON column's own short human
+    phrase ("squelch tail", "hallucination", "too short", "repeated text", "no-speech probability",
+    "compression ratio"), read verbatim from `Log-Rejected.dc.html`'s own five example rows (the
+    sixth, `COMPRESSION_RATIO`, has no example on that board; its own short phrase continues that
+    style). Deliberately a *different*, terser mapping than `whyFor`'s `rejectionCategoryProse`
+    (unchanged — the register: "the human why-line beneath is right"). `RejectedRow`
+    (`ui/components/Rows.kt`, WP2's) already renders `"rejected · $reason".uppercase()`; only what
+    `reason` itself carries changed.
+  - `ReaderTransmissionViewStateMapper.durationLabel` gained sub-second precision — "0.4 s" below a
+    second (whole-second rounding was silently dropping a 0.4 s rejected segment's own duration to
+    "0 s"), unchanged "38 s"/"1 m 55 s" behaviour from a second up. `Log-Rejected.dc.html`'s own
+    static mockup literally writes the unspaced "0.4s", but the register's own R-331 text asks for
+    "0.4 s" with a space — this app's one established convention (R-249), not that one mockup's
+    literal, kept.
+- **R-332 (`ThreadGroupingMapper.reasoningFor`/new `reasoningLinkTimeFor`, `ThreadDetailScreen`'s
+  `ThreadDetailOverRow`).**
+  - The per-over reasoning line no longer exposes the raw ULID ("inherited from transmission
+    01M21...") — it names the source over's own time instead ("inherited by voice from 02:16:02"),
+    the same time `sourceTimeLabel` now carries as its own field on `ThreadDetailOverViewState` for
+    the UI to style.
+  - The method word is read from real, already-recorded fields, not invented: a real
+    `sourceTransmissionId` only ever comes from `Attribution.inferred`'s own voiceprint-match
+    construction (functional-spec §4's own row: INFERRED is "attributed by voiceprint cluster
+    match" — the *only* mechanism it documents) — "by voice". `Attribution.corrected` with no source
+    is exactly `Attribution.withCorrection`'s own shape (a human typed or picked a callsign; no
+    source, no score) — "by callsign", with nothing to link to (honest — there is no source
+    transmission to open).
+  - `ThreadDetailScreen.kt`'s new `reasoningAnnotatedString(text, linkTime)` (internal, unit-testable
+    without rendering Compose — the same pattern `Rows.kt`'s `logRowTranscriptStyle` established)
+    styles the trailing time run mono/green (guide §6.7: "if it acts, it looks like it acts") inside
+    the *same* `Text`/same clickable region already established — the existing 44dp tap target and
+    `onOpenSource` behaviour are unchanged; only the visual affordance and the copy are new.
+
+**Verified:**
+- Read R-330, R-331, R-332 in `results/ui-audit/register.md` in full, the cited screenshots
+  (`overnight/L02-filter-pass3.png`, `overnight/L02-filter-pass3@2x.png`,
+  `overnight/L05-rejected-pass3.png`, `overnight/F04-rejected-detail-pass3.png`,
+  `overnight/T02-thread-detail-pass3.png`, `overnight/T02-thread-detail-pass3@2x.png`), and
+  `design/canvas/Log-Rejected.dc.html`/`Thread-Detail.dc.html` (the source of the exact REASON
+  phrases and the link styling) via the Read tool, before starting.
+- `git merge --ff-only main` — `Updating eccebfa..fa0a0a4, Fast-forward`; `git merge-base
+  --is-ancestor HEAD main` exit 0 before merging.
+- **Load policy change mid-round** (the coordinator's message, main's gate having stalled an hour
+  under many worktrees running the whole-project build at once): switched from `build
+  dependencyRules platformGuards` to the scoped gate below for the rest of this and future rounds.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.LogViewDataTest" --tests
+  "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.data.ThreadViewDataTest" --tests
+  "org.ort.app.ui.screens.ThreadDetailScreenTest" --tests "org.ort.app.ui.screens.LogScreenTest"` —
+  BUILD SUCCESSFUL, every test `PASSED` (13s).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean.
+- `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 191 covered ->
+  results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (191
+  covered of 419)`.
+- New/changed tests, all `PASSED`: `LogPollingTest` (+1: `R_330` — a real Room-backed gap and two
+  transmissions, "Show N overs" proven to hold at 2 whether the gap toggle is checked or not) ·
+  `LogViewDataTest` (+2: `R_331_reason` — all six rule tokens' short phrases plus the bare-reason,
+  no-record and unrecognised-token fallbacks, wired through `buildRejectedFocus`; `R_331_duration` —
+  sub-second and whole-second `durationLabel` values, wired through the same) · `ThreadViewDataTest`
+  (+4: `R_332_copy` — a real ULID source that resolves ("by voice from <time>", ULID absent from the
+  text), an unresolvable source ("by voice", no link), a human correction ("by callsign", no link),
+  and the honest no-source/no-correction fallback) · `ThreadDetailScreenTest` (+2: `R_332_affordance`
+  — the rendered sentence stays one reachable text while `reasoningAnnotatedString` is proven,
+  unit-level, to style exactly the trailing time run in `OrtColors.accentGreen`/`OrtType.mono` and to
+  fall back to fully-plain text on a `null` or mismatched link time).
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- R-331's detail-title half (`F04-rejected-detail-pass3.png` — "REJECTED" alone, no elaboration) is
+  WP6's file (`TransmissionDetailScreen.kt`/its mapper), not touched here.
+
+### (pending) — ui-conformance WP5 · Log filter sheet claims system back (R-333, Log half)
+
+**Scope:** `ui/screens/LogContent.kt` and a new test file, `LogContentBackHandlerTest.kt`.
+
+**Requirements/ACs:** R-333, Log half only (register.md — WP3 owns the host's own `BackHandler`;
+`design-intent.md` §0).
+
+**Constitution Check.** Principle II (Test-Backed Change): the new test is a genuine regression
+guard, not a green-by-construction one — verified by reverting the fix, confirming the test fails
+(`assertDoesNotExist` on the still-open sheet), then restoring it and confirming it passes again,
+the same discipline every `Saver`/regression-guard test in this package has shipped with.
+
+**What changed:**
+- `LogContent`'s own `BackHandler(enabled = sheetOpen) { sheetOpen = false }`, placed beside the
+  `sheetOpen`/`sheetState` declarations. Root cause: WP3's `OrtNavHost` host `BackHandler` closes the
+  drawer and pops drill-ins, but has no idea this composable's own L02 filter sheet exists —
+  `LogFilterSheet` is a plain composable, not a `ModalBottomSheet` that would intercept back on its
+  own — so a system back press while the sheet was open fell through to the host and popped Log
+  itself, one level too far. `enabled = sheetOpen` means this handler only claims back while the
+  sheet is actually showing; the host's own handler (and the Activity's default finish) still apply
+  the rest of the time.
+- New `LogContentBackHandlerTest.kt` (a dedicated file, not a case added to the existing
+  `LogAndThreadContentActivityTest`): that file's own doc comment records why a real, non-`null`
+  `sessionId` case must not share a class with one that keeps `sessionId = null` — an uncancelled
+  session-tied polling loop bleeding into a later test in the same Robolectric suite run. `R_333_log_sheet_back`
+  hosts `LogContent` inside a real `ComponentActivity`, opens the sheet (taps "Filter", waits for
+  the real poll to resolve), dispatches back through the real `composeTestRule.activity.onBackPressedDispatcher`
+  (not a fake), and asserts the sheet closed while Log itself is still showing.
+
+**Verified:**
+- `git merge main` (not `--ff-only` — `409d3a2` was not yet an ancestor of main at merge time, per
+  the coordinator's own "queued to merge" framing) — one real conflict, `results/coverage-matrix.md`
+  (a generated file); resolved by taking main's version and letting `coverageMatrix` regenerate it
+  fresh against the merged tree in the gate below. Every other file (including `CHANGELOG.md`)
+  auto-merged cleanly. `python tools\spec-check\spec_check.py` confirmed no unresolved conflict
+  markers remain anywhere.
+- **Reproduced first**: ran the new test against the code without the `BackHandler` — failed exactly
+  as expected (`assertDoesNotExist` found the sheet's own "Filter the log" title still present after
+  the back dispatch). Restored the fix; re-ran; passed.
+- Scoped gate (the coordinator's own standing load-policy change from the prior round — main's full
+  `build` stalled an hour under many worktrees running it at once):
+  - `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.LogContentBackHandlerTest"
+    --tests "org.ort.app.ui.screens.LogAndThreadContentActivityTest" --tests
+    "org.ort.app.ui.screens.LogScreenTest" --tests "org.ort.app.ui.data.LogViewDataTest" --tests
+    "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.data.ThreadViewDataTest" --tests
+    "org.ort.app.ui.screens.ThreadDetailScreenTest"` — BUILD SUCCESSFUL, every test `PASSED`.
+  - `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean.
+  - `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+  - `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+  - `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+  - `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 191 covered ->
+    results\coverage-matrix.md` (unchanged from the merge — confirms the conflict resolution above
+    left the matrix accurate).
+  - `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (191
+    covered of 419)`.
+- New test, `PASSED`: `LogContentBackHandlerTest.R_333_log_sheet_back`.
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- R-333's other three reproduction points (D01 opened from an L01 row, the rejected detail from L05,
+  the open drawer on Now) are WP3's own host-level `BackHandler` — not this package's file.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)

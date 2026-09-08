@@ -21,6 +21,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.DrillInHeader
@@ -181,7 +185,11 @@ private fun ThreadDetailOverRow(over: ThreadDetailOverViewState, onOpen: () -> U
         val sourceId = over.sourceTransmissionId
         if (sourceId != null) {
             Text(
-                text = over.reasoning,
+                // R-332: the source over's own time renders as a mono/green link (guide §6.7 —
+                // "if it acts, it looks like it acts"); the rest of the sentence stays plain faint
+                // prose. Both runs sit in the one `Text`/one clickable region already established,
+                // so the existing 44dp tap target and `onOpenSource` behaviour are unchanged.
+                text = reasoningAnnotatedString(over.reasoning, over.sourceTimeLabel),
                 style = OrtType.subLine,
                 color = OrtColors.textFaint,
                 modifier = Modifier
@@ -201,6 +209,27 @@ private fun ThreadDetailOverRow(over: ThreadDetailOverViewState, onOpen: () -> U
                 color = OrtColors.textFaint,
                 modifier = Modifier.padding(start = 62.dp, top = 4.dp),
             )
+        }
+    }
+}
+
+/**
+ * R-332: [text] with its trailing [linkTime] substring (if any, and if [text] genuinely ends with
+ * it) styled mono/green — `Thread-Detail.dc.html`'s "inherited by voice from `02:16:02`" link.
+ * Falls back to plain (unstyled) [text] whenever [linkTime] is `null` or the two disagree, rather
+ * than styling the wrong span or crashing on a caller's mismatch. `internal`, not `private` — a
+ * plain function over ordinary data classes (`AnnotatedString`/`SpanStyle`), directly unit-testable
+ * without rendering Compose at all (the same pattern `Rows.kt`'s `logRowTranscriptStyle` already
+ * established, for the same reason: a rendered *colour* isn't reliably verifiable via this host's
+ * Robolectric setup, but the pure decision that produces it is).
+ */
+internal fun reasoningAnnotatedString(text: String, linkTime: String?): AnnotatedString {
+    if (linkTime == null || linkTime.isEmpty() || !text.endsWith(linkTime)) return AnnotatedString(text)
+    val splitAt = text.length - linkTime.length
+    return buildAnnotatedString {
+        append(text.substring(0, splitAt))
+        withStyle(SpanStyle(color = OrtColors.accentGreen, fontFamily = OrtType.mono)) {
+            append(linkTime)
         }
     }
 }

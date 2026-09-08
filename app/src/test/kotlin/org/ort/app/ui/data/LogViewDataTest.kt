@@ -347,6 +347,64 @@ class LogViewDataTest {
         assertTrue(why != null && !why.contains("TOO_SHORT"))
     }
 
+    @Test
+    fun `R_331_reason the list REASON column reads the human short reason, never the raw rule id`() {
+        // `Log-Rejected.dc.html`'s own six example rows, read verbatim -- never the raw
+        // `"$rule: $detail"` record `whyFor`'s own elaboration reads from.
+        assertEquals("too short", LogItemsMapper.shortReasonFor("TOO_SHORT: segment is 120 ms, below the 250 ms floor"))
+        assertEquals("squelch tail", LogItemsMapper.shortReasonFor("VAD_NO_SPEECH: squelch tail, 0.4 s"))
+        assertEquals(
+            "no-speech probability",
+            LogItemsMapper.shortReasonFor("NO_SPEECH_PROB: no_speech_prob=0.94 exceeds ceiling=0.6"),
+        )
+        assertEquals("repeated text", LogItemsMapper.shortReasonFor("REPETITION: verbatim repeat of the prior over"))
+        assertEquals("hallucination", LogItemsMapper.shortReasonFor("BLOCKLIST: thank you for watching"))
+        assertEquals(
+            "compression ratio",
+            LogItemsMapper.shortReasonFor("COMPRESSION_RATIO: compression ratio=2.65 exceeds ceiling=2.40"),
+        )
+
+        // A bare short reason with no "$rule: " prefix at all is already the short reason.
+        assertEquals("squelch tail", LogItemsMapper.shortReasonFor("squelch tail"))
+        // Nothing recorded at all is honest, not a guessed reason.
+        assertEquals("no reason recorded", LogItemsMapper.shortReasonFor(null))
+        // An unrecognised rule token falls back to the raw record rather than a guessed short reason.
+        assertEquals(
+            "SOME_FUTURE_RULE: a detail this mapping has never seen",
+            LogItemsMapper.shortReasonFor("SOME_FUTURE_RULE: a detail this mapping has never seen"),
+        )
+
+        // Wired through to the dedicated Rejected view's rows.
+        val focus = LogItemsMapper.buildRejectedFocus(
+            listOf(
+                detail(
+                    id = "TX9",
+                    processingState = TransmissionState.REJECTED,
+                    rejectionReason = "VAD_NO_SPEECH: squelch tail, 0.4 s",
+                ),
+            ),
+        )
+        assertEquals("squelch tail", focus.single().reason)
+    }
+
+    @Test
+    fun `R_331_duration a sub-second rejected segment never rounds down to 0 s`() {
+        assertEquals("0.4 s", ReaderTransmissionViewStateMapper.durationLabel(400L))
+        assertEquals("0.9 s", ReaderTransmissionViewStateMapper.durationLabel(900L))
+        assertEquals("0.0 s", ReaderTransmissionViewStateMapper.durationLabel(0L))
+        // At or beyond a second, unchanged whole-second behaviour.
+        assertEquals("1 s", ReaderTransmissionViewStateMapper.durationLabel(1_000L))
+        assertEquals("4 s", ReaderTransmissionViewStateMapper.durationLabel(4_200L))
+
+        val focus = LogItemsMapper.buildRejectedFocus(
+            listOf(
+                detail(id = "TX9", processingState = TransmissionState.REJECTED, rejectionReason = "squelch tail")
+                    .copy(durationMs = 400L),
+            ),
+        )
+        assertEquals("0.4 s", focus.single().durationLabel)
+    }
+
     // -- R-042 filtering ------------------------------------------------------------------------
 
     @Test
