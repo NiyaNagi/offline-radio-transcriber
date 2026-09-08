@@ -175,7 +175,8 @@ are individually green.*
   F-017 is closed — see CHANGELOG's second audit F-017 entry.
 - [x] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
   `:data`)* — done 2026-09-08. FR-UI-6 (one-tap correction, Q8's tiers), FR-UI-8 (the inspection
-  surface, honestly empty until a future `:pipeline` change writes lattice/candidate rows), and
+  surface — was honestly empty pending a `:pipeline` change; that change landed 2026-09-07 as
+  audit F-009, `DataPassBResultSink` now writes lattice/candidate rows, see CHANGELOG), and
   FR-OBS-4 (labelled-sample capture per `docs/reference/labelling-protocol.md`) — see
   CHANGELOG.md for the CORRECTED-lock enforcement and the module-boundary substitution for "search
   the lexicon".

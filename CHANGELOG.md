@@ -32,6 +32,49 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-009)
+
+### (pending) — audit F-009 · Pass B now persists the phonetic lattice and every ranked candidate, so the inspection surface is no longer permanently empty
+
+**Scope:** `:pipeline` only — `pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`;
+new test `pipeline/src/test/kotlin/org/ort/pipeline/passb/DataPassBResultSinkTest.kt`.
+**Requirements/ACs:** FR-UI-8, FR-LEX-12, constitution I ("every machine conclusion MUST be
+inspectable — the lattice, the candidates, each prior's contribution").
+**What changed:** `DataPassBResultSink.record` wrote the transcript and the attribution only —
+`PassBResult.lattice` and `.ranked` never reached `:data`'s `phonetic_lattice`/`callsign_candidate`
+tables, so `CatalogDao.latticesFor`/`candidatesFor` (which `app/.../ui/data/ReaderPolling.kt` and
+`InspectionSurface.kt` already read) were permanently empty — P16 recorded this as blocked on a
+`:pipeline` change and it is now unblocked. The sink now persists, in the same
+`db.withTransaction { }` as the transcript/attribution write: every entry of `PassBResult.ranked`
+as a `CallsignCandidateEntity` (rank = list index, `score` = `RankedCandidate.totalScore`,
+`ituPrefix`/`ituCountry` from the candidate's `ItuAllocation`, `priorBreakdown` as a
+name→logOdds map built from every `PriorContribution`, `grammarValid = true` — `CallsignGrammar`
+only ever emits structurally valid candidates — `databaseHit` read honestly off the "database"
+prior's own contribution rather than threading a new signal through `PassBResult`, and `selected`
+set for the one candidate matching a `CONFIRMED` attribution's station id), and `PassBResult.lattice`
+(when non-null) as a `PhoneticLatticeEntity`, its `unitsBlob` a lossless hand-rolled JSON array of
+slots (`startMs`/`endMs`/`alts[]`, each alt's unit name and log-probability) — `unitsBlob` is
+documented as an opaque blob owned by the writer, so no `:data` change was needed. Both entities
+are `@Insert`-only with a fresh ULID per call, so re-running Pass B for the same transmission adds
+a second lattice/candidate set instead of overwriting the first (constitution III: nothing is
+deleted quietly) — no new "supersede" mechanism was added because none of `FR-UI-8`/`FR-LEX-12`
+calls for one; every version stays reachable via `latticesFor`/`candidatesFor`.
+**Verified:** on a Windows JVM (JDK 17.0.20.101, Robolectric — no device). `DataPassBResultSinkTest`
+cases `FR_UI_8_the_ranked_candidate_list_is_persisted...`, `FR_LEX_12_the_phonetic_lattice_is_persisted...`
+and `FR_LEX_12_a_second_run_for_the_same_transmission_adds_rather_than_replaces` were seen to fail
+first (`expected:<2> but was:<0>` etc. — nothing had been written), then made to pass by the fix
+above; a fourth case confirms a `Rejected` outcome still persists neither. `./gradlew :pipeline:test`
+(all green), then `./gradlew build dependencyRules` and `python tools/spec-check/spec_check.py`
+(both green).
+**Left open / not done:** `databaseHit` is derived from the "database" prior's contribution sign
+rather than a dedicated field on `PassBResult`/`RankingContext` threaded through — correct for
+every prior shipped today (`DatabasePresencePrior`'s clamp is `(+1.0, -0.3)`, so the sign always
+distinguishes hit from miss/cold), but a future prior named `"database"` with a different
+convention would silently break this; worth a dedicated field if that prior's contract ever
+changes. Real per-prior-ablation cross-checking (whether the stored `priorBreakdown` values match
+what a `withoutPrior` re-rank would show) is not exercised here — only the plumbing from
+`RankedCandidate.contributions` into the stored map is.
+
 ## 2026-09-07 (audit — F-002)
 
 ### (pending) — audit F-002 · the status surface now shows the real shed level and backlog, or says "Not measured" — never a fabricated "Nominal"
