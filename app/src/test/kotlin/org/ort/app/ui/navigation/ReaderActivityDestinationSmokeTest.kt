@@ -34,6 +34,9 @@ import org.robolectric.RobolectricTestRunner
  * receiver-type usages under ktlint's line-length limit without wrapping generics awkwardly. */
 private typealias ReaderComposeTestRule = AndroidComposeTestRule<ActivityScenarioRule<ReaderActivity>, ReaderActivity>
 
+/** Round 5's helpers were written against this shorter name; both spellings name the same rule type. */
+private typealias ReaderComposeRule = ReaderComposeTestRule
+
 /**
  * R-129 (V3 Reader validation @3e2d4ee, `results/ui-audit/register.md`): the drawer's own report
  * — "Robolectric did not catch it because no `SaveableStateRegistry` is installed under
