@@ -30,7 +30,7 @@ public class MigrationTest {
     )
 
     @Test
-    @Requirement("AC-53")
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
     public fun migration_from_the_v1_fixture_preserves_audio_and_superseded_transcripts() {
         val dbName = "migration-test-db"
         val v1 = helper.createDatabase(dbName, 1)
@@ -85,7 +85,7 @@ public class MigrationTest {
      * the migration, and the new table is immediately usable through [OrtDatabase.shedEventDao].
      */
     @Test
-    @Requirement("AC-53")
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
     public fun migration_from_v1_to_v2_preserves_existing_rows_and_adds_the_shed_event_table() {
         val dbName = "migration-test-db-v2"
         val v1 = helper.createDatabase(dbName, 1)

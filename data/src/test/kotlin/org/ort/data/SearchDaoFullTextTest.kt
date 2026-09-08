@@ -72,7 +72,7 @@ public class SearchDaoFullTextTest {
     )
 
     @Test
-    @Requirement("FR-UI-3")
+    @Requirement("FR-UI-3", "FR-STO-1")
     public fun `full-text search returns a transmission by a word in its transcript`(): Unit = runTest {
         assumeTrue(
             "fts5 module unavailable under this Robolectric host SQLite build (confirmed: " +
