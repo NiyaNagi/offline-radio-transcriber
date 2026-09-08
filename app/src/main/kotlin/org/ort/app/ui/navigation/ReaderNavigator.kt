@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import org.ort.app.ui.setup.SetupActivity
+import org.ort.app.ui.setup.SetupStep
 
 /**
  * A navigation handle hoisted out of [OrtNavHost] (ui-conformance-plan WP3, round 3) so code
@@ -44,21 +45,19 @@ public class ReaderNavigator internal constructor(
 
     /**
      * "Choose another input" (F3/F16 — route mismatch, USB permission denied) and "Set the
-     * frequency by hand" both name Setup's `Input` step as their real destination, but
-     * **`SetupActivity` exposes no entry point for landing on a specific step** (confirmed by
-     * reading `ui/setup/SetupActivity.kt` before writing this) — its `internal companion object`
-     * carries no intent factory, and the step it opens on is derived entirely from
-     * [org.ort.app.ui.setup.SetupStateMachine.stepFor]'s read of already-stored setup state. Both
-     * of these actions fire *during a running session* — meaning setup is already marked
-     * complete — so that state machine would hand straight back to `MainActivity` and finish
-     * before the operator sees anything; launching `SetupActivity` here is a documented no-op in
-     * exactly that case, not a working "choose another input" flow. Reported in full in this
-     * package's CHANGELOG/report rather than silently accepted; `SetupActivity` would need a new
-     * public entry point (an intent extra naming a step, mirroring [ReaderActivity]'s own
-     * `EXTRA_DESTINATION`) to make this real.
+     * frequency by hand" both name Setup's `Input` step as their real destination. WP9 merged
+     * `SetupActivity.EXTRA_STEP` for exactly this (ui-conformance-plan WP9, round 3 — confirmed by
+     * reading `ui/setup/SetupActivity.kt`'s own doc comment before wiring this, which names this
+     * exact call site): the requested step is honored only when the store's own gates before it are
+     * already satisfied, so this reliably reaches `Input` once setup has completed at least that far
+     * (true for both actions above, which only fire *during a running session*) and otherwise falls
+     * back to `SetupStateMachine`'s ordinary resume point rather than skipping ahead of an unmet
+     * gate — never a way around a verification the guide requires.
      */
     public fun openSetupInput() {
-        context.startActivity(Intent(context, SetupActivity::class.java))
+        context.startActivity(
+            Intent(context, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, SetupStep.INPUT.name),
+        )
     }
 }
 

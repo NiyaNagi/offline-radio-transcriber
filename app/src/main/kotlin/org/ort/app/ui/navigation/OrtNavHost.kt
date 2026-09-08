@@ -317,6 +317,19 @@ private fun NavHostBody(
     Column(modifier = layout.modifier) {
         val drillInIds = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId)
         val isDrillIn = drillInIds.any { it != null }
+        // ui-conformance WP3 round 4 (R-129 smoke coverage found this, real at the time): this host
+        // used to skip its own header for `SETTINGS` because `SettingsRootScreen` drew a second,
+        // duplicate one — the same double-header defect R-016 already fixed once for the four real
+        // drill-ins. **Superseded, not re-added**: register R-130 (System validator, landed in the
+        // same merge that brought this file's own `contentTopPadding` change) fixed the identical
+        // finding from the *other* side — `SettingsRootScreen.kt`'s own doc comment now states
+        // plainly that it draws no header at all, "`OrtNavHost`'s `NavHostBody` already renders one
+        // for the whole `SETTINGS` destination... before dispatching to `SettingsContent`". Keeping
+        // both fixes after that merge left `SETTINGS` with *zero* headers — `R_129_SETTINGS_composes
+        // _and_survives_recreation`'s own `recreate()` case is what caught it, timing out waiting for
+        // "Open navigation" to ever exist. `SETTINGS` is an ordinary destination again, exactly like
+        // every other non-drill-in one; the two fixes cannot both stand, and the later, more specific
+        // one (`ui/settings/**`'s own file, stating outright what it now expects the host to do) wins.
         if (!isDrillIn) {
             // R-003/R-004/R-015: drawer icon, live dot + elapsed while a session is capturing,
             // search icon — no title, the destination content below draws its own (`Main.dc.html`'s

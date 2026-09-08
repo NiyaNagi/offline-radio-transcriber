@@ -302,6 +302,29 @@ Seeded screens: `now` (the landing screen after `ScenarioReaderActivity` launche
 populated — see `run-set.ps1`'s own doc comment for why the rest are deliberately absent rather
 than faked.
 
+## The JVM unit-test gate (register R-129)
+
+This validator's own V3 pass found `Log` crashing on entry (`LogContent.kt`'s `rememberSaveable`
+with no `Saver` — register R-129, `register.md`) *only once a real `Activity` was involved*: every
+JVM-side test up to that point composed the reader's screens through `createComposeRule()`, which
+installs no real `SaveableStateRegistry`, so nothing on the JVM side ever hit the same crash a real
+device did. `org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest` closes that gap — one
+real `Activity`, launched and `recreate()`d, per destination and drill-in — but real `Activity`
+launches this numerous are heavier than anything else in this suite: left inside the same JVM worker
+`:app:testDebugUnitTest` reuses for its other ~900 tests, they could leave that worker's Compose
+test environment unable to reach idle for whatever test happened to compose *next*, unrelated to the
+code under test (see that class's own KDoc for the full account). `app/build.gradle.kts` now runs it
+as its own Gradle task instead, `smokeTestDebugUnitTest` — the same classpath/test classes/JVM
+argument providers as `testDebugUnitTest`, excluded from that task, forked into its own JVM worker.
+Both tasks are part of `check`/`build`, so `./gradlew build` (this repo's own top-level gate command,
+per `AGENTS.md`) still runs every one of this class's cases; a reviewer confirming R-129 stays fixed
+(or checking this validator's own findings are covered) needs both:
+
+```
+./gradlew :app:testDebugUnitTest
+./gradlew :app:smokeTestDebugUnitTest
+```
+
 ## Verified
 
 A real run of `scenario.ps1 -Port 5554 -Name overnight` followed by
