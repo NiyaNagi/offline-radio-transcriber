@@ -61,6 +61,9 @@ public fun CaptureStatusScreen(
     liveBar: LiveBarViewState? = null,
     onStop: () -> Unit = {},
     onOpenLive: () -> Unit = {},
+    // design-intent N04 → N06: the Level row opens the level meter. Defaulted so every existing
+    // caller (this screen's own tests included) keeps compiling unchanged.
+    onOpenLevel: () -> Unit = {},
 ) {
     var confirmingStop by remember { mutableStateOf(false) }
 
@@ -105,7 +108,13 @@ public fun CaptureStatusScreen(
 
             SectionHeader(label = "Audio", modifier = Modifier.padding(top = OrtSpacing.lg))
             KeyValueRowWithDot("Input", state.input, "capture-status-input")
-            KeyValueRowWithDot("Level", state.level, "capture-status-level")
+            KeyValueRowWithDot(
+                "Level",
+                state.level,
+                "capture-status-level",
+                onClick = onOpenLevel,
+                onClickDescription = "Open level meter",
+            )
             KeyValueRowWithDot("Radio", state.radio, "capture-status-radio")
 
             SectionHeader(label = "Processing", modifier = Modifier.padding(top = OrtSpacing.lg))
@@ -138,7 +147,17 @@ public fun CaptureStatusScreen(
 }
 
 @Composable
-private fun KeyValueRowWithDot(key: String, facts: KeyValueFacts, testTagValue: String, modifier: Modifier = Modifier) {
+private fun KeyValueRowWithDot(
+    key: String,
+    facts: KeyValueFacts,
+    testTagValue: String,
+    modifier: Modifier = Modifier,
+    // N04 → N06 (design-intent): only the Level row is tappable today — a real 44dp target with a
+    // Role.Button and its own description, not the row's own value/sub-line description doing
+    // double duty as an affordance (guide §6.7: "if it acts, it looks like it acts").
+    onClick: (() -> Unit)? = null,
+    onClickDescription: String? = null,
+) {
     val description = buildString {
         append(key)
         append(": ")
@@ -157,8 +176,20 @@ private fun KeyValueRowWithDot(key: String, facts: KeyValueFacts, testTagValue: 
         value = facts.value,
         subLine = facts.subLine,
         modifier = modifier
+            .then(
+                if (onClick != null) {
+                    Modifier
+                        .heightIn(min = 44.dp)
+                        .clickable(role = Role.Button, onClickLabel = onClickDescription, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            )
             .testTag(testTagValue)
-            .semantics(mergeDescendants = true) { contentDescription = description },
+            .semantics(mergeDescendants = true) {
+                contentDescription = onClickDescription?.let { "$description. $it" } ?: description
+                if (onClick != null) role = Role.Button
+            },
         trailingMarker = facts.trailingDot?.let { tone ->
             {
                 Row(

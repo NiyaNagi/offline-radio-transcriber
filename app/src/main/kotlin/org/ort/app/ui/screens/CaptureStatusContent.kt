@@ -13,6 +13,8 @@ import kotlinx.coroutines.delay
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.data.CaptureStatusMapper
 import org.ort.app.ui.data.CaptureStatusViewState
+import org.ort.app.ui.data.LevelViewState
+import org.ort.app.ui.data.LevelViewStateMapper
 import org.ort.app.ui.data.LiveBarPolling
 import org.ort.app.ui.data.ReaderPolling
 import org.ort.core.SystemClock
@@ -28,38 +30,62 @@ import org.ort.pipeline.capture.VadAvailability
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
 
+private enum class CaptureStatusSubScreen { NONE, LEVEL_METER }
+
 /**
  * The Capture destination's polling wrapper (ui-conformance-plan WP4, R-031/R-032/R-034/R-035/
- * R-038) — reachable from the drawer's Capture row once WP3 dispatches
- * `ReaderDestination.CAPTURE` here (see this package's report: `ReaderDestination.kt`'s
- * `hasScreen = false` and the nav host's `PlaceholderScreen` fallback are both WP3's file, out of
- * this package's row).
+ * R-038/R-039) — reachable from the drawer's Capture row (`OrtNavHost.kt`, WP3, dispatches
+ * `ReaderDestination.CAPTURE` here — confirmed post-merge, R-035 closed).
+ *
+ * Owns an internal "which sub-screen" state for `Level-Meter.dc.html` (design-intent N04 → N06),
+ * the same pattern [StationDetailContent] (WP8) uses for its own drill-ins: tapping the Level row
+ * shows [LevelMeterScreen] full-screen over this same destination rather than a separate drawer
+ * entry (N06 is never a standalone destination — see that screen's own kdoc), polled at the same
+ * cadence as the status; its `DrillInHeader` back returns here.
  *
  * [sessionId] `null` (no active or prior session) renders the idle facts honestly rather than
  * polling a session that does not exist — the same rule [NowContent] follows.
  */
 @Composable
 public fun CaptureStatusContent(context: Context, sessionId: String?, modifier: Modifier = Modifier) {
+    var sub by remember { mutableStateOf(CaptureStatusSubScreen.NONE) }
     var state by remember { mutableStateOf(idleCaptureStatus()) }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
+    var levelState by remember { mutableStateOf(currentLevelViewState()) }
 
     if (sessionId != null) {
         LaunchedEffect(sessionId) {
             while (true) {
                 state = ReaderPolling.captureStatus(context, sessionId)
                 liveBar = if (CaptureState.isCapturing) LiveBarPolling.current(context, sessionId) else null
+                // R-039: read alongside the status, at the same 2 s cadence — LevelStatus is a
+                // process-wide holder (like every other capture signal here), not session-scoped,
+                // so it is safe (and cheap) to sample every tick regardless of which sub-screen is
+                // showing, rather than starting a second poll loop when the meter opens.
+                levelState = currentLevelViewState()
                 delay(POLL_INTERVAL_MILLIS)
             }
         }
     }
 
-    CaptureStatusScreen(
-        state = state,
-        modifier = modifier,
-        liveBar = liveBar,
-        onStop = { stopCapture(context) },
-        onOpenLive = {},
-    )
+    when (sub) {
+        CaptureStatusSubScreen.LEVEL_METER ->
+            LevelMeterScreen(
+                state = levelState,
+                modifier = modifier,
+                onBack = { sub = CaptureStatusSubScreen.NONE },
+            )
+
+        CaptureStatusSubScreen.NONE ->
+            CaptureStatusScreen(
+                state = state,
+                modifier = modifier,
+                liveBar = liveBar,
+                onStop = { stopCapture(context) },
+                onOpenLive = {},
+                onOpenLevel = { sub = CaptureStatusSubScreen.LEVEL_METER },
+            )
+    }
 }
 
 /** `Stop` (R-032): the same `ACTION_STOP` [RealCaptureService.onStartCommand] already handles —
@@ -95,3 +121,22 @@ private fun idleCaptureStatus(): CaptureStatusViewState = CaptureStatusMapper.fr
     batteryCharging = false,
     batteryExemptionReportsIgnoring = false,
 )
+
+/** [LevelStatus.state]/[LevelStatus.peakHistoryDbfs] read together, matching that object's own
+ * "always read alongside each other" rule (see its kdoc), with the same device-name convention
+ * the Input row uses. */
+private fun currentLevelViewState(): LevelViewState = LevelViewStateMapper.from(
+    level = LevelStatus.state,
+    history = LevelStatus.peakHistoryDbfs,
+    inputLabel = levelInputLabel(),
+)
+
+private fun levelInputLabel(): String {
+    val deviceName = when (val input = InputStatus.state) {
+        InputStatus.State.None -> null
+        is InputStatus.State.Opened -> input.descriptor.label
+        is InputStatus.State.Mismatch -> input.expected.label
+        is InputStatus.State.Lost -> input.lastKnown.descriptor.label
+    }
+    return if (deviceName != null) "$deviceName · last 60 s" else "last 60 s"
+}

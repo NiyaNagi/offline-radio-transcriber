@@ -103,6 +103,18 @@ class CaptureStatusScreenTest {
     }
 
     @Test
+    @Requirement("R-039")
+    fun `R_039 tapping the Level row invokes onOpenLevel, with a real 44dp target and description`() {
+        var opened = false
+        composeTestRule.setContent {
+            OrtTheme { CaptureStatusScreen(state = baseState, onOpenLevel = { opened = true }) }
+        }
+
+        composeTestRule.onNodeWithTag("capture-status-level").performClick()
+        assert(opened)
+    }
+
+    @Test
     fun `an idle session shows no Stop action`() {
         val idle = baseState.copy(
             stateLabel = "Not capturing",

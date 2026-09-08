@@ -32,6 +32,65 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round three: the Level row opens the live level meter)
+
+### (pending) — ui-conformance WP4 · Level row opens the live level meter
+
+**Scope:** `:app` only, this package's own row — third addendum to the WP4 entries below, after
+merging `main` at `555cd4e` (WP6's follow-up; no files in this package's row touched). Files
+touched: `ui/screens/CaptureStatusScreen.kt`, `ui/screens/CaptureStatusContent.kt`,
+`ui/screens/LevelMeterScreen.kt`, `ui/screens/CaptureStatusScreenTest.kt`, and a new
+`ui/screens/CaptureStatusContentTest.kt`. `ui/data/LiveBarPolling.kt` again deliberately untouched
+(WP11b).
+
+**Requirements/ACs:** R-039, design-intent N04 → N06 (`Capture-Status.dc.html`'s Level row opens
+`Level-Meter.dc.html`), FR-A11Y-2 (a real 44dp target, `Role.Button`, a description naming the
+action — not the row's own value text doing double duty as an affordance).
+
+**What changed:**
+- **Constitution Check.** Principle VII (guide §6.7): "if it acts, it looks like it acts" — the
+  Level `KeyValueRow` was previously inert; it is now a real target with its own
+  `contentDescription` ("… Open level meter"), not a bare click added to existing display text.
+  No new fabrication risk: the meter still reads `LevelStatus` directly, unchanged from the prior
+  entry.
+- **`CaptureStatusScreen`** gained `onOpenLevel: () -> Unit = {}`; the Level row (only — Input/
+  Radio/etc. stay plain) is now `heightIn(44.dp)` + `clickable(role = Role.Button, onClickLabel =
+  "Open level meter")`, with `"Open level meter"` appended to its merged content description.
+- **`CaptureStatusContent`** now owns an internal `NONE`/`LEVEL_METER` sub-navigation state, the
+  same pattern WP8's `StationDetailContent` uses for its own drill-ins: tapping the Level row shows
+  `LevelMeterScreen` full-screen over this destination; its `DrillInHeader` back returns to the
+  status. `LevelStatus.state`/`peakHistoryDbfs` are read on the *same* `LaunchedEffect` poll loop
+  and cadence (2 s) as `captureStatus` — no second poll timer — so the meter is always as fresh as
+  the status screen it was opened from, whichever one is currently showing.
+- **`LevelMeterScreen`** gained `onBack: () -> Unit = {}` and now always renders `DrillInHeader
+  (parentLabel = "Capture", onBack = onBack)` at its top (`testTag("level-meter-back")`) — per its
+  own updated kdoc, N06 is reached only as a drill-in, never a standalone destination, so the
+  header is unconditional rather than caller-optional.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded from `0c542cb` to `555cd4e` cleanly (this branch was
+  an ancestor); confirmed via `git log --oneline -1`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 181 covered**; `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` — **625 of 625 passing**, 0 failed (full `:app` suite).
+  New: `CaptureStatusContentTest` (`R_039_the_level_row_opens_the_level_meter_and_back_returns`,
+  `the Level row carries a real 44dp target with an Open level meter description`) and one new
+  case in `CaptureStatusScreenTest` (`R_039 tapping the Level row invokes onOpenLevel, with a real
+  44dp target and description`).
+
+**Left open / not done:**
+- N06's own `Adjust` interaction (design-intent: `Adjust` → CF02, `Settings-Capture.dc.html`) was
+  **not** built this round — the coordinator's concrete ask was the open/back pair only, and CF02
+  is WP3/WP10's destination, out of this package's row. `LevelMeterScreen` carries no `Adjust`
+  affordance yet.
+- The live bar's level bars remain the honest floor-height placeholder (`LiveBarPolling.kt`
+  untouched again this round, per standing instruction — WP11b owns the failure variants landing
+  there).
+
 ## 2026-09-08 (ui-conformance WP11b: failure screens, failure host, recovery announcements)
 
 ### (pending) — ui-conformance WP11b · failure screens F1-F22 UI, failure host, recovery announcements, debug failure scenarios
@@ -288,7 +347,6 @@ leadingIcon, WP7's `Filters` chip); plus a shared `TextField` (`Controls.dc.html
 ---
 
 ## 2026-09-08 (ui-conformance WP4, round two: capture status and level meter from InputStatus/LevelStatus)
-
 ### (pending) — ui-conformance WP4 · capture status and level meter from InputStatus and LevelStatus; Now navigation hooks; ReaderPolling copies removed
 
 **Scope:** `:app` only, this package's own row — addendum to the WP4 entry below ("Now home,
