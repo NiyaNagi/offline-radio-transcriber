@@ -9,7 +9,11 @@ package org.ort.app.ui.navigation
  * requires, but render [ReaderDestination.hasScreen] `false`'s
  * [org.ort.app.ui.screens.PlaceholderScreen] until their own build-plan prompt (P16-P17) builds
  * them — reachable and honest about not existing yet, rather than missing from the drawer or
- * silently faked. `Stations` and `Frequencies` are real screens as of build-plan P17.
+ * silently faked. `Stations` and `Frequencies` are real screens as of build-plan P17. `Settings`
+ * is a real screen as of audit F-008: [org.ort.app.ui.screens.ModelsScreen], the declared,
+ * user-initiated channel through which an ASR/VAD model reaches the device (constitution V) — put
+ * here rather than under `Improve records`, which P16 already gave a per-transmission
+ * correction/labelling meaning; asset management reads as a `Settings` concern instead.
  */
 public enum class ReaderDestination(public val label: String, public val hasScreen: Boolean) {
     NOW("Now", hasScreen = true),
@@ -21,7 +25,7 @@ public enum class ReaderDestination(public val label: String, public val hasScre
     EARLIER_NIGHTS("Earlier nights", hasScreen = false),
     CAPTURE("Capture", hasScreen = false),
     IMPROVE_RECORDS("Improve records", hasScreen = false),
-    SETTINGS("Settings", hasScreen = false),
+    SETTINGS("Settings", hasScreen = true),
     ;
 
     public companion object {

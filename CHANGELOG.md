@@ -32,6 +32,92 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-008)
+
+### (pending) — audit F-008 (`:app` half) · a "Models" screen is the declared, user-initiated channel through which an ASR/VAD model reaches the device
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (new:
+`ModelCatalog`, `ModelsController`), `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`
+(new), `app/src/main/kotlin/org/ort/app/ui/navigation/ReaderDestination.kt` (`SETTINGS.hasScreen`
+flips to `true`), `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`ModelsContent`
+dispatch + wiring); tests `app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerTest.kt` and
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenTest.kt`. `app/build.gradle.kts` already
+carried `implementation(project(":net"))` (confirmed, not touched). The `:net` half of F-008 (the
+`INTERNET` manifest grant) was owned by a parallel agent and is not part of this change — no
+manifest was touched here.
+
+**Requirements/ACs:** FR-ASR-1, constitution V (nothing leaves the device except by a declared
+channel; user-initiated model download is one of exactly two), constitution I (never claim
+"installed" without the checksum having verified), FR-RUN-9/FR-REP-8 (F-016's `WorkQueue.
+requeueFailed`, now actually called from somewhere).
+
+**What changed:** Before this change `:net`'s `ModelAcquisition.fetch()`/`.sideload()` had no
+`:app` call site at all (confirmed by grep, per the audit finding) — the debug build could capture
+audio but never transcribe it, because no ASR (Whisper tiny.en) or VAD (Silero) model could ever
+reach the device. This adds the drawer's `Settings` destination (previously a placeholder;
+`Improve records` was left alone — P16 already gave it a per-transmission
+correction/labelling meaning, so asset management reads as a `Settings` concern instead) as a real
+"Models" screen:
+
+- `ModelCatalog` lists the four files the real providers actually read —
+  `AsrModelLocator`'s three (`tiny.en-encoder.int8.onnx`, `tiny.en-decoder.int8.onnx`,
+  `tiny.en-tokens.txt`) and `SileroVadLocator`'s one (`silero_vad.onnx`) — each with a real,
+  individually-fetchable URL. The Whisper files are the same sherpa-onnx release contents
+  `asr-sherpa/README.md` documents, but fetched as flat files from HuggingFace
+  (`csukuangfj/sherpa-onnx-whisper-tiny.en`, confirmed to host each file separately) rather than
+  extracting the `.tar.bz2` archive that README uses for the desktop-JVM test cache — deliberately
+  avoiding a new, untested archive-extraction dependency this fix does not need. The VAD URL is
+  the one already documented and confirmed reachable in `asr-sherpa/README.md`.
+- `ModelsController.download()` mints `NetCapability.UserInitiated` and calls
+  `ModelAcquisition.fetch()` on `Dispatchers.IO`; `.sideload()` does the same for a file the user
+  picks via `ActivityResultContracts.OpenDocument()` (content `Uri` copied to app-private cache
+  first, since `ModelAcquisition.sideload()` takes a `File`). Both write to the exact destination
+  the real providers already read, so a successful install is picked up with no second path
+  definition. Neither is reachable from `:pipeline` or `:capture-*` — `:app`-only, off the
+  capture/processing path, matching constitution V/IV.
+- A row is "Installed" only when `ModelAcquisition`'s own `.sha256` marker file is present and
+  matches the pinned checksum for that exact destination — never inferred from the file merely
+  existing.
+- On every successful install, `WorkQueue.requeueFailed()` (F-016, no filter — deliberately not
+  narrowed to a specific error-message prefix `:pipeline` owns the wording of) runs and the count
+  is shown to the user.
+
+**Left open / not done:**
+- **`ModelCatalog`'s checksums are not pinned to the real published bytes.** This session had no
+  network egress to actually download either model and compute its real SHA-256 (confirmed: a
+  `PowerShell Invoke-WebRequest` to a small file failed immediately — "NonInteractive mode" — while
+  `WebFetch` could reach HuggingFace's *page*, which is how the flat-file URLs and file listing
+  above were confirmed to exist, but that tool renders pages to text and cannot hand back raw
+  bytes to hash). `ModelCatalog.UNPINNED_CHECKSUM` is a human-readable placeholder string, not a
+  hex digest, so it can never be mistaken for a genuinely pinned value — a real fetch or side-load
+  against these specs today will correctly and loudly fail checksum verification rather than ever
+  silently installing unverified bytes (fails closed, not open). Replacing it with the real digest,
+  computed once from a genuinely downloaded copy of each file, is the next session's job before
+  this can install a real model on a device.
+- **No real download has been run, on a device or against the real URLs, in this session.**
+  Everything below is Robolectric/JVM, against `FakeHttpRangeClient`.
+- The `:net` half of F-008 (the `INTERNET` manifest grant) is a separate agent's work, landing
+  separately.
+- Progress and resume mid-download are not surfaced in the UI (`ModelAcquisition` itself supports
+  resume; the screen shows only a coarse "Downloading…"/done/failed state) — not required by the
+  finding's fix sketch, noted as a possible follow-up.
+- `spec/build-plan.md`'s P18 note and P12's note are updated alongside this entry to say the
+  `:app` call site now exists (see that file's Progress section) — the checksum-pinning gap above
+  is the reason F-008 is not fully closed by this half alone.
+
+**Verified:**
+- `FR_ASR_1_...` tests seen to fail for the right reason first: with `ModelsController`'s
+  installed-check hardcoded to `false`, `./gradlew :app:testDebugUnitTest --tests
+  "org.ort.app.ui.data.ModelsControllerTest"` failed 1 of 4 with `java.lang.AssertionError:
+  expected:<INSTALLED> but was:<NOT_INSTALLED>`; restored, the same command passes 4/4.
+- `./gradlew :app:testDebugUnitTest` (full module): green, including the new
+  `ModelsControllerTest` (download/checksum-mismatch/requeue/honest-not-installed) and
+  `ModelsScreenTest` (row rendering, Download tap, busy state, message display).
+- `./gradlew build dependencyRules` (full gate): green.
+- `python tools/spec-check/spec_check.py`: all 8 checks PASS.
+- Everything above is Robolectric/JVM only — no on-device verification, no real network call in
+  any test (constitution V; `FakeHttpRangeClient` throughout).
+
 ## 2026-09-07 (audit — F-009)
 
 ### (pending) — audit F-009 · Pass B now persists the phonetic lattice and every ranked candidate, so the inspection surface is no longer permanently empty
