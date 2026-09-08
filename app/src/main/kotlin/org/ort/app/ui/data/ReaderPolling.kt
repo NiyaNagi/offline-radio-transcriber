@@ -115,6 +115,8 @@ public object ReaderPolling {
             sessionId = entity.sessionId,
             samplePosition = entity.samplePosition,
             inspection = inspection,
+            processingState = entity.processingState,
+            rejectionReason = entity.rejectionReason,
         )
     }
 

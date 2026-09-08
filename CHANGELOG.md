@@ -32,6 +32,56 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-003)
+
+### (pending) — audit F-003 · the reader distinguishes FAILED and REJECTED from still-pending
+
+**Scope:** `:app` only — `ui/data/TransmissionDetail.kt` (`TransmissionDetail`'s new
+`processingState`/`rejectionReason` fields, and `ReaderTransmissionViewStateMapper`'s new
+`transcriptLabel`), `ui/data/ReaderPolling.kt` (`detailFrom` now carries the two real
+`TransmissionEntity` columns through), and their tests.
+
+**Requirements/ACs:** FR-RUN-9 (`FAILED` is distinct from `REJECTED` and from pending),
+constitution I (Uncertainty Is Content) and VII (text, not colour, carries the four states).
+
+**What changed:** `results/audit-2026-09-07.md` F-003: `app/src/main` never read
+`TransmissionEntity.processingState`, so every transmission with no current transcript rendered
+`"(captured, not yet transcribed)"` — including one the work queue had already moved to `FAILED`
+after `WorkQueue.DEFAULT_MAX_ATTEMPTS` or to `REJECTED` with a recorded reason. With no ASR model
+on disk (the `UnavailableAsrEngine` fallback, `RealCaptureService.kt`), every real transmission
+reaches `FAILED` within five drain cycles today and was displayed as pending forever.
+`TransmissionDetail` now carries `processingState: TransmissionState` and `rejectionReason:
+String?` (both already existed on `TransmissionEntity`; only the reader's mapping was blind to
+them). `ReaderTransmissionViewStateMapper` gained a private `transcriptLabel` used by both
+`listEntry` and `detailView` (so the log row and the detail screen render identically): a
+non-null `currentTranscriptText` wins as before; otherwise `FAILED` renders `"(transcription
+failed)"`, `REJECTED` renders `"(rejected: <reason>)"` (or `"(rejected — no reason recorded)"` if
+none was written), and `CAPTURED`/`PROCESSING`/`COMPLETE` keep the original honest pending label.
+`ReaderPolling.detailFrom` now passes `entity.processingState` and `entity.rejectionReason`
+through.
+
+**Left open / not done:** the `FAILED` label carries no `lastError` text, only the state. The
+work queue's `lastError` lives on `WorkQueueItemEntity`, keyed by `(transmissionId, pass)`;
+`:data`'s `WorkQueueDao` has no query that reaches a `FAILED` item by `transmissionId` alone
+(`findByTransmissionAndPass` needs the pass id, which this reader does not carry per
+transmission), and adding one is a `:data` change out of this fix's owned files — flagged rather
+than added silently. A state label alone was called an acceptable outcome for this case in the
+finding itself.
+
+**Verified:** `ReaderTransmissionViewStateMapperTest` — 5 new cases named `FR_RUN_9_...` (a
+`FAILED` row renders a distinct failure label in both `listEntry` and `detailView`; a `REJECTED`
+row renders its reason, and renders distinctly even with no reason recorded; `CAPTURED`/
+`PROCESSING` keep the original pending label) — first run failed to *compile* (`No parameter with
+name 'processingState' found`), confirming the fields did not exist yet, before the production
+change. `LogScreenTest` — 1 new case (`FR_RUN_9 a transmission the work queue moved to FAILED
+shows a failure label, not the pending state`) driving the real mapper end-to-end into the
+Compose screen. `./gradlew :app:test --console=plain -q` — green, no failures. Full gate:
+`./gradlew build dependencyRules --console=plain -q` — green; `python
+tools/spec-check/spec_check.py` — all 8 checks PASS. All on JVM/Robolectric; no on-device
+verification is claimed.
+
+---
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture
