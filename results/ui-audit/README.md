@@ -93,7 +93,8 @@ Fired by `adb shell am broadcast -a org.ort.app.debug.SCENARIO --es name <scenar
 every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment for exactly what
 "clear" means) and resets the process-wide capture-facet singletons
 (`CaptureState`/`AsrAvailability`/`VadAvailability`/`ShedStatus`/`ThermalStatus`/`RigStatus`/
-`StorageForecast` — the last three added by WP11a, register R-104/R-105) before applying its own.
+`StorageForecast` — the last three added by WP11a, register R-104/R-105 — and `LevelStatus`/
+`InputStatus`, added by WP11c, register R-112/R-113) before applying its own.
 
 | Scenario | What it seeds |
 |---|---|
@@ -115,9 +116,21 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `storage-warn` | `StorageForecast.ThreeNightsLeft` (FR-STO-3, register R-105), capture genuinely still running — replaces this scenario's earlier misuse of F6's exhaustion failure string. |
 | `thermal` | `ThermalStatus.Warm`, measured RTF 0.9 (F7, register R-104), the same shed level/backlog `backlog` sets. |
 | `rig-lost` | `RigStatus.Stale` since 30 minutes ago, last known on 145.230/146.960 (F9, register R-104). |
+| `level-low` | `LevelStatus.Measured` peak −38 dBFS, floor −60 dBFS, no clip (F3, register R-112), capture genuinely still running. |
+| `level-clip` | `LevelStatus.Measured` peak 0 dBFS, clipped, 12 clips in the last second (F3, register R-112). |
+| `input-verified` | `InputStatus.Opened` with a USB descriptor, native 48 kHz, a recorded resampler identity, `routeVerified`/`routedDeviceMatches` both true (register R-113). |
+| `input-mismatch` | `InputStatus.Mismatch` — built-in mic routed instead of the chosen USB device (F1, register R-113). Capture is **not** marked running — see "Known gaps" below. |
 
 ### Known gaps (report to the lead, not fixed here)
 
+- **`input-mismatch` seeds the holder directly; it does not drive a real capture tick.** Like
+  `thermal`/`rig-lost`/`backlog` before it, this scenario sets `InputStatus.mismatch(...)` on an
+  idle process rather than running `RealCaptureService` end to end — a real capture tick would
+  overwrite it with whatever the (non-existent, in the simulator) audio route actually reports.
+  Capture is deliberately left marked idle for this one scenario specifically (unlike the others in
+  this batch): `Fail-Route.dc.html` states "capture stopped in the same second" on a mismatch, so a
+  scenario claiming both `Mismatch` and `CaptureState.isCapturing` would misrepresent the one thing
+  this state exists to show.
 - **`pass-a-partial` is representable in data, not yet rendered.** `TranscriptEntity.pass = A`
   with no `pass = B` row is exactly what a real in-flight Pass A produces, but the Log screen
   (register R-041) does not yet render a partial state at all — this scenario proves the data

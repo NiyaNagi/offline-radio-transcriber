@@ -50,6 +50,14 @@ public class AudioRecordSource(
 
     override val resamplerIdentity: ResamplerIdentity? = resampler?.identity
 
+    /**
+     * register R-112: the single tap point that hands every verified frame to the level meter —
+     * see [LevelMeter]'s own kdoc for why this is safe to call synchronously here (O(n) arithmetic,
+     * no allocation beyond one snapshot, no lock, single writer). [RealCaptureService] reads
+     * [LevelMeter.snapshot] on the same frame path and republishes it through `LevelStatus`.
+     */
+    public val levelMeter: LevelMeter = LevelMeter(clock)
+
     @Volatile private var stopRequested = false
 
     @Volatile private var lastRouted: AudioDeviceDescriptor? = null
@@ -128,6 +136,8 @@ public class AudioRecordSource(
                         }
                         firstReadVerified = true
                     }
+
+                    levelMeter.onFrame(raw, n, deviceFormat.sampleRate)
 
                     val now = clock.wallMillis()
                     val elapsedMillis = (now - lastFrameWallMillis).coerceAtLeast(0)

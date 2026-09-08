@@ -18,6 +18,8 @@ import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
@@ -55,6 +57,8 @@ class ScenariosTest {
         ThermalStatus.reset()
         RigStatus.reset()
         StorageForecast.reset()
+        LevelStatus.reset()
+        InputStatus.reset()
     }
 
     @Test
@@ -375,4 +379,58 @@ class ScenariosTest {
 
     private fun isAtLeastThirtyMinutesAgo(sinceMillis: Long): Boolean =
         sinceMillis <= System.currentTimeMillis() - 29 * 60_000L
+
+    @Test
+    @Requirement("R-112")
+    fun `R_112_level-low sets LevelStatus Measured at minus 38 dBFS with no clip`() = runTest {
+        Scenarios.load(context, "level-low")
+
+        val state = LevelStatus.state
+        assertTrue(state is LevelStatus.State.Measured)
+        state as LevelStatus.State.Measured
+        assertEquals(-38f, state.peakDbfs)
+        assertEquals(-60f, state.noiseFloorDbfs)
+        assertFalse(state.clipped)
+        assertTrue(CaptureState.isCapturing)
+    }
+
+    @Test
+    @Requirement("R-112")
+    fun `R_112_level-clip sets LevelStatus Measured clipped at 0 dBFS with twelve clips`() = runTest {
+        Scenarios.load(context, "level-clip")
+
+        val state = LevelStatus.state
+        assertTrue(state is LevelStatus.State.Measured)
+        state as LevelStatus.State.Measured
+        assertEquals(0f, state.peakDbfs)
+        assertTrue(state.clipped)
+        assertEquals(12, state.clipCountLastSecond)
+    }
+
+    @Test
+    @Requirement("R-113")
+    fun `R_113_input-verified sets InputStatus Opened at 48kHz with a verified matching route`() = runTest {
+        Scenarios.load(context, "input-verified")
+
+        val state = InputStatus.state
+        assertTrue(state is InputStatus.State.Opened)
+        state as InputStatus.State.Opened
+        assertEquals(48_000, state.nativeRateHz)
+        assertTrue(state.routeVerified)
+        assertTrue(state.routedDeviceMatches)
+        assertTrue(state.resamplerId.isNotBlank())
+    }
+
+    @Test
+    @Requirement("R-113", "F-001")
+    fun `R_113_input-mismatch sets InputStatus Mismatch and does not claim capture is running`() = runTest {
+        Scenarios.load(context, "input-mismatch")
+
+        val state = InputStatus.state
+        assertTrue(state is InputStatus.State.Mismatch)
+        state as InputStatus.State.Mismatch
+        assertEquals("USB Audio Device", state.expected.label)
+        assertEquals("Built-in microphone", state.actual?.label)
+        assertFalse("a mismatch must not claim capture is still running", CaptureState.isCapturing)
+    }
 }
