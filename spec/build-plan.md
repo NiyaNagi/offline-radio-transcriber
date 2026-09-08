@@ -49,6 +49,9 @@ underlying breakdown each prompt draws on.
   `AudioRecord` shortfall directly (elapsed wall time vs. samples delivered) and reports it through
   the existing `CaptureEvent.Interrupted`/`Resumed` pair, closed immediately by `GapTracker` — AC-3
   now holds on the real capture path. `RingBuffer` is unchanged and still unused in production.
+  audit F-021 (2026-09-07): shed events were memory-only in `ShedController` with no `shed_event`
+  table — the `:data` half is now fixed (`ShedEventEntity`/`ShedEventDao`, schema v2, migration),
+  but the `:pipeline` persist call from `ShedController` into the new DAO is still not wired
 
 **Wave D — the M2 gate, then transcription.**
 

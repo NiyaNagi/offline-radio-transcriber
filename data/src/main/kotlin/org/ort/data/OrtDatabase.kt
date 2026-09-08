@@ -13,6 +13,7 @@ import org.ort.data.dao.CatalogDao
 import org.ort.data.dao.CorrectionDao
 import org.ort.data.dao.SearchDao
 import org.ort.data.dao.SessionDao
+import org.ort.data.dao.ShedEventDao
 import org.ort.data.dao.TranscriptDao
 import org.ort.data.dao.TransmissionDao
 import org.ort.data.dao.WorkQueueDao
@@ -26,6 +27,7 @@ import org.ort.data.entity.LexiconVersionEntity
 import org.ort.data.entity.OperatorLocationEntity
 import org.ort.data.entity.PhoneticLatticeEntity
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.ShedEventEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.StationSummaryEntity
 import org.ort.data.entity.ThreadEntity
@@ -35,10 +37,10 @@ import org.ort.data.entity.VoiceprintEntity
 import org.ort.data.entity.WorkQueueItemEntity
 
 /**
- * The schema (functional spec §8; technical design §12.1). Schema version 1 — the first
- * released version, per build-plan P5. `exportSchema = true` writes to `:data/schemas/`, which
- * [migrationCallback] and future [Migration]s are tested against forward to head (FR-AST-5 →
- * AC-53).
+ * The schema (functional spec §8; technical design §12.1). Schema version 2 — v1 was the first
+ * released version (build-plan P5); v2 adds [ShedEventEntity] (F-021, FR-RUN-3/4/5).
+ * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
+ * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
 @Database(
     entities = [
@@ -59,6 +61,7 @@ import org.ort.data.entity.WorkQueueItemEntity
         AssetEntity::class,
         OperatorLocationEntity::class,
         StationSummaryEntity::class,
+        ShedEventEntity::class,
     ],
     version = OrtDatabase.SCHEMA_VERSION,
     exportSchema = true,
@@ -75,17 +78,33 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun activityDao(): ActivityDao
     public abstract fun searchDao(): SearchDao
     public abstract fun correctionDao(): CorrectionDao
+    public abstract fun shedEventDao(): ShedEventDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 1
+        public const val SCHEMA_VERSION: Int = 2
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
-         * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53). Empty at
-         * v1 — the first release has nothing to migrate *from* yet; the fixture-forward-to-head
-         * test in `:testing` is the harness this list plugs into as soon as v2 exists.
+         * v1 → v2 (F-021): adds the `shed_event` table so [ShedEventEntity] rows can be
+         * persisted. No existing table is touched — every v1 row survives untouched
+         * (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
          */
-        public val MIGRATIONS: Array<Migration> = emptyArray()
+        public val MIGRATION_1_2: Migration = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `shed_event` (" +
+                        "`id` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `levelBefore` INTEGER NOT NULL, " +
+                        "`levelAfter` INTEGER NOT NULL, `trigger` TEXT NOT NULL, `reason` TEXT NOT NULL, " +
+                        "`atWallMillis` INTEGER NOT NULL, `atMonotonicNanos` INTEGER NOT NULL, " +
+                        "`samplePosition` INTEGER, PRIMARY KEY(`id`))",
+                )
+            }
+        }
+
+        /**
+         * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
+         */
+        public val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
 
         /**
          * Adds the schema Room's annotations cannot express (technical design §8.3, §12.1):
