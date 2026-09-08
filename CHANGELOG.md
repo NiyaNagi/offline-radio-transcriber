@@ -32,6 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-027)
+
+### (pending) — audit F-027 · execution-provider, minSdk and the network/telemetry/backup structural set get tests
+
+**Scope:** `:onnx` (`ModelDescriptor.kt` + new `ModelDescriptorCpuPathTest.kt`); `buildSrc`
+(new `PlatformGuards.kt`/`PlatformGuardsTask.kt` + `PlatformGuardsTest.kt`); root
+`build.gradle.kts` (wires `platformGuards` into `check`, and adds `buildSrc/src/test/kotlin` to
+`coverageMatrix`'s scanned test roots — it was previously invisible to the matrix entirely);
+`app/src/test/kotlin/org/ort/app/structural/` (new package, `AllowBackupTest.kt`);
+`results/coverage-matrix.md` (regenerated).
+**Requirements/ACs:** FR-ACC-2, NFR-5b, AC-59, FR-OBS-5, NFR-6, FR-STO-8, NFR-6a, FR-PLT-5.
+Explicitly NOT established here: NFR-5, NFR-5b's "no vendor SDK" clause beyond the CPU-path
+slice, CON-CAP-1 (see Left open).
+**What changed:**
+- `ModelDescriptor`'s `init` now `require`s `"cpu" in providerBinaries` (was: any non-empty
+  set). This is the type-level slice of FR-ACC-2/NFR-5b that is actually built today — a
+  descriptor that only ever declares an accelerator binary can no longer be constructed. The
+  full `ExecutionProvider` abstraction technical design §3.3 describes does not exist yet (M11
+  scope); `ModelDescriptorCpuPathTest` says so in its KDoc and establishes only this slice.
+- New `PlatformGuards` (pure logic, buildSrc) + `PlatformGuardsTask`, wired as the `platformGuards`
+  Gradle task and into `check`: fails the build on (a) any dependency coordinate matching a
+  telemetry/analytics/crash-reporting marker list in any module (FR-OBS-5), (b) any HTTP-client
+  dependency coordinate outside `:net` (constitution V, NFR-6), (c) `android.permission.INTERNET`
+  declared in any module's manifest outside `:net` (AC-59, NFR-6). Ran against the real project:
+  currently zero violations on all three. These are declared-artifact checks — they prove what a
+  build *could* do, never what it *did*; the task's own log output and KDoc say this explicitly.
+- New `AllowBackupTest` (Robolectric) reads the merged manifest's `ApplicationInfo.FLAG_ALLOW_BACKUP`
+  and asserts it is unset — `android:allowBackup="false"` was already correct in
+  `AndroidManifest.xml`, so no manifest edit was needed; this only adds the missing proof.
+- `coverageMatrix`'s `testRoots` now includes `buildSrc/src/test/kotlin`, which was silently
+  excluded before (buildSrc is a separate included build, not a `subprojects` member). Side
+  effect: regenerating surfaced two pre-existing, unrelated staleness items in the matrix —
+  `Q8` (`CorrectionDaoTest`, already in `:data`, was already an orphan the last regen missed)
+  and `AC-999` (`CoverageMatrixTest`'s own fixture for testing the orphan-detector, a permanent
+  and expected orphan now that buildSrc is scanned). Neither is part of F-027; left as the
+  regenerated tool now honestly reports them.
+**Verified:** `./gradlew :onnx:test :buildSrc:test :asr-api:test :asr-sherpa:test :core:test
+dependencyRules platformGuards --console=plain -q` green. `ModelDescriptorCpuPathTest`'s
+rejection case and `PlatformGuardsTest`'s four detection cases were written and run failing
+first (`Unresolved reference` / compile failure before `PlatformGuards` existed;
+`IllegalArgumentException` not thrown before the `ModelDescriptor` guard existed).
+`AllowBackupTest` was proven against a deliberate, uncommitted, reverted-before-commit
+`allowBackup="true"` edit (`:app:testDebugUnitTest` failed with the expected assertion message),
+then against the real (unchanged) `false` value (green) — `app/src/main/AndroidManifest.xml`
+carries no net diff. `./gradlew coverageMatrix` regenerated; FR-ACC-2, NFR-5b, AC-59, FR-OBS-5,
+NFR-6, FR-STO-8, FR-PLT-5, NFR-6a no longer appear in "Not yet covered". Robolectric/JVM only
+throughout — no device, no real accelerator, no real network involved anywhere in this change.
+**Left open / not done:**
+- **NFR-5** (minSdk 26) — `MinSdkLaunchTest` (`app/src/androidTest/kotlin/org/ort/app/`) already
+  documents NFR-5 in its KDoc and is a genuine, running instrumented test, but its test *function
+  name* only carries `AC_93`, so the matrix generator does not credit NFR-5 to it. Renaming it
+  needs `app/src/androidTest`, outside this fix's owned paths (`:onnx`/`:asr-api`/`:asr-sherpa`/
+  `:core`/`app/src/test/kotlin/org/ort/app/structural`). Not fixed here — flagging as a one-line
+  follow-up for whoever owns that file.
+- **NFR-5b**'s "no required dependency on any specific SoC, NPU or vendor SDK" beyond the CPU-path
+  slice, and the rest of **FR-ACC-2**'s "stable execution-provider interface" — not established
+  here. The `ExecutionProvider`/`CpuProvider` abstraction technical design §3.3 describes has not
+  been built (only `ModelDescriptor.providerBinaries`, a `Set<String>` with no NPU implementation
+  behind it, exists); building that interface is production scope well beyond a test-only audit
+  fix, and there is currently no vendor SDK dependency anywhere to test against regardless.
+- **CON-CAP-1** (Bluetooth audio input never offered) — would need a test in `:capture-android`/
+  `:capture-api` (where `AudioDeviceKind.BLUETOOTH` and route selection actually live), which is
+  outside this fix's owned modules. Not established here.
+- `PlatformGuards`' three checks are structural proxies, stated as such in their own KDoc: they
+  cannot and do not prove a build made no network call, ran no telemetry SDK, or attempted no
+  backup at runtime — only that the declared building blocks for doing so are absent from the
+  source tree today. A regression there (someone adds `implementation("com.squareup.okhttp3:...")`
+  to `:pipeline`, say) is what `platformGuards` catches; a compiled binary phoning home through a
+  hand-rolled `java.net.Socket` is not.
+- This worktree carried pre-existing, unrelated, uncommitted changes to
+  `app/src/main/kotlin/org/ort/app/ui/data/SearchViewData.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/screens/SearchScreen.kt`, and two Search tests (a
+  broken/incomplete Search feature — `:app`'s main source set does not currently compile because
+  of them). Not part of F-027, not touched or committed by this change; noted so `./gradlew
+  build` failing on `:app:compileDebugKotlin` for an unrelated `Band` reference is not mistaken
+  for a regression from this fix.
+
+---
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture

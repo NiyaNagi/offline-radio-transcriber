@@ -1,5 +1,7 @@
 import org.ort.gradle.CoverageMatrixTask
 import org.ort.gradle.DependencyRulesTask
+import org.ort.gradle.PlatformGuardsTask
+import org.gradle.api.artifacts.ExternalDependency
 import org.gradle.api.artifacts.ProjectDependency
 
 // Plugin versions come from buildSrc/build.gradle.kts, which puts AGP and the Kotlin plugin
@@ -17,6 +19,17 @@ val dependencyRules = tasks.register<DependencyRulesTask>("dependencyRules") {
 
 val checkedConfigurations = setOf("api", "implementation", "compileOnly")
 
+/**
+ * `platformGuards` (audit F-027) — no analytics/telemetry/crash-reporting dependency anywhere
+ * (FR-OBS-5), no HTTP client dependency outside `:net` (NFR-6, constitution V), no
+ * `android.permission.INTERNET` declared outside `:net`'s manifest (AC-59, NFR-6). A declared-
+ * artifact check, not a runtime traffic capture — see PlatformGuards's KDoc.
+ */
+val platformGuards = tasks.register<PlatformGuardsTask>("platformGuards") {
+    group = "verification"
+    description = "Fails the build on a disallowed dependency coordinate or manifest permission (audit F-027)."
+}
+
 gradle.projectsEvaluated {
     val actual: Map<String, List<String>> = subprojects.associate { sp ->
         val deps: List<String> = sp.configurations
@@ -28,6 +41,24 @@ gradle.projectsEvaluated {
         sp.path to deps
     }
     dependencyRules.configure { actualGraph.set(actual) }
+
+    val externalDeps: Map<String, List<String>> = subprojects.associate { sp ->
+        val coords: List<String> = sp.configurations
+            .filter { it.name in checkedConfigurations }
+            .flatMap { cfg -> cfg.dependencies.filterIsInstance<ExternalDependency>() }
+            .map { dep -> "${dep.group}:${dep.name}:${dep.version}" }
+            .toSortedSet()
+            .toList()
+        sp.path to coords
+    }
+    val manifests: Map<String, String> = subprojects.associate { sp ->
+        val manifest = sp.projectDir.resolve("src/main/AndroidManifest.xml")
+        sp.path to (if (manifest.isFile) manifest.readText() else "")
+    }
+    platformGuards.configure {
+        externalDependencies.set(externalDeps)
+        manifestTexts.set(manifests)
+    }
 }
 
 /** `coverageMatrix` — regenerates results/coverage-matrix.md (test-plan §9). */
@@ -41,7 +72,13 @@ tasks.register<CoverageMatrixTask>("coverageMatrix") {
                 it.layout.projectDirectory.dir("src/test/kotlin"),
                 it.layout.projectDirectory.dir("src/androidTest/kotlin"),
             )
-        },
+        } + listOf(
+            // audit F-027: buildSrc's own meta-guard tests (PlatformGuardsTest, ModuleGraphTest,
+            // CoverageMatrixTest) establish requirement ids too (e.g. AC-59, FR-OBS-5, NFR-6) but
+            // buildSrc is a separate included build, not a member of `subprojects` — without this
+            // it is silently invisible to the matrix regardless of what its tests actually prove.
+            layout.projectDirectory.dir("buildSrc/src/test/kotlin"),
+        ),
     )
     output.set(layout.projectDirectory.file("results/coverage-matrix.md"))
 }
@@ -50,5 +87,6 @@ tasks.register<CoverageMatrixTask>("coverageMatrix") {
 tasks.register("check") {
     group = "verification"
     dependsOn(dependencyRules)
+    dependsOn(platformGuards)
     dependsOn(subprojects.map { "${it.path}:check" })
 }
