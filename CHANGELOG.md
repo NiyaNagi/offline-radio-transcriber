@@ -32,6 +32,62 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-017)
+
+### (pending) — audit F-017 · `:data` half: SearchDao gains band, attribution-state and rejected/accepted filters
+
+**Scope:** `:data` — `dao/SearchDao.kt` (`filterOnly`, `searchText`, `search`), new `Band.kt`;
+tests in `SearchDaoFilterTest.kt`. Does not touch `:app`'s `SearchScreen` half (tracked
+separately in `results/audit-2026-09-07.md` F-017) or any other module.
+**Requirements/ACs:** FR-UI-3 (band, attribution state, rejected/accepted — the three filters
+P15 left open; see CHANGELOG's earlier P15 entry and `results/audit-2026-09-07.md` F-017).
+**What changed:**
+- Added `org.ort.data.Band`: the amateur-radio band table (functional spec §8's "Band plan
+  tables") as sixteen `[minHz, maxHz]` allocations from 160m through 23cm, with `Band.of(hz)`
+  and `Band.contains(hz)`. Deliberately amateur-only, not a full scanner-service table — that is
+  what FR-UI-3's "band" filter and the lexicon's own band-plan table mean. No `Band` type
+  existed anywhere in `:core` or `:data` before this (confirmed by grep), so it lives in `:data`
+  at the package root beside `Converters.kt`, reusable by any `:data` caller.
+- `SearchDao.filterOnly` and `SearchDao.searchText` each gained four new bind parameters:
+  `bandMinHz`/`bandMaxHz` (inclusive frequency bounds), `attributionState`
+  (`org.ort.core.AttributionState?`), and `rejected` (`Boolean?`, tri-state: null = don't
+  filter, true = `processingState = 'REJECTED'` only, false = everything else). All four compose
+  with each other, with the pre-existing callsign/frequency/date filters, and with both the
+  filter-only path and the FTS5 MATCH path.
+- `SearchDao.search()` — the one entry point `:app` calls — kept its original parameter names
+  and positions (`text, callsign, frequencyHz, fromUtc, toUtc`) so
+  `org.ort.app.ui.data.SearchPolling.search`'s existing named-argument call sites keep compiling
+  unchanged, and gained three new trailing optional parameters: `band: Band?`,
+  `attributionState: AttributionState?`, `rejected: Boolean?`. `search()` resolves `band` to its
+  `minHz`/`maxHz` range before calling `filterOnly`/`searchText`.
+- Considered bundling all eight filters into one data-class parameter (to keep `searchText`'s
+  parameter count down and give the DAO a named "filter model"); reverted after confirming Room's
+  raw-SQL `@Query` binder has no dot-path syntax for a POJO's fields (`:filters.callsign` is a
+  SQL parse error under KSP, not a Room-specific one) — `filterOnly`/`searchText` must bind each
+  filter as its own flat parameter. `searchText` (9 parameters: the match expression plus the
+  six filters plus the original callsign/frequency pair split doesn't apply — see the file for
+  the exact list) needed `@Suppress("LongParameterList")` for detekt's threshold of 8; this is a
+  direct consequence of Room's raw-SQL binding, not a hidden design smell.
+**Verified:** `./gradlew :data:testDebugUnitTest --tests "org.ort.data.SearchDaoFilterTest" --tests "org.ort.data.SearchDaoFullTextTest"`
+green (all filter and full-text-search tests pass, including the honest fts5-unavailable
+`Assume` skip in `SearchDaoFullTextTest`, unchanged). Full gate:
+`./gradlew build dependencyRules` green; `python tools/spec-check/spec_check.py` — all 8 checks
+PASS. All JVM/Robolectric only; no on-device verification was performed or claimed.
+New tests, all named `FR_UI_3_...` in spirit (backtick test names, per this codebase's existing
+convention in this file): filtering by band (2m vs. 70cm), filtering by attribution state
+(CONFIRMED vs. AMBIGUOUS), filtering by rejected (true) and accepted (false), and one combined
+case exercising band + attribution state + rejected + frequency together. Caught and fixed one
+test-fixture bug in the same change: `TestFixtures.transmission()`'s default `attributionState`
+is derived from the `stationId` argument passed to that call, not from a later `.copy()` — the
+existing TX1/TX2 seed rows in `SearchDaoFilterTest` were silently `UNKNOWN` rather than
+`CONFIRMED` until `attributionState` was set explicitly.
+**Left open / not done:** The `:app` half of F-017 (`SearchScreen` UI: exposing these three new
+filters to the user, e.g. a band picker, attribution-state chips, rejected/accepted toggle) is
+untouched — out of scope for this change per the finding's own split into two briefs. No new
+Room migration was needed (no schema change; the new filters read existing columns).
+
+---
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture
