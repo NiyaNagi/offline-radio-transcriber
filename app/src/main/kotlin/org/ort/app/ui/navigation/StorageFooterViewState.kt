@@ -2,6 +2,7 @@ package org.ort.app.ui.navigation
 
 import android.content.Context
 import android.os.StatFs
+import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import java.io.File
 
 /**
@@ -20,10 +21,11 @@ import java.io.File
  * stays `false` — and the footer must show "no budget set" rather than any "of N GB" — until
  * FR-STO-3's budget setting exists to make that denominator real.
  *
- * R-012 (ui-conformance-plan WP3): [budgetBytes] is the field FR-STO-3's eventual setting (WP10)
- * fills in — `null` today, always, since nothing sets it yet. [hasBudget] stays its own explicit
- * field (rather than derived from [budgetBytes]) so an existing `hasBudget = false` call site
- * keeps compiling unchanged; the two are expected to agree once WP10 lands
+ * R-012 (ui-conformance-plan WP3), landed by WP10 (register R-090): [budgetBytes] reads
+ * [org.ort.app.ui.settings.SettingsStore.audioBudgetGb] — `null` until the operator sets one on
+ * `Settings › Storage and retention`, never fabricated. [hasBudget] stays its own explicit field
+ * (rather than derived from [budgetBytes]) so an existing `hasBudget = false` call site keeps
+ * compiling unchanged; the two agree by construction in [fromAudioDirectory]
  * (`hasBudget == (budgetBytes != null)`), but this type does not enforce that itself.
  */
 public data class StorageFooterViewState(
@@ -40,7 +42,15 @@ public data class StorageFooterViewState(
             val usedBytes = audioDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
             val stat = StatFs(context.filesDir.path)
             val freeBytes = stat.availableBlocksLong * stat.blockSizeLong
-            return StorageFooterViewState(audioUsedBytes = usedBytes, freeBytes = freeBytes, hasBudget = false)
+            val prefs = context.getSharedPreferences(SharedPreferencesSettingsStore.PREFS_NAME, Context.MODE_PRIVATE)
+            val budgetGb = SharedPreferencesSettingsStore(prefs).audioBudgetGb
+            val budgetBytes = budgetGb?.let { it * 1_000_000_000L }
+            return StorageFooterViewState(
+                audioUsedBytes = usedBytes,
+                freeBytes = freeBytes,
+                hasBudget = budgetBytes != null,
+                budgetBytes = budgetBytes,
+            )
         }
     }
 }

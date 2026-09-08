@@ -32,6 +32,154 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10: settings root and sub-screens, assets presentation, improve, sessions, digest)
+
+### (pending) — ui-conformance WP10 · settings root and sub-screens, assets presentation, improve, sessions, digest
+
+**Scope:** `:app` new `ui/settings/{SettingsStore,SettingsViewData,SettingsPolling,SettingsContent,
+SettingsRootScreen,SettingsCaptureScreen,SettingsRigScreen,SettingsTierScreen,SettingsStorageScreen,
+SettingsExportScreen,SettingsContributeScreen,SettingsDiagnosticsScreen,SettingsAboutScreen}.kt`;
+rebuilt `ui/screens/ModelsScreen.kt` presentation and `ui/data/ModelsViewData.kt` (two new fields);
+new `ui/improve/{ImproveViewData,ImprovePolling,ImproveCounts,ImproveRunner,ImproveScreens,
+ImproveContent}.kt`; new `ui/digest/{DigestViewData,DigestPolling,DigestContent,DigestScreens,
+SessionsContent,SessionsScreens}.kt`; `ui/navigation/OrtNavHost.kt` (SETTINGS/EARLIER_NIGHTS/
+IMPROVE_RECORDS dispatch, `DestinationContent` now takes `NavHostCallbacks` instead of four loose
+lambdas), `ui/navigation/ReaderDestination.kt` (`hasScreen` flip for those two), `ui/navigation/
+StorageFooterViewState.kt` (reads the new budget setting); `ui/settings/ModelsContent.kt` (`onBack`
+param). Tests beside each new/changed file.
+
+**Requirements/ACs:** R-090 (settings root + nine sub-screens), R-091 (Improve, P12, FR-REP-1..11),
+R-092 (Sessions/Session/Digest/Digest-Item, FR-DIG-1..6, FR-RUN-11/12/16), R-093 (assets
+presentation, guide §6.7/§9), R-107 (`SessionEntity.deviceTier` now read, closing the finding),
+F13 (assets screen's missing-model state), FR-CFG-1, FR-STO-1..8, FR-TIER-1..7, FR-RIG-1..12,
+FR-EXP-1..6, FR-CON-1..8, FR-OBS-3/5, constitution I/II/III/V/VII.
+
+**What changed:**
+
+*Constitution Check.* Principle I (Uncertainty Is Content): every fact this package renders comes
+from a real holder, DAO, or `SettingsStore` — never an artboard literal; where no real source
+exists (a tier detector, a rig module, an exporter, a diagnostics-bundle or contribution-upload
+producer, a reprocessing engine), the screen says so plainly (`FailedState`, disabled actions with
+a stated reason) rather than showing the artboard's example numbers or a fake success. Principle II
+(Test-Backed Change): `SettingsStore`, `SettingsPolling`, `ImprovePolling`/`FakeImproveRunner`, and
+`DigestPolling` each have a test file exercising real Robolectric-backed state (`SharedPreferences`,
+a real `OrtDatabase`, the real `:pipeline` holders) before the screens were wired to them; the one
+model-bearing interface this package adds (`ImproveRunner`) ships its behavioural fake
+(`FakeImproveRunner`) in the same change, per constitution II. Principle III (Audio Is The Source Of
+Truth) / P9: `Settings-Storage`'s deletion preview and `Improve`'s reprocess action never delete or
+overwrite content — `FakeImproveRunner` only clears `TransmissionEntity.isReprocessCandidate`, never
+a transcript or attribution. Principle V (Nothing Leaves The Device): `Settings-Contribute` and
+`Settings-Export` restate constitution III's never-included list verbatim
+(`NEVER_LEAVES_DEVICE`) and every contribution category defaults off (`SettingsStore`). Principle
+VII: `SettingsStore`/`ImproveRunner` are typed interfaces with a real and a fake implementation,
+not a convention.
+
+- **R-090 Settings root** (`SettingsRootScreen`, `SettingsContent`): four grouped sections
+  (Capture/Records/Privacy/About) exactly matching `Settings.dc.html`'s nine rows, each sub-line
+  computed by `SettingsPolling.root` from `InputStatus`/`RigStatus`/`ShedStatus`/`StorageForecast`-
+  adjacent facts, `ModelsController`, and `SettingsStore`. `SettingsStore` (new, `SharedPreferences`-
+  backed, following `ui/setup/SetupStore.kt`'s exact shape) holds every setting the boards show;
+  every contribution category and auto-prune default off (FR-CON-1/FR-STO-3a); no audio budget or
+  tier override is a fabricated default — both are honestly `null` until set.
+- **R-090 Capture/Tier/Rig/Storage** (`SettingsCaptureScreen`/`SettingsTierScreen`/
+  `SettingsRigScreen`/`SettingsStorageScreen`): Input/level facts read `InputStatus`/`LevelStatus`
+  (WP11c's holders, landed after this package's brief was written); Tier states the current
+  shed-level-derived number and what each lower tier does *not* know (P11), with an honest note
+  that no real measured-throughput detector (FR-TIER-1) exists yet; Rig renders `RigStatus` and,
+  since FR-RIG's module contract is unbuilt, an honest `FailedState` rather than fabricated
+  Reconnect/Change-radio actions; Storage shows real category byte counts (audio directory, sum of
+  installed model files, the Room database file), a "what will be deleted" preview banner (nothing
+  deleted by this package — FR-STO-3b/P9), and a budget control that flows into `SettingsStore`.
+- **R-093 Assets** (`ModelsScreen.kt` rebuilt, `ModelsViewData.kt` +`sizeBytes`/`checksumPrefix`):
+  one row per asset — a verified (solid)/unverified (half-filled amber)/not-installed (hollow)
+  marker, an `active` tag, a `size · sha256 prefix` sub-line, no full-sentence checksum-unknown
+  explanation in the row label (guide §9). `ModelsController`'s logic is unchanged; only the
+  presentation and `ModelsScreenTest.kt` (now `R_093`-named) were rewritten — the pre-existing
+  `ModelsControllerTest.kt` (F-008/FR-ASR-1's own tests) is untouched and still green. F13: when
+  neither the tiny.en encoder nor decoder is installed, a `FailedState` states the tier-1 fallback
+  and offers `Install`.
+- **R-090 Export/Contribute/Diagnostics/About**: real scope/include/format controls
+  (`SettingsExportScreen`) and per-category consent (`SettingsContributeScreen`, the never-included
+  list verbatim) are interactive and real; `Save file`/`Preview bundle` render disabled with an
+  honest "not available in this build" reason, since no exporter or diagnostics-bundle producer
+  exists anywhere in `:app`/`:pipeline`/`:net` (grepped before writing this, not assumed). About
+  reads the real app version from `PackageManager` and the real `android.os.Build.VERSION.RELEASE`.
+- **R-091 Improve** (`ui/improve/**`, P12, FR-REP-1..11): `ImprovePolling.root` groups sessions by
+  `SessionEntity.deviceTier` (R-107 — the field register found written and read nowhere; this reads
+  it) below the current tier, with real over/session counts; `Improve-Select`'s estimate uses a real
+  measured `ThermalStatus.realTimeFactor` when one exists this process, else states "not measured"
+  rather than inventing a duration, and a real corrections-to-reapply count via `CorrectionDao`.
+  No reprocess/Pass-B/C scheduling mechanism exists anywhere in `:pipeline` (no `WorkManager`, no
+  `CoroutineWorker` — confirmed by grep and by `RealCaptureService.kt`'s own kdoc) — `ImproveRunner`
+  is the seam a real one would satisfy; the shipped `FakeImproveRunner` performs exactly one real,
+  honest write (clearing `isReprocessCandidate`) and invents no transcript/attribution content, so
+  `Improve-Running`/`Improve-Done` show real counts and an explicit "no reprocessing engine exists
+  yet" note instead of a fabricated diff. `ImproveCounts.canGetBetterCount` is the hook WP4's Now
+  screen is meant to call for its "Can get better" row's count (not yet switched over — that edit
+  is WP4's file, not this package's).
+- **R-092 Sessions/Session/Digest/Digest-Item** (`ui/digest/**`, FR-DIG-1..6, FR-RUN-11/12/16):
+  `SessionsContent` (the `EARLIER_NIGHTS` destination) lists every session with the `TIER 1` chip
+  and "can be improved" exactly when `deviceTier` qualifies (R-107); `SessionDetailScreen` renders
+  WP2's `ActivityPatternChart` over the session's own gaps (built via `ActivityPatternMapper`,
+  unedited) and every gap's `CaptureGapCause` as prose (`incoming call took the microphone`,
+  `stopped by the OS`, etc. — WP11a's four new enum values, now consumed for the first time).
+  `DigestPolling.digest` computes first-heard-this-session stations (comparing against every prior
+  transmission for that station via `ActivityDao.transmissionsForStation`), a frequency departing
+  from its usual nightly pattern (reusing WP8's public `NightlyDeparture.isBusierThanUsual`/
+  `usualAverage`, unedited), and AMBIGUOUS/UNKNOWN counts — **no long-thread or "regular absent"
+  item is computed**, since no query lists a session's threads or a station's day-of-week
+  regularity (see Left open). `Log`/`Full log` embed WP5's own `LogContent` directly, filtered to
+  the exact session tapped (confirmed `LogContent`'s `sessionId` genuinely filters, by reading
+  `LogPolling.screenState` first) — composition, not an edit to that file.
+- **`OrtNavHost.kt`**: `SETTINGS`/`EARLIER_NIGHTS`/`IMPROVE_RECORDS` now dispatch to
+  `SettingsContent`/`SessionsContent`/`ImproveContent` instead of `ModelsContent` directly (Settings)
+  or `PlaceholderScreen` (the other two); `DestinationContent` gained an `onOpenDrawer` parameter
+  (needed by all three new root screens' `ScreenHeader`) — to stay under detekt's
+  `LongParameterList` threshold this is passed as the existing `NavHostCallbacks` bundle rather than
+  a fifth loose lambda, so its call site changed too. `ReaderDestination.EARLIER_NIGHTS`/
+  `IMPROVE_RECORDS.hasScreen` flipped to `true`.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` — full `:app` module suite green, including 39 new tests
+  (`SettingsStoreTest`, `SettingsPollingTest`, `SettingsRootScreenTest`, `ModelsScreenTest`
+  (rewritten, `R_093`/`F13`-named), `ImprovePollingTest`, `DigestPollingTest`,
+  `StorageFooterViewStateTest` (+1 new case)) plus every pre-existing test in the module, all
+  `PASSED`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 53s`, 841 actionable
+  tasks (39 executed, 802 up-to-date).
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL in 3s`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 181 covered ->
+  results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (181
+  covered of 419)`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+
+**Left open / not done:**
+- No aggregate "failed passes across every pass id" query exists on `WorkQueueDao` —
+  `Settings-Diagnostics`'s failed-pass tile reads `not tracked` rather than a fabricated number.
+- No lexicon/calibration asset rows on `Settings-Assets` — `ModelCatalog` (F-008's) only models the
+  four ASR/VAD files; `CatalogDao` has `LexiconVersionEntity`/`CalibrationEntity` but no view-state
+  or polling was built to surface them here, kept out of scope for this pass.
+- `Improve-Select`'s per-pass checkboxes are display-only (always checked, `onCheckedChange = {}`)
+  — there is no real per-pass-toggle-aware runner to honour an unchecked box, so offering one that
+  does nothing would be dishonest; the "Never re-run: Segmentation" row is real (a disabled,
+  unchecked checkbox, per constitution III).
+- Digest never computes a long-thread or "regular station absent" item (see What changed) — no
+  thread-listing-by-session or station-day-of-week-regularity query exists; noted rather than
+  invented.
+- The drawer's `improveRecordsCount` badge (`ui/navigation/Drawer.kt`, WP3's file) is not wired to
+  `ImproveCounts.canGetBetterCount` — left for WP3/WP4, since `Drawer.kt` is outside this package's
+  row.
+- `SessionsContent`'s embedded `Log` view passes `onOpen = {}` — tapping a log row there does not
+  open `TransmissionDetailContent`, since that drill-in is host-level state this package does not
+  own; the row is otherwise fully functional (filtering, scrolling, real content).
+- `Settings-Capture`'s "Log overs against" manual-frequency row is read-only in this build (no edit
+  dialog) — `SettingsStore.manualFrequencyMhz` exists and is read, but nothing writes it yet.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
 ### (pending) — ui-conformance WP8 · stations and frequencies: lists, detail, hour-by-day pattern, identity, departure
