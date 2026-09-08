@@ -184,6 +184,64 @@ class RowsTest {
     }
 
     @Test
+    fun `R_205_log_row and rejected_row time and freq columns meet the guide's floor and render in full`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    LogRow(state = row(), onClick = {}, modifier = Modifier.testTag("log"))
+                    RejectedRow(
+                        timeLabel = "16:28:56",
+                        frequencyLabel = "146.960",
+                        reason = "squelch tail",
+                        modifier = Modifier.testTag("rejected"),
+                    )
+                }
+            }
+        }
+
+        // Full labels, verbatim — never truncated by the new `maxLines`/`softWrap` (a truncated
+        // render would fail these exact-text lookups, since a clipped display still reports its
+        // real semantics text, but a *summarised* one would not — this is the check that would
+        // catch that class of regression).
+        composeTestRule.onNodeWithText("02:14:07").assertIsDisplayed()
+        composeTestRule.onNodeWithText("145.230").assertIsDisplayed()
+        composeTestRule.onNodeWithText("16:28:56").assertIsDisplayed()
+        composeTestRule.onNodeWithText("146.960").assertIsDisplayed()
+
+        // The guide's own 52dp/56dp floor, never regressed — deterministic regardless of host
+        // font metrics, since a `widthIn(min = …)` never reports less than its floor.
+        val logTimeWidth = composeTestRule.onNodeWithText("02:14:07").fetchSemanticsNode().size.width
+        val logFreqWidth = composeTestRule.onNodeWithText("145.230").fetchSemanticsNode().size.width
+        val rejectedTimeWidth = composeTestRule.onNodeWithText("16:28:56").fetchSemanticsNode().size.width
+        val rejectedFreqWidth = composeTestRule.onNodeWithText("146.960").fetchSemanticsNode().size.width
+        assert(logTimeWidth >= 52) { "expected LogRow's time column at least 52px, got ${logTimeWidth}px" }
+        assert(logFreqWidth >= 56) { "expected LogRow's freq column at least 56px, got ${logFreqWidth}px" }
+        assert(rejectedTimeWidth >= 52) { "expected RejectedRow's time column at least 52px, got ${rejectedTimeWidth}px" }
+        assert(rejectedFreqWidth >= 56) { "expected RejectedRow's freq column at least 56px, got ${rejectedFreqWidth}px" }
+    }
+
+    @Test
+    fun `R_205_gap_row and column_header_row time and freq columns meet the guide's floor and render in full`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    GapRow(timeLabel = "16:28:56", label = "not listening", modifier = Modifier.testTag("gap"))
+                    ColumnHeaderRow()
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("16:28:56").assertIsDisplayed()
+        val gapTimeWidth = composeTestRule.onNodeWithText("16:28:56").fetchSemanticsNode().size.width
+        assert(gapTimeWidth >= 52) { "expected GapRow's time column at least 52px, got ${gapTimeWidth}px" }
+
+        val headerTimeWidth = composeTestRule.onNodeWithText("TIME").fetchSemanticsNode().size.width
+        val headerFreqWidth = composeTestRule.onNodeWithText("FREQ").fetchSemanticsNode().size.width
+        assert(headerTimeWidth >= 52) { "expected ColumnHeaderRow's time column at least 52px, got ${headerTimeWidth}px" }
+        assert(headerFreqWidth >= 56) { "expected ColumnHeaderRow's freq column at least 56px, got ${headerFreqWidth}px" }
+    }
+
+    @Test
     fun `a drill-in header and a screen header carry their own targets and descriptions`() {
         var backCalled = false
         composeTestRule.setContent {

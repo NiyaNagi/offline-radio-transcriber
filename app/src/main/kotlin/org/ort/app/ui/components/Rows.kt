@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -35,6 +36,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -54,17 +57,61 @@ import org.ort.core.AttributionState
  * sits to its right with no visible gap (`Session`/`Capture-Status`'s "Stations5"). A floor keeps
  * every row's columns aligned at the guide's scale (1.0) — where content is always narrower than
  * the floor — and lets a column grow past it, never collide, at 2.0.
+ *
+ * R-205: R-152's floor was not enough by itself — found on an emulator, not just at a larger font
+ * scale, that the guide's own 52dp/56dp widths are already too narrow for real content ("16:28:56",
+ * "146.960") in [OrtType.timeFreq] even at the guide's own scale (1.0): a `Text` given room to
+ * wrap onto a second line will do exactly that rather than ask its parent for more width, so
+ * `widthIn(min = …)` alone never got the chance to grow the column — the wrap happened first.
+ * [rememberTimeColumnWidth]/[rememberFreqColumnWidth] fix the root cause two ways: `maxLines = 1`
+ * and `softWrap = false` on every time/frequency `Text` forbid the wrap outright, and the floor
+ * itself is `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN` widened, if needed, to whatever
+ * [rememberTextMeasurer] actually measures a representative value to need in [OrtType.timeFreq]
+ * at the *real*, current density/font scale — correct against real font metrics on whatever host
+ * renders it, not a guessed constant that can quietly drift out of date the way 52dp/56dp did.
  */
 
 /** Time column floor — 52dp at the guide's own scale, so every row's time aligns down the whole
  * log there (guide §6.5/§5); grows past 52dp rather than colliding with what follows it at a
- * larger font scale. */
-public val LOG_TIME_COLUMN: androidx.compose.ui.unit.Dp = 52.dp
+ * larger font scale. R-205: callers render at [rememberTimeColumnWidth] instead, which never
+ * returns less than this constant. */
+public val LOG_TIME_COLUMN: Dp = 52.dp
 
-/** Frequency column floor — 56dp at the guide's own scale. */
-public val LOG_FREQ_COLUMN: androidx.compose.ui.unit.Dp = 56.dp
+/** Frequency column floor — 56dp at the guide's own scale. R-205: callers render at
+ * [rememberFreqColumnWidth] instead, which never returns less than this constant. */
+public val LOG_FREQ_COLUMN: Dp = 56.dp
 
 private val SIGNAL_COLUMN = 24.dp
+
+/** R-205: HH:MM:SS, the widest real shape [LogRowViewState.timeLabel]/`GapRow`/`RejectedRow`'s
+ * `timeLabel` ever take — every caller in this codebase uses this exact format, so measuring this
+ * one representative value (rather than each row's own, different, digits) is what keeps every
+ * row's time column the same width, aligned down the whole log. */
+private const val TIME_COLUMN_SAMPLE = "16:28:56"
+
+/** R-205: NNN.NNN MHz, the widest real shape a frequency label takes in this codebase. */
+private const val FREQ_COLUMN_SAMPLE = "146.960"
+
+/** R-205: [LOG_TIME_COLUMN] widened, if the real, current font metrics need it, to fit
+ * [TIME_COLUMN_SAMPLE] on one line in [OrtType.timeFreq] — measured with [rememberTextMeasurer],
+ * not guessed, so it is correct on this host's actual fonts rather than only the guide's. */
+@Composable
+public fun rememberTimeColumnWidth(): Dp = rememberMonoColumnWidth(TIME_COLUMN_SAMPLE, LOG_TIME_COLUMN)
+
+/** R-205: [LOG_FREQ_COLUMN] widened, if needed, to fit [FREQ_COLUMN_SAMPLE] — see
+ * [rememberTimeColumnWidth]. */
+@Composable
+public fun rememberFreqColumnWidth(): Dp = rememberMonoColumnWidth(FREQ_COLUMN_SAMPLE, LOG_FREQ_COLUMN)
+
+@Composable
+private fun rememberMonoColumnWidth(sample: String, floor: Dp): Dp {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val measuredWidth = remember(density.density, density.fontScale, sample) {
+        with(density) { measurer.measure(text = sample, style = OrtType.timeFreq).size.width.toDp() }
+    }
+    return maxOf(floor, measuredWidth)
+}
 
 // ---------------------------------------------------------------------------------------------
 // Section / header rows.
@@ -190,13 +237,17 @@ public fun ColumnHeaderRow(
             text = "time".uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
-            modifier = Modifier.widthIn(min = LOG_TIME_COLUMN),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
         )
         Text(
             text = "freq".uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
-            modifier = Modifier.widthIn(min = LOG_FREQ_COLUMN),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.widthIn(min = rememberFreqColumnWidth()),
         )
         Text(
             text = stationLabel.uppercase(),
@@ -459,13 +510,17 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
                 text = state.timeLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.widthIn(min = LOG_TIME_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
             )
             Text(
                 text = state.frequencyLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.widthIn(min = LOG_FREQ_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberFreqColumnWidth()),
             )
             Column(modifier = Modifier.weight(1f)) {
                 LogRowMarkerLine(state = state)
@@ -619,7 +674,9 @@ public fun GapRow(timeLabel: String, label: String, modifier: Modifier = Modifie
                 text = timeLabel,
                 style = OrtType.signal,
                 color = OrtColors.accentGap,
-                modifier = Modifier.widthIn(min = LOG_TIME_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
             )
             Icon(
                 imageVector = OrtIcons.gapWarn,
@@ -670,13 +727,17 @@ public fun RejectedRow(
                 text = timeLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.widthIn(min = LOG_TIME_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
             )
             Text(
                 text = frequencyLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.widthIn(min = LOG_FREQ_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberFreqColumnWidth()),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
