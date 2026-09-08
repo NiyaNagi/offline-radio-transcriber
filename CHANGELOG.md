@@ -343,6 +343,43 @@ above) against the pre-fix client; all four cases green after the fix under
 PASS). JVM-only (Robolectric/desktop), no on-device verification claimed.
 **Left open / not done:** none for this finding. The other clustered F-027 gaps (FR-AST-4/7/9,
 etc.) are out of this change's scope.
+## 2026-09-07 (audit — F-004)
+
+### (pending) — audit F-004 · Status surface now shows ASR/VAD model availability
+
+**Scope:** `:app` — `status/StatusViewState.kt` (and its mapper), `ui/data/ReaderPolling.kt`
+(`currentStatus` only), `ui/screens/StatusScreen.kt`, `ui/screens/NowScreen.kt`, and their tests
+(`StatusViewStateMapperTest.kt`, new `StatusScreenTest.kt`, `NowScreenTest.kt`,
+`ReaderPollingTest.kt`).
+**Requirements/ACs:** FR-UI-7 (capture status surface shows current tier/processing state);
+constitution I (uncertainty is content — a status surface must never read as more capable than it
+is) and IV (capture never lies).
+**What changed:** `AsrAvailability`/`VadAvailability` (set by `RealCaptureService`, `:pipeline`)
+were previously read only by the dead `StatusActivity`; nothing in the live Compose reader
+(`OrtNavHost` → `ReaderPolling.currentStatus` → `StatusViewState` → `StatusScreen`, inside
+`NowScreen`) showed whether a transcription model was installed, so with no model fetch built yet
+(build-plan P18 not shipped) the reader gives no reason transcripts never appear. `StatusViewState`
+gained `asrStatusLabel`, `vadStatusLabel` and `transcriptionUnavailableMessage` (all with safe
+"not started"/unavailable defaults, never a healthy-looking default when unset);
+`StatusViewStateMapper.from` gained optional `asrState`/`vadState` parameters read from the real
+`AsrAvailability.state`/`VadAvailability.state` in `ReaderPolling.currentStatus`. `StatusScreen`
+renders two new plain-text rows ("ASR: …", "VAD: …"); `NowScreen`'s header shows the one-line
+`transcriptionUnavailableMessage` ("No transcription model installed — transcripts will not
+appear") whenever ASR is not `Available`. No change to `:pipeline`'s `AsrAvailability`/
+`VadAvailability` API — it was sufficient as built.
+**Verified:** TDD — each new/changed assertion was first run against the pre-fix code and seen to
+fail for the right reason (compile error for the new `StatusViewState` fields/params; Compose
+`assertExists` failures for the missing rows/header text; `ReaderPollingTest`'s new case failed
+because `AsrAvailability.unavailable(...)` had no effect before the mapper was wired to it), then
+the fix was applied and all tests passed. `./gradlew :app:test` — green (Robolectric/JVM only; no
+on-device verification). `python tools/spec-check/spec_check.py` — OK. Full gate
+`./gradlew build dependencyRules` run before commit.
+**Left open / not done:** No ASR/VAD model can actually be installed yet (build-plan P18), so on
+Robolectric this only proves the "not started"/"unavailable" path renders correctly, not the
+"available" path against a real model — that is P18's own verification once model fetch exists.
+`StatusActivity` (dead) is left untouched per the finding's scope.
+
+---
 
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 

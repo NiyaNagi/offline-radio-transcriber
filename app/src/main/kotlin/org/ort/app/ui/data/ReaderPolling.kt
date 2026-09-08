@@ -12,7 +12,9 @@ import org.ort.core.TransmissionId
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureStatusRepository
+import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.VadAvailability
 import org.ort.pipeline.shed.ShedController
 import org.ort.pipeline.shed.ShedSignals
 import java.io.File
@@ -51,7 +53,10 @@ public object ReaderPolling {
             gapCount = gaps,
             isIgnoringBatteryOptimizationsDiagnosticOnly = pm.isIgnoringBatteryOptimizations(context.packageName),
         )
-        val base = StatusViewStateMapper.from(status)
+        // FR-UI-7 / audit F-004: read the real, process-wide ASR/VAD availability the capture
+        // service set (or has not set yet — `AsrAvailability.state`/`VadAvailability.state`
+        // default to their own honest "not started"/fallback states, never a healthy default).
+        val base = StatusViewStateMapper.from(status, AsrAvailability.state, VadAvailability.state)
         val failure = CaptureState.failureReason
         return if (failure != null) base.copy(stateLabel = "${base.stateLabel} — $failure") else base
     }

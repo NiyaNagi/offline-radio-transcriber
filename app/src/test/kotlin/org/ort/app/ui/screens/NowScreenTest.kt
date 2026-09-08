@@ -9,6 +9,7 @@ import org.junit.runner.RunWith
 import org.ort.app.status.StatusViewState
 import org.ort.app.ui.data.NowSummaryViewState
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -66,6 +67,36 @@ class NowScreenTest {
         }
 
         composeTestRule.onNodeWithContentDescription("Nothing to report yet", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 the header says no transcription model is installed when unavailable`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                NowScreen(status = idleStatus, summary = NowSummaryViewState(overCount = 0, stationCount = 0))
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "No transcription model installed — transcripts will not appear",
+            substring = true,
+        ).assertExists()
+    }
+
+    @Test
+    @Requirement("FR-UI-7")
+    fun `FR_UI_7 the header stays silent once a transcription model is actually available`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                NowScreen(
+                    status = idleStatus.copy(transcriptionUnavailableMessage = null),
+                    summary = NowSummaryViewState(overCount = 0, stationCount = 0),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("No transcription model installed", substring = true).assertDoesNotExist()
     }
 
     @Test

@@ -41,6 +41,11 @@ public fun StatusScreen(state: StatusViewState, modifier: Modifier = Modifier) {
         LabeledLine("Gaps", "${state.gapCount}")
         LabeledLine("Shed level", state.shedLevelLabel)
         LabeledLine("Liveness", state.livenessLabel)
+        // FR-UI-7 / audit F-004: the status surface must say whether a transcription model is
+        // actually installed and running, in plain text — not just via the missing-transcript
+        // symptom the reader would otherwise show with no explanation.
+        LabeledLine("ASR", state.asrStatusLabel)
+        LabeledLine("VAD", state.vadStatusLabel)
     }
 }
 

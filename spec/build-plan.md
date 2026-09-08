@@ -121,6 +121,10 @@ are individually green.*
   **2026-09-07 (audit F-003):** the read path never surfaced `TransmissionEntity.processingState`,
   so `FAILED`/`REJECTED` transmissions rendered identically to still-pending ones; fixed (FR-RUN-9)
   — see CHANGELOG 2026-09-07 entry. The `FAILED` label still lacks the queue's `lastError` text.
+  **2026-09-07 audit fix (F-004):** `StatusScreen`/`NowScreen` did not surface
+  `AsrAvailability`/`VadAvailability` at all — the reader gave no reason transcripts never appear.
+  Fixed: `StatusViewState` now carries real ASR/VAD status labels and an honest
+  "no transcription model installed" header message; see CHANGELOG.md's F-004 entry.
 - [x] **P15 · Search and threads** *(`:app`, `:data`)* — done 2026-09-08. `SearchDao` (a new DAO
   file, per the prompt, to stay conflict-free with concurrent P17) queries the FTS5 index P5 built
   and nothing queried until now, with callsign/frequency/date filters; `SearchScreen`/`ThreadScreen`
