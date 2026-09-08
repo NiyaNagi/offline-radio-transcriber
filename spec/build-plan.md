@@ -43,7 +43,12 @@ underlying breakdown each prompt draws on.
 **Wave C — composition.**
 
 - [x] **P7 · Lexicon: ranking, calibration, harness** *(`:lexicon`, `:eval`)* — done 2026-09-07
-- [x] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)* — done 2026-09-07
+- [x] **P8 · Android capture spine** *(`:capture-android`, `:pipeline`, `:app`)* — done 2026-09-07;
+  audit F-010 (2026-09-07): AC-3 was previously covered only by `RingBuffer`, which nothing in
+  `src/main` constructs. `AudioRecordSource` now detects a stalled downstream collector or
+  `AudioRecord` shortfall directly (elapsed wall time vs. samples delivered) and reports it through
+  the existing `CaptureEvent.Interrupted`/`Resumed` pair, closed immediately by `GapTracker` — AC-3
+  now holds on the real capture path. `RingBuffer` is unchanged and still unused in production.
 
 **Wave D — the M2 gate, then transcription.**
 
