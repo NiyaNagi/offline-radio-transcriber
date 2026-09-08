@@ -32,6 +32,62 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP1 addendum: dark system bars regardless of night mode)
+
+### (pending) — ui-conformance WP1 · dark system bars regardless of night mode (R-008)
+
+**Scope:** `:app` — `MainActivity.kt`, `ui/ReaderActivity.kt` (both `onCreate`'s `enableEdgeToEdge`
+call), `ui/theme/Theme.kt` (new `OrtSystemBarStyle`), `res/values/themes.xml` (doc comment only,
+values unchanged — already correct). Test: `MainActivityTest.kt` (two new cases).
+
+**Requirements/ACs:** R-008 (register row, filed by the lead from on-device observation on
+`emulator-5554`); guide §12 (no light theme, ever).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) bears indirectly: an operator who
+  cannot read the clock/icons in the status bar cannot tell the device is alive at a glance, which
+  is adjacent to the liveness-must-be-legible concern the constitution takes seriously elsewhere.
+  Mostly this is guide §12's own rule (no light theme) applied to a surface this package's R-001
+  fix had not yet reached: the *system* bar, as opposed to the app's own content.
+- **Root cause.** `enableEdgeToEdge()`'s no-argument overload defaults both bar styles to
+  `SystemBarStyle.auto(...)`, which picks light system-bar icons whenever the OS itself is not in
+  night mode — regardless of what the *app's own* theme looks like. This app has no light theme at
+  all (every artboard is dark, guide §12), so on a device/emulator not in night mode the status
+  bar rendered dark icons on this app's dark ground: nearly invisible clock and icons, on both
+  `MainActivity`'s permission screens and `ReaderActivity`. R-001's `Theme.Ort` already set
+  `windowLightStatusBar`/`windowLightNavigationBar` to `false` for the brief pre-Compose frame,
+  but `enableEdgeToEdge()` overrides that the moment it runs, using its own default rather than
+  reading the theme.
+- **The fix.** `OrtSystemBarStyle` (`ui/theme/Theme.kt`) is `SystemBarStyle.dark(Color.TRANSPARENT)`
+  — a fixed, non-`auto` style. Both `MainActivity.onCreate` and `ReaderActivity.onCreate` now call
+  `enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)`
+  instead of the no-arg form. `themes.xml`'s `windowLightStatusBar`/`windowLightNavigationBar`
+  were already `false` (R-001) — gained a doc-comment cross-reference explaining the two halves
+  must agree, not a value change.
+- **Test.** `R_008_system_bar_style_is_dark_regardless_of_night_mode` (two cases, "in day mode"
+  and "in night mode", `MainActivityTest.kt`): builds a real `MainActivity` and reads
+  `WindowInsetsControllerCompat(activity.window, activity.window.decorView)
+  .isAppearanceLightStatusBars`/`.isAppearanceLightNavigationBars` after `onCreate` — the actual
+  runtime effect `enableEdgeToEdge()` produces, genuinely simulated by Robolectric, not merely the
+  static theme attribute (which was already correct and did not need a new test). Both must read
+  `false` in both Robolectric's default (day) qualifiers and under `@Config(qualifiers = "night")`.
+  Verified this is a real regression test, not one that would pass regardless: temporarily reverted
+  the call to bare `enableEdgeToEdge()` and re-ran — the "day mode" case failed exactly as the bug
+  report described (`isAppearanceLightStatusBars` read `true`), while "night mode" still passed
+  (since night mode alone already makes `auto` pick dark) — then restored the fix and confirmed
+  both pass again. A single `@Config(qualifiers = "night")` case alone could not tell `SystemBarStyle
+  .auto` and `.dark` apart while genuinely in day; the pair together can.
+
+**Verified:**
+- `.\gradlew.bat :app:check` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL`; `dependencyRules: OK
+  — every edge is permitted by the design graph.`; `platformGuards: OK.`
+
+**Left open / not done:** not verified on a real device or the actual `emulator-5554` this was
+reported from — Robolectric/JVM only, as for the rest of this package's work. `WindowInsetsControllerCompat`'s
+appearance flags are Robolectric's best simulation of the real platform behaviour, not the real
+platform itself.
+
 ## 2026-09-08 (ui-conformance WP1: theme, tokens, manifest, scaffold; themed permission screens)
 
 ### (pending) — ui-conformance WP1 · theme, tokens, manifest, scaffold; themed permission screens

@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import org.ort.app.ui.navigation.OrtNavHost
+import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.CaptureState
 
@@ -30,12 +31,15 @@ import org.ort.pipeline.capture.CaptureState
  * ui-conformance-plan R-001: [enableEdgeToEdge] draws content behind a transparent status/
  * navigation bar rather than under an opaque platform one — see `res/values/themes.xml`'s
  * `Theme.Ort` and [OrtTheme]'s own doc comment for the rest of R-001/R-006.
+ *
+ * ui-conformance-plan R-008: [OrtSystemBarStyle] keeps the status/navigation bar icons light
+ * regardless of the OS's night-mode state — see that constant's own doc comment.
  */
 public class ReaderActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
         val sessionId = resolveSessionId(
             intentSessionId = intent?.getStringExtra(EXTRA_SESSION_ID),
             liveSessionId = CaptureState.sessionId,

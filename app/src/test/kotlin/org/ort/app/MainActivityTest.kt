@@ -7,10 +7,12 @@ import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -24,6 +26,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
+import org.robolectric.annotation.Config
 import org.robolectric.util.ReflectionHelpers
 
 /**
@@ -265,6 +268,50 @@ class MainActivityTest {
 
         assertEquals(null, activity.currentScreenForTest)
         assertTrue(activity.isFinishing)
+    }
+
+    // --- R-008: dark system bars regardless of night mode ----------------------------------------
+
+    /**
+     * `enableEdgeToEdge()`'s runtime effect is what `WindowInsetsControllerCompat
+     * .isAppearanceLightStatusBars`/`isAppearanceLightNavigationBars` report — `false` means "dark
+     * background, light icons", which is what this app must always show (guide §12: no light
+     * theme). The no-arg overload (`SystemBarStyle.auto`) would report `true` here whenever the
+     * device is *not* in night mode; `OrtSystemBarStyle` (`SystemBarStyle.dark(...)`) must report
+     * `false` unconditionally — proven twice, once under Robolectric's default (day) qualifiers and
+     * once forced into night mode, so a regression back to `auto` would fail at least the second
+     * case even though the first alone cannot tell `auto` and `dark` apart while genuinely in day.
+     */
+    @Test
+    fun `R_008_system_bar_style_is_dark_regardless_of_night_mode in day mode`() {
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val activity = buildAndResume()
+
+        val insetsController = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
+        assertFalse("status bar must render light icons on a dark ground", insetsController.isAppearanceLightStatusBars)
+        assertFalse(
+            "navigation bar must render light icons on a dark ground",
+            insetsController.isAppearanceLightNavigationBars,
+        )
+    }
+
+    @Test
+    @Config(qualifiers = "night")
+    fun `R_008_system_bar_style_is_dark_regardless_of_night_mode in night mode`() {
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val activity = buildAndResume()
+
+        val insetsController = WindowInsetsControllerCompat(activity.window, activity.window.decorView)
+        assertFalse(
+            "SystemBarStyle.auto would flip this true in night mode; OrtSystemBarStyle must not",
+            insetsController.isAppearanceLightStatusBars,
+        )
+        assertFalse(
+            "SystemBarStyle.auto would flip this true in night mode; OrtSystemBarStyle must not",
+            insetsController.isAppearanceLightNavigationBars,
+        )
     }
 
     private companion object {
