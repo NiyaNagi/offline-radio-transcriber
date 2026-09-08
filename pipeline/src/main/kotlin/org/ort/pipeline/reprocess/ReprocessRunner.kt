@@ -1,5 +1,6 @@
 package org.ort.pipeline.reprocess
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -11,7 +12,9 @@ import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
+import org.ort.data.PassRunOutcome
 import org.ort.data.WorkQueue
+import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
 import org.ort.pipeline.CaptureProcessingLoop
 import org.ort.pipeline.Pass
@@ -97,6 +100,24 @@ public data class ReprocessTuning(
  * reprocess run, picks it up — resumability is a property of the durable queue this class reuses,
  * not a mechanism it had to build.
  *
+ * **A missing/deleted retained-audio file must never take the process down (register R-290)**:
+ * `FlacSegmentAudioProvider.forItem` throws a bare `IllegalStateException` when the file a
+ * transmission's `audioPath()` names is gone (retention deletion, or a synthetic fixture that
+ * never wrote one) — a real condition on a real device, not a test-only edge case. [run] wraps
+ * whatever [passFor] returns in [SafePass] specifically so that exception (or any other a [Pass]
+ * throws) is caught and converted to [org.ort.data.PassRunOutcome.Errored] *before* it can escape
+ * [org.ort.data.WorkQueue.runLeased]'s `withTimeoutOrNull` — which does not catch ordinary
+ * exceptions, only its own timeout — and reach the collecting coroutine (the app's main thread,
+ * via `RealImproveRunner`) uncaught. Once converted, [WorkQueue.failPass]'s existing, already-
+ * tested bounded-retry path takes over exactly as it does for any other Pass B error (FR-RUN-9):
+ * the transmission reaches terminal `FAILED` with the real message recorded as
+ * [org.ort.data.entity.WorkQueueItemEntity.lastError] — the same shape the `pass-failed` scenario
+ * (register R-153) already renders — and this run keeps going with the next id.
+ * [ReprocessStatus.Summary.failureReasons] carries that message forward so `Improve-Done` can say
+ * *why*, not just *how many*, without a caller needing a separate `:data` query.
+ * [CancellationException] is deliberately never caught by [SafePass] — swallowing it would break
+ * `run`'s own documented "a collector that stops collecting stops the run" contract.
+ *
  * **What this does not do yet**: only [PassId.B_OFFLINE] is supported — [PassId.C_SPOT] exists as
  * an id (technical design §9.7, M4) but no runner for it exists anywhere in `:pipeline` (grepped
  * the tree before writing this); requesting it throws rather than silently no-opping.
@@ -152,7 +173,8 @@ public class ReprocessRunner(
         }
 
         val tier = currentTier()
-        val pass = passFor(tier)
+        // R-290: never the raw Pass returned by passFor() -- see the class kdoc.
+        val pass = SafePass(passFor(tier))
         val queue = WorkQueue(db, clock)
         val drainRunner = PassDrainRunner(queue, runId)
 
@@ -162,6 +184,7 @@ public class ReprocessRunner(
         var rejected = 0
         var failed = 0
         var correctedCount = 0
+        val failureReasons = LinkedHashSet<String>()
 
         ReprocessStatus.running(done, total, null)
 
@@ -184,14 +207,17 @@ public class ReprocessRunner(
             val outcome = runOnePass(queue, drainRunner, pass, id, passes.first(), done, total)
 
             when (outcome) {
-                PassOutcomeKind.FAILED -> failed++
-                PassOutcomeKind.COMPLETED, PassOutcomeKind.REJECTED -> {
+                is PassAttemptOutcome.Failed -> {
+                    failed++
+                    outcome.reason?.let { failureReasons.add(it) }
+                }
+                PassAttemptOutcome.Completed, PassAttemptOutcome.Rejected -> {
                     db.transmissionDao().setReprocessCandidate(id, false)
                     // Register R-204 follow-up (FR-REP-2, FR-REP-9): both outcomes mean Pass B
-                    // genuinely ran this record at `tier` -- only FAILED (handled above) means it
-                    // did not, so only FAILED must leave `processedTier` untouched, still eligible.
+                    // genuinely ran this record at `tier` -- only Failed (handled above) means it
+                    // did not, so only Failed must leave `processedTier` untouched, still eligible.
                     db.transmissionDao().setProcessedTier(id, tier)
-                    if (outcome == PassOutcomeKind.REJECTED) {
+                    if (outcome == PassAttemptOutcome.Rejected) {
                         rejected++
                     } else {
                         val after = db.transmissionDao().getById(id)
@@ -221,6 +247,7 @@ public class ReprocessRunner(
             rejected = rejected,
             failed = failed,
             correctedCount = correctedCount,
+            failureReasons = failureReasons.toList(),
         )
         ReprocessStatus.done(summary)
     }
@@ -262,16 +289,24 @@ public class ReprocessRunner(
         passId: PassId,
         done: Int,
         total: Int,
-    ): PassOutcomeKind {
+    ): PassAttemptOutcome {
         val rowId = enqueueOrReuseActive(queue, transmissionId, passId)
         var iterations = 0
         while (iterations < tuning.maxDrainIterationsPerItem) {
             val row = db.workQueueDao().getById(rowId)
             if (row == null) {
                 val state = db.transmissionDao().getById(transmissionId)?.processingState
-                return if (state == TransmissionState.REJECTED) PassOutcomeKind.REJECTED else PassOutcomeKind.COMPLETED
+                return if (state == TransmissionState.REJECTED) {
+                    PassAttemptOutcome.Rejected
+                } else {
+                    PassAttemptOutcome.Completed
+                }
             }
-            if (row.state == WorkQueueState.FAILED) return PassOutcomeKind.FAILED
+            // R-290: lastError is the real message SafePass converted the pass's exception (or an
+            // ordinary PassRunOutcome.Errored) into -- WorkQueue.failPass's own field, read back
+            // rather than duplicated, so this is never out of step with what a later query of the
+            // same row would show.
+            if (row.state == WorkQueueState.FAILED) return PassAttemptOutcome.Failed(row.lastError)
 
             awaitCaptureNotBusy(done, total)
             drainRunner.drainBatch(limit = tuning.drainBatchLimit, deadlineMillis = tuning.deadlineMillis, pass = pass)
@@ -279,10 +314,14 @@ public class ReprocessRunner(
         }
         // Defensive only -- a queue row that never resolves after this many drain calls would be a
         // bug elsewhere (e.g. a starved lease); reported as a failure rather than hanging forever.
-        return PassOutcomeKind.FAILED
+        return PassAttemptOutcome.Failed("gave up after ${tuning.maxDrainIterationsPerItem} drain attempts")
     }
 
-    private enum class PassOutcomeKind { COMPLETED, REJECTED, FAILED }
+    private sealed interface PassAttemptOutcome {
+        data object Completed : PassAttemptOutcome
+        data object Rejected : PassAttemptOutcome
+        data class Failed(val reason: String?) : PassAttemptOutcome
+    }
 
     public companion object {
         /** Only pass runner this class can actually invoke today -- see the class kdoc. */
@@ -304,6 +343,37 @@ public class ReprocessRunner(
             val ordinal = (MAX_TIER_ORDINAL - ShedStatus.currentLevel).coerceIn(0, MAX_TIER_ORDINAL)
             return Tier.entries[ordinal]
         }
+    }
+}
+
+/**
+ * register R-290: wraps [delegate] so a leased pass's own exception —
+ * `org.ort.pipeline.passb.FlacSegmentAudioProvider`'s `IllegalStateException` when a transmission's
+ * retained audio is missing being the reproduced case, but this is deliberately general, not a
+ * special case for that one class — is converted to
+ * [PassRunOutcome.Errored] instead of escaping [org.ort.data.WorkQueue.runLeased]'s
+ * `withTimeoutOrNull` uncaught. [CancellationException] is re-thrown, never swallowed: catching it
+ * here would silently defeat `run`'s own cooperative-cancellation contract (a collector that stops
+ * collecting must actually stop the run, not have this class convert the resulting cancellation
+ * into a fake "failed" item and carry on).
+ *
+ * **`internal`, not `private` (R-290, live-capture round):** the exact same gap exists in the live
+ * path — `RealCaptureService.startProcessingLoop` hands a real `Pass` to `CaptureProcessingLoop`/
+ * `PassDrainRunner` through the identical `WorkQueue.runLeased` machinery this class already
+ * protects, and `RealCaptureService`'s own `scope` is a plain `CoroutineScope(Dispatchers.IO +
+ * Job())` — **not** a `SupervisorJob`, confirmed by reading it — so an uncaught exception in the
+ * processing-loop coroutine cancels the whole `Job`, including the sibling coroutine actually
+ * recording audio. A missing retained-audio file must never take live capture down any more than
+ * it may take a reprocess run down; `RealCaptureService.startProcessingLoop` wraps its own real
+ * pass in this same class rather than duplicating the catch/convert logic.
+ */
+internal class SafePass(private val delegate: Pass) : Pass {
+    override suspend fun run(item: WorkQueueItemEntity): PassRunOutcome = try {
+        delegate.run(item)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        PassRunOutcome.Errored(e.message ?: e::class.simpleName ?: "unknown reprocess error")
     }
 }
 

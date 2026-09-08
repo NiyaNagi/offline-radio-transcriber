@@ -13,6 +13,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
@@ -31,6 +35,7 @@ import org.ort.app.ui.data.LexiconAssetActions
 import org.ort.app.ui.data.LexiconAssetRowViewState
 import org.ort.app.ui.data.LexiconCheckViewRow
 import org.ort.app.ui.data.LexiconImportViewState
+import org.ort.app.ui.data.ModelDownloadFailureViewState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
@@ -124,14 +129,28 @@ public fun ModelsScreen(
             // caption, each part still its own row with its own real actions) rather than either
             // hiding the split or leaving it unexplained.
             groupAssetRows(state.rows).forEach { group ->
-                Text(
-                    text = group.familyLabel,
-                    style = OrtType.subLine,
-                    color = OrtColors.textFaint,
-                    modifier = Modifier.padding(top = OrtSpacing.sm),
-                )
-                group.parts.forEach { row ->
-                    AssetRow(row = row, isBusy = row.id in busy, onDownload = onDownload, onSideload = onSideload)
+                // R-140 (register, round 7 System validator pass 3): a multi-file family (today,
+                // only the Whisper tiny.en encoder/decoder/tokens split) is one row — the board's
+                // own `whisper-small-int8`/`whisper-tiny-en-int8` shape — not one full `AssetRow`
+                // per file. A single-file family (VAD) keeps the pre-existing caption + row.
+                if (group.parts.size > 1) {
+                    GroupedAssetRow(
+                        familyLabel = group.familyLabel,
+                        parts = group.parts,
+                        busy = busy,
+                        onDownload = onDownload,
+                        onSideload = onSideload,
+                    )
+                } else {
+                    Text(
+                        text = group.familyLabel,
+                        style = OrtType.subLine,
+                        color = OrtColors.textFaint,
+                        modifier = Modifier.padding(top = OrtSpacing.sm),
+                    )
+                    group.parts.forEach { row ->
+                        AssetRow(row = row, isBusy = row.id in busy, onDownload = onDownload, onSideload = onSideload)
+                    }
                 }
             }
             // R-154 (round 5): the callsign lexicon is a real asset ([org.ort.data.entity.LexiconVersionEntity],
@@ -180,17 +199,55 @@ private fun ModelsNotices(
                     .semantics { contentDescription = "Last action: $message" },
             )
         }
-        // R-140: a failed download used to leave `:net`'s raw exception text sitting in the same
-        // plain-body slot a success message uses — this is the amber `FailedState` every other
-        // operator-facing failure in this build gets, with a real `Retry`.
+        // R-140 (round 4, then round 7 System validator pass 3): a failed download used to leave
+        // `:net`'s raw exception text sitting in plain body copy — round 4 stopped it being the
+        // *only* thing shown but still quoted it inline; this is the amber `FailedState` every
+        // other operator-facing failure in this build gets, real `Retry`, operator-language body
+        // (guide §9) with the unedited raw cause now behind its own expandable "Details" instead.
         status.downloadFailure?.let { failure ->
-            FailedState(
-                title = "${failure.id.label} could not be downloaded",
-                body = "The download did not complete: ${failure.reason}. The version already " +
-                    "installed, if any, is unchanged.",
-                actionLabel = "Retry",
-                onAction = { onRetryDownload(failure.id) },
+            DownloadFailureNotice(
+                failure = failure,
+                onRetryDownload = onRetryDownload,
                 modifier = Modifier.padding(top = OrtSpacing.sm),
+            )
+        }
+    }
+}
+
+/** R-140 (round 7): split out of [ModelsNotices] so a failed download's raw cause
+ * ([ModelDownloadFailureViewState.reason] — real, `:net`'s own, never edited) can carry its own
+ * local `expanded` state without `ModelsNotices` itself needing one. The visible body never
+ * guesses *why* the download failed (a checksum mismatch reads nothing like a host that could not
+ * be reached) — "did not complete" is true of every real cause this state can carry; the specific
+ * one is one tap away, not hidden, not deleted. */
+@Composable
+private fun DownloadFailureNotice(
+    failure: ModelDownloadFailureViewState,
+    onRetryDownload: (ModelId) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var detailsExpanded by remember { mutableStateOf(false) }
+    Column(modifier = modifier) {
+        FailedState(
+            title = "${failure.id.label} could not be downloaded",
+            body = "The download did not complete. Check the connection and retry. The version " +
+                "already installed, if any, is unchanged.",
+            actionLabel = "Retry",
+            onAction = { onRetryDownload(failure.id) },
+        )
+        TextAction(
+            text = if (detailsExpanded) "Hide details" else "Details",
+            onClick = { detailsExpanded = !detailsExpanded },
+            modifier = Modifier.padding(start = OrtSpacing.lg),
+        )
+        if (detailsExpanded) {
+            Text(
+                text = failure.reason,
+                style = OrtType.subLine,
+                color = OrtColors.textFaint,
+                modifier = Modifier
+                    .padding(start = OrtSpacing.lg, top = OrtSpacing.xs)
+                    .semantics { contentDescription = "Details: ${failure.reason}" },
             )
         }
     }
@@ -270,6 +327,88 @@ private fun AssetRow(
                 onClick = { onSideload(row.id) },
                 modifier = Modifier.semantics { contentDescription = "Install ${row.label} from a file" },
             )
+        }
+    }
+}
+
+/** R-140 (register, round 7 System validator pass 3): a multi-file model family (today, only the
+ * Whisper tiny.en encoder/decoder/tokens split) as one row — the board's own
+ * `whisper-small-int8`/`whisper-tiny-en-int8` pattern — instead of one full [AssetRow] per file.
+ * The family's marker/`active` tag reflect every part together, never claiming installed while a
+ * part is still missing (constitution I); each still-missing part keeps its own real action
+ * (`Download`/`Install from a file`) nested beneath, so nothing reachable before is now hidden. */
+@Composable
+private fun GroupedAssetRow(
+    familyLabel: String,
+    parts: List<ModelRowViewState>,
+    busy: Set<ModelId>,
+    onDownload: (ModelId) -> Unit,
+    onSideload: (ModelId) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val missing = parts.filter { it.status == ModelRowStatus.NOT_INSTALLED }
+    val fullyInstalled = missing.isEmpty()
+    val fullyVerified = fullyInstalled && parts.all { it.status == ModelRowStatus.INSTALLED }
+    val anyBusy = parts.any { it.id in busy }
+    val aggregateStatus = when {
+        !fullyInstalled -> ModelRowStatus.NOT_INSTALLED
+        fullyVerified -> ModelRowStatus.INSTALLED
+        else -> ModelRowStatus.INSTALLED_UNVERIFIED
+    }
+    val subLine = when {
+        anyBusy -> "downloading…"
+        fullyInstalled -> {
+            val size = formatAssetSize(parts.sumOf { it.sizeBytes ?: 0L })
+            if (fullyVerified) {
+                "$size · every part verified"
+            } else {
+                "$size · not every part verified against a published checksum"
+            }
+        }
+        else -> "not installed · ${missing.size} of ${parts.size} parts missing"
+    }
+    val description = "$familyLabel ${if (fullyInstalled) "installed" else "not installed"}. $subLine"
+
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.sm)) {
+        Row(
+            modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = description },
+            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+        ) {
+            AssetMarker(status = aggregateStatus, isBusy = anyBusy)
+            Column(modifier = Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
+                    Text(text = familyLabel, style = OrtType.rowTitle, color = OrtColors.textHigh)
+                    if (fullyInstalled) Badge(text = "active", kind = BadgeKind.TIER)
+                }
+                Text(
+                    text = subLine,
+                    style = OrtType.subLine,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+        missing.forEach { part ->
+            Row(
+                modifier = Modifier.padding(top = OrtSpacing.xs, start = MARKER_COLUMN_WIDTH),
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
+            ) {
+                Text(text = part.label, style = OrtType.subLine, color = OrtColors.textFaint)
+                if (part.checksumKnown) {
+                    TextAction(
+                        text = "Download",
+                        enabled = part.id !in busy,
+                        onClick = { onDownload(part.id) },
+                        modifier = Modifier.semantics { contentDescription = "Download ${part.label}" },
+                    )
+                }
+                TextAction(
+                    text = "Install from a file",
+                    enabled = part.id !in busy,
+                    onClick = { onSideload(part.id) },
+                    modifier = Modifier.semantics { contentDescription = "Install ${part.label} from a file" },
+                )
+            }
         }
     }
 }

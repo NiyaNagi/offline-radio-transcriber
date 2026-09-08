@@ -3,20 +3,18 @@ package org.ort.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -33,15 +31,15 @@ import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
+import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.KeyValueRow
-import org.ort.app.ui.components.LOG_FREQ_COLUMN
-import org.ort.app.ui.components.LOG_TIME_COLUMN
-import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.rememberFreqColumnWidth
+import org.ort.app.ui.components.rememberTimeColumnWidth
 import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationListBadge
 import org.ort.app.ui.data.StationListEntryViewState
@@ -88,7 +86,13 @@ public fun StationsListScreen(
                 modifier = Modifier.testTag("stations-sort-most-heard"),
             )
         }
-        FilterChipRow(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        // R-277 (register, design, V5 pass 2 @8d1456f): this row already used WP2's scrolling
+        // `FilterChipRow` (unchanged) — `fillMaxWidth()` added defensively so the scrollable row
+        // always reports the real available width to scroll within, rather than whatever width its
+        // own content measurement happens to settle on.
+        FilterChipRow(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
+        ) {
             StationsFilter.entries.forEach { filter ->
                 FilterChip(
                     label = filterLabel(filter),
@@ -244,7 +248,18 @@ public fun StationDetailScreen(
     backLabel: String = "Stations",
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        StationDetailHeader(parentLabel = backLabel, onBack = onBack, onOpenIdentity = onOpenIdentity)
+        // R-192 (register, design): the board draws no explicit Identity action, section preview
+        // or row anywhere in its body — the header kebab is the *only* affordance, so it must
+        // carry a real, specific description rather than the shared header's generic "More". WP2
+        // has since added `kebabDescription`/`kebabTestTag` to `DrillInHeader` for exactly this
+        // (this package's own hand-rolled clone of the header, built before that landed, is gone).
+        DrillInHeader(
+            parentLabel = backLabel,
+            onBack = onBack,
+            onKebab = onOpenIdentity,
+            kebabDescription = "Station identity",
+            kebabTestTag = "station-identity-open",
+        )
         // A single top-level LazyColumn — the header/facts/chart section as its first item, then
         // one item per recent over. A `verticalScroll` Column was tried here first and measured
         // fine, but a `clickable` Row nested inside it silently swallowed its own tap in this
@@ -279,53 +294,6 @@ public fun StationDetailScreen(
                     RecentOverRow(entry = entry, onOpen = onOpenTransmission)
                 }
             }
-        }
-    }
-}
-
-/**
- * `Station.dc.html`'s own header (R-192, register, design, V5 @f8430b8): the board draws no
- * explicit Identity action, section preview or row anywhere in its body — the kebab in the top
- * row is the *only* affordance, and V4/V5 both found it undiscoverable (a bare "More", the same
- * generic label every other kebab in the app carries). The shared `DrillInHeader` has no way to
- * override that per-screen — its kebab has one hardcoded description and no `testTag` at all — so
- * this is this screen's own header, not `DrillInHeader`, matching its exact layout and back-icon
- * behaviour but giving the kebab a real, specific description ("Station identity") and a
- * `testTag("station-identity-open")`. (Worth routing to WP2 as a `kebabDescription`/`kebabTestTag`
- * parameter on the shared component if another screen's kebab needs the same treatment — see this
- * package's report.)
- */
-@Composable
-private fun StationDetailHeader(
-    parentLabel: String,
-    onBack: () -> Unit,
-    onOpenIdentity: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier = modifier.fillMaxWidth().heightIn(min = 44.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Icon(
-                imageVector = OrtIcons.back,
-                contentDescription = "Back to $parentLabel",
-                tint = OrtColors.accentGreen,
-                modifier = Modifier
-                    .size(20.dp)
-                    .clickable(role = Role.Button, onClickLabel = "Back to $parentLabel", onClick = onBack),
-            )
-            Text(text = parentLabel, style = OrtType.bodyProse, color = OrtColors.accentGreen)
-            Spacer(modifier = Modifier.weight(1f))
-            Icon(
-                imageVector = OrtIcons.more,
-                contentDescription = "Station identity",
-                tint = OrtColors.textDim,
-                modifier = Modifier.size(19.dp)
-                    .testTag("station-identity-open")
-                    .clickable(role = Role.Button, onClickLabel = "Station identity", onClick = onOpenIdentity),
-            )
         }
     }
 }
@@ -427,17 +395,27 @@ private fun RecentOverRow(
             .semantics(mergeDescendants = true) { contentDescription = description }
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
     ) {
+        // R-270 (register, design, V5 pass 2 @8d1456f, cf. R-205): a fixed `width` cannot grow for
+        // a real value at a larger font scale, so it wraps mid-value ("05:37:0/0") instead of
+        // truncating or growing — `rememberTimeColumnWidth`/`rememberFreqColumnWidth` (WP2's own
+        // R-205 fix) size the column to real content and never shrink below the guide's column
+        // widths; `maxLines = 1`/`softWrap = false` make a value that still doesn't fit truncate
+        // rather than wrap.
         Text(
             text = entry.timeLabel,
             style = OrtType.timeFreq,
             color = OrtColors.textTime,
-            modifier = Modifier.width(LOG_TIME_COLUMN),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
         )
         Text(
             text = entry.frequencyLabel,
             style = OrtType.timeFreq,
             color = OrtColors.textTime,
-            modifier = Modifier.width(LOG_FREQ_COLUMN).padding(start = OrtSpacing.sm),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.widthIn(min = rememberFreqColumnWidth()).padding(start = OrtSpacing.sm),
         )
         Text(
             text = entry.transcriptText,

@@ -15,6 +15,7 @@ import androidx.compose.ui.semantics.semantics
 import org.ort.app.ui.data.FrequencyChangeViewState
 import org.ort.app.ui.data.FrequencyDetailViewState
 import org.ort.app.ui.data.FrequencyPolling
+import org.ort.app.ui.data.TimeWindow
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
 
@@ -33,6 +34,11 @@ public fun FrequencyDetailContent(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenStation: (String) -> Unit = {},
+    // R-276 (register, spec): `Frequency-Change`'s "The N overs" action — WP3 routes this to the
+    // Log filtered by frequency and window. Defaulted to a no-op so `OrtNavHost.kt` compiles
+    // unchanged until WP3 wires it, the same pattern `onOpenTransmission`/`onOpenStation` already
+    // established elsewhere in this package.
+    onOpenOvers: (Long, TimeWindow) -> Unit = { _, _ -> },
     // R-017: passed straight through to `FrequencyDetailScreen`'s own `backLabel` — see
     // `StationDetailScreen`'s doc comment for the same reasoning.
     backLabel: String = "Frequencies",
@@ -58,7 +64,7 @@ public fun FrequencyDetailContent(
                     state = current,
                     onBack = { sub = FrequencySubScreen.NONE },
                     modifier = modifier,
-                    onViewOvers = {},
+                    onOpenOvers = onOpenOvers,
                 )
             } else {
                 LoadingLine(modifier)

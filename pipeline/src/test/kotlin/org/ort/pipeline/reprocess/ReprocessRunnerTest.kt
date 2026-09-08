@@ -200,6 +200,55 @@ class ReprocessRunnerTest {
     }
 
     @Test
+    @Requirement("R-290", "FR-RUN-9", "FR-REP-11")
+    fun `R_290_a_missing_retained_audio_file_fails_that_item_without_crashing_the_run`() = runBlocking {
+        val missingAudioId = "TX-NO-AUDIO"
+        val okId = "TX-HAS-AUDIO"
+        seedTransmission(missingAudioId, text = "old text")
+        // Deliberately no writeAudioFixture(missingAudioId) -- the exact R-290 reproduction: a
+        // real device's retention deletion, or (here) a fixture that never wrote one.
+        seedTransmission(okId, text = "old text")
+        writeAudioFixture(okId)
+
+        val engine =
+            FakeAsrEngine(FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "new transcript text")))
+        val runner = ReprocessRunner(
+            db = db,
+            filesDir = filesDir,
+            currentTier = { Tier.T0 },
+            passFor = { tier ->
+                PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"), "cpu", tier = tier)
+            },
+        )
+
+        // Must not throw -- FlacSegmentAudioProvider.forItem's IllegalStateException is exactly
+        // the crash R-290 found (FATAL EXCEPTION: main, uncaught, at forItem's check()).
+        val progress = runner.run(listOf(missingAudioId, okId)).toList()
+
+        assertEquals(ReprocessProgress(2, 2, okId), progress.last())
+
+        val summary = (ReprocessStatus.state as ReprocessStatus.State.Done).summary
+        assertEquals("the missing-audio item is failed, not silently dropped", 1, summary.failed)
+        assertEquals(
+            "the other item is still processed and its transcript still changes",
+            1,
+            summary.transcriptsChanged,
+        )
+        assertTrue(
+            "the failure reason must name what actually went wrong, for R03/R04/pass-failed to show",
+            summary.failureReasons.any { it.contains("retained audio") },
+        )
+
+        assertEquals(TransmissionState.FAILED, db.transmissionDao().getById(missingAudioId)?.processingState)
+        assertEquals(
+            "the failed item's previous transcript is untouched, never worse than before (FR-REP-11)",
+            "old text",
+            db.transcriptDao().getCurrent(missingAudioId)?.text,
+        )
+        assertEquals("new transcript text", db.transcriptDao().getCurrent(okId)?.text)
+    }
+
+    @Test
     @Requirement("FR-REP-6", "R-091")
     fun `FR_REP_6_reprocess_pauses_while_capture_is_busy`() = runBlocking {
         val txId = "TX-REP6"

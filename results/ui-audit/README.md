@@ -168,7 +168,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 |---|---|
 | `empty` | No sessions at all. |
 | `first-session` | One session started 3 minutes ago, no transmissions, capture marked running. |
-| `overnight` | A real 6h42m, two-frequency session with ~42 overs exercising every `Rows.dc.html` variant: CONFIRMED, INFERRED (linked to its confirming over), AMBIGUOUS, UNKNOWN, a corrected row, a revised row (two transcript versions), a rejected row (retained), a first-heard station, a QSO thread (4 overs, shared `threadId`), a 38s capture gap, mixed signal strength, mixed retained audio, and lattice/candidate rows for the confirmed/inferred/ambiguous overs — including one cold-start and one negative prior, for `Detail-Why`. |
+| `overnight` | A real 6h42m, two-frequency session with ~42 overs exercising every `Rows.dc.html` variant: CONFIRMED, INFERRED (linked to its confirming over), AMBIGUOUS, UNKNOWN, a corrected row, a revised row (two transcript versions), a rejected row (retained), a first-heard station, a QSO thread (4 overs, shared `threadId`), a 38s capture gap, mixed signal strength, mixed retained audio, and lattice/candidate rows for the confirmed/inferred/ambiguous overs — including one cold-start and one negative prior, for `Detail-Why`. The AMBIGUOUS over's own candidates are three, ranked and distinctly scored (`KE7QRS` 8.20 / `KE7QRF` 8.05 / `KE7QRZ` 7.90, register R-184), so `Detail-Correct-A`'s Tier A list has real rows to render, not one candidate filtered down to zero. |
 | `gap-call` | `overnight` plus a second capture gap, cause `CALL` (register R-106 — `CaptureGapCause.CALL` added by WP11a). |
 | `overnight-live` | The same `overnight` fixture, but `SessionEntity.endedAt` is `null` and `CaptureState` is actually `capturing` on that id, with a fresh heartbeat (register R-171) — reaches the *populated, running* shape of `Main.dc.html` (N01) and `Capture-Status.dc.html` (N04) that neither `overnight` (populated but ended) nor `first-session` (running but empty) can reach on its own. |
 | `unclean-end` | A heartbeat file that reads as an unclean end (never marked clean shutdown) for a prior session; this process is not capturing. |
@@ -178,8 +178,8 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `corrected` | A single transmission carrying the exact shape a one-tap correction produces, plus its `CorrectionEntity` audit row. |
 | `no-audio` | A confirmed transmission with no retained-audio file at all. |
 | `revisions` | A single transmission with two transcript versions, the older superseded. |
-| `stations-14-nights` | Fourteen sessions over a fifteen-day span (two weeks plus the skipped night), realistic hour-of-day/day-of-week spread across the design canvas's ~9 callsigns, a within-night hatch gap on most nights, and one whole calendar day with no session at all. |
-| `field-tier1` | A session with `deviceTier = "T1"` (see "Known gaps" — nothing renders this yet). |
+| `stations-14-nights` | Fourteen sessions over a fifteen-day span (two weeks plus the skipped night), realistic hour-of-day/day-of-week spread across the design canvas's ~9 callsigns, a within-night hatch gap on most nights, one whole calendar day with no session at all, (register R-184) one AMBIGUOUS over on the primary session with the same three ranked, distinctly-scored candidates `overnight`'s own AMBIGUOUS over carries, and (register R-272) `WA7HJR` bound to two real voiceprint clusters (`voiceprint-wa7hjr-a`/`-b`), each with a real, non-fabricated `memberCount` matching the overs actually assigned to it — so `Station-Identity`'s Split screen has a genuine multi-voice case to render, not just the single-cluster empty state. |
+| `field-tier1` | A session with `deviceTier = "T1"`, twelve overs, each with a real, decodable retained-audio file at the exact path `FlacSegmentAudioProvider`/the real `ReprocessRunner` reads (register R-290 — before this fix, only the database rows existed, so `Improve-Running`/`Improve-Done` (R03/R04) crashed the app on the first item instead of ever completing). |
 | `search-corpus` | Fourteen transcripts mentioning "park activation" across three sessions ("nights"). |
 | `backlog` | `ShedStatus` set to level 3 / backlog 112 (F8), capture marked running. |
 | `model-missing` | `AsrAvailability.unavailable(...)` (F13); captured but untranscribed transmissions. |
@@ -194,6 +194,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `input-mismatch` | `InputStatus.Mismatch` — built-in mic routed instead of the chosen USB device (F1, register R-113). Capture is **not** marked running — see "Known gaps" below. |
 | `setup-verified` | Seeds `org.ort.app.setup`'s real `SharedPreferences` (through `SharedPreferencesSetupStore`, not a duplicated key set) so `SetupStateMachine.stepFor` lands at `SetupStep.READY` (S12) directly, its Level row already green (register R-227) — see "Reaching S07/S12" below. |
 | `setup-level` | The same verified-input base as `setup-verified`, but `levelInBand`/`levelPeakDbfs` are left honestly unset so `stepFor` lands at `SetupStep.LEVEL` (S07) directly, from a cold launch (register R-264) — see "Reaching S07/S12" below. |
+| `setup-radio` | The same verified-input/level/overnight base as `setup-verified`, but `radioChoice`/`manualFrequencyHz` are left honestly unset (explicitly cleared — `SharedPreferences` persist across scenario loads, unlike `:data`) so `stepFor` lands at `SetupStep.RADIO` (S09) directly, from a cold launch (register R-285) — see "Reaching S07/S09/S12" below. |
 | `clock-dst` | F14 (`Fail-Clock.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Clock`. No runtime signal exists; see "Known gaps" below. |
 | `usb-permission` | F16 (`Fail-Usb.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Usb`. No runtime signal exists. |
 | `interrupted-pass` | F17 (`Fail-Interrupted.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Interrupted`. No runtime signal exists. |
@@ -203,15 +204,18 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `calibration` | F22 (`Fail-Calibration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Calibration`, a five-point reliability scatter. No runtime signal exists. |
 | `lexicon-corrupt` | R-154, F12 (`Fail-Lexicon.dc.html`), FR-LEX-12/FR-LEX-30/FR-AST-2 — unlike every scenario above, this one is **not** a `DebugFailureOverride` stand-in: it seeds a real "previous" `lexicon_version` row (2026.08 · 1,104,208 records), then calls the *real* `org.ort.app.ui.data.ModelsController.installLexicon` against a genuinely corrupt bundled asset (`app/src/debug/assets/lexicon-corrupt/lexicon-2026.09.tsv` — a manifest declaring 1,122,410 records whose checksum matches neither the 2 data rows actually present nor their count), through the new `:lexicon` package `org.ort.lexicon.import` (`LexiconImportValidator`/`LexiconImportInstaller`). The genuine `LexiconImportResult.Rejected` this produces is stored in `org.ort.app.debug.LexiconCorruptScenario.lastResult` — see "Known gaps" below for why nothing renders it yet. |
 
-### Reaching S07/S12 (register R-227, R-264)
+### Reaching S07/S09/S12 (register R-227, R-264, R-285)
 
-Before `setup-verified`, S07 (`Setup-Level.dc.html`) and S12 (`Setup-Done.dc.html`) were
-unreachable on this AVD at all: `SetupStateMachine.stepFor` resumes at `SetupStep.INPUT` until
-`SetupStore.inputVerified` is real, and the only way that becomes real is S05's own 30 s
-raw-signal listen (`RealRouteCheck`) actually hearing something — which the AVD's silent virtual
-mic never does. `setup-verified`/`setup-level` seed the real `SetupStore` preferences (not a fake)
-so setup's own state machine resumes at S12/S07 respectively, no `run-as`/manual `SharedPreferences`
-edit needed.
+Before `setup-verified`, S07 (`Setup-Level.dc.html`), S09 (`Setup-Rig.dc.html`) and S12
+(`Setup-Done.dc.html`) were unreachable on this AVD at all: `SetupStateMachine.stepFor` resumes at
+`SetupStep.INPUT` until `SetupStore.inputVerified` is real, and the only way that becomes real is
+S05's own 30 s raw-signal listen (`RealRouteCheck`) actually hearing something — which the AVD's
+silent virtual mic never does. `setup-verified` itself also resolves `radioChoice` up front (`NONE`,
+a manual frequency), so it alone never stops at S09 either — not even via S12's own Radio row,
+since that row previously had no action at all once a choice already existed (R-285's own finding,
+now fixed by the `Change` action `readyRowsFor`'s `radioRow` adds). `setup-verified`/`setup-level`/
+`setup-radio` seed the real `SetupStore` preferences (not a fake) so setup's own state machine
+resumes at S12/S07/S09 respectively, no `run-as`/manual `SharedPreferences` edit needed.
 
 **R-264 (V7 accessibility pass) found the recipe below this line used to launch — `adb shell am
 start -n org.ort.app/org.ort.app.ui.setup.SetupActivity` — throws a `SecurityException` on a real
@@ -233,6 +237,10 @@ $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.
 
 # S07 (Level), reached directly rather than via S12's own Fix row:
 .\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-level
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/.MainActivity
+
+# S09 (Rig), reached directly rather than via S12's own Radio row's new Change action:
+.\tools\ui-audit\scenario.ps1 -Port 5554 -Name setup-radio
 $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start -n org.ort.app/.MainActivity
 ```
 
@@ -326,8 +334,13 @@ DebugFailureOverride`'s own kdoc says precisely what each would need and from wh
   with no `pass = B` row is exactly what a real in-flight Pass A produces, but the Log screen
   (register R-041) does not yet render a partial state at all — this scenario proves the data
   path is ready, not that the screen shows it.
-- **`field-tier1` is representable, unread.** `SessionEntity.deviceTier` is a free `String?`; no
-  screen renders it yet (register R-090, `Settings-Tier`/CF05 is a placeholder).
+- **`field-tier1` is now read, not just representable** — WP10 wired `Settings-Tier`/CF05 and
+  `Improve`/`Improve-Select`/`Improve-Running` to `SessionEntity.deviceTier` end to end (register
+  R-090/R-091). What was missing until register R-290's fix was retained audio: the real
+  `ReprocessRunner` reaches this scenario's overs through `FlacSegmentAudioProvider`, which requires
+  a real file at each transmission's `audioPath` — this scenario now writes one for every over (see
+  the scenario table above), so `Improve-Running`/`Improve-Done` (R03/R04) are actually reachable,
+  not just `Improve`/`Improve-Select` (R01/R02).
 - **`lexicon-corrupt` is representable, unread — and, unlike every other row in this list, the
   underlying feature is now real, not just the fixture.** R-154's own register row previously said
   "no lexicon-import validator exists in `:app`/`:lexicon`/`:net` — F12 is an unbuilt feature, not a

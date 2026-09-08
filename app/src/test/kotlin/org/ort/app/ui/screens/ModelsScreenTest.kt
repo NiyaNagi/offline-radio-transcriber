@@ -262,7 +262,7 @@ class ModelsScreenTest {
 
     @Test
     @Requirement("R-140")
-    fun `R_140 the three Whisper file rows are grouped under one family caption, not three loose assets`() {
+    fun `R_140 the three Whisper files render as one grouped row, not three loose assets, when none is installed`() {
         composeTestRule.setContent {
             OrtTheme {
                 ModelsScreen(
@@ -270,7 +270,7 @@ class ModelsScreenTest {
                         rows = listOf(
                             row(ModelId.ASR_ENCODER, ModelRowStatus.NOT_INSTALLED),
                             row(ModelId.ASR_DECODER, ModelRowStatus.NOT_INSTALLED),
-                            row(ModelId.ASR_TOKENS, ModelRowStatus.NOT_INSTALLED),
+                            row(ModelId.ASR_TOKENS, ModelRowStatus.NOT_INSTALLED, checksumKnown = false),
                             row(ModelId.VAD, ModelRowStatus.NOT_INSTALLED),
                         ),
                     ),
@@ -282,6 +282,62 @@ class ModelsScreenTest {
 
         composeTestRule.onNodeWithText("Whisper tiny.en (speech to text)").assertExists()
         composeTestRule.onNodeWithText("Silero VAD (voice activity)").assertExists()
+        // Never installed as a group — no `active` tag ([org.ort.app.ui.components.Badge] renders
+        // its text uppercased), and the per-part actions this screen could always do stay
+        // reachable, just nested under the one family row rather than three loose ones.
+        composeTestRule.onNodeWithText("ACTIVE").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("Download Whisper tiny.en — encoder").assertExists()
+        composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — tokens from a file").assertExists()
+        // R-093/FR-AST-1: the checksum-unknown tokens file never offers Download, grouped or not.
+        composeTestRule.onNodeWithContentDescription("Download Whisper tiny.en — tokens").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-140")
+    fun `R_140 the Whisper family row reads active with one aggregate size once every part is installed`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(
+                                ModelId.ASR_ENCODER,
+                                ModelRowStatus.INSTALLED,
+                                sizeBytes = 1_000_000L,
+                                checksumPrefix = "aa",
+                            ),
+                            row(
+                                ModelId.ASR_DECODER,
+                                ModelRowStatus.INSTALLED,
+                                sizeBytes = 2_000_000L,
+                                checksumPrefix = "bb",
+                            ),
+                            row(
+                                ModelId.ASR_TOKENS,
+                                ModelRowStatus.INSTALLED_UNVERIFIED,
+                                checksumKnown = false,
+                                sizeBytes = 500_000L,
+                                checksumPrefix = "cc",
+                            ),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Whisper tiny.en (speech to text)").assertExists()
+        composeTestRule.onNodeWithText("ACTIVE").assertExists()
+        // Aggregate size is the sum of every part's real bytes (1.0 + 2.0 + 0.5 = 3.5 MB, rounds to
+        // 4 MB) — never a per-part number standing in for the whole family, and honestly "not
+        // every part verified" since the tokens file is trust-on-first-use, never a false blanket
+        // "verified" claim.
+        composeTestRule.onNodeWithText("4 MB · not every part verified against a published checksum").assertExists()
+        // No loose per-part action remains once nothing is missing.
+        composeTestRule.onNodeWithContentDescription(
+            "Install Whisper tiny.en — tokens from a file",
+        ).assertDoesNotExist()
     }
 
     @Test
@@ -305,7 +361,17 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithText("Silero VAD could not be downloaded").assertExists()
+        // R-140 (round 7, register): the raw cause is operator-language-free and no longer sits in
+        // the always-visible body — it is real, but behind its own "Details" disclosure.
+        composeTestRule.onNodeWithText(
+            "The download did not complete. Check the connection and retry.",
+            substring = true,
+        )
+            .assertExists()
+        composeTestRule.onNodeWithText("Unable to resolve host", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Details").performClick()
         composeTestRule.onNodeWithText("Unable to resolve host", substring = true).assertExists()
+
         composeTestRule.onNodeWithText("Retry").performClick()
 
         assert(retried == ModelId.VAD) { "expected Retry to re-run the download for VAD, got $retried" }

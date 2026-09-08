@@ -6,6 +6,8 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -222,8 +224,94 @@ class TransmissionDetailScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("KE7QRS").assertExists()
+        // R-180: the primary candidate's own callsign now also appears a second time, in the real
+        // "why this callsign" candidate row this package's own R-180 fix added — `onAllNodesWithText`
+        // rather than `onNodeWithText`, since this test only needs to prove the title row shows it
+        // at all, not that it is the *only* place on screen that does.
+        composeTestRule.onAllNodesWithText("KE7QRS").onFirst().assertExists()
         composeTestRule.onNodeWithText("or KE7QRF").assertExists()
+    }
+
+    /**
+     * R-186 (design): `Attribution.ambiguous()` carries no `stationId` at all (constitution I), so
+     * the title row's own callsign — "KE7QRS" — must come from the resolver's top-ranked candidate,
+     * not `attribution.stationId`, or the header reads only "or KE7QRF" with nothing before it.
+     */
+    @Test
+    fun `R_186_the_ambiguous_title_names_the_primary_candidate_not_just_the_alternate`() {
+        val inspection = InspectionViewState(
+            lattice = null,
+            candidates = listOf(
+                CandidateInspectionViewState("KE7QRS", 0, 0.51, true, true, false, emptyList()),
+                CandidateInspectionViewState("KE7QRF", 1, 0.46, true, false, false, emptyList()),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.ambiguous(), inspection = inspection)),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        // The title row's own marker + callsign — the full "half-filled circle, Ambiguous, ..."
+        // description is unique to `TitleAttributionRow`'s own merged node, distinct from the (also
+        // real, also present) inline "why" preview row and the ambiguous chooser row.
+        composeTestRule
+            .onNodeWithContentDescription("half-filled circle, Ambiguous, KE7QRS", substring = true)
+            .assertExists()
+    }
+
+    /**
+     * R-187 (spec): each ambiguous candidate is one evidence-bearing, clickable row (real ITU
+     * country when the candidate has one — never a fabricated per-repeater heard-count this mapper
+     * cannot back), not a display row plus a separate "Choose X" link.
+     */
+    @Test
+    fun `R_187_each_ambiguous_candidate_is_one_evidence_bearing_row_with_a_visible_score`() {
+        val inspection = InspectionViewState(
+            lattice = null,
+            candidates = listOf(
+                CandidateInspectionViewState(
+                    "KE7QRS",
+                    0,
+                    0.51,
+                    grammarValid = true,
+                    databaseHit = true,
+                    selected = false,
+                    priorContributions = emptyList(),
+                    ituCountry = "United States",
+                ),
+                CandidateInspectionViewState(
+                    "KE7QRF",
+                    1,
+                    0.46,
+                    grammarValid = true,
+                    databaseHit = false,
+                    selected = false,
+                    priorContributions = emptyList(),
+                ),
+            ),
+        )
+        var chosen: String? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.ambiguous(), inspection = inspection)),
+                    player = FakeTransmissionAudioPlayer(),
+                    onChooseCandidate = { chosen = it },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.51").assertExists()
+        composeTestRule.onNodeWithText("a known station · United States", substring = true).assertExists()
+        composeTestRule.onNodeWithText("never heard before").assertExists()
+        composeTestRule
+            .onNodeWithContentDescription("Choose KE7QRS", substring = true)
+            .performClick()
+        assert(chosen == "KE7QRS") { "got $chosen" }
     }
 
     @Test
@@ -325,6 +413,24 @@ class TransmissionDetailScreenTest {
             .assertExists()
         composeTestRule.onNodeWithTag("pass-failure-last-error").assertExists()
         composeTestRule.onNodeWithText("Out of memory in the decoder", substring = true).assertExists()
+    }
+
+    /**
+     * R-196 (halt): a failed pass carries `AttributionState.UNKNOWN` (no pass ever finished to
+     * resolve one) purely as an honest byproduct — `state.body` is genuinely
+     * `DetailBodyViewState.Unknown` — but the failed-pass header already gives the real account of
+     * what happened ("Pass B errored..."). D04's "What was tried"/"Why this callsign" sections speak
+     * to a *resolver* that came up empty, which is not this over's story, and must not render
+     * alongside the failed-pass header.
+     */
+    @Test
+    fun `R_196_a_failed_pass_never_also_renders_the_unknown_attributions_what_was_tried_block`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = failedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule.onNodeWithText("What was tried", substring = true, ignoreCase = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Why this callsign", substring = true, ignoreCase = true).assertDoesNotExist()
     }
 
     @Test

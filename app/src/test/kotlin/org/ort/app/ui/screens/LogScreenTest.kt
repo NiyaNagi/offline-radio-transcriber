@@ -1,5 +1,10 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -11,10 +16,13 @@ import org.ort.app.ui.components.LogRowBadge
 import org.ort.app.ui.components.LogRowPartial
 import org.ort.app.ui.components.LogRowViewState
 import org.ort.app.ui.data.LogEmptyStateViewState
+import org.ort.app.ui.data.LogFilterSelection
+import org.ort.app.ui.data.LogItemsMapper
 import org.ort.app.ui.data.LogListItem
 import org.ort.app.ui.data.LogQuickFilterChipViewState
 import org.ort.app.ui.data.LogQuickFilterId
 import org.ort.app.ui.data.LogScreenViewState
+import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
@@ -47,6 +55,7 @@ class LogScreenTest {
         alternate: String? = null,
         badge: LogRowBadge? = null,
         partial: LogRowPartial? = null,
+        callsign: String? = null,
     ) = LogRowViewState(
         id = id,
         timeLabel = "02:14:07",
@@ -55,6 +64,7 @@ class LogScreenTest {
         partial = partial,
         attribution = if (partial == null) attribution else null,
         alternate = alternate,
+        callsign = callsign,
         signalLabel = if (partial == null) "S7" else null,
         badge = badge,
     )
@@ -143,6 +153,40 @@ class LogScreenTest {
         // The score chip is visible text beside INFERRED only — never a number on CONFIRMED.
         composeTestRule.onNodeWithText("0.82").assertExists()
         composeTestRule.onNodeWithText("0.95").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_240 an AMBIGUOUS row's description carries the kept candidate and the alternate`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(
+                        listOf(
+                            LogListItem.Row(
+                                rowState(
+                                    "TX-ambiguous",
+                                    "kilo echo seven quebec romeo sierra, portable",
+                                    Attribution.ambiguous(),
+                                    alternate = "KE7QRF",
+                                    callsign = "KE7QRS",
+                                ),
+                            ),
+                        ),
+                    ),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        // The kept candidate renders in the row's own visible text (guide: primary in text/high)...
+        composeTestRule.onNodeWithText("KE7QRS").assertExists()
+        // ...and the merged marker description names both — the kept candidate, then "or" the
+        // alternate — never just the alternate on its own (the bug R-240 named).
+        composeTestRule
+            .onNodeWithContentDescription("half-filled circle, Ambiguous, KE7QRS, or KE7QRF", substring = true)
+            .assertExists()
     }
 
     @Test
@@ -318,6 +362,52 @@ class LogScreenTest {
     }
 
     @Test
+    fun `R_242 the DUR column shows in the dedicated Rejected view`() {
+        val item = LogListItem.RejectedItem(
+            "TX1",
+            "02:16:40",
+            "146.960",
+            "no speech detected",
+            durationLabel = "0.4 s",
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(item), rejectedFocus = true),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.4 s").assertExists()
+    }
+
+    @Test
+    fun `R_242 the DUR column stays hidden in the interleaved list`() {
+        val item = LogListItem.RejectedItem(
+            "TX1",
+            "02:16:40",
+            "146.960",
+            "no speech detected",
+            durationLabel = "0.4 s",
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(item), rejectedFocus = false),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.4 s").assertDoesNotExist()
+    }
+
+    @Test
     fun `R_041 a hearing partial has no state marker and shows the streaming text`() {
         composeTestRule.setContent {
             OrtTheme {
@@ -389,5 +479,67 @@ class LogScreenTest {
         composeTestRule.onNodeWithText("Rejected").performClick()
 
         assert(selected == LogQuickFilterId.Rejected) { "expected the Rejected chip to be selected but was $selected" }
+    }
+
+    private fun detail(id: String, freqHz: Long, atMillis: Long) = TransmissionDetail(
+        id = id,
+        startedAtUtcMillis = atMillis,
+        frequencyHz = freqHz,
+        durationMs = 4_200L,
+        signalStrength = 7.0,
+        attribution = Attribution.confirmed("W7NPC", 0.9),
+        currentTranscriptText = "$id transcript",
+        supersededTranscriptTexts = emptyList(),
+        hasAudio = true,
+    )
+
+    /**
+     * R-276 (`Frequency.dc.html`'s "The N overs" stat → Log filtered to that frequency and window):
+     * this runs the real `LogItemsMapper` functions [LogContent]'s seeded `initialFilter` and
+     * `quickFilter` drive — `selectionFor`, `buildItems`, `quickFilters` — the same call chain
+     * `LogPolling.screenState` makes, so this proves the production filtering logic, not a
+     * hand-fabricated already-filtered state.
+     */
+    @Test
+    fun `R_276 a seeded frequency and time window narrows rows and the frequency chip renders active`() {
+        val details = listOf(
+            detail("TX-in-window", freqHz = 145_230_000L, atMillis = 1_000L), // matches freq + window
+            detail("TX-out-of-window", freqHz = 145_230_000L, atMillis = 50_000L), // matches freq, not window
+            detail("TX-other-freq", freqHz = 146_960_000L, atMillis = 1_000L), // matches window, not freq
+        )
+        val seededSelection = LogFilterSelection(frequencyHz = 145_230_000L, fromMillis = 0L, toMillis = 10_000L)
+        val seededQuickFilter = LogQuickFilterId.Frequency(145_230_000L)
+        val effectiveSelection = LogItemsMapper.selectionFor(seededQuickFilter, seededSelection)
+        val items = LogItemsMapper.buildItems(
+            details,
+            gaps = emptyList(),
+            effectiveSelection,
+            firstHeardIds = emptySet(),
+        )
+        val quickFilters = LogItemsMapper.quickFilters(
+            frequencies = listOf(145_230_000L, 146_960_000L),
+            active = seededQuickFilter,
+            rejectedCount = 0,
+        )
+
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(items, quickFilters = quickFilters),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("TX-in-window transcript").assertExists()
+        composeTestRule.onNodeWithText("TX-out-of-window transcript").assertDoesNotExist()
+        composeTestRule.onNodeWithText("TX-other-freq transcript").assertDoesNotExist()
+        // "145.230" also appears in the matching row's own frequency column, so this narrows to the
+        // quick-filter chip specifically by its `Role.Checkbox` (`FilterChip`'s own `.selectable`
+        // role — the row is a plain `Role.Button`).
+        val chipMatcher = hasText("145.230") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox)
+        composeTestRule.onNode(chipMatcher).assertIsSelected()
     }
 }

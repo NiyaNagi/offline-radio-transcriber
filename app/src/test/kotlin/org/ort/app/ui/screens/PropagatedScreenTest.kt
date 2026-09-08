@@ -82,7 +82,78 @@ class PropagatedScreenTest {
         }
 
         composeTestRule.onNodeWithText("0 priors updated").assertExists()
-        composeTestRule.onNodeWithText("0 voiceprint now belongs to KA7LWH").assertExists()
         composeTestRule.onNodeWithText("0 records deleted — every earlier attribution is kept").assertExists()
+    }
+
+    /**
+     * R-190 (design): a genuinely zero voiceprint reassignment must not phrase it as if the
+     * voiceprint went somewhere ("0 voiceprint now belongs to KA7LWH" reads as a claim it did,
+     * with a zero standing in front of it) — no station is named when none received it.
+     */
+    @Test
+    fun `R_190 a zero voiceprint reassignment never names a station it did not move to`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                PropagatedScreen(outcome = outcome(), onUndoAll = {}, onBackToOver = {}, onDone = {})
+            }
+        }
+
+        composeTestRule.onNodeWithText("0 voiceprint unchanged").assertExists()
+        composeTestRule.onNodeWithText("0 voiceprint now belongs to KA7LWH").assertDoesNotExist()
+    }
+
+    /** R-190 (design): the shared plural helper — "1 over"/"6 overs", never "1 overs". */
+    @Test
+    fun `R_190 over counts use the shared plural helper`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                PropagatedScreen(
+                    outcome = outcome().copy(overCount = 1),
+                    onUndoAll = {},
+                    onBackToOver = {},
+                    onDone = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("1 over re-attributed").assertExists()
+        composeTestRule.onNodeWithText("1 overs re-attributed").assertDoesNotExist()
+    }
+
+    /** R-191 (design): the subtitle names the real correction method and time, not just the old callsign. */
+    @Test
+    fun `R_191 the subtitle names the real correction method and time`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                PropagatedScreen(
+                    outcome = outcome().copy(
+                        tier = org.ort.app.ui.data.CorrectionTier.PICK_CANDIDATE,
+                        correctedAtMillis = 6 * 3_600_000L + 20 * 60_000L,
+                    ),
+                    onUndoAll = {},
+                    onBackToOver = {},
+                    onDone = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText(
+                "Was K7LWH · picked from the resolver's candidates · 06:20",
+                substring = true,
+            )
+            .assertExists()
+    }
+
+    /** R-191 (design): each affected row carries a marker and a `CORRECTED` badge. */
+    @Test
+    fun `R_191 each affected row carries a corrected badge`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                PropagatedScreen(outcome = outcome(), onUndoAll = {}, onBackToOver = {}, onDone = {})
+            }
+        }
+
+        composeTestRule.onNodeWithText("CORRECTED").assertExists()
     }
 }

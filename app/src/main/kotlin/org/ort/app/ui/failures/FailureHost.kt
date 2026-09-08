@@ -4,9 +4,13 @@ package org.ort.app.ui.failures
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,7 +70,9 @@ public data class FailureHostActions(
  * that, passing it on to [org.ort.app.ui.navigation.OrtNavHost]'s own `contentTopPadding`. Without
  * this, a banner that grows taller (font scale 2.0 wraps its copy onto more lines) only visually
  * covered more of the destination content sitting at its fixed position underneath, rather than
- * making room for itself.
+ * making room for itself. The `content`/`contentTopPadding` contract itself is unchanged by
+ * R-300's own fix below (see [BannerOverlay]'s kdoc) — WP4 and every other destination-owning
+ * package keep reading it exactly as before.
  */
 @Composable
 public fun FailureHost(
@@ -102,14 +108,20 @@ public fun FailureHost(
         onDismissInterrupted = { dismissedInterruptedLabel = it },
     )
 
-    Box(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         content(bannerHeight)
 
+        // Register R-300 (halt): a banner tall enough (`Fail-Storage`'s "How this unfolded" card,
+        // at font scale 2.0) used to push the destination's own title/controls almost entirely off
+        // screen — `contentTopPadding` faithfully reported the banner's *real* height, but nothing
+        // bounded that height in the first place. `maxHeight` (this `BoxWithConstraints`'s own,
+        // i.e. the full viewport) is threaded down so [BannerOverlay] can cap itself.
         FailurePresentationOverlay(
             presentation = presentation,
             actions = actions,
             dismiss = dismiss,
             onBannerHeightChanged = { bannerHeight = it },
+            viewportHeight = maxHeight,
         )
 
         ToastSlot(toasts = toasts, onToastShown = { toasts = toasts.drop(1) })
@@ -166,6 +178,15 @@ private fun ToastSlot(toasts: List<RecoveryToast>, onToastShown: () -> Unit, mod
  * silently re-derived. */
 private val HEADER_HEIGHT: Dp = 44.dp
 
+/** Register R-300: the fraction of the current viewport's height ([FailureHost]'s own
+ * `BoxWithConstraints`) a banner may ever occupy — `Fail-Storage`'s own "How this unfolded" card
+ * was tall enough, at font scale 2.0, to consume nearly the whole screen otherwise
+ * (`storage-warn/N04-capture-status-banner@2x-pass3.png`), squeezing the destination's own title
+ * and controls (`capture-status-stop`) into a sliver behind the pinned live bar. 40% leaves the
+ * destination's own header, title and at least one real control genuinely reachable underneath, on
+ * every device this app targets. */
+private const val BANNER_MAX_HEIGHT_FRACTION = 0.4f
+
 /** Every banner/card renders pinned near the top of the current destination, below both the
  * status bar ([failureScreenInset]) and the destination's own header row ([HEADER_HEIGHT]) — see
  * class kdoc for why an overlay is this package's only placement option. Register R-164 (halt):
@@ -178,9 +199,24 @@ private val HEADER_HEIGHT: Dp = 44.dp
  * `OrtSpacing.lg` padding around the banner's content, so the reported value is exactly how much
  * *extra* room the destination content needs to clear this banner, not the banner's absolute
  * position on screen.
+ *
+ * Register R-300 (halt): that reported height used to be *unbounded* — a genuinely tall banner
+ * (`Fail-Storage`'s "How this unfolded" card at font scale 2.0) pushed the destination almost
+ * entirely off screen. [viewportHeight] ([FailureHost]'s own `BoxWithConstraints` height, scaled
+ * here by [BANNER_MAX_HEIGHT_FRACTION]) caps this box's own height — content taller than that now
+ * scrolls *inside the banner itself* (`Modifier.verticalScroll`, clipped to the cap) rather than
+ * growing the box, and [onHeightMeasured] therefore never reports more than the cap either, so
+ * `contentTopPadding` downstream is bounded the same way. `heightIn(max = …)` sits *outside*
+ * `onGloballyPositioned` in the chain (so the reported size already reflects the cap) but
+ * *outside* `verticalScroll` too (so the cap constrains the scrollable viewport, not just its
+ * virtual content) — see the modifier order below.
  */
 @Composable
-private fun BoxScope.BannerOverlay(onHeightMeasured: (Dp) -> Unit, content: @Composable () -> Unit) {
+private fun BoxScope.BannerOverlay(
+    onHeightMeasured: (Dp) -> Unit,
+    viewportHeight: Dp,
+    content: @Composable () -> Unit,
+) {
     val density = LocalDensity.current
     Box(
         modifier = Modifier
@@ -188,14 +224,16 @@ private fun BoxScope.BannerOverlay(onHeightMeasured: (Dp) -> Unit, content: @Com
             .fillMaxWidth()
             .failureScreenInset()
             .padding(top = HEADER_HEIGHT)
+            .heightIn(max = viewportHeight * BANNER_MAX_HEIGHT_FRACTION)
             // `onGloballyPositioned` reports the size of the node *at this point in the chain* —
-            // everything to its right (padding(lg) and the content) but nothing to its left, so
-            // this deliberately sits between the two `padding` calls: it measures `lg + content +
-            // lg`, excluding `HEADER_HEIGHT` (already accounted for by the content column's own
-            // natural position, right after its header — see this function's own kdoc).
+            // everything to its right (the scroll, padding(lg) and the content) but nothing to its
+            // left, so this deliberately sits between `heightIn` and `verticalScroll`: it measures
+            // `min(lg + content + lg, the cap above)`, excluding `HEADER_HEIGHT` (already accounted
+            // for by the content column's own natural position, right after its header).
             .onGloballyPositioned { coordinates ->
                 onHeightMeasured(with(density) { coordinates.size.height.toDp() })
             }
+            .verticalScroll(rememberScrollState())
             .padding(OrtSpacing.lg)
             .testTag("failure-banner-overlay"),
     ) {
@@ -254,6 +292,7 @@ private fun BoxScope.FailurePresentationOverlay(
     actions: FailureHostActions,
     dismiss: FailureDismissState,
     onBannerHeightChanged: (Dp) -> Unit,
+    viewportHeight: Dp,
 ) {
     if (TAKEOVER_PRESENTATIONS.contains(presentation::class.java)) {
         if (isTakeoverShown(presentation, dismiss)) {
@@ -262,7 +301,7 @@ private fun BoxScope.FailurePresentationOverlay(
         }
         return
     }
-    FailureBannerOverlay(presentation, actions, dismiss, onBannerHeightChanged)
+    FailureBannerOverlay(presentation, actions, dismiss, onBannerHeightChanged, viewportHeight)
 }
 
 /** Every banner-shaped [FailurePresentation] id — anything [FailurePresentationOverlay] did not
@@ -275,20 +314,21 @@ private fun BoxScope.FailureBannerOverlay(
     actions: FailureHostActions,
     dismiss: FailureDismissState,
     onBannerHeightChanged: (Dp) -> Unit,
+    viewportHeight: Dp,
 ) {
     when (presentation) {
-        is FailurePresentation.Disconnect -> BannerOverlay(onBannerHeightChanged) {
+        is FailurePresentation.Disconnect -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailDisconnectBanner(
                 state = presentation.state,
                 onRetry = actions.onRetryInput,
                 onChooseAnotherInput = actions.onChooseAnotherInput,
             )
         }
-        is FailurePresentation.Level -> BannerOverlay(onBannerHeightChanged) {
+        is FailurePresentation.Level -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailLevelBanner(state = presentation.state)
         }
         is FailurePresentation.Killed -> if (presentation.state.stoppedAtLabel != dismiss.killedLabel) {
-            BannerOverlay(onBannerHeightChanged) {
+            BannerOverlay(onBannerHeightChanged, viewportHeight) {
                 FailKilledBanner(
                     state = presentation.state,
                     onOpenBatterySettings = actions.onOpenBatteryExemptionSettings,
@@ -298,27 +338,27 @@ private fun BoxScope.FailureBannerOverlay(
         } else {
             onBannerHeightChanged(0.dp)
         }
-        is FailurePresentation.StorageWarning -> BannerOverlay(onBannerHeightChanged) {
+        is FailurePresentation.StorageWarning -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailStorageWarningBanner(
                 state = presentation.state,
                 onFreeUpSpace = actions.onOpenStorageSettings,
                 onOpenRetentionSettings = actions.onOpenRetentionSettings,
             )
         }
-        is FailurePresentation.StorageAudioPaused -> BannerOverlay(onBannerHeightChanged) {
+        is FailurePresentation.StorageAudioPaused -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailStorageAudioPausedBanner(
                 state = presentation.state,
                 onFreeUpSpace = actions.onOpenStorageSettings,
                 onOpenRetentionSettings = actions.onOpenRetentionSettings,
             )
         }
-        is FailurePresentation.Thermal -> BannerOverlay(onBannerHeightChanged) {
+        is FailurePresentation.Thermal -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailThermalBanner(state = presentation.state)
         }
-        is FailurePresentation.Backlog -> BannerOverlay(onBannerHeightChanged) {
+        is FailurePresentation.Backlog -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailBacklogBanner(state = presentation.state)
         }
-        is FailurePresentation.Rig -> BannerOverlay(onBannerHeightChanged) {
+        is FailurePresentation.Rig -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailRigBanner(
                 state = presentation.state,
                 onReconnect = actions.onReconnectRig,
@@ -326,7 +366,7 @@ private fun BoxScope.FailureBannerOverlay(
             )
         }
         is FailurePresentation.Call -> if (presentation.state.durationLabel != dismiss.callLabel) {
-            BannerOverlay(onBannerHeightChanged) {
+            BannerOverlay(onBannerHeightChanged, viewportHeight) {
                 FailCallBanner(
                     state = presentation.state,
                     onDismiss = { dismiss.onDismissCall(presentation.state.durationLabel) },

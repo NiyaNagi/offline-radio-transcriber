@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.TransmissionAudioPlayer
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.clearedWhileOverlaid
 import org.ort.app.ui.data.CorrectionPolling
 import org.ort.app.ui.data.CorrectionRequest
 import org.ort.app.ui.data.CorrectionScope
@@ -77,19 +78,33 @@ public fun TransmissionDetailContent(
 ) {
     var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
     var passFailure by remember(transmissionId) { mutableStateOf<PassFailureViewState?>(null) }
+    var sourceOverTimeLabel by remember(transmissionId) { mutableStateOf<String?>(null) }
     var destination by remember(transmissionId) { mutableStateOf<DetailDestination>(DetailDestination.Main) }
     val scope = rememberCoroutineScope()
 
     // R-153: a pass-failure lookup is a real extra `:data` read, so it only runs for the
     // transmissions that can possibly have one — `processingState == FAILED` — never on every poll.
+    // R-189 (halt): `ReaderPolling`'s own attribution derivation drops a corrected row's real
+    // stationId back to UNKNOWN once its confidence is null (see `CorrectionPolling.currentAttribution`'s
+    // own doc comment for the full diagnosis) — patched here, on every poll, not only after Undo.
+    // R-183: the source over's real time, for the INFERRED explanation's "to HH:MM:SS" clause.
     suspend fun refresh() {
-        val fetched = ReaderPolling.transmissionDetail(context, transmissionId)
+        var fetched = ReaderPolling.transmissionDetail(context, transmissionId)
+        if (fetched != null) {
+            fetched = fetched.copy(
+                attribution = CorrectionPolling.currentAttribution(context, transmissionId, fetched.attribution),
+            )
+        }
         detail = fetched
         passFailure = if (fetched?.processingState == TransmissionState.FAILED) {
             CorrectionPolling.passFailure(context, transmissionId)
         } else {
             null
         }
+        sourceOverTimeLabel = CorrectionPolling.sourceOverTimeLabel(
+            context,
+            fetched?.attribution?.sourceTransmissionId?.toString(),
+        )
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -101,7 +116,11 @@ public fun TransmissionDetailContent(
         )
         return
     }
-    val viewState = DetailViewStateMapper.from(ReaderTransmissionViewStateMapper.detailView(current), passFailure)
+    val viewState = DetailViewStateMapper.from(
+        ReaderTransmissionViewStateMapper.detailView(current),
+        passFailure,
+        sourceOverTimeLabel,
+    )
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
     val dest = destination
@@ -123,7 +142,10 @@ public fun TransmissionDetailContent(
                 onDestinationChange = { destination = it },
                 refresh = ::refresh,
                 backLabel = backLabel,
-                modifier = Modifier.fillMaxSize(),
+                // R-261: while the correction sheet is open, the dimmed detail beneath it — its
+                // own `DrillInHeader`'s `Back to Log` included — must not be focusable or reachable
+                // by TalkBack traversal, and must not appear in the merged semantics tree at all.
+                modifier = Modifier.fillMaxSize().clearedWhileOverlaid(dest == DetailDestination.Correcting),
             )
 
             DetailDestination.Why -> DetailWhyScreen(
@@ -329,7 +351,7 @@ private fun CorrectingOverlay(
             currentCallsign = current.attribution.stationId,
             candidates = viewState.why.candidates,
             everyOverSameVoiceCount = everyOverCount,
-            onSearchLexicon = { query -> ReaderPolling.searchLexicon(query) },
+            onSearchStations = { query -> CorrectionPolling.searchHeardStations(context, query) },
             onApply = ::apply,
             onDismiss = onDismiss,
             modifier = Modifier.testTag("correction-sheet"),

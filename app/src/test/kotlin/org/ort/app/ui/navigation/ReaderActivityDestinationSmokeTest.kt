@@ -225,8 +225,26 @@ class ReaderActivityDestinationSmokeTest {
     fun `R_129_IMPROVE_RECORDS_composes_and_survives_recreation`() =
         assertComposesAndSurvives(ReaderDestination.IMPROVE_RECORDS)
 
+    // Round 7 (R-090's double-header saga, resolved for good this round): `SettingsRootScreen` now
+    // draws its own `ScreenHeader` (round 6 found the sub-screen half of this; `SettingsContent`'s
+    // own doc comment named the fix and the exact removal this host now makes), so this host draws
+    // neither a `ScreenHeader` nor a `DrillInHeader` for any of `SETTINGS` — asserted directly
+    // (exactly one "Open navigation", zero "Back to Settings"), not left to a `recreate()` timeout
+    // to catch a regression by accident, the way the prior double-/zero-header incidents both were.
     @Test
-    fun `R_129_SETTINGS_composes_and_survives_recreation`() = assertComposesAndSurvives(ReaderDestination.SETTINGS)
+    fun `R_129_SETTINGS_composes_and_survives_recreation`() {
+        runReaderActivity(ReaderDestination.SETTINGS) { rule ->
+            rule.waitUntilContentDescriptionExists("Open navigation")
+            rule.assertExactlyOneContentDescription("Open navigation")
+            rule.assertExactlyOneContentDescription("Search")
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            rule.waitUntilContentDescriptionExists("Open navigation")
+            rule.assertExactlyOneContentDescription("Open navigation")
+        }
+    }
 
     // Round 5 (R-090/R-139/F6/F9): `EXTRA_DESTINATION=SETTINGS` with `EXTRA_SETTINGS_SCREEN` set
     // lands directly on a sub-screen — `SettingsContent.initialScreen`'s real target now — rather
@@ -236,24 +254,25 @@ class ReaderActivityDestinationSmokeTest {
     // `SettingsSubScreen`'s one dispatch and the same `DrillInHeader(parentLabel = "Settings", ...)`
     // this asserts on, so this one case stands for all eight.
     //
-    // Found by writing this case, reported rather than silently worked around (out of this row's
-    // file to fix — see this round's own report): the host still renders its own `ScreenHeader`
-    // ("Open navigation") for every `SETTINGS` case, sub-screen included — `OrtNavHost.kt` has no
-    // way to know a sub-screen is showing, since that state is entirely internal to
-    // `SettingsContent` (confirmed by reading that file). `SettingsRootScreen` needs the host's
-    // header (R-130, it draws none of its own); every *sub*-screen draws its own `DrillInHeader`
-    // too, so a sub-screen reached this way shows both at once — a real, live double-header this
-    // assertion deliberately does not (and structurally cannot, without editing `ui/settings/**`)
-    // guard against; it only proves the sub-screen itself renders and survives `recreate()`.
+    // Round 7: the double-header this case's own round-5/6 doc comment reported (the host's
+    // `ScreenHeader` and this sub-screen's own `DrillInHeader` both showing) is fixed now that
+    // `SettingsRootScreen` owns the header instead of the host — asserted directly: exactly one
+    // "Back to Settings", zero "Open navigation" (a sub-screen draws no drawer-icon header at all).
     @Test
     fun `R_129_SETTINGS_RIG_initialScreen_composes_and_survives_recreation`() {
         runReaderActivity(ReaderDestination.SETTINGS, settingsScreen = SettingsScreenId.RIG) { rule ->
             rule.waitUntilContentDescriptionExists("Back to Settings")
+            rule.assertExactlyOneContentDescription("Back to Settings")
+            check(
+                rule.onAllNodes(hasContentDescription("Open navigation", substring = true))
+                    .fetchSemanticsNodes().isEmpty(),
+            ) { "expected no host ScreenHeader ('Open navigation') on a SETTINGS sub-screen" }
 
             rule.activityRule.scenario.recreate()
             rule.waitForIdle()
 
             rule.waitUntilContentDescriptionExists("Back to Settings")
+            rule.assertExactlyOneContentDescription("Back to Settings")
         }
     }
 
@@ -483,6 +502,22 @@ class ReaderActivityDestinationSmokeTest {
     ) {
         waitUntil(timeoutMillis) {
             onAllNodes(hasContentDescription(substring, substring = true)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Round 7 (R-090's own double-header saga, this time asserted against directly rather than
+     * left to a `recreate()` timeout to catch by accident): counts every node whose content
+     * description contains [substring], exact — not [waitUntilContentDescriptionExists]'s "at
+     * least one". `SETTINGS`'s own header now moves between [org.ort.app.ui.settings
+     * .SettingsRootScreen] (root) and no header at all (a sub-screen, which draws only its own
+     * `DrillInHeader`) depending entirely on `SettingsContent`'s internal state — the host draws
+     * neither on its own — so "one, not zero and not two" is the fact worth asserting on each.
+     */
+    private fun ReaderComposeTestRule.assertExactlyOneContentDescription(substring: String) {
+        val count = onAllNodes(hasContentDescription(substring, substring = true)).fetchSemanticsNodes().size
+        check(count == 1) {
+            "expected exactly one node with content description containing '$substring', found $count"
         }
     }
 

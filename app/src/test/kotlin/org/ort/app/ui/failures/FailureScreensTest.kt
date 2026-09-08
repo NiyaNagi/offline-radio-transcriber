@@ -539,10 +539,14 @@ class FailureScreensTest {
                 )
             }
         }
-        composeTestRule.onNodeWithText("2026.08 · active · this session").assertIsDisplayed()
-        composeTestRule.onNodeWithText("2026.09 · staged · next session").assertIsDisplayed()
-        composeTestRule.onNodeWithText("the default · nothing else to do").assertIsDisplayed()
-        composeTestRule.onNodeWithText("tonight's log ends here").assertIsDisplayed()
+        // Register R-292: the scaffold's content slot is now genuinely height-constrained (never
+        // renders behind the fixed bottom bar at any scroll offset), so content past what the
+        // reduced viewport shows at rest needs a real scroll to reach — the same "content can
+        // always scroll clear" contract R-151/R-123 already established elsewhere in this file.
+        composeTestRule.onNodeWithText("2026.08 · active · this session").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("2026.09 · staged · next session").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("the default · nothing else to do").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("tonight's log ends here").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -625,5 +629,51 @@ class FailureScreensTest {
         // Same as the migration case above: the Done button is in the fixed action bar.
         composeTestRule.onNodeWithTag("failure-asset-swap-done").assertIsDisplayed()
         composeTestRule.onNodeWithTag("failure-asset-swap-option-1").performScrollTo().assertIsDisplayed()
+    }
+
+    private val storageTimeline = listOf(
+        StorageTimelineStage("12:28:15 · warned at 3 nights left", "notification and status surface", reached = true),
+        StorageTimelineStage("Not reached", "500 MB hard floor", reached = false),
+    )
+
+    @Test
+    fun `R_300 F6 How this unfolded stays expanded by default at normal font scale, matching the board`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailStorageWarningBanner(
+                    state = StorageWarningViewState(
+                        nightsLeftLabel = "2.4",
+                        freeLabel = "6.0 GB free",
+                        timeline = storageTimeline,
+                    ),
+                    onFreeUpSpace = {},
+                    onOpenRetentionSettings = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-storage-timeline").assertIsDisplayed()
+        composeTestRule.onAllNodesWithTag("failure-storage-timeline-toggle").assertCountEquals(0)
+    }
+
+    @Test
+    fun `R_300 F6 How this unfolded collapses behind a Details disclosure at large font scale`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    FailStorageWarningBanner(
+                        state = StorageWarningViewState(
+                            nightsLeftLabel = "2.4",
+                            freeLabel = "6.0 GB free",
+                            timeline = storageTimeline,
+                        ),
+                        onFreeUpSpace = {},
+                        onOpenRetentionSettings = {},
+                    )
+                }
+            }
+        }
+        composeTestRule.onAllNodesWithTag("failure-storage-timeline").assertCountEquals(0)
+        composeTestRule.onNodeWithTag("failure-storage-timeline-toggle").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("failure-storage-timeline").assertIsDisplayed()
     }
 }

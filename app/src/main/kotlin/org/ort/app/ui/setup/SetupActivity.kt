@@ -557,6 +557,10 @@ public class SetupActivity : ComponentActivity() {
             onFixLevel = { step = SetupStep.LEVEL },
             onFixOvernight = { step = SetupStep.OVERNIGHT },
             onFixRadio = { step = SetupStep.RADIO },
+            // R-285: the same clear-then-navigate callback S11's own "Change radio" already uses
+            // ([RadioVerifiedScreen]), not the bare step jump [onFixRadio] is — this row is already
+            // `ok`, not broken, so a stray leftover `radioAbsentBanner` must not appear on S09.
+            onChangeRadio = ::onChangeRadio,
             onInstallModel = ::onInstallModel,
         )
         val rows = readyRowsFor(store, batteryExempt(), rigStatusSnapshot, AsrAvailability.state, actions)

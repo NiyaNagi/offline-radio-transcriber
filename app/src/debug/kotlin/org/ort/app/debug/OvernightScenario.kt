@@ -164,6 +164,14 @@ internal object OvernightScenario {
         db.catalogDao().insert(
             ScenarioFixtures.candidate("$tx3-c2", tx3, "KE7QRF", rank = 1, score = 8.05, selected = false),
         )
+        // R-184: a third, distinctly-scored candidate — `Detail-Correct-A.dc.html`'s Tier A list
+        // ("the resolver's other candidates") renders every ranked candidate whose callsign is not
+        // the over's own current one; for an AMBIGUOUS over that is `null`, so the whole ranked list
+        // shows. WP6 verified the derivation by test (a9c24c6); the zero-rows-on-device symptom was
+        // this fixture never carrying more than two, not the screen — see this scenario's own report.
+        db.catalogDao().insert(
+            ScenarioFixtures.candidate("$tx3-c3", tx3, "KE7QRZ", rank = 2, score = 7.90, selected = false),
+        )
 
         // -- 4. UNKNOWN: nothing claimed. ----------------------------------------------------------
         val tx4 = "$sessionId-tx04"

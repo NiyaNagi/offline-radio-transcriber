@@ -95,10 +95,11 @@ public object Scenarios {
      * R-100) adds `clock-dst`/`usb-permission`/`interrupted-pass`/`reconcile`/`migration-failed`/
      * `asset-swap`/`calibration` — the seven ids with no runtime signal today, driven through
      * `org.ort.app.ui.failures.DebugFailureOverride` (that object's own kdoc says exactly why for
-     * each). `setup-verified`/`setup-level` (register R-227/R-264) are the two scenarios this
-     * registry seeds outside `:data` and the process-wide capture facets — see [setupVerified]'s
-     * and [setupLevel]'s own doc comments for why (S05's `SetupStore` gates, not a runtime signal,
-     * are what block S07/S12 from ever being reached on an emulator with no real signal to hear).
+     * each). `setup-verified`/`setup-level`/`setup-radio` (register R-227/R-264/R-285) are the
+     * three scenarios this registry seeds outside `:data` and the process-wide capture facets — see
+     * [setupVerified]'s, [setupLevel]'s and [setupRadio]'s own doc comments for why (S05's
+     * `SetupStore` gates, not a runtime signal, are what block S07/S09/S12 from ever being reached
+     * on an emulator with no real signal to hear).
      */
     public val NAMES: List<String> = listOf(
         "empty",
@@ -130,6 +131,7 @@ public object Scenarios {
         "input-mismatch",
         "setup-verified",
         "setup-level",
+        "setup-radio",
         "clock-dst",
         "usb-permission",
         "interrupted-pass",
@@ -171,7 +173,7 @@ public object Scenarios {
             "revisions" -> revisions(context, db)
             "stations-14-nights" -> StationsFixtures.stations14Nights(db)
             "frequency-change" -> FrequencyChangeFixtures.frequencyChange(db)
-            "field-tier1" -> fieldTier1(db)
+            "field-tier1" -> fieldTier1(context, db)
             "search-corpus" -> searchCorpus(db)
             "backlog" -> backlog(context, db)
             "model-missing" -> modelMissing(context, db)
@@ -186,6 +188,7 @@ public object Scenarios {
             "input-mismatch" -> inputMismatch(db)
             "setup-verified" -> setupVerified(context)
             "setup-level" -> setupLevel(context)
+            "setup-radio" -> setupRadio(context)
             "clock-dst" -> clockDst(context, db)
             "usb-permission" -> usbPermission(context, db)
             "interrupted-pass" -> interruptedPass(context, db)
@@ -700,8 +703,23 @@ public object Scenarios {
      * finished before a screenshot script's own settle wait could ever catch it running. Twelve
      * overs (`FIELD_TIER1_OVER_COUNT`), still a real, honest number [ImprovePolling] counts for
      * real, gives the run a visible multi-second span at the runner's default per-item delay.
+     *
+     * R-290 (halt): the *real* `RealImproveRunner`/[org.ort.pipeline.reprocess.ReprocessRunner]
+     * reaches this session's overs through [org.ort.pipeline.passb.FlacSegmentAudioProvider], which
+     * `check`s that a real file exists at [org.ort.data.entity.TransmissionEntity.audioPath] and
+     * throws if not — this fixture used to seed only the database rows, so R03/R04
+     * (`Improve-Running`/`Improve-Done`) crashed the app on the first item instead of ever
+     * completing. Every over here is, by definition, "improvable" (that is what a non-null
+     * `deviceTier` below the current one means — see [ImprovePolling.root]'s own kdoc), so every one
+     * of them now gets [ScenarioFixtures.writeAudioFixture]'s real, decodable file — the same
+     * synthetic-tone fixture `OvernightScenario`'s own `writeAudio = true` overs already write, and
+     * the exact container [FlacSegmentAudioProvider]'s default codec
+     * ([org.ort.capture.android.codec.DeflatePredictiveCodec]) decodes (its own class name aside,
+     * that is the real codec production reprocessing reads with — confirmed by reading
+     * [org.ort.pipeline.passb.FlacSegmentAudioProvider]'s own constructor default before writing
+     * this, not assumed from the file extension `TransmissionEntity.audioPath()` happens to use).
      */
-    private suspend fun fieldTier1(db: OrtDatabase): LoadResult {
+    private suspend fun fieldTier1(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("field-tier1")
         db.sessionDao().insert(
             ScenarioFixtures.session(
@@ -715,18 +733,20 @@ public object Scenarios {
         repeat(FIELD_TIER1_OVER_COUNT) { i ->
             val txId = "$sessionId-tx${i + 1}"
             val startedAt = baseStartedAt + i * 20_000L
-            db.transmissionDao().insert(
-                ScenarioFixtures.transmission(
-                    id = txId,
-                    sessionId = sessionId,
-                    startedAtUtc = startedAt,
-                    samplePosition = (i + 1).toLong(),
-                    frequencyHz = 146_960_000L,
-                    attributionState = AttributionState.INFERRED,
-                    stationId = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size],
-                    attributionConfidence = 0.68,
-                ),
+            val tx = ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = startedAt,
+                samplePosition = (i + 1).toLong(),
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.INFERRED,
+                stationId = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size],
+                attributionConfidence = 0.68,
             )
+            db.transmissionDao().insert(tx)
+            // R-290: real, decodable retained audio at the exact path the reprocess engine
+            // requires — not seeded before this fix (see this function's own kdoc).
+            ScenarioFixtures.writeAudioFixture(context, tx)
             db.transcriptDao().insert(
                 ScenarioFixtures.transcript(
                     id = "$txId-t1",
@@ -1103,6 +1123,35 @@ public object Scenarios {
      */
     private fun setupLevel(context: Context): LoadResult {
         verifiedInputStore(context)
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-radio` — R-285 (V1 pass 3). No sanctioned path reached S09..S11 (`Setup-Rig*.dc.html`)
+     * on an emulator before this: the linear flow stalls at S05's own 30 s raw-signal listen (a
+     * silent emulator mic never hears anything, [setupVerified]'s own doc comment), and
+     * `setupVerified` itself resolves straight through [SetupStep.RADIO] to `READY` by setting
+     * [SetupStore.radioChoice] up front — so even the `Fix` action on S12's own Radio row landed
+     * back on `READY` immediately rather than ever showing S09, since [SetupStateMachine.stepFor]
+     * only stops at [SetupStep.RADIO] while [SetupSnapshot.radioChoice] is still unset. This
+     * scenario is the same verified-input/level/overnight base [setupVerified] seeds, but leaves
+     * [SetupStore.radioChoice] at its honest, unset default (`null` — never a fabricated choice), so
+     * `stepFor` resumes at [SetupStep.RADIO] directly from a cold `MainActivity` launch, the same
+     * "leave the one gate this screen exists to test unset" recipe [setupLevel] already uses for S07.
+     *
+     * `radioChoice`/`manualFrequencyHz` are set to `null` explicitly, not merely left untouched —
+     * [SharedPreferencesSetupStore] persists across scenario loads (unlike the `:data` tables
+     * [clearPriorScenarioData] wipes), so a `setup-verified` run immediately before this one would
+     * otherwise leave `radioChoice = NONE` behind and this scenario would resume at `READY`, not
+     * `RADIO`, defeating its own purpose.
+     */
+    private fun setupRadio(context: Context): LoadResult {
+        val store = verifiedInputStore(context)
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = null
+        store.manualFrequencyHz = null
         return LoadResult(0, 0, null)
     }
 
