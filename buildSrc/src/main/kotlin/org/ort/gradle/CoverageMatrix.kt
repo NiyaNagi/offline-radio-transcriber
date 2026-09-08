@@ -34,8 +34,13 @@ object CoverageMatrix {
      * open-questions entry. A test naming one is documenting which failure mode, decision or
      * question it establishes behaviour for, not claiming an undefined requirement id, so it must
      * not be counted or rendered as an orphan. It is still worth surfacing on its own.
+     *
+     * F-029: the audit register itself writes these ids hyphenated (`F-005`, not `F5`), and
+     * `@Requirement("FR-UI-7", "F-005")`-style annotations use that form — the bare-only regex
+     * rejected it, so a correctly-cited audit id fell through to "orphan" in the generated
+     * matrix. The hyphen is now optional.
      */
-    private val CROSS_REFERENCE = Regex("""^[FDRQ]\d+[A-Z]?$""")
+    private val CROSS_REFERENCE = Regex("""^[FDRQ]-?\d+[A-Z]?$""")
 
     /**
      * F-027: `corpus/` is Python (its own `pyproject.toml`, pytest under `corpus/tests/`), not a

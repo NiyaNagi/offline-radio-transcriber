@@ -32,6 +32,50 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (audit — F-029)
+
+### (pending commit) — audit F-029 · coverage matrix's own hygiene: hyphenated audit ids and a fixture's self-reference no longer read as false orphans
+
+**Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt`,
+`buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt`, `results/coverage-matrix.md`.
+**Requirements/ACs:** constitution II (the matrix is generated, so it must be truthful); F-023,
+F-027 (the two prior fixes this hygiene gap fell out of).
+**What changed:** the regenerated `results/coverage-matrix.md` reported 5 false "orphan tests":
+`F-005`, `F-011`, `F-022`, `F-028` — real `@Requirement("FR-UI-7", "F-0NN")`-style audit-id
+citations in `RealCaptureServiceTest` — and `AC-999`, a fixture string inside
+`CoverageMatrixTest.kt` itself. Two independent bugs: (1) `CROSS_REFERENCE`'s regex
+(`^[FDRQ]\d+[A-Z]?$`, added by F-023) only matched the bare `F13` shape and rejected the
+hyphenated `F-005` form the audit register actually uses, so a correctly-cited audit id fell
+through to "orphan" instead of the cross-reference section — fixed by making the hyphen optional
+(`^[FDRQ]-?\d+[A-Z]?$`). (2) F-027 added `buildSrc/src/test/kotlin` to the matrix's own scanned
+roots, and the scanner does a naive text scan rather than lexing Kotlin strings, so the fixture
+literal inside `CoverageMatrixTest`'s "an orphan test naming an unknown requirement is surfaced"
+test — a string that itself looks like `fun \`AC_999_not_a_real_requirement\`(` — was picked up as
+a genuine (fake) test declaration when the real file was scanned for real. Fixed per the smaller
+of the two sketched options (the brief offered "exclude string literals" or "rename the fixture
+so it cannot match"): the scanner already matches only test-declaration shapes, not bare tokens,
+so making it string-literal-aware would mean a real Kotlin lexer for a net-new class of bug this
+narrow — rejected as disproportionate. Instead the fixture's fake id is now built by string
+concatenation (`"AC" + "_999"`), so no contiguous `fun \`AC_999...\`(`-shaped text exists anywhere
+in this file's own source (including its explanatory comment, which was rewritten once after an
+first pass reintroduced the exact same leak by spelling the id out in prose). The unit test's
+assertions are unchanged in substance — it still proves an unrecognised, requirement-shaped id
+is surfaced as an orphan, just via a runtime-assembled string rather than a static one.
+**Verified:** `./gradlew -p buildSrc test` — new test `F-029 a hyphenated audit id like F-005 is a
+cross-reference, not an orphan` seen to fail first (`AssertionFailedError: {F-005=[T],
+FR-UI-7=[T]} ==> expected: <false> but was: <true>`) before the regex change, green after; all 30
+buildSrc tests green after. `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (run
+as separate invocations, per audit convention) — header row "Tests naming a requirement id not in
+the spec" is `0`; `F-005`/`F-011`/`F-022`/`F-028` now render correctly under "Cross-referenced
+failure modes / decisions / questions"; requirement/covered/uncovered counts unchanged at
+419/179/240 (this fix only reclassifies non-requirement ids, it establishes none). Full gate:
+`./gradlew build dependencyRules platformGuards` green. Everything here is Robolectric/JVM only;
+nothing ran on a physical device.
+**Left open / not done:** none for this finding. `spec/ui-conformance-plan.md`'s spec-check rule 2
+failure (`Q01`/`Q05`) is concurrent work outside this audit and was left untouched, as directed.
+
+---
+
 ## 2026-09-08 (audit close-out — the 2026-09-07 audit-and-remediate run)
 
 ### (many) — Audit of the whole repository against constitution, spec and build plan; 27 of 28 findings closed
