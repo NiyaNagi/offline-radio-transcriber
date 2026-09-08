@@ -3,7 +3,9 @@ package org.ort.app.ui.components
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -14,11 +16,13 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtColors
+import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
@@ -29,6 +33,43 @@ class RowsTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    private val maxFontScale = 2f
+
+    /** R-152: the gap between the right edge of the node found by [leftText] and the left edge of
+     * the node found by [rightText] must be at least [minGapDp] — a real, code-enforced minimum,
+     * not a coincidence of whichever content happened to leave whitespace inside a fixed box (the
+     * pre-fix `KeyValueRow`'s defect exactly: no `Arrangement` gap at all, so its columns only
+     * ever looked apart because short keys left slack inside their own box — this asserts a
+     * *strict* gap so that a regression back to zero explicit spacing fails here, not just a
+     * regression to visible overlap).
+     *
+     * This deliberately does not try to prove a column *grows* to fit wide content by measuring
+     * text width: Robolectric's `Paint` returns degenerate glyph metrics for this codebase's
+     * `sans`/`mono` `fontFamily`s (verified directly — a 23-character key measured 96px wide, a
+     * lone digit measured 1px wide, regardless of a 2.0 font scale), so an intrinsic-width
+     * assertion would pass or fail on an artifact of the test host's font substitution, not on
+     * real behaviour. What *is* deterministic, and what this checks, is the arrangement gap
+     * itself — `widthIn(min = …)` never returns less than `width(…)` would for the same content
+     * and can only ever add room, so pairing it with a real `Arrangement.spacedBy` gap is a sound,
+     * Compose-guaranteed fix independent of what any given host's font metrics report.
+     *
+     * `useUnmergedTree = true` because several of these rows (`LogRow`, `RejectedRow`,
+     * `NotificationCard`) wrap their whole content in `semantics(mergeDescendants = true)` for a
+     * single accessible target — on the default merged tree, `onNodeWithText` for either column
+     * would resolve to that one outer node instead of the individual `Text`, making every column
+     * report the same (wrong) position. */
+    private fun assertColumnsDoNotCollide(leftText: String, rightText: String, minGapDp: Int = 1) {
+        val left = composeTestRule.onNodeWithText(leftText, useUnmergedTree = true).fetchSemanticsNode()
+        val right = composeTestRule.onNodeWithText(rightText, useUnmergedTree = true).fetchSemanticsNode()
+        val leftEdge = left.positionInRoot.x + left.size.width
+        val rightEdge = right.positionInRoot.x
+        val gap = rightEdge - leftEdge
+        assert(gap >= minGapDp) {
+            "expected at least ${minGapDp}px between '$leftText' (ending at ${leftEdge}px) and " +
+                "'$rightText' (starting at ${rightEdge}px) at font scale $maxFontScale, got ${gap}px"
+        }
+    }
 
     private fun row(
         attribution: Attribution? = Attribution.confirmed("W7NPC", 0.95),
@@ -293,5 +334,81 @@ class RowsTest {
         composeTestRule.onNodeWithText("Open").assertIsDisplayed()
         composeTestRule.onNodeWithText("Stop").assertIsDisplayed()
         composeTestRule.onNodeWithText("Running warm — tier 2").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_152_a key value row keeps a real enforced gap between its label and its value at font scale 2`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    // The register's own repro: `Session`/`Capture-Status`'s "Stations" key
+                    // against a one-character value rendered "Stations5" at font scale 2.0 — the
+                    // pre-fix row had no `Arrangement` gap at all between its columns, so this is
+                    // the one row where the fix had to *add* spacing, not just widen a floor.
+                    KeyValueRow(key = "Stations", value = "5")
+                }
+            }
+        }
+
+        assertColumnsDoNotCollide("Stations", "5", minGapDp = OrtSpacing.sm.value.toInt())
+    }
+
+    @Test
+    fun `R_152_a column header row keeps a real enforced gap between its time and freq columns at font scale 2`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    ColumnHeaderRow()
+                }
+            }
+        }
+
+        assertColumnsDoNotCollide("TIME", "FREQ", minGapDp = 10)
+    }
+
+    @Test
+    fun `R_152_a log row keeps a real enforced gap between its time and freq columns at font scale 2`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    LogRow(state = row(), onClick = {})
+                }
+            }
+        }
+
+        assertColumnsDoNotCollide("02:14:07", "145.230", minGapDp = 10)
+    }
+
+    @Test
+    fun `R_152_a rejected row keeps a real enforced gap between its time and freq columns at font scale 2`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    RejectedRow(timeLabel = "02:14:07", frequencyLabel = "145.230", reason = "squelch tail")
+                }
+            }
+        }
+
+        assertColumnsDoNotCollide("02:14:07", "145.230", minGapDp = 10)
+    }
+
+    @Test
+    fun `R_152_a notification card's expanded key-value row keeps a real enforced gap at font scale 2`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    NotificationCard(
+                        icon = OrtIcons.frequencies,
+                        title = "Capturing",
+                        elapsedLabel = "6:42",
+                        countLabel = "412 overs",
+                        secondLine = "145.230 and 146.960 · tier 3",
+                        expandedRows = listOf(NotificationCardRow("Last over", "W7NPC · 02:14 · 145.230")),
+                    )
+                }
+            }
+        }
+
+        assertColumnsDoNotCollide("Last over", "W7NPC · 02:14 · 145.230", minGapDp = 8)
     }
 }
