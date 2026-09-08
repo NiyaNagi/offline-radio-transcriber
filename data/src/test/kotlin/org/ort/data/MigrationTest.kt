@@ -9,8 +9,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.data.dao.StationIdentityDao
+import org.ort.data.entity.PriorAdjustmentEntity
 import org.ort.data.entity.ShedEventEntity
 import org.ort.data.entity.ShedTrigger
+import org.ort.data.entity.StationIdentityHistoryEntity
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
@@ -132,6 +135,66 @@ public class MigrationTest {
             }
             val events = runBlocking { db.shedEventDao().listBySession("S1") }
             assertEquals(listOf("SE1"), events.map { it.id }) // new table works post-migration
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * Register R-052, R-073 — the v2 -> v3 migration adds `station_identity_history`,
+     * `voiceprint_binding_history` and `prior_adjustment` without touching existing tables.
+     * Proves both halves of FR-AST-5/6: a pre-existing station row survives, and
+     * [OrtDatabase.stationIdentityDao]'s write path is immediately usable afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "R-052", "R-073")
+    public fun migration_from_v2_to_v3_preserves_existing_rows_and_adds_the_identity_history_tables() {
+        val dbName = "migration-test-db-v3"
+        val v2 = helper.createDatabase(dbName, 2)
+        v2.execSQL(
+            "INSERT INTO station (id, callsign, firstHeardAt, lastHeardAt, transmissionCount, " +
+                "isUserPinned, notes, userName, frequenciesHeard, activityByHourDow, potaRefs, " +
+                "spokenGrids, ituRegionFromPrefix, overCountsByAttributionState) VALUES " +
+                "('N7XYZ', 'N7XYZ', 0, 0, 1, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+        )
+        v2.close()
+
+        helper.runMigrationsAndValidate(dbName, 3, true, OrtDatabase.MIGRATION_2_3)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val station = runBlocking { db.catalogDao().getStation("N7XYZ") }
+            assertEquals("N7XYZ", station!!.callsign) // pre-existing row survives
+
+            runBlocking {
+                db.stationIdentityDao().renameStation(
+                    StationIdentityHistoryEntity(
+                        id = "H1",
+                        stationId = "N7XYZ",
+                        field = StationIdentityDao.FIELD_NAME,
+                        previousValue = null,
+                        newValue = "Dave",
+                        changedAt = 100L,
+                    ),
+                )
+                db.stationIdentityDao().updatePriorWeight(
+                    PriorAdjustmentEntity(
+                        id = "P1",
+                        stationId = "N7XYZ",
+                        name = "on_this_repeater",
+                        weight = 0.2,
+                        reason = null,
+                        isCurrent = true,
+                        updatedAt = 100L,
+                    ),
+                )
+            }
+            val renamed = runBlocking { db.catalogDao().getStation("N7XYZ") }
+            assertEquals("Dave", renamed!!.userName) // new tables usable post-migration
+            val prior = runBlocking { db.stationIdentityDao().currentPriorWeight("N7XYZ", "on_this_repeater") }
+            assertEquals(0.2, prior!!.weight, 0.0)
         } finally {
             db.close()
         }

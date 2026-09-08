@@ -14,6 +14,7 @@ import org.ort.data.dao.CorrectionDao
 import org.ort.data.dao.SearchDao
 import org.ort.data.dao.SessionDao
 import org.ort.data.dao.ShedEventDao
+import org.ort.data.dao.StationIdentityDao
 import org.ort.data.dao.TranscriptDao
 import org.ort.data.dao.TransmissionDao
 import org.ort.data.dao.WorkQueueDao
@@ -26,19 +27,25 @@ import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.LexiconVersionEntity
 import org.ort.data.entity.OperatorLocationEntity
 import org.ort.data.entity.PhoneticLatticeEntity
+import org.ort.data.entity.PriorAdjustmentEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.ShedEventEntity
 import org.ort.data.entity.StationEntity
+import org.ort.data.entity.StationIdentityHistoryEntity
 import org.ort.data.entity.StationSummaryEntity
 import org.ort.data.entity.ThreadEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintEntity
 import org.ort.data.entity.WorkQueueItemEntity
 
 /**
- * The schema (functional spec §8; technical design §12.1). Schema version 2 — v1 was the first
- * released version (build-plan P5); v2 adds [ShedEventEntity] (F-021, FR-RUN-3/4/5).
+ * The schema (functional spec §8; technical design §12.1). Schema version 3 — v1 was the first
+ * released version (build-plan P5); v2 added [ShedEventEntity] (F-021, FR-RUN-3/4/5); v3 adds
+ * [StationIdentityHistoryEntity], [VoiceprintBindingHistoryEntity] and [PriorAdjustmentEntity]
+ * (register R-052, R-073; FR-SPK-10, FR-UI-6) so a station rename, a voiceprint rebinding and a
+ * prior weight change each leave what they replaced reachable, not overwritten in place.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -62,6 +69,9 @@ import org.ort.data.entity.WorkQueueItemEntity
         OperatorLocationEntity::class,
         StationSummaryEntity::class,
         ShedEventEntity::class,
+        StationIdentityHistoryEntity::class,
+        VoiceprintBindingHistoryEntity::class,
+        PriorAdjustmentEntity::class,
     ],
     version = OrtDatabase.SCHEMA_VERSION,
     exportSchema = true,
@@ -79,9 +89,10 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun searchDao(): SearchDao
     public abstract fun correctionDao(): CorrectionDao
     public abstract fun shedEventDao(): ShedEventDao
+    public abstract fun stationIdentityDao(): StationIdentityDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 2
+        public const val SCHEMA_VERSION: Int = 3
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -102,9 +113,60 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v2 → v3 (register R-052, R-073): adds `station_identity_history`,
+         * `voiceprint_binding_history` and `prior_adjustment` — see [StationIdentityDao]. No
+         * existing table or column is touched — every v2 row survives untouched (FR-AST-5/6 →
+         * AC-53), verified by `MigrationTest`.
+         *
+         * Deliberately does **not** create `idx_prior_adjustment_one_current` here — that partial
+         * unique index lives only in [createHandWrittenSchema], the same choice already made for
+         * `idx_transcript_one_current` (see that index's comment): Room's schema validation
+         * compares a migrated database only against what the `@Entity`/`@Index` annotations
+         * declare, so a hand-written index created *by a `Migration`* would make every future
+         * migration test fail a spurious "unexpected index" check. The accepted consequence,
+         * carried over unchanged from `idx_transcript_one_current`, is that the constraint is
+         * enforced on a fresh install but not (yet) on a database upgraded from v2.
+         */
+        public val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `station_identity_history` (" +
+                        "`id` TEXT NOT NULL, `stationId` TEXT NOT NULL, `field` TEXT NOT NULL, " +
+                        "`previousValue` TEXT, `newValue` TEXT, `changedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_station_identity_history_stationId` " +
+                        "ON `station_identity_history` (`stationId`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `voiceprint_binding_history` (" +
+                        "`id` TEXT NOT NULL, `voiceprintId` TEXT NOT NULL, `previousStationId` TEXT, " +
+                        "`previousBindingConfidence` REAL, `previousBindingSource` TEXT, " +
+                        "`newStationId` TEXT, `newBindingConfidence` REAL, `newBindingSource` TEXT, " +
+                        "`changedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_voiceprint_binding_history_voiceprintId` " +
+                        "ON `voiceprint_binding_history` (`voiceprintId`)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `prior_adjustment` (" +
+                        "`id` TEXT NOT NULL, `stationId` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`weight` REAL NOT NULL, `reason` TEXT, `isCurrent` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_prior_adjustment_stationId_name_isCurrent` " +
+                        "ON `prior_adjustment` (`stationId`, `name`, `isCurrent`)",
+                )
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
-        public val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
+        public val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
 
         /**
          * Adds the schema Room's annotations cannot express (technical design §8.3, §12.1):
@@ -134,6 +196,11 @@ public abstract class OrtDatabase : RoomDatabase() {
             db.execSQL(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_wq_active " +
                     "ON work_queue_item(transmissionId, pass) WHERE state IN ('READY','LEASED','DEFERRED')",
+            )
+            // Exactly one current weight per (station, named prior) — register R-052.
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_prior_adjustment_one_current " +
+                    "ON prior_adjustment(stationId, name) WHERE isCurrent = 1",
             )
             createFtsIndex(db)
         }
