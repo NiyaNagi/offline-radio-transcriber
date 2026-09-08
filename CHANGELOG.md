@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-08 (ui-conformance WP4 · search-unavailable scenario)
 
-### e902844 — ui-conformance WP4 · search-unavailable scenario, `Retry` genuinely recovers
+### bdcb168 — ui-conformance WP4 · search-unavailable scenario, `Retry` genuinely recovers
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (WP4's own row: new
 `search-unavailable` scenario, `NAMES` entry, `load()` dispatch, `resetProcessWideFacets()`
