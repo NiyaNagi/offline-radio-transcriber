@@ -84,6 +84,57 @@ class CoverageMatrixTest {
         assertFalse(coverage.covered.contains("AC-999"))
     }
 
+    // F-023: bare `F13`/`Q8`-style ids are cross-references to §12 failure modes and the
+    // open-questions register, not requirement ids — the tool must not report a test naming one
+    // as an orphan, but the reference is still worth surfacing, so it gets its own section.
+
+    @Test
+    fun `F-023 a test naming a bare failure-mode or question id is not an orphan`(@TempDir dir: Path) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("AC-1 exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("F13")
+                @Test fun something() {}
+
+                @Requirement("Q8")
+                @Test fun something_else() {}
+            }
+            """.trimIndent(),
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        assertFalse(coverage.orphanTests.containsKey("F13"), coverage.orphanTests.toString())
+        assertFalse(coverage.orphanTests.containsKey("Q8"), coverage.orphanTests.toString())
+        assertTrue(coverage.crossReferencedTests.containsKey("F13"), coverage.crossReferencedTests.toString())
+        assertTrue(coverage.crossReferencedTests.containsKey("Q8"), coverage.crossReferencedTests.toString())
+    }
+
+    @Test
+    fun `F-023 the rendered matrix lists cross-references in their own section, not as orphans`(@TempDir dir: Path) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("AC-1 exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("F13")
+                @Test fun `a probe-run crash refuses activation`() {}
+            }
+            """.trimIndent(),
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        val rendered = CoverageMatrix.render(coverage)
+        assertTrue(
+            rendered.contains("Cross-referenced failure modes / decisions / questions"),
+            rendered,
+        )
+        assertFalse(rendered.contains("## Orphan tests"), rendered)
+    }
+
     // F-014: results/coverage-matrix.md is committed but nothing failed CI when it went stale.
     // contentMatches() is the comparison `coverageMatrixCheck` uses to fail loudly instead.
 
