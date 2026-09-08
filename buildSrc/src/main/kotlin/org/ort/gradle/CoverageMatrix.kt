@@ -28,6 +28,15 @@ object CoverageMatrix {
     private val NAME_ID =
         Regex("""(?<![A-Za-z0-9])((?:FR|AC|NFR|CON)(?:_[A-Z][A-Z0-9]{1,5})*_\d+[a-z]?)(?=_|\s|${'$'})""")
 
+    /**
+     * F-023: a bare `F13`, `D28`, `R15` or `Q8` is not a requirement id — it is a cross-reference
+     * to functional-spec §12's failure-mode register, a technical-design decision, a risk, or an
+     * open-questions entry. A test naming one is documenting which failure mode, decision or
+     * question it establishes behaviour for, not claiming an undefined requirement id, so it must
+     * not be counted or rendered as an orphan. It is still worth surfacing on its own.
+     */
+    private val CROSS_REFERENCE = Regex("""^[FDRQ]\d+[A-Z]?$""")
+
     data class Coverage(
         val requirements: List<String>,
         val testsByRequirement: Map<String, List<String>>,
@@ -35,7 +44,9 @@ object CoverageMatrix {
         val covered: Set<String> get() = testsByRequirement.keys.filter { it in requirements }.toSet()
         val uncovered: List<String> get() = requirements.filterNot { it in testsByRequirement }
         val orphanTests: Map<String, List<String>>
-            get() = testsByRequirement.filterKeys { it !in requirements }
+            get() = testsByRequirement.filterKeys { it !in requirements && !CROSS_REFERENCE.matches(it) }
+        val crossReferencedTests: Map<String, List<String>>
+            get() = testsByRequirement.filterKeys { it !in requirements && CROSS_REFERENCE.matches(it) }
     }
 
     fun requirementsFrom(specDir: File): List<String> {
@@ -97,6 +108,14 @@ object CoverageMatrix {
             appendLine("## Orphan tests (name a requirement id the spec does not define)")
             appendLine()
             coverage.orphanTests.toSortedMap(comparator())
+                .forEach { (req, tests) -> appendLine("- `$req` — ${tests.joinToString(", ")}") }
+            appendLine()
+        }
+        if (coverage.crossReferencedTests.isNotEmpty()) {
+            // F-023: bare F/D/R/Q ids are not requirements — see CROSS_REFERENCE's doc comment.
+            appendLine("## Cross-referenced failure modes / decisions / questions (not requirement ids)")
+            appendLine()
+            coverage.crossReferencedTests.toSortedMap(comparator())
                 .forEach { (req, tests) -> appendLine("- `$req` — ${tests.joinToString(", ")}") }
             appendLine()
         }

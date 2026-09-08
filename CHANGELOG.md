@@ -32,6 +32,45 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-023)
+
+### (pending) — audit F-023 · coverage matrix treats bare F/D/R/Q ids as cross-references, not orphans
+
+**Scope:** `buildSrc/` — `CoverageMatrix.kt`, `CoverageMatrixTest.kt`; `results/coverage-matrix.md`.
+**Requirements/ACs:** none new — this is a tooling fix to the coverage matrix itself (test-plan
+§9, constitution VII "guarantees are expressed as types where possible" / II "the coverage matrix
+is generated rather than maintained").
+**What changed:** `results/coverage-matrix.md` listed `F13` (named by `ModelRegistryTest` and
+`RejectionPipelineTest` via `@Requirement("F13")`) and `Q8` (named by `CorrectionDaoTest`) as
+orphan tests — the spec does not define `F13`/`Q8` as requirement ids because they aren't
+requirement ids: `F13` is a functional-spec §12 failure-mode id and `Q8` is an open-questions
+register id, both legitimate cross-references the tests are documenting, not misnamed
+requirements. Chose the smaller of the two options in the finding: taught `CoverageMatrix.kt`
+that a bare `F\d+`/`D\d+`/`R\d+`/`Q\d+` id (new `CROSS_REFERENCE` regex) is a cross-reference, not
+an orphan — `Coverage.orphanTests` now excludes them and a new `Coverage.crossReferencedTests`
+carries them into their own rendered section, "Cross-referenced failure modes / decisions /
+questions (not requirement ids)". The requirement-id set (`REQUIREMENT`, `NAME_ID`) is unchanged;
+nothing about what counts as covered moved. Rejected the alternative (renaming the three tests to
+the `FR-*`/`AC-*` id they actually establish): that would have required a semantic judgement call
+per test with no clear single winner (e.g. the `F13` tests span model-fallback and probe-crash
+behaviour across two modules) and would still need the tool to special-case bare ids for the next
+one that appears — the tool fix is the durable, general answer, and it generalises to `D*`/`R*`
+ids the register also uses.
+**Verified:** `./gradlew :buildSrc:test --tests "org.ort.gradle.CoverageMatrixTest"` — new tests
+`F-023 a test naming a bare failure-mode or question id is not an orphan` and `F-023 the rendered
+matrix lists cross-references in their own section, not as orphans` seen failing first
+(`compileTestKotlin`: `Unresolved reference: crossReferencedTests`) before `Coverage
+.crossReferencedTests` was added, green after. `./gradlew coverageMatrix` regenerated
+`results/coverage-matrix.md`: header row "Tests naming a requirement id not in the spec" now `0`
+(was 2); `F13`/`Q8` moved to the new cross-reference section. `./gradlew coverageMatrixCheck` —
+up to date. Full gate: `./gradlew build dependencyRules` (exit 0) and
+`python tools/spec-check/spec_check.py` (all 8 checks PASS).
+**Left open / not done:** none for this finding. `coverageMatrix` and `coverageMatrixCheck` cannot
+be run in the same Gradle invocation without an explicit task dependency (Gradle flags the
+undeclared output/input relationship) — pre-existing, out of this finding's scope
+(`buildSrc/CoverageMatrixCheckTask.kt` is unowned by F-023), so they were run as separate
+invocations.
+
 ## 2026-09-07 (audit — F-016)
 
 ### (pending) — audit F-016 · WorkQueue.requeueFailed gives exhausted FAILED items a fresh run
