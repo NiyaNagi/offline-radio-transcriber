@@ -90,6 +90,21 @@ public data class PassFailureViewState(
     val attempts: Int,
 )
 
+/**
+ * R-242 (register), F04 `Fail-Hallucination.dc.html`, FR-ASR-5: a rejected over, opened from a
+ * `Log-Rejected.dc.html` row (WP5's own why-line/DUR wiring; this package owns only the detail
+ * state itself). [reason] is the real `transmission.rejectionReason` column — the board's own
+ * "4 of 6 controls fired" breakdown (a known-hallucination-phrase match, a no-speech-probability
+ * figure, an energy-profile read, words-per-second, repeated-text and compression-ratio checks)
+ * needs data no `:data` table records today beyond [reason] itself and, sometimes,
+ * [org.ort.data.entity.TranscriptEntity.noSpeechProb] — not surfaced here, since one real number
+ * out of six named checks would misrepresent a control panel that mostly does not exist yet
+ * (constitution I). No `restore`/re-queue action either: "It was speech — restore" would need a
+ * `:pipeline` re-run of Pass B with its phrase filter disabled, a write path this package has no
+ * access to build honestly.
+ */
+public data class RejectedViewState(val reason: String?)
+
 public data class DetailViewState(
     val detail: TransmissionDetailViewState,
     val body: DetailBodyViewState,
@@ -97,6 +112,12 @@ public data class DetailViewState(
     /** R-153: non-null exactly when [org.ort.app.ui.data.CorrectionPolling.passFailure] found a
      * real terminally-FAILED [org.ort.data.entity.WorkQueueItemEntity] for this transmission. */
     val passFailure: PassFailureViewState? = null,
+    /** R-242: non-null exactly when the polled `processingState` is `REJECTED`. */
+    val rejected: RejectedViewState? = null,
+    /** R-188: the current transcript's real recorded confidence
+     * ([org.ort.app.ui.data.CorrectionPolling.currentTranscriptConfidence]) — `null` for no current
+     * transcript row, or one that recorded no confidence; never a fabricated number. */
+    val transcriptConfidence: Double? = null,
 )
 
 public object DetailViewStateMapper {
@@ -122,11 +143,18 @@ public object DetailViewStateMapper {
         detail: TransmissionDetailViewState,
         passFailure: PassFailureViewState? = null,
         sourceOverTimeLabel: String? = null,
+        transcriptConfidence: Double? = null,
+        // R-242: mirrors [passFailure] exactly — optional, defaults to `null` so every existing
+        // call site compiles unchanged, populated by a caller that already knows the polled
+        // `processingState` is `REJECTED` ([org.ort.app.ui.screens.TransmissionDetailContent]).
+        rejected: RejectedViewState? = null,
     ): DetailViewState = DetailViewState(
         detail = detail,
         body = bodyFor(detail, sourceOverTimeLabel),
         why = whyFor(detail.inspection),
         passFailure = passFailure,
+        rejected = rejected,
+        transcriptConfidence = transcriptConfidence,
     )
 
     private fun bodyFor(detail: TransmissionDetailViewState, sourceOverTimeLabel: String? = null): DetailBodyViewState {

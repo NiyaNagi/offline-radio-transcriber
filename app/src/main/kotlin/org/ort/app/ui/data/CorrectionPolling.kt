@@ -108,14 +108,22 @@ public data class PropagationOutcome(
     public val priorsUpdatedCount: Int get() = priorAdjustments.size
 }
 
-/** R-055, `Detail-Revisions.dc.html`: one version card. [who] is pass + model, plus "corrected" when
- * this transmission has at least one [org.ort.data.entity.CorrectionEntity] recorded against it. */
+/**
+ * R-055, `Detail-Revisions.dc.html`: one version card. [who] is pass + model, plus "corrected" when
+ * this transmission has at least one [org.ort.data.entity.CorrectionEntity] recorded against it.
+ * [stationId]/[corrected] are R-194's own addition — the transmission's real, *current* attribution,
+ * shown the same on every version's card: `:data` keeps no per-version attribution history (only the
+ * transcript text is versioned), so this is the one real fact available, not a fabricated one
+ * matching each version's own moment.
+ */
 public data class TranscriptVersionViewState(
     val id: String,
     val text: String,
     val timeLabel: String,
     val who: String,
     val isCurrent: Boolean,
+    val stationId: String? = null,
+    val corrected: Boolean = false,
 )
 
 /**
@@ -272,6 +280,22 @@ public object CorrectionPolling {
     }
 
     /**
+     * R-188: `Detail-Unknown.dc.html`'s "Transcript confidence 0.61" caption, generalised to every
+     * state that carries a current transcript — [org.ort.data.entity.TranscriptEntity.confidence]
+     * is the real per-transcript figure Pass B (or Pass A) recorded, read directly since neither
+     * `TransmissionDetail` nor `TransmissionDetailViewState` carries it through today. Deliberately
+     * **not** the board's own "· weak signal, cut off" qualitative clause — this package has no
+     * honest way to derive "weak signal" or "cut off" from a bare confidence number, and constitution
+     * I forbids inventing one. `null` for a transmission with no current transcript row at all, or
+     * whose row recorded no confidence (e.g. a corrected/restored version — see
+     * [org.ort.data.dao.TranscriptDao.supersede]'s own callers).
+     */
+    public suspend fun currentTranscriptConfidence(context: Context, transmissionId: String): Double? {
+        val db = OrtDatabase.create(context.applicationContext)
+        return db.transcriptDao().getCurrent(transmissionId)?.confidence
+    }
+
+    /**
      * Applies [request] to every transmission [scope] selects, each as its own
      * [org.ort.data.dao.CorrectionDao.recordCorrection] (its own audit row, its own locked
      * attribution — never one write standing in for many). When [scope] is
@@ -409,6 +433,7 @@ public object CorrectionPolling {
         val versions = db.transcriptDao().getAllVersions(transmissionId)
         val (current, superseded) = versions.partition { it.isCurrent }
         val ordered = current + superseded.sortedByDescending { it.createdAt }
+        val transmission = db.transmissionDao().getById(transmissionId)
         return ordered.map { version ->
             TranscriptVersionViewState(
                 id = version.id,
@@ -416,6 +441,8 @@ public object CorrectionPolling {
                 timeLabel = timeLabel(version.createdAt),
                 who = who(version, corrected && version.isCurrent),
                 isCurrent = version.isCurrent,
+                stationId = transmission?.stationId,
+                corrected = transmission?.corrected ?: false,
             )
         }
     }

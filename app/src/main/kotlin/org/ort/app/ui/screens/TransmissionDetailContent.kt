@@ -36,6 +36,7 @@ import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.PropagationOutcome
 import org.ort.app.ui.data.ReaderPolling
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
+import org.ort.app.ui.data.RejectedViewState
 import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.theme.OrtColors
@@ -79,32 +80,18 @@ public fun TransmissionDetailContent(
     var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
     var passFailure by remember(transmissionId) { mutableStateOf<PassFailureViewState?>(null) }
     var sourceOverTimeLabel by remember(transmissionId) { mutableStateOf<String?>(null) }
+    var transcriptConfidence by remember(transmissionId) { mutableStateOf<Double?>(null) }
     var destination by remember(transmissionId) { mutableStateOf<DetailDestination>(DetailDestination.Main) }
     val scope = rememberCoroutineScope()
 
-    // R-153: a pass-failure lookup is a real extra `:data` read, so it only runs for the
-    // transmissions that can possibly have one — `processingState == FAILED` — never on every poll.
-    // R-189 (halt): `ReaderPolling`'s own attribution derivation drops a corrected row's real
-    // stationId back to UNKNOWN once its confidence is null (see `CorrectionPolling.currentAttribution`'s
-    // own doc comment for the full diagnosis) — patched here, on every poll, not only after Undo.
-    // R-183: the source over's real time, for the INFERRED explanation's "to HH:MM:SS" clause.
+    // R-153/R-189/R-183/R-188: every real extra `:data` read a poll needs, in one place — see
+    // [pollDetail]'s own doc comment for what each field is and why.
     suspend fun refresh() {
-        var fetched = ReaderPolling.transmissionDetail(context, transmissionId)
-        if (fetched != null) {
-            fetched = fetched.copy(
-                attribution = CorrectionPolling.currentAttribution(context, transmissionId, fetched.attribution),
-            )
-        }
-        detail = fetched
-        passFailure = if (fetched?.processingState == TransmissionState.FAILED) {
-            CorrectionPolling.passFailure(context, transmissionId)
-        } else {
-            null
-        }
-        sourceOverTimeLabel = CorrectionPolling.sourceOverTimeLabel(
-            context,
-            fetched?.attribution?.sourceTransmissionId?.toString(),
-        )
+        val polled = pollDetail(context, transmissionId)
+        detail = polled.detail
+        passFailure = polled.passFailure
+        sourceOverTimeLabel = polled.sourceOverTimeLabel
+        transcriptConfidence = polled.transcriptConfidence
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -120,6 +107,8 @@ public fun TransmissionDetailContent(
         ReaderTransmissionViewStateMapper.detailView(current),
         passFailure,
         sourceOverTimeLabel,
+        transcriptConfidence,
+        rejected = rejectedViewStateFor(current),
     )
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
@@ -392,6 +381,55 @@ private fun PropagatedDestination(
         )
     }
 }
+
+/** Everything one [refresh] poll needs — see [pollDetail]'s own doc comment for each field. */
+private data class DetailPollResult(
+    val detail: TransmissionDetail?,
+    val passFailure: PassFailureViewState?,
+    val sourceOverTimeLabel: String?,
+    val transcriptConfidence: Double?,
+)
+
+/**
+ * Every real extra `:data` read one detail poll needs, pulled out of
+ * [TransmissionDetailContent]'s own `refresh()` to keep that composable under detekt's
+ * `LongMethod` threshold — a plain data move, not a behaviour change.
+ *
+ * R-153: a pass-failure lookup only runs for the transmissions that can possibly have one —
+ * `processingState == FAILED` — never on every poll. R-189 (halt): `ReaderPolling`'s own
+ * attribution derivation drops a corrected row's real stationId back to UNKNOWN once its
+ * confidence is null (see [CorrectionPolling.currentAttribution]'s own doc comment for the full
+ * diagnosis) — patched here, on every poll, not only after Undo. R-183: the source over's real
+ * time, for the INFERRED explanation's "to HH:MM:SS" clause. R-188: the current transcript's own
+ * real recorded confidence.
+ */
+private suspend fun pollDetail(context: Context, transmissionId: String): DetailPollResult {
+    var fetched = ReaderPolling.transmissionDetail(context, transmissionId)
+    if (fetched != null) {
+        fetched = fetched.copy(
+            attribution = CorrectionPolling.currentAttribution(context, transmissionId, fetched.attribution),
+        )
+    }
+    val passFailure = if (fetched?.processingState == TransmissionState.FAILED) {
+        CorrectionPolling.passFailure(context, transmissionId)
+    } else {
+        null
+    }
+    val sourceOverTimeLabel = CorrectionPolling.sourceOverTimeLabel(
+        context,
+        fetched?.attribution?.sourceTransmissionId?.toString(),
+    )
+    val transcriptConfidence = CorrectionPolling.currentTranscriptConfidence(context, transmissionId)
+    return DetailPollResult(fetched, passFailure, sourceOverTimeLabel, transcriptConfidence)
+}
+
+/**
+ * R-242: `detail.processingState`/`.rejectionReason` are already part of every poll
+ * ([ReaderPolling.transmissionDetail]'s own read) — no new `:data` query needed, unlike
+ * [pollDetail]'s own fields.
+ */
+private fun rejectedViewStateFor(detail: TransmissionDetail): RejectedViewState? =
+    if (detail.processingState == TransmissionState.REJECTED) RejectedViewState(detail.rejectionReason) else null
 
 private sealed interface DetailDestination {
     data object Main : DetailDestination
