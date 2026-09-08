@@ -7,6 +7,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -222,7 +224,12 @@ public fun ScreenHeader(
     }
 }
 
-/** `Rows.dc.html`'s column-header row: fixed time/freq columns matching every [LogRow] below it. */
+/** `Rows.dc.html`'s column-header row: fixed time/freq columns matching every [LogRow] below it.
+ * R-245 (`overnight/L01-log@2x.png`): every label here — including [stationLabel] on its flexible
+ * `weight(1f)` column, which takes whatever width the fixed columns leave rather than being sized
+ * to its own content — carries `maxLines = 1, softWrap = false`, so a short header word like
+ * "STATION" is never itself broken mid-word ("STATIO"/"N") at a larger font scale; there is no
+ * second line for a column *header* to wrap onto the way a data row's own content can. */
 @Composable
 public fun ColumnHeaderRow(
     modifier: Modifier = Modifier,
@@ -253,12 +260,16 @@ public fun ColumnHeaderRow(
             text = stationLabel.uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier.weight(1f),
         )
         Text(
             text = signalLabel.uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier.widthIn(min = SIGNAL_COLUMN),
         )
     }
@@ -474,6 +485,15 @@ public data class LogRowViewState(
     val alternate: String? = null,
     val signalLabel: String? = null,
     val badge: LogRowBadge? = null,
+    /** R-240 (`overnight/L01-log.png`): the kept/leading candidate's callsign to show beside
+     * [alternate], for a state — AMBIGUOUS today — whose own [Attribution.stationId] is `null` by
+     * design (`Attribution.ambiguous()` never carries one; more than one candidate survived, so
+     * there is no single resolved station the data layer can name). Without this, an AMBIGUOUS
+     * row reads only "or KE7QRS" — the primary candidate silently missing, both visually and from
+     * the merged content description — which is the bug this field exists to let a caller fix.
+     * `null` (every caller before this existed) falls back to [Attribution.stationId] exactly as
+     * before, so CONFIRMED/INFERRED rows (which do carry one) are unaffected. */
+    val callsign: String? = null,
     /** R-065: character ranges of [transcript] to render in `highlightGreen`, per
      * `Search-Results.dc.html`'s matched-word treatment (`.hit`) — a search match, not a state,
      * so it is additive and never the only way a row communicates anything. Empty by default so
@@ -564,36 +584,58 @@ private fun highlightedTranscript(transcript: String, ranges: List<IntRange>): A
     return AnnotatedString(text = transcript, spanStyles = spans)
 }
 
+/** R-244 (`overnight/L01-log@2x.png`): at a large font scale, a real callsign plus [state]'s
+ * badge no longer both fit on one line — the badge previously had nowhere to go but clip to a
+ * sliver or vanish entirely, since a plain `Row` never wraps. A `FlowRow` fixes the actual defect
+ * (a badge must never clip, guide §5/AC-63) without touching [AttributionRow]'s own internal
+ * layout: the attribution (shape + callsign + its own INFERRED score chip, or the AMBIGUOUS " or
+ * <alternate>") stays the one atomic unit it already was — [AttributionRow] itself is shared far
+ * too widely to change its own wrap behaviour from here — and [state]'s trailing `Badge`
+ * (`NEW`/`REVISED`/`CORRECTED`) is the one thing that now wraps below it when there is no more
+ * room, rather than being cut off. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LogRowMarkerLine(state: LogRowViewState, modifier: Modifier = Modifier) {
-    Row(
+    FlowRow(
         modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs),
+        verticalArrangement = Arrangement.spacedBy(OrtSpacing.xs),
     ) {
         when (state.partial) {
             LogRowPartial.HEARING -> {
-                HearingMeter()
+                HearingMeter(modifier = Modifier.align(Alignment.CenterVertically))
                 Text(
                     text = "hearing…",
                     style = OrtType.subLine.copy(fontStyle = FontStyle.Italic),
                     color = OrtColors.textDim,
+                    modifier = Modifier.align(Alignment.CenterVertically),
                 )
             }
 
             LogRowPartial.RESOLVING -> {
-                InProgressRing(size = 9.dp, color = OrtColors.textSignal)
+                InProgressRing(
+                    size = 9.dp,
+                    color = OrtColors.textSignal,
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                )
                 Text(
                     text = "resolving…",
                     style = OrtType.subLine.copy(fontStyle = FontStyle.Italic),
                     color = OrtColors.textDim,
+                    modifier = Modifier.align(Alignment.CenterVertically),
                 )
             }
 
             null -> state.attribution?.let { attribution ->
                 AttributionRow(
                     attribution = attribution,
+                    // R-240: `state.callsign` first — the caller's kept-candidate override for a
+                    // state (AMBIGUOUS) whose own Attribution.stationId is null by design — falling
+                    // back to attribution.stationId so CONFIRMED/INFERRED are unaffected, exactly
+                    // AttributionRow's own default.
+                    callsign = state.callsign ?: attribution.stationId,
                     alternate = state.alternate,
+                    modifier = Modifier.align(Alignment.CenterVertically),
                 )
             }
         }
@@ -603,7 +645,7 @@ private fun LogRowMarkerLine(state: LogRowViewState, modifier: Modifier = Modifi
                 LogRowBadge.CORRECTED -> "corrected" to BadgeKind.CORRECTED
                 LogRowBadge.REVISED -> "revised" to BadgeKind.REVISED
             }
-            Badge(text = label, kind = kind)
+            Badge(text = label, kind = kind, modifier = Modifier.align(Alignment.CenterVertically))
         }
     }
 }

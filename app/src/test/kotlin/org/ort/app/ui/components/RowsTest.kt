@@ -1,5 +1,6 @@
 package org.ort.app.ui.components
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -140,6 +141,106 @@ class RowsTest {
         composeTestRule.onNodeWithText("resolving…").assertExists()
         composeTestRule.onNodeWithText("NEW").assertExists()
         composeTestRule.onNodeWithTag("confirmed").assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `R_240_an ambiguous row with a callsign shows it beside the alternate, never just or-alternate`() {
+        // The register's own repro (`overnight/L01-log.png`): AttributionState.AMBIGUOUS never
+        // carries a stationId (Attribution.ambiguous() sets it null by design — more than one
+        // candidate survived), so before LogRowViewState.callsign existed the row could only ever
+        // read "or KE7QRS" — the kept candidate silently missing. A caller supplying one now
+        // reaches the rendered row.
+        composeTestRule.setContent {
+            OrtTheme {
+                LogRow(
+                    state = row(Attribution.ambiguous()).copy(callsign = "KE7QRS", alternate = "N7ABC"),
+                    onClick = {},
+                    modifier = Modifier.testTag("ambiguous"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("KE7QRS").assertIsDisplayed()
+        composeTestRule.onNodeWithText("or N7ABC").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_240_an ambiguous row with no callsign supplied still falls back to Attribution_stationId`() {
+        // Documents the fallback explicitly: `callsign = null` (every caller before R-240) keeps
+        // AttributionRow's own default (`attribution.stationId`) — for AMBIGUOUS that is null too,
+        // so the row reads only "or <alternate>", exactly the register's pre-fix screenshot. This
+        // is the honest current behaviour for a caller that has not supplied one yet, not silently
+        // hidden by this fix.
+        composeTestRule.setContent {
+            OrtTheme {
+                LogRow(
+                    state = row(Attribution.ambiguous()).copy(alternate = "N7ABC"),
+                    onClick = {},
+                    modifier = Modifier.testTag("ambiguous"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("or N7ABC").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_244_a badge that no longer fits beside the attribution wraps below it, never clipping`() {
+        // A narrow row leaves the marker line (shape + callsign + badge) too little width for a
+        // badge to sit beside the attribution on one line — real, non-text-driven minimums do the
+        // forcing here (AttributionShape's own fixed Canvas size, Badge's own padding), not font
+        // metrics Robolectric can't measure reliably (see R_152's own findings elsewhere in this
+        // file). If the badge wraps to a second line rather than clipping, the row measures
+        // taller than the same narrow row with no badge at all.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    Column {
+                        Box(modifier = Modifier.width(220.dp)) {
+                            LogRow(state = row(badge = null), onClick = {}, modifier = Modifier.testTag("no-badge"))
+                        }
+                        Box(modifier = Modifier.width(220.dp)) {
+                            LogRow(
+                                state = row(badge = LogRowBadge.NEW),
+                                onClick = {},
+                                modifier = Modifier.testTag("with-badge"),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // The badge is still reachable — never dropped from the tree — and the row grew to fit it
+        // on a wrapped second line rather than clipping it to a sliver.
+        composeTestRule.onNodeWithText("NEW").assertExists()
+        val noBadgeHeight = composeTestRule.onNodeWithTag("no-badge").fetchSemanticsNode().size.height
+        val withBadgeHeight = composeTestRule.onNodeWithTag("with-badge").fetchSemanticsNode().size.height
+        assert(withBadgeHeight > noBadgeHeight) {
+            "expected the badge to wrap onto a second line in a narrow row, measuring taller than " +
+                "the same row with no badge; got no-badge=${noBadgeHeight}px, with-badge=${withBadgeHeight}px"
+        }
+    }
+
+    @Test
+    fun `R_245_column_header_row's STATION label renders whole, never split mid-word, at font scale 2`() {
+        // Robolectric's degenerate glyph metrics for this codebase's custom `fontFamily`s mean a
+        // rendered wrap can't be forced or verified reliably here (established repeatedly
+        // elsewhere in this file/CHANGELOG — even a 1dp-wide box does not force a real Compose
+        // `Text` to report more than one line in this environment). `maxLines = 1`/`softWrap =
+        // false` are themselves deterministic, host-independent Compose guarantees — not
+        // something this test needs to re-verify the framework does correctly — so what this
+        // checks is the one thing that *is* host-independently meaningful: the full word survives
+        // into the semantics tree, not a hyphen-split substring ("STATIO"/"N").
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    ColumnHeaderRow()
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("STATION").assertIsDisplayed()
     }
 
     @Test
