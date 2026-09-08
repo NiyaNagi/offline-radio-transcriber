@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -61,14 +64,28 @@ public fun SearchFiltersSheet(
     onClearAll: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Sheet(title = "Filters", onClearAll = onClearAll, modifier = modifier) {
-        Column(modifier = Modifier.padding(top = OrtSpacing.xs)) {
-            CallsignSection(input, onInputChange)
-            FrequencyAndBandSection(input, onInputChange)
-            TimeSection(input, onInputChange)
-            AttributionSection(input, facetCounts, onInputChange)
-            IncludeSection(input, facetCounts, onInputChange)
-            ShowResultsButton(input, facetCounts, onShowResults)
+    // guide §6.9: "a sheet is never taller than the screen minus 120px — past that, it is a
+    // screen." Six sections (callsign, frequency/band, time, four attribution rows, two include
+    // rows, the action button) genuinely exceed that on real content, so the whole sheet —
+    // including `Sheet`'s own title/`Clear all` row, not just this composable's own content — has
+    // to scroll as one unit. `Sheet` (WP2) has no scroll of its own (by design: it is the static
+    // surface, guide's own words, "not the scaffold around it"), so the scrollable container wraps
+    // the `Sheet(...)` call itself here, at the one call site that needs it, rather than being
+    // added to the shared component. `fillMaxHeight(0.85f)` is the same "never taller than the
+    // screen minus ~120px" cap in fraction form (120/844 ≈ 0.14, so 0.85 leaves slightly more) —
+    // capped, not `fillMaxSize()`, so the scrim above the sheet stays visible and tappable to
+    // dismiss (an uncapped scrollable Column expands to the full available height and silently
+    // covers the scrim, swallowing its tap).
+    Column(modifier = modifier.fillMaxHeight(0.85f).verticalScroll(rememberScrollState())) {
+        Sheet(title = "Filters", onClearAll = onClearAll) {
+            Column(modifier = Modifier.padding(top = OrtSpacing.xs)) {
+                CallsignSection(input, onInputChange)
+                FrequencyAndBandSection(input, onInputChange)
+                TimeSection(input, onInputChange)
+                AttributionSection(input, facetCounts, onInputChange)
+                IncludeSection(input, facetCounts, onInputChange)
+                ShowResultsButton(input, facetCounts, onShowResults)
+            }
         }
     }
 }
@@ -251,11 +268,15 @@ private fun MonoField(
             .height(44.dp)
             .background(OrtColors.bgScreen, RoundedCornerShape(8.dp))
             .border(1.dp, OrtColors.lineStrong, RoundedCornerShape(8.dp))
-            .padding(horizontal = 13.dp)
-            .semantics { this.contentDescription = contentDescription },
+            .padding(horizontal = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(modifier = Modifier.weight(1f)) {
+            // The content description belongs on the text field itself, not the wrapping Row: a
+            // Row has no RequestFocus/text-input semantics action of its own to merge one into, so
+            // a description placed on it instead of the field silently makes the field unreachable
+            // by `performTextInput` (found by SearchScreen.kt's own query field, which puts its
+            // description directly on the `BasicTextField` — the pattern this now matches).
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -266,6 +287,7 @@ private fun MonoField(
                 ),
                 singleLine = true,
                 cursorBrush = SolidColor(OrtColors.accentGreen),
+                modifier = Modifier.semantics { this.contentDescription = contentDescription },
             )
         }
         Text(text = hint, style = OrtType.axis, color = OrtColors.textLow)

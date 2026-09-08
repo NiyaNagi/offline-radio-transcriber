@@ -174,6 +174,90 @@ rendered "not measured" or omitted rather than invented) and IV (liveness from h
 
 ## 2026-09-08 (ui-conformance WP7: search)
 
+### (pending) — ui-conformance WP7 · search tests green on the rewired host
+
+**Scope:** `:app` only — `ui/screens/SearchFiltersSheet.kt`, `ui/screens/SearchScreen.kt`,
+`ui/screens/SearchContentTest.kt`. Addendum to the WP7 entry directly below, same package, after
+the coordinator integrated this package's `596b958` with WP4 and WP3's host rewire (branch
+`worktree-agent-ade7be2062e7805e7`, `HEAD 47d5a7e`) and ran the full suite for the first time:
+408 tests, 402 passing, 6 failing, all in `SearchContentTest`/`SearchFiltersSheetTest`. Merged in
+with `git merge --ff-only` (this branch was an ancestor; no stash, no rebase) before fixing.
+
+**Requirements/ACs:** R-061 (filter sheet, refined by the fixes below), R-063 (search flows,
+refined), guide §6.9 (sheet/scrim contract — one of the two real bugs found here).
+
+**What changed — six failures, two were real product bugs, four were test bugs:**
+1. **Code fix (real bug).** `SearchFiltersSheet`'s six sections plus `Sheet`'s own title/`Clear
+   all` row had no scrollable ancestor at all — on real content (16 band chips wrapped over
+   several lines, four attribution rows, two include rows, the action button) this is taller than
+   a phone screen, so `Clear all`, every checkbox, the callsign field and `Show N overs` were
+   already unreachable *on a device*, not just in the test harness; the tests correctly caught it
+   (`Semantic Node has no parent layout with a Scroll SemanticsAction`). Fixed by wrapping the
+   `Sheet(...)` call (title row included, not just this package's own content below it) in a
+   `Column(Modifier.fillMaxHeight(0.85f).verticalScroll(...))` — the 0.85 fraction is guide §6.9's
+   "never taller than the screen minus ~120px" rule in fraction form.
+2. **Code fix (real bug, found by fixing #1).** Capping the sheet at 85% height and making it
+   scrollable is what exposed a second, latent bug: `FiltersSheetOverlay`'s scrim and the sheet
+   were two independent `fillMaxSize()` siblings in a `Box`. Once the sheet was properly sized
+   (previously its unbounded, unscrollable `Column` had been overflowing past the scrim's own
+   click point in a way that happened not to matter), the scrim's full-screen clickable region and
+   the sheet's own 85%-height region overlapped at the point Compose's `performClick()` targets,
+   and the topmost element (the sheet) always won the tap regardless of intent — `tapping the
+   scrim dismisses the filters sheet` (`SearchScreenTest`) started failing too the moment the sheet
+   was properly sized, confirming this was a real, previously-masked bug, not a test artifact.
+   Restructured `FiltersSheetOverlay` as a `Column` (scrim `weight(1f)`, sheet `fillMaxHeight(0.85f)`)
+   so each owns a **distinct, non-overlapping** region — the scrim is only ever tappable in the
+   strip actually exposed above the sheet, which is also the only place a real operator could tap
+   it. Re-ran `SearchScreenTest` in full after this fix: all 16 tests pass.
+3. **Code fix (real bug, found by the same fix).** `SearchFiltersSheet`'s `MonoField` put its
+   `contentDescription` on the wrapping `Row` instead of the `BasicTextField` itself — a `Row` has
+   no `RequestFocus`/text-input semantics action to inherit one from, so `performTextInput` could
+   never reach the callsign/frequency/range fields by their content description (`Failed to assert
+   the following: (RequestFocus is defined)`), which was never exercised before since this
+   package's tests never ran under Gradle until this integration. Moved the content description
+   onto the `BasicTextField` itself, matching the pattern `SearchScreen.kt`'s own query field
+   already uses correctly.
+4. **Test fix, test was wrong.** `SearchContentTest`'s empty-result test asserted the
+   `SearchWidenSuggestions` narrowing-summary text existed immediately after `setContent` (later,
+   after adding one `waitForIdle()`, still immediately). That suggestion is computed inside a
+   `LaunchedEffect` that makes a real Room query (`SimilarCallsigns.near`); Room's own executor
+   runs on a genuine background thread `waitForIdle()`'s composition-clock idling does not track,
+   so the assertion could observe the screen before that query's result had landed — the standard
+   failure mode for Compose UI test content whose state depends on I/O outside the composition
+   clock, and this package's own report had already flagged the risk before this test ever ran.
+   Fixed by polling with `composeTestRule.waitUntil(timeoutMillis = 5_000) { ... }` before the
+   assertion, the idiomatic pattern for exactly this class of race — not a fabricated wait, a real
+   bound on how long a background Room query is allowed to take.
+5. **Test fix, test was missing setup (same underlying cause as #4, no code change).**
+   `SearchContentTest` had no `@Before` deleting/recreating the Room database, unlike this
+   package's other Robolectric+Room test files (`SearchPollingTest`, `SearchWidenSuggestionsTest`,
+   `SimilarCallsignsTest`), which explicitly guard against a stale `ort.db` left by an earlier test
+   class in the same Robolectric process. Added the same `@Before` for consistency and defense in
+   depth, though the actual fix for the reported failure was #4 above (this alone did not resolve
+   it — confirmed empirically before adding #4's `waitUntil`).
+
+**Verified:**
+- `git merge --ff-only worktree-agent-ade7be2062e7805e7` — fast-forward, `596b958..47d5a7e`;
+  `git log --oneline -1` confirmed `47d5a7e`.
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL, 408 tests, 0 failed, 0 skipped**
+  (counted from every `app/build/test-results/testDebugUnitTest/*.xml`'s `tests`/`failures`
+  attributes, 59 files) — the six named failures above and no others.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+  `dependencyRules: OK`, `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered (unchanged — this addendum fixes
+  existing tests, adds none).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 181 of 419.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- The sheet's drag-to-dismiss (guide §6.9) is still not implemented — dismiss is scrim-tap only,
+  unchanged by this addendum.
+- Every other gap the WP7 entry below already lists (R-065 highlighted-match spans, `FilterChip`'s
+  missing leading-icon slot, the recently-heard-frequency chips, `RecentSearches`' single-term
+  label) is unchanged by this addendum.
+
 ### (pending) — ui-conformance WP7 · search: initial, filters sheet, grouped results, empty and unavailable states
 
 **Scope:** `:app` only — `ui/screens/SearchScreen.kt` (rewritten), new `ui/screens/SearchFiltersSheet.kt`,

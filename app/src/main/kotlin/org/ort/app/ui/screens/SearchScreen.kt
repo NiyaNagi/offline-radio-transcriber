@@ -654,10 +654,18 @@ private fun FiltersSheetOverlay(
     onSearch: () -> Unit,
     onDismissFilters: () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    // A Column, not two fillMaxSize() siblings in a Box: the sheet (capped to 85% of the height,
+    // guide §6.9's "never taller than the screen minus ~120px") and the scrim each own a distinct
+    // region this way — the scrim's clickable area is exactly the strip actually exposed above
+    // the sheet, never the area the sheet itself covers. Two overlapping fillMaxSize() elements
+    // both claim the same centre point for a tap; the sheet, drawn on top, would always win there
+    // regardless of which one the operator meant to tap, so a scrim occupying the sheet's own area
+    // is not just untestable but the wrong behaviour on a real device too.
+    Column(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
+                .fillMaxWidth()
                 .background(OrtColors.bgPage.copy(alpha = 0.78f))
                 .clickable(role = Role.Button, onClickLabel = "Dismiss filters", onClick = onDismissFilters)
                 .testTag("search-filters-scrim"),
@@ -685,9 +693,7 @@ private fun FiltersSheetOverlay(
                     ),
                 )
             },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .testTag("search-filters-sheet"),
+            modifier = Modifier.testTag("search-filters-sheet"),
         )
     }
 }
