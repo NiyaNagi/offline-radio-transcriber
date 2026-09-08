@@ -32,6 +32,135 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11b: failure screens, failure host, recovery announcements)
+
+### (pending) — ui-conformance WP11b · failure screens F1-F22 UI, failure host, recovery announcements, debug failure scenarios
+
+**Scope:** `:app` — new `ui/failures/**` (`FailureViewState.kt`, `FailureMapper.kt`,
+`FailureSignalsPolling.kt`, `DebugFailureOverride.kt`, `RecoveryAnnouncer.kt`, `FailureHost.kt`,
+`FailRoute.kt`, `FailUsb.kt`, `FailStorage.kt`, `FailureBanners.kt`, `FailInfoCards.kt`,
+`FailReconcile.kt`, `FailMigration.kt`, `FailAssetSwap.kt`, `FailCalibration.kt`) and every test
+alongside these; `ui/ReaderActivity.kt` (mounts `FailureHost` above `OrtNavHost`, the one edit
+this package makes to that file); `ui/data/LiveBarPolling.kt` and its new test (the failure
+variants of the live bar's label — the one file outside `ui/failures/**` this package's row
+explicitly names); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` and `ScenariosTest.kt`
+(seven new debug-override scenarios); `results/ui-audit/README.md` (documents them).
+
+**Requirements/ACs:** R-100, R-101, R-103; F1, F2, F3, F5, F6, F7, F8, F9, F14, F15, F16, F17,
+F19, F20, F21, F22; FR-A11Y-2, FR-A11Y-3; constitution I (never fabricate — a missing signal is
+reported, not invented; "Not shown" beats a guessed number) and IV ("capture never blocks, never
+drops, never lies" — F1/F6-at-floor render as full-screen takeovers with no continue-anyway,
+matching "never continue silently").
+
+**What changed:**
+
+- **Constitution Check.** Principle IV is the one this package exists to serve: F1 (route
+  mismatch) and F6-at-floor (storage exhausted) are the two real, signal-driven takeovers, and
+  neither offers a way to keep going — `FailRouteScreen`/`FailStorageHaltScreen` have exactly one
+  path forward (fix the input / free space) plus, for F1 only, ending the session; there is no
+  dismiss. Principle I bears on every banner's copy: an enum name or a raw `failureReason` string
+  never reaches the screen (`FailureBanners.kt`'s composables all take a typed view-state built by
+  `FailureMapper`, never the holder's own `String`), and six ids with no real signal today are
+  documented as exactly that — `DebugFailureOverride.kt`'s kdoc names precisely what's missing and
+  from which package, rather than a plausible-looking fake.
+- **`FailureMapper.map`** — the pure, unit-tested function the brief asks for: `FailureSignals`
+  (a snapshot of `CaptureState`/`InputStatus`/`LevelStatus`/`ThermalStatus`/`RigStatus`/
+  `StorageForecast`/`ShedStatus` plus the newest `CaptureGapEntity`) in, at most one
+  `FailurePresentation` out. Priority is fixed: a debug override wins outright; then the two
+  takeovers (`InputStatus.Mismatch` → F1, `StorageForecast.AtFloor` + `CaptureState.Failed` →
+  F6-halt); then at most one banner in `Flow-Degrade.dc.html`'s own story order
+  (`InputStatus.Lost` → F2, a quiet/clipped `LevelStatus` → F3, a recently-closed `OS_STOPPED` gap
+  → F5, a storage warning → F6-warning, `ThermalStatus.Warm`/`Hot` → F7, a growing
+  `ShedStatus.backlog` → F8, `RigStatus.Stale` → F9, a recently-closed `CALL` gap while capturing
+  → F15). 22 unit tests (`FailureMapperTest.kt`) prove the priority order directly, including that
+  a debug override beats a real `Mismatch` and that thermal outranks backlog when both are true.
+- **`RecoveryAnnouncer.diff`** — R-103's own function: a pure diff of two consecutive
+  `FailureSignals`, one `RecoveryToast` per transition ("Back to tier 3" — with an optional
+  "· N overs can be improved" suffix when `FailureHost` supplies a real count — "Radio
+  reconnected", "Input back", "Storage back above the floor"), never a stacked summary. 9 unit
+  tests, sequential-call style (no Turbine dependency needed for a function this shape — plain
+  calls prove the same thing).
+- **`FailureHost`** — mounted once in `ReaderActivity.kt`, above `OrtNavHost`. Polls
+  `FailureSignalsPolling` every 2 s (matching `ReaderPolling`/`LiveBarPolling`'s own cadence),
+  renders at most one takeover/standalone screen full-screen, or a banner/card pinned to the top
+  of whatever destination is current (see "Left open" — this package owns no individual screen's
+  content file, so a fixed overlay is the only placement achievable), plus a toast slot at the
+  bottom. F5/F15 are the only dismissable presentations, tracked per-instance by their own label so
+  a *new* occurrence of either still shows. Refactored into `FailureHostActions` (bundles the nine
+  recovery callbacks so `FailureHost`'s own signature stays short) plus
+  `FailurePresentationOverlay`/`TakeoverOrScreen`/`pollFailureSignals` once detekt's
+  `LongMethod`/`LongParameterList`/`CyclomaticComplexMethod` flagged the first draft.
+- **One composable per F-id**, each a pure function of its own view-state (`FailureViewState.kt`):
+  `FailRouteScreen`/`FailUsbScreen` (takeovers), `FailStorageHaltScreen`, `FailDisconnectBanner`/
+  `FailLevelBanner`/`FailKilledBanner`/`FailStorageWarningBanner`/`FailStorageAudioPausedBanner`/
+  `FailThermalBanner`/`FailBacklogBanner`/`FailRigBanner`/`FailCallBanner` (banners, built on
+  WP2's `Banner`/`TextAction`), `FailClockCard`/`FailInterruptedCard` (informational, green —
+  guide: they report something handled correctly, not a degradation), `FailReconcileScreen`/
+  `FailMigrationScreen`/`FailAssetSwapScreen`/`FailCalibrationScreen` (standalone screens, F19-F22,
+  reachable only through the debug override). Every element carries a `testTag` or content
+  description named for its board (`failure-route-screen`, `failure-route-choose-input`,
+  `failure-usb-grant-permission`, `failure-storage-halt-free-space`, ...).
+- **Real recovery actions wired where a real destination exists.** `ReaderActivity.kt`'s
+  `onOpenBatteryExemptionSettings`/`onOpenStorageSettings`/`onOpenRetentionSettings` launch
+  `Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS`/`Settings.ACTION_INTERNAL_STORAGE_SETTINGS`
+  — real platform screens, no manifest permission needed. Every other action ("Choose another
+  input", "Retry", "Reconnect", "Set the frequency by hand", "Grant USB permission again") has no
+  destination this package can reach (`OrtNavHost.kt` is WP3's file; `:capture-android` exposes no
+  USB-permission call, FR-RIG unbuilt) and stays a documented no-op default — see "Left open".
+- **Seven debug scenarios** (`clock-dst`, `usb-permission`, `interrupted-pass`, `reconcile`,
+  `migration-failed`, `asset-swap`, `calibration`) for the six ids the brief names as having no
+  runtime signal, plus F6's "audio paused, capture continues" narrative, which turned out to be a
+  seventh — each sets `DebugFailureOverride.show(...)` with the exact `FailurePresentation` its
+  board needs, on top of a minimal session. `ScenariosTest.kt` gained 8 new cases (one per
+  scenario, plus a case proving a later real-signal scenario clears a prior override).
+- **`LiveBarPolling`'s failure-variant labels** — F2 "Gap", F3 "Quiet"/"Hot", F6-warning "Low
+  storage", F8 "N behind", and F9 renamed from the placeholder "Radio disconnected" to the board's
+  own "Rig lost" — inserted into the existing priority chain at the same relative positions
+  `FailureMapper` uses, and sharing its exact thresholds (`QUIET_PEAK_THRESHOLD_DBFS`,
+  `BACKLOG_GROWING_THRESHOLD`) so the live bar and a banner can never disagree about what is
+  currently wrong. 8 new tests in the new `LiveBarPollingTest.kt` (this file previously had none).
+- **R-101's own question — does capture halt on a mid-session route mismatch — was already
+  answered before this package started**: `RealCaptureService`'s real production path halts on a
+  route-mismatch `CaptureEvent.Failed` (`CaptureState.failed(...)`, reason prefixed
+  `"route mismatch:"`) and WP11c's `input-mismatch` scenario already publishes
+  `InputStatus.State.Mismatch` for exactly this. `FailureMapper` keys F1 off `InputStatus.Mismatch`
+  directly (the caller-supplied guidance for F1/F2/F16), so R-101 needed no new signal — only the
+  screen, which this package built.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` —
+BUILD SUCCESSFUL. `.\gradlew.bat :app:detekt` — BUILD SUCCESSFUL (0 issues; `maxIssues: 0`).
+`.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.debug.ScenariosTest"` — 91 tests,
+all green (`FailureMapperTest` 22, `RecoveryAnnouncerTest` 9, `FailureScreensTest` 17,
+`FailureHostTest` 3, `LiveBarPollingTest` 8, plus this package's additions to `ScenariosTest`).
+The gate's full sequence (`build dependencyRules platformGuards`, `-p buildSrc test`,
+`spec_check.py`, `coverageMatrix`/`coverageMatrixCheck`, `:app:assembleDebug`) is reported in
+full in this package's own report to the lead, not restated here.
+
+**Left open:**
+
+- **Banners render as a fixed top-anchored overlay across every destination, not embedded inside
+  each screen's own layout** — this package owns no individual screen's content file. `F14`/`F17`'s
+  cards render the same way for now, though their boards place them inline in a session-detail
+  screen that does not exist yet.
+- **F2's disconnect banner and F6's hard-floor takeover have no scenario that seeds them
+  directly** (both are real, mapped signals — proven by `FailureMapperTest` — but no existing
+  debug scenario sets `InputStatus.Lost` or `StorageForecast.AtFloor` + `CaptureState.Failed`
+  together). **`gap-call`'s F15 banner does not currently trigger from the emulator**, because
+  `gap-call` (outside this package's ownership) ends the session rather than marking it live,
+  which F15's own trigger condition requires.
+- **F16's "grant USB permission again" and the four navigation-shaped recovery actions have no
+  real destination** — see "What changed" above and `results/ui-audit/README.md`'s "Known gaps".
+- **F6's "audio paused, capture continues" narrative** (`Fail-Storage.dc.html`'s own title) has no
+  distinct `StorageForecast` state yet — `StorageAudioPausedViewState`/`FailStorageAudioPausedBanner`
+  are built against the shape the signal would need (this package's brief's own instruction for
+  a missing signal), reachable only through the debug override until `:pipeline` adds it.
+- **`coverageMatrix`/`spec_check.py`/`platformGuards`/`:app:assembleDebug` results** are in this
+  package's report to the lead, verified but not restated here to avoid this entry going stale if
+  a later package's own gate run changes an unrelated number.
+
+---
+
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
 
 ### (pending) — ui-conformance WP4 · Now home, capture status surface, level meter, live-bar feed

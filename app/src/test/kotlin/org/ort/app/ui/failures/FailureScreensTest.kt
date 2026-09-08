@@ -1,0 +1,299 @@
+package org.ort.app.ui.failures
+
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.ort.app.ui.theme.OrtTheme
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * WP11b, register R-100: each `Fail*` composable is a pure function of its own view-state — no
+ * `Context`, no live holder read — so every one of them renders from a plain, hand-built state
+ * here. V7 (font scale 2.0, "must not clip the action"): one takeover ([FailRouteScreen]) and one
+ * banner ([FailDisconnectBanner]) are proven not to clip their primary action at maximum system
+ * font scale, matching `ReaderAccessibilityTest`'s own pattern.
+ */
+@RunWith(RobolectricTestRunner::class)
+class FailureScreensTest {
+
+    @get:Rule
+    val composeTestRule = createComposeRule()
+
+    private val maxFontScale = 2f
+
+    @Test
+    fun `F1_route the takeover carries its copy, rows and both actions, testTags reachable`() {
+        var chosenInput = false
+        var endedSession = false
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRouteScreen(
+                    state = RouteViewState("USB Audio Device", "Built-in microphone", "02:41:12"),
+                    onChooseInputAgain = { chosenInput = true },
+                    onEndSession = { endedSession = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("failure-route-screen").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Halted").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Audio switched to the built-in microphone").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-route-choose-input").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("failure-route-end-session").assertIsDisplayed().performClick()
+        assert(chosenInput)
+        assert(endedSession)
+    }
+
+    @Test
+    fun `V7 the route takeover does not clip its primary action at maximum font scale`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    FailRouteScreen(
+                        state = RouteViewState("USB Audio Device", "Built-in microphone", "02:41:12"),
+                        onChooseInputAgain = {},
+                        onEndSession = {},
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("failure-route-choose-input").assertIsDisplayed().assertHeightIsAtLeast(44.dp)
+        composeTestRule.onNodeWithTag("failure-route-end-session").assertIsDisplayed().assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `F2_disconnect the banner carries its copy and both actions`() {
+        var retried = false
+        var chose = false
+        composeTestRule.setContent {
+            OrtTheme {
+                FailDisconnectBanner(
+                    state = DisconnectViewState("USB Audio Device", "02:54:08"),
+                    onRetry = { retried = true },
+                    onChooseAnotherInput = { chose = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("failure-disconnect-banner").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Input disconnected — retrying").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Retry now").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithText("Choose another input").assertIsDisplayed().performClick()
+        assert(retried)
+        assert(chose)
+    }
+
+    @Test
+    fun `V7 the disconnect banner does not clip its actions at maximum font scale`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    FailDisconnectBanner(
+                        state = DisconnectViewState("USB Audio Device", "02:54:08"),
+                        onRetry = {},
+                        onChooseAnotherInput = {},
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("Retry now").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Choose another input").assertIsDisplayed()
+    }
+
+    @Test
+    fun `F3_level a quiet reading never surfaces the enum name`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailLevelBanner(state = LevelViewState(LevelProblem.QUIET, -34f, "03:31"))
+            }
+        }
+        composeTestRule.onNodeWithText("Too quiet since 03:31 — speech peaks at -34 dBFS").assertIsDisplayed()
+    }
+
+    @Test
+    fun `F5_killed carries a dismiss action`() {
+        var dismissed = false
+        composeTestRule.setContent {
+            OrtTheme {
+                FailKilledBanner(
+                    state = KilledViewState("03:12:40", "3 h 36 m"),
+                    onOpenBatterySettings = {},
+                    onDismiss = { dismissed = true },
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("OK").assertIsDisplayed().performClick()
+        assert(dismissed)
+    }
+
+    @Test
+    fun `F6_storage the halt takeover carries its one recovery action`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailStorageHaltScreen(
+                    state = StorageHaltViewState("50 MB free", "100 MB"),
+                    onFreeUpSpace = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-storage-halt-screen").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Halted").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-storage-halt-free-space").assertIsDisplayed()
+    }
+
+    @Test
+    fun `F9_rig both recovery actions are wired`() {
+        var reconnected = false
+        var setByHand = false
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRigBanner(
+                    state = RigViewState("TH-D75A", "04:02"),
+                    onReconnect = { reconnected = true },
+                    onSetFrequencyByHand = { setByHand = true },
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("Reconnect").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithText("Set the frequency by hand").assertIsDisplayed().performClick()
+        assert(reconnected)
+        assert(setByHand)
+    }
+
+    @Test
+    fun `F15_call the acknowledgement banner dismisses`() {
+        var dismissed = false
+        composeTestRule.setContent {
+            OrtTheme {
+                FailCallBanner(state = CallViewState("38 s"), onDismiss = { dismissed = true })
+            }
+        }
+        composeTestRule.onNodeWithText("Resumed after a 38 s call. The gap is in the log.").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-call-dismiss").assertIsDisplayed().performClick()
+        assert(dismissed)
+    }
+
+    @Test
+    fun `F16_usb the takeover dialog carries both recovery actions`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailUsbScreen(
+                    state = UsbViewState("03:44", "03:47", 4),
+                    onGrantPermission = {},
+                    onContinueWithoutRadio = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-usb-screen").assertIsDisplayed()
+        composeTestRule.onNodeWithText("The rig needs USB permission again").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-usb-grant-permission").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-usb-continue-without-radio").assertIsDisplayed()
+    }
+
+    @Test
+    fun `F19_reconcile lists both mismatch directions and both actions`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailReconcileScreen(
+                    state = ReconcileViewState(
+                        recordsNoFile = listOf(ReconcileRecord("W7NPC", "Fri 4 Sep 01:22 · 28.4 s", null)),
+                        filesNoRecord = listOf(ReconcileFile("a/x.flac", "6.2 s", null)),
+                        causeText = "The OS stopped the app with writes in flight.",
+                    ),
+                    onImport = {},
+                    onLeaveAsIs = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-reconcile-screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-reconcile-import").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-reconcile-leave").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `F20_migration shows the rebuild action`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailMigrationScreen(
+                    state = MigrationViewState(
+                        versionLabel = "Updated to 1.1.0",
+                        headline = "The records did not fully carry over",
+                        steps = listOf(MigrationStep("Audio untouched", "38.2 GB", ok = true)),
+                    ),
+                    onRebuildNow = {},
+                    onSaveDiagnosticBundle = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-migration-rebuild").assertIsDisplayed()
+    }
+
+    @Test
+    fun `F21_asset-swap shows the options and the Done action`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailAssetSwapScreen(
+                    state = AssetSwapViewState(
+                        activeLabel = "2026.08 active",
+                        stagedLabel = "2026.09 staged",
+                        options = listOf("Wait", "Swap now"),
+                        selectedOption = 0,
+                    ),
+                    onSelectOption = {},
+                    onDone = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-asset-swap-option-0").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-asset-swap-done").assertIsDisplayed()
+    }
+
+    @Test
+    fun `F22_calibration shows the chart and the install action`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailCalibrationScreen(
+                    state = CalibrationViewState(
+                        sinceLabel = "1 Sep",
+                        scoreLabel = "0.90",
+                        accuracyLabel = "78%",
+                        points = listOf(0.3f to 0.22f),
+                        calibrationVersion = "2026.09-a",
+                        correctionsCount = 22,
+                        correctionsNeeded = 100,
+                    ),
+                    onInstall = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-calibration-chart").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-calibration-install").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `F14_clock and F17_interrupted render as informational, non-amber cards`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                androidx.compose.foundation.layout.Column {
+                    FailClockCard(state = ClockViewState("PDT → PST", "8 h 30 m", "23:10", "06:40"))
+                    FailInterruptedCard(state = InterruptedViewState(3, "03:12 – 06:48"))
+                }
+            }
+        }
+        composeTestRule.onNodeWithTag("failure-clock-card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("failure-interrupted-card").assertIsDisplayed()
+    }
+}
