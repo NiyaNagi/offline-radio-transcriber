@@ -25,6 +25,8 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -465,11 +467,30 @@ public fun ToggleRow(
 // Fields — Controls.dc.html's "Fields" panel.
 // ---------------------------------------------------------------------------------------------
 
+/** guide §3: the `halt` colour family is reserved for capture stopped, never a field-validation
+ * cue — R-063.
+ * [FieldTone.Halt] (the default, matching every caller before this existed) is for the rare field
+ * whose error really does mean something halting; [FieldTone.Degraded] is the ordinary amber
+ * "this didn't take" cue (`Search-Unavailable.dc.html`'s "text not applied"). */
+public enum class FieldTone { Halt, Degraded }
+
 /**
  * `Controls.dc.html`'s field: 44dp, `bg/current` ground, `line/strong` border (`accent/green`
- * focused or non-empty), placeholder in `text/signal`, mono when [mono] (a callsign or
- * frequency field). [errorText], when given, renders below in `halt/text`. WP7 and WP9 each
- * hand-rolled their own text field before this existed; this is the shared one they migrate to.
+ * focused or non-empty), placeholder in `text/signal`, mono when [mono] (a callsign or frequency
+ * field). [errorText], when given, renders below in [errorTone]'s colour. [leadingIcon] and
+ * [trailingAction] sit inside the bordered box itself (a search glyph, a clear `×`), per
+ * `Search.dc.html` — not outside it, which was R-060's gap. [keyboardOptions]/[keyboardActions]
+ * reach the underlying [BasicTextField] directly (a search field's IME action, for one).
+ *
+ * The wrapper contract: [modifier] lands on the **outer** `Column` — the one node this composable
+ * emits as a direct child of whatever `Row`/`Column` calls it — specifically so a caller's
+ * `Modifier.weight(1f)` inside a `Row` is honoured (it was silently dropped when `modifier`
+ * instead landed on an inner grandchild, R-060's other gap). The outer `Column` merges its
+ * descendants' semantics, so `testTag`/`performTextInput`/content-description assertions on that
+ * same tagged node still reach the real text-input field underneath. `fillMaxWidth()` is applied
+ * *after* the caller's `modifier` (not instead of it) so the default (no modifier given) still
+ * fills the width exactly as before, while `Modifier.weight(1f).fillMaxWidth()` composes exactly
+ * as it does for any other Compose child — take the weighted share, then fill it.
  */
 @Suppress("LongParameterList") // every parameter is an independent, optional field concern.
 @Composable
@@ -483,8 +504,19 @@ public fun TextField(
     errorText: String? = null,
     contentDescriptionText: String? = null,
     singleLine: Boolean = true,
+    leadingIcon: ImageVector? = null,
+    trailingAction: (@Composable () -> Unit)? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    errorTone: FieldTone = FieldTone.Halt,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                contentDescription = contentDescriptionText ?: label ?: placeholder.orEmpty()
+            },
+    ) {
         label?.let {
             Text(
                 text = it,
@@ -493,44 +525,58 @@ public fun TextField(
                 modifier = Modifier.padding(bottom = OrtSpacing.xs),
             )
         }
+        val degraded = errorText != null && errorTone == FieldTone.Degraded
         val borderColor = when {
+            degraded -> OrtColors.bannerAmberBorder
             errorText != null -> OrtColors.haltBorder
             value.isNotEmpty() -> OrtColors.accentGreen
             else -> OrtColors.lineStrong
         }
         val textStyle = (if (mono) OrtType.control.copy(fontFamily = FontFamily.Monospace) else OrtType.control)
             .copy(color = OrtColors.textHigh)
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = singleLine,
-            textStyle = textStyle,
-            cursorBrush = SolidColor(OrtColors.accentGreen),
-            // `modifier` lands here (not on the outer Column) so a caller's testTag/semantics
-            // target the actual text-input node — the one `performTextInput`/a11y services need.
-            modifier = modifier
+        Row(
+            modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 44.dp)
                 .background(OrtColors.bgCurrent, RoundedCornerShape(8.dp))
                 .border(1.dp, borderColor, RoundedCornerShape(8.dp))
-                .padding(horizontal = 13.dp)
-                .semantics {
-                    contentDescription = contentDescriptionText ?: label ?: placeholder.orEmpty()
-                },
-            decorationBox = { innerTextField ->
-                Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.fillMaxWidth()) {
-                    if (value.isEmpty() && placeholder != null) {
-                        Text(text = placeholder, style = OrtType.control, color = OrtColors.textSignal)
+                .padding(horizontal = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            if (leadingIcon != null) {
+                Icon(
+                    imageVector = leadingIcon,
+                    contentDescription = null,
+                    tint = OrtColors.textDim,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = singleLine,
+                textStyle = textStyle,
+                cursorBrush = SolidColor(OrtColors.accentGreen),
+                keyboardOptions = keyboardOptions,
+                keyboardActions = keyboardActions,
+                modifier = Modifier.weight(1f),
+                decorationBox = { innerTextField ->
+                    Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.fillMaxWidth()) {
+                        if (value.isEmpty() && placeholder != null) {
+                            Text(text = placeholder, style = OrtType.control, color = OrtColors.textSignal)
+                        }
+                        innerTextField()
                     }
-                    innerTextField()
-                }
-            },
-        )
+                },
+            )
+            trailingAction?.invoke()
+        }
         errorText?.let {
             Text(
                 text = it,
                 style = OrtType.subLine,
-                color = OrtColors.haltText,
+                color = if (degraded) OrtColors.accentAmberText else OrtColors.haltText,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
             )
         }
