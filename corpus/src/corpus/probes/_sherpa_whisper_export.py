@@ -20,15 +20,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import onnx
 import torch
 import torch.nn.functional as F
+import whisper
 from onnxruntime.quantization import QuantType, quantize_dynamic
 from torch import Tensor, nn
-
-import whisper
 from whisper.model import (
     AudioEncoder,
     MultiHeadAttention,
@@ -96,9 +94,9 @@ class MultiHeadAttentionCross(nn.Module):
         super().__init__()
         self.multiHeadAttention = inMultiHeadAttention
 
-    def forward(self, x: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None):
+    def forward(self, x: Tensor, k: Tensor, v: Tensor, mask: Tensor | None = None):
         q = self.multiHeadAttention.query(x)
-        wv, qk = self.multiHeadAttention.qkv_attention(q, k, v, mask)
+        wv, _qk = self.multiHeadAttention.qkv_attention(q, k, v, mask)
         return self.multiHeadAttention.out(wv)
 
 
@@ -113,7 +111,7 @@ class MultiHeadAttentionSelf(nn.Module):
         v = self.multiHeadAttention.value(x)
         k_cache[:, -k.shape[1]:, :] = k
         v_cache[:, -v.shape[1]:, :] = v
-        wv, qk = self.multiHeadAttention.qkv_attention(q, k_cache, v_cache, mask)
+        wv, _qk = self.multiHeadAttention.qkv_attention(q, k_cache, v_cache, mask)
         return self.multiHeadAttention.out(wv), k_cache, v_cache
 
 
@@ -154,8 +152,7 @@ class TextDecoderTensorCache(nn.Module):
             + self.textDecoder.positional_embedding[offset[0]: offset[0] + tokens.shape[-1]]
         )
         x = x.to(n_layer_cross_k[0].dtype)
-        i = 0
-        for block in self.blocks:
+        for i, block in enumerate(self.blocks):
             self_k_cache = n_layer_self_k_cache[i, :, : offset[0] + tokens.shape[-1], :]
             self_v_cache = n_layer_self_v_cache[i, :, : offset[0] + tokens.shape[-1], :]
             x, self_k_cache, self_v_cache = block(
@@ -164,7 +161,6 @@ class TextDecoderTensorCache(nn.Module):
             )
             n_layer_self_k_cache[i, :, : offset[0] + tokens.shape[-1], :] = self_k_cache
             n_layer_self_v_cache[i, :, : offset[0] + tokens.shape[-1], :] = self_v_cache
-            i += 1
         x = self.textDecoder.ln(x)
         logits = (
             torch.matmul(self.textDecoder.token_embedding.weight.to(x.dtype), x.permute(0, 2, 1))
@@ -184,8 +180,7 @@ def convert_tokens(name: str, model) -> None:
         contents = f.read()
         tokens = {token: int(rank) for token, rank in (line.split() for line in contents.splitlines() if line)}
     with open(f"{name}-tokens.txt", "w") as f:
-        for t, i in tokens.items():
-            f.write(f"{t} {i}\n")
+        f.writelines(f"{t} {i}\n" for t, i in tokens.items())
 
 
 @torch.no_grad()

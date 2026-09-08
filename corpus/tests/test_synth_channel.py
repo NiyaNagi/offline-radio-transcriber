@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from corpus.synth.channel import ChannelModel, apply_channel, fit_channel
-from corpus.synth.channel import _hf_energy_ratio
+from corpus.synth.channel import ChannelModel, _hf_energy_ratio, apply_channel, fit_channel
 
 
 def _clean_fixture(n: int = 16000, seed: int = 1) -> np.ndarray:

@@ -13,7 +13,7 @@ requires-python = ">=3.10"
 dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.5"]
+dev = ["pytest>=8", "ruff==0.16.6"]
 # R1 (spec/build-plan.md S1.7): the real LoRA fine-tune / merge / sherpa-onnx export / load /
 # transcribe toolchain. Not needed to run the fake-backed test suite — only RealLoraTrainer,
 # RealSherpaOnnxExporter and RealSherpaOnnxRuntime in corpus.probes.lora_export import these,

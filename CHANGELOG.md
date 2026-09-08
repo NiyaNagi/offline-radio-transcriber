@@ -32,6 +32,50 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (just after midnight, cont. — CI catches a real ruff-version-drift bug too)
+
+### (pending) — Fix 23 ruff findings surfaced by an unpinned `ruff>=0.5`, then pin it
+
+**Scope:** `corpus/pyproject.toml`, `corpus/src/corpus/fingerprint.py`,
+`corpus/src/corpus/synth/generator.py`, `corpus/src/corpus/probes/_sherpa_whisper_export.py`,
+`corpus/tests/test_acquire.py`, `corpus/tests/test_harness.py`.
+**Requirements/ACs:** none — lint/dependency hygiene.
+**What changed:** the numpy fix (previous entry) unblocked test collection, and CI's `corpus`
+job then failed at the `ruff check .` step with 23 findings, none of which showed up in any
+local run this whole session. Root cause: `pyproject.toml`'s dev extra pinned `ruff>=0.5` (a
+floor, no ceiling) and this repo's local machine had ruff 0.15.11 installed, while a completely
+fresh `pip install -e "corpus[dev]"` on a GitHub runner resolved 0.16.6 — newer, with more rules
+enabled by default (`UP037`, `RUF046`, `RUF059`, `SIM113`, `B017`, `BLE001`, `I001`). Confirmed by
+upgrading locally to 0.16.6 and reproducing exactly the same 23 findings before fixing anything.
+Fixed all of them:
+- `ruff check --fix` handled 20 mechanically (unnecessary quoted forward-refs, `Callable` import
+  location, an unsorted import block).
+- `fingerprint.py`'s blind `except Exception` narrowed to the three real failure modes calling
+  `git` can raise (`OSError`, `CalledProcessError`, `TimeoutExpired`) — same fallback behaviour,
+  named exceptions instead of "anything."
+- Two `int(round(...))` casts in `synth/generator.py` — `round()` with no `ndigits` argument
+  already returns `int`; the wrapping `int()` was dead.
+- Two unused unpacked variables in the vendored `_sherpa_whisper_export.py` (`qk` from
+  `qkv_attention`, genuinely unused by both callers) renamed to `_qk`; a manual counter loop
+  converted to `enumerate()`.
+- Two `pytest.raises(Exception)` assertions widened to the real exception each one actually
+  needs — `ValueError` (checksum mismatch, `acquire.py`'s `_download`) and `EvalFoldSealed`
+  (`corpus.gate`) — checked what each call site genuinely raises before narrowing, rather than
+  guessing; a wrong guess here would have silently accepted the wrong failure as "the test
+  passed."
+Then **pinned `ruff==0.16.6` exactly**, replacing the open-ended floor, so this specific failure
+mode — a new ruff release enabling new default rules between one session and the next — cannot
+recur silently; a future ruff bump becomes a deliberate version bump with its own findings fixed
+in the same change, not a surprise on the next clean-runner CI run.
+**Verified:** `ruff check corpus` clean at 0.16.6; `pytest corpus -q` — 70 passed, 1 skipped
+(unchanged); repeated the from-scratch venv simulation from the numpy fix (fresh `pip install -e
+"corpus[dev]"`, no other packages) — both `ruff check` and `pytest` clean in complete isolation,
+not just "clean on this machine."
+**Left open / not done:** none for this bug. Same process note as the numpy entry: a hosted-runner
+CI run that hadn't actually executed against this code path in a while is exactly what caught
+both of today's real defects — local-only verification through several agent sessions missed
+both.
+
 ## 2026-09-08 (just after midnight — CI catches a real dependency-declaration bug)
 
 ### (pending) — Declare numpy as a real corpus dependency (found by CI, not local testing)

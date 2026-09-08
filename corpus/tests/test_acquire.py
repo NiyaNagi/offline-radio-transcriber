@@ -75,7 +75,7 @@ def test_acquire_resumes_a_partial_download(tmp_path, monkeypatch):
     monkeypatch.setattr(src, "upstream_checksum", {"algo": "sha256", "value": digest})
 
     broken = FakeFetcher(payload, fail_after=50)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="checksum mismatch"):
         acquire_source(src, tmp_path, fetcher=broken, normaliser=_fake_normaliser, members=["a.wav"])
 
     good = FakeFetcher(payload)

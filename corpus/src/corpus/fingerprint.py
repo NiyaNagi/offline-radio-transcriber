@@ -28,7 +28,9 @@ def code_version() -> str:
             capture_output=True, text=True, timeout=5, check=True,
         ).stdout.strip()
         return f"{rev}{'+dirty' if dirty else ''}"
-    except Exception:
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # No git binary, not a git checkout, or it hung — any of these are equally "unknown"
+        # to a caller that only wants a fingerprint, never a crash.
         return "unknown"
 
 

@@ -6,7 +6,7 @@ shape and the numbers it will carry.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 
 def _levenshtein(a: Sequence[str], b: Sequence[str]) -> int:

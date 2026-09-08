@@ -30,7 +30,7 @@ class ChannelModel:
         return {"gain": self.gain, "noise_rms": self.noise_rms, "tilt": self.tilt, "seed": self.seed}
 
     @staticmethod
-    def from_dict(d: dict) -> "ChannelModel":
+    def from_dict(d: dict) -> ChannelModel:
         return ChannelModel(gain=d["gain"], noise_rms=d["noise_rms"], tilt=d["tilt"], seed=d.get("seed", 0))
 
 

@@ -6,8 +6,8 @@ and a test can verify the rendered audio actually matches the declared offset.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 
 @dataclass(frozen=True)

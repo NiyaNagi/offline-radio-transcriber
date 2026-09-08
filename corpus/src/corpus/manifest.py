@@ -31,7 +31,7 @@ class Source:
     upstream_checksum: dict[str, str]
 
     @staticmethod
-    def from_dict(d: dict[str, Any]) -> "Source":
+    def from_dict(d: dict[str, Any]) -> Source:
         for key in ("id", "name", "url", "licence", "kind"):
             if not d.get(key):
                 raise ManifestError(f"source {d.get('id', '?')!r}: missing {key}")
@@ -66,7 +66,7 @@ class Session:
     checksum: dict[str, str]
 
     @staticmethod
-    def from_dict(d: dict[str, Any]) -> "Session":
+    def from_dict(d: dict[str, Any]) -> Session:
         if not d.get("id"):
             raise ManifestError("session: missing id")
         if d.get("fold") not in FOLDS:

@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,7 @@ class FakeAsrRuntime:
         def transcribe(self, audio: Any) -> str:
             return f"transcribed:{audio}"
 
-    def load(self, exported_path: str) -> "FakeAsrRuntime._Engine":
+    def load(self, exported_path: str) -> FakeAsrRuntime._Engine:
         return FakeAsrRuntime._Engine(exported_path)
 
 
@@ -238,7 +239,7 @@ class RealSherpaOnnxRuntime:
             self._recognizer.decode_stream(stream)
             return stream.result.text
 
-    def load(self, exported_path: str) -> "RealSherpaOnnxRuntime._Engine":
+    def load(self, exported_path: str) -> RealSherpaOnnxRuntime._Engine:
         import sherpa_onnx
 
         name = self.export_name

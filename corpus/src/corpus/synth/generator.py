@@ -51,10 +51,10 @@ def generate_utterance(
 
     sr = voice.sample_rate
     total_s = placed[-1].start_s + placed[-1].dur_s if placed else 0.0
-    buf = np.zeros(int(round(total_s * sr)), dtype=np.float64)
+    buf = np.zeros(round(total_s * sr), dtype=np.float64)
     for unit in placed:
         clip = voice.synth(unit.text)
-        start = int(round(unit.start_s * sr))
+        start = round(unit.start_s * sr)
         buf[start : start + len(clip)] = clip[: len(buf) - start]
 
     audio = apply_channel(buf, channel) if (channel.gain != 1.0 or channel.tilt or channel.noise_rms) else buf

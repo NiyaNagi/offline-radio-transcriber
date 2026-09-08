@@ -6,8 +6,8 @@ signed 16-bit — the same invocation every time so a re-run reproduces byte-for
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 Runner = Callable[[list[str]], object]
 

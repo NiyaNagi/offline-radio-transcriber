@@ -10,7 +10,12 @@ import numpy as np
 import pytest
 
 from corpus.synth.channel import ChannelModel
-from corpus.synth.generator import EvalFoldForbidden, FakeTtsVoice, generate_dataset, generate_utterance
+from corpus.synth.generator import (
+    EvalFoldForbidden,
+    FakeTtsVoice,
+    generate_dataset,
+    generate_utterance,
+)
 
 
 def test_label_always_matches_audio():

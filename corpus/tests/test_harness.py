@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from corpus.gate import EvalFoldSealed
 from corpus.harness import evaluate
 from corpus.manifest import Manifest, Session, Source
 from corpus.report import Report, ReportError
@@ -55,7 +56,7 @@ def test_evaluate_reports_per_source_and_aggregate():
 
 
 def test_evaluate_refuses_eval_without_flag():
-    with pytest.raises(Exception):
+    with pytest.raises(EvalFoldSealed):
         evaluate(_manifest(), "eval", {})
 
 
