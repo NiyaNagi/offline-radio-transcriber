@@ -93,6 +93,16 @@ public fun AttributionMarker(
  * (`States.dc.html`); the ring weight scales from 1.5dp to 2dp at the card size, and UNKNOWN's
  * dot scales with it (5dp at 9dp, ~6dp at 12dp) rather than staying fixed while everything else
  * grows.
+ *
+ * R-373 (`overnight/L01-log-pass3@2x.png`, via [LogRow]): every callsign `Text` here carries
+ * `maxLines = 1, softWrap = false` — a callsign is one unbroken mono token with no word-break
+ * opportunity of its own, so a container narrow enough to force a wrap split it character by
+ * character ("KE7QRS" → "KE7QR"/"S") rather than as a whole word the way a real English word
+ * mostly can. This alone only stops the *split*; the container calling this composable still
+ * needs to be wide enough not to clip it instead — [LogRow]'s own fix
+ * ([rememberCallsignColumnWidth]) is the floor this needs, applied at the one call site the
+ * register's own repro reached, but the guarantee here is general and safe for every caller of
+ * this widely-shared composable, not scoped to that one row family.
  */
 @Composable
 public fun AttributionRow(
@@ -110,10 +120,22 @@ public fun AttributionRow(
         Spacer(modifier = Modifier.width(OrtSpacing.xs))
         when (state) {
             AttributionState.CONFIRMED ->
-                Text(text = callsign.orEmpty(), style = OrtType.callsignRow, color = OrtColors.textHigh)
+                Text(
+                    text = callsign.orEmpty(),
+                    style = OrtType.callsignRow,
+                    color = OrtColors.textHigh,
+                    maxLines = 1,
+                    softWrap = false,
+                )
 
             AttributionState.INFERRED -> {
-                Text(text = callsign.orEmpty(), style = OrtType.callsignRow, color = OrtColors.textBody)
+                Text(
+                    text = callsign.orEmpty(),
+                    style = OrtType.callsignRow,
+                    color = OrtColors.textBody,
+                    maxLines = 1,
+                    softWrap = false,
+                )
                 attribution.confidence?.let { confidence ->
                     Spacer(modifier = Modifier.width(OrtSpacing.xs))
                     ScoreChip(confidence = confidence)
@@ -121,7 +143,13 @@ public fun AttributionRow(
             }
 
             AttributionState.AMBIGUOUS -> {
-                Text(text = callsign.orEmpty(), style = OrtType.callsignRow, color = OrtColors.textAmbiguous)
+                Text(
+                    text = callsign.orEmpty(),
+                    style = OrtType.callsignRow,
+                    color = OrtColors.textAmbiguous,
+                    maxLines = 1,
+                    softWrap = false,
+                )
                 if (alternate != null) {
                     Spacer(modifier = Modifier.width(OrtSpacing.xs))
                     // guide §6.1: "or QRF" alternate at 11sp — OrtType has no exact 11sp non-mono

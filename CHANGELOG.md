@@ -32,6 +32,138 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: LogRow's columns stack as whole units, callsign never splits mid-character, at font scale 2.0)
+
+### (pending) — ui-conformance WP2 · R-373
+
+**Scope:** `:app` `ui/components/Rows.kt`, `ui/components/AttributionMarker.kt` and their tests
+(`RowsTest.kt`, new `LogRowResponsiveTest.kt`) only. `git merge main` run first (fast-forward
+`46a8174..7897cbd` — WP10/pipeline register updates; none of this package's files touched by the
+merge). No rebase, no stash, no `gradlew --stop`. Per the coordinator's load policy, the gate for
+this round is scoped (`ui.components.*`, `LogScreenTest`, `SearchScreenTest`, plus the usual
+project-wide checks) rather than the full `:app:testDebugUnitTest` — a stray earlier background
+`testDebugUnitTest` invocation from this same worktree was found still running and contending for
+the build lock; stopped via `TaskStop` (never `gradlew --stop`) partway through this round.
+
+**Requirements/ACs:** R-373 (spec) — WP7's parity test proved `Search` composes `LogRow` exactly
+as `Log` does, and that the same defect reproduces on both: `overnight/L01-log-pass3@2x.png`
+(`Log`) and `search-corpus/Q03-results-2x-clean-pass4.png` (`Search`) both show, at font scale
+2.0, a callsign splitting character by character ("KE7QRS" → "KE7QR"/"S"), transcript words
+splitting mid-word ("activation" → "activatio"/"n"), and the time/frequency columns with nowhere
+of their own to go.
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) governs the fix's shape: the
+  defect lives in `LogRow`'s own layout and `AttributionRow`'s own callsign `Text` (both shared,
+  both in this package), not in `Search`/`Log`'s own screen code — WP7's own parity test is what
+  proves that, and is exactly why this fix, landed once here, closes the defect on both screens
+  with no caller-side change needed.
+- **Root cause.** `LogRow`'s weighted station/transcript column (`Column(Modifier.weight(1f))`)
+  had no minimum width of its own — at a large font scale, once the fixed time/freq/signal
+  columns' own real widths grew, the weighted column could be measured arbitrarily narrow. A
+  callsign is one unbroken mono token with no word-break opportunity of its own, so a column
+  narrower than it forced a character-by-character split (`AttributionRow`'s callsign `Text` had
+  no `softWrap = false` either, so nothing stopped it); the transcript's own words mostly wrap at
+  real boundaries, but the same unbounded-narrow column let an occasional word split mid-way too.
+- **The fix, three additive pieces:**
+  1. **`AttributionMarker.kt` — `AttributionRow`'s three callsign `Text`s** (CONFIRMED, INFERRED,
+     AMBIGUOUS) now carry `maxLines = 1, softWrap = false` — a callsign never wraps, full stop,
+     regardless of the container `AttributionRow` is asked to render inside. Deliberately general
+     (not scoped to `LogRow`'s own call site) since `AttributionRow` is shared broadly and this
+     guarantee is safe and desirable everywhere a callsign renders.
+  2. **`Rows.kt` — a new, measured floor for `LogRow`'s weighted column.** `CALLSIGN_COLUMN_SAMPLE
+     = "KE7QRS"` (the widest realistic amateur callsign shape — prefix + digit + suffix) and new
+     `rememberCallsignColumnWidth()` measure that sample in `OrtType.callsignRow` at the real,
+     current density/font scale — the identical `rememberTextMeasurer`-backed pattern R-205
+     already established for the time/freq columns (`rememberMonoColumnWidth` generalized to take
+     a `style` parameter, default unchanged, so `rememberTimeColumnWidth`/`rememberFreqColumnWidth`
+     are unaffected). One shared floor across every row, not each row's own (possibly shorter)
+     callsign, so the column stays aligned down the log the way time/freq already do.
+  3. **`Rows.kt` — `LogRow` reflows as whole units, never intra-word (guide §5).** The outer `Row`
+     is now a `BoxWithConstraints` that picks, from the row's own real, current width (not a
+     guessed breakpoint): the existing one-line layout when `time + freq + the callsign floor +
+     signal` actually fits, or — new — a stacked layout when it does not, where the marker line +
+     transcript take the row's own full width on their own line, and time/freq (+ signal) move to
+     a second line *beneath* them, still together, never split from each other. Four small private
+     composables (`LogRowTimeText`/`LogRowFreqText`/`LogRowSignalText`/`LogRowTranscriptText`)
+     factor the four columns' own `Text`s out so both layouts render the identical column, not two
+     copies that could quietly drift apart.
+- **The transcript's own mid-word breaks are not separately configured** — `LogRowTranscriptText`
+  keeps Compose's own default `softWrap = true`, no `maxLines` (a transcript is expected to run
+  onto more than one line, unlike the callsign). Reasoned, not assumed: the register's own two
+  mid-word breaks were a symptom of the same unbounded-narrow column the callsign fix addresses
+  directly — once the column always has at least the callsign floor's own width (both layouts
+  apply it — full row width in the stacked case, `widthIn(min = …)` in the one-line case), the
+  breaks stop happening in practice, without needing a second, transcript-specific mechanism.
+- **A genuine host limit, found and disclosed while writing the test for the callsign fix.** This
+  package's own established finding — this host's Robolectric returns degenerate glyph metrics
+  for its `sans`/`mono` `fontFamily`s (`RowsTest.kt`'s own `assertColumnsDoNotCollide` doc
+  comment) — turns out to extend to *line-breaking*, not only width measurement: forcing a real,
+  confirmed-narrower-than-content constraint on `AttributionRow`'s callsign (a `Box` outside
+  `OrtTheme`'s own `Surface`, whose `propagateMinConstraints` otherwise silently widens a smaller
+  `Modifier.width()` back out — the same finding recorded against R-340's own diagnosis, an
+  earlier entry in this file) still rendered "KE7QRS" as one 35px-tall line under a real,
+  confirmed 3px budget, not the two-line split a real device's own line-breaker would produce —
+  with *or* without `softWrap = false` present. This host cannot itself distinguish the fixed and
+  unfixed callsign code by a rendered line count or height; the test below pins the real,
+  structural guarantee `softWrap = false` makes regardless of any host's glyph metrics (Compose
+  always reports exactly one line for a `Text` configured this way) rather than the narrow-
+  container scenario itself, which this host cannot independently confirm. The *other* half of the
+  fix — the one-line/stacked layout decision — does not have this limitation: it is driven by
+  `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN`'s own real, non-degenerate `Dp` floors (`maxOf(floor,
+  measuredWidth)` — degenerate measurement can only ever lose to the floor, never beat it), so the
+  test for it is fully discriminative on this host — confirmed directly, by temporarily forcing
+  the old (always-one-line) behaviour and re-running the test, which failed exactly as expected.
+- **`RowsTest.kt` split — detekt's own `LargeClass` finding.** Adding this round's two tests grew
+  `RowsTest.kt` past detekt's size threshold. The two R-373 tests moved verbatim into a new file,
+  `LogRowResponsiveTest.kt` (self-contained, not entangled with the row families `RowsTest.kt`
+  still owns) — the same split this package already applied once before for `NavRowTest.kt` (an
+  earlier entry in this file), not a suppression.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.*" --tests
+  "org.ort.app.ui.screens.LogScreenTest" --tests "org.ort.app.ui.screens.SearchScreenTest"` —
+  **145 of 145 passing, 0 failed** (summed from every matching `*.xml` report's `tests`/`failures`
+  attributes) — includes `RowsTest` (29 tests, unaffected by the split), the new
+  `LogRowResponsiveTest` (2 tests: `R_373_a callsign renders as one line, never split character by
+  character, at font scale 2_0`; `R_373_log_row stacks time freq beneath the marker line when too
+  narrow for the callsign floor, at 2_0`), `AttributionMarkerTest` (unaffected), `LogScreenTest`
+  (the real `Log` screen, exercising `LogRow` through real fixtures) and `SearchScreenTest`
+  (`R_065 results render through the shared LogRow…`, WP7's own parity coverage).
+- **Both new tests' discriminative power confirmed directly, not assumed:**
+  `R_373_log_row stacks…` was re-run against a temporarily-forced `if (true)` (simulating the old,
+  always-one-line behaviour) and failed exactly as expected (`expected … measuring taller than the
+  wide row; got wide=90px, narrow=90px`) before the real condition was restored and it passed
+  again. The callsign test's own limitation (see "What changed" above) is disclosed in its own
+  comment rather than papered over.
+- `.\gradlew.bat dependencyRules platformGuards` (isolated) — both **OK** (17 modules).
+- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck :app:detekt --rerun-tasks` — **BUILD
+  SUCCESSFUL**; all three report files confirmed **0 bytes** (a first `detekt` run flagged this
+  commit's own new test name for `MaxLineLength` and `RowsTest.kt` for `LargeClass` — shortened
+  the name and split the file as described above, then reran clean).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 191 covered` (up from 185 — the two new
+  `R_373` test names).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (191 covered of 419)`.
+
+**Left open / not done:**
+- **The full, unscoped `:app:testDebugUnitTest` was not run this round**, per the coordinator's
+  own load-policy instruction (a stray background invocation from earlier in this session was
+  found still consuming the build lock and was stopped via `TaskStop`); the scoped set above
+  covers every test this change could plausibly affect (`ui/components/**`'s own tests plus both
+  real `LogRow` callers' screen tests), but a full-suite confirmation is still owed before the
+  register can be confident nothing elsewhere regressed.
+- **V7 pass 2 device confirmation** (named in the coordinator's own message) is not done here —
+  Robolectric assertions only, per the plan (Phase E/Validators own screenshot verification); the
+  register should stay open against R-373 until that pass confirms `Log`/`Search` on a real
+  device/emulator.
+- **The register is not updated by this commit** — closing out R-373 is the
+  validator/coordinator's own bookkeeping.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: R-340 device diagnosis — not fixed, root cause redirected)
 
 ### (pending) — ui-conformance WP2 · R-340 diagnosis
