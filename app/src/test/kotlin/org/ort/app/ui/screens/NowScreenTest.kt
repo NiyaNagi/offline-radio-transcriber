@@ -32,12 +32,14 @@ class NowScreenTest {
     private fun activeState(
         sessionTitle: String = "Overnight",
         summaryLabel: String = "412 overs · 19 stations",
+        overCount: Int = 412,
         missingModel: MissingModelFacts? = null,
         worthKnowing: List<org.ort.app.ui.data.WorthKnowingItem> = emptyList(),
         stations: NowStationsSection = NowStationsSection(0, emptyList(), null, "None yet."),
     ) = NowViewState.Active(
         sessionTitle = sessionTitle,
         summaryLabel = summaryLabel,
+        overCount = overCount,
         activityPattern = emptyList(),
         axisStartLabel = null,
         axisEndLabel = null,
@@ -86,14 +88,14 @@ class NowScreenTest {
         val stations = NowStationsSection(
             totalCount = 1,
             rows = listOf(NowStationRow("W7NPC", AttributionState.CONFIRMED, "W7NPC", "48 overs", "02:14")),
-            unidentifiedLabel = "4 unidentified overs",
+            unidentifiedLabel = "4 unidentified voices",
             emptyMessage = null,
         )
         composeTestRule.setContent { OrtTheme { NowScreen(state = activeState(stations = stations)) } }
 
         composeTestRule.onNodeWithTag("now-station-W7NPC").assertExists()
         composeTestRule.onNodeWithText("48 overs", substring = true).assertExists()
-        composeTestRule.onNodeWithText("4 unidentified overs", substring = true).assertExists()
+        composeTestRule.onNodeWithText("4 unidentified voices", substring = true).assertExists()
     }
 
     @Test
@@ -135,6 +137,22 @@ class NowScreenTest {
         composeTestRule.onNodeWithTag("now-can-get-better").assertExists()
         composeTestRule.onNodeWithText("64 overs were processed below this phone's capability", substring = true)
             .assertExists()
+    }
+
+    @Test
+    @Requirement("R-174")
+    fun `R_174 a fresh zero over session shows the flat chart baseline, never the hatched pattern`() {
+        val state = activeState(
+            sessionTitle = "Tonight",
+            summaryLabel = "0 overs · listening on 145.230",
+            overCount = 0,
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = state) } }
+
+        composeTestRule.onNodeWithTag("now-first-session-chart").assertExists()
+        composeTestRule.onNodeWithTag("now-activity-chart").assertDoesNotExist()
+        composeTestRule.onNodeWithText("the chart fills as the night goes on", substring = true).assertExists()
+        composeTestRule.onNodeWithText("0 overs · listening on 145.230", substring = true).assertExists()
     }
 
     @Test

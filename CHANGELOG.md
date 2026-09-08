@@ -32,6 +32,154 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round five: validator fixes — live session keying, locale dates, first-session Now, level meter completion, overnight-live and no-restart scenarios)
+
+### (pending) — ui-conformance WP4 · validator fixes: live session keying, locale dates, first-session Now, level meter completion, overnight-live and no-restart scenarios
+
+**Scope:** `:app` (this package's own row), `app/src/debug/**` (scenarios), `tools/ui-audit/scenario.ps1`
+and `results/ui-audit/README.md` — fifth addendum to the WP4 entries below, after merging `main`
+(`git merge --ff-only main`, fast-forwarded cleanly onto `59383e0`, "ui-conformance · V2 Capture
+validation at 3e2d4ee: R-170..R-179 filed" — confirmed an ancestor first; no rebase, no stash).
+Responds to the Capture validator's (V2) seven findings against this package: R-170, R-171, R-172
+(halt), R-174, R-175, R-176, R-179.
+
+**Requirements/ACs:** R-170, R-171, R-172, R-174, R-175, R-176, R-179 (register findings — see
+`results/ui-audit/register.md`); FR-UI-9/FR-UI-12/R-030/R-033/R-039/R-112 (the artboards these rows
+sit inside, all previously established); constitution I (uncertainty is content) and constitution VI
+(fold/machine/provider discipline) govern every fix below.
+
+**What changed:**
+
+- **Constitution Check.** Principle I governs almost every fix this round: R-175's "Weakest over
+  resolved tonight" row is the real minimum `signalStrength` among this session's own transmissions,
+  formatted the same "S%.0f" way every other S-meter label in this codebase already is — never
+  paired with a fabricated dBFS figure, since nothing in `:pipeline` records a per-over dBFS reading
+  (only `LevelStatus`'s own live, session-wide peak/RMS does); the row is honestly absent, not a
+  fabricated zero, when no over recorded a strength. R-175's bottom sentence is judged only against
+  the real measured peak vs. the fixed target band already in `LevelViewState` — no new claim beyond
+  what `LevelStatus.State.Measured` actually carries. R-174's fix is not to fabricate 23 hours of
+  "quiet, but listened-through" (a session three minutes old has not listened through them) — it is
+  to not commit to the real hour-by-hour pattern at all yet, with a distinct, near-empty baseline
+  chart instead of `ActivityPatternChart`'s honest-but-alarming full hatch. R-176 is a **deliberate
+  reversal** of this package's own earlier documented choice ("N unidentified overs" over the
+  artboard's "N unidentified voices" — round two's changelog entry — reasoning that "voices" implies
+  distinct-voice/voiceprint clustering nothing here measures): the lead's explicit ruling on this
+  artboard-vs-honesty tension is followed, with the reasoning kept in `unidentifiedVoicesLabel`'s own
+  kdoc as a labelling choice made by the lead, not a claim this code verifies — every over from an
+  unattributed transmission is one speaker, so the over-count and the board's "voices" wording name
+  the same real count. Principle VI governs R-179's `-NoRestart`: it changes nothing about *what* is
+  measured, only whether the process reading a scenario broadcast is a fresh launch or the one
+  already on screen — documented at length in `results/ui-audit/README.md` so a future validator
+  does not have to re-derive from source that `ScenarioReceiver` updates the same in-process holders
+  either way.
+- **R-172 (halt) — `ReaderPolling.effectiveSessionId(hostSessionId)`**: `CaptureState.sessionId`
+  whenever `CaptureState.isCapturing`, full stop; the host's own `sessionId` argument is a fallback
+  only, for the one case there is genuinely no live session to prefer. `nowViewState`/`captureStatus`
+  now route through it, and `NowContent`/`CaptureStatusContent` both resolve the session fresh every
+  poll tick instead of once at first composition (the old `if (sessionId != null)` outer gate on
+  `CaptureStatusContent` is gone — before this fix a `null` host `sessionId` meant the screen never
+  started polling at all, even once a session genuinely started capturing later in the same
+  composition). Root cause was two independent bugs: the outer gate, and `captureStatus` trusting its
+  `sessionId` argument for every DB-scoped fact while `Input`/`Level`/`Thermal`/`Tier` (process-wide
+  holders) were always correct — producing a coherent-looking but internally inconsistent screen
+  exactly like the validator's screenshot.
+- **R-170 — `ReaderPolling.nightDateFormat` now uses `Locale.getDefault()`**, not `Locale.ROOT`
+  (`Locale.ROOT` has no real month-name data, so `"MMM"` degraded to the literal `"M09"` instead of
+  `"Sep"`). Times/frequencies elsewhere in the file stay `Locale.ROOT` deliberately — only night dates
+  are prose, read in the device's own locale.
+- **R-174 — `NowViewState.Active` gained `overCount: Int`** (both `NowViewStateMapper.active` and the
+  legacy bridge populate it). `NowScreen` now renders a new `FirstSessionChartBaseline` composable
+  (a near-flat bar strip plus "the chart fills as the night goes on", centered between axis labels)
+  instead of `ActivityPatternChart` whenever `overCount == 0` — see the Constitution Check above for
+  why. The `first-session` debug scenario now sets `RigStatus.connected(...)` (145.230/146.960) so
+  `Now-First`'s "listening on 145.230 and 146.960" subtitle is honestly reachable — the mapper
+  already built this text correctly whenever `RigStatus.state` is `Connected`; nothing set it before.
+- **R-175 — `LevelMeterScreen` completed**: `liveBar: LiveBarViewState? = null` + `onOpenLive`
+  parameters, pinned at the bottom the same way `CaptureStatusScreen`/`NowScreen` already do (this
+  closes a real compile error — `CaptureStatusContent` already passed `liveBar` before this
+  parameter existed). `LevelViewState` gained `weakestOverLabel: String?` (see
+  `ReaderPolling.weakestOverLabel`, new) and `bandStateSentence`/`bandStateTone: CaptureStateTone?`
+  (`LevelViewStateMapper` computes the sentence from the real peak vs. the existing fixed target
+  band — "In the band. Nothing to adjust." / "Above the band. Turn the volume down." / "Below the
+  band. Turn the volume up." / "Clipping. Turn the volume down.", a closed set). The chart's
+  right-edge dB axis labels (0 / target-band top / target-band bottom / the real noise floor, when
+  tracked) are new — positioned via `BoxWithConstraints` at the same fractional height the sibling
+  `Canvas` draws its reference lines at, so the label and the line it names can never visually drift
+  apart. The fourth label is the actual measured noise floor, never a fixed "-58" — the artboard's
+  own figure is that particular fixture's real reading, not a constant.
+- **R-176 — `NowViewState.kt`'s `unidentifiedVoicesLabel(count)`** replaces the old inline
+  `"$unidentifiedCount unidentified overs"` string: `"N unidentified voices"` / `"1 unidentified
+  voice"` (correct singular), per the lead's ruling — see the Constitution Check above.
+- **R-171 — `OvernightScenario.overnightLive(context, db)`** (new): the same ~40-over `overnight`
+  fixture, but `SessionEntity.endedAt = null` and `CaptureState` actually `capturing` on that id
+  (via `ScenarioFixtures.markCapturing`, the same primitive `backlog`/`thermal`/`rig-lost` already
+  use) — reaches the populated, *running* shape of `Main.dc.html` (N01) and `Capture-Status.dc.html`
+  (N04) that neither `overnight` (populated but ended) nor `first-session` (running but empty) can
+  reach alone. `build()` gained a `live: Boolean = false` parameter; `overnight`/`gap-call` pass
+  `false` (unchanged behaviour). Registered in `Scenarios.NAMES`/`load()`'s dispatch and documented
+  in `results/ui-audit/README.md`'s scenario table.
+- **R-179 — `tools/ui-audit/scenario.ps1` gained a `-NoRestart` switch**: when set, the app is not
+  force-stopped before the broadcast, so a scenario can be sent into whatever process is already
+  running (and already on screen) instead of a fresh launch. `results/ui-audit/README.md` gained a
+  new "Watching a live transition" section with a worked example and a documented finding: read from
+  `ScenarioReceiver.kt`'s and `Scenarios.kt`'s own source (not just inferred), `ScenarioReceiver` is
+  a plain manifest-registered `BroadcastReceiver` with no IPC boundary of its own — when the
+  broadcast lands in the app's already-running process, `Scenarios.load(...)` calls the exact same
+  process-wide holder singletons (`CaptureState`/`ThermalStatus`/`RigStatus`/`LevelStatus`/
+  `InputStatus`/...) the running UI's own poll loops are already reading, so recovery toasts and
+  degraded→nominal transitions are now genuinely observable this way.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded cleanly onto `59383e0` ("ui-conformance · V2 Capture
+  validation at 3e2d4ee: R-170..R-179 filed…"), confirmed an ancestor first; no rebase, no stash.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** ($env:JAVA_HOME set to
+  the JDK 17 install, $env:ANDROID_HOME to the SDK — the default JRE 8 on PATH cannot run this
+  build's toolchain). `detekt` needed one real pass: `LevelHistoryChart` grew past the `LongMethod`
+  threshold (99 lines, suppressed with the same `@Suppress("LongMethod")` pattern
+  `OvernightScenario.build` already uses) plus two `MaxLineLength` wraps (`NowScreen.kt`,
+  `NowScreenTest.kt`). `ktlintTestSourceSetCheck` needed one auto-format pass
+  (`:app:ktlintMainSourceSetFormat :app:ktlintTestSourceSetFormat`) for `NowContentTest.kt`'s import
+  order; clean after.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 181 covered** (unchanged — register R-ids are not spec FR/AC
+  ids, so this round's new tests do not move this number); `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **835 of 835 passing**, zero
+  failures (the jump from round four's 714 is mostly `main`'s other WPs' work landing via the
+  `--ff-only` merge, not this round's own 14 new tests). New tests, by name: `R_172 effectiveSessionId
+  prefers the real live CaptureState session over the host's own`, `R_172 effectiveSessionId falls
+  back to the host's own sessionId when nothing is capturing` (`ReaderPollingTest`); `R_172 follows
+  CaptureState's live session, never a stale host-supplied sessionId, while capturing`, `R_172 a null
+  host sessionId still polls once a session starts capturing, not stuck idle forever`
+  (`CaptureStatusContentTest`); `R_172 Now follows CaptureState's live session, never the host's
+  stale sessionId argument` (new `NowContentTest.kt`); `R_174 overCount reflects the real over total
+  and is zero for a fresh first session` (`NowViewStateMapperTest`); `R_174 a fresh zero over session
+  shows the flat chart baseline, never the hatched pattern` (`NowScreenTest`); `R_175 weakestOverLabel
+  is the lowest recorded signal strength this session, honestly null otherwise`, `R_175
+  weakestOverLabel is honestly null when no over this session recorded a signal strength`
+  (`ReaderPollingTest`); `R_175 weakestOverLabel is carried straight through, honestly null when the
+  caller has none`, `R_175 the band-state sentence reads in-band, above, below or clipping per the
+  real peak` (`LevelViewStateMapperTest`); `R_175 the weakest-over row, the band-state sentence and
+  the pinned live bar all render`, `R_175 the weakest-over row is honestly absent, never a fabricated
+  zero, when no over recorded a signal` (`LevelMeterScreenTest`); `R_176 the unidentified count reads
+  voices per the board, singular for exactly one` (`NowViewStateMapperTest`).
+
+**Left open / not done:**
+- **R-179's "recovery toasts can be validated" is enabled, not itself proven here** — this round adds
+  the mechanism (`-NoRestart`) and documents that `ScenarioReceiver` updates holders in-process from
+  source, but running an actual `-NoRestart` session against a booted emulator to watch a toast fire
+  is a validator (V2/V-follow-up) action, outside this package's own gate.
+- **`gap-call`'s own F15 gap remains** (documented pre-existing, `results/ui-audit/README.md`'s
+  "Known gaps"): `overnight-live` reaches the populated-and-running shape R-171 asked for, but does
+  not itself carry a `CaptureGapCause.CALL` gap, so F15's banner specifically still needs either a
+  future `gap-call`-plus-`live` variant or a small change to `gap-call` itself — not asked for this
+  round, noted so a future pass does not assume it is already covered.
+- **R-175's weakest-over row reads this *session's* transmissions only** (via `ReaderPolling
+  .weakestOverLabel`), matching "tonight's overs" in the register's own wording — it does not (and
+  should not) aggregate across prior nights.
+
 ## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)
 
 ### (pending) — ui-conformance WP9 · setup step entry and Install destination

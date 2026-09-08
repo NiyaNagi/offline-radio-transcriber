@@ -85,6 +85,7 @@ public object Scenarios {
         "empty",
         "first-session",
         "overnight",
+        "overnight-live",
         "unclean-end",
         "os-stopped",
         "gap-call",
@@ -123,6 +124,7 @@ public object Scenarios {
             "empty" -> empty(db)
             "first-session" -> firstSession(context, db)
             "overnight" -> OvernightScenario.overnight(context, db)
+            "overnight-live" -> OvernightScenario.overnightLive(context, db)
             "gap-call" -> OvernightScenario.gapCall(context, db)
             "unclean-end" -> uncleanEnd(context, db)
             "os-stopped" -> osStopped(context, db)
@@ -238,6 +240,17 @@ public object Scenarios {
         val startedAt = SystemClock.wallMillis() - 3 * 60_000L
         db.sessionDao().insert(ScenarioFixtures.session(id, startedAt = startedAt, endedAt = null))
         ScenarioFixtures.markCapturing(context, id)
+        // R-174: `Now-First.dc.html`'s subtitle reads "listening on 145.230 and 146.960" —
+        // `NowViewStateMapper.active` only ever says that when `RigStatus.state` is actually
+        // `Connected` (`ReaderPolling.activeNowViewState`'s own `listeningOnLabel`), so a scenario
+        // that never sets it renders an honestly-blank subtitle instead, not this artboard's text.
+        RigStatus.connected(
+            descriptor = "TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = false),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+        )
         return LoadResult(0, 1, id)
     }
 

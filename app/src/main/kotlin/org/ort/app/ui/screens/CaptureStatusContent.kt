@@ -43,28 +43,48 @@ private enum class CaptureStatusSubScreen { NONE, LEVEL_METER }
  * entry (N06 is never a standalone destination — see that screen's own kdoc), polled at the same
  * cadence as the status; its `DrillInHeader` back returns here.
  *
- * [sessionId] `null` (no active or prior session) renders the idle facts honestly rather than
- * polling a session that does not exist — the same rule [NowContent] follows.
+ * R-172: [sessionId] is a fallback only, and the poll loop is unconditional (never gated on
+ * [sessionId] being non-null) — see [ReaderPolling.effectiveSessionId]'s own kdoc. Before this
+ * fix, a `null` [sessionId] at first composition meant this screen would never start polling at
+ * all, even once a session genuinely started capturing later in the same composition (R-171's
+ * `overnight-live` scenario, broadcast while the reader is already open); a non-null [sessionId]
+ * that later stopped matching the live session meant it kept polling the *wrong* one forever
+ * instead of falling back to the honest idle facts. Both are fixed by resolving the session to
+ * read fresh, every tick, rather than once.
  */
 @Composable
 public fun CaptureStatusContent(context: Context, sessionId: String?, modifier: Modifier = Modifier) {
     var sub by remember { mutableStateOf(CaptureStatusSubScreen.NONE) }
     var state by remember { mutableStateOf(idleCaptureStatus()) }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
-    var levelState by remember { mutableStateOf(currentLevelViewState()) }
+    // Not [currentLevelViewState] (suspend, R-175 reads the session's overs) — the first frame
+    // renders the same honest LevelStatus-only snapshot it always has; the LaunchedEffect below
+    // fills in the weakest-over label and band-state sentence on its very first tick.
+    var levelState by remember {
+        mutableStateOf(
+            LevelViewStateMapper.from(
+                level = LevelStatus.state,
+                history = LevelStatus.peakHistoryDbfs,
+                inputLabel = levelInputLabel(),
+            ),
+        )
+    }
 
-    if (sessionId != null) {
-        LaunchedEffect(sessionId) {
-            while (true) {
-                state = ReaderPolling.captureStatus(context, sessionId)
-                liveBar = if (CaptureState.isCapturing) LiveBarPolling.current(context, sessionId) else null
-                // R-039: read alongside the status, at the same 2 s cadence — LevelStatus is a
-                // process-wide holder (like every other capture signal here), not session-scoped,
-                // so it is safe (and cheap) to sample every tick regardless of which sub-screen is
-                // showing, rather than starting a second poll loop when the meter opens.
-                levelState = currentLevelViewState()
-                delay(POLL_INTERVAL_MILLIS)
+    LaunchedEffect(sessionId) {
+        while (true) {
+            val effectiveSessionId = ReaderPolling.effectiveSessionId(sessionId)
+            state = if (effectiveSessionId != null) {
+                ReaderPolling.captureStatus(context, effectiveSessionId)
+            } else {
+                idleCaptureStatus()
             }
+            liveBar = if (CaptureState.isCapturing) LiveBarPolling.current(context, effectiveSessionId) else null
+            // R-039: read alongside the status, at the same 2 s cadence — LevelStatus is a
+            // process-wide holder (like every other capture signal here), not session-scoped,
+            // so it is safe (and cheap) to sample every tick regardless of which sub-screen is
+            // showing, rather than starting a second poll loop when the meter opens.
+            levelState = currentLevelViewState(context, effectiveSessionId)
+            delay(POLL_INTERVAL_MILLIS)
         }
     }
 
@@ -73,6 +93,7 @@ public fun CaptureStatusContent(context: Context, sessionId: String?, modifier: 
             LevelMeterScreen(
                 state = levelState,
                 modifier = modifier,
+                liveBar = liveBar,
                 onBack = { sub = CaptureStatusSubScreen.NONE },
             )
 
@@ -124,12 +145,15 @@ private fun idleCaptureStatus(): CaptureStatusViewState = CaptureStatusMapper.fr
 
 /** [LevelStatus.state]/[LevelStatus.peakHistoryDbfs] read together, matching that object's own
  * "always read alongside each other" rule (see its kdoc), with the same device-name convention
- * the Input row uses. */
-private fun currentLevelViewState(): LevelViewState = LevelViewStateMapper.from(
-    level = LevelStatus.state,
-    history = LevelStatus.peakHistoryDbfs,
-    inputLabel = levelInputLabel(),
-)
+ * the Input row uses. [weakestOverLabel] (R-175) is `null` — an honest absence, not a query
+ * failure — whenever there is no live session to read tonight's overs from. */
+private suspend fun currentLevelViewState(context: Context, sessionId: String?): LevelViewState =
+    LevelViewStateMapper.from(
+        level = LevelStatus.state,
+        history = LevelStatus.peakHistoryDbfs,
+        inputLabel = levelInputLabel(),
+        weakestOverLabel = sessionId?.let { ReaderPolling.weakestOverLabel(context, it) },
+    )
 
 private fun levelInputLabel(): String {
     val deviceName = when (val input = InputStatus.state) {

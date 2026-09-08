@@ -78,6 +78,13 @@ public data class LevelViewState(
     val clippedLastSecondLabel: String?,
     /** Oldest-first, up to 60 entries — [LevelStatus.peakHistoryDbfs] carried straight through. */
     val historyDbfs: List<Float>,
+    /** R-175: `null` when no over this session recorded a signal strength at all — see
+     * [ReaderPolling.weakestOverLabel]'s own kdoc for why this is never a fabricated dBFS pairing. */
+    val weakestOverLabel: String? = null,
+    /** R-175: the bottom state sentence with its dot ("In the band. Nothing to adjust.") — `null`
+     * exactly when [notMeasuredReason] is non-null (nothing to judge against the target band yet). */
+    val bandStateSentence: String? = null,
+    val bandStateTone: CaptureStateTone? = null,
     val notMeasuredReason: String?,
 ) {
     public companion object {
@@ -104,10 +111,19 @@ public data class LevelViewState(
 
 public object LevelViewStateMapper {
 
-    /** [history] is [LevelStatus.peakHistoryDbfs] — read alongside [LevelStatus.state] by the
+    /**
+     * [history] is [LevelStatus.peakHistoryDbfs] — read alongside [LevelStatus.state] by the
      * caller (never derived here), so both always belong to the same snapshot (see that object's
-     * own kdoc on why they are read together). */
-    public fun from(level: LevelStatus.State, history: List<Float>, inputLabel: String): LevelViewState = when (level) {
+     * own kdoc on why they are read together). [weakestOverLabel] is
+     * [ReaderPolling.weakestOverLabel]'s own result, threaded through rather than queried here —
+     * this mapper stays pure, no `Context`.
+     */
+    public fun from(
+        level: LevelStatus.State,
+        history: List<Float>,
+        inputLabel: String,
+        weakestOverLabel: String? = null,
+    ): LevelViewState = when (level) {
         LevelStatus.State.NotMeasured -> LevelViewState.notMeasured(inputLabel)
         is LevelStatus.State.Measured -> LevelViewState(
             inputLabel = inputLabel,
@@ -117,8 +133,30 @@ public object LevelViewStateMapper {
             headroomLabel = "%.0f dB".format(Locale.ROOT, LevelViewState.CHART_CEILING_DBFS - level.peakDbfs),
             clippedLastSecondLabel = "${level.clipCountLastSecond}",
             historyDbfs = history,
+            weakestOverLabel = weakestOverLabel,
+            bandStateSentence = bandStateSentence(level),
+            bandStateTone = bandStateTone(level),
             notMeasuredReason = null,
         )
+    }
+
+    /**
+     * R-175: `Level-Meter.dc.html`'s bottom sentence — the one place this screen tells the operator
+     * whether the radio's volume knob needs turning, judged against [LevelViewState]'s own fixed
+     * target band, never a fabricated recommendation beyond what [level] actually measured.
+     */
+    private fun bandStateSentence(level: LevelStatus.State.Measured): String = when {
+        level.clipped -> "Clipping. Turn the volume down."
+        level.peakDbfs > LevelViewState.TARGET_BAND_TOP_DBFS -> "Above the band. Turn the volume down."
+        level.peakDbfs < LevelViewState.TARGET_BAND_BOTTOM_DBFS -> "Below the band. Turn the volume up."
+        else -> "In the band. Nothing to adjust."
+    }
+
+    private fun bandStateTone(level: LevelStatus.State.Measured): CaptureStateTone = when {
+        level.clipped -> CaptureStateTone.HALTED
+        level.peakDbfs > LevelViewState.TARGET_BAND_TOP_DBFS -> CaptureStateTone.DEGRADED
+        level.peakDbfs < LevelViewState.TARGET_BAND_BOTTOM_DBFS -> CaptureStateTone.DEGRADED
+        else -> CaptureStateTone.NOMINAL
     }
 }
 

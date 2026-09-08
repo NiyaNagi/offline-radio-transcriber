@@ -6,15 +6,20 @@ import java.util.Locale
 
 /**
  * The "Now" home's full render-ready state (ui-conformance-plan WP4, R-030/R-033/R-036/R-037,
- * `Main.dc.html`/`Now-Idle.dc.html`/`Now-First.dc.html`) — [org.ort.app.ui.screens.NowScreen] is a
- * pure function of one of these, no `Context`.
+ * R-174, `Main.dc.html`/`Now-Idle.dc.html`/`Now-First.dc.html`) —
+ * [org.ort.app.ui.screens.NowScreen] is a pure function of one of these, no `Context`.
  *
  * The three artboards are three shapes of the same screen, not three screens: [Idle] (no session
  * running), and [Active] for both `Main.dc.html` (a populated running/ended session) and
  * `Now-First.dc.html` (a session that has just started, nothing heard yet — [Active] with
- * `overCount == 0`, distinguished by [sessionTitle] and every list being honestly empty rather
- * than by a fourth sealed case, since every field the two artboards differ on is already a value
- * this type carries).
+ * `overCount == 0`). [overCount] (R-174) is what [org.ort.app.ui.screens.NowScreen] switches on to
+ * render `Now-First`'s flat chart baseline instead of [activityPattern]'s real hour-by-hour
+ * pattern: a session three minutes old genuinely has not listened through the other 23 hours of
+ * the day, so [activityPattern] would honestly render them all as the full-height not-listening
+ * hatch (FR-UI-12) — accurate, but exactly the alarming full-width hatch `Now-First.dc.html`
+ * deliberately does not show this early. The fix is not to fabricate 23 hours of "quiet, but
+ * listened-through" (that would be the actual lie), it is to not commit to the real pattern at all
+ * yet — see `NowScreen`'s own `FirstSessionChartBaseline`.
  */
 public sealed interface NowViewState {
 
@@ -28,10 +33,11 @@ public sealed interface NowViewState {
         val canGetBetter: CanGetBetterRow?,
     ) : NowViewState
 
-    /** `Main.dc.html` (populated) and `Now-First.dc.html` (nothing heard yet). */
+    /** `Main.dc.html` (populated) and `Now-First.dc.html` (`overCount == 0`). */
     public data class Active(
         val sessionTitle: String,
         val summaryLabel: String,
+        val overCount: Int,
         val activityPattern: List<HourActivityBucket>,
         val axisStartLabel: String?,
         val axisEndLabel: String?,
@@ -133,6 +139,7 @@ public object NowViewStateMapper {
         return NowViewState.Active(
             sessionTitle = sessionTitle,
             summaryLabel = summaryLabel,
+            overCount = overCount,
             activityPattern = pattern,
             axisStartLabel = hourLabel(sessionStartedAtUtc),
             axisEndLabel = (sessionEndedAtUtc ?: nowMillis).let { hourLabel(it) },
@@ -182,6 +189,7 @@ public object NowViewStateMapper {
         NowViewState.Active(
             sessionTitle = if (overCount == 0) "Tonight" else "Overnight",
             summaryLabel = "$overCount overs · $stationCount stations",
+            overCount = overCount,
             activityPattern = emptyList(),
             axisStartLabel = null,
             axisEndLabel = null,
@@ -263,10 +271,21 @@ public object NowViewStateMapper {
         return NowStationsSection(
             totalCount = rows.size,
             rows = rows,
-            unidentifiedLabel = if (unidentifiedCount > 0) "$unidentifiedCount unidentified overs" else null,
+            unidentifiedLabel = if (unidentifiedCount > 0) unidentifiedVoicesLabel(unidentifiedCount) else null,
             emptyMessage = if (rows.isEmpty() && unidentifiedCount == 0) "None yet." else null,
         )
     }
+
+    /**
+     * R-176: `Main.dc.html` says "voices", not "overs" — every over from an unattributed
+     * transmission is, on the air, one speaker, so counting overs here is the same count the
+     * board's wording implies. It is not a distinct-voice/voiceprint-clustering count (this
+     * package reads no such signal — [NowStationsSection]'s own doc comment says so), so two
+     * unidentified overs from what was actually the same unknown speaker still read as
+     * "2 unidentified voices" here, same as the board's own literal wording — a labelling choice
+     * made by the design lead (R-176), not a claim this code verifies.
+     */
+    private fun unidentifiedVoicesLabel(count: Int): String = "$count unidentified voice" + if (count == 1) "" else "s"
 
     private fun notListeningLabel(gaps: List<GapWindow>): String? {
         val totalSeconds = gaps.sumOf { ((it.endedAt ?: it.startedAt) - it.startedAt) / 1000 }

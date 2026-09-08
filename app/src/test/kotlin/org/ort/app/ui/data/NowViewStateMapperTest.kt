@@ -189,7 +189,68 @@ class NowViewStateMapperTest {
             missingModel = missingModel(),
             listeningOnLabel = null,
         )
-        assertEquals("2 unidentified overs", view.stations.unidentifiedLabel)
+        assertEquals("2 unidentified voices", view.stations.unidentifiedLabel)
+    }
+
+    @Test
+    @Requirement("R-176")
+    fun `R_176 the unidentified count reads voices per the board, singular for exactly one`() {
+        val plural = NowViewStateMapper.active(
+            details = listOf(detail("TX1", Attribution.unknown()), detail("TX2", Attribution.ambiguous())),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = null,
+            nowMillis = 0L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertEquals("2 unidentified voices", plural.stations.unidentifiedLabel)
+
+        val singular = NowViewStateMapper.active(
+            details = listOf(detail("TX1", Attribution.unknown())),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = null,
+            nowMillis = 0L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertEquals("1 unidentified voice", singular.stations.unidentifiedLabel)
+    }
+
+    @Test
+    @Requirement("R-174")
+    fun `R_174 overCount reflects the real over total and is zero for a fresh first session`() {
+        val fresh = NowViewStateMapper.active(
+            details = emptyList(),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = null,
+            nowMillis = 0L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = "listening on 145.230 and 146.960",
+        )
+        assertEquals(0, fresh.overCount)
+        assertEquals("0 overs · listening on 145.230 and 146.960", fresh.summaryLabel)
+
+        val populated = NowViewStateMapper.active(
+            details = listOf(detail("TX1", Attribution.confirmed("W7NPC", 0.9))),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = null,
+            nowMillis = 0L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertEquals(1, populated.overCount)
     }
 
     @Test

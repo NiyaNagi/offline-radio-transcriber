@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
-  spec/ui-conformance-plan.md WP0, register R-111 - force-stops the app, fires the debug scenario
-  broadcast (register R-110), and waits for ScenarioReceiver's confirming logcat line.
+  spec/ui-conformance-plan.md WP0, register R-111/R-179 - force-stops the app (unless -NoRestart),
+  fires the debug scenario broadcast (register R-110), and waits for ScenarioReceiver's confirming
+  logcat line.
 
 .DESCRIPTION
   Prints the loaded scenario's primary session id (from `ScenarioReceiver`'s own
@@ -10,13 +11,35 @@
 
     adb -s emulator-<port> shell am start -n org.ort.app/.ui.ReaderActivity --es session_id <id>
 
+  R-179: the default force-stop makes a *running UI* an impossible witness to a scenario's own
+  effect — force-stop kills the process the broadcast would otherwise land in, so a validator can
+  never watch a screen already on-screen transition live (a degraded banner clearing, a recovery
+  toast, a poll picking up a session that just started capturing). Pass -NoRestart to send the same
+  broadcast to whatever process is already running instead: `ScenarioReceiver` is a plain manifest-
+  registered receiver in the app's own process (`app/src/debug/AndroidManifest.xml`), so when the
+  app is already running the broadcast is delivered into that same process and
+  `Scenarios.load(...)` updates the same process-wide holders (`CaptureState`, `ThermalStatus`,
+  `RigStatus`, `LevelStatus`, `InputStatus`, ...) the running UI's own poll loops are already
+  reading — nothing about the mechanism differs, only whether the process reading the result is the
+  one already on screen. With -NoRestart the app must already be running and in the foreground (or
+  at least not force-stopped) for the broadcast to be delivered at all — Android does not wake a
+  genuinely stopped app for an explicit broadcast either, once it has actually stopped.
+
 .EXAMPLE
   .\scenario.ps1 -Port 5554 -Name overnight
+
+.EXAMPLE
+  # Load a first scenario normally, launch the reader, then broadcast a second scenario without
+  # restarting so the already-open UI can be watched transitioning live.
+  .\scenario.ps1 -Port 5554 -Name thermal
+  adb -s emulator-5554 shell am start -n org.ort.app/.ui.ReaderActivity
+  .\scenario.ps1 -Port 5554 -Name empty -NoRestart
 #>
 param(
     [Parameter(Mandatory = $true)][int]$Port,
     [Parameter(Mandatory = $true)][string]$Name,
-    [int]$TimeoutSeconds = 60
+    [int]$TimeoutSeconds = 60,
+    [switch]$NoRestart
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,8 +50,13 @@ $adb = Join-Path $androidHome "platform-tools\adb.exe"
 $serial = "emulator-$Port"
 $packageId = "org.ort.app"
 
-Write-Output "Force-stopping $packageId on $serial..."
-& $adb -s $serial shell am force-stop $packageId
+if ($NoRestart) {
+    Write-Output "Skipping force-stop of $packageId on $serial (-NoRestart) - broadcasting into whatever is already running."
+}
+else {
+    Write-Output "Force-stopping $packageId on $serial..."
+    & $adb -s $serial shell am force-stop $packageId
+}
 
 # Clear logcat first so the confirming line below is unambiguous - a prior scenario's run cannot
 # be mistaken for this one's.
