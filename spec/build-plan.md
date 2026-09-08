@@ -187,7 +187,12 @@ are individually green.*
   **Not done here, by design:** the `:app` call site that mints `NetCapability.UserInitiated` and
   actually downloads the models P12 is waiting on — see CHANGELOG.md. **Update 2026-09-07 (audit
   F-024):** `RealHttpRangeClient` now has an automated loopback test (`ServerSocket`-based, not
-  `jdk.httpserver`) and a real truncated-body bug it caught is fixed — see CHANGELOG.md.
+  `jdk.httpserver`) and a real truncated-body bug it caught is fixed — see CHANGELOG.md. **Update
+  2026-09-07 (audit F-008, `:net` half):** `net/src/main/AndroidManifest.xml` now declares
+  `android.permission.INTERNET` (it declared none before, so even the still-missing `:app` call
+  site would have failed at runtime with a `SecurityException`); `platformGuards` gained a rule
+  that fails the build if `:net` itself lacks the permission, not just if another module has it.
+  The `:app` call site remains the other half of F-008, unbuilt.
 
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not

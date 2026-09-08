@@ -32,6 +32,63 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-008, `:net` half)
+
+### (pending) — audit F-008 · `:net`'s manifest now grants INTERNET, and `platformGuards` fails the build if it ever stops
+
+**Scope:** `:net` (`src/main/AndroidManifest.xml`, new `src/test/kotlin/org/ort/net/NetManifestPermissionTest.kt`,
+`README.md`); `buildSrc` (`PlatformGuards.kt`, `PlatformGuardsTask.kt`, and an unrelated
+pre-existing compile break in `PlatformGuardsTest.kt`'s sibling file `CoverageMatrixTest.kt` fixed
+incidentally — see "What changed"). This is the `:net` half only; the `:app` call site that mints
+`NetCapability.UserInitiated` and drives `ModelAcquisition.fetch()` from a real user action is
+still unbuilt (tracked as the other half of F-008).
+
+**Requirements/ACs:** FR-ASR-1, AC-59, NFR-6; constitution V (exactly two declared outbound
+channels — the user-initiated download must be able to exist, not just be exclusive).
+
+**What changed:**
+- `net/src/main/AndroidManifest.xml` was `<manifest />` — no permission at all. It now declares
+  `android.permission.INTERNET`, with a comment citing constitution V and technical design §8.4.
+  Without this, `ModelAcquisition.fetch()` would fail at runtime with a `SecurityException` the
+  moment an `:app` call site exists, regardless of how correct that call site was.
+- `PlatformGuards.missingInternetPermissionViolations()` (new): the existing
+  `internetPermissionViolations()` only ever asserted exclusivity — it is satisfied vacuously if
+  *nobody*, `:net` included, declares the permission. The new function fails when `:net`'s own
+  manifest lacks the grant, closing that gap. Wired into `PlatformGuardsTask.check()` so
+  `./gradlew platformGuards` fails on either direction of the mistake.
+- `net/src/test/kotlin/org/ort/net/NetManifestPermissionTest.kt` (new): reads the manifests on
+  disk directly (not through the Gradle build script) and asserts the same thing from inside
+  `:net` — `NFR_6_the_INTERNET_permission_is_declared_by_net_and_only_net` plus a companion
+  assertFalse-style test over every other module's manifest text.
+- `net/README.md` gained a paragraph documenting where the permission lives and why, and what
+  enforces it in both directions.
+- Incidental, unrelated fix: `buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt` had
+  a missing closing brace (a pre-existing merge artifact, not connected to this finding) that
+  broke compilation of the entire `buildSrc` test source set, which meant `./gradlew -p buildSrc
+  test` could not run at all — including the new `PlatformGuardsTest` cases this change needed to
+  verify. Fixed with a one-line brace insertion; no test logic in that file was changed.
+
+**Verified:**
+- `./gradlew -p buildSrc test --console=plain -q` — green, all buildSrc tests pass including the
+  three new `PlatformGuardsTest` cases (`F_008_constitution_V_...`). Confirmed failing first with
+  `Unresolved reference: missingInternetPermissionViolations` before the function was written.
+- `./gradlew :net:test --console=plain` — green, 17 tests including the two new
+  `NetManifestPermissionTest` cases. Confirmed the manifest-declaration test failing first
+  (`AssertionFailedError: ... expected: <true> but was: <false>`) against `net`'s original
+  `<manifest />`, by reverting the manifest, re-running, and restoring it.
+- `./gradlew platformGuards --console=plain` — green: "checked 17 modules' external dependencies
+  and 17 manifests — ... android.permission.INTERNET declared by :net and only :net".
+- All of the above are JVM/Robolectric-free plain-file and unit-test checks. **No on-device
+  download has been verified** — that requires the still-missing `:app` call site plus a real
+  device or emulator with network access, neither attempted here.
+
+**Left open / not done:**
+- The `:app` half of F-008 (a Settings/"Improve" action, `NetCapability.UserInitiated`, wiring
+  `ModelAcquisition.fetch()` into `RealAsrEngineProvider`/`RealVadProvider`) is untouched — F-008
+  stays OPEN in `results/audit-2026-09-07.md` (not edited here; the auditor owns it) until that
+  half lands too.
+- On-device model download is unverified, structurally — no device test exists yet.
+
 ## 2026-09-07 (audit — F-007)
 
 ### (pending) — audit F-007 · RealCaptureService now ticks a real ShedController, persists shed events, and stops loudly at a storage floor

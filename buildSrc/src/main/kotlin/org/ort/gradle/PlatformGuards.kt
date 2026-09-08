@@ -57,4 +57,29 @@ object PlatformGuards {
                 ManifestViolation(module, "declares android.permission.INTERNET outside $allowedModule (AC-59, NFR-6)")
             }
             .sortedBy { it.module }
+
+    /**
+     * Audit F-008 — exclusivity is not the whole requirement: constitution V names a
+     * user-initiated download as one of exactly two declared outbound channels, so the channel
+     * MUST exist, not merely be the only one that could. [internetPermissionViolations] alone is
+     * satisfied vacuously if nobody, including `:net`, declares the permission; this catches
+     * that case, which would otherwise leave `ModelAcquisition.fetch()` failing at runtime with
+     * no build-time signal at all.
+     */
+    fun missingInternetPermissionViolations(
+        manifestTextByModule: Map<String, String>,
+        requiredModule: String = ":net",
+    ): List<ManifestViolation> {
+        val declares = manifestTextByModule[requiredModule]?.contains("android.permission.INTERNET") ?: false
+        return if (declares) {
+            emptyList()
+        } else {
+            listOf(
+                ManifestViolation(
+                    requiredModule,
+                    "does not declare android.permission.INTERNET — the declared channel must exist (constitution V, F-008)",
+                ),
+            )
+        }
+    }
 }
