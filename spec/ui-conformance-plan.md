@@ -86,7 +86,8 @@ create or edit; anything else is off limits.
 | **WP8** | Stations + frequencies | `ui/screens/StationScreen.kt`, `ui/screens/FrequencyScreen.kt`, `ui/data/StationsAndFrequencies.kt`, `ui/data/ActivityPattern.kt` | WP2 |
 | **WP9** | Setup sequence | new `ui/setup/**`, `permissions/**` | WP1, WP2 |
 | **WP10** | Settings, improve, digest, sessions | `ui/settings/**` (including `ModelsContent.kt` once WP3 has moved it), `ui/screens/ModelsScreen.kt`, `ui/data/ModelsViewData.kt`, new `ui/improve/**`, `ui/digest/**` | WP2, WP3 |
-| **WP11** | Failure states wiring | new `ui/failures/**` (one composable per F-id, fed by a `FailureEvent` flow), `pipeline/**` only where an event must be *emitted* (list per file in the brief) | WP2, WP4 |
+| **WP11a** | Failure *signals* — the non-UI half | `pipeline/src/main/kotlin/org/ort/pipeline/capture/{ThermalStatus,RigStatus,StorageForecast}.kt` (new holders on the `ShedStatus` pattern), `RealCaptureService.kt` (wiring and the notification only), `pipeline/.../GapPersister.kt`, `:capture-android`'s `CaptureNotificationBuilder.kt` (non-transcript fields only — AC-61 stays structural) and `AndroidShedSignals.kt`; the `CaptureGapCause` enum in `:data` (lead-approved exception, R-106); `app/src/debug/**` to add the `thermal` / `rig-lost` / `storage-warn` scenarios; tests beside each | WP0 |
+| **WP11b** | Failure *screens* | new `ui/failures/**` (one composable per F-id, fed by the WP11a holders) | WP2, WP4, WP11a |
 
 Rules every builder follows, restated because they are the ones most often skipped:
 
