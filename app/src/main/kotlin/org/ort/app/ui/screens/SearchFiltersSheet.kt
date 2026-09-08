@@ -1,35 +1,25 @@
 package org.ort.app.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.CheckboxRow
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.Sheet
+import org.ort.app.ui.components.TextField
 import org.ort.app.ui.data.SearchFacetCounts
 import org.ort.app.ui.data.SearchFacetFilter
 import org.ort.app.ui.data.SearchFilterInput
@@ -93,11 +83,12 @@ public fun SearchFiltersSheet(
 @Composable
 private fun CallsignSection(input: SearchFilterInput, onInputChange: (SearchFilterInput) -> Unit) {
     SectionLabel("Callsign")
-    MonoField(
+    TextField(
         value = input.callsign,
         onValueChange = { onInputChange(input.copy(callsign = it)) },
-        hint = "prefix match",
-        contentDescription = "Callsign prefix filter",
+        mono = true,
+        placeholder = "prefix match",
+        contentDescriptionText = "Callsign prefix filter",
         modifier = Modifier.padding(top = OrtSpacing.sm, bottom = OrtSpacing.xs),
     )
 }
@@ -115,11 +106,12 @@ private fun FrequencyAndBandSection(input: SearchFilterInput, onInputChange: (Se
             )
         }
     }
-    MonoField(
+    TextField(
         value = input.frequencyMhz,
         onValueChange = { onInputChange(input.copy(frequencyMhz = it)) },
-        hint = "exact MHz",
-        contentDescription = "Exact frequency filter",
+        mono = true,
+        placeholder = "exact MHz",
+        contentDescriptionText = "Exact frequency filter",
         modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.xs),
     )
 }
@@ -141,20 +133,28 @@ private fun TimeSection(input: SearchFilterInput, onInputChange: (SearchFilterIn
             modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.xs),
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
         ) {
-            MonoField(
-                value = input.rangeFromLocal,
-                onValueChange = { onInputChange(input.copy(rangeFromLocal = it)) },
-                hint = "from",
-                contentDescription = "Range start",
-                modifier = Modifier.weight(1f),
-            )
-            MonoField(
-                value = input.rangeToLocal,
-                onValueChange = { onInputChange(input.copy(rangeToLocal = it)) },
-                hint = "to",
-                contentDescription = "Range end",
-                modifier = Modifier.weight(1f),
-            )
+            // `TextField`'s outer wrapper always `fillMaxWidth()`s itself (the modifier passed in
+            // lands on the inner field only — its own KDoc), so `weight(1f)` given directly to it
+            // is silently dropped; a `Box(Modifier.weight(1f))` around each gives the two fields
+            // an even split of the row instead of one claiming it all.
+            Box(modifier = Modifier.weight(1f)) {
+                TextField(
+                    value = input.rangeFromLocal,
+                    onValueChange = { onInputChange(input.copy(rangeFromLocal = it)) },
+                    mono = true,
+                    placeholder = "from",
+                    contentDescriptionText = "Range start",
+                )
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                TextField(
+                    value = input.rangeToLocal,
+                    onValueChange = { onInputChange(input.copy(rangeToLocal = it)) },
+                    mono = true,
+                    placeholder = "to",
+                    contentDescriptionText = "Range end",
+                )
+            }
         }
     }
 }
@@ -248,48 +248,4 @@ private fun SectionLabel(text: String, modifier: Modifier = Modifier, topPadding
         color = OrtColors.textFaint,
         modifier = modifier.padding(top = topPadding),
     )
-}
-
-/** `Search-Filters.dc.html`'s `.fld`: `bg/screen` on the sheet's `bg/raised`, `line/strong` border,
- * 8px radius, 44dp tall, mono value, a dim trailing/leading [hint]. Used for every free-text field
- * in the sheet (callsign prefix, exact frequency, the range from/to pair) — never a bare
- * Material `TextField`, which does not match the artboard's inset look. */
-@Composable
-private fun MonoField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    hint: String,
-    contentDescription: String,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(44.dp)
-            .background(OrtColors.bgScreen, RoundedCornerShape(8.dp))
-            .border(1.dp, OrtColors.lineStrong, RoundedCornerShape(8.dp))
-            .padding(horizontal = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(modifier = Modifier.weight(1f)) {
-            // The content description belongs on the text field itself, not the wrapping Row: a
-            // Row has no RequestFocus/text-input semantics action of its own to merge one into, so
-            // a description placed on it instead of the field silently makes the field unreachable
-            // by `performTextInput` (found by SearchScreen.kt's own query field, which puts its
-            // description directly on the `BasicTextField` — the pattern this now matches).
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                textStyle = TextStyle(
-                    color = OrtColors.textHigh,
-                    fontFamily = OrtType.mono,
-                    fontSize = OrtType.control.fontSize,
-                ),
-                singleLine = true,
-                cursorBrush = SolidColor(OrtColors.accentGreen),
-                modifier = Modifier.semantics { this.contentDescription = contentDescription },
-            )
-        }
-        Text(text = hint, style = OrtType.axis, color = OrtColors.textLow)
-    }
 }

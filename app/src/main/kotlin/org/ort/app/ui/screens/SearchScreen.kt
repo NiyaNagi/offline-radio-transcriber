@@ -1,7 +1,6 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,10 +13,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -25,17 +20,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
@@ -47,6 +38,8 @@ import org.ort.app.ui.components.LogRowBadge
 import org.ort.app.ui.components.LogRowViewState
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
+import org.ort.app.ui.components.TextField
+import org.ort.app.ui.data.MatchHighlighter
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.RecentSearchEntry
 import org.ort.app.ui.data.SearchFacetCounts
@@ -102,7 +95,7 @@ public fun SearchScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = OrtSpacing.lg),
         ) {
-            SearchHeaderRow(input = input, result = result, onInputChange = onInputChange, onSearch = onSearch)
+            SearchHeaderRow(input = input, onInputChange = onInputChange, onSearch = onSearch)
             QuickFilterChipsRow(
                 input = input,
                 onInputChange = onInputChange,
@@ -129,7 +122,7 @@ public fun SearchScreen(
                     onSearch = onSearch,
                     input = input,
                 )
-                else -> ResultsState(result = result, onOpen = onOpen)
+                else -> ResultsState(result = result, query = input.text, onOpen = onOpen)
             }
         }
 
@@ -152,78 +145,61 @@ public fun SearchScreen(
 @Composable
 private fun SearchHeaderRow(
     input: SearchFilterInput,
-    result: SearchResult?,
     onInputChange: (SearchFilterInput) -> Unit,
     onSearch: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
+            .testTag("search-query-field"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
         val mono = isCallsignLike(input.text) || isFrequencyLike(input.text)
-        val struckThrough = result?.textSearchUnavailable == true
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(44.dp)
-                .background(OrtColors.bgRaised, RoundedCornerShape(8.dp))
-                .border(
-                    1.dp,
-                    if (struckThrough) OrtColors.bannerAmberBorder else OrtColors.lineStrong,
-                    RoundedCornerShape(8.dp),
-                )
-                .padding(horizontal = 13.dp)
-                .testTag("search-query-field"),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                Icon(
-                    imageVector = OrtIcons.search,
-                    contentDescription = null,
-                    tint = OrtColors.textFaint,
-                    modifier = Modifier.width(15.dp).height(15.dp),
-                )
-                Box(modifier = Modifier.weight(1f)) {
-                    if (input.text.isEmpty()) {
-                        Text(
-                            text = "Search transcripts, callsigns, frequencies",
-                            style = OrtType.control,
-                            color = OrtColors.textSignal,
-                        )
-                    }
-                    BasicTextField(
-                        value = input.text,
-                        onValueChange = { onInputChange(input.copy(text = it)) },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            color = OrtColors.textHigh,
-                            fontFamily = if (mono) OrtType.mono else OrtType.sans,
-                            fontSize = OrtType.control.fontSize,
-                            textDecoration = if (struckThrough) TextDecoration.LineThrough else null,
-                        ),
-                        cursorBrush = SolidColor(OrtColors.accentGreen),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .semantics { contentDescription = "Search text" },
-                    )
-                }
-                if (input.text.isNotEmpty()) {
-                    Icon(
-                        imageVector = OrtIcons.dismiss,
-                        contentDescription = "Clear search text",
-                        tint = OrtColors.textFaint,
-                        modifier = Modifier
-                            .width(14.dp)
-                            .height(14.dp)
-                            .clickable(role = Role.Button, onClickLabel = "Clear search text") {
-                                onInputChange(input.copy(text = ""))
-                            },
-                    )
-                }
-            }
+        // R-063/R-060 (WP2 follow-up): the shared `TextField` — no leading-icon slot of its own,
+        // so the search glyph and the clear (x) sit either side of it rather than inset inside its
+        // own bordered box as the earlier hand-rolled field drew them, and it has no
+        // `keyboardOptions`/`keyboardActions` params, so the keyboard's own "search" IME action
+        // (this screen's run action, per R-060) is lost — the visible `PrimaryButton` below is the
+        // only run action now once the field is non-blank. Its `errorText` styles in `halt/text`
+        // (capture-stopped red, constitution: "red is for one thing"), which is the wrong colour
+        // for "the text term was not applied" (a `DEGRADED` fact, not a halt), so this state no
+        // longer draws its own struck-through cue on the field either — the amber `Banner` in
+        // `UnavailableState` right below it is what actually says so, in words, either way.
+        Icon(
+            imageVector = OrtIcons.search,
+            contentDescription = null,
+            tint = OrtColors.textFaint,
+            modifier = Modifier.width(15.dp).height(15.dp),
+        )
+        // `TextField`'s own outer wrapper always `fillMaxWidth()`s itself regardless of the
+        // modifier passed in (that modifier lands on the inner field only, by its own design —
+        // see its KDoc); `weight(1f)` given directly to it has no direct-child-of-Row to apply to
+        // and is silently dropped, so the field would otherwise claim the Row's full width and
+        // push the clear icon/`PrimaryButton` out past it. Wrapping in a `Box(Modifier.weight(1f))`
+        // gives `TextField` a properly-weighted box to fill instead.
+        Box(modifier = Modifier.weight(1f)) {
+            TextField(
+                value = input.text,
+                onValueChange = { onInputChange(input.copy(text = it)) },
+                mono = mono,
+                placeholder = "Search transcripts, callsigns, frequencies",
+                contentDescriptionText = "Search text",
+            )
+        }
+        if (input.text.isNotEmpty()) {
+            Icon(
+                imageVector = OrtIcons.dismiss,
+                contentDescription = "Clear search text",
+                tint = OrtColors.textFaint,
+                modifier = Modifier
+                    .width(14.dp)
+                    .height(14.dp)
+                    .clickable(role = Role.Button, onClickLabel = "Clear search text") {
+                        onInputChange(input.copy(text = ""))
+                    },
+            )
         }
         if (input.text.isNotBlank()) {
             PrimaryButton(
@@ -248,6 +224,7 @@ private fun QuickFilterChipsRow(
             selected = false,
             onClick = onOpenFilters,
             modifier = Modifier.testTag("search-filters-chip"),
+            leadingIcon = OrtIcons.filters,
         )
         FilterChip(
             label = SearchTimeFilter.TONIGHT.label(),
@@ -424,7 +401,7 @@ private fun TryHintRow(prefix: String, example: String, modifier: Modifier = Mod
 // -------------------------------------------------------------------------------------------
 
 @Composable
-private fun ResultsState(result: SearchResult, onOpen: (String) -> Unit) {
+private fun ResultsState(result: SearchResult, query: String, onOpen: (String) -> Unit) {
     val entries = result.details.map { ReaderTransmissionViewStateMapper.listEntry(it) }
     val grouped = result.details.groupBy { dayLabel(it.startedAtUtcMillis) }
     val nightCount = grouped.size
@@ -438,9 +415,11 @@ private fun ResultsState(result: SearchResult, onOpen: (String) -> Unit) {
         detailsInDay.forEach { detail ->
             val entry = entries[cursor]
             cursor++
-            LogRow(state = entry.toLogRowViewState(), onClick = {
-                onOpen(detail.id)
-            }, modifier = Modifier.testTag("search-result-row-${detail.id}"))
+            LogRow(
+                state = entry.toLogRowViewState(query),
+                onClick = { onOpen(detail.id) },
+                modifier = Modifier.testTag("search-result-row-${detail.id}"),
+            )
         }
     }
 }
@@ -491,7 +470,10 @@ private fun DayHeader(label: String, modifier: Modifier = Modifier) {
     }
 }
 
-private fun TransmissionListEntryViewState.toLogRowViewState(): LogRowViewState = LogRowViewState(
+/** [query] is the free-text search term whose words get painted `highlightGreen` (R-065) — blank
+ * where the text term was never actually applied (the unavailable state), so nothing is
+ * highlighted that was not really matched. */
+private fun TransmissionListEntryViewState.toLogRowViewState(query: String): LogRowViewState = LogRowViewState(
     id = id,
     timeLabel = timeLabel,
     frequencyLabel = frequencyLabel,
@@ -499,6 +481,7 @@ private fun TransmissionListEntryViewState.toLogRowViewState(): LogRowViewState 
     attribution = attribution,
     signalLabel = signalLabel,
     badge = if (revisionNote != null) LogRowBadge.REVISED else null,
+    highlightRanges = MatchHighlighter.rangesFor(transcriptText, query),
 )
 
 private val DAY_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ROOT)
@@ -637,7 +620,9 @@ private fun UnavailableState(
         )
         val entries = result.details.map { ReaderTransmissionViewStateMapper.listEntry(it) }
         result.details.forEachIndexed { index, detail ->
-            LogRow(state = entries[index].toLogRowViewState(), onClick = { onOpen(detail.id) })
+            // query = "" — the text term was never applied here (that is the whole point of this
+            // state), so nothing is highlighted as if it had been.
+            LogRow(state = entries[index].toLogRowViewState(query = ""), onClick = { onOpen(detail.id) })
         }
     }
 }

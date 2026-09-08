@@ -437,3 +437,36 @@ public object SimilarCallsigns {
         return true
     }
 }
+
+/**
+ * R-065 (`Search-Results.dc.html`'s `.hit` spans, `LogRowViewState.highlightRanges`): the
+ * character ranges of a transcript that match a word in the search query — computed here, in the
+ * data layer, once per result row, rather than in the screen, so `SearchScreen`'s own mapping to
+ * `LogRowViewState` stays a plain, untested-logic-free field copy.
+ */
+public object MatchHighlighter {
+    private val WHITESPACE: Regex = Regex("\\s+")
+
+    /**
+     * Every non-overlapping, case-insensitive occurrence of a whitespace-separated token from
+     * [query] inside [transcript], sorted by position. This mirrors what the operator searched
+     * for closely enough to be a useful reading aid — it is not a re-implementation of FTS5's own
+     * match semantics (stemming, operators), which is not this function's job. Empty for a blank
+     * query or transcript, never "highlight everything".
+     */
+    public fun rangesFor(transcript: String, query: String): List<IntRange> {
+        val tokens = query.trim().split(WHITESPACE).filter { it.isNotBlank() }
+        if (tokens.isEmpty() || transcript.isEmpty()) return emptyList()
+        val ranges = mutableListOf<IntRange>()
+        for (token in tokens) {
+            var from = 0
+            while (from <= transcript.length - token.length) {
+                val idx = transcript.indexOf(token, from, ignoreCase = true)
+                if (idx < 0) break
+                ranges += idx..(idx + token.length - 1)
+                from = idx + token.length
+            }
+        }
+        return ranges.sortedBy { it.first }
+    }
+}
