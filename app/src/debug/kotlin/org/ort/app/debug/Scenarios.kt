@@ -708,7 +708,14 @@ public object Scenarios {
         )
         ScenarioFixtures.markCapturing(context, sessionId)
         ShedStatus.update(level = 3, backlog = 112)
-        ThermalStatus.update(osThermalStatus = ThermalStatus.THERMAL_STATUS_MODERATE, realTimeFactor = 0.9)
+        // R-177: a real, fixed "minutes ago" transition moment -- not "now" -- so the banner's
+        // "dropped to tier N at HH:MM:SS" reads the same real clock time on every poll instead of
+        // advancing each time the mapper re-renders it.
+        ThermalStatus.update(
+            osThermalStatus = ThermalStatus.THERMAL_STATUS_MODERATE,
+            realTimeFactor = 0.9,
+            sinceMillis = SystemClock.wallMillis() - 12 * 60_000L,
+        )
         return LoadResult(0, 1, sessionId)
     }
 

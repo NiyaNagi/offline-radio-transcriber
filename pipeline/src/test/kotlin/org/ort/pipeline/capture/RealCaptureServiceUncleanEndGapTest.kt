@@ -5,7 +5,6 @@ import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -100,10 +99,13 @@ public class RealCaptureServiceUncleanEndGapTest {
                 runBlocking { db.captureGapDao().listBySession(newSessionId) }.isEmpty(),
             )
 
-            // "Does not reopen the previous session" -- its own row is untouched (still endedAt = null
-            // from the fixture above, not overwritten to look like it continued).
+            // "Does not reopen the previous session" -- no new transmissions/state make it look
+            // like it continued running. R-173/FR-RUN-16: it IS now closed, honestly, at its real
+            // last-known moment -- the opposite of "reopened", and the whole point of this fix
+            // (before it, a session like this read "still running" forever).
             val previousSession = runBlocking { db.sessionDao().getById(previousSessionId) }
-            assertNull(previousSession?.endedAt)
+            assertEquals(lastHeartbeatWallMillis, previousSession?.endedAt)
+            assertEquals(org.ort.data.entity.TerminationReason.KILLED, previousSession?.terminationReason)
         } finally {
             controller.destroy()
         }
