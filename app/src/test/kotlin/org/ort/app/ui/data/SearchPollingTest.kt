@@ -5,10 +5,13 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.debug.Scenarios
 import org.ort.core.AttributionState
+import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.Band
 import org.ort.data.OrtDatabase
@@ -269,5 +272,54 @@ class SearchPollingTest {
         assertEquals(2, result.facetCounts.unknown)
         assertEquals(1, result.facetCounts.rejectedCount)
         assertEquals(2, result.details.size) // only the two CONFIRMED, non-rejected rows shown
+    }
+
+    // R-371: routed through the real search path — SearchFilterParser.parse (the free-text shape
+    // router) into SearchPolling.search (the real DAO) — against the same `search-corpus` fixture
+    // debug scenario the register's own validator loaded on the device (`Scenarios.load`, the
+    // debug source set `ScenariosTest` also depends on). 14 overs across 3 nights, alternating
+    // 146.960/145.230 MHz by index, every transcript reading "this is <callsign>, doing a park
+    // activation at K-<4400+i>, any hunters listening" (`Scenarios.kt`'s own `searchCorpus` doc
+    // comment: "8 hits on 146.960" matches this fixture's own i%2==0 alternation exactly).
+
+    private val includeEverythingInput = SearchFilterInput(attributionStates = AttributionState.entries.toSet())
+
+    @Test
+    fun R_371_frequency_query(): Unit = runTest {
+        Scenarios.load(context, "search-corpus")
+
+        // Both the app's own TRY hint shapes — "146.96" (2 decimals) and "146.960" (3) — must
+        // resolve to the identical 146,960,000 Hz filter, never literal FTS text (which the
+        // register found always returned "Nothing matched", although the corpus has 8 overs on
+        // that exact frequency — the Filters chip for the same frequency narrows "park" to 8).
+        for (typed in listOf("146.96", "146.960")) {
+            val params = SearchFilterParser.parse(SearchFilterInput(text = typed), SystemClock.wallMillis())
+            val result = SearchPolling.search(context, params, SearchFacetFilter.from(includeEverythingInput))
+
+            assertEquals("typing '$typed'", 8, result.details.size)
+            assertTrue(
+                "expected every result to be on 146.960MHz for '$typed', got " +
+                    result.details.map { it.frequencyHz },
+                result.details.all { it.frequencyHz == 146_960_000L },
+            )
+            assertFalse(result.textSearchUnavailable)
+        }
+    }
+
+    @Test
+    fun R_371_mixed_query(): Unit = runTest {
+        Scenarios.load(context, "search-corpus")
+
+        // "K-4400" (the POTA-style reference embedded in the first over of every night, i=0 — see
+        // `Scenarios.kt`'s own `searchCorpus`) narrows the 8-over frequency match down to exactly
+        // the 3 nights' own i=0 over — proving the routed frequency filter and the *remaining* FTS
+        // text term both actually apply, ANDed, not one silently dropping the other.
+        val params = SearchFilterParser.parse(SearchFilterInput(text = "146.96 K-4400"), SystemClock.wallMillis())
+        val result = SearchPolling.search(context, params, SearchFacetFilter.from(includeEverythingInput))
+
+        assertEquals(3, result.details.size)
+        assertTrue(result.details.all { it.frequencyHz == 146_960_000L })
+        assertTrue(result.details.all { it.currentTranscriptText?.contains("K-4400") == true })
+        assertFalse(result.textSearchUnavailable)
     }
 }

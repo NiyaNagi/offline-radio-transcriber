@@ -9585,6 +9585,133 @@ rendered "not measured" or omitted rather than invented) and IV (liveness from h
 
 ## 2026-09-08 (ui-conformance WP7: search)
 
+### (pending) — ui-conformance WP7 · frequency-and-callsign query routing, real widen options, locale day headers, row-width parity diagnosis
+
+**Scope:** `:app` only — `ui/data/SearchViewData.kt`, `ui/screens/SearchScreen.kt`, and their tests
+(`SearchPollingTest.kt`, `SearchWidenSuggestionsTest.kt`, `SearchScreenTest.kt`). `git merge
+--ff-only main` first (fast-forward to `be98bcb`, "V5 Search pass 4 at fc693af: R-204 (halt) and
+R-017 closed; R-370..R-373 filed"). Addresses R-370, R-371, R-372, R-373 from
+`results/ui-audit/register.md`.
+
+**Requirements/ACs:** R-370 (day-group header locale), R-371 (frequency/callsign query routing),
+R-372 (widen-suggestion rows with honest counts, similar callsigns from a free-text query), R-373
+(row wrapping/width parity at font scale 2.0 — diagnosed, not a defect in this package's files).
+
+**What changed:**
+- **Constitution Check.** Principle VI (never report a number without its fold/machine/provider):
+  R-372's widen options and R-371's routed query both stay true to a real count from a real query,
+  never a guess. Principle VII (Boundaries Are Structural): R-373's finding, once diagnosed, routes
+  to WP2 rather than being worked around inside this package's own files.
+- **R-371.** New `TextQueryRouter` (`SearchViewData.kt`) splits the free-text query box's content
+  by shape before `SearchFilterParser.parse` builds `SearchQueryParams`: a frequency-shaped token
+  (`^\d{1,3}\.\d{2,3}$` — "146.96"/"146.960", the app's own TRY hint) is pulled out and filtered
+  against the structured `frequencyHz` column instead of ever reaching FTS (nobody speaks a
+  frequency into a transmission, so it never matched as literal transcript prose — the exact
+  "always returns Nothing matched" bug the register found); a callsign-shaped token
+  (`^[A-Za-z]{1,2}[0-9][A-Za-z0-9]{1,4}$`, the same shape `SearchScreen.kt`'s own mono-styling
+  check already used) is pulled out and matched against `SearchDao`'s `callsign` bind — already a
+  `station.callsign` comparison, i.e. the attribution/candidate column, not a `:data` change.
+  Whatever tokens remain still go to FTS, ANDed with the routed filters — "146.96 park" finds every
+  "park" over on 146.960MHz, not nothing. The Filters sheet's own dedicated `callsign`/`frequencyMhz`
+  fields, when set, always win over a shape match in the free-text box.
+- **R-372.** `SearchWidenSuggestions.build` now sources its "similar callsigns one edit away" row
+  from `params.callsign` (the parsed, routed value) rather than `input.callsign` (the dedicated
+  Filters-sheet field alone) — a callsign typo'd straight into the search box (the register's own
+  example: "KE7QRT should offer KE7QRS") now reaches `SimilarCallsigns.near` exactly the way a
+  dedicated-field callsign already did, closing the gap that made the whole "Widen" section render
+  as nothing but two static lines for that exact scenario. Also generalized "drop each active
+  filter" (previously only "All nights"/"Include every attribution state") to `band`/`frequency`/
+  `callsign` too, each its own honest-count `search-widen-option-<id>` row, never fabricated or
+  shown at a 0 count. `SearchScreen.kt`'s `EmptyState` gained the matching `onShow` cases
+  (`"drop_band"` clears `input.band`, `"drop_frequency"` clears `input.frequencyMhz`,
+  `"drop_callsign"` clears both `input.callsign` and `input.text` — a free-text-routed callsign has
+  no dedicated field of its own to clear).
+- **R-370.** `SearchScreen.kt`'s own `DAY_FORMAT` (`"EEE d MMM"`) moved from `Locale.ROOT` to
+  `Locale.getDefault()` — the identical fix R-170 already made in `ReaderPolling`'s own (`private`,
+  so replicated here rather than imported directly) `nightDateFormat`. `Locale.ROOT` has no real
+  month-name data, so "MMM" degraded to the literal field code "M09" rather than "Sep" — the
+  register's own screenshot ("MON 7 M09").
+- **R-373 — diagnosed, not a defect in this package's files.** Read the register's cited real
+  device screenshot (`search-corpus/Q03-results-2x-clean-pass4.png`) closely: the callsign "KE7QRS"
+  splits "KE7QR"/"S" and the transcript wraps character-by-character ("activatio"/"n"), consistent
+  with the weighted transcript column being left almost no width once the time/frequency columns'
+  own (correctly, intentionally, per R-205) font-scale-grown floors are subtracted. Read `LogScreen`
+  (WP5's file) and `LogRow`/`Rows.kt` (WP2's file, `ui/components/LogRow`) directly: `SearchScreen.kt`
+  composes `LogRow` as a plain, unwrapped child of a `Column` with no extra width constraint —
+  no `IntrinsicSize`, no missing `fillMaxWidth` (`LogRow`'s own root always applies one, regardless
+  of caller), no horizontal scroll — structurally identical to `LogScreen.kt`'s own `LazyColumn`
+  item usage (`LogRow(state = item.state, onClick = ...)`, no extra modifier there either). **Then
+  found a real, on-device Log screenshot at the same scale** (`overnight/L01-log-pass3@2x.png`,
+  already in this repo, from an earlier validator pass) **and it shows the identical bug** —
+  "novemb"/"er" splitting mid-word, the station/transcript column squeezed the same way — meaning
+  R-244/R-245's Robolectric tests ("Log's own rows are fine at 2.0") never actually proved
+  real-device wrap behaviour (this codebase's own established finding, restated in R_244's test
+  comment: "Robolectric's degenerate glyph metrics… mean a rendered wrap can't be forced or
+  verified reliably here") — they proved a Compose-property-level guarantee (`maxLines`/`softWrap`),
+  not that the row fits. **Conclusion: this is a pre-existing, shared `LogRow` defect (its
+  `rememberTimeColumnWidth`/`rememberFreqColumnWidth` column floors, which correctly grow at a large
+  font scale, leaving the weighted content column too little of what remains) that affects Log
+  identically — not something specific to how this package composes it.** No `SearchScreen.kt`
+  layout change made; per the coordinator's own conditional instruction, this is said plainly here
+  and routed to WP2 for a min-width contract on `LogRow`'s weighted content column, rather than
+  worked around inside this package's file.
+- **Tests**, named for the row they establish: `R_371_frequency_query`, `R_371_mixed_query`
+  (`SearchPollingTest.kt` — through the *real* search path, `SearchFilterParser.parse` into
+  `SearchPolling.search` against a real Room DB seeded with the debug `search-corpus` scenario
+  fixture via `Scenarios.load`, the same fixture the register's own validator used); `R_372 a
+  callsign typo'd into the free-text query box still offers a similar-callsign suggestion`, `R_372
+  a drop-frequency widen option offers the real count once the frequency filter alone is dropped`
+  (`SearchWidenSuggestionsTest.kt`); `R_370 the day-group header renders the locale's real month
+  name, never a raw MMM field code` (`SearchScreenTest.kt`); `R_373 a result row measures exactly
+  as tall as the same LogRow rendered bare, at font scale 2_0` (`SearchScreenTest.kt` — a parity
+  test: the same `LogRowViewState`, same fixed width, same font scale 2.0, through the full
+  `SearchScreen` versus a bare `LogRow` — proves there is nothing to fix here today and stands as a
+  regression guard if this package's own composition of `LogRow` ever drifts from `LogScreen`'s).
+- **One pre-existing test fixed, not broken by this change**:
+  `SearchWidenSuggestionsTest.kt`'s `similar callsigns are offered only when a callsign filter is
+  set` passed a bare `SearchQueryParams()` (`callsign = null`) alongside an `input.callsign =
+  "VE7ABC"` — every real caller (`SearchContent.kt`) always derives `params` from `input` via
+  `SearchFilterParser.parse`, so this test's own simplification stopped matching reality once
+  [SearchWidenSuggestions.build] correctly started reading `params.callsign` instead of
+  `input.callsign`. Fixed the test to pass `SearchQueryParams(callsign = input.callsign)`, matching
+  what a real caller would actually derive — the test's *intent* (offer similar callsigns only
+  when one is set) was already correct and is unchanged.
+
+**Verified** (per the coordinator's new load-policy: scoped tests, never `build` or the full
+`:app:testDebugUnitTest`, for the rest of this program):
+- `git merge --ff-only main` — fast-forward, confirmed `be98bcb` in `git log --oneline -1` before
+  starting.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.SearchFilterParserTest"
+  --tests "org.ort.app.ui.data.SearchPollingTest" --tests
+  "org.ort.app.ui.data.SearchWidenSuggestionsTest" --tests
+  "org.ort.app.ui.data.SearchFacetCountsTest" --tests "org.ort.app.ui.data.MatchHighlighterTest"
+  --tests "org.ort.app.ui.screens.SearchScreenTest" --tests
+  "org.ort.app.ui.screens.SearchFiltersSheetTest" --tests
+  "org.ort.app.ui.screens.SearchContentTest"` — **BUILD SUCCESSFUL, 81 tests, 0 failed** (summed
+  from all 8 classes' own `testDebugUnitTest` XML results).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, both against real sources
+  (confirmed by report content, not just exit code, per the prior addendum's own finding about this
+  worktree's ktlint/detekt having been vacuous until the `subst` workaround).
+- `.\gradlew.bat dependencyRules platformGuards` — `dependencyRules: checked 17 modules … OK`;
+  `platformGuards: checked 17 modules' … OK`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 191 covered (up from 185 — this addendum's own
+  new tests).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 191 of 419.
+- One real, pre-existing detekt finding caught and fixed along the way: `SearchScreenTest.kt`'s own
+  R-373 test function name exceeded the 120-char line-length rule (`MaxLineLength`) — shortened,
+  no behavioural change; re-verified clean.
+
+**Left open / not done:**
+- **R-373's actual fix is `LogRow`'s own min-width contract for its weighted content column at a
+  large font scale — WP2's file (`ui/components/Rows.kt`), not touched here.** Flagged explicitly,
+  with the real-device evidence (both screenshots cited above) that this affects Log identically,
+  not a Search-specific regression.
+- Every gap the earlier WP7 entries below already list (R-204's `:data`-layer decision — now
+  closed, register confirms — WP3's still-doubled header for `SEARCH`, `RecentSearches`' single-term
+  label, sheet drag-to-dismiss) is unchanged by this addendum except where explicitly noted above.
+
 ### (pending) — ui-conformance WP7 · filters sheet traps focus
 
 **Scope:** `:app` only — `ui/screens/SearchScreen.kt` and `ui/screens/SearchContentTest.kt`. `git
