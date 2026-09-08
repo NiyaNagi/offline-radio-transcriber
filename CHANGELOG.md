@@ -32,6 +32,126 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP7: search)
+
+### (pending) — ui-conformance WP7 · search: initial, filters sheet, grouped results, empty and unavailable states
+
+**Scope:** `:app` only — `ui/screens/SearchScreen.kt` (rewritten), new `ui/screens/SearchFiltersSheet.kt`,
+new `ui/screens/SearchContent.kt`, `ui/data/SearchViewData.kt` (rewritten), new
+`ui/data/RecentSearches.kt`, and their tests. No file outside this list touched.
+
+**Requirements/ACs:** R-060 (halt, fixed), R-061 (halt, fixed), R-062 (spec, fixed), R-063
+(design, fixed), R-064 (design, fixed), R-065 (design, fixed — with one gap noted below).
+FR-UI-3.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content): every attribution in a search
+  result still renders through the shared `AttributionMarker`/`LogRow` machinery — nothing here
+  re-derives a state. Principle II (Test-Backed Change): every new/changed function has a test
+  named for the id it establishes; `SearchFilterParser`'s new time-range math, `SearchFacetCounts`,
+  `SimilarCallsigns`'s edit-distance and `RecentSearches`'s persistence are each covered on their
+  own before the screens that use them. Principle VII (Boundaries Are Structural): the filter
+  sheet's `Show N overs` and every count shown is computed from already-fetched rows
+  (`SearchFacetCounts`) rather than invented — guide §9's "never fabricate a number" is a type-level
+  property of `SearchFacetCounts.countMatching`, not a copy-review rule.
+- **R-060 (halt).** `SearchScreen` no longer renders a screen title (the destination header already
+  says "Search") and no longer has a second, unstyled `Search` action text. The run action is the
+  keyboard's own IME search action; a `PrimaryButton`-styled `Search` appears only once the query
+  field is non-blank.
+- **R-061 (halt).** Band, attribution state and rejected/corrected are no longer tap-to-cycle text.
+  `SearchFiltersSheet` (new file, WP2's `Sheet`) renders: a callsign-prefix field; band as a
+  `FilterChip` row (`All` + every `Band` entry) plus an exact-frequency field; time as four
+  `FilterChip`s (`Tonight` / `Last 7 nights` / `Range` / `All`); attribution as four `CheckboxRow`s
+  with real counts and the shared `AttributionMarker` shape as each row's leading icon; `Rejected
+  segments` / `Corrected by you` as two more `CheckboxRow`s with counts. `SearchFilterInput.band`/
+  `.timeFilter`/`.attributionStates` are now typed, closed-set fields — no `Band?`/`AttributionState?`
+  single-value tap-to-cycle field remains.
+- **R-062 (spec).** `SearchTimeFilter` (`TONIGHT`/`LAST_7_NIGHTS`/`RANGE`/`ALL`) replaces the single
+  `Date (YYYY-MM-DD)` field. `RANGE` reveals two mono fields (`yyyy-MM-dd'T'HH:mm`) that
+  `SearchFilterParser.parse(input, nowUtcMillis)` turns into a real `[fromUtcMillis, toUtcMillis)`
+  pair; `TONIGHT`/`LAST_7_NIGHTS` are computed from `nowUtcMillis` (passed in, not read from a
+  clock, so the parser stays a pure function under test).
+- **R-063 (design).** Five states, all in the rebuilt `SearchScreen`: **initial** (focused query
+  field, `Filters`/`Tonight`/`All nights` chips, `RECENT` rows with counts from the new
+  `RecentSearches` app-private store, `TRY` hints, the "nothing is sent anywhere" footer); **results**
+  (grouped by night with a `bg/group` day header, the shared `LogRow` — time/frequency columns
+  included — applied filters as dismissable chips, a "N overs · M nights · K stations" count line,
+  `Newest first`); **empty** (names which filters narrowed it via `SearchWidenSuggestions`, offers
+  to widen each with its *real, queried* count, and near-miss callsigns one edit away via the new
+  `SimilarCallsigns`); **unavailable** (WP2's amber `Banner` naming what did and did not apply,
+  `Retry`, and the results the filters that *did* apply produced, beneath).
+- **R-064 (design).** `AttributionState.prose()`/`SearchTimeFilter.label()`/`Band.prose()` (new
+  extension functions in `SearchViewData.kt`) are the only place these enums become UI text —
+  `Confirmed`, not `CONFIRMED`; `160M`/`1.25M`, not `HF_160M`/`VHF_1_25M`.
+- **R-065 (design).** Search results render through `org.ort.app.ui.components.LogRow` (WP2's
+  component) via a new `TransmissionListEntryViewState.toLogRowViewState()` mapper — the same
+  time/frequency columns, marker and badge treatment as the Log. **Gap:** `LogRowViewState.transcript`
+  is a plain `String`; WP2's `LogRow` has no way to carry highlighted spans, so matched-word
+  `highlightGreen` emphasis (part of R-065/`Search-Results.dc.html`) is not rendered. Not built as
+  a local look-alike per this package's own ownership rule — noted here and in the report instead.
+  `LogRow`'s transcript parameter would need to accept an `AnnotatedString` (or a list of highlight
+  ranges) for a future WP2 change to close this.
+- `SearchPolling.search` now takes a `SearchFacetFilter` alongside `SearchQueryParams`: the DAO
+  only accepts one nullable `AttributionState` and one nullable rejected flag, so the base query
+  runs with neither set and the *set* of attribution states plus the two independent include
+  toggles are applied client-side; `SearchResult.facetCounts` carries the pre-facet-filter
+  breakdown so the sheet's checkboxes and `Show N overs` are exact, not re-queried per tap.
+- New `ui/screens/SearchContent.kt`: the content composable `OrtNavHost` (WP3) dispatches `SEARCH`
+  to, per this package's row in the plan (`SearchContent(input, result, onInputChange, onSearch,
+  onOpen, modifier)`). It owns the pieces `SearchScreen` needs beyond `input`/`result` — `recent`
+  (loaded/recorded via `RecentSearches`), the no-results `widenSuggestions` (computed via
+  `SearchWidenSuggestions.build` only once a search comes back empty) and the filters-sheet
+  open/closed state — so `SearchScreen` itself stays a pure function of view-state with no
+  `Context`. `OrtNavHost.kt` itself is untouched (WP3's file) — see "Left open" below.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintFormat` then `:app:ktlintCheck` — **BUILD SUCCESSFUL** (main + test
+  source sets).
+- `.\gradlew.bat :app:detekt` — **BUILD SUCCESSFUL**, zero findings (`SearchScreen`'s ten-parameter
+  view-state/callback signature and its test helper are `@Suppress("LongParameterList")`, matching
+  the precedent already in `:data`'s `SearchDao.kt`; `SearchFiltersSheet` was split into six
+  section-composables to clear `LongMethod` genuinely rather than suppressed).
+- `.\gradlew.bat dependencyRules` — OK, 17 modules, every edge permitted.
+- `.\gradlew.bat platformGuards` — OK, no analytics/telemetry, `INTERNET` only in `:net`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered (`results/coverage-matrix.md`
+  regenerated by the mandated gate command, not hand-edited).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 181 of 419.
+- `.\gradlew.bat :app:compileDebugKotlin` — **fails**, entirely inside `OrtNavHost.kt` (WP3's file,
+  outside this package's ownership), at its stale inline `SearchContent`/calls to
+  `SearchFilterParser.parse(input)` and the old five-parameter `SearchScreen`. Every compiler error
+  is at `OrtNavHost.kt:276-280`; zero errors in any file this package owns. See "Left open" below —
+  this is the coordination point the plan's own WP7 row names ("WP3 deletes the inline copies from
+  the host and calls those"), not a defect introduced here. Consequently `.\gradlew.bat build
+  dependencyRules platformGuards` and `.\gradlew.bat :app:assembleDebug` also fail at the same
+  single step (confirmed by running both; every other module — `:data`, `:pipeline`, `:net`,
+  `:capture-android`, `:rig-usb`, `:core` — built/tested/linted clean first). `:app:testDebugUnitTest`
+  could not be run for the same reason, so the new tests below are verified by careful manual
+  review and by the arithmetic in `SearchFilterParserTest` being independently re-derived and
+  checked, not by a green Gradle test run — flagged explicitly rather than claimed.
+
+**Left open / not done:**
+- `OrtNavHost.kt`'s inline `SearchContent`/`SearchFilterParser.parse(input)`/five-parameter
+  `SearchScreen(...)` call sites are stale and need WP3 to delete them and call this package's new
+  `SearchContent(input, result, onInputChange, onSearch, onOpen, modifier)` instead, per the plan's
+  own WP7 row. Until that lands, `:app` does not compile and none of this package's tests have run
+  under Gradle.
+- R-065's highlighted-match spans are not rendered (see "Gap" above) — needs a WP2 change to
+  `LogRowViewState`/`LogRow` to carry highlight ranges.
+- `FilterChip` (WP2) has no leading-icon slot, so the `Filters` chip is text-only where the artboard
+  shows a filter glyph.
+- The artboard's `Search-Filters.dc.html` shows a handful of *recently-heard* exact frequencies as
+  chips (e.g. `145.230`, `146.960`) alongside the band chips; that would need a new distinct-frequency
+  query this package did not add. Implemented instead as an always-available exact-frequency text
+  field (mono, matching the callsign-prefix field's style) plus the full closed set of `Band` chips.
+- `RecentSearches.record`'s label is the single primary term (`callsign` > `text` > `frequencyMhz`);
+  a filters-only search (band/time/attribution only, no callsign/text/frequency) has no term to
+  record — matches `Search.dc.html`'s single-term rows but not its "ambiguous on 146.960"-style
+  composite label, which would need its own copy-generation rule.
+- The filters sheet is a full-screen scrim + bottom-aligned `Sheet`, not a true draggable bottom
+  sheet — guide §6.9's drag-to-dismiss is not implemented; dismiss is scrim-tap only.
+
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
 ### (pending) — ui-conformance WP3 · drawer, header, live bar, drill-in header, navigation origin

@@ -2,26 +2,32 @@ package org.ort.app.ui.screens
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.ort.app.ui.data.RejectedFilter
+import org.ort.app.ui.data.RecentSearchEntry
+import org.ort.app.ui.data.SearchFacetCounts
+import org.ort.app.ui.data.SearchFacetRow
 import org.ort.app.ui.data.SearchFilterInput
 import org.ort.app.ui.data.SearchResult
+import org.ort.app.ui.data.SearchTimeFilter
+import org.ort.app.ui.data.SearchWidenOption
+import org.ort.app.ui.data.SearchWidenViewState
 import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
-import org.ort.data.Band
 import org.robolectric.RobolectricTestRunner
 
 /**
- * FR-UI-3 — full-text search over the transcript index, with callsign/frequency/date filters. The
- * screen itself is a pure function of [SearchFilterInput]/[SearchResult] — [SearchPollingTest] and
- * [org.ort.app.ui.data.SearchFilterParserTest] cover the data half; this proves what renders.
+ * `Search`/`Search-Results`/`Search-Empty`/`Search-Unavailable.dc.html` (R-060, R-063, R-065).
+ * [org.ort.app.ui.data.SearchFilterParserTest]/[org.ort.app.ui.data.SearchPollingTest] cover the
+ * data half; this proves what renders for each of the screen's five states.
  */
 @RunWith(RobolectricTestRunner::class)
 class SearchScreenTest {
@@ -29,9 +35,14 @@ class SearchScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun detail(id: String, text: String, attribution: Attribution = Attribution.unknown()) = TransmissionDetail(
+    private fun detail(
+        id: String,
+        text: String,
+        attribution: Attribution = Attribution.unknown(),
+        startedAt: Long = 0L,
+    ) = TransmissionDetail(
         id = id,
-        startedAtUtcMillis = 0L,
+        startedAtUtcMillis = startedAt,
         frequencyHz = 145_230_000L,
         durationMs = 1_000L,
         signalStrength = null,
@@ -41,140 +52,253 @@ class SearchScreenTest {
         hasAudio = false,
     )
 
-    @Test
-    fun `before any search runs, the screen shows an honest prompt rather than a blank list`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                SearchScreen(input = SearchFilterInput(), result = null, onInputChange = {}, onSearch = {}, onOpen = {})
-            }
-        }
-
-        composeTestRule.onNodeWithText("Enter a search term or filter, then tap Search").assertExists()
-    }
-
-    @Test
-    fun `tapping Search invokes the callback`() {
-        var searched = false
+    @Suppress("LongParameterList") // one param per SearchScreen argument — see SearchScreen.kt's own suppression.
+    private fun screen(
+        input: SearchFilterInput = SearchFilterInput(),
+        result: SearchResult? = null,
+        recent: List<RecentSearchEntry> = emptyList(),
+        widenSuggestions: SearchWidenViewState? = null,
+        filtersSheetOpen: Boolean = false,
+        onInputChange: (SearchFilterInput) -> Unit = {},
+        onSearch: () -> Unit = {},
+        onOpen: (String) -> Unit = {},
+        onOpenFilters: () -> Unit = {},
+        onDismissFilters: () -> Unit = {},
+    ) {
         composeTestRule.setContent {
             OrtTheme {
                 SearchScreen(
-                    input = SearchFilterInput(),
-                    result = null,
-                    onInputChange = {},
-                    onSearch = { searched = true },
-                    onOpen = {},
+                    input = input,
+                    result = result,
+                    recent = recent,
+                    widenSuggestions = widenSuggestions,
+                    filtersSheetOpen = filtersSheetOpen,
+                    onOpenFilters = onOpenFilters,
+                    onDismissFilters = onDismissFilters,
+                    onInputChange = onInputChange,
+                    onSearch = onSearch,
+                    onOpen = onOpen,
                 )
             }
         }
+    }
+
+    // --- R-060: no duplicated "Search" text, run action is the keyboard action + a conditional button ---
+
+    @Test
+    fun `R_060 before any search runs, no Search button shows for a blank field`() {
+        screen(result = null)
+
+        composeTestRule.onNodeWithTag("search-run-button").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_060 once the field is non-blank a single PrimaryButton-styled Search action appears`() {
+        var searched = false
+        screen(input = SearchFilterInput(text = "mayday"), onSearch = { searched = true })
 
         composeTestRule.onNodeWithContentDescription("Run search").performScrollTo().performClick()
-
         assert(searched) { "expected the Search action to be invoked" }
     }
 
     @Test
-    fun `a search with no matches shows an honest empty state, not a blank screen`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                SearchScreen(
-                    input = SearchFilterInput(text = "nonesuch"),
-                    result = SearchResult(emptyList(), textSearchUnavailable = false),
-                    onInputChange = {},
-                    onSearch = {},
-                    onOpen = {},
-                )
-            }
-        }
+    fun `R_060 typing into the query field issues an updated input`() {
+        var current = SearchFilterInput()
+        screen(input = current, onInputChange = { current = it })
 
-        composeTestRule.onNodeWithText("No results").assertExists()
+        composeTestRule.onNodeWithContentDescription("Search text").performTextInput("mayday")
+
+        assert(current.text.contains("mayday")) {
+            "expected the query field edit to reach onInputChange, got ${current.text}"
+        }
+    }
+
+    // --- Initial state (R-063) ---
+
+    @Test
+    fun `R_063 the initial state shows Try hints and no results list`() {
+        screen(result = null)
+
+        composeTestRule.onNodeWithTag("search-try-hint-0").assertExists()
+        composeTestRule.onNodeWithTag("search-empty-state").assertDoesNotExist()
     }
 
     @Test
-    fun `matching transmissions render with their attribution and open on tap`() {
-        var opened: String? = null
-        composeTestRule.setContent {
-            OrtTheme {
-                SearchScreen(
-                    input = SearchFilterInput(text = "mayday"),
-                    result = SearchResult(
-                        listOf(detail("TX1", "mayday mayday", Attribution.confirmed("W7NPC", 0.9))),
-                        textSearchUnavailable = false,
-                    ),
-                    onInputChange = {},
-                    onSearch = {},
-                    onOpen = { opened = it },
-                )
-            }
+    fun `R_063 recent searches render with their counts and a tap re-runs them`() {
+        var current = SearchFilterInput()
+        var searched = false
+        screen(
+            result = null,
+            recent = listOf(RecentSearchEntry("WA7HJR", 6)),
+            onInputChange = { current = it },
+            onSearch = { searched = true },
+        )
+
+        composeTestRule.onNodeWithTag("search-recent-row-0").performScrollTo().performClick()
+
+        assert(current.callsign == "WA7HJR") {
+            "expected the recent row to fill the callsign field, got ${current.callsign}"
         }
+        assert(searched) { "expected tapping a recent row to re-run the search" }
+    }
+
+    @Test
+    fun `R_060 the Tonight and All nights quick chips set the time filter and run immediately`() {
+        var current = SearchFilterInput()
+        var searchCount = 0
+        screen(result = null, onInputChange = { current = it }, onSearch = { searchCount++ })
+
+        composeTestRule.onNodeWithTag("search-tonight-chip").performScrollTo().performClick()
+
+        assert(current.timeFilter == SearchTimeFilter.TONIGHT) { "expected TONIGHT but was ${current.timeFilter}" }
+        assert(searchCount == 1) { "expected the quick chip to run a search" }
+    }
+
+    // --- Results state (R-063/R-065) ---
+
+    @Test
+    fun `R_065 results render through the shared LogRow, grouped by night, with a count line`() {
+        val result = SearchResult(
+            details = listOf(detail("TX1", "mayday mayday", Attribution.confirmed("W7NPC", 0.9))),
+            textSearchUnavailable = false,
+            facetCounts = SearchFacetCounts(listOf(SearchFacetRow(AttributionState.CONFIRMED, false, false))),
+        )
+        screen(input = SearchFilterInput(text = "mayday"), result = result)
 
         composeTestRule.onNodeWithText("mayday mayday").assertExists()
-        composeTestRule.onNodeWithContentDescription("filled circle, ✓ CONFIRMED", substring = true).assertExists()
-        composeTestRule.onNodeWithContentDescription("Transmission at", substring = true)
-            .performScrollTo()
-            .performClick()
+        composeTestRule.onNodeWithTag("search-count-line").assertExists()
+        composeTestRule.onNodeWithText("Newest first").assertExists()
+    }
+
+    @Test
+    fun `R_065 tapping a result row opens it`() {
+        var opened: String? = null
+        val result = SearchResult(
+            details = listOf(detail("TX1", "mayday mayday", Attribution.confirmed("W7NPC", 0.9))),
+            textSearchUnavailable = false,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+        screen(result = result, onOpen = { opened = it })
+
+        composeTestRule.onNodeWithTag("search-result-row-TX1").performScrollTo().performClick()
+
         assert(opened == "TX1") { "expected TX1 to be opened but was $opened" }
     }
 
     @Test
-    fun `when the full-text index is unavailable the screen says so honestly rather than hiding it`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                SearchScreen(
-                    input = SearchFilterInput(text = "mayday", callsign = "W7NPC"),
-                    result = SearchResult(
-                        listOf(detail("TX1", "irrelevant transcript")),
-                        textSearchUnavailable = true,
-                    ),
-                    onInputChange = {},
-                    onSearch = {},
-                    onOpen = {},
-                )
-            }
-        }
+    fun `applied filters render as dismissable chips and dismissing one clears it and re-runs`() {
+        var current = SearchFilterInput(callsign = "W7NPC")
+        var searchCount = 0
+        val result = SearchResult(
+            details = listOf(detail("TX1", "text", Attribution.confirmed("W7NPC", 0.9))),
+            textSearchUnavailable = false,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+        screen(input = current, result = result, onInputChange = { current = it }, onSearch = { searchCount++ })
 
-        composeTestRule.onNodeWithText(
-            "Full-text search unavailable right now; only the other filters were applied",
-        ).assertExists()
+        composeTestRule.onNodeWithContentDescription("Remove W7NPC filter").performScrollTo().performClick()
+
+        assert(current.callsign == "") { "expected dismissing the chip to clear the callsign filter" }
+        assert(searchCount == 1) { "expected dismissing a chip to re-run the search" }
     }
 
-    /**
-     * FR-UI-3 / audit F-017: the `:app` half of the finding — band, attribution-state and
-     * rejected/accepted controls exist (text-labelled, per the accessibility floor) and tapping
-     * each one changes the [SearchFilterInput] the screen issues, exactly like every other filter
-     * field here.
-     */
+    // --- Empty state (R-063) ---
+
     @Test
-    fun `FR_UI_3 band, attribution-state and rejected filter controls exist and a tap changes the issued query`() {
-        var current = SearchFilterInput()
-        composeTestRule.setContent {
-            OrtTheme {
-                SearchScreen(
-                    input = current,
-                    result = null,
-                    onInputChange = { current = it },
-                    onSearch = {},
-                    onOpen = {},
-                )
-            }
+    fun `R_063 a search with no matches shows the empty state with widen options, never a blank screen`() {
+        val result =
+            SearchResult(details = emptyList(), textSearchUnavailable = false, facetCounts = SearchFacetCounts.EMPTY)
+        val widen = SearchWidenViewState(
+            narrowingSummary = "The callsign filter is doing the narrowing.",
+            options = listOf(SearchWidenOption("all_nights", "All nights", "would show 2 overs, from 1 Sep")),
+            similarCallsigns = listOf("VE7ABD"),
+        )
+        screen(input = SearchFilterInput(callsign = "VE7ABC"), result = result, widenSuggestions = widen)
+
+        composeTestRule.onNodeWithTag("search-empty-state").assertExists()
+        composeTestRule.onNodeWithText("The callsign filter is doing the narrowing.").assertExists()
+        composeTestRule.onNodeWithTag("search-widen-option-all_nights").assertExists()
+        composeTestRule.onNodeWithTag("search-similar-callsigns").assertExists()
+    }
+
+    @Test
+    fun `tapping a widen option applies it and re-runs the search`() {
+        var current = SearchFilterInput(timeFilter = SearchTimeFilter.TONIGHT)
+        var searchCount = 0
+        val result =
+            SearchResult(details = emptyList(), textSearchUnavailable = false, facetCounts = SearchFacetCounts.EMPTY)
+        val widen = SearchWidenViewState(
+            narrowingSummary = "narrowed",
+            options = listOf(SearchWidenOption("all_nights", "All nights", "would show 2 overs")),
+            similarCallsigns = emptyList(),
+        )
+        screen(input = current, result = result, widenSuggestions = widen, onInputChange = {
+            current = it
+        }, onSearch = { searchCount++ })
+
+        composeTestRule.onNodeWithContentDescription("Show — All nights").performScrollTo().performClick()
+
+        assert(current.timeFilter == SearchTimeFilter.ALL) {
+            "expected the widen option to set ALL but was ${current.timeFilter}"
         }
+        assert(searchCount == 1)
+    }
 
-        composeTestRule.onNodeWithContentDescription("Band filter: All bands").assertExists()
-        composeTestRule.onNodeWithContentDescription("Attribution state filter: All states").assertExists()
-        composeTestRule.onNodeWithContentDescription("Accepted/rejected filter: All").assertExists()
+    // --- Unavailable state (R-063) ---
 
-        composeTestRule.onNodeWithContentDescription("Band filter: All bands").performScrollTo().performClick()
-        assert(current.band == Band.HF_160M) { "expected the band filter to advance but was ${current.band}" }
+    @Test
+    fun `R_063 when the full-text index is unavailable the amber banner names what did and did not apply`() {
+        val result = SearchResult(
+            details = listOf(detail("TX1", "irrelevant transcript")),
+            textSearchUnavailable = true,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+        screen(input = SearchFilterInput(text = "mayday", callsign = "W7NPC"), result = result)
 
-        composeTestRule.onNodeWithContentDescription("Attribution state filter: All states")
-            .performScrollTo()
-            .performClick()
-        assert(current.attributionState == AttributionState.CONFIRMED) {
-            "expected the attribution-state filter to advance but was ${current.attributionState}"
-        }
+        composeTestRule.onNodeWithTag("search-unavailable-banner").assertExists()
+        composeTestRule.onNodeWithText("Text search is unavailable right now").assertExists()
+        composeTestRule.onNodeWithText("irrelevant transcript").assertExists()
+    }
 
-        composeTestRule.onNodeWithContentDescription("Accepted/rejected filter: All").performScrollTo().performClick()
-        assert(current.rejectedFilter == RejectedFilter.ACCEPTED) {
-            "expected the rejected filter to advance but was ${current.rejectedFilter}"
-        }
+    @Test
+    fun `Retry on the unavailable banner re-runs the search`() {
+        var searched = false
+        val result =
+            SearchResult(details = emptyList(), textSearchUnavailable = true, facetCounts = SearchFacetCounts.EMPTY)
+        screen(input = SearchFilterInput(text = "mayday"), result = result, onSearch = { searched = true })
+
+        composeTestRule.onNodeWithText("Retry").performScrollTo().performClick()
+
+        assert(searched) { "expected Retry to invoke onSearch" }
+    }
+
+    // --- Filters sheet wiring ---
+
+    @Test
+    fun `tapping the Filters chip opens the filters sheet`() {
+        var opened = false
+        screen(onOpenFilters = { opened = true })
+
+        composeTestRule.onNodeWithTag("search-filters-chip").performScrollTo().performClick()
+
+        assert(opened) { "expected the Filters chip to call onOpenFilters" }
+    }
+
+    @Test
+    fun `the filters sheet renders over a scrim when filtersSheetOpen is true`() {
+        screen(filtersSheetOpen = true)
+
+        composeTestRule.onNodeWithTag("search-filters-scrim").assertExists()
+        composeTestRule.onNodeWithTag("search-filters-sheet").assertExists()
+    }
+
+    @Test
+    fun `tapping the scrim dismisses the filters sheet`() {
+        var dismissed = false
+        screen(filtersSheetOpen = true, onDismissFilters = { dismissed = true })
+
+        composeTestRule.onNodeWithTag("search-filters-scrim").performClick()
+
+        assert(dismissed) { "expected tapping the scrim to call onDismissFilters" }
     }
 }
