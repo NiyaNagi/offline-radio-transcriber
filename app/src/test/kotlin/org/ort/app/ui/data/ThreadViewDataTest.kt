@@ -130,4 +130,23 @@ class ThreadViewDataTest {
     fun `R_044 detailState is null for a threadId with no transmissions`() {
         assertNull(ThreadListMapper.detailState("NOPE", listOf(detail("TX1", 0L, threadId = "T1"))))
     }
+
+    // -- ThreadGroupingMapper.reasoningFor, still used by detailState's per-over reasoning line
+    // (its own dedicated test file, ThreadGroupingMapperTest, was removed with the legacy
+    // ThreadGroupViewState/currentThreadGroups it tested — this keeps reasoningFor itself covered). --
+
+    @Test
+    fun `R_044 each over's reasoning names its real attribution state, not a generic label`() {
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)),
+            detail("TX2", 1_000L, threadId = "T1", attribution = Attribution.ambiguous()),
+            detail("TX3", 2_000L, threadId = "T1", attribution = Attribution.unknown()),
+        )
+
+        val overs = ThreadListMapper.detailState("T1", details)!!.overs.associateBy { it.transmissionId }
+
+        assertEquals("callsign confirmed in this transmission", overs.getValue("TX1").reasoning)
+        assertEquals("more than one candidate; the system will not choose", overs.getValue("TX2").reasoning)
+        assertEquals("no callsign resolved", overs.getValue("TX3").reasoning)
+    }
 }

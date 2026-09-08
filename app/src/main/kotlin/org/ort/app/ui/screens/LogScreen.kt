@@ -18,14 +18,11 @@ import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.GapRow
 import org.ort.app.ui.components.LogGroupHeader
 import org.ort.app.ui.components.LogRow
-import org.ort.app.ui.components.LogRowViewState
 import org.ort.app.ui.components.RejectedRow
 import org.ort.app.ui.components.TextAction
-import org.ort.app.ui.data.LogEmptyStateViewState
 import org.ort.app.ui.data.LogListItem
 import org.ort.app.ui.data.LogQuickFilterId
 import org.ort.app.ui.data.LogScreenViewState
-import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -50,6 +47,7 @@ public fun LogScreen(
     onQuickFilterSelect: (LogQuickFilterId) -> Unit,
     onFilterClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenThread: (String) -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         Row(
@@ -95,63 +93,17 @@ public fun LogScreen(
         }
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(state.items, key = { it.key }) { item -> LogListItemRow(item = item, onOpen = onOpen) }
+            items(state.items, key = { it.key }) { item ->
+                LogListItemRow(item = item, onOpen = onOpen, onOpenThread = onOpenThread)
+            }
         }
     }
 }
 
-/**
- * Compile-compatibility overload only. `OrtNavHost.kt` (WP3's file, not this package's — see
- * `LogContent.kt`'s doc comment) still calls this exact 3-argument shape from its own, still-inline
- * `LogContent` until WP3 deletes that copy and wires the nav host to this package's own
- * [org.ort.app.ui.screens.LogContent] instead — at which point this overload has no more callers
- * and WP3 or a follow-up may remove it. It renders through the real R-040 row family (never the
- * old two-free-width-column layout this destination shipped with before this change), just without
- * the grouping/partial/gap/rejected/filter facts that need [TransmissionDetail]'s richer data —
- * this legacy view-state does not carry those.
- */
 @Composable
-public fun LogScreen(
-    entries: List<TransmissionListEntryViewState>,
-    onOpen: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val items: List<LogListItem> = entries.map { entry ->
-        LogListItem.Row(
-            LogRowViewState(
-                id = entry.id,
-                timeLabel = entry.timeLabel,
-                frequencyLabel = entry.frequencyLabel,
-                transcript = entry.transcriptText,
-                attribution = entry.attribution,
-                signalLabel = entry.signalLabel,
-            ),
-        )
-    }
-    val emptyState = if (entries.isEmpty()) {
-        LogEmptyStateViewState("No transmissions yet", "The first one appears here the moment squelch opens.")
-    } else {
-        null
-    }
-    LogScreen(
-        state = LogScreenViewState(
-            items = items,
-            quickFilters = emptyList(),
-            rejectedFocus = false,
-            rejectedExplanation = null,
-            emptyState = emptyState,
-        ),
-        onOpen = onOpen,
-        onQuickFilterSelect = {},
-        onFilterClick = {},
-        modifier = modifier,
-    )
-}
-
-@Composable
-private fun LogListItemRow(item: LogListItem, onOpen: (String) -> Unit) {
+private fun LogListItemRow(item: LogListItem, onOpen: (String) -> Unit, onOpenThread: (String) -> Unit) {
     when (item) {
-        is LogListItem.Group -> LogGroupHeader(label = item.label)
+        is LogListItem.Group -> LogGroupHeader(label = item.label, onClick = { onOpenThread(item.threadId) })
         is LogListItem.Row -> LogRow(state = item.state, onClick = { onOpen(item.state.id) })
         is LogListItem.Gap -> GapRow(timeLabel = item.timeLabel, label = item.label)
         is LogListItem.RejectedItem -> RejectedRow(

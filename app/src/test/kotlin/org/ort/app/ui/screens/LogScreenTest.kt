@@ -213,6 +213,31 @@ class LogScreenTest {
     }
 
     @Test
+    fun `R_017 tapping a QSO group header opens its thread`() {
+        var openedThread: String? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(
+                        listOf(
+                            LogListItem.Group("T1", "QSO · 2 overs · 2 stations"),
+                            LogListItem.Row(rowState("TX1", "monitoring", Attribution.confirmed("W7NPC", 0.9))),
+                        ),
+                    ),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                    onOpenThread = { openedThread = it },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("QSO · 2 overs · 2 stations").performClick()
+
+        assert(openedThread == "T1") { "expected T1 to be opened but was $openedThread" }
+    }
+
+    @Test
     fun `R_040 a gap row names the reason, never conflated with a quiet band`() {
         composeTestRule.setContent {
             OrtTheme {

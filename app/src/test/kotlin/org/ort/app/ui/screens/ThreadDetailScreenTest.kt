@@ -69,11 +69,13 @@ class ThreadDetailScreenTest {
         onBack: () -> Unit = {},
         onOpenOver: (String) -> Unit = {},
         onOpenSourceOver: (String) -> Unit = {},
+        backLabel: String = "Threads",
     ) = ThreadDetailScreen(
         state = state(),
         onBack = onBack,
         onOpenOver = onOpenOver,
         onOpenSourceOver = onOpenSourceOver,
+        backLabel = backLabel,
     )
 
     @Test
@@ -120,6 +122,17 @@ class ThreadDetailScreenTest {
         composeTestRule.setContent { OrtTheme { screen(onBack = { backPressed = true }) } }
 
         composeTestRule.onNodeWithContentDescription("Back to Threads").performClick()
+
+        assert(backPressed)
+    }
+
+    @Test
+    fun `R_017 the chevron names the real navigation origin, not a hardcoded Threads`() {
+        var backPressed = false
+        composeTestRule.setContent { OrtTheme { screen(backLabel = "Log", onBack = { backPressed = true }) } }
+
+        composeTestRule.onNodeWithContentDescription("Back to Threads").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("Back to Log").performClick()
 
         assert(backPressed)
     }

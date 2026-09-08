@@ -31,12 +31,21 @@ private val EMPTY_LOG_SCREEN_STATE = LogScreenViewState(
 /**
  * The Log destination's polling content composable (R-040..R-045, ui-conformance WP5) —
  * `ui-conformance-plan.md`'s nav-host rule: WP3's `OrtNavHost` dispatches `ReaderDestination.LOG`
- * here once it removes its own inline copy; this file owns that dispatch target. Session-tied
- * polling and the filter sheet's open/close/selection state live here, off the pure [LogScreen]/
- * [LogFilterSheet] composables — neither of those takes a [Context].
+ * here. Session-tied polling and the filter sheet's open/close/selection state live here, off the
+ * pure [LogScreen]/[LogFilterSheet] composables — neither of those takes a [Context].
+ *
+ * [onOpenThread] (R-017, default a no-op so `OrtNavHost.kt` compiles unchanged until it passes a
+ * real one) opens the QSO a [org.ort.app.ui.data.LogListItem.Group] header names — `Rows.dc.html`:
+ * "Tapping opens the thread."
  */
 @Composable
-public fun LogContent(context: Context, sessionId: String?, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
+public fun LogContent(
+    context: Context,
+    sessionId: String?,
+    onOpen: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onOpenThread: (String) -> Unit = {},
+) {
     var screenState by remember { mutableStateOf(EMPTY_LOG_SCREEN_STATE) }
     var quickFilter by rememberSaveable { mutableStateOf<LogQuickFilterId>(LogQuickFilterId.All) }
     var selection by remember { mutableStateOf(LogFilterSelection()) }
@@ -61,6 +70,7 @@ public fun LogContent(context: Context, sessionId: String?, onOpen: (String) -> 
             onOpen = onOpen,
             onQuickFilterSelect = { id -> quickFilter = id },
             onFilterClick = { sheetOpen = true },
+            onOpenThread = onOpenThread,
         )
 
         val currentSheetState = sheetState

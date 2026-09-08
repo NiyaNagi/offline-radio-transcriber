@@ -17,13 +17,12 @@ private const val POLL_INTERVAL_MILLIS = 2_000L
 /**
  * The Threads destination's polling content composable (R-044, ui-conformance WP5) —
  * `ui-conformance-plan.md`'s nav-host rule: WP3's `OrtNavHost` dispatches
- * `ReaderDestination.THREADS` here once it removes its own inline copy; this file owns that
- * dispatch target. [onOpen] opens a transmission's own detail screen — [ThreadDetailScreen]'s own
- * drill-in is not yet wired into navigation (see that screen's doc comment for why); this content
- * composable renders [ThreadScreen] only. [onOpen] is required by this file's own row in
- * `spec/ui-conformance-plan.md` (`ThreadContent(context, sessionId, onOpen, modifier)`, matching
- * [org.ort.app.ui.screens.LogContent]'s shape) but genuinely has nowhere to go yet — see the
- * previous paragraph — so it is intentionally unused until a route exists.
+ * `ReaderDestination.THREADS` here. [onOpen] opens a transmission's own detail screen; [onOpenThread]
+ * (R-017, default a no-op so `OrtNavHost.kt` compiles unchanged until it passes a real one) opens a
+ * thread card into `ThreadDetailScreen` — WP3's own `ThreadDetailContent` wrapper (`OrtNavHost.kt`)
+ * already polls [ThreadPolling.threadDetail] and renders it; this composable only needs to forward
+ * the tap. [onOpen] has nowhere to go yet — a thread card opens the thread, not one transmission —
+ * so it stays unused pending a per-over destination from this screen.
  */
 @Suppress("UnusedParameter")
 @Composable
@@ -32,6 +31,7 @@ public fun ThreadContent(
     sessionId: String?,
     onOpen: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenThread: (String) -> Unit = {},
 ) {
     var state by remember { mutableStateOf<ThreadListViewState>(ThreadListViewState.Empty) }
     if (sessionId != null) {
@@ -42,5 +42,5 @@ public fun ThreadContent(
             }
         }
     }
-    ThreadScreen(state = state, onOpenThread = {}, modifier = modifier)
+    ThreadScreen(state = state, onOpenThread = onOpenThread, modifier = modifier)
 }

@@ -38,9 +38,11 @@ import org.ort.app.ui.theme.OrtType
  * every over in the thread with its own reasoning line, whose source-over link
  * ([onOpenSourceOver]) opens the transmission an inherited attribution was carried from.
  *
- * Not yet reachable from [ThreadScreen] — opening a thread card needs a route this package's own
- * `ThreadContent.kt` does not add (see that file's doc comment on why); this screen is a pure,
- * tested function of [ThreadDetailViewState] ready for whichever package wires that route.
+ * Reachable from [ThreadScreen]'s thread cards via `ThreadContent`'s `onOpenThread`, through WP3's
+ * own `ThreadDetailContent` wrapper in `OrtNavHost.kt` (that host polls [ThreadPolling.threadDetail]
+ * and renders this screen — see its own doc comment). [backLabel] (R-017: the chevron names where
+ * the operator came from) defaults to the common case but the host may override it with the real
+ * navigation origin (`ids.openedFrom.label`).
  */
 @Composable
 public fun ThreadDetailScreen(
@@ -49,9 +51,10 @@ public fun ThreadDetailScreen(
     onOpenOver: (String) -> Unit,
     onOpenSourceOver: (String) -> Unit,
     modifier: Modifier = Modifier,
+    backLabel: String = "Threads",
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = "Threads", onBack = onBack)
+        DrillInHeader(parentLabel = backLabel, onBack = onBack)
 
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             val kindPrefix = state.kindLabel?.let { "$it · " }.orEmpty()
