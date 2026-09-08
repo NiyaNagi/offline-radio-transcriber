@@ -1,6 +1,7 @@
 package org.ort.data
 
 import android.content.Context
+import androidx.room.useReaderConnection
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -83,10 +84,17 @@ public class DurabilityTest {
     public fun the_file_backed_database_runs_in_wal_journal_mode(): Unit = runTest {
         val db = OrtDatabase.create(context, name = dbName, inMemory = false)
         try {
-            db.openHelper.writableDatabase.query("PRAGMA journal_mode").use { cursor ->
-                cursor.moveToFirst()
-                assertEquals("wal", cursor.getString(0).lowercase())
+            // R-204: `db.openHelper` throws once a database uses `BundledSQLiteDriver` ("Cannot
+            // return a SupportSQLiteOpenHelper since no SupportSQLiteOpenHelper.Factory was
+            // configured with Room") — the driver-native way to run a raw PRAGMA is a reader
+            // connection's prepared statement.
+            val mode = db.useReaderConnection { connection ->
+                connection.usePrepared("PRAGMA journal_mode") { statement ->
+                    statement.step()
+                    statement.getText(0)
+                }
             }
+            assertEquals("wal", mode.lowercase())
         } finally {
             db.close()
         }

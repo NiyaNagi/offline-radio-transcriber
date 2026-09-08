@@ -32,6 +32,138 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance data: bundled SQLite with FTS5)
+
+### (pending) — ui-conformance data · bundled SQLite with FTS5 so text search works on every device and in tests
+
+**Scope:** `:data` (`OrtDatabase.kt`, `build.gradle.kts`), `gradle/libs.versions.toml`; two narrowly-
+scoped, mechanically-forced follow-on fixes outside `:data` (justified below) — `:pipeline`'s
+`DataPassBResultSink.kt`/`build.gradle.kts`, `:app`'s `Scenarios.kt` (`src/debug`),
+`CorrectionPolling.kt`, `SearchViewData.kt`, `build.gradle.kts`, and their affected tests
+(`DurabilityTest.kt`, `TranscriptVersioningTest.kt`, `WorkQueueTest.kt`, new `FtsIndexRepairTest.kt`,
+rewritten `SearchDaoFullTextTest.kt`, `SearchPollingTest.kt`); `results/ui-audit/register.md` (R-204
+closed).
+
+**Requirements/ACs:** R-204 (halt, `Search-Results`/`Search-Unavailable`, FR-UI-3), FR-STO-1,
+AC-53 (FR-AST-5/6, migration preserves existing rows), constitution I ("uncertainty is content" —
+a silent capability gap one layer down in the stack is the same failure shape), constitution V/VII
+(`:data` gaining a SQLite library, no network — `platformGuards`/`dependencyRules` verified).
+
+**What changed:**
+
+*Constitution Check.* Principle I is the throughline: R-204 was a **silent** degrade — every text
+search failed the same reproducible way and told the operator "unavailable" without ever surfacing
+why, because `OrtDatabase` assumed `fts5` was always present on minSdk 26 and that assumption was
+false on the very reference emulator this project targets. Fixing the symptom (make search degrade
+more gracefully) would have been another silent layer; the actual fix removes the false assumption.
+Principle VII: the fix is structural (every `OrtDatabase` connection, on every platform, uses the
+same bundled SQLite binary) rather than conventional (a comment telling callers to remember a
+workaround). Principle V: `androidx.sqlite:sqlite-bundled` is a local, offline SQLite implementation
+— `platformGuards` confirms `:data` still links no HTTP client and declares no network permission.
+
+- **Root cause, fully diagnosed** (WP7 had already found half of it): the API 34 reference
+  emulator's platform SQLite has no `fts5` module (`no such module: fts5` at `CREATE VIRTUAL TABLE`).
+  Robolectric's host-JVM SQLite has the identical gap — this project's own test suite had been
+  carrying a "confirmed unavailable, tests skip" doc comment for it since build-plan P15.
+- **The fix:** `OrtDatabase.create` now installs `BundledSQLiteDriver` via
+  `RoomDatabase.Builder.setDriver(...)` (Room bumped 2.6.1 → **2.7.2**, pulling in
+  `androidx.sqlite:sqlite-bundled:2.5.2` — both resolved and verified against this project's
+  existing `google()`/`mavenCentral()` repositories, no new repository needed). This SQLite build
+  has `fts5` compiled in and is not the platform's/host's own — verified two ways: `FtsIndexRepairTest.FR_UI_3_fts5_is_available_on_every_supported_sqlite`
+  (a `MATCH` query executes without the "no such module" error) and by inspecting the assembled
+  debug APK directly (`lib/{arm64-v8a,armeabi-v7a,x86,x86_64}/libsqliteJni.so` all present).
+- **A second bug found and fixed along the way, more consequential than the first:**
+  `RoomDatabase.Callback.onCreate`/`.onOpen` **do not run at all** once `.setDriver(...)` is used
+  (confirmed empirically — instrumented `onOpen` to throw unconditionally and watched nothing catch
+  it). Every hand-written schema element this module needs Room's own annotations cannot express —
+  `idx_transcript_one_current`, `idx_wq_active`, `idx_prior_adjustment_one_current`, and the
+  `transcript_fts` table/triggers themselves — silently never existed, on *every* database, not just
+  ones lacking fts5. Fixed by moving `applyHandWrittenSchema` out of the (now-removed) `Callback` and
+  running it explicitly and idempotently (`CREATE ... IF NOT EXISTS` throughout, plus FTS5's own
+  `'rebuild'` command for the index content) inside `create()` itself, synchronously
+  (`runBlocking { db.useWriterConnection { ... } }`) so `create()` stays non-suspend for its many
+  existing callers. `FtsIndexRepairTest.FR_UI_3_an_install_without_the_index_gets_it_built_on_open`
+  proves the repair path directly: a database built from the committed v3 schema fixture (the same
+  state a real pre-existing install is in, and the same mechanism `MigrationTestHelper` already uses
+  for every other migration test) gets `transcript_fts` built **and backfilled** from its pre-existing
+  transcript row the moment it is opened.
+- **A third, related bug found and fixed:** `androidx.room.withTransaction` (`room-ktx`'s KTX
+  helper) also silently breaks under the driver — throws `Cannot return a SupportSQLiteOpenHelper
+  since no SupportSQLiteOpenHelper.Factory was configured with Room` the moment it is actually
+  exercised, because it still routes through the classic blocking-transaction bridge internally.
+  Every call site repo-wide is fixed: `:data`'s new `OrtDatabase.inWriteTransaction` (built on
+  `useWriterConnection`/`Transactor.withTransaction(IMMEDIATE)`, letting nested suspend DAO calls
+  transparently reuse the same pooled connection, the same mechanism `@Transaction`-annotated DAO
+  methods already use) replaces it in `:data`'s own `WorkQueue.kt`, `:pipeline`'s
+  `DataPassBResultSink.kt`, and `:app`'s `CorrectionPolling.retryFailedPass`. A fourth broken pattern,
+  `OrtDatabase.openHelper` (raw `SupportSQLiteDatabase` access outside a `Migration`/`Callback`,
+  where it does still work), is fixed the same way: a new `OrtDatabase.execRaw(sql, vararg args)`
+  helper (driver-native positional-bind raw statement execution) replaces it in `:app/src/debug`'s
+  `Scenarios.kt` (the debug scenario simulator's own data-cleanup path, made `suspend`) and in three
+  test files that used it for raw diagnostic probes (`DurabilityTest`'s WAL-mode check,
+  `SearchDaoFullTextTest`'s — now `FtsIndexRepairTest`'s — fts5-availability probe,
+  `SearchPollingTest`'s equivalent). **Why files outside `:data` were touched**, given the brief's
+  file list: every one of these was a genuine regression this exact change caused (confirmed by the
+  full gate going red without them, and green with them) in code this session did not otherwise
+  touch — a mechanical, same-shape substitution (`db.withTransaction { }` → `db.inWriteTransaction { }`,
+  `db.openHelper.writableDatabase.execSQL(sql, args)` → `db.execRaw(sql, *args)`) with the new
+  primitives `:data` now exports, not a redesign; left unfixed, "full gate green" (this task's own
+  explicit requirement) was unreachable. `TranscriptVersioningTest`/`WorkQueueTest`'s own constraint
+  tests needed one further adjustment: the driver throws the base `android.database.SQLException`
+  for a failed prepare, not always the narrower `SQLiteConstraintException`/`SQLiteException`
+  subclasses the classic driver did — `SearchViewData.kt`'s live fts5-missing degrade path (R-204's
+  original symptom) is widened the same way, so that safety net still actually catches what it is
+  for if this class of regression ever recurs.
+- **Test gap closed, not left skipped:** `SearchDaoFullTextTest`'s always-`assumeTrue`-guarded test
+  now runs unconditionally (fts5 is guaranteed present); `robolectric.properties`'s comment, which
+  had claimed NATIVE mode gives Robolectric real fts5 (empirically false, and the actual reason this
+  gap existed at all), is corrected.
+
+**Verified:**
+- `.\gradlew.bat :data:test` (debug + release) — 66 tests total, 0 failed, including new
+  `FtsIndexRepairTest.FR_UI_3_fts5_is_available_on_every_supported_sqlite` and
+  `.FR_UI_3_an_install_without_the_index_gets_it_built_on_open`, and the pre-existing
+  `MigrationTest`/`DurabilityTest`/`TranscriptVersioningTest`/`SearchDaoFullTextTest` suites, all
+  green with the driver.
+- `.\gradlew.bat :pipeline:test` — full suite green, including `DataPassBResultSinkTest` (the
+  `withTransaction` regression this exposed) and `RealCaptureServiceTest`/`ThermalTrackingPassTest`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.debug.ScenariosTest --tests org.ort.app.ui.data.SearchPollingTest --tests org.ort.app.ui.data.CorrectionPollingTest` —
+  41 + 6 + 20 tests, 0 failed (every scenario-simulator and Room/SQLite-touching test in `:app`).
+  The full, unfiltered `:app:testDebugUnitTest` (~945 tests, most of them Compose UI tests
+  unrelated to this change) could not be run to a single clean completion in this session — this
+  machine runs several other worktree agents' Gradle/Robolectric processes concurrently (confirmed
+  via the OS process list), and Compose's Robolectric idling strategy has a hard 60-second timeout
+  per test that heavy shared-machine contention trips intermittently
+  (`androidx.test.espresso.AppNotIdleException`). Isolated after-the-fact: `FailureScreensTest`
+  (27/27) and `ActivityPatternChartTest` (12/12) — the two classes that showed the most such
+  failures under contention — both pass 100% cleanly, unmodified, when run alone; every failure
+  observed under contention was a Compose idle timeout with no reference to Room, SQLite or any file
+  this change touched, and re-running the exact same class alone always passed.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules: checked 17 modules …
+  OK`; `platformGuards: checked 17 modules' external dependencies and 17 manifests … OK` (no HTTP
+  client outside `:net`, no new network permission from `:data`'s new SQLite dependency).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `coverageMatrix: 419 requirements, 183 covered`; `coverageMatrixCheck: up to date (183 covered of
+  419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL; `app-debug.apk` inspected directly and
+  confirmed to package `lib/{arm64-v8a,armeabi-v7a,x86,x86_64}/libsqliteJni.so`.
+- Register `results/ui-audit/register.md`: R-204 marked `fixed` (lead to confirm on the emulator).
+
+**Left open / not done:**
+- The full `:app:testDebugUnitTest` Compose UI suite was not run to one clean, uncontended
+  completion in this session, for the environmental reason above — a validator (or a rerun once
+  this machine is not running several concurrent agents) should do a full, single-invocation pass
+  to confirm the whole suite, not just the classes spot-checked here.
+- `idx_prior_adjustment_one_current`'s pre-existing upgrade-path gap (noted in the prior `:data`
+  session's entry below) is unaffected by this change, still open.
+- `execRaw`/`inWriteTransaction` are now the two general-purpose driver-native primitives this
+  project has for "arbitrary transaction" and "arbitrary raw statement" respectively; any future
+  code that reaches for `androidx.room.withTransaction` or `OrtDatabase.openHelper` directly will
+  hit the same silent breakage this entry fixes — worth a lint rule or a code-review note, not
+  something this change adds.
+
 ## 2026-09-08 (ui-conformance WP2: line length)
 
 ### (pending) — ui-conformance WP2 · line length

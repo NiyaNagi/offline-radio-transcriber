@@ -306,8 +306,11 @@ public class WorkQueueTest {
                     enqueuedAt = 2L,
                 ),
             )
-        } catch (e: android.database.sqlite.SQLiteConstraintException) {
-            threw = true
+        } catch (e: android.database.SQLException) {
+            // BundledSQLiteDriver (register R-204) throws the base `android.database.SQLException`
+            // for a constraint failure, not always the `SQLiteConstraintException` subclass the
+            // classic framework SQLite driver used — confirmed empirically at this exact call site.
+            threw = e.message?.contains("UNIQUE constraint failed") == true
         }
         assertTrue("a second active row for the same (transmission, pass) must violate idx_wq_active", threw)
     }

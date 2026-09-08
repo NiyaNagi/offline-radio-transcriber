@@ -1,7 +1,7 @@
 package org.ort.app.ui.data
 
 import android.content.Context
-import android.database.sqlite.SQLiteException
+import android.database.SQLException
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.Band
@@ -235,11 +235,15 @@ public object SearchPolling {
         return try {
             val entities = rawSearch(db, params, params.text)
             buildResult(context, entities, facetFilter, textSearchUnavailable = false)
-        } catch (e: SQLiteException) {
-            // Only degrade for the specific, known fts5-missing case (this project's own
-            // Robolectric host — see data/src/test/kotlin/org/ort/data/SearchDaoFullTextTest.kt);
-            // any other database error is a real bug and must not be hidden behind a silent
-            // fallback.
+        } catch (e: SQLException) {
+            // Only degrade for the specific, known fts5-missing case. Register R-204: on every
+            // supported SQLite build (`OrtDatabase.create` always installs `BundledSQLiteDriver`)
+            // this branch should now be unreachable — kept, not deleted, as the honest fallback
+            // this file has always promised rather than a silent crash if that ever regresses.
+            // `SQLException` (not `SQLiteException`) because the driver throws its base Android-
+            // compatible type for a failed prepare, not always the narrower subclass — confirmed
+            // empirically (see `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`'s `createFtsIndex`).
+            // Any other database error is a real bug and must not be hidden behind a silent fallback.
             val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
                 e.message?.contains("transcript_fts", ignoreCase = true) == true
             if (!fts5Missing || params.text == null) throw e
@@ -262,7 +266,7 @@ public object SearchPolling {
         val db = OrtDatabase.create(context.applicationContext)
         val entities = try {
             rawSearch(db, params, params.text)
-        } catch (e: SQLiteException) {
+        } catch (e: SQLException) {
             val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
                 e.message?.contains("transcript_fts", ignoreCase = true) == true
             if (!fts5Missing || params.text == null) throw e
@@ -391,7 +395,7 @@ public object SearchWidenSuggestions {
                 toUtc = params.toUtcMillis,
                 band = params.band,
             )
-        } catch (e: SQLiteException) {
+        } catch (e: SQLException) {
             val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
                 e.message?.contains("transcript_fts", ignoreCase = true) == true
             if (!fts5Missing || params.text == null) throw e

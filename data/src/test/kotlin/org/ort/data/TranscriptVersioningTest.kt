@@ -1,6 +1,5 @@
 package org.ort.data
 
-import android.database.sqlite.SQLiteConstraintException
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -72,8 +71,11 @@ public class TranscriptVersioningTest {
         try {
             // Bypasses supersede()'s clearCurrent — the index must catch it independently.
             dao.insert(transcript("T2", "TX1", "b", current = true, createdAt = 2L))
-        } catch (e: SQLiteConstraintException) {
-            threw = true
+        } catch (e: android.database.SQLException) {
+            // BundledSQLiteDriver (register R-204) throws the base `android.database.SQLException`
+            // for a constraint failure, not always the `SQLiteConstraintException` subclass the
+            // classic framework SQLite driver used — confirmed empirically at this exact call site.
+            threw = e.message?.contains("UNIQUE constraint failed") == true
         }
         assertTrue("a second isCurrent=1 row for the same transmission must violate idx_transcript_one_current", threw)
     }

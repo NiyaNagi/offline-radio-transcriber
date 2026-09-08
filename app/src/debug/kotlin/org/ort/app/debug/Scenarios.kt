@@ -34,6 +34,7 @@ import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
+import org.ort.data.execRaw
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -59,8 +60,9 @@ import java.io.File
  * not an exception to that).
  *
  * **Clearing prior scenario data.** None of `:data`'s DAOs expose a delete query (build-plan P5
- * never needed one), so [clearPriorScenarioData] reaches through [OrtDatabase.openHelper] — public
- * Room API, not a new dependency — and runs plain `DELETE` statements scoped to the
+ * never needed one), so [clearPriorScenarioData] reaches through [org.ort.data.execRaw] — `:data`'s
+ * own driver-native raw-statement helper (register R-204; `OrtDatabase.openHelper` throws once
+ * `BundledSQLiteDriver` is installed) — and runs plain `DELETE` statements scoped to the
  * `scenario-`-prefixed session/transmission ids every scenario here writes
  * ([ScenarioFixtures.SESSION_PREFIX]). `station`/`voiceprint` rows are cleared unconditionally
  * rather than by prefix: [org.ort.data.entity.TransmissionEntity.stationId] *is* the callsign
@@ -167,44 +169,43 @@ public object Scenarios {
     // Clearing
     // ---------------------------------------------------------------------------------------
 
-    private fun clearPriorScenarioData(context: Context, db: OrtDatabase) {
-        val sql = db.openHelper.writableDatabase
-        val likeScenario = arrayOf<Any>("${ScenarioFixtures.SESSION_PREFIX}%")
-        sql.execSQL(
+    private suspend fun clearPriorScenarioData(context: Context, db: OrtDatabase) {
+        val likeScenario = "${ScenarioFixtures.SESSION_PREFIX}%"
+        db.execRaw(
             "DELETE FROM correction WHERE transmissionId IN " +
                 "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
             likeScenario,
         )
-        sql.execSQL(
+        db.execRaw(
             "DELETE FROM callsign_candidate WHERE transmissionId IN " +
                 "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
             likeScenario,
         )
-        sql.execSQL(
+        db.execRaw(
             "DELETE FROM phonetic_lattice WHERE transmissionId IN " +
                 "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
             likeScenario,
         )
-        sql.execSQL(
+        db.execRaw(
             "DELETE FROM transcript WHERE transmissionId IN " +
                 "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
             likeScenario,
         )
         // R-153: `pass-failed` is the first scenario to write a work_queue_item row — cleared by
         // the same transmissionId-through-sessionId join every other per-transmission table uses.
-        sql.execSQL(
+        db.execRaw(
             "DELETE FROM work_queue_item WHERE transmissionId IN " +
                 "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
             likeScenario,
         )
-        sql.execSQL("DELETE FROM thread WHERE sessionId LIKE ?", likeScenario)
-        sql.execSQL("DELETE FROM capture_gap WHERE sessionId LIKE ?", likeScenario)
-        sql.execSQL("DELETE FROM transmission WHERE sessionId LIKE ?", likeScenario)
-        sql.execSQL("DELETE FROM session WHERE id LIKE ?", likeScenario)
+        db.execRaw("DELETE FROM thread WHERE sessionId LIKE ?", likeScenario)
+        db.execRaw("DELETE FROM capture_gap WHERE sessionId LIKE ?", likeScenario)
+        db.execRaw("DELETE FROM transmission WHERE sessionId LIKE ?", likeScenario)
+        db.execRaw("DELETE FROM session WHERE id LIKE ?", likeScenario)
         // Unconditional — see this object's own doc comment for why station/voiceprint rows
         // cannot be tagged by the same session-id-prefix convention.
-        sql.execSQL("DELETE FROM station")
-        sql.execSQL("DELETE FROM voiceprint")
+        db.execRaw("DELETE FROM station")
+        db.execRaw("DELETE FROM voiceprint")
 
         File(context.filesDir, "audio").listFiles { f -> f.name.startsWith(ScenarioFixtures.SESSION_PREFIX) }
             ?.forEach { it.deleteRecursively() }

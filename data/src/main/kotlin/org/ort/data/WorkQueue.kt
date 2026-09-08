@@ -1,6 +1,5 @@
 package org.ort.data
 
-import androidx.room.withTransaction
 import kotlinx.coroutines.withTimeoutOrNull
 import org.ort.core.Clock
 import org.ort.core.PassId
@@ -21,7 +20,7 @@ public sealed interface PassRunOutcome {
  * technical design §7.1's durable work queue, with run-id leasing, per-item deadlines and
  * bounded retry (functional spec §7.14 FR-RUN-2, FR-RUN-8..10a). Every state change that
  * touches both the queue and the transmission commits **in one transaction**
- * ([androidx.room.withTransaction]), which is what makes AC-47 ("kill mid-pass, identical
+ * ([OrtDatabase.inWriteTransaction]), which is what makes AC-47 ("kill mid-pass, identical
  * results") and AC-99 ("a hung pass is cancelled, the queue keeps draining") true together.
  */
 public class WorkQueue(
@@ -53,7 +52,7 @@ public class WorkQueue(
         runId: String,
         limit: Int,
         deadlineMillisFor: (WorkQueueItemEntity) -> Long,
-    ): List<WorkQueueItemEntity> = db.withTransaction {
+    ): List<WorkQueueItemEntity> = db.inWriteTransaction {
         val ready = queueDao.selectReady(limit)
         val now = clock.wallMillis()
         ready.map { item ->
@@ -71,7 +70,7 @@ public class WorkQueue(
      * to a run that died. The item returns to `READY` and its transmission to `CAPTURED`, so
      * the next lease re-runs the (idempotent) pass with identical results.
      */
-    public suspend fun recoverStaleLeases(currentRunId: String): Int = db.withTransaction {
+    public suspend fun recoverStaleLeases(currentRunId: String): Int = db.inWriteTransaction {
         val stale = queueDao.selectLeasedNotRunId(currentRunId)
         for (item in stale) {
             queueDao.resetToReady(item.id)
@@ -92,7 +91,7 @@ public class WorkQueue(
      * [TransmissionDao.canTransition] first, the same guard [leaseBatch] uses.
      */
     public suspend fun completePass(item: WorkQueueItemEntity, finalState: TransmissionState): Unit =
-        db.withTransaction {
+        db.inWriteTransaction {
             require(finalState == TransmissionState.COMPLETE || finalState == TransmissionState.REJECTED) {
                 "completePass(...) commits COMPLETE or REJECTED, got $finalState"
             }
@@ -111,7 +110,7 @@ public class WorkQueue(
      * already committed a different final state first (see [completePass]'s note on concurrent
      * passes) — in which case that state stands.
      */
-    public suspend fun failPass(item: WorkQueueItemEntity, error: String): Unit = db.withTransaction {
+    public suspend fun failPass(item: WorkQueueItemEntity, error: String): Unit = db.inWriteTransaction {
         val attempts = item.attemptCount + 1
         if (attempts >= maxAttempts) {
             queueDao.markFailed(item.id, attempts, error)
@@ -161,7 +160,7 @@ public class WorkQueue(
      *
      * Returns the number of items requeued.
      */
-    public suspend fun requeueFailed(pass: PassId? = null, lastErrorPrefix: String? = null): Int = db.withTransaction {
+    public suspend fun requeueFailed(pass: PassId? = null, lastErrorPrefix: String? = null): Int = db.inWriteTransaction {
         val failed = queueDao.selectFailed(pass?.name, lastErrorPrefix)
         for (item in failed) {
             queueDao.requeueToReady(item.id)
