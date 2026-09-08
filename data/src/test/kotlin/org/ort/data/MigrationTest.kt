@@ -9,8 +9,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.AttributionState
 import org.ort.core.Tier
 import org.ort.data.dao.StationIdentityDao
+import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.PriorAdjustmentEntity
 import org.ort.data.entity.ShedEventEntity
 import org.ort.data.entity.ShedTrigger
@@ -243,6 +245,68 @@ public class MigrationTest {
             runBlocking { db.transmissionDao().setProcessedTier("TX1", Tier.T2) }
             val processed = runBlocking { db.transmissionDao().getById("TX1") }
             assertEquals(Tier.T2, processed!!.processedTier) // new write path usable post-migration
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * Register R-321 — the v4 -> v5 migration adds `correction.previousAttributionState` and its
+     * three siblings without touching any existing column. Proves both halves of FR-AST-5/6: a
+     * pre-existing correction row survives with its real `newValue` intact, and the four new
+     * columns default to `NULL` until [OrtDatabase.correctionDao]'s write path stamps them.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "R-321")
+    public fun migration_from_v4_to_v5_preserves_existing_rows_and_adds_the_previous_attribution_columns() {
+        val dbName = "migration-test-db-v5"
+        val v4 = helper.createDatabase(dbName, 4)
+        v4.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 1, 0, 0)",
+        )
+        v4.execSQL(
+            "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
+                "audioFormat, preRollMs, postRollMs, frequencyHz, frequencyProvenance, mode, signalStrength, " +
+                "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
+                "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
+                "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
+                "isReprocessCandidate, processedTier) VALUES ('TX1', 'S1', NULL, 0, 1000, 1000, " +
+                "'flac/16k/mono', 200, 200, NULL, 'measured', NULL, NULL, NULL, NULL, 'CONFIRMED', 'K7ABC', " +
+                "0.9, NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, NULL)",
+        )
+        v4.execSQL(
+            "INSERT INTO correction (id, transmissionId, field, previousValue, newValue, correctedAt, " +
+                "propagatedToCount) VALUES ('CORR1', 'TX1', 'stationId', NULL, 'K7ABC', 100, 0)",
+        )
+        v4.close()
+
+        helper.runMigrationsAndValidate(dbName, 5, true, OrtDatabase.MIGRATION_4_5)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val correction = runBlocking { db.correctionDao().correctionsFor("TX1") }.single()
+            assertEquals("K7ABC", correction.newValue) // pre-existing row survives
+            assertEquals(null, correction.previousAttributionState) // new columns default to NULL
+
+            runBlocking {
+                db.correctionDao().recordCorrection(
+                    CorrectionEntity(
+                        id = "CORR2",
+                        transmissionId = "TX1",
+                        field = "stationId",
+                        previousValue = "K7ABC",
+                        newValue = "W7NPC",
+                        correctedAt = 200L,
+                    ),
+                )
+            }
+            val stamped = runBlocking { db.correctionDao().correctionsFor("TX1") }.single { it.id == "CORR2" }
+            // New write path usable post-migration.
+            assertEquals(AttributionState.CONFIRMED, stamped.previousAttributionState)
         } finally {
             db.close()
         }

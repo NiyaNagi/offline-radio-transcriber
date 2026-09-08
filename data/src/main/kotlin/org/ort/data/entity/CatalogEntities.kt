@@ -3,6 +3,7 @@ package org.ort.data.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import org.ort.core.AttributionState
 import org.ort.core.Tier
 
 /**
@@ -137,6 +138,20 @@ public data class LexiconVersionEntity(
     val checksum: String,
 )
 
+/**
+ * [previousAttributionState]/[previousAttributionConfidence]/
+ * [previousAttributionSourceTransmissionId]/[previousCorrected] (schema v5, register R-321):
+ * captured — not by the caller, by [org.ort.data.dao.CorrectionDao.recordCorrection] itself,
+ * from the transmission row's real state the instant before it overwrites it — so `Undo all`
+ * (`Detail-Propagated.dc.html`) can restore the *exact* prior attribution
+ * ([org.ort.data.dao.CorrectionDao.restoreAttribution]) instead of re-correcting to the old
+ * callsign, which always lands `INFERRED` and always sets the `corrected` lock — losing a prior
+ * `CONFIRMED`/`AMBIGUOUS` state and an uncorrected row's unlocked status. `null` on every row
+ * written before this column existed (schema v4 and earlier) and on [FIELD_STATION_UNVERIFIED]'s
+ * own genuinely-first-ever correction of a never-before-corrected transmission has real (non-null)
+ * values for the other three; only [previousCorrected] `== false` is itself informative there —
+ * still real data, not a sentinel.
+ */
 @Entity(tableName = "correction")
 public data class CorrectionEntity(
     @PrimaryKey val id: String,
@@ -146,6 +161,10 @@ public data class CorrectionEntity(
     val newValue: String,
     val correctedAt: Long,
     val propagatedToCount: Int = 0,
+    val previousAttributionState: AttributionState? = null,
+    val previousAttributionConfidence: Double? = null,
+    val previousAttributionSourceTransmissionId: String? = null,
+    val previousCorrected: Boolean? = null,
 )
 
 @Entity(tableName = "calibration")

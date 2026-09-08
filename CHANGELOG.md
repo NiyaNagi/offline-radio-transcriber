@@ -32,6 +32,77 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance data: R-321 exact-attribution undo)
+
+### (pending) — ui-conformance data · R-321 exact-attribution undo
+
+**Scope:** `:data` only — `entity/CatalogEntities.kt` (`CorrectionEntity`), `dao/CorrectionDao.kt`,
+`OrtDatabase.kt` (schema v4 → v5, `MIGRATION_4_5`), new `data/schemas/org.ort.data.OrtDatabase/5.json`,
+`test/kotlin/org/ort/data/dao/CorrectionDaoTest.kt`, `test/kotlin/org/ort/data/MigrationTest.kt`.
+
+**Requirements/ACs:** R-321, FR-UI-6, FR-SPK-7, AC-53 (FR-AST-5/6, migration preserves existing
+rows), constitution I ("an attribution without its confidence state is a bug"), constitution III
+("nothing is deleted quietly").
+
+**What changed:**
+
+*Constitution Check.* Principle I is the actual bug this closes: `Undo all`
+(`Detail-Propagated.dc.html`) re-corrected to the old callsign, which
+[CorrectionDao.applyCorrectedAttribution] always writes as `INFERRED` with no confidence — so
+undoing a correction on a row that had been `CONFIRMED` or `AMBIGUOUS` (or simply not yet
+`corrected`) silently *changed* its attribution state and lock instead of restoring it. Principle
+III: the fix does not delete or overwrite anything new to get there — every prior state was
+already sitting in `transmission`'s own columns; this just copies it into the audit row *before*
+it is overwritten, the same append-then-overwrite shape `TranscriptDao.supersede` and
+`StationIdentityDao` already use elsewhere in this module.
+
+- **`CorrectionEntity` gains four nullable columns** (schema v5): `previousAttributionState`,
+  `previousAttributionConfidence`, `previousAttributionSourceTransmissionId`, `previousCorrected`.
+  `null` on every row written before this column existed; real values (with `previousCorrected`
+  itself sometimes `false`, which is real data, not a sentinel) on every row `recordCorrection`
+  writes from here on.
+- **`CorrectionDao.recordCorrection` now stamps them itself**, not the caller: a new
+  `attributionSnapshot(transmissionId)` query reads the transmission row's real attribution
+  fields, and `recordCorrection` reads it *inside its own transaction*, immediately before
+  `applyCorrectedAttribution` overwrites them — so the snapshot can never go stale between being
+  computed and being written, and a caller cannot forget to pass it (it isn't a caller-supplied
+  argument at all). Proven for a correction chain too: a *second* correction's `previous*` columns
+  correctly capture the *first* correction's resulting `INFERRED`/locked state, not the
+  transmission's original state — the same one-hop-at-a-time restore shape a chain of superseded
+  transcript versions already has.
+- **New `CorrectionDao.restoreAttribution(transmissionId, state, stationId, confidence,
+  sourceTransmissionId, corrected)`** — an unconditional direct write (no `AND corrected = 0`
+  guard, matching `applyCorrectedAttribution`'s own reasoning: this *is* the deliberate human
+  "undo" the lock exists to survive, not a machine re-propagation the lock is supposed to block).
+  `app/.../ui/data/CorrectionPolling.kt`'s `undoAll` is expected to call this next round, reading
+  the four new columns off the correction being undone — not wired here (out of `:data`'s
+  ownership; the lead's own brief names WP6 as the caller).
+
+**Verified:**
+- `.\gradlew.bat :data:test` — full suite green, including new
+  `CorrectionDaoTest.R_321_correction_then_restore_round_trips_a_confirmed_attribution_exactly`,
+  `.R_321_correction_then_restore_round_trips_an_ambiguous_attribution_exactly`,
+  `.R_321_a_second_correction_captures_the_first_corrections_resulting_state`, and
+  `MigrationTest.migration_from_v4_to_v5_preserves_existing_rows_and_adds_the_previous_attribution_columns`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.data.CorrectionPollingTest` — 23
+  tests, 0 failed (confirms the new nullable columns and `recordCorrection`'s new internal read
+  don't disturb `:app`'s existing correction/undo behaviour, even though it doesn't yet call the
+  new restore path).
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules: OK`; `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `191 covered of 419` (up from 187); `coverageMatrixCheck` green.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `:data:ktlintMainSourceSetCheck`, `:data:ktlintTestSourceSetCheck`, `:data:detekt` — all green.
+
+**Left open / not done:**
+- `CorrectionPolling.undoAll` itself is not changed — WP6's own follow-up, using
+  `restoreAttribution` and the four new `CorrectionEntity` columns this commit adds.
+- The v4→v5 migration is shared with the schema-v5 round's other item (register R-320/R-182, a
+  lexicon-side `lattice_slot` table) per the lead's own instruction — that item's commit extends
+  `MIGRATION_4_5` rather than minting a v5→v6, once lexicon's `SlotDetail` lands on main.
+
 ## 2026-09-08 (ui-conformance data: busy timeout; processed tier per record)
 
 ### (pending) — ui-conformance data · busy timeout; processed tier per record

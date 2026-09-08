@@ -46,13 +46,15 @@ import org.ort.data.entity.VoiceprintEntity
 import org.ort.data.entity.WorkQueueItemEntity
 
 /**
- * The schema (functional spec §8; technical design §12.1). Schema version 3 — v1 was the first
+ * The schema (functional spec §8; technical design §12.1). Schema version 5 — v1 was the first
  * released version (build-plan P5); v2 added [ShedEventEntity] (F-021, FR-RUN-3/4/5); v3 adds
  * [StationIdentityHistoryEntity], [VoiceprintBindingHistoryEntity] and [PriorAdjustmentEntity]
  * (register R-052, R-073; FR-SPK-10, FR-UI-6) so a station rename, a voiceprint rebinding and a
  * prior weight change each leave what they replaced reachable, not overwritten in place; v4 adds
  * [TransmissionEntity.processedTier] (register R-204 follow-up, FR-REP-2/9) so a reprocess run's
- * outcome tier is queryable per record, not just per session.
+ * outcome tier is queryable per record, not just per session; v5 adds
+ * [CorrectionEntity.previousAttributionState] and its three siblings (register R-321) so
+ * `Undo all` can restore a correction's exact prior attribution, not just its prior callsign.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -99,7 +101,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun stationIdentityDao(): StationIdentityDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 4
+        public const val SCHEMA_VERSION: Int = 5
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -184,9 +186,29 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v4 → v5 (register R-321): adds `correction.previousAttributionState`,
+         * `.previousAttributionConfidence`, `.previousAttributionSourceTransmissionId` and
+         * `.previousCorrected` — see [org.ort.data.entity.CorrectionEntity]'s own doc comment. No
+         * existing column is touched or dropped; every v4 row survives with all four new columns
+         * `NULL` (FR-AST-5/6 → AC-53), verified by `MigrationTest`. Also the schema v5 round's
+         * lexicon-side addition once that lands (register R-320, R-182): a `lattice_slot` table
+         * for [org.ort.lexicon.SlotDetail] per candidate — the coordinator's own instruction was
+         * to share this one version bump rather than mint a v5→v6 for it.
+         */
+        public val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousAttributionState` TEXT")
+                db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousAttributionConfidence` REAL")
+                db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousAttributionSourceTransmissionId` TEXT")
+                db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousCorrected` INTEGER")
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
-        public val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        public val MIGRATIONS: Array<Migration> =
+            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 
         private suspend fun PooledConnection.exec(sql: String) {
             usePrepared(sql) { it.step() }
