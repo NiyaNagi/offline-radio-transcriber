@@ -17,11 +17,14 @@ import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
 
 /**
- * `overnight` and `gap-call` (spec/ui-conformance-plan.md §E's V3 set; register R-110) — the one
- * scenario `design/canvas/Rows.dc.html` needs every variant from: CONFIRMED, INFERRED (linked to
- * its confirming over), AMBIGUOUS, UNKNOWN, a corrected row, a revised row, a rejected row, a
- * first-heard ("NEW") station, a QSO thread, a capture gap, mixed signal strength and mixed
- * retained audio — spread across a real 6h42m, two-frequency session with roughly forty overs.
+ * `overnight`, `gap-call` and `overnight-live` (spec/ui-conformance-plan.md §E's V3 set; register
+ * R-110, R-171) — the one scenario `design/canvas/Rows.dc.html` needs every variant from:
+ * CONFIRMED, INFERRED (linked to its confirming over), AMBIGUOUS, UNKNOWN, a corrected row, a
+ * revised row, a rejected row, a first-heard ("NEW") station, a QSO thread, a capture gap, mixed
+ * signal strength and mixed retained audio — spread across a real 6h42m, two-frequency session
+ * with roughly forty overs. `overnight-live` (R-171) is the same fixture with the session still
+ * open and [CaptureState] actually capturing, so the populated `Main`/`Capture-Status` running
+ * shape is reachable — see [overnightLive]'s own doc comment.
  */
 internal object OvernightScenario {
 
@@ -36,17 +39,32 @@ internal object OvernightScenario {
     suspend fun gapCall(context: Context, db: OrtDatabase): Scenarios.LoadResult =
         build(context, db, scenarioName = "gap-call", extraGap = true)
 
+    /**
+     * `overnight-live` (R-171) — the same populated ~40-over overnight fixture, but
+     * [SessionEntity.endedAt] `null` and [CaptureState] actually `capturing` on it (via
+     * [ScenarioFixtures.markCapturing], the same primitive `backlog`/`thermal`/`rig-lost` already
+     * use), so `Main.dc.html` (N01) and `Capture-Status.dc.html` (N04) are reachable in their
+     * *populated, running* shape — every other overnight-shaped scenario is either populated and
+     * ended (`overnight`, `gap-call`) or running and empty (`first-session`); nothing before this
+     * was both at once.
+     */
+    suspend fun overnightLive(context: Context, db: OrtDatabase): Scenarios.LoadResult =
+        build(context, db, scenarioName = "overnight-live", extraGap = false, live = true)
+
     @Suppress("LongMethod")
     private suspend fun build(
         context: Context,
         db: OrtDatabase,
         scenarioName: String,
         extraGap: Boolean,
+        live: Boolean = false,
     ): Scenarios.LoadResult {
         val sessionId = ScenarioFixtures.sessionId(scenarioName)
         val end = SystemClock.wallMillis() - 8 * 60_000L
         val start = end - SESSION_DURATION_MILLIS
-        db.sessionDao().insert(ScenarioFixtures.session(sessionId, startedAt = start, endedAt = end))
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = start, endedAt = if (live) null else end),
+        )
 
         var sample = 0L
         fun nextSample(): Long {
@@ -345,6 +363,14 @@ internal object OvernightScenario {
                 text = "${phrases[i % phrases.size]} $station",
                 writeAudio = i % 2 == 0,
             )
+        }
+
+        if (live) {
+            // Marked *after* every insert above, not before: `markCapturing` also writes a fresh
+            // heartbeat (liveness proven by heartbeat, never by battery-exemption APIs — see
+            // AGENTS.md), and `sample` is by then the real high-water mark this "session" reached,
+            // not zero.
+            ScenarioFixtures.markCapturing(context, sessionId, samplePosition = sample)
         }
 
         val txCount = db.transmissionDao().listBySession(sessionId).size

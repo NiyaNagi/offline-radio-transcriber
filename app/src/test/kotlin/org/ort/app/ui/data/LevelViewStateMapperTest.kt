@@ -84,4 +84,49 @@ class LevelViewStateMapperTest {
 
         assertEquals("7", view.clippedLastSecondLabel)
     }
+
+    @Test
+    @Requirement("R-175")
+    fun `R_175 weakestOverLabel is carried straight through, honestly null when the caller has none`() {
+        val withLabel = LevelViewStateMapper.from(
+            level = measured(peakDbfs = -14f),
+            history = emptyList(),
+            inputLabel = "USB Audio Device",
+            weakestOverLabel = "S2",
+        )
+        assertEquals("S2", withLabel.weakestOverLabel)
+
+        val withoutLabel = LevelViewStateMapper.from(
+            level = measured(peakDbfs = -14f),
+            history = emptyList(),
+            inputLabel = "USB Audio Device",
+        )
+        assertNull(withoutLabel.weakestOverLabel)
+    }
+
+    @Test
+    @Requirement("R-175")
+    fun `R_175 the band-state sentence reads in-band, above, below or clipping per the real peak`() {
+        assertEquals("In the band. Nothing to adjust.", mapped(measured(peakDbfs = -14f)).bandStateSentence)
+        assertEquals("Above the band. Turn the volume down.", mapped(measured(peakDbfs = -4f)).bandStateSentence)
+        assertEquals("Below the band. Turn the volume up.", mapped(measured(peakDbfs = -40f)).bandStateSentence)
+        assertEquals(
+            "Clipping. Turn the volume down.",
+            mapped(measured(peakDbfs = 0f, clipped = true)).bandStateSentence,
+        )
+    }
+
+    private fun measured(peakDbfs: Float, clipped: Boolean = false): LevelStatus.State.Measured =
+        LevelStatus.State.Measured(
+            peakDbfs = peakDbfs,
+            rmsDbfs = peakDbfs - 6f,
+            noiseFloorDbfs = -58f,
+            clipped = clipped,
+            clipCountLastSecond = if (clipped) 3 else 0,
+            sampleRateHz = 16_000,
+            updatedAtMillis = 0L,
+        )
+
+    private fun mapped(level: LevelStatus.State.Measured): LevelViewState =
+        LevelViewStateMapper.from(level = level, history = emptyList(), inputLabel = "USB Audio Device")
 }
