@@ -19,5 +19,12 @@ import org.ort.app.ui.data.FrequencyPolling
 public fun FrequenciesContent(context: Context, onOpen: (Long) -> Unit, modifier: Modifier = Modifier) {
     var frequencies by remember { mutableStateOf(emptyList<FrequencyListEntryViewState>()) }
     LaunchedEffect(Unit) { frequencies = FrequencyPolling.listFrequencies(context) }
-    FrequenciesListScreen(frequencies = frequencies, onOpen = onOpen, modifier = modifier)
+    FrequenciesListScreen(
+        frequencies = frequencies,
+        onOpen = onOpen,
+        modifier = modifier,
+        // R-215: "N heard all time · M tonight" — the frequency counts, not any one row's.
+        heardAllTimeCount = frequencies.size,
+        heardTonightCount = frequencies.count { it.tonightCount > 0 },
+    )
 }

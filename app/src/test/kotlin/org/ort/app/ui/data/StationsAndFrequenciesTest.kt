@@ -5,6 +5,10 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.ort.core.Attribution
 import org.ort.data.entity.StationEntity
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** FR-UI-9 (station view) and FR-UI-10 (frequency view) — the pure view-state mapping (build-plan P17). */
 class StationsAndFrequenciesTest {
@@ -49,7 +53,12 @@ class StationsAndFrequenciesTest {
 
         assertEquals("W7NPC", entry.label)
         assertEquals(4, entry.transmissionCount)
-        assertEquals("2023-11-14 22:13 UTC", entry.lastHeardLabel)
+        // R-207 (register, design, V5 @f8430b8): the list row's last-heard is a bare local mono
+        // "HH:mm" — never a raw ISO date with a literal "UTC" suffix (that bug lived here). Computed
+        // via the device's own zone, like the mapper itself, rather than a hardcoded machine-local value.
+        val expected = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT).withZone(ZoneId.systemDefault())
+            .format(Instant.ofEpochMilli(1_700_000_000_000L))
+        assertEquals(expected, entry.lastHeardLabel)
     }
 
     @Test

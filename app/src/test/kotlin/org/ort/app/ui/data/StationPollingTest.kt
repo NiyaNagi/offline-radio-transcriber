@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.debug.Scenarios
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -253,6 +254,65 @@ class StationPollingTest {
     )
 
     @Test
+    fun `R_206_a_station_heard_only_on_a_prior_night_still_shows_its_real_dominant_state`(): Unit = runTest {
+        // The real bug, reproduced exactly: WA7HJR has 10/10 CONFIRMED overs, all from a session
+        // that is NOT the most recent one — the "All time" list (the default view) must still show
+        // its real state, not fall back to Unknown just because it was not heard tonight.
+        db.sessionDao().insert(session("S_OLD", startedAt = 0L))
+        db.sessionDao().insert(session("S_TONIGHT", startedAt = 100_000L))
+        db.catalogDao().insert(station("WA7HJR"))
+        repeat(10) { i ->
+            db.transmissionDao().insert(
+                tx(
+                    "TX$i",
+                    "S_OLD",
+                    i * 1_000L,
+                    attribution = FixtureAttribution("WA7HJR", AttributionState.CONFIRMED, 0.9),
+                ),
+            )
+        }
+
+        val rows = StationPolling.listStations(context)
+
+        val row = rows.single { it.stationId == "WA7HJR" }
+        assertEquals(AttributionState.CONFIRMED, row.attribution.state)
+        assertTrue("must not fall back to Unknown", row.attribution.state != AttributionState.UNKNOWN)
+        assertTrue("this station was not heard in the latest session", !row.heardTonight)
+    }
+
+    @Test
+    fun `R_213_the_voiceprint_total_equals_the_confirmed_plus_inferred_breakdown`(): Unit = runTest {
+        // The real WA7HJR-shaped bug: real CONFIRMED/INFERRED overs exist, but the bound
+        // voiceprint's own `memberCount` is stale (0) — the clustering pipeline lagging or never
+        // having run is a real, separate fact from the attribution pipeline's own resolved count.
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.catalogDao().insert(station("WA7HJR"))
+        db.catalogDao().insert(voiceprint("V1", boundStationId = "WA7HJR", memberCount = 0))
+        db.transmissionDao().insert(
+            tx(
+                "TX1",
+                "S1",
+                0L,
+                attribution = FixtureAttribution("WA7HJR", AttributionState.CONFIRMED, 0.9, voiceprintId = "V1"),
+            ),
+        )
+        db.transmissionDao().insert(
+            tx(
+                "TX2",
+                "S1",
+                1_000L,
+                attribution = FixtureAttribution("WA7HJR", AttributionState.INFERRED, 0.7, voiceprintId = "V1"),
+            ),
+        )
+
+        val identity = StationPolling.stationIdentity(context, "WA7HJR")
+
+        assertEquals(1, identity.voice.confirmedCount)
+        assertEquals(1, identity.voice.inferredCount)
+        assertEquals(2, identity.voice.clusterOverCount)
+    }
+
+    @Test
     fun `R_073_rename_persists_and_the_previous_name_stays_reachable`(): Unit = runTest {
         db.catalogDao().insert(station("N7XYZ"))
 
@@ -326,4 +386,25 @@ class StationPollingTest {
         assertEquals("N7DAVE", corrections.single().previousValue)
         assertEquals(StationIdentityDao.FIELD_VOICEPRINT_SPLIT, corrections.single().field)
     }
+
+    @Test
+    fun `R_216_R_074 the frequency-change scenario makes FQ03 reachable with a real busier-than-usual cause`(): Unit =
+        runTest {
+            Scenarios.load(context, "frequency-change")
+
+            val frequencies = FrequencyPolling.listFrequencies(context)
+            val row = frequencies.single { it.frequencyHz == 145_230_000L }
+            assertTrue("frequency-change must seed a real busier-than-usual night", row.busierThanUsual)
+
+            val change = FrequencyPolling.frequencyChange(context, 145_230_000L)
+            assertTrue("expected at least one real cause", change.causes.isNotEmpty())
+            assertTrue(
+                "expected a first-time-heard cause",
+                change.causes.any { !it.isUnidentified && it.label.contains("first time heard") },
+            )
+            assertTrue(
+                "expected an unidentified-voices cause",
+                change.causes.any { it.isUnidentified },
+            )
+        }
 }

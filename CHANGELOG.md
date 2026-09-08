@@ -2177,6 +2177,178 @@ conflicting with the builders who own `:app`.
 
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
+### (pending) — ui-conformance WP8 · stations validator fixes: real dominant state, board headers and facts, grid orientation, plurals, frequency facts and change scenario
+
+**Scope:** `:app` `ui/data/StationPolling.kt`, `ui/data/StationsAndFrequencies.kt`,
+`ui/screens/StationScreen.kt`, `ui/screens/StationsContent.kt`, `ui/screens/StationPatternScreen.kt`,
+`ui/screens/StationIdentityScreen.kt`, `ui/screens/FrequencyScreen.kt`,
+`ui/screens/FrequenciesContent.kt`; `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,
+FrequencyChangeFixtures}.kt` (new `frequency-change` scenario, by explicit grant); tests beside
+each. Addendum to this package's own WP8 entry directly below, filed against V5's validation at
+`f8430b8` — register R-206 through R-216, and R-074 reopened.
+
+**Requirements/ACs:** R-070, R-071, R-072, R-073, R-074, R-075, FR-UI-9/10/11/12, FR-SPK-10,
+constitution I, constitution VII.
+
+**What changed:**
+
+*Constitution Check.* Principle I (Uncertainty Is Content) is the halt this round exists to fix:
+R-206 found every Stations-list row reading Unknown regardless of a station's real, provable
+state — a fabricated absence of knowledge is exactly as dishonest as a fabricated presence of it,
+and worse here because the station's own detail screen one tap away contradicted it outright. The
+fix is structural, not cosmetic: `stationRow`'s dominant-attribution derivation now reads the same
+all-time transmission set `stationDetail` already reads (a new shared `dominantAttribution`
+helper), so the list row and the detail screen it opens can never disagree about the same
+station's own state again. Principle VII: `StationsColumnHeaderRow`/`StationHourByDayGrid` are new
+composables in this package's own files rather than edits to WP2's shared `ColumnHeaderRow`/
+`DayOfWeekGrid` — those components are shaped for `Rows.dc.html`/a transposed grid respectively,
+genuinely different boards, and neither takes a parameter that would let this package ask for its
+own shape; forcing that in would be the boundary violation, not avoiding it.
+
+- **R-206 (halt) — real dominant state, always.** `StationPolling.stationRow` computed the list
+  row's marker/count context from *only* the most recent session's transmissions, falling back to
+  an unearned `Attribution.unknown()` for every station not heard in that one session — most of a
+  14-night "All time" list, on any given night. Root-caused against the `stations-14-nights`
+  fixture and V5's own screenshot (WA7HJR: 10/10 CONFIRMED on `Station.dc.html`, Unknown on
+  `Stations.dc.html`). Fixed: `stationRow` and `stationDetail` both call a new shared
+  `dominantAttribution(stationId, entities)` over the station's *entire* history;
+  `heardTonight`/the `NEW` badge stay scoped to the latest session, which is what they are actually
+  for.
+- **R-207 (design) — the board's own header, subtitle, sort and local last-heard.** The old header
+  reused WP2's `ColumnHeaderRow` — `Rows.dc.html`'s TIME/FREQ/STATION/SIG log-row header — passing
+  it a `stationLabel`/`signalLabel` that could not suppress the two columns this board never had.
+  New `StationsColumnHeaderRow` (this package's own file) draws exactly `Stations.dc.html`'s own
+  four segments: marker spacer, `station`, `tonight`, `last`. Added the "N stations heard all time
+  · M tonight" subtitle (real, unfiltered totals — computed in `StationsContent` from the full
+  fetched list, not the chip-filtered one) and a real `Most heard` sort action (toggles a local
+  `sortMostHeard` flag, re-sorting by all-time overs; relabels itself `Most recent` while active,
+  since `TextAction` has no separate selected-state styling). Last-heard on the row is now a bare
+  local mono `HH:mm` (new `LOCAL_HHMM_FORMAT`), never the raw `"yyyy-MM-dd HH:mm 'UTC'"` string
+  that leaked device-unfriendly ISO+zone text onto a dense list.
+- **R-208 (spec) — the same real state and honest local facts on the detail screen.**
+  `StationDetailViewState` gained `attribution` (the same `dominantAttribution` result) and
+  `contextSentence` ("Heard 14 nights of 14" — real, from the station's own session/night count;
+  the artboard's illustrative "Net control, Tuesday night net" role-labelling is not built — this
+  package has no honest way to derive a net-control role without guessing, see Left open).
+  `StationHeaderSection` now draws an `AttributionMarker` beside the callsign title and the context
+  sentence in the subtitle. First/Last heard use the same new `LOCAL_DATETIME_FORMAT` (local zone,
+  no `"UTC"` suffix) `stationIdentity`'s dates and the Frequencies regulars' last-heard both also
+  now use.
+- **R-209 (design) — the hour x day grid's real orientation and legend.** WP2's shared
+  `DayOfWeekGrid` draws days as columns (bottom-labelled) and hours as un-labelled rows — the
+  transpose of `Station-Pattern.dc.html`'s own layout (days as rows, labelled left; hours as
+  columns, labelled every six hours along the top) — and its legend reads "heard"/"quiet" where the
+  board reads "heard often"/"listened, not heard". `DayOfWeekGrid` has no orientation parameter
+  today; per the coordinator's own instruction this package built its own `StationHourByDayGrid`
+  (reusing the shared, `internal` `drawHatchRegion` for the hatch) rather than block on one being
+  added — **still worth routing to WP2** if other boards want this orientation too, since the two
+  grids now duplicate real drawing logic.
+- **R-210 (polish) — the real subtitle.** "Local time" named the zone, not the fact the board
+  states — new `nightsSubtitle` ("14 nights of listening, 25 Aug – 7 Sep"), built from the same
+  session windows the grid itself folds over, formatted with the device's own locale (`Locale.
+  getDefault()`, never `Locale.ROOT`+`MMM` — R-170's exact bug class, avoided deliberately).
+- **R-211 (spec, WP2+WP8) — verified, not re-fixed.** `FilterChipRow` (WP2's shared component)
+  already wraps its content in `.horizontalScroll(...)`, and both `StationsListScreen` and
+  `StationPatternScreen` already build their chip rows through it — R-211 is satisfied by
+  composition; a new test (`R_211 the mode chip row scrolls horizontally...`) pins this down so a
+  future regression here is caught.
+- **R-212 (design) — the shared plural helper, not `(s)`.** Replaced every `(s)` placeholder this
+  package's own files still had: `StationIdentityScreen`'s "heard N time(s)" (now `pluralize(n,
+  "time")`), `FrequencyPolling.regularRow`'s "N over(s) · M session(s)", and the two
+  `FrequencyChangeCause` strings ("N over(s)"/"N unidentified voice(s)").
+- **R-213 (spec) — the voiceprint total equals its breakdown.** `stationIdentity`'s
+  `clusterOverCount` came from `voiceprintsForStation().sumOf { memberCount }` — the voice-
+  clustering pipeline's own, separate figure, which can legitimately lag or omit overs the
+  attribution pipeline already resolved (exactly the WA7HJR case: 10 confirmed overs, a voiceprint
+  with `memberCount = 0`). Fixed: the total is now `confirmedCount + inferredCount` — the same
+  numbers the sub-line beneath it already shows, so the two can never read as two different counts
+  of the same fact again.
+- **R-214 (design) — markers and the `HEARD` label.** `HeardAndVoiceFacts`' rows (Callsign,
+  Lexicon, Voiceprint, Nearest other) had no leading state marker and no section label above them
+  (only `VOICE`/`GIVEN BY YOU` existed). `KeyValueRow` has no leading-marker slot, so this package
+  added a local `MarkedKeyValueRow` wrapper (this screen's own file) pairing an `AttributionMarker`
+  (shape only, `showConfidence = false` — the same borrowed-shape convention `Station-Pattern`'s
+  "What this says" list already uses) with each fact, and a `HEARD` `SectionHeader` above them,
+  matching `Station-Identity.dc.html`.
+- **R-215 (polish) — the Frequencies subtitle.** Added "N frequencies heard all time · M tonight"
+  under the title, computed in `FrequenciesContent` from the fetched list (all-time = list size,
+  tonight = count with `tonightCount > 0`), matching `Frequencies.dc.html` verbatim.
+- **R-216 / R-074 reopened (spec) — Frequency detail's facts, chart and the departure scenario.**
+  - `Listened` row: new `FrequencyDetailViewState.listenedLabel` ("14 nights of 14 · 96 h total") —
+    every session listens on every configured band at once (this project's own dual-band
+    architecture), so "nights/hours listened" is simply every session's own window, minus its real
+    gaps; never a per-frequency sub-figure this package has no column to derive.
+  - `Nets` row: new `FrequencyNetViewState`/`FrequencyPolling.netFor` — a real recurring-net
+    heuristic: a (day-of-week, local hour) slot with activity in at least half of the calendar
+    weeks this frequency has been heard on, with the `CONFIRMED`-dominant station in that slot
+    named as control. Absent, never fabricated, when fewer than two weeks of data exist or no slot
+    clears the bar (see Left open for this heuristic's own limits).
+  - Chart: `axisStart`/`axisEnd` ("18:00"/"10:00", `ActivityPatternChart`'s own existing
+    parameters — no WP2 edit needed) plus a new "averaged over every night · no hatch: always
+    listening here" caption drawn directly by this screen when the pattern has zero not-listening
+    hours (the shared chart only ever draws the hatch legend, never this alternative — a caller-
+    supplied caption slot is a reasonable ask for WP2 later, not built here since one screen's own
+    `Text` beneath the chart already says it honestly).
+  - `More`: `SectionHeader(trailingActionLabel = "More")` beside "Typical night, by hour", wired to
+    the same `onOpenChange` `Frequency-Change` opens from — the only related destination that
+    exists; omitted (never a dead action) when the frequency is not busier than usual.
+  - `frequency-change` **debug scenario** (new `FrequencyChangeFixtures.kt`, wired into
+    `Scenarios.NAMES`/`Scenarios.load`): ten quiet prior nights (~2 overs each on 145.230) set a
+    real "usual" average, then a busy final session (17 regular overs, one station heard for the
+    first time, two weak `UNKNOWN` overs) that clears `NightlyDeparture.isBusierThanUsual`'s own `>
+    2x usual` bar — FQ03 (`Frequency-Change`) is reachable on the emulator for the first time, with
+    real, non-empty `causes` (a first-time-heard cause and an unidentified-voices cause).
+- **What was left for a real reason, not deferred quietly:**
+  - R-208's "Net control, Tuesday night net" role-labelling is not built — this package can say
+    *how often* a station is heard, not *what role* it plays in a net, without a real net-detection
+    pass across every station on a frequency (the same class of heuristic `netFor` now runs for
+    frequencies, not yet stations); `contextSentence` stays to the honestly-derivable "Heard N
+    nights of M".
+  - `netFor`'s heuristic is a real, working first pass, not the artboard's own (unspecified) exact
+    algorithm — a slot needs ≥50% of the weeks in the data range and its `CONFIRMED`-dominant
+    station is named "control"; a station that only ever checks in (never confirmed directly) in
+    that slot would show no control name, which is honest but may read as incomplete next to a real
+    net with a consistently-inferred-only control operator.
+  - `:app:detekt` **found to report `NO-SOURCE` on this worktree** — confirmed independent of this
+    package's own changes (reproduced with `--no-daemon`, `--rerun-tasks`, and present even on the
+    *first* full gate run this round, immediately after `git merge --ff-only main` and before any
+    edit here) and independent of the two daemon `--stop` interruptions this round: `:data:detekt`
+    and other modules still analyze correctly on the same worktree, so this is `:app`-module-
+    specific, not the `.claude`-path exclusion `ort.common.gradle.kts` documents (which would
+    equally strip `:data`). `ktlintFormat` still runs and reports clean. Flagging for the
+    coordinator to route — outside this package's file ownership (`buildSrc`/`app/build.gradle.kts`)
+    and not introduced by this round's changes.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded to `11e6c09` (V5's validation commit `eea2ea4` plus
+  a later WP2 merge); confirmed via `git log` before starting.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — BUILD SUCCESSFUL, 900 tests, 0
+  failed, 0 ignored (up from 622 before this round; new/updated tests named for each row: `R_206`,
+  `R_207` x2, `R_208` x2, `R_209`, `R_210`, `R_211`, `R_213`, `R_214`, `R_215`, `R_216` x3, plus the
+  `frequency-change` scenario test and updated fixtures across `StationIdentityScreenTest`,
+  `StationPatternScreenTest`, `StationsAndFrequenciesTest`).
+- `.\gradlew.bat :app:ktlintFormat` — BUILD SUCCESSFUL, clean.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (run twice this round,
+  both green; `:app:detekt` reports `NO-SOURCE` both times — see Left open above, not a new
+  regression).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` unchanged (no new requirement ids this round).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Two Gradle daemon `--stop` interruptions from another concurrent worktree hit mid-run this round
+  (not issued by this package — the coordinator's own standing instruction is never to run
+  `gradlew --stop`); both times the affected command was simply rerun and completed cleanly.
+
+**Left open / not done:**
+- The `:app:detekt` `NO-SOURCE` finding above — needs a lead/platform look at
+  `buildSrc/src/main/kotlin/ort.common.gradle.kts` or `app/build.gradle.kts`'s detekt wiring; this
+  package cannot fix it within its own file ownership.
+- R-208's net-control role labelling and `netFor`'s heuristic limits, both explained above.
+- The repeater offset/tone/type gap `R-074`'s original entry and this package's own WP8 entry below
+  already named (`FrequencyListEntryViewState.whatItIs`'s own doc comment) is unchanged — still no
+  supporting `:data` column, still honestly omitted rather than guessed.
+
 ### (pending) — ui-conformance WP8 · station rename, note and voiceprint split persist through StationIdentityDao
 
 **Scope:** `:app` `ui/data/StationPolling.kt`, `ui/data/StationsAndFrequencies.kt`,

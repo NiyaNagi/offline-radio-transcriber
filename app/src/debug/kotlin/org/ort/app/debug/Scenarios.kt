@@ -94,6 +94,7 @@ public object Scenarios {
         "no-audio",
         "revisions",
         "stations-14-nights",
+        "frequency-change",
         "field-tier1",
         "search-corpus",
         "backlog",
@@ -132,6 +133,7 @@ public object Scenarios {
             "no-audio" -> noAudio(db)
             "revisions" -> revisions(context, db)
             "stations-14-nights" -> StationsFixtures.stations14Nights(db)
+            "frequency-change" -> FrequencyChangeFixtures.frequencyChange(db)
             "field-tier1" -> fieldTier1(db)
             "search-corpus" -> searchCorpus(db)
             "backlog" -> backlog(context, db)

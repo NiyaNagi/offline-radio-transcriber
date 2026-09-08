@@ -2,8 +2,9 @@ package org.ort.app.ui.data
 
 import org.ort.core.Attribution
 import org.ort.data.entity.StationEntity
+import java.time.DayOfWeek
 import java.time.Instant
-import java.time.ZoneOffset
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
@@ -62,6 +63,9 @@ public data class StationPatternViewState(
     val hourByDay: List<HourByDayActivityCell>,
     val weekOverWeekSummary: List<String>,
     val whatThisSays: List<String>,
+    /** "14 nights of listening, 25 Aug – 7 Sep" (R-210) — `Station-Pattern.dc.html`'s own subtitle,
+     * never "Local time" (a fact about the zone, not the one an operator actually wants here). */
+    val nightsSubtitle: String = "",
 )
 
 // -------------------------------------------------------------------------------------------
@@ -79,6 +83,13 @@ public data class StationDetailViewState(
     val stationId: String,
     val label: String,
     val givenName: String? = null,
+    /** The real dominant attribution across every session this station has ever been heard in
+     * (R-208) — the same figure [StationListEntryViewState.attribution] carries on the list row
+     * that opened this screen, so the two can never disagree. */
+    val attribution: Attribution = Attribution.unknown(),
+    /** "Heard 14 nights of 14" (R-208) — never a fabricated net-control role this package cannot
+     * honestly derive; see this package's report. */
+    val contextSentence: String = "",
     val transmissionCount: Int,
     val transmissionCountTonight: Int = 0,
     val confirmedCount: Int = 0,
@@ -135,6 +146,22 @@ public data class FrequencyRegularViewState(
     val lastHeardLabel: String?,
 )
 
+/**
+ * `Frequency.dc.html`'s `Nets` row (R-074, R-216) — a recurring weekly time slot this package can
+ * honestly call a net: the same (day-of-week, local hour) has real activity in at least half of
+ * the calendar weeks this frequency has been heard on, with one station's `CONFIRMED` count
+ * dominant in that slot often enough to name as control. `null` from
+ * [FrequencyPolling.frequencyDetail] — never a fabricated one — when no such recurring pattern
+ * exists (see this package's report for the heuristic's own limits).
+ */
+public data class FrequencyNetViewState(
+    val dayOfWeek: DayOfWeek,
+    val hourOfDay: Int,
+    val controlStationId: String?,
+    val weeksSeen: Int,
+    val weeksTotal: Int,
+)
+
 /** Everything heard on one frequency, across every session (FR-UI-10), plus its activity pattern (FR-UI-11). */
 public data class FrequencyDetailViewState(
     val frequencyHz: Long,
@@ -155,6 +182,11 @@ public data class FrequencyDetailViewState(
     val transmissions: List<TransmissionListEntryViewState>,
     val nights: List<HourActivityState> = emptyList(),
     val busierThanUsual: Boolean = false,
+    /** `Frequency.dc.html`'s `Listened` row (R-074, R-216) — "14 nights of 14 · 96 h total". */
+    val listenedLabel: String = "",
+    /** `Frequency.dc.html`'s `Nets` row (R-074, R-216) — absent, never fabricated, when this
+     * package finds no recurring weekly pattern (see [FrequencyNetViewState]'s own doc comment). */
+    val net: FrequencyNetViewState? = null,
 )
 
 // -------------------------------------------------------------------------------------------
@@ -374,11 +406,22 @@ public object FrequencyViewMapper {
     private fun frequencyLabel(frequencyHz: Long): String = "%.3f MHz".format(Locale.ROOT, frequencyHz / 1_000_000.0)
 }
 
-/** Internal (not private) so [StationPolling]/[FrequencyPolling], in their own file, can format the same way. */
-internal val LABEL_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'", Locale.ROOT)
-    .withZone(ZoneOffset.UTC)
+/**
+ * Local-zone, no zone-name suffix (R-207/R-208, register, V5 @f8430b8): every timestamp this app
+ * shows is already local (R-075), so a literal "UTC" on some of them was simply wrong, not a
+ * missing label — and R-210 found that even spelling out "local" reads as clutter once every
+ * timestamp is consistently local; the absence of a suffix *is* the convention. Internal (not
+ * private) so [StationPolling]/[FrequencyPolling], in their own file, format the same way.
+ */
+internal val LOCAL_DATETIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)
+    .withZone(ZoneId.systemDefault())
 
-private fun dateTimeLabel(utcMillis: Long?): String? = utcMillis?.let { LABEL_FORMAT.format(Instant.ofEpochMilli(it)) }
+/** The Stations/Frequencies list row's mono last-heard column (R-207) — a bare local "HH:mm". */
+internal val LOCAL_HHMM_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
+    .withZone(ZoneId.systemDefault())
+
+private fun dateTimeLabel(utcMillis: Long?): String? =
+    utcMillis?.let { LOCAL_HHMM_FORMAT.format(Instant.ofEpochMilli(it)) }
 
 /**
  * Turns FR-UI-11's "how that has changed" comparison into the one honest sentence per weekday

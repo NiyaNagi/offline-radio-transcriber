@@ -46,9 +46,11 @@ import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.StationIdentityViewState
 import org.ort.app.ui.data.StationVoiceSplitViewState
 import org.ort.app.ui.data.VoiceprintSplitOverViewState
+import org.ort.app.ui.data.pluralize
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
+import org.ort.core.Attribution
 import java.util.Locale
 
 private enum class EditTarget { NONE, NAME, NOTE }
@@ -143,23 +145,37 @@ public fun StationIdentityScreen(
 }
 
 /** The "Heard" and "Voice" facts (callsign, lexicon, cluster size, `Split`, nearest other) — split
- * out of [StationIdentityScreen] to keep that composable under detekt's `LongMethod` limit. */
+ * out of [StationIdentityScreen] to keep that composable under detekt's `LongMethod` limit.
+ * R-214: every row here carries a leading state marker (`Station-Identity.dc.html`'s own shape —
+ * filled for a fact heard directly, a hollow ring for one the voice pipeline infers rather than
+ * hears, a small muted dot for one not yet computed), and the section itself is labelled `Heard`
+ * — [KeyValueRow] has no leading-marker slot, so this uses [MarkedKeyValueRow] instead.
+ */
 @Composable
 private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
-        KeyValueRow(
+        SectionHeader(label = "Heard")
+        MarkedKeyValueRow(
+            attribution = Attribution.confirmed(state.stationId, 1.0),
             key = "Callsign",
             value = state.callsign,
-            subLine = "heard ${state.heardOverCount} time(s)",
+            // R-212: the shared plural helper, not a literal "(s)" placeholder.
+            subLine = "heard ${pluralize(state.heardOverCount, "time")}",
         )
-        KeyValueRow(key = "Lexicon", value = state.lexiconLabel ?: "not known")
+        val lexiconKnown = state.lexiconLabel != null
+        MarkedKeyValueRow(
+            attribution = if (lexiconKnown) Attribution.confirmed(state.stationId, 1.0) else Attribution.unknown(),
+            key = "Lexicon",
+            value = state.lexiconLabel ?: "not known",
+        )
 
         SectionHeader(label = "Voice", modifier = Modifier.padding(top = OrtSpacing.md))
         val voiceSubLine = "${state.voice.confirmedCount} with the callsign heard · " +
             "${state.voice.inferredCount} inferred from it"
-        KeyValueRow(
+        MarkedKeyValueRow(
+            attribution = Attribution.inferred(state.stationId, 1.0),
             key = "Voiceprint",
-            value = "One cluster, ${state.voice.clusterOverCount} overs",
+            value = "One cluster, ${pluralize(state.voice.clusterOverCount, "over")}",
             subLine = voiceSubLine,
             trailingMarker = {
                 TextAction(text = "Split", onClick = onSplit, modifier = Modifier.testTag("station-identity-split"))
@@ -172,7 +188,31 @@ private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> U
         } else {
             "not computed yet"
         }
-        KeyValueRow(key = "Nearest other", value = nearestValue)
+        MarkedKeyValueRow(attribution = Attribution.unknown(), key = "Nearest other", value = nearestValue)
+    }
+}
+
+/** [KeyValueRow]'s own layout plus a leading [AttributionMarker] (shape only, `showConfidence =
+ * false` — this is not a real transmission attribution, just its shape vocabulary borrowed for
+ * "how sure is this fact", the same convention [WhatThisSaysLine] already uses on `Station-Pattern`). */
+@Composable
+private fun MarkedKeyValueRow(
+    attribution: Attribution,
+    key: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    subLine: String? = null,
+    trailingMarker: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(modifier = Modifier.padding(top = 6.dp)) {
+            AttributionMarker(attribution = attribution, showConfidence = false)
+        }
+        Spacer(modifier = Modifier.width(OrtSpacing.sm))
+        KeyValueRow(key = key, value = value, subLine = subLine, trailingMarker = trailingMarker)
     }
 }
 
