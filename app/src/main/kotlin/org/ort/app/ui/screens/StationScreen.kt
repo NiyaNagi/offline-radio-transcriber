@@ -2,6 +2,7 @@ package org.ort.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,10 +26,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.ActivityPatternChart
+import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
-import org.ort.app.ui.components.ColumnHeaderRow
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FilterChip
@@ -44,6 +45,7 @@ import org.ort.app.ui.data.StationListEntryViewState
 import org.ort.app.ui.data.StationsFilter
 import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.data.UnidentifiedVoicesSummary
+import org.ort.app.ui.data.pluralize
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -62,14 +64,30 @@ public fun StationsListScreen(
     selectedFilter: StationsFilter = StationsFilter.ALL_TIME,
     onFilterSelected: (StationsFilter) -> Unit = {},
     unidentified: UnidentifiedVoicesSummary? = null,
+    // R-207: the subtitle names the real, unfiltered totals — see `StationsContent`'s own doc
+    // comment for why these are passed in rather than derived from `stations` (already filtered).
+    heardAllTimeCount: Int = 0,
+    heardTonightCount: Int = 0,
+    sortMostHeard: Boolean = false,
+    onToggleSort: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        Text(
-            text = "Stations",
-            style = OrtType.screenTitle,
-            modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
-                .semantics { heading() },
-        )
+        Row(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "Stations", style = OrtType.screenTitle, modifier = Modifier.semantics { heading() })
+                Text(
+                    text = "${pluralize(heardAllTimeCount, "station")} heard all time · $heardTonightCount tonight",
+                    style = OrtType.subtitle,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = OrtSpacing.xs),
+                )
+            }
+            TextAction(
+                text = if (sortMostHeard) "Most recent" else "Most heard",
+                onClick = onToggleSort,
+                modifier = Modifier.testTag("stations-sort-most-heard"),
+            )
+        }
         FilterChipRow(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             StationsFilter.entries.forEach { filter ->
                 FilterChip(
@@ -87,13 +105,37 @@ public fun StationsListScreen(
             )
             return@Column
         }
-        ColumnHeaderRow(stationLabel = "station", signalLabel = "last")
+        StationsColumnHeaderRow()
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(stations, key = { it.stationId }) { entry -> StationRow(entry = entry, onOpen = onOpen) }
             if (unidentified != null) {
                 item(key = "unidentified") { UnidentifiedVoicesRow(unidentified) }
             }
         }
+    }
+}
+
+/**
+ * `Stations.dc.html`'s own column header (R-207) — a marker-width spacer, `station`, `tonight`
+ * (the row's own overs/context column), `last` — never the shared `ColumnHeaderRow`, which is
+ * `Rows.dc.html`'s TIME/FREQ/STATION/SIG log-row header and cannot be told to omit the two
+ * columns this board never had (V5 @f8430b8 found exactly that mismatch on device).
+ */
+@Composable
+private fun StationsColumnHeaderRow(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        Spacer(modifier = Modifier.width(14.dp))
+        Text(text = "station".uppercase(), style = OrtType.columnHeader, color = OrtColors.textDisabled)
+        Text(
+            text = "tonight".uppercase(),
+            style = OrtType.columnHeader,
+            color = OrtColors.textDisabled,
+            modifier = Modifier.weight(1f).padding(start = OrtSpacing.sm),
+        )
+        Text(text = "last".uppercase(), style = OrtType.columnHeader, color = OrtColors.textDisabled)
     }
 }
 
@@ -249,8 +291,15 @@ private fun StationHeaderSection(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.padding(horizontal = OrtSpacing.lg)) {
+        // R-208 (register, spec, V5 @f8430b8): the same real, all-time state marker the Stations
+        // list row shows belongs beside this screen's own title too.
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = state.label, style = OrtType.callsignTitle, modifier = Modifier.semantics { heading() })
+            AttributionMarker(attribution = state.attribution, showConfidence = false)
+            Text(
+                text = state.label,
+                style = OrtType.callsignTitle,
+                modifier = Modifier.padding(start = OrtSpacing.sm).semantics { heading() },
+            )
             state.givenName?.let {
                 Text(
                     text = " · $it",
@@ -260,8 +309,13 @@ private fun StationHeaderSection(
                 )
             }
         }
+        val subtitle = if (state.contextSentence.isNotBlank()) {
+            "${state.contextSentence} · ${pluralize(state.transmissionCount, "transmission")}"
+        } else {
+            pluralize(state.transmissionCount, "transmission")
+        }
         Text(
-            text = "${state.transmissionCount} transmissions",
+            text = subtitle,
             style = OrtType.subtitle,
             color = OrtColors.textDim,
             modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.md),

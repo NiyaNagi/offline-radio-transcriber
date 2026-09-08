@@ -1,5 +1,6 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -35,6 +36,17 @@ class StationPatternScreenTest {
     )
 
     @Test
+    fun `R_211 the mode chip row scrolls horizontally, so an off-screen chip at large font scale is still reachable`() {
+        composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
+
+        // WP2's `FilterChipRow` (shared component) — this screen must actually use it rather than
+        // a bare non-scrolling `Row`, which is what V5 @f8430b8 found clipped "Change over time"
+        // at font scale 2.0 with no way to reach it.
+        assert(composeTestRule.onAllNodes(hasScrollAction()).fetchSemanticsNodes().isNotEmpty())
+        composeTestRule.onNodeWithText("Change over time").assertExists()
+    }
+
+    @Test
     fun `R_072 the three toggle modes are all present`() {
         composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
 
@@ -49,7 +61,7 @@ class StationPatternScreenTest {
 
         composeTestRule.onNodeWithTag("pattern-mode-HOUR_BY_DAY").performClick()
 
-        composeTestRule.onNodeWithContentDescription("Activity by hour and day of week", substring = true)
+        composeTestRule.onNodeWithContentDescription("Activity by day and hour", substring = true)
             .assertExists()
     }
 
@@ -75,5 +87,36 @@ class StationPatternScreenTest {
         composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
 
         composeTestRule.onNodeWithText("(UTC)", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_210 the subtitle names the real night count and range, never Local time`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                StationPatternScreen(
+                    state = fixtureState().copy(nightsSubtitle = "14 nights of listening, 25 Aug – 7 Sep"),
+                    onBack = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("14 nights of listening, 25 Aug – 7 Sep").assertExists()
+        composeTestRule.onNodeWithText("Local time").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_209 the hour x day grid is oriented days-as-rows with day labels and the board's own legend wording`() {
+        composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithTag("pattern-mode-HOUR_BY_DAY").performClick()
+
+        // Days labelled down the left (never on the transposed shared grid's own bottom-row
+        // day-initial layout) and the board's own three-swatch legend wording — never
+        // `DayOfWeekGrid`'s "heard"/"quiet".
+        composeTestRule.onNodeWithText("Mon").assertExists()
+        composeTestRule.onNodeWithText("Sun").assertExists()
+        composeTestRule.onNodeWithText("listened, not heard").assertExists()
+        composeTestRule.onNodeWithText("heard often").assertExists()
+        composeTestRule.onNodeWithText("not listening").assertExists()
     }
 }
