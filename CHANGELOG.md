@@ -32,6 +32,69 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (build tooling: lint/detekt ignore nested worktrees under .claude)
+
+### (pending) — build · lint and analysis ignore nested worktrees under .claude
+
+**Scope:** build tooling only — `buildSrc/src/main/kotlin/ort.common.gradle.kts` (the one
+convention plugin `ort.android-app`/`ort.android-library`/`ort.jvm-library` all apply, so every
+module gets the fix from one edit). No product code touched. Lead-approved for build files only.
+
+**Requirements/ACs:** none new — process/tooling. Cites
+[`spec/ui-conformance-plan.md`](spec/ui-conformance-plan.md) §"Concurrency and safety": "every
+builder runs in `isolation: worktree`" — the property this fix protects, since those worktrees
+physically live under this repository's own `.claude/worktrees/<name>/`, not somewhere a
+filesystem-walking Gradle task would already know to skip.
+
+**What changed:**
+
+- **Root cause.** Main's gate failed on `:app:runKtlintCheckOverMainSourceSet` with "KtLint
+  failed to parse file: `…\.claude\worktrees\agent-…\app\src\main\kotlin\org\ort\app\ui\
+  ReaderActivity.kt`" — a *different* worktree's own copy of that file, mid-edit by another
+  agent. ktlint's Gradle plugin (`org.jlleitschuh.gradle.ktlint`) and detekt's
+  (`io.gitlab.arturbosch.detekt`) both resolve their per-module file set by walking the
+  filesystem from the module's source directories rather than using the Kotlin plugin's declared
+  `SourceDirectorySet` precisely, so a worktree checked out as a plain subdirectory under this
+  project's own root — exactly what `isolation: worktree` does — is walked into and lints/analyses
+  *another agent's uncommitted, possibly unparseable file*, failing the main checkout's gate for
+  a reason that has nothing to do with the main checkout.
+- **Fix, in one place.** `ort.common.gradle.kts` (applied by every module's convention plugin)
+  now excludes `**/.claude/**` from both: `KtlintExtension.filter { exclude(...) }` (the
+  ktlint Gradle plugin's own documented global filter, applies to every generated ktlint task for
+  the module in one call) and `tasks.withType<Detekt>().configureEach { exclude(...) }` (`Detekt`
+  extends Gradle's `SourceTask`, so `exclude` is a real, supported filter, not a workaround).
+- **Checked, and left alone: `dependencyRules`, `platformGuards`, `coverageMatrix`/
+  `coverageMatrixCheck`, AGP's own `lint`.** `dependencyRules`/`platformGuards`
+  (`buildSrc/src/main/kotlin/org/ort/gradle/{ModuleGraph,PlatformGuards}.kt`, wired from
+  `build.gradle.kts`) read Gradle's own resolved project/configuration model and one fixed
+  relative path per subproject (`sp.projectDir.resolve("src/main/AndroidManifest.xml")`) — no
+  filesystem walk at all, confirmed by grep (no `walkTopDown`/`listFiles`/`Files.walk` anywhere in
+  that package). `coverageMatrix`/`coverageMatrixCheck` (`CoverageMatrix.kt`) *do* call
+  `File.walkTopDown()`, but every root they walk (`spec/`, each subproject's
+  `src/test/kotlin`/`src/androidTest/kotlin`, `buildSrc/src/test/kotlin`, `corpus/tests` — all set
+  in `build.gradle.kts`'s `coverageMatrixTestRoots`) is a fixed, module-relative directory that
+  does not nest `.claude/` inside it, so none of these walks can reach a sibling worktree.
+  Confirmed empirically for AGP `lint`, not just by inspection: reran the throwaway-file proof
+  below against `:app:lintDebug` — it passed untouched, because AGP lint resolves its analysis set
+  from the variant's declared source sets, never a raw directory walk.
+- **Proved, not just configured.** Created a throwaway, deliberately unparseable
+  `.claude/worktrees/zz-test/app/src/main/kotlin/Broken.kt` inside this worktree (the exact shape
+  the failure report described), ran `.\gradlew.bat :app:ktlintCheck :app:detekt` — both
+  `BUILD SUCCESSFUL` with the broken file still present on disk — then deleted the throwaway
+  directory. Re-created it once more to check `:app:lintDebug` the same way (see above), then
+  deleted it again; `git status --porcelain` confirmed nothing throwaway survived.
+
+**Verified:** `.\gradlew.bat :app:ktlintCheck :app:detekt` with the throwaway broken file present
+— `BUILD SUCCESSFUL`. `.\gradlew.bat :app:lintDebug` with the same file present — `BUILD
+SUCCESSFUL` (AGP lint unaffected, as predicted). Full gate and `-p buildSrc test` results are in
+this package's report to the lead, not restated here.
+
+**Left open:** none — the three things asked for (ktlint, detekt, and the "check lint/
+dependencyRules/platformGuards/coverageMatrix too" instruction) are all addressed, the latter by
+confirming no change was needed and recording why.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: text field keeps its editable semantics on the inner node)
 
 ### (pending) — ui-conformance WP2 · text field keeps its editable semantics on the inner node
