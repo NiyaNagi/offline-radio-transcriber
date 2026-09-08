@@ -25,6 +25,13 @@
             </intent-filter>
         </activity>
 
+        <!-- The guided setup sequence (build-plan P8, ui-conformance-plan WP9, register
+             R-080..R-084, `Flow-Setup.dc.html`) — MainActivity routes here whenever setup is
+             incomplete or a capture-gating permission has been revoked since it last completed;
+             SetupActivity hands back to MainActivity once `Start capture` is tapped on S12. Not
+             exported: only MainActivity ever launches it. -->
+        <activity android:name=".ui.setup.SetupActivity" android:exported="false" />
+
         <!-- The Compose navigation host (build-plan P13, D15): theme, drawer and nav graph, with
              capture status and the transmission list as Compose screens (`StatusScreen`,
              `TransmissionListScreen`). This is now the app's reader — `MainActivity` launches it
