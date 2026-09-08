@@ -39,6 +39,7 @@ import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
@@ -352,6 +353,25 @@ private fun NeverLeavesCard(modifier: Modifier = Modifier) {
 // -------------------------------------------------------------------------------------------
 // Split (R-073) — Fail-Cluster.dc.html, reached from Station-Identity's "Split" action.
 // -------------------------------------------------------------------------------------------
+
+/**
+ * `Fail-Cluster.dc.html`'s real empty state (R-272, register, halt) — reached when
+ * [StationPolling.voiceSplitCandidates] has genuinely finished and found nothing (no voiceprint
+ * cluster bound to this station, or its cluster has no member overs), never confused with "still
+ * fetching" (a bare "Loading…" that never resolved was exactly V5 pass 2's halt). A real header
+ * (with a real way back) and a named message — never a dead end.
+ */
+@Composable
+internal fun SplitEmptyState(callsign: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.fillMaxSize()) {
+        DrillInHeader(parentLabel = callsign, onBack = onBack)
+        EmptyState(
+            message = "One cluster, nothing to split",
+            subMessage = "$callsign has no voiceprint cluster with more than one over yet.",
+            modifier = Modifier.padding(OrtSpacing.lg),
+        )
+    }
+}
 
 /**
  * `Fail-Cluster.dc.html` (R-073): the real overs in [state]'s cluster, a checkbox per over

@@ -4882,6 +4882,144 @@ conflicting with the builders who own `:app`.
 
 ## 2026-09-08 (ui-conformance WP8: stations and frequencies)
 
+### (pending) — ui-conformance WP8 · pass-2 fixes: split empty state and DB reuse, row widths, chip rows, frequency-change chart and copy
+
+**Scope:** `:app` `ui/data/StationPolling.kt`, `ui/data/StationsAndFrequencies.kt`,
+`ui/screens/StationScreen.kt`, `ui/screens/StationIdentityScreen.kt`,
+`ui/screens/StationDetailContent.kt`, `ui/screens/FrequencyChangeScreen.kt`,
+`ui/screens/FrequencyDetailContent.kt`; tests beside each, new
+`ui/screens/StationDetailContentTest.kt`. Addendum to this package's own WP8 entry directly below,
+filed against V5's second validation pass at `8d1456f` — register R-270 through R-277.
+
+**Requirements/ACs:** R-074, R-192 (superseded, see below), R-209 (superseded, see below), FR-UI-9,
+FR-UI-10, FR-UI-11, FR-DIG, constitution I, constitution III.
+
+**What changed:**
+
+*Constitution Check.* Principle III (nothing deleted quietly, nothing left unreachable) is R-272's
+own halt: a real absence ("this station has no voiceprint cluster to split") was rendered
+identically to "still working on it" — a dead end disguised as progress. The fix makes the two
+states structurally distinct, not just better-worded. Principle VII (Boundaries Are Structural)
+governed two decisions this round: `StationPolling`'s new `SharedDatabase` cache lives entirely
+inside this package's own file (never touching `:data`'s `OrtDatabase.create`, which other real
+call sites — including tests — still need fresh), and this package's earlier hand-rolled
+`StationDetailHeader`/`StationHourByDayGrid` (built when the shared components had no way to do
+what R-192/R-209 needed) are deleted now that WP2 has shipped the real parameters — never keep
+maintaining a look-alike once the shared component does the job.
+
+- **R-272 (halt) — the split screen distinguishes loading from empty, and one `OrtDatabase` per
+  process.** `StationPolling.voiceSplitCandidates` returning `null` is a real, honest answer for a
+  station whose voice pipeline never bound a cluster — not "still fetching". Both states used to
+  share the same `splitCandidates == null` value in `StationDetailContent`, so a single-cluster (or
+  cluster-less) station's `Split` action rendered a bare "Loading…" forever. Fixed: a new
+  `splitCandidatesLoaded` flag (own per-station `remember`) makes "not yet loaded" and "loaded, and
+  genuinely nothing to split" structurally distinct; the latter now renders a real
+  `SplitEmptyState` — `DrillInHeader` (a real way back) plus a named `EmptyState` message ("One
+  cluster, nothing to split"), never a dead end. Separately: every function in
+  `StationPolling`/`FrequencyPolling` called `OrtDatabase.create` fresh — a brand new Room instance,
+  and therefore a brand new `SQLiteConnectionPool`, on every single poll, never explicitly closed;
+  `SplitSubScreen`'s own `LaunchedEffect` re-firing while stuck on the old ambiguous `null` opened a
+  fresh pool on every recomposition, flooding logcat with `SQLiteConnectionPool leaked`. Fixed with
+  a new file-scoped `SharedDatabase` object — one instance reused by every call in this package,
+  keyed by `context.applicationContext` identity (not just "has one been created") so Robolectric's
+  fresh `Application` per test method never reads a previous test's disposed database. New
+  `StationDetailContentTest` reproduces the exact original bug against a real (file-backed)
+  database — a WA7HJR-shaped station (CONFIRMED overs, no voiceprint bound) — and proves the split
+  screen now resolves to the real empty state within a bounded `waitUntil`, never hanging.
+- **R-270 (design) — recent-overs rows never wrap mid-value.** `StationDetailScreen`'s
+  `RecentOverRow` used a fixed `Modifier.width(LOG_TIME_COLUMN)`/`LOG_FREQ_COLUMN`, which cannot
+  grow for a real value at a larger font scale (cf. R-205, the same defect class WP2 already fixed
+  for the shared `LogRow`). Switched to WP2's own `rememberTimeColumnWidth()`/
+  `rememberFreqColumnWidth()` (`widthIn(min = ...)`, sized to real content, never below the guide's
+  column widths) plus `maxLines = 1`/`softWrap = false`, so a value that still doesn't fit
+  truncates rather than wraps.
+- **R-277 (design) — verified, defensively hardened.** The Stations chip row already used WP2's
+  scrolling `FilterChipRow` (unchanged); added `fillMaxWidth()` at the call site so the scrollable
+  row always reports the real available width to scroll within.
+- **R-192 / R-209 — switched to WP2's shipped shared parameters, hand-rolled clones deleted.** WP2
+  merged `DrillInHeader(kebabDescription, kebabTestTag)` — `StationDetailScreen` now calls the
+  shared `DrillInHeader(kebabDescription = "Station identity", kebabTestTag =
+  "station-identity-open")` directly; this package's own `StationDetailHeader` clone (built last
+  round because the shared component had no override) is gone.
+- **R-271 (polish) — routed to WP2, not fixed here.** The hour-axis labels that wrap to two lines
+  at default scale ("00 06 12 18") live entirely inside WP2's shared `DayOfWeekGrid`
+  (`ui/components/ActivityPatternChart.kt`'s `DaysAsRowsGrid`, `hourAxisLabel(hour)` text with no
+  `softWrap = false`/`maxLines = 1`) — `StationPatternScreen` (this package's own file) already
+  calls that shared component and has nothing of its own left to fix. Confirmed by direct
+  inspection, not assumed; flagging for the coordinator to route to WP2 rather than reaching into a
+  file this package does not own.
+- **R-273 (design) — the real departure window in the subtitle.** New
+  `FrequencyPolling.departureWindowLabel`: the contiguous local hours tonight actually ran ahead of
+  their own usual average (never a fabricated window when no single hour cleared its own usual —
+  the overall-count departure test can still flag a night without any one hour doing so).
+  `subtitleLabel` now reads "Tonight, 02:00–04:00 · 61 overs where the usual is 4" when a window is
+  found, the previous bare "Tonight · …" form otherwise.
+- **R-274 (design) — the real dual-series chart.** `DepartureChart` gained the fixed "22:00"/
+  "06:00" axis labels (the same convention this package's own `FrequencyHeaderSection` chart
+  already uses for `Frequency.dc.html`'s "18:00"/"10:00" — see that screen's own doc comment for
+  why these are fixed labels, not derived from a per-night listening-window figure this package
+  does not compute in general) and a real legend (an amber swatch + "tonight", a green line swatch
+  + "usual, N nights" — new `FrequencyChangeViewState.usualNightsCount`, the real prior-session
+  count `frequencyChange` already computed for the usual-hourly average). The added row made the
+  screen tall enough to push the bottom `The N overs` action off a small device's viewport with no
+  way to reach it — the exact click-lands-nowhere shape this package has root-caused before,
+  confirmed again by a test failure that resolved once the content became genuinely scrollable
+  (`Modifier.weight(1f).verticalScroll(...)`, the pinned-action-row idiom `StationSplitScreen`
+  already uses) rather than by scrolling the test to a button that, it turned out, needed to be
+  reachable without scrolling at all.
+- **R-275 (design) — the full closing paragraph.** `explanationParagraph` (renamed from
+  `explanationSentence` — it is no longer one) now reads the board's full three-part paragraph:
+  the always-true "A departure is a finding, not an alarm.", a middle clause only when a real
+  cause is listed ("This one has an explanation — see What made it busy above." — this package's
+  own honest paraphrase, never the board's fictional "an activation pulled the regulars over" it
+  cannot assert in general), and the always-true digest/won't-change-usual sentence.
+- **R-276 (spec) — "The N overs" is a real action.** New `TimeWindow(startMillis, endMillis)` and
+  `FrequencyChangeViewState.window` (tonight's own session bounds — real, not the narrower
+  departure window R-273's subtitle names; "The N overs" means "everything heard tonight", not
+  just the hours that spiked). `FrequencyChangeScreen` gained `onOpenOvers: (Long, TimeWindow) ->
+  Unit`, wired through `FrequencyDetailContent` with the same defaulted-no-op-until-WP3-routes-it
+  pattern `onOpenStation`/`onOpenTransmission` already established elsewhere in this package.
+
+**A pre-existing issue found, not fixed — flagged for the coordinator to route:**
+`:app:ktlintMainSourceSetCheck` (part of the plain `./gradlew build`) fails on
+`ui/components/Rows.kt` (WP2's file, six "Missing newline" findings at two call sites) —
+confirmed via `git checkout --` to restore main's own committed version of that file and rerunning
+`:app:ktlintMainSourceSetCheck` in isolation: the failure is 100% inside `Rows.kt`, reproducible
+with zero changes of this package's own applied. Not touched — outside this package's file
+ownership. `dependencyRules`/`platformGuards` (part of the same gate invocation) both still ran to
+completion and reported `OK` before the aggregate `build` task reached the failing ktlint step.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded twice this round: first to `d113bb7` (V5 pass 2's own
+  validation commit, R-270..R-277 filed) to start, then again to `a272464` after the coordinator's
+  addendum (WP2's `DrillInHeader(kebabDescription, kebabTestTag)` merge, `548b229`).
+- `.\gradlew.bat :app:testDebugUnitTest` (whole `:app` module) — 1047 tests, **2 pre-existing
+  failures** in `org.ort.app.ui.setup.ReadyScreenTest` (`R_265` x2) — confirmed unrelated: that
+  file is WP9's own (`ui/setup/**`), untouched by this package, and the failure reproduces
+  identically before and after every change in this addendum; not fixed here (outside this
+  package's ownership). Every other test passed, including all of this package's own (up from
+  962 before this round; new: `R_272` (`StationDetailContentTest`), `R_274`, `R_275`, `R_276`, plus
+  updated `R_074`/`R_207` fixtures).
+- `.\gradlew.bat :app:ktlintFormat :app:detekt :app:ktlintCheck` (this package's own files only,
+  `Rows.kt` reverted first) — BUILD SUCCESSFUL, zero findings.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules`/`platformGuards` both
+  reported `OK`; the aggregate `build` task itself fails on the pre-existing `Rows.kt` issue above
+  (not this package's files — see that section).
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` regenerated (picks up test files that landed
+  via this round's `main` merges, e.g. `ImproveScreensTest`; nothing from this package's own
+  changes needed a new row).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- R-271 — routed to WP2 (see above); this package has nothing left to fix once
+  `StationPatternScreen` calls the shared `DayOfWeekGrid`.
+- The `Rows.kt` ktlint finding above — needs a WP2 look, not this package's file ownership.
+- `departureWindowLabel`'s heuristic shares `netFor`'s own limits (an earlier addendum's "Left
+  open"): a real, working first pass, not the artboard's own unspecified exact algorithm.
+
 ### (pending) — ui-conformance WP8 · station identity discoverable; shared day-of-week grid
 
 **Scope:** `:app` `ui/screens/StationScreen.kt`, `ui/screens/StationPatternScreen.kt`,

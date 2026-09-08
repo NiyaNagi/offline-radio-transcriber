@@ -33,11 +33,46 @@ import java.util.Locale
  * pattern [org.ort.app.ui.data.SearchPolling]/[org.ort.app.ui.data.ThreadPolling] already use, so
  * a transmission cannot show different facts on two screens.
  */
+
+/**
+ * One [OrtDatabase] instance for this package's own read path (R-272, register, halt, V5 pass 2
+ * @8d1456f): every function in [StationPolling]/[FrequencyPolling] used to call
+ * `OrtDatabase.create` fresh on every single poll — a brand new Room instance, and therefore a
+ * brand new `SQLiteConnectionPool`, never explicitly closed. The halt this produced:
+ * `SplitSubScreen`'s own `LaunchedEffect` re-firing while `voiceSplitCandidates` stayed `null`
+ * opened a fresh pool on every recomposition, flooding logcat with `SQLiteConnectionPool leaked`
+ * warnings. `OrtDatabase.create` is deliberately not memoized inside `:data` itself (other call
+ * sites there, including tests, legitimately want a fresh instance) — this cache is process-wide
+ * in production but scoped to this package's own two read-path objects, not a `:data`-level
+ * change. Keyed by `context.applicationContext` identity, not just "has one been created" —
+ * Robolectric hands each test method a fresh `Application`, and reusing a previous test's instance
+ * across that boundary would silently read/write the wrong (disposed) database.
+ */
+private object SharedDatabase {
+    @Volatile
+    private var cachedContext: Context? = null
+
+    @Volatile
+    private var instance: OrtDatabase? = null
+
+    fun get(context: Context): OrtDatabase {
+        val appContext = context.applicationContext
+        instance?.let { if (cachedContext === appContext) return it }
+        synchronized(this) {
+            instance?.let { if (cachedContext === appContext) return it }
+            return OrtDatabase.create(appContext).also {
+                instance = it
+                cachedContext = appContext
+            }
+        }
+    }
+}
+
 public object StationPolling {
 
     /** The "Stations" list (R-070): every station ever heard, most recently heard first. */
     public suspend fun listStations(context: Context): List<StationListEntryViewState> {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val stations = db.activityDao().listStations()
         val latest = latestSession(db)
         return stations.map { station -> stationRow(db, station, latest) }
@@ -51,7 +86,7 @@ public object StationPolling {
      * this folds over every session's own transmissions rather than adding one.
      */
     public suspend fun unidentifiedSummary(context: Context, tonightOnly: Boolean): UnidentifiedVoicesSummary? {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val transmissions = if (tonightOnly) {
             val latest = latestSession(db) ?: return null
             db.transmissionDao().listBySession(latest.id)
@@ -72,7 +107,7 @@ public object StationPolling {
      * table figures and its activity pattern (FR-UI-11, in the device's own zone — R-075).
      */
     public suspend fun stationDetail(context: Context, stationId: String, nowMillis: Long): StationDetailViewState {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val zone = ZoneId.systemDefault()
         val entities = db.activityDao().transmissionsForStation(stationId)
         val details = entities.map { ReaderPolling.detailFromEntity(context, it) }
@@ -146,7 +181,7 @@ public object StationPolling {
 
     /** `Station-Pattern.dc.html`'s state (R-072, R-075) — every bucket is local-time. */
     public suspend fun stationPattern(context: Context, stationId: String, nowMillis: Long): StationPatternViewState {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val zone = ZoneId.systemDefault()
         val entities = db.activityDao().transmissionsForStation(stationId)
         val timestamps = entities.map { it.startedAtUtc }
@@ -191,7 +226,7 @@ public object StationPolling {
      * for the Stations list, so a rename shows up identically in both places.
      */
     public suspend fun stationIdentity(context: Context, stationId: String): StationIdentityViewState {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val station = db.catalogDao().getStation(stationId)
         val entities = db.activityDao().transmissionsForStation(stationId)
         val confirmed = entities.count { it.attributionState == AttributionState.CONFIRMED }
@@ -224,7 +259,7 @@ public object StationPolling {
      * (constitution III) even though `station.userName` only ever holds the current one.
      */
     public suspend fun renameStation(context: Context, stationId: String, name: String?) {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val station = db.catalogDao().getStation(stationId)
         val (previousName, _) = currentGivenByYou(db, stationId, station?.userName, station?.notes)
         db.stationIdentityDao().renameStation(
@@ -241,7 +276,7 @@ public object StationPolling {
 
     /** Adds or edits [stationId]'s note (R-073), versioned the same way as [renameStation]. */
     public suspend fun updateStationNote(context: Context, stationId: String, note: String?) {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val station = db.catalogDao().getStation(stationId)
         val (_, previousNote) = currentGivenByYou(db, stationId, station?.userName, station?.notes)
         db.stationIdentityDao().updateStationNote(
@@ -264,7 +299,7 @@ public object StationPolling {
      * report) — never a fabricated suggestion standing in for one.
      */
     public suspend fun voiceSplitCandidates(context: Context, stationId: String): StationVoiceSplitViewState? {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val station = db.catalogDao().getStation(stationId)
         val cluster = db.catalogDao().voiceprintsForStation(stationId).maxByOrNull { it.memberCount } ?: return null
         val entities = db.activityDao().transmissionsForStation(stationId)
@@ -305,7 +340,7 @@ public object StationPolling {
         transmissionIds: List<String>,
     ): StationIdentityViewState {
         if (transmissionIds.isNotEmpty()) {
-            val db = OrtDatabase.create(context.applicationContext)
+            val db = SharedDatabase.get(context)
             val newVoiceprintId = Ulid.generate().toString()
             db.catalogDao().insert(
                 VoiceprintEntity(
@@ -425,7 +460,7 @@ public object FrequencyPolling {
         context: Context,
         nowMillis: Long = SystemClock.wallMillis(),
     ): List<FrequencyListEntryViewState> {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val zone = ZoneId.systemDefault()
         val latestSession = db.sessionDao().listAll().firstOrNull()
         val sessions = everySessionWindow(db)
@@ -446,7 +481,7 @@ public object FrequencyPolling {
 
     /** Everything heard on [frequencyHz], across every session (R-074), plus its typical-night pattern and regulars. */
     public suspend fun frequencyDetail(context: Context, frequencyHz: Long, nowMillis: Long): FrequencyDetailViewState {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val zone = ZoneId.systemDefault()
         val entities = db.activityDao().transmissionsForFrequency(frequencyHz)
         val details = entities.map { ReaderPolling.detailFromEntity(context, it) }
@@ -530,7 +565,7 @@ public object FrequencyPolling {
      * needs no `nowMillis` — there is no night-window arithmetic here to anchor.
      */
     public suspend fun frequencyChange(context: Context, frequencyHz: Long): FrequencyChangeViewState {
-        val db = OrtDatabase.create(context.applicationContext)
+        val db = SharedDatabase.get(context)
         val zone = ZoneId.systemDefault()
         val entities = db.activityDao().transmissionsForFrequency(frequencyHz)
         val latestSession = db.sessionDao().listAll().firstOrNull()
@@ -568,16 +603,62 @@ public object FrequencyPolling {
 
         val overCount = tonightTx.size
         val usualTotal = usualHourly.sum()
+        val usualTotalLabel = "%.0f".format(Locale.ROOT, usualTotal)
+        // R-273 (register, design, V5 pass 2 @8d1456f): the subtitle names the real departure
+        // window — the contiguous local hours tonight actually ran ahead of their own usual
+        // average — not just the bare overall count. `null` (never a fabricated window) when no
+        // single hour cleared its own usual, which the overall-count departure test can still flag.
+        val window = departureWindowLabel(tonightHourly, usualHourly)
+        val subtitleLabel = if (window != null) {
+            "Tonight, $window · ${pluralize(overCount, "over")} where the usual is $usualTotalLabel"
+        } else {
+            "Tonight · ${pluralize(overCount, "over")} where the usual is $usualTotalLabel"
+        }
+        // R-275: the board's full closing paragraph, not just its first sentence — the middle
+        // clause only when there is a real, listed cause to point at ("see below"), never the
+        // board's own fictional "an activation pulled the regulars over" this package cannot
+        // honestly assert in general.
+        val explanationParagraph = buildString {
+            append("A departure is a finding, not an alarm.")
+            if (causes.isNotEmpty()) {
+                append(" This one has an explanation — see What made it busy above.")
+            }
+            append(
+                " It will appear in tonight's digest, and will not change what \"usual\" means " +
+                    "unless it keeps happening.",
+            )
+        }
+        // R-276: "The N overs" opens the Log filtered to this frequency and this real window —
+        // tonight's own session, not the narrower departure window named above (the Log filter is
+        // "everything heard tonight", the subtitle's window is "when it spiked").
+        val tonightWindow = TimeWindow(
+            startMillis = latestSession?.startedAt ?: 0L,
+            endMillis = latestSession?.endedAt ?: SystemClock.wallMillis(),
+        )
         return FrequencyChangeViewState(
             frequencyHz = frequencyHz,
             label = "%.3f".format(Locale.ROOT, frequencyHz / 1_000_000.0),
-            subtitleLabel = "Tonight · $overCount overs where the usual is ${"%.0f".format(Locale.ROOT, usualTotal)}",
+            subtitleLabel = subtitleLabel,
             tonightHourly = tonightHourly.toList(),
             usualHourly = usualHourly,
+            usualNightsCount = priorSessionIds.size,
             causes = causes,
             overCount = overCount,
-            explanationSentence = "A departure is a finding, not an alarm.",
+            explanationParagraph = explanationParagraph,
+            window = tonightWindow,
         )
+    }
+
+    /** The contiguous local-hour range tonight ran ahead of its own usual average ("02:00–04:00"),
+     * `null` when no hour did (R-273) — never a fabricated window standing in for a real one. */
+    private fun departureWindowLabel(tonightHourly: IntArray, usualHourly: List<Double>): String? {
+        val elevated = tonightHourly.indices.filter { hour ->
+            tonightHourly[hour] > 0 && tonightHourly[hour] > usualHourly.getOrElse(hour) { 0.0 }
+        }
+        if (elevated.isEmpty()) return null
+        val start = elevated.min()
+        val end = (elevated.max() + 1) % 24
+        return "%02d:00–%02d:00".format(Locale.ROOT, start, end)
     }
 
     private suspend fun regularRow(

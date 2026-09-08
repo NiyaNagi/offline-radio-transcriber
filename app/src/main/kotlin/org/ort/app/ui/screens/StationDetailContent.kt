@@ -54,6 +54,13 @@ public fun StationDetailContent(
     var pattern by remember(stationId) { mutableStateOf<StationPatternViewState?>(null) }
     var identity by remember(stationId) { mutableStateOf<StationIdentityViewState?>(null) }
     var splitCandidates by remember(stationId) { mutableStateOf<StationVoiceSplitViewState?>(null) }
+    // R-272 (register, halt, V5 pass 2 @8d1456f): `voiceSplitCandidates` returning `null` is a
+    // real, honest answer — this station's voice pipeline never bound a cluster to split, not
+    // "still fetching". Before this flag, both states shared the one `splitCandidates == null`
+    // value, so a single-cluster (or cluster-less) station rendered "Loading…" forever — there was
+    // nothing left to load. `remember(stationId)` so switching stations resets it, matching every
+    // other piece of this screen's own per-station state.
+    var splitCandidatesLoaded by remember(stationId) { mutableStateOf(false) }
 
     LaunchedEffect(stationId) {
         detail = StationPolling.stationDetail(context, stationId, nowMillis = SystemClock.wallMillis())
@@ -65,8 +72,9 @@ public fun StationDetailContent(
         if (sub == StationSubScreen.PATTERN && pattern == null) {
             pattern = StationPolling.stationPattern(context, stationId, nowMillis = SystemClock.wallMillis())
         }
-        if (sub == StationSubScreen.SPLIT && splitCandidates == null) {
+        if (sub == StationSubScreen.SPLIT && !splitCandidatesLoaded) {
             splitCandidates = StationPolling.voiceSplitCandidates(context, stationId)
+            splitCandidatesLoaded = true
         }
     }
 
@@ -96,7 +104,11 @@ public fun StationDetailContent(
         )
 
         StationSubScreen.SPLIT -> SplitSubScreen(
-            state = splitCandidates,
+            state = SplitSubScreenState(
+                candidates = splitCandidates,
+                loaded = splitCandidatesLoaded,
+                callsign = identity?.callsign ?: stationId,
+            ),
             context = context,
             stationId = stationId,
             scope = scope,
@@ -165,12 +177,31 @@ private fun IdentitySubScreen(
     )
 }
 
-/** `StationSubScreen.SPLIT` — split out of [StationDetailContent] for the same reason as
+/**
+ * [SplitSubScreen]'s own fetched state (R-272), folded into one holder — the same reason
+ * [org.ort.app.ui.data.StationsListState] exists — so that composable's own parameter count stays
+ * under detekt's `LongParameterList` limit. [loaded] distinguishes "still fetching" from "fetched,
+ * and this station genuinely has nothing to split" — [candidates] is `null` in both cases, which
+ * is exactly the ambiguity that used to render a bare "Loading…" forever for a station with no
+ * voiceprint cluster bound.
+ */
+private data class SplitSubScreenState(
+    val candidates: StationVoiceSplitViewState?,
+    val loaded: Boolean,
+    val callsign: String,
+)
+
+/**
+ * `StationSubScreen.SPLIT` — split out of [StationDetailContent] for the same reason as
  * [IdentitySubScreen]. [onSplit] hands back the refreshed identity and split-candidate state once
- * [StationPolling.splitVoiceprint] has actually written, so the caller never has to guess. */
+ * [StationPolling.splitVoiceprint] has actually written, so the caller never has to guess.
+ *
+ * R-272 (register, halt): `!state.loaded` renders the loading line; `state.loaded &&
+ * state.candidates == null` renders a real, named empty state with its own header and a way back.
+ */
 @Composable
 private fun SplitSubScreen(
-    state: StationVoiceSplitViewState?,
+    state: SplitSubScreenState,
     context: Context,
     stationId: String,
     scope: CoroutineScope,
@@ -178,19 +209,24 @@ private fun SplitSubScreen(
     onSplit: (StationIdentityViewState, StationVoiceSplitViewState?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (state == null) {
+    if (!state.loaded) {
         LoadingLine(modifier)
         return
     }
+    val candidates = state.candidates
+    if (candidates == null) {
+        SplitEmptyState(callsign = state.callsign, onBack = onCancel, modifier = modifier)
+        return
+    }
     StationSplitScreen(
-        state = state,
+        state = candidates,
         onCancel = onCancel,
         onSplit = { transmissionIds ->
             scope.launch {
                 val newIdentity = StationPolling.splitVoiceprint(
                     context,
                     stationId,
-                    state.fromVoiceprintId,
+                    candidates.fromVoiceprintId,
                     transmissionIds,
                 )
                 // The overs that moved are no longer in this cluster — refetch rather than patch
