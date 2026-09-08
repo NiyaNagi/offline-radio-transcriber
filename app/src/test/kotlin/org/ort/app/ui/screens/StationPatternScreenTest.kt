@@ -61,7 +61,9 @@ class StationPatternScreenTest {
 
         composeTestRule.onNodeWithTag("pattern-mode-HOUR_BY_DAY").performClick()
 
-        composeTestRule.onNodeWithContentDescription("Activity by day and hour", substring = true)
+        // WP2's shared `DayOfWeekGrid` (this screen went back to it — see this file's own top doc
+        // comment) carries its own content description wording.
+        composeTestRule.onNodeWithContentDescription("Activity by hour and day of week", substring = true)
             .assertExists()
     }
 

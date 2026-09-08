@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import org.ort.app.ui.data.StationListEntryViewState
 import org.ort.app.ui.data.StationPolling
 import org.ort.app.ui.data.StationsFilter
+import org.ort.app.ui.data.StationsListState
 import org.ort.app.ui.data.UnidentifiedVoicesSummary
 
 /**
@@ -41,18 +42,21 @@ public fun StationsContent(context: Context, onOpen: (String) -> Unit, modifier:
     }
     val visible = if (sortMostHeard) filtered.sortedByDescending { it.transmissionCount } else filtered
 
-    StationsListScreen(
+    // R-207: the subtitle's "N heard all time · M tonight" always names the real total, not the
+    // current chip's filtered count — matching `Stations.dc.html`'s own subtitle, which does not
+    // change as the chips below it are tapped.
+    val listState = StationsListState(
         stations = visible,
+        unidentified = unidentified,
+        heardAllTimeCount = allStations.size,
+        heardTonightCount = allStations.count { it.heardTonight },
+    )
+    StationsListScreen(
+        state = listState,
         onOpen = onOpen,
         modifier = modifier,
         selectedFilter = filter,
         onFilterSelected = { filter = it },
-        unidentified = unidentified,
-        // R-207: the subtitle's "N heard all time · M tonight" always names the real total, not
-        // the current chip's filtered count — matching `Stations.dc.html`'s own subtitle, which
-        // does not change as the chips below it are tapped.
-        heardAllTimeCount = allStations.size,
-        heardTonightCount = allStations.count { it.heardTonight },
         sortMostHeard = sortMostHeard,
         onToggleSort = { sortMostHeard = !sortMostHeard },
     )

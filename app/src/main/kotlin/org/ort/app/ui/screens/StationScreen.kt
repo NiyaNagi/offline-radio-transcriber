@@ -3,17 +3,20 @@ package org.ort.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -30,19 +33,20 @@ import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
-import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.LOG_FREQ_COLUMN
 import org.ort.app.ui.components.LOG_TIME_COLUMN
+import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationListBadge
 import org.ort.app.ui.data.StationListEntryViewState
 import org.ort.app.ui.data.StationsFilter
+import org.ort.app.ui.data.StationsListState
 import org.ort.app.ui.data.TransmissionListEntryViewState
 import org.ort.app.ui.data.UnidentifiedVoicesSummary
 import org.ort.app.ui.data.pluralize
@@ -58,16 +62,11 @@ import org.ort.app.ui.theme.OrtType
  */
 @Composable
 public fun StationsListScreen(
-    stations: List<StationListEntryViewState>,
+    state: StationsListState,
     onOpen: (String) -> Unit,
     modifier: Modifier = Modifier,
     selectedFilter: StationsFilter = StationsFilter.ALL_TIME,
     onFilterSelected: (StationsFilter) -> Unit = {},
-    unidentified: UnidentifiedVoicesSummary? = null,
-    // R-207: the subtitle names the real, unfiltered totals — see `StationsContent`'s own doc
-    // comment for why these are passed in rather than derived from `stations` (already filtered).
-    heardAllTimeCount: Int = 0,
-    heardTonightCount: Int = 0,
     sortMostHeard: Boolean = false,
     onToggleSort: () -> Unit = {},
 ) {
@@ -76,7 +75,8 @@ public fun StationsListScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = "Stations", style = OrtType.screenTitle, modifier = Modifier.semantics { heading() })
                 Text(
-                    text = "${pluralize(heardAllTimeCount, "station")} heard all time · $heardTonightCount tonight",
+                    text = "${pluralize(state.heardAllTimeCount, "station")} heard all time · " +
+                        "${state.heardTonightCount} tonight",
                     style = OrtType.subtitle,
                     color = OrtColors.textDim,
                     modifier = Modifier.padding(top = OrtSpacing.xs),
@@ -98,7 +98,7 @@ public fun StationsListScreen(
                 )
             }
         }
-        if (stations.isEmpty() && unidentified == null) {
+        if (state.stations.isEmpty() && state.unidentified == null) {
             EmptyState(
                 message = "No stations heard yet",
                 modifier = Modifier.padding(horizontal = OrtSpacing.lg),
@@ -107,9 +107,9 @@ public fun StationsListScreen(
         }
         StationsColumnHeaderRow()
         LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(stations, key = { it.stationId }) { entry -> StationRow(entry = entry, onOpen = onOpen) }
-            if (unidentified != null) {
-                item(key = "unidentified") { UnidentifiedVoicesRow(unidentified) }
+            items(state.stations, key = { it.stationId }) { entry -> StationRow(entry = entry, onOpen = onOpen) }
+            state.unidentified?.let { summary ->
+                item(key = "unidentified") { UnidentifiedVoicesRow(summary) }
             }
         }
     }
@@ -238,13 +238,13 @@ public fun StationDetailScreen(
     onOpenIdentity: () -> Unit = {},
     onViewAllOvers: () -> Unit = {},
     // R-017: `OrtNavHost` (WP3) does not render a second header over this drill-in's own — this
-    // screen's `DrillInHeader` is the only one drawn — but it does not yet know the operator's
+    // screen's own header is the only one drawn — but it does not yet know the operator's
     // real navigation origin either, so it hands nothing down. Defaulted so `OrtNavHost.kt`
     // (WP10 is editing it concurrently) compiles unchanged; WP3 wires the true origin afterwards.
     backLabel: String = "Stations",
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = backLabel, onBack = onBack, onKebab = onOpenIdentity)
+        StationDetailHeader(parentLabel = backLabel, onBack = onBack, onOpenIdentity = onOpenIdentity)
         // A single top-level LazyColumn — the header/facts/chart section as its first item, then
         // one item per recent over. A `verticalScroll` Column was tried here first and measured
         // fine, but a `clickable` Row nested inside it silently swallowed its own tap in this
@@ -279,6 +279,53 @@ public fun StationDetailScreen(
                     RecentOverRow(entry = entry, onOpen = onOpenTransmission)
                 }
             }
+        }
+    }
+}
+
+/**
+ * `Station.dc.html`'s own header (R-192, register, design, V5 @f8430b8): the board draws no
+ * explicit Identity action, section preview or row anywhere in its body — the kebab in the top
+ * row is the *only* affordance, and V4/V5 both found it undiscoverable (a bare "More", the same
+ * generic label every other kebab in the app carries). The shared `DrillInHeader` has no way to
+ * override that per-screen — its kebab has one hardcoded description and no `testTag` at all — so
+ * this is this screen's own header, not `DrillInHeader`, matching its exact layout and back-icon
+ * behaviour but giving the kebab a real, specific description ("Station identity") and a
+ * `testTag("station-identity-open")`. (Worth routing to WP2 as a `kebabDescription`/`kebabTestTag`
+ * parameter on the shared component if another screen's kebab needs the same treatment — see this
+ * package's report.)
+ */
+@Composable
+private fun StationDetailHeader(
+    parentLabel: String,
+    onBack: () -> Unit,
+    onOpenIdentity: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier.fillMaxWidth().heightIn(min = 44.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = OrtIcons.back,
+                contentDescription = "Back to $parentLabel",
+                tint = OrtColors.accentGreen,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable(role = Role.Button, onClickLabel = "Back to $parentLabel", onClick = onBack),
+            )
+            Text(text = parentLabel, style = OrtType.bodyProse, color = OrtColors.accentGreen)
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(
+                imageVector = OrtIcons.more,
+                contentDescription = "Station identity",
+                tint = OrtColors.textDim,
+                modifier = Modifier.size(19.dp)
+                    .testTag("station-identity-open")
+                    .clickable(role = Role.Button, onClickLabel = "Station identity", onClick = onOpenIdentity),
+            )
         }
     }
 }
