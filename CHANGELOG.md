@@ -294,6 +294,109 @@ FR-UI-3.
 
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · host dispatches to WP4 and WP7 content; live bar fed by LiveBarPolling
+
+**Scope:** `:app` `ui/navigation/**` only (`OrtNavHost.kt`, `ReaderDestination.kt`,
+`Drawer.kt` untouched) and `ui/data/DrawerCounts.kt` (its `liveBar` fallback and matching tests
+removed, station/frequency counts kept). Reconciliation addendum to the WP3 entry directly below,
+after merging `integrate-wp7` (WP4 + WP7, HEAD `11affed`) — main must not receive WP4/WP7 until
+this host rewiring lands, per the lead's own note.
+
+**Requirements/ACs:** R-017, R-022 (both refined, not reopened, by this addendum), FR-UI-7.
+
+**What changed:**
+- **Constitution Check.** Principle I: the drawer's live bar is now WP4's real
+  `LiveBarPolling.current` (an actually-measured tone/label, gated on this exact session actively
+  capturing) rather than this package's own approximation. Principle VII: `ui/screens/**` and
+  `ui/data/SearchViewData.kt`/`LiveBarPolling.kt` (WP4/WP7's files) are untouched — every change
+  here is `OrtNavHost.kt`'s dispatch, `ReaderDestination.CAPTURE.hasScreen`, and this package's own
+  `DrawerCounts.kt`.
+- **`git merge --ff-only integrate-wp7`** — fast-forward, `329e7d4..11affed`, clean (WP3 is an
+  ancestor of `integrate-wp7`; nothing to resolve).
+- **SEARCH** (R-017): the inline `SearchContent`/`SearchScreen` call and the old
+  `SearchFilterInput`/`SearchFilterParser`/`SearchPolling` shapes are gone from `OrtNavHost.kt` —
+  WP7 replaced all three with a materially different model (`SearchTimeFilter`, a
+  `Set<AttributionState>`, `SearchFacetFilter`, `SearchPolling.search(context, params,
+  facetFilter)`, `SearchFilterParser.parse(input, nowUtcMillis)`). The host now dispatches to WP7's
+  `org.ort.app.ui.screens.SearchContent(input, result, onInputChange, onSearch, onOpen, modifier)`
+  — note its `onSearch: () -> Unit` is a trigger, not a result setter, so the host's own `onSearch`
+  lambda runs `SearchFilterParser.parse` + `SearchPolling.search` and writes `searchResult` itself.
+  `searchInput` is now `rememberSaveable` via a new `SearchFilterInputSaver` (built entirely in this
+  file — every field is a `String`/`Boolean`/enum-by-name, joined into one delimited `String`, no
+  edit to WP7's types); `searchResult` stays plain `remember` — `SearchResult` nests
+  `TransmissionDetail` (`Attribution`, `InspectionViewState`), and hand-rolling a faithful Saver for
+  that graph is out of proportion to this package's row. R-017 itself (back from a drill-in restores
+  Search's state) is unchanged in substance — this is the same lifted-to-the-host state as before,
+  now shaped to match WP7's real API instead of this package's placeholder guess at it.
+- **CAPTURE:** dispatches to WP4's `org.ort.app.ui.screens.CaptureStatusContent(context, sessionId,
+  modifier)`; `ReaderDestination.CAPTURE.hasScreen` flips to `true` (was `false`) — the drawer row's
+  "not built" sub-line and disabled-text colour, both computed from `hasScreen`, update themselves
+  with no other change.
+- **NOW:** dispatches to WP4's `org.ort.app.ui.screens.NowContent(context, sessionId,
+  onOpenTransmission, onOpenStation, modifier)` — its real signature (confirmed by reading the file)
+  takes no `onOpenModels`; the coordinator's speculative alternative did not apply.
+- **Live bar (R-022):** `DrawerCounts.liveBar` (this package's `CaptureState`/`ThermalStatus`/
+  `StorageForecast` fallback) is deleted, along with its six tests. `OrtNavHost`'s
+  `rememberDrawerLiveState` now calls WP4's real `LiveBarPolling.current(context, sessionId)`,
+  gated the same way WP4's own callers (`NowContent`, `CaptureStatusContent`) gate it — only while
+  `CaptureState.isCapturing && CaptureState.sessionId == sessionId`, never for an ended or
+  never-started session. **New, found only by reading `NowScreen.kt`/`CaptureStatusScreen.kt`
+  before wiring this:** both already pin their *own* `LiveBar` internally (WP4's own doc comments
+  on `NowContent`/`CaptureStatusContent` say so). `NavHostBody` now skips the host-level bar
+  exactly when the current destination is `NOW` or `CAPTURE` and no drill-in is open, so the two
+  are never stacked — every other destination and every drill-in still gets the host's bar, as
+  R-022 requires.
+- `DrawerCounts.kt`/`DrawerCountsTest.kt`: station/frequency counts (`R-010`) kept unchanged; only
+  the live-bar half removed, with a doc-comment pointer to this addendum for why.
+
+**Verified:**
+- `git log --oneline -1` — `11affed` after the fast-forward merge, before this addendum's own
+  commit.
+- `.\gradlew.bat :app:compileDebugKotlin` / `:app:compileDebugUnitTestKotlin` — both **BUILD
+  SUCCESSFUL** (first attempt after the merge failed to compile — WP7's rewritten
+  `SearchFilterInput`/`SearchQueryParams`/`SearchPolling` shapes; fixed by rewriring
+  `OrtNavHost.kt` as described above).
+- `.\gradlew.bat :app:detekt`, `:app:ktlintMainSourceSetCheck`, `:app:ktlintTestSourceSetCheck` —
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules`/`platformGuards`
+  **OK** (17 modules, every edge permitted; no analytics/telemetry, `INTERNET` only in `:net`).
+  `build` itself **fails** — `:app:testDebugUnitTest` reports **408 tests, 6 failed, 402 passing**.
+  Every failure is in `SearchContentTest`/`SearchFiltersSheetTest` (WP7's own files, `ui/screens/**`,
+  outside this package's ownership row) — confirmed pre-existing, not caused by this reconciliation:
+  run in isolation (`--tests "org.ort.app.ui.screens.SearchContentTest" --tests
+  "org.ort.app.ui.screens.SearchFiltersSheetTest"`) the same 6 fail the same way, and WP7's own
+  CHANGELOG entry states its tests were "verified by careful manual review... not by a green Gradle
+  test run" because `:app` could not compile at all when WP7 landed. This reconciliation is the
+  first time these tests have actually run — the 6 failures (1 `assertExists` on "is doing the
+  narrowing." text, 5 `performScrollTo` "Semantic Node has no parent layout with a Scroll
+  SemanticsAction") are genuine, pre-existing defects in `ui/screens/SearchContent.kt`/
+  `SearchFiltersSheet.kt` this package's ownership row does not cover — not touched, per the
+  reconciliation's own "editing only `ui/navigation/**` and `CHANGELOG.md`" instruction. Every one
+  of this package's own tests (`DrawerContentTest` 14/14, `DrawerCountsTest` 2/2,
+  `DrawerSessionHeaderViewStateTest` 7/7) passes, as does `ReaderAccessibilityTest` (now WP4's
+  `CaptureStatusScreen`-based first test plus this package's two, all three green).
+  `.\gradlew.bat :app:assembleDebug` run standalone — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`; `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — `up to date (181 covered of 419)`.
+
+**Left open / not done:**
+- The 6 pre-existing `SearchContentTest`/`SearchFiltersSheetTest` failures above are **not fixed**
+  — `ui/screens/**` is outside this package's ownership row, and the reconciliation instruction was
+  explicit: "editing only `ui/navigation/**` and `CHANGELOG.md`". Flagged for the lead to route to
+  WP7 (or whoever owns the next pass on those files). `:app:testDebugUnitTest`/`build` will not be
+  green until they are fixed.
+- `searchInput`'s `rememberSaveable` Saver is new and untested against an actual process-death
+  restore (only exercised via normal composition in this package's own tests) — Robolectric alone
+  cannot prove a real `Bundle` round trip; a device/emulator check is out of this package's reach
+  (the plan tells builders not to touch the emulator).
+- The live-bar suppression on `NOW`/`CAPTURE` is a two-destination `==` check, not a general
+  "does this screen embed its own bar" flag — if a future destination adds its own embedded
+  `LiveBar`, whoever adds it needs to extend this same `embedsOwnLiveBar` condition in
+  `OrtNavHost.kt`'s `NavHostBody` (or the two packages agree on a shared signal); nothing enforces
+  it structurally.
+
 ### (pending) — ui-conformance WP3 · drawer, header, live bar, drill-in header, navigation origin
 
 **Scope:** `:app` `ui/navigation/**` (`Drawer.kt`, `OrtNavHost.kt`, `StorageFooterViewState.kt`

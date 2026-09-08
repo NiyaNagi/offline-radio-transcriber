@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -24,7 +25,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.ort.app.status.StatusViewState
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.LiveBar
@@ -33,33 +33,89 @@ import org.ort.app.ui.components.ScreenHeader
 import org.ort.app.ui.data.DrawerCounts
 import org.ort.app.ui.data.DrawerCountsViewState
 import org.ort.app.ui.data.FrequencyListEntryViewState
-import org.ort.app.ui.data.NowSummaryMapper
-import org.ort.app.ui.data.NowSummaryViewState
+import org.ort.app.ui.data.LiveBarPolling
 import org.ort.app.ui.data.ReaderPolling
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
+import org.ort.app.ui.data.SearchFacetFilter
 import org.ort.app.ui.data.SearchFilterInput
 import org.ort.app.ui.data.SearchFilterParser
 import org.ort.app.ui.data.SearchPolling
 import org.ort.app.ui.data.SearchResult
+import org.ort.app.ui.data.SearchTimeFilter
 import org.ort.app.ui.data.StationListEntryViewState
 import org.ort.app.ui.data.ThreadGroupViewState
 import org.ort.app.ui.data.ThreadPolling
 import org.ort.app.ui.data.TransmissionDetail
+import org.ort.app.ui.screens.CaptureStatusContent
 import org.ort.app.ui.screens.FrequenciesListScreen
 import org.ort.app.ui.screens.FrequencyDetailScreen
 import org.ort.app.ui.screens.LogScreen
-import org.ort.app.ui.screens.NowScreen
+import org.ort.app.ui.screens.NowContent
 import org.ort.app.ui.screens.PlaceholderScreen
-import org.ort.app.ui.screens.SearchScreen
+import org.ort.app.ui.screens.SearchContent
 import org.ort.app.ui.screens.StationDetailScreen
 import org.ort.app.ui.screens.StationsListScreen
 import org.ort.app.ui.screens.ThreadScreen
 import org.ort.app.ui.screens.TransmissionDetailScreen
 import org.ort.app.ui.theme.OrtSpacing
+import org.ort.core.AttributionState
 import org.ort.core.SystemClock
+import org.ort.data.Band
+import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.RigStatus
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
+
+/** The delimiter [SearchFilterInputSaver] joins fields on - a control character no field's
+ * own free text is expected to contain. */
+private const val SEARCH_SAVER_DELIMITER = ""
+
+/**
+ * A [Saver] for [SearchFilterInput] built entirely from this package (no edit to WP7's
+ * `ui/data/SearchViewData.kt`) — every field is already a Bundle-primitive (`String`, `Boolean`) or
+ * a plain enum/enum-set encoded by name, joined into one delimited `String` (itself trivially
+ * `Bundle`-saveable, and it sidesteps `listSaver`'s single-element-type constraint a genuinely
+ * heterogeneous row like this one cannot satisfy). [SearchResult] gets no equivalent Saver — it
+ * nests `TransmissionDetail`, which itself carries `Attribution` (a sealed core type) and
+ * `InspectionViewState` (lattice slots, candidates, prior contributions) — hand-rolling a faithful
+ * round trip for that graph is out of proportion to this package's row, so [SearchResult] stays a
+ * plain `remember` (see `OrtNavHost`'s own doc comment on what that still fixes and what it does
+ * not).
+ */
+private val SearchFilterInputSaver: Saver<SearchFilterInput, String> = Saver(
+    save = { input ->
+        listOf(
+            input.text,
+            input.callsign,
+            input.frequencyMhz,
+            input.band?.name.orEmpty(),
+            input.timeFilter.name,
+            input.rangeFromLocal,
+            input.rangeToLocal,
+            input.attributionStates.joinToString(",") { it.name },
+            input.includeRejected.toString(),
+            input.includeCorrected.toString(),
+        ).joinToString(SEARCH_SAVER_DELIMITER)
+    },
+    restore = { saved ->
+        val parts = saved.split(SEARCH_SAVER_DELIMITER)
+        SearchFilterInput(
+            text = parts[0],
+            callsign = parts[1],
+            frequencyMhz = parts[2],
+            band = parts[3].takeIf { it.isNotEmpty() }?.let { Band.valueOf(it) },
+            timeFilter = SearchTimeFilter.valueOf(parts[4]),
+            rangeFromLocal = parts[5],
+            rangeToLocal = parts[6],
+            attributionStates = parts[7].split(",")
+                .filter { it.isNotEmpty() }
+                .map { AttributionState.valueOf(it) }
+                .toSet(),
+            includeRejected = parts[8].toBoolean(),
+            includeCorrected = parts[9].toBoolean(),
+        )
+    },
+)
 
 /**
  * The navigation host (build-plan P13, extended by P14, P17 and ui-conformance-plan WP3): the
@@ -93,16 +149,14 @@ public fun OrtNavHost(sessionId: String?) {
     var openStationId by rememberSaveable { mutableStateOf<String?>(null) }
     var openFrequencyHz by rememberSaveable { mutableStateOf<Long?>(null) }
     // R-017 / `Flow-Search.dc.html`: Search's input and results live here, in the host, not inside
-    // `SearchContent` — that composable is skipped entirely while a drill-in is showing (see
+    // WP7's `SearchContent` — that composable is skipped entirely while a drill-in is showing (see
     // `NavHostBody` below), and a skipped composable's own `remember` state does not survive being
     // skipped; lifting it here is what makes "back from a detail opened from Search returns to
-    // Search with its filters intact" true rather than aspirational. Plain `remember`, not
-    // `rememberSaveable`: `SearchFilterInput`/`SearchResult` are `ui/data/SearchViewData.kt` types
-    // (WP7's file, out of this package's ownership row) and are not `Bundle`-saveable as they
-    // stand — this still fixes the actual, observed bug (state lost across the drill-in branch
-    // within one composition), just not a process-death restore; flagged in this package's report
-    // for the lead to reconcile if WP7 later makes the types `Parcelable`.
-    var searchInput by remember { mutableStateOf(SearchFilterInput()) }
+    // Search with its filters intact" true rather than aspirational. `searchInput` is
+    // `rememberSaveable` via [SearchFilterInputSaver] (built in this file, no edit to WP7's own
+    // types); `searchResult` stays plain `remember` — see [SearchFilterInputSaver]'s own doc
+    // comment for why `SearchResult` gets no equivalent Saver.
+    var searchInput by rememberSaveable(stateSaver = SearchFilterInputSaver) { mutableStateOf(SearchFilterInput()) }
     var searchResult by remember { mutableStateOf<SearchResult?>(null) }
     val drawerLive = rememberDrawerLiveState(sessionId, context)
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
@@ -159,7 +213,13 @@ public fun OrtNavHost(sessionId: String?) {
                     input = searchInput,
                     onInputChange = { searchInput = it },
                     result = searchResult,
-                    onResultChange = { searchResult = it },
+                    onSearch = {
+                        scope.launch {
+                            val params = SearchFilterParser.parse(searchInput, SystemClock.wallMillis())
+                            val facetFilter = SearchFacetFilter.from(searchInput)
+                            searchResult = SearchPolling.search(context, params, facetFilter)
+                        }
+                    },
                 ),
             )
         }
@@ -186,12 +246,16 @@ private data class NavHostCallbacks(
     val onOpenFrequency: (Long) -> Unit,
 )
 
-/** R-017: [SearchContent]'s input/result, owned by [OrtNavHost] — see that function's doc comment. */
+/**
+ * R-017: WP7's [SearchContent]'s `input`/`result`, owned by [OrtNavHost] — see that function's doc
+ * comment. [onSearch] is the host's own trigger (WP7's `SearchContent` takes `onSearch: () ->
+ * Unit`, not a result setter — the host runs the query and writes [result] itself).
+ */
 private data class SearchHostState(
     val input: SearchFilterInput,
     val onInputChange: (SearchFilterInput) -> Unit,
     val result: SearchResult?,
-    val onResultChange: (SearchResult?) -> Unit,
+    val onSearch: () -> Unit,
 )
 
 /**
@@ -267,9 +331,15 @@ private fun NavHostBody(
 
         // R-022: pinned to the bottom of every destination and drill-in alike, while a session
         // runs — `null` (nothing pinned) covers both "no session" and "session idle", never a bar
-        // with nothing real to show.
-        drawerLive.liveBar?.let { liveBarState ->
-            LiveBar(state = liveBarState, onClick = callbacks.onOpenCapture)
+        // with nothing real to show. Now and Capture are the two destinations that already pin
+        // their own (`NowScreen`/`CaptureStatusScreen`, WP4's — confirmed by reading both before
+        // assuming otherwise); rendering the host's bar there too would stack two.
+        val embedsOwnLiveBar = !isDrillIn &&
+            (ids.current == ReaderDestination.NOW || ids.current == ReaderDestination.CAPTURE)
+        if (!embedsOwnLiveBar) {
+            drawerLive.liveBar?.let { liveBarState ->
+                LiveBar(state = liveBarState, onClick = callbacks.onOpenCapture)
+            }
         }
     }
 }
@@ -299,7 +369,7 @@ private fun rememberDrawerLiveState(sessionId: String?, context: android.content
     var sessionHeader by remember {
         mutableStateOf(DrawerSessionHeaderViewState.from(sessionLabel = null, rigState = RigStatus.state))
     }
-    var liveBar by remember { mutableStateOf(DrawerCounts.liveBar(sessionId)) }
+    var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
     LaunchedEffect(sessionId) {
         while (true) {
             storage = StorageFooterViewState.fromAudioDirectory(context)
@@ -309,7 +379,15 @@ private fun rememberDrawerLiveState(sessionId: String?, context: android.content
             // `DrawerSessionHeaderViewState`'s own doc comment) — `sessionLabel` stays `null`
             // until one exists, rather than this fabricating one.
             sessionHeader = DrawerSessionHeaderViewState.from(sessionLabel = null, rigState = RigStatus.state)
-            liveBar = DrawerCounts.liveBar(sessionId)
+            // R-022: WP4's real read path, now that it is on this branch. Gated the same way
+            // `NowContent`/`CaptureStatusContent` (WP4's own callers) gate it — only while this
+            // exact session is actually capturing, never a bar built for a session that has ended
+            // or one that never started.
+            liveBar = if (sessionId != null && CaptureState.isCapturing && CaptureState.sessionId == sessionId) {
+                LiveBarPolling.current(context, sessionId)
+            } else {
+                null
+            }
             delay(POLL_INTERVAL_MILLIS)
         }
     }
@@ -337,21 +415,28 @@ private fun DestinationContent(
 ) {
     val content = modifier
     when (current) {
-        ReaderDestination.NOW ->
-            NowContent(sessionId = sessionId, modifier = content)
+        // Both dispatch to WP4/WP7's own real content composables now that they are on this
+        // branch (confirmed by reading `ui/screens/NowContent.kt`/`ui/screens/SearchContent.kt`
+        // before writing this) — this package's own inline copies are gone.
+        ReaderDestination.NOW -> NowContent(
+            context = context,
+            sessionId = sessionId,
+            onOpenTransmission = onOpenTransmission,
+            onOpenStation = onOpenStation,
+            modifier = content,
+        )
 
         ReaderDestination.LOG ->
             LogContent(sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
 
-        ReaderDestination.SEARCH ->
-            SearchContent(
-                input = search.input,
-                onInputChange = search.onInputChange,
-                result = search.result,
-                onResultChange = search.onResultChange,
-                onOpen = onOpenTransmission,
-                modifier = content,
-            )
+        ReaderDestination.SEARCH -> SearchContent(
+            input = search.input,
+            result = search.result,
+            onInputChange = search.onInputChange,
+            onSearch = search.onSearch,
+            onOpen = onOpenTransmission,
+            modifier = content,
+        )
 
         ReaderDestination.THREADS ->
             ThreadContent(sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
@@ -362,29 +447,14 @@ private fun DestinationContent(
         ReaderDestination.FREQUENCIES ->
             FrequenciesContent(context = context, onOpen = onOpenFrequency, modifier = content)
 
+        ReaderDestination.CAPTURE ->
+            CaptureStatusContent(context = context, sessionId = sessionId, modifier = content)
+
         ReaderDestination.SETTINGS ->
             org.ort.app.ui.settings.ModelsContent(context = context, modifier = content)
 
         else -> PlaceholderScreen(destinationLabel = current.label, modifier = content)
     }
-}
-
-@Composable
-private fun NowContent(sessionId: String?, modifier: Modifier) {
-    val context = LocalContext.current
-    var status by remember { mutableStateOf(idleStatus()) }
-    var summary by remember { mutableStateOf(NowSummaryViewState(overCount = 0, stationCount = 0)) }
-    if (sessionId != null) {
-        LaunchedEffect(sessionId) {
-            val startedAt = SystemClock.wallMillis()
-            while (true) {
-                status = ReaderPolling.currentStatus(context, sessionId, startedAt)
-                summary = NowSummaryMapper.from(ReaderPolling.currentTransmissionDetails(context, sessionId))
-                delay(POLL_INTERVAL_MILLIS)
-            }
-        }
-    }
-    NowScreen(status = status, summary = summary, modifier = modifier)
 }
 
 @Composable
@@ -401,36 +471,6 @@ private fun LogContent(sessionId: String?, onOpen: (String) -> Unit, modifier: M
     }
     val entries = details.map { ReaderTransmissionViewStateMapper.listEntry(it) }
     LogScreen(entries = entries, onOpen = onOpen, modifier = modifier)
-}
-
-/**
- * FR-UI-3 (build-plan P15): search runs on an explicit action, not on every keystroke — a search
- * screen has no session-tied poll, unlike Now/Log, since it queries on demand rather than showing
- * a live session's state. R-017 (ui-conformance-plan WP3): [input]/[result] are the host's own
- * state, not this composable's — see [OrtNavHost]'s own doc comment on why.
- */
-@Composable
-private fun SearchContent(
-    input: SearchFilterInput,
-    onInputChange: (SearchFilterInput) -> Unit,
-    result: SearchResult?,
-    onResultChange: (SearchResult?) -> Unit,
-    onOpen: (String) -> Unit,
-    modifier: Modifier,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    SearchScreen(
-        input = input,
-        result = result,
-        onInputChange = onInputChange,
-        onSearch = {
-            val params = SearchFilterParser.parse(input)
-            scope.launch { onResultChange(SearchPolling.search(context, params)) }
-        },
-        onOpen = onOpen,
-        modifier = modifier,
-    )
 }
 
 @Composable
@@ -539,14 +579,3 @@ private fun FrequencyDetailContent(context: android.content.Context, frequencyHz
         )
     }
 }
-
-private fun idleStatus(): StatusViewState = StatusViewState(
-    stateLabel = "Idle",
-    elapsedLabel = "00:00:00",
-    transmissionCount = 0,
-    gapCount = 0,
-    shedLevel = 0,
-    shedLevelLabel = "Nominal",
-    livenessLabel = "No session",
-    uncleanEndBanner = null,
-)

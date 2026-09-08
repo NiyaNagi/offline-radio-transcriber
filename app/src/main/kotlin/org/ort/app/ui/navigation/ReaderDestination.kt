@@ -13,7 +13,10 @@ package org.ort.app.ui.navigation
  * is a real screen as of audit F-008: [org.ort.app.ui.screens.ModelsScreen], the declared,
  * user-initiated channel through which an ASR/VAD model reaches the device (constitution V) — put
  * here rather than under `Improve records`, which P16 already gave a per-transmission
- * correction/labelling meaning; asset management reads as a `Settings` concern instead.
+ * correction/labelling meaning; asset management reads as a `Settings` concern instead. `Capture`
+ * is a real screen as of ui-conformance-plan WP4:
+ * [org.ort.app.ui.screens.CaptureStatusContent], reached from the drawer row and the live bar's
+ * own tap target alike.
  */
 public enum class ReaderDestination(public val label: String, public val hasScreen: Boolean) {
     NOW("Now", hasScreen = true),
@@ -23,7 +26,7 @@ public enum class ReaderDestination(public val label: String, public val hasScre
     STATIONS("Stations", hasScreen = true),
     FREQUENCIES("Frequencies", hasScreen = true),
     EARLIER_NIGHTS("Earlier nights", hasScreen = false),
-    CAPTURE("Capture", hasScreen = false),
+    CAPTURE("Capture", hasScreen = true),
     IMPROVE_RECORDS("Improve records", hasScreen = false),
     SETTINGS("Settings", hasScreen = true),
     ;
