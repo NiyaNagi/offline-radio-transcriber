@@ -50,7 +50,9 @@ import org.ort.data.entity.WorkQueueItemEntity
  * released version (build-plan P5); v2 added [ShedEventEntity] (F-021, FR-RUN-3/4/5); v3 adds
  * [StationIdentityHistoryEntity], [VoiceprintBindingHistoryEntity] and [PriorAdjustmentEntity]
  * (register R-052, R-073; FR-SPK-10, FR-UI-6) so a station rename, a voiceprint rebinding and a
- * prior weight change each leave what they replaced reachable, not overwritten in place.
+ * prior weight change each leave what they replaced reachable, not overwritten in place; v4 adds
+ * [TransmissionEntity.processedTier] (register R-204 follow-up, FR-REP-2/9) so a reprocess run's
+ * outcome tier is queryable per record, not just per session.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -97,7 +99,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun stationIdentityDao(): StationIdentityDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 3
+        public const val SCHEMA_VERSION: Int = 4
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -169,9 +171,22 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v3 → v4 (register R-204 follow-up, FR-REP-2/9): adds `transmission.processedTier` —
+         * see [org.ort.data.entity.TransmissionEntity]'s own doc comment. No existing column is
+         * touched or dropped; every v3 row survives with `processedTier = NULL` (FR-AST-5/6 →
+         * AC-53), verified by `MigrationTest`. A nullable `ADD COLUMN` needs no `DEFAULT` clause —
+         * SQLite's own default for an added nullable column is `NULL`.
+         */
+        public val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transmission` ADD COLUMN `processedTier` TEXT")
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
-        public val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        public val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 
         private suspend fun PooledConnection.exec(sql: String) {
             usePrepared(sql) { it.step() }
@@ -232,6 +247,34 @@ public abstract class OrtDatabase : RoomDatabase() {
             if (!createFtsIndex(connection)) return
             connection.exec("INSERT INTO transcript_fts(transcript_fts) VALUES('rebuild')")
         }
+
+        /**
+         * Register R-204's follow-up, from WP0's `Scenarios.kt` regression (register R-110,
+         * `ScenariosTest :: R_110 every declared scenario name loads without throwing`): a
+         * transient single-writer lock — two `OrtDatabase` instances open against the same
+         * on-disk file at once, one mid-write while the other opens, exactly the shape that
+         * test's own regression case reproduced — should make the *next* writer **wait**, not
+         * throw `SQLITE_BUSY`/`SQLITE_LOCKED` immediately.
+         *
+         * Room's own driver-mode connection pipeline already sets a `PRAGMA busy_timeout` of
+         * `BaseRoomConnectionManager.BUSY_TIMEOUT_MS` (3000ms — confirmed by disassembly of the
+         * shipped `room-runtime` class; there is no public API for it) on every connection it
+         * opens. That call is part of the same always-run `configureDatabase` step
+         * [applyHandWrittenSchema] discovered `RoomDatabase.Callback` is *not* part of, so, unlike
+         * this file's hand-written schema, it was never actually broken — every connection already
+         * gets a busy-timeout floor. This sets a longer, explicit value on the writer connection
+         * [create] already touches once per `OrtDatabase` instance — for headroom beyond that
+         * 3000ms default under exactly the kind of shared-machine/back-to-back-instance contention
+         * this project's own test suite has hit (`PRAGMA busy_timeout` only ever *raises* how long
+         * SQLite retries internally before giving up; it is always safe to set a larger value on
+         * top of Room's own). `Scenarios.kt`'s bounded, backed-off retry (register R-110) stays in
+         * place as defence in depth for whatever a 10-second wait does not itself absorb.
+         */
+        private suspend fun configureBusyTimeout(connection: PooledConnection) {
+            connection.exec("PRAGMA busy_timeout = $BUSY_TIMEOUT_MILLIS")
+        }
+
+        private const val BUSY_TIMEOUT_MILLIS = 10_000L
 
         /**
          * FTS5 external-content over the whole transcript table (technical design §12.1) —
@@ -305,7 +348,12 @@ public abstract class OrtDatabase : RoomDatabase() {
                 .setDriver(BundledSQLiteDriver())
                 .addMigrations(*MIGRATIONS)
                 .build()
-            runBlocking { db.useWriterConnection { connection -> applyHandWrittenSchema(connection) } }
+            runBlocking {
+                db.useWriterConnection { connection ->
+                    configureBusyTimeout(connection)
+                    applyHandWrittenSchema(connection)
+                }
+            }
             return db
         }
     }
@@ -327,8 +375,9 @@ public abstract class OrtDatabase : RoomDatabase() {
  * front, not on the first write statement, so two callers cannot both start and then discover a
  * conflict partway through.
  */
-public suspend fun <R> OrtDatabase.inWriteTransaction(block: suspend () -> R): R =
-    useWriterConnection { transactor -> transactor.withTransaction(Transactor.SQLiteTransactionType.IMMEDIATE) { block() } }
+public suspend fun <R> OrtDatabase.inWriteTransaction(block: suspend () -> R): R = useWriterConnection { transactor ->
+    transactor.withTransaction(Transactor.SQLiteTransactionType.IMMEDIATE) { block() }
+}
 
 /**
  * Runs [sql] (typically `DELETE`/`UPDATE` with no result set — this is not a `SELECT` helper) with

@@ -160,16 +160,17 @@ public class WorkQueue(
      *
      * Returns the number of items requeued.
      */
-    public suspend fun requeueFailed(pass: PassId? = null, lastErrorPrefix: String? = null): Int = db.inWriteTransaction {
-        val failed = queueDao.selectFailed(pass?.name, lastErrorPrefix)
-        for (item in failed) {
-            queueDao.requeueToReady(item.id)
-            if (transmissionDao.canTransition(item.transmissionId, TransmissionState.PROCESSING)) {
-                transmissionDao.requireLegalTransition(item.transmissionId, TransmissionState.PROCESSING)
+    public suspend fun requeueFailed(pass: PassId? = null, lastErrorPrefix: String? = null): Int =
+        db.inWriteTransaction {
+            val failed = queueDao.selectFailed(pass?.name, lastErrorPrefix)
+            for (item in failed) {
+                queueDao.requeueToReady(item.id)
+                if (transmissionDao.canTransition(item.transmissionId, TransmissionState.PROCESSING)) {
+                    transmissionDao.requireLegalTransition(item.transmissionId, TransmissionState.PROCESSING)
+                }
             }
+            failed.size
         }
-        failed.size
-    }
 
     public companion object {
         public const val DEFAULT_MAX_ATTEMPTS: Int = 5

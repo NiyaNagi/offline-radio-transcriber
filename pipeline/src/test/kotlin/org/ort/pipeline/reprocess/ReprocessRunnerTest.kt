@@ -293,6 +293,32 @@ class ReprocessRunnerTest {
     }
 
     @Test
+    @Requirement("FR-REP-2", "FR-REP-9", "R-204")
+    fun `FR_REP_2_completed_and_rejected_outcomes_stamp_the_processed_tier`() = runBlocking {
+        seedTransmission("TX-COMPLETE")
+        seedTransmission("TX-REJECT")
+        val pass = ScriptedPass(db) { id ->
+            when (id) {
+                "TX-COMPLETE" -> ScriptedOutcome.Complete("new text", AttributionState.UNKNOWN, null)
+                "TX-REJECT" -> ScriptedOutcome.Rejected
+                else -> error("unexpected id $id")
+            }
+        }
+        val runner = ReprocessRunner(db, filesDir, currentTier = { Tier.T2 }, passFor = { pass })
+
+        runner.run(listOf("TX-COMPLETE", "TX-REJECT")).toList()
+
+        assertEquals(Tier.T2, db.transmissionDao().getById("TX-COMPLETE")?.processedTier)
+        assertEquals(Tier.T2, db.transmissionDao().getById("TX-REJECT")?.processedTier)
+
+        // Both are now genuine improvements over "never processed" or "processed below T2" --
+        // idsBelowProcessedTier (:data's own read path, register R-204) must no longer offer
+        // either as a candidate for a caller still targeting T0/T1.
+        val stillBelowT2 = db.transmissionDao().idsBelowProcessedTier(listOf(Tier.T0, Tier.T1))
+        assertTrue(stillBelowT2.none { it == "TX-COMPLETE" || it == "TX-REJECT" })
+    }
+
+    @Test
     @Requirement("R-091")
     fun `an empty transmission list completes immediately with an honest empty summary`() = runBlocking {
         val progress = ReprocessRunner(db, filesDir, passFor = { InstantCompletingPass() }).run(emptyList()).toList()

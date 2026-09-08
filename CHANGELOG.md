@@ -32,6 +32,112 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance data: busy timeout; processed tier per record)
+
+### (pending) — ui-conformance data · busy timeout; processed tier per record
+
+**Scope:** `:data` (`OrtDatabase.kt` schema v3 → v4, `dao/TransmissionDao.kt`,
+`entity/TransmissionEntity.kt`, new `data/schemas/org.ort.data.OrtDatabase/4.json`, new
+`test/kotlin/org/ort/data/dao/TransmissionDaoTest.kt`, `test/DurabilityTest.kt`,
+`test/MigrationTest.kt`); one minimal call site in `:pipeline`
+(`reprocess/ReprocessRunner.kt`, where the tier is known — per the lead's own brief — plus its
+test). A same-branch merge of `main` (`8ab1968..cc0d922`, a real merge commit, resolving conflicts
+in `Scenarios.kt`/`CHANGELOG.md`/`register.md`/`coverage-matrix.md`) preceded this unit.
+
+**Requirements/ACs:** FR-RUN-2 (busy-timeout follow-up), FR-REP-2, FR-REP-9 (per-record processed
+tier), AC-53 (FR-AST-5/6, migration preserves existing rows), register R-110 (`ScenariosTest`'s
+own flake, WP0), R-204 (both are this package's own follow-ups from the FTS5/driver session).
+
+**What changed:**
+
+*Constitution Check.* Principle III ("nothing is deleted quietly") is implicit in the migration
+discipline both changes share: `MIGRATION_3_4` adds one nullable column and touches nothing else,
+verified the same way `MIGRATION_2_3` was. Principle I: `processedTier` makes "still needs
+improving" an inspectable fact per record instead of a session-wide guess — the read path this
+unblocks (`ImprovePolling`, WP11d) can now tell a genuinely-unimproved record from one a reprocess
+already brought current, rather than re-offering every record in a flagged session forever.
+
+- **The merge.** `git merge main` (no `--ff-only`, a real merge commit — main had moved from
+  `8ab1968` to `cc0d922` with unrelated work touching the same files this session's own `:data`
+  commit touched). Four conflicts: `results/ui-audit/register.md` and `results/coverage-matrix.md`
+  resolved to main's version entirely (the lead's own instruction — those are the lead's to keep);
+  `CHANGELOG.md` resolved to keep both entries (markers removed, no content dropped);
+  `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` needed real reconciliation — WP0
+  independently found and fixed the *same* `androidx.room.withTransaction`/`OrtDatabase.openHelper`
+  breakage this session's FTS5 work diagnosed (register R-110's own flaky-gate investigation,
+  landed on main while this branch was still open), wrapped in a well-documented bounded retry.
+  Resolved by keeping WP0's full retry/backoff structure and root-cause writeup verbatim, and
+  swapping its two broken calls for this session's own driver-native replacements
+  (`OrtDatabase.inWriteTransaction`, `OrtDatabase.execRaw`) — the same fix, expressed with the
+  primitives this session had already built rather than a second, parallel one. `CorrectionPolling.kt`
+  and `SearchViewData.kt` auto-merged cleanly (both sides' changes were disjoint once git saw them
+  in context). Verified no conflict markers remain: `grep -rn '^(<<<<<<<|=======|>>>>>>>)'` across
+  every `.kt`/`.md`/`.kts`/`.toml` file — one hit, `.specify/memory/constitution.md`'s own
+  `====...` divider line, not a real marker.
+- **Busy timeout (`OrtDatabase.create`).** Room 2.7.2's `BundledSQLiteDriver` path already sets
+  `PRAGMA busy_timeout` to a 3000ms default on every connection it opens — confirmed by
+  disassembling the shipped `room-runtime` class (`BaseRoomConnectionManager.configureBusyTimeout`,
+  called from the same always-run `configureDatabase` step this session's earlier `Callback`
+  finding does *not* apply to, so this one was never actually broken). `configureBusyTimeout`
+  (new, in `OrtDatabase.kt`) sets an explicit 10-second value on the writer connection `create()`
+  already touches — headroom beyond Room's own default for exactly the shared-machine/
+  back-to-back-`OrtDatabase`-instance contention `Scenarios.kt`'s own regression test (merged from
+  main, above) diagnosed. `Scenarios.kt`'s bounded retry stays in place as defence in depth for
+  whatever a 10-second wait does not itself absorb.
+- **Per-record processed tier (schema v4).** `TransmissionEntity.processedTier: Tier?` (nullable,
+  default `null` — "never reprocessed"), written only by
+  `TransmissionDao.setProcessedTier(id, tier)` and read via
+  `TransmissionDao.idsBelowProcessedTier(belowTiers: List<Tier>)` (SQLite has no notion of enum
+  *order*, so the caller supplies the tier names considered "still below target," computed from
+  `Tier.ordinal`). `ReprocessRunner.run()` — the one place the tier a run is actually using is
+  known (`val tier = currentTier()`, threaded through the whole batch) — calls
+  `setProcessedTier(id, tier)` on both a `COMPLETED` and a `REJECTED` outcome (both mean Pass B
+  genuinely ran at that tier) but not a `FAILED` one (it did not), so a record whose pass never
+  resolved stays eligible for a later attempt. **Not wired into a read path**: `ImprovePolling`'s
+  own session-level `deviceTier` grouping is unchanged by this commit — per the lead's brief, that
+  read-path change is WP11d's, using the write/read pair this commit adds; `ReprocessRunner`'s own
+  kdoc now says so explicitly.
+
+**Verified:**
+- `.\gradlew.bat :data:test` (debug+release) — 71 tests, 0 failed (new: `TransmissionDaoTest`'s
+  four tests, `DurabilityTest.the_writer_connection_carries_a_busy_timeout_longer_than_rooms_own_default`,
+  `MigrationTest.migration_from_v3_to_v4_preserves_existing_rows_and_adds_the_processed_tier_column`;
+  every pre-existing test still green).
+- `.\gradlew.bat :pipeline:test` — full suite green, including
+  `ReprocessRunnerTest.FR_REP_2_completed_and_rejected_outcomes_stamp_the_processed_tier`.
+- `.\gradlew.bat build dependencyRules platformGuards :app:smokeTestDebugUnitTest` —
+  `dependencyRules: OK`; `platformGuards: OK`; `:app:smokeTestDebugUnitTest`
+  (`ReaderActivityDestinationSmokeTest`, 13 tests) green. First attempt caught two genuine
+  `:data:ktlintMainSourceSetCheck`/detekt `MaxLineLength`/function-signature findings in this
+  session's own FTS5 commit (`OrtDatabase.inWriteTransaction`, `WorkQueue.requeueFailed`) and one
+  in this commit's own `ReprocessRunnerTest` addition — all three fixed here, then reverified
+  green (`:data`/`:pipeline` ktlint + detekt). The full `:app:testDebugUnitTest` run inside `build`
+  accumulated ~45 `androidx.test.espresso.AppNotIdleException` Compose-idle-timeout failures under
+  sustained contention — confirmed via the OS process list mid-run to be four *other* worktree
+  agents' own concurrent Gradle/Robolectric processes on this same shared machine, not this
+  machine being quiet as expected. Per the rerun-once instruction: every failing class from that
+  run (`DrawerContentTest`, `FailureScreensTest`, `ImproveScreensTest`, `SessionsScreensTest` — 45
+  tests) re-run alone, uncontended, in 45s — **all 45 passed, 0 failed.** No failure in either run
+  named Room, SQLite or any file this branch touches.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — `186 covered of 419`
+  (up from 183, this commit's new `@Requirement`-tagged tests); `coverageMatrixCheck` green.
+  `results/coverage-matrix.md` is regenerated and committed here despite the lead's "I keep those"
+  merge-conflict instruction, because `coverageMatrixCheck` — part of the standing gate — fails
+  stale otherwise; that instruction was about the *merge* (not carrying this branch's superseded
+  count into main's), not a standing hold on the file.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- Register `results/ui-audit/register.md`: unchanged by this commit (main's version was kept
+  verbatim on the earlier merge, per the lead's instruction — the lead updates it).
+
+**Left open / not done:**
+- `ImprovePolling`'s read-path wiring (WP11d) — the two new `:data` primitives are ready for it,
+  untouched itself.
+- `PassId.C_SPOT` still has no runner in `:pipeline` (pre-existing, `ReprocessRunner`'s own kdoc),
+  so `processedTier` is only ever stamped at a Pass B outcome today.
+- The explicit 10-second busy-timeout is a judgement call, not a measured figure — if a future
+  contention scenario needs longer, `OrtDatabase.BUSY_TIMEOUT_MILLIS` is the one place to change it.
+
 ## 2026-09-08 (ui-conformance data: bundled SQLite with FTS5)
 
 ### (pending) — ui-conformance data · bundled SQLite with FTS5 so text search works on every device and in tests
