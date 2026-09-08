@@ -6650,6 +6650,86 @@ rendered "not measured" or omitted rather than invented) and IV (liveness from h
 
 ## 2026-09-08 (ui-conformance WP7: search)
 
+### (pending) — ui-conformance WP7 · filters sheet traps focus
+
+**Scope:** `:app` only — `ui/screens/SearchScreen.kt` and `ui/screens/SearchContentTest.kt`. `git
+merge --ff-only main` first (fast-forward to `a272464`, "R-264, R-265 fixed (WP9); WP2 slots
+merged for R-242/R-246/R-261" — no stash, no rebase).
+
+**Requirements/ACs:** R-261 class (the register's own R-261 is filed against the detail
+correction sheet, WP6/WP2's rows — this is the same defect class, closed proactively for Search's
+own filters sheet using the general fix WP2 just landed for it).
+
+**What changed:**
+- **Constitution Check.** Principle VII (accessibility is structural, not a UI afterthought):
+  without this, the query field and every result/recent row behind the filters sheet's scrim stay
+  reachable to TalkBack traversal and to a stray keyboard/D-pad focus move while the sheet is open
+  — visually hidden, not actually gone, the exact class of bug the register found on the detail
+  screen's "Back to Log" button (R-261).
+- `SearchScreen.kt`'s main content `Column` (the one `FiltersSheetOverlay` draws on top of, inside
+  the screen's outer `Box`) now carries `.clearedWhileOverlaid(filtersSheetOpen)` — WP2's new
+  `Modifier.clearedWhileOverlaid(contentHidden: Boolean)` (`ui/components/Feedback.kt`), which
+  applies `Modifier.clearAndSetSemantics {}` to the whole subtree while `contentHidden` is true and
+  is a complete no-op (`this`, unchanged) otherwise. This is the accessibility/focus half of the
+  job; the scrim's own tap-consuming `Box` inside `FiltersSheetOverlay` (already correct since
+  Round 2 of this package's work) remains the pointer-input half.
+- New test, named for the defect class: `R_261 class the query field is unreachable while the
+  filters sheet is open, reachable again after dismiss` (`SearchContentTest.kt`) — asserts
+  `onNodeWithContentDescription("Search text")` exists before the sheet opens, does not exist once
+  the Filters chip opens it (proving the semantics subtree is actually cleared, not merely
+  visually obscured), and exists again once the scrim tap dismisses it. Uses `SearchContent` (not
+  the bare `SearchScreen`) specifically because it owns the real `filtersSheetOpen` state needed to
+  observe the open→dismiss cycle within one test.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forward, confirmed `a272464` in `git log --oneline -1` before
+  starting.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchContentTest"` —
+  BUILD SUCCESSFUL, 5/5 passing, including the new test.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD FAILED**, but not from this
+  package's own work: `dependencyRules: checked 17 modules ... OK`, `platformGuards: checked 17
+  modules' ... OK`, both clean; the failure is two pre-existing, out-of-ownership problems the
+  `main` merge itself brought in, confirmed unrelated to this change by file and by re-running each
+  in isolation:
+  - `:app:ktlintMainSourceSetCheck` FAILED — 9 real `standard:statement-wrapping` violations, all
+    in `ui/components/Rows.kt:332` and `:869-870` (**WP2's file, not touched by this package**).
+    First real ktlint finding of the session on `main`'s own code — confirms the `NO-SOURCE`
+    infrastructure gap this package flagged in the previous addendum was hiding real violations on
+    every worktree-isolated builder's merges, not just this package's own.
+  - `:app:testDebugUnitTest` — **1046 tests, 2 failed**, both in `org.ort.app.ui.setup
+    .ReadyScreenTest` (**WP9's file, not touched by this package**): `an amber row with a Fix
+    action announces label, value and the action` and `a verified row announces label, value and
+    status as one merged node`, both `AssertionError`s from **two** semantics nodes sharing the
+    same content description (`"Overnight"`, then `"Input"`) where the test expects exactly one —
+    confirmed consistently failing (not flaky) by re-running `--tests
+    "org.ort.app.ui.setup.ReadyScreenTest"` alone, twice. A third, different failure
+    (`org.ort.app.ui.data.CorrectionPollingTest`, WP6's file) appeared on one of the three full
+    runs and was confirmed to be the same transient Robolectric `SQLiteDatabaseLockedException`
+    (`database is locked`, `SQLITE_BUSY`) flake this package documented and root-caused in the
+    previous addendum — reran clean in isolation (21/21 passing).
+  - This package's own scope inside that same run is unaffected: `ktlintTestSourceSetCheck`'s
+    report is empty (clean — `SearchContentTest.kt` included), `detekt` shows 267 kt files
+    analyzed, 0 findings.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 185 covered (up from 183 — this addendum's
+  own new test).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 185 of 419.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- **This package's own work is green; the full gate is not**, for reasons entirely outside WP7's
+  ownership: `Rows.kt` (WP2) needs its own `ktlintFormat`, and `ReadyScreenTest`/`ReadyScreen.kt`
+  (WP9) has a real, reproducing duplicate-content-description bug to fix — neither touched here,
+  per the working agreement's file-ownership rule. Flagged for the coordinator to route to WP2 and
+  WP9 respectively.
+- R-261 itself (the detail correction sheet, WP6/WP2's screen) remains registered `open` in
+  `results/ui-audit/register.md` — this addendum closes the same defect *class* for Search only;
+  it does not touch or resolve the register's own R-261 row.
+- Every gap the earlier WP7 entries below already list (R-204's `:data`-layer decision, WP3's
+  still-doubled header for `SEARCH`, `RecentSearches`' single-term label, sheet drag-to-dismiss) is
+  unchanged by this addendum.
+
 ### (pending) — ui-conformance WP7 · search validator fixes: real filter counts, focused field, hint typography, heard-frequency chips; text-search diagnosis
 
 **Scope:** `:app` only — `ui/data/SearchViewData.kt`, `ui/screens/SearchContent.kt`,

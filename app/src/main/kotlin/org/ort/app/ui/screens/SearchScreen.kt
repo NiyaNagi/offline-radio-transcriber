@@ -48,6 +48,7 @@ import org.ort.app.ui.components.LogRowViewState
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextField
+import org.ort.app.ui.components.clearedWhileOverlaid
 import org.ort.app.ui.data.MatchHighlighter
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.RecentSearchEntry
@@ -120,10 +121,19 @@ public fun SearchScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
+            // R-261 class: while the filters sheet is open, this content sits fully beneath its
+            // scrim — without this, the query field and every result/recent row stay reachable to
+            // TalkBack traversal and to a stray keyboard/D-pad focus move, exactly the "Back to
+            // Log" bug the register found on the detail screen. `clearedWhileOverlaid` (WP2,
+            // `Feedback.kt`) clears this whole subtree's merged semantics while `filtersSheetOpen`
+            // is true; the scrim's own tap-consuming `Box` (in `FiltersSheetOverlay`, below) still
+            // does the real pointer-input blocking — this is the accessibility/focus half of that
+            // same job.
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = OrtSpacing.lg),
+                .padding(bottom = OrtSpacing.lg)
+                .clearedWhileOverlaid(filtersSheetOpen),
         ) {
             SearchHeaderRow(
                 input = input,

@@ -2,6 +2,7 @@ package org.ort.app.ui.screens
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -78,6 +79,32 @@ class SearchContentTest {
         composeTestRule.onNodeWithTag("search-filters-scrim").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("search-filters-sheet").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_261 class the query field is unreachable while the filters sheet is open, reachable again after dismiss`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SearchContent(input = SearchFilterInput(), result = null, onInputChange = {
+                }, onSearch = {}, onOpen = {})
+            }
+        }
+
+        // Before the sheet opens, the query field's own content description ("Search text",
+        // SearchScreen.kt's SearchHeaderRow) is a normal, reachable semantics node.
+        composeTestRule.onNodeWithContentDescription("Search text").assertExists()
+
+        composeTestRule.onNodeWithTag("search-filters-chip").performScrollTo().performClick()
+        // `Modifier.clearedWhileOverlaid` (WP2, Feedback.kt) applied to SearchScreen's own content
+        // Column clears its entire merged semantics subtree while the sheet is open — the query
+        // field is still there (visually, beneath the scrim) but no longer in the semantics tree
+        // TalkBack/Compose focus traversal reaches, exactly the R-261 class of bug the register
+        // found on the detail screen's "Back to Log" button.
+        composeTestRule.onNodeWithContentDescription("Search text").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("search-filters-scrim").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithContentDescription("Search text").assertExists()
     }
 
     @Test
