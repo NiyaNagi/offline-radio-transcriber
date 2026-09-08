@@ -5583,6 +5583,232 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 · detail validator fixes: state derivation, why section and lattice route, tier A candidates, tier B station search, waveform, highlights, ambiguous evidence, copy
+
+**Scope:** `:app`, this package's own files — `ui/data/DetailViewState.kt`, `ui/data/CorrectionPolling.kt`,
+`ui/data/InspectionSurface.kt`, `ui/screens/TransmissionDetailScreen.kt`,
+`ui/screens/TransmissionDetailContent.kt`, `ui/screens/CorrectionSheet.kt`, `ui/screens/PropagatedScreen.kt`,
+and their tests. Two small, disclosed, out-of-scope mechanical fixes (see "What changed" #12) landed
+in this same commit because they were genuinely blocking the shared gate, not because this package
+now owns those files. `main` fast-forward merged twice (`git merge --ff-only main`, no stash, no
+rebase — once to `894ac29`, once more mid-round to `a272464` once WP2's `clearedWhileOverlaid` landed,
+discarding this worktree's own now-superseded local hotfix to `ReaderActivityDestinationSmokeTest.kt`
+via `git checkout --` rather than stashing, since WP3's own commit already fixed it better).
+
+**Requirements/ACs:** R-180, R-183, R-184, R-185, R-186, R-187, R-189, R-190, R-191, R-196 (all this
+package's own register rows, six of the sixteen the V4/V7 validators filed were halts: R-180, R-184,
+R-185, R-189, R-196, plus R-261 which V7 separately escalated); FR-UI-4, FR-UI-6, FR-SPK-7, R-051,
+R-052, R-054, R-058.
+
+**Constitution Check.** Principle I (never fabricate) governs almost every fix below by omission as
+much as by addition: R-187's evidence line adds the real ITU country a candidate carries but does
+**not** add the board's own "heard on this repeater 3 times"/"Tuesday net regular" narrative, since
+neither is honestly derivable from what `:data` records; R-185's station search evidence is "heard N
+times · voice on file", never the board's day-of-week pattern, for the identical reason; R-180's
+lattice section still shows no per-slot boxes — `PhoneticLatticeEntity.unitsBlob` still has no defined
+per-unit shape, unchanged from this package's earlier revision. Principle VII ("never hand-roll a
+look-alike of a component that exists") governs R-191's `AffectedRow` (reuses `AttributionRow` rather
+than a second marker) and R-187's chooser row (one clickable row, not a display row plus a separate
+link — the exact anti-pattern this package's own history already names and fixed once before, in
+`CorrectionSheet.kt`). Principle III (nothing deleted quietly) is why R-190's zero-voiceprint fix
+changes *wording*, not the real `0`.
+
+**What changed, halts first:**
+
+1. **R-189 (halt) — the real root cause, fixed at its root, not just for `Undo`.** The accessibility
+   validator's broader repro (a fresh typed correction, no `Undo`, reverting to UNKNOWN ~2s later)
+   confirmed the bug is structural: `CorrectionDao.applyCorrectedAttribution` correctly writes
+   `attributionState = INFERRED` with `attributionConfidence = NULL` (there is no calibrated number
+   for "a human said so" — [`Attribution.withCorrection`]'s own contract), but `ReaderPolling`'s own
+   attribution derivation (WP4's file, not this package's) requires a non-null confidence for every
+   INFERRED row and silently downgrades anything missing one to `Attribution.unknown()` — discarding
+   the real, just-written `stationId` on the very next poll. Fixed in this package's own read path,
+   not `ReaderPolling.kt`: new `CorrectionPolling.currentAttribution(context, transmissionId,
+   fallback)` re-derives the attribution directly from the real `transmission.corrected`/`stationId`
+   columns whenever `corrected` is set — "current attribution = latest correction if any, else the
+   resolver's" (the coordinator's own framing) — called from `TransmissionDetailContent.refresh()` on
+   every poll. New tests: `CorrectionPollingTest`'s four `R_189_currentAttribution_*` (fresh
+   correction, `Undo all`, an uncorrected row's fallback untouched, a deleted transmission's fallback),
+   plus `TransmissionDetailContentTest`'s
+   `R_189_after_a_fresh_typed_correction_the_next_poll_still_shows_the_corrected_callsign_not_unknown`
+   — a real tap through the composed screen and a real re-poll (`Back to the over`), not a direct call.
+2. **R-196 (halt) — a failed pass no longer also renders D04's "What was tried".** A failed-pass
+   transmission's own attribution is honestly `UNKNOWN` (no pass ever finished to resolve one), so
+   `state.body` genuinely fell into the `Unknown` branch — but `TransmissionDetailScreen` rendered
+   `AmbiguousChooserSection`/`UnknownTriedSection`/`WhySection` (all keyed to the attribution-state
+   branch) *alongside* `FailedPassHeaderSection`'s own "what went wrong" account of the identical
+   over. All three now gate on `state.passFailure == null`. Test:
+   `TransmissionDetailScreenTest.R_196_a_failed_pass_never_also_renders_the_unknown_attributions_what_was_tried_block`.
+3. **R-180 (halt) — real "why this callsign" components, and `Full lattice` proved to open D05.**
+   The inline preview's candidate rows were one concatenated `Text` per candidate ("K7ABC — score 8.6
+   · chosen") — now a real marker-dot + mono-callsign + evidence + score row
+   (`WhyCandidateRow`), the identical shape `DetailWhyScreen`'s own `CandidatesSection` already used,
+   so the preview and the exhaustive screen read as one system. Every `PriorBar` name is now guide §9
+   prose from a new curated table (`DetailViewStateMapper.PRIOR_LABELS`/`priorLabel`), not the raw
+   stored key — confirmed directly against `OvernightScenario.kt`'s real fixture keys
+   (`"callsign-history"`, `"database"`, `"propagation"`), which the validator's own screenshot came
+   from; a key with no curated entry still renders as honest sentence-case prose (its own name,
+   separators replaced with spaces, first letter capitalised), never the raw identifier and never an
+   invented meaning. **"Full lattice is a dead tap" — proved not to be a code bug**: a new
+   `TransmissionDetailContentTest.R_180_full_lattice_opens_the_exhaustive_why_screen` drives a real
+   tap through the composed `TransmissionDetailContent` against a transmission with real candidate
+   data and lands on `DetailWhyScreen`'s own distinct content, cleanly. The `DrillInHeader` navigation
+   wiring (`onOpenWhy` → `DetailDestination.Why` → `DetailWhyScreen`) was already correct; the
+   validator's own screenshot most plausibly reflects `screens.json`'s tap coordinates going stale
+   once this fix's own content changes the vertical layout — the ui-audit README's own documented,
+   expected class of drift as WP1–WP11 land, not a defect this package can fix from here. The lattice
+   section's own honest gap (no per-slot boxes — `PhoneticLatticeEntity.unitsBlob` still has no
+   defined shape) is unchanged and still named explicitly in the section's own text.
+4. **R-184 (halt) — Tier A verified, not changed.** Read the code and the fixture directly before
+   writing anything: `CorrectionSheet.MainTier`'s `others = candidates.filterNot { it.callsign ==
+   currentCallsign }` is already correct — `CorrectionSheetTest`'s own pre-existing
+   `` `R_052 picking a resolver candidate applies PICK_CANDIDATE...` `` test already proves a runner-up
+   renders and is choosable when the resolver recorded one. `OvernightScenario.kt`'s own confirmed/
+   inferred rows (the ones the validator's "D08 Correct-A" screenshot came from) store exactly *one*
+   `CallsignCandidateEntity` each — no runner-up — so Tier A's "zero rows" for those specific overs is
+   an honest reflection of real, single-candidate data, not a code bug; only the ambiguous demo's two
+   candidates currently exercise the runner-up path. Adding a second candidate to the confirmed/
+   inferred fixture rows needs `app/src/debug/**`, not granted this round — named here rather than
+   silently left unaddressed. New tests confirming the mechanism (not new behaviour):
+   `R_186_the_ambiguous_title_names_the_primary_candidate_not_just_the_alternate`,
+   `R_187_each_ambiguous_candidate_is_one_evidence_bearing_row_with_a_visible_score` (below).
+5. **R-185 (halt) — Tier B now searches stations this phone has heard, not the lexicon.** Audit F-018
+   had replaced Tier B's original "known stations" search with `ReaderPolling.searchLexicon` (a true
+   ITU-grammar lexicon search), reasoning Q8 names only three tiers and the known-stations version was
+   a stand-in for one that did not yet exist. `Detail-Correct-B.dc.html` itself ("Only stations this
+   phone has heard appear here — it is not a callsign database") and this round's validator both make
+   clear Tier B and Tier C need to search genuinely different things; F-018's lexicon search is kept
+   exactly where it landed, this is Tier B's own separate read, reverted to what the board has always
+   shown. New `CorrectionPolling.searchHeardStations(context, query): StationSearchOutcome` — no
+   `:data` query for "every station heard" exists, so this walks `transmissionDao().listAll()` the
+   same way `StationPolling.kt` (WP8) already derives its own station list, real heard-counts from
+   real transmission rows, `hasVoiceOnFile` from `CatalogDao.voiceprintsForStation` actually returning
+   a row. `CorrectionSheet`'s `SearchTier` now shows the board's own "Matches · N of M" and real
+   evidence rows ("heard 4 times · voice on file"), plus "Not here — type a callsign instead" routing
+   to Tier C. `CorrectionSheet`'s public signature changed `onSearchLexicon` → `onSearchStations`
+   (only call site: `TransmissionDetailContent`'s `CorrectingOverlay`, updated). New tests:
+   `CorrectionPollingTest`'s three `R_185_searchHeardStations_*`, `CorrectionSheetTest`'s
+   `` `R_185 searching heard stations shows real evidence and applies SEARCH_LEXICON` `` and
+   `` `R_185 not here routes from Tier B to Tier C` ``.
+
+**Other fixes:**
+
+6. **R-183 (spec) — the INFERRED explanation names the source over's real time.** "Matched by voice to
+   the source over" is now "Matched by voice to 02:14:07" when the source resolves — new
+   `CorrectionPolling.sourceOverTimeLabel(context, sourceTransmissionId)`, read on every poll and
+   threaded through a new `DetailViewStateMapper.from(detail, passFailure, sourceOverTimeLabel)`
+   parameter (defaulted, every pre-existing call site unchanged). The "no source-over link" half of
+   the original report was already fixed by a prior round's R-241 (confirmed by reading
+   `OvernightScenario.kt`'s own comment naming the exact `TransmissionId.parse` trap and its fix) — the
+   time clause was the real remaining gap. Tests: `CorrectionPollingTest`'s two
+   `R_183_sourceOverTimeLabel_*`, `TransmissionDetailContentTest`'s
+   `R_183_the_inferred_explanation_names_the_real_source_over_time_and_links_to_it` (a real ULID
+   source id, per R-241's own documented trap).
+7. **R-186/R-187 (design/spec) — the ambiguous header and chooser rows.** `Attribution.ambiguous()`
+   carries no `stationId` at all (constitution I: nothing is asserted for AMBIGUOUS), so the title row
+   named only the alternate ("or KE7QRF") with nothing before it; `HeaderSection` now reads the primary
+   callsign from the resolver's own top-ranked candidate. Each chooser row is now one evidence-bearing,
+   clickable row (marker + mono callsign + real evidence + visible score), not a display row plus a
+   separate "Choose X" link — the identical semantics-ambiguity class this package's own history
+   already found and fixed once in `CorrectionSheet.kt`. Evidence now includes the candidate's real
+   ITU country (`CandidateInspectionViewState` gained `ituPrefix`/`ituCountry`, already recorded on
+   `CallsignCandidateEntity` for Tier B, simply not read here before) — never the board's own
+   per-repeater heard-count narrative.
+8. **R-190/R-191 (design) — `Detail-Propagated.dc.html`'s copy and layout.** "1 overs" → the shared
+   `pluralize` helper (`org.ort.app.ui.data.ThreadViewData.kt`) throughout; "0 voiceprint now belongs
+   to VE7ABC" (phrasing a zero as if it happened, naming a station that never received it) → "0
+   voiceprint unchanged" when `voiceprintReassigned` is false, the named station kept only when it
+   genuinely moved. "What changed" now sits inside a real `bg/card` container. Each affected row now
+   carries a marker (`AttributionRow`, reused — not a hand-rolled look-alike) and a `CORRECTED` badge.
+   The subtitle now names the real correction method and time ("Was K7LWH · picked from the resolver's
+   candidates · 06:20") — `PropagationOutcome` gained `tier`/`correctedAtMillis` (both defaulted,
+   populated from the real `CorrectionRequest` in `applyCorrection`). New/updated tests in
+   `PropagatedScreenTest`: `R_190_a_zero_voiceprint_reassignment_never_names_a_station_it_did_not_move_to`,
+   `R_190_over_counts_use_the_shared_plural_helper`, `R_191_the_subtitle_names_the_real_correction_method_and_time`,
+   `R_191_each_affected_row_carries_a_corrected_badge`; the pre-existing zero-count test's assertion on
+   the old, misleading wording was itself the bug and is replaced.
+9. **R-261 (spec/halt-adjacent) — nothing behind the open correction sheet is reachable.** WP2's
+   `Modifier.clearedWhileOverlaid(contentHidden: Boolean)` (`ui/components/Feedback.kt`) applied to
+   `MainDestination`'s content whenever `dest == DetailDestination.Correcting` — the dimmed detail
+   beneath the sheet, `DrillInHeader`'s own `Back to Log` included, is now removed from the merged
+   semantics tree entirely while the sheet is open, not merely dimmed. New test:
+   `TransmissionDetailContentTest.R_261_back_to_log_is_not_in_the_merged_tree_while_the_correction_sheet_is_open`
+   (`onNodeWithContentDescription("Back to Log")` absent while open, present again after dismiss); the
+   pre-existing `` `R_052 the correction sheet sits over a dimmed detail screen...` `` test's own
+   assertion that the header callsign "remains findable" while the sheet is up was describing exactly
+   the bug R-261 reports — updated to assert the opposite (gone while open, back after dismiss).
+
+**Not done — real gaps, named rather than silently skipped:**
+10. **R-181 (waveform bars).** `WaveformCard` still draws only the play control and duration — a real
+    per-bar amplitude envelope needs decoding the retained audio file through
+    `TransmissionAudioPlayer`/a small decoder, a genuinely larger piece of work this round's remaining
+    time did not allow doing carefully. Left for a dedicated round.
+11. **R-182 (highlight span), R-188's voice-match-count/thread-context checks.** Both need data this
+    mapper does not have a path to: R-182 needs the resolver's own recorded character span for the
+    callsign (not a literal substring search); R-188's other two "what was tried" checks were already
+    honestly named as absent in this package's own earlier revision (a real per-transmission voice-
+    match distance and thread context, neither of which reaches `TransmissionDetailViewState` today) —
+    unchanged, still honest, not fabricated to look complete.
+12. **R-188's transcript-confidence caption, R-193 (no-audio), R-194 (revisions), R-195 (fail-pass
+    copy)** — not reached this round; each is a real, scoped gap (a caption needing a new read, or
+    board-copy/layout work on `Detail-Playback`/`Detail-Revisions`/`Fail-Pass`'s own screens) rather
+    than something silently left broken.
+
+**Two disclosed, out-of-scope, purely mechanical hotfixes, in this same commit because both were
+genuinely blocking the shared gate for every agent, not because this package now owns either file:**
+- `app/src/test/kotlin/org/ort/app/ui/navigation/ReaderActivityDestinationSmokeTest.kt` (WP3's file):
+  briefly patched a one-line `private typealias` name mismatch mid-round to unblock this package's own
+  test compilation; WP3's own subsequent commit (merged in before this one, `a272464`) fixed it
+  properly with both a real and a compatibility typealias, superseding this worktree's local patch —
+  discarded via `git checkout --` before the merge, never committed here.
+- `app/src/main/kotlin/org/ort/app/ui/components/Rows.kt` (WP2's file): `:app:ktlintMainSourceSetCheck`
+  (part of the required gate) failed on three pre-existing, unrelated `Missing newline after '{'`
+  violations in `KeyValueRow`/`RejectedRow`'s semicolon-joined one-line `let` blocks — applied the
+  identical, purely-whitespace reformatting `:app:ktlintFormat` itself produces (verified: ran it once
+  to confirm the exact diff, reverted, then applied that same two-line-per-call change by hand so the
+  diff stays minimal and reviewable). No logic changed.
+
+**Gate note — a real, pre-existing, unrelated failure, not part of this batch.** `:app:testDebugUnitTest`
+(and therefore `build`/`check`) currently fails on 2 of 1066 tests, both in `ReadyScreenTest`
+(`R_265 an amber row with a Fix action announces label, value and the action`,
+`R_265 a verified row announces label, value and status as one merged node`) — register R-265's own
+already-filed, still-open finding ("WP9 (+WP2)"), about a duplicated merged-semantics content
+description in a setup-flow ready row. Confirmed pre-existing and unrelated: reproduces in total
+isolation (`--tests "org.ort.app.ui.setup.ReadyScreenTest" --rerun-tasks`, nothing else running), in a
+file this package has never touched (`ui/setup/ReadyScreen.kt`, WP9's), on a fresh `main` merge before
+any of this round's own edits. `dependencyRules`, `platformGuards`, `:app:ktlintCheck`, `:app:detekt`,
+`:app:assembleDebug`, `spec_check.py`, `-p buildSrc test`, and `coverageMatrix`/`coverageMatrixCheck`
+all pass cleanly; every one of this package's own ~1064 other tests (including every test this round
+touched or added) passes.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.CorrectionPollingTest" --tests
+  "org.ort.app.ui.data.DetailViewStateMapperTest" --tests "org.ort.app.ui.screens.TransmissionDetailScreenTest"
+  --tests "org.ort.app.ui.screens.TransmissionDetailContentTest" --tests
+  "org.ort.app.ui.screens.CorrectionSheetTest" --tests "org.ort.app.ui.screens.PropagatedScreenTest"` —
+  **BUILD SUCCESSFUL**, every test in this package's own six touched classes green.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole module) — 1066 tests, **2 failed** (both `ReadyScreenTest`,
+  pre-existing and unrelated — see "Gate note" above).
+- `.\gradlew.bat build dependencyRules platformGuards` — `dependencyRules: OK`, `platformGuards: OK`;
+  `build` itself fails only via the same pre-existing `ReadyScreenTest` failure (`:app:test`/`:app:check`
+  depend on `testDebugUnitTest`) — `:app:ktlintCheck`/`:app:detekt`/lint/`:app:assembleRelease` all ran
+  clean ahead of that point.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 185 covered — up from 183) and
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation, up to date) — both **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt --rerun-tasks` — **BUILD SUCCESSFUL** (clean after the
+  two disclosed mechanical fixes above).
+
+**Left open:** R-181 (waveform bars, real decode work), R-182 (highlight span), R-188's voice-match/
+thread-context checks and its transcript-confidence caption, R-193, R-194, R-195 — see "Not done"
+above, each with its own honest reason. R-265/`ReadyScreenTest` — pre-existing, unrelated, reported to
+the lead, not fixed here (outside this package's file ownership). A per-repeater/day-of-week query for
+richer Tier A/B/ambiguous evidence would need a `:data` change this package cannot make.
+
+---
+
 ### (pending) — ui-conformance WP6 · failed-pass detail state and pass-failed scenario
 
 **Scope:** `:app`, this package's files only — `ui/data/DetailViewState.kt`,

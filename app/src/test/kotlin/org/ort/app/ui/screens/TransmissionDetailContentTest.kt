@@ -22,6 +22,7 @@ import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.CallsignCandidateEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.WorkQueueItemEntity
@@ -159,6 +160,45 @@ class TransmissionDetailContentTest {
         composeTestRule.onNodeWithText("Search").assertExists()
     }
 
+    /**
+     * R-261 (spec, `Detail-Correct-*.dc.html`, guide §11.2): the detail's own `Back to Log` header
+     * button stayed focusable/reachable behind the correction sheet's scrim — the dimmed content
+     * now carries [org.ort.app.ui.components.clearedWhileOverlaid] (WP2), which removes it from the
+     * merged semantics tree entirely while the sheet is open, not just visually. Proved both ways:
+     * gone while the sheet is up, back once it is dismissed.
+     */
+    @Test
+    fun `R_261_back_to_log_is_not_in_the_merged_tree_while_the_correction_sheet_is_open`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilDescriptionExists("Back to Log")
+        composeTestRule.onNodeWithContentDescription("Back to Log").assertExists()
+
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        composeTestRule.waitUntilTextExists("Who was it?")
+
+        composeTestRule.onNodeWithContentDescription("Back to Log").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("correction-sheet-scrim").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithContentDescription("Back to Log").assertExists()
+    }
+
     @Test
     fun `R_052 correcting via Not right applies and reaches the propagated screen`() {
         runBlocking {
@@ -192,6 +232,50 @@ class TransmissionDetailContentTest {
     }
 
     /**
+     * R-189 (halt): the accessibility validator saw the detail revert to UNKNOWN about 2s after
+     * applying a fresh typed correction — no `Undo` involved. `CorrectionDao.applyCorrectedAttribution`
+     * writes `attributionState = INFERRED` with `attributionConfidence = NULL` (there is no
+     * calibrated number for "a human said so"); `ReaderPolling`'s own attribution derivation
+     * requires a non-null confidence for every INFERRED row and silently downgraded that to
+     * `Attribution.unknown()` on the very next poll — this reproduces the poll ("Back to the over"
+     * re-runs `refresh()`, the exact call a live poll makes) end to end through the real composed
+     * screen and the real database, not a direct call to `CorrectionPolling.currentAttribution`.
+     */
+    @Test
+    fun `R_189_after_a_fresh_typed_correction_the_next_poll_still_shows_the_corrected_callsign_not_unknown`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Not right?")
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        composeTestRule.waitUntilTextExists("Type a callsign")
+        composeTestRule.onNodeWithText("Type a callsign").performScrollTo().performClick()
+        composeTestRule.onNodeWithContentDescription("Typed callsign").performScrollTo().performTextInput("VE7ABC")
+        composeTestRule.onNodeWithText("Save unverified correction").performScrollTo().performClick()
+        composeTestRule.waitUntilTextExists("Corrected to VE7ABC")
+
+        // The exact re-poll a live "check back a couple seconds later" would trigger.
+        composeTestRule.onNodeWithText("Back to the over").performClick()
+        composeTestRule.waitUntilTextExists("VE7ABC")
+
+        composeTestRule.onNodeWithText("VE7ABC").assertExists()
+        composeTestRule.onNodeWithText("unknown station", substring = true, ignoreCase = true).assertDoesNotExist()
+    }
+
+    /**
      * R-052, `Detail-Correct-A/B/C.dc.html`: the sheet sits over a dimmed backdrop within the
      * detail screen — not a second full screen — and tapping the scrim dismisses back to it
      * (the identical pattern `SearchScreen.kt`'s `FiltersSheetOverlay`, WP7, uses for its filters
@@ -220,9 +304,11 @@ class TransmissionDetailContentTest {
         composeTestRule.onNodeWithText("Not right?").performClick()
         composeTestRule.waitUntilTextExists("Who was it?")
 
-        // The detail screen underneath is still in the tree (dimmed, not replaced) while the sheet
-        // is up — the header callsign remains findable, and the scrim exists at its own tag.
-        composeTestRule.onNodeWithContentDescription("K7LWH", substring = true).assertExists()
+        // R-261: the detail screen underneath is still *composed* while the sheet is up (dimmed,
+        // not replaced — the scrim and sheet exist at their own tags), but is no longer reachable —
+        // `clearedWhileOverlaid` removes it from the merged semantics tree entirely, so its own
+        // header callsign must not be findable while the sheet is open.
+        composeTestRule.onNodeWithContentDescription("K7LWH", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithTag("correction-sheet-scrim").assertExists()
         composeTestRule.onNodeWithTag("correction-sheet").assertExists()
 
@@ -231,6 +317,8 @@ class TransmissionDetailContentTest {
 
         composeTestRule.onNodeWithText("Who was it?").assertDoesNotExist()
         composeTestRule.onNodeWithText("Not right?").assertExists()
+        // ...and reachable again once the sheet is dismissed.
+        composeTestRule.onNodeWithContentDescription("K7LWH", substring = true).assertExists()
     }
 
     @Test
@@ -268,6 +356,104 @@ class TransmissionDetailContentTest {
             assert(!entity.corrected)
             assert(db.correctionDao().correctionsFor("TX1").isNotEmpty())
         }
+    }
+
+    /**
+     * R-180 (halt): the validator reported "Full lattice" a dead tap — D05 (the exhaustive
+     * `DetailWhyScreen`) never reached, "the same screen re-renders" instead. Proves the whole
+     * `TransmissionDetailContent` → `DetailDestination.Why` → `DetailWhyScreen` wiring end to end,
+     * through a real tap, against a transmission with real candidate data (not an empty
+     * `InspectionViewState`, which would make `Full lattice` genuinely have nothing new to show).
+     */
+    @Test
+    fun `R_180_full_lattice_opens_the_exhaustive_why_screen`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+            db.catalogDao().insert(
+                CallsignCandidateEntity(
+                    id = "c1",
+                    transmissionId = "TX1",
+                    callsign = "K7LWH",
+                    rank = 0,
+                    score = 8.6,
+                    grammarValid = true,
+                    ituPrefix = "K",
+                    ituCountry = "United States",
+                    priorBreakdown = mapOf("database" to 0.8),
+                    databaseHit = true,
+                    selected = true,
+                ),
+            )
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Full lattice")
+
+        composeTestRule.onNodeWithText("Full lattice").performScrollTo().performClick()
+
+        composeTestRule.waitUntilTextExists("Everything the resolver saw")
+        composeTestRule
+            .onNodeWithText("Everything the resolver saw, in the order it used it")
+            .assertExists()
+        // The exhaustive screen's own candidate row, not just the inline preview's — proves D05
+        // itself rendered, not a re-render of the same detail screen.
+        composeTestRule.onNodeWithText("2 · Candidates that survived", ignoreCase = true, substring = true)
+            .assertExists()
+    }
+
+    /**
+     * R-183: `Detail.dc.html`'s INFERRED explanation names the source over's real time ("to
+     * 02:14:07, where the callsign was heard clearly") and offers a real link to it — proved end to
+     * end against a real source transmission's own `startedAtUtc`, not a generic placeholder. The
+     * source id must be a real ULID — `attributionSourceTransmissionId` is round-tripped through
+     * `TransmissionId.parse` (`ReaderPolling.sourceId`) before an INFERRED reasoning line can link
+     * to it at all (the exact trap `OvernightScenario.kt`'s own R-241 comment documents).
+     */
+    @Test
+    fun `R_183_the_inferred_explanation_names_the_real_source_over_time_and_links_to_it`() {
+        val sourceId = org.ort.core.Ulid.generate().toString()
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission(sourceId, stationId = "K7LWH").copy(startedAtUtc = 0L))
+            db.transmissionDao().insert(
+                transmission("TX1", stationId = "K7LWH").copy(
+                    startedAtUtc = 500_000L,
+                    attributionSourceTransmissionId = sourceId,
+                ),
+            )
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        // `detail` and `sourceOverTimeLabel` are two separate state writes inside one `refresh()`
+        // call — waiting on the generic "Matched by voice" text (present in both the honest
+        // fallback wording and the final one) can catch the composition between those two writes;
+        // waiting on the real time clause itself is the one condition that is only true once both
+        // have landed.
+        composeTestRule.waitUntilTextExists("00:00:00")
+
+        composeTestRule.onNodeWithText("00:00:00", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Open the source over").assertExists()
     }
 
     // ---- R-153, F18 Fail-Pass, FR-RUN-9 ----

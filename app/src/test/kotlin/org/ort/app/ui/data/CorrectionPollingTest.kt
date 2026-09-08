@@ -9,6 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
@@ -440,6 +441,129 @@ class CorrectionPollingTest {
         val count = CorrectionPolling.affectedOverCount(context, "TX1", CorrectionScope.THIS_OVER_ONLY)
 
         assertEquals(1, count)
+    }
+
+    // ---- R-185 (halt): Tier B searches stations this phone has heard, not the lexicon ----
+
+    private fun voiceprintFor(id: String, stationId: String) = voiceprint(id, boundStationId = stationId)
+
+    @Test
+    fun R_185_searchHeardStations_counts_real_hears_and_flags_voice_on_file(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "KA7LWH"))
+        db.transmissionDao().insert(transmission("TX2", stationId = "KA7LWH"))
+        db.transmissionDao().insert(transmission("TX3", stationId = "KA7LWH"))
+        db.transmissionDao().insert(transmission("TX4", stationId = "KA7LWH"))
+        db.transmissionDao().insert(transmission("TX5", stationId = "KA7BQD"))
+        db.catalogDao().insert(voiceprintFor("V1", "KA7LWH"))
+
+        val outcome = CorrectionPolling.searchHeardStations(context, "KA7")
+
+        assertEquals(2, outcome.matchCount)
+        assertEquals(2, outcome.totalCount)
+        val lwh = outcome.rows.single { it.stationId == "KA7LWH" }
+        assertEquals("heard 4 times · voice on file", lwh.evidence)
+        assertTrue(lwh.hasVoiceOnFile)
+        val bqd = outcome.rows.single { it.stationId == "KA7BQD" }
+        assertEquals("heard once · no voice on file yet", bqd.evidence)
+        assertFalse(bqd.hasVoiceOnFile)
+    }
+
+    @Test
+    fun R_185_searchHeardStations_filters_by_prefix_and_reports_the_real_total(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "KA7LWH"))
+        db.transmissionDao().insert(transmission("TX2", stationId = "W7NPC"))
+
+        val outcome = CorrectionPolling.searchHeardStations(context, "KA7")
+
+        assertEquals(1, outcome.matchCount)
+        assertEquals(2, outcome.totalCount)
+        assertEquals("KA7LWH", outcome.rows.single().stationId)
+    }
+
+    @Test
+    fun R_185_searchHeardStations_never_returns_a_station_that_was_never_heard(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "KA7LWH"))
+
+        val outcome = CorrectionPolling.searchHeardStations(context, "N0CALL")
+
+        assertTrue(outcome.rows.isEmpty())
+        assertEquals(0, outcome.matchCount)
+        assertEquals(1, outcome.totalCount)
+    }
+
+    // ---- R-183: the INFERRED explanation names the source over's real time ----
+
+    @Test
+    fun R_183_sourceOverTimeLabel_reads_the_real_source_transmissions_own_time(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("SRC1", samplePosition = 0L))
+
+        val label = CorrectionPolling.sourceOverTimeLabel(context, "SRC1")
+
+        assertEquals(ReaderTransmissionViewStateMapper.timeLabel(0L), label)
+    }
+
+    @Test
+    fun R_183_sourceOverTimeLabel_is_null_for_a_null_or_unresolved_source(): Unit = runTest {
+        assertEquals(null, CorrectionPolling.sourceOverTimeLabel(context, null))
+        assertEquals(null, CorrectionPolling.sourceOverTimeLabel(context, "does-not-exist"))
+    }
+
+    // ---- R-189 (halt): current attribution honours the latest correction, not just Undo ----
+
+    @Test
+    fun R_189_currentAttribution_honours_a_fresh_typed_correction_despite_the_null_confidence(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        // The exact shape CorrectionDao.applyCorrectedAttribution really writes: INFERRED,
+        // confidence NULL — no Undo involved, a single fresh correction.
+        db.correctionDao().recordCorrection(request("TX1", "K7LWH", "VE7ABC").toEntity())
+
+        val attribution = CorrectionPolling.currentAttribution(context, "TX1", fallback = Attribution.unknown())
+
+        assertEquals(AttributionState.INFERRED, attribution.state)
+        assertEquals("VE7ABC", attribution.stationId)
+        assertTrue("a correction's attribution must carry the corrected lock", attribution.corrected)
+    }
+
+    @Test
+    fun R_189_currentAttribution_honours_undo_alls_revert_the_same_way(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        val outcome = CorrectionPolling.applyCorrection(
+            context,
+            request("TX1", "K7LWH", "KA7LWH"),
+            CorrectionScope.THIS_OVER_ONLY,
+        )
+
+        CorrectionPolling.undoAll(context, outcome, atMillis = 700L)
+
+        val attribution = CorrectionPolling.currentAttribution(context, "TX1", fallback = Attribution.unknown())
+        assertEquals("K7LWH", attribution.stationId)
+        assertTrue(attribution.corrected)
+    }
+
+    @Test
+    fun R_189_currentAttribution_leaves_an_uncorrected_row_to_the_resolvers_own_fallback(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        val resolverFallback = Attribution.confirmed("K7LWH", 0.94)
+
+        val attribution = CorrectionPolling.currentAttribution(context, "TX1", resolverFallback)
+
+        assertEquals(resolverFallback, attribution)
+    }
+
+    @Test
+    fun R_189_currentAttribution_returns_the_fallback_for_a_transmission_that_no_longer_exists(): Unit = runTest {
+        val fallback = Attribution.unknown()
+
+        val attribution = CorrectionPolling.currentAttribution(context, "does-not-exist", fallback)
+
+        assertEquals(fallback, attribution)
     }
 
     // ---- R-153, F18 Fail-Pass, FR-RUN-9: passFailure + retryFailedPass ----

@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,10 +31,11 @@ import org.ort.app.ui.components.TextField
 import org.ort.app.ui.data.CorrectionScope
 import org.ort.app.ui.data.CorrectionTier
 import org.ort.app.ui.data.RankedCandidateViewState
+import org.ort.app.ui.data.StationSearchOutcome
+import org.ort.app.ui.data.StationSearchRow
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
-import org.ort.pipeline.passb.LexiconMatch
 
 /**
  * R-052/R-058, `Detail-Correct-A/B/C.dc.html`, `Flow-Correct.dc.html`: the three correction tiers,
@@ -57,7 +59,7 @@ public fun CorrectionSheet(
     currentCallsign: String?,
     candidates: List<RankedCandidateViewState>,
     everyOverSameVoiceCount: Int,
-    onSearchLexicon: suspend (String) -> List<LexiconMatch>,
+    onSearchStations: suspend (String) -> StationSearchOutcome,
     onApply: (callsign: String, tier: CorrectionTier, scope: CorrectionScope) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -78,11 +80,12 @@ public fun CorrectionSheet(
                 )
 
                 CorrectionTierStep.SEARCH -> SearchTier(
-                    onSearchLexicon = onSearchLexicon,
+                    onSearchStations = onSearchStations,
                     onPick = { callsign ->
                         onApply(callsign, CorrectionTier.SEARCH_LEXICON, CorrectionScope.EVERY_OVER_SAME_VOICE)
                     },
                     onBack = { tier = CorrectionTierStep.MAIN },
+                    onOpenType = { tier = CorrectionTierStep.TYPE },
                 )
 
                 CorrectionTierStep.TYPE -> TypeTier(
@@ -129,16 +132,26 @@ private fun MainTier(
     TextAction(text = "Type a callsign", onClick = onOpenType)
 }
 
-/** Tier B: search the lexicon (existing `ReaderPolling.searchLexicon`, called — not edited). */
+/**
+ * R-185 (halt), `Detail-Correct-B.dc.html`: "A station heard before" — [onSearchStations] (real
+ * [org.ort.app.ui.data.CorrectionPolling.searchHeardStations]) is Tier B's own search of stations
+ * *this device has heard*, distinct from Tier C's grammar/ITU validator and from the true lexicon
+ * search audit F-018 gave this tier's old call site — see [CorrectionPolling.searchHeardStations]'s
+ * own doc comment for why this reverts that decision. Board's own "Matches · N of M" and "Not here
+ * — type a callsign instead" (routes to Tier C) both render from the real [StationSearchOutcome].
+ */
 @Composable
 private fun SearchTier(
-    onSearchLexicon: suspend (String) -> List<LexiconMatch>,
+    onSearchStations: suspend (String) -> StationSearchOutcome,
     onPick: (String) -> Unit,
     onBack: () -> Unit,
+    onOpenType: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf(emptyList<LexiconMatch>()) }
+    var outcome by remember { mutableStateOf<StationSearchOutcome?>(null) }
+
+    LaunchedEffect(Unit) { outcome = onSearchStations("") }
 
     TextAction(text = "‹ Back", onClick = onBack)
     SectionHeader(label = "A station heard before", modifier = Modifier.padding(top = OrtSpacing.sm))
@@ -146,37 +159,61 @@ private fun SearchTier(
         value = query,
         onValueChange = { text ->
             query = text
-            scope.launch { results = onSearchLexicon(text) }
+            scope.launch { outcome = onSearchStations(text) }
         },
         placeholder = "callsign or name",
         mono = true,
-        contentDescriptionText = "Search the lexicon",
+        contentDescriptionText = "Search stations heard",
     )
-    results.forEach { match ->
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 44.dp)
-                .clickable(role = Role.Button, onClick = { onPick(match.callsign) })
-                .padding(vertical = OrtSpacing.sm)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = "Correct to ${match.callsign}, ${match.ituCountry} (${match.ituPrefix})"
-                },
-        ) {
-            // Match highlighting: the typed query, where it prefixes the result, in `accent/green`
-            // (`Detail-Correct-B.dc.html`'s "KA7" prefix in green ahead of "LWH"). A plain fallback
-            // when the result is not a prefix match keeps every real result visible either way.
-            if (query.isNotBlank() && match.callsign.startsWith(query, ignoreCase = true)) {
-                Text(
-                    text = match.callsign,
-                    style = OrtType.callsignRow,
-                    color = OrtColors.accentGreen,
-                )
-            } else {
-                Text(text = match.callsign, style = OrtType.callsignRow, color = OrtColors.textHigh)
-            }
-            Text(text = "${match.ituCountry} (${match.ituPrefix})", style = OrtType.cardBody, color = OrtColors.textDim)
+    val result = outcome
+    if (result != null) {
+        SectionHeader(
+            label = "Matches · ${result.matchCount} of ${result.totalCount}",
+            modifier = Modifier.padding(top = OrtSpacing.md),
+        )
+        result.rows.forEach { row ->
+            StationSearchResultRow(row = row, query = query, onClick = { onPick(row.stationId) })
         }
+    }
+    Text(
+        text = "Only stations this phone has heard appear here — it is not a callsign database. " +
+            "Naming one that has a voice on file also tells the matcher this voice is theirs.",
+        style = OrtType.subLine,
+        color = OrtColors.textFaint,
+        modifier = Modifier.padding(top = OrtSpacing.md),
+    )
+    TextAction(
+        text = "Not here — type a callsign instead",
+        onClick = onOpenType,
+        modifier = Modifier.padding(top = OrtSpacing.md),
+    )
+}
+
+@Composable
+private fun StationSearchResultRow(row: StationSearchRow, query: String, onClick: () -> Unit) {
+    val name = row.userName
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = OrtSpacing.sm)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Correct to ${row.stationId}" +
+                    (name?.let { ", $it" } ?: "") + ", ${row.evidence}"
+            },
+    ) {
+        // Match highlighting: the typed query, where it prefixes the result, in `accent/green`
+        // (`Detail-Correct-B.dc.html`'s "KA7" prefix in green ahead of "LWH").
+        if (query.isNotBlank() && row.stationId.startsWith(query, ignoreCase = true)) {
+            Text(text = row.stationId, style = OrtType.callsignRow, color = OrtColors.accentGreen)
+        } else {
+            Text(text = row.stationId, style = OrtType.callsignRow, color = OrtColors.textHigh)
+        }
+        name?.let {
+            Text(text = it, style = OrtType.cardBody, color = OrtColors.textBody)
+        }
+        Text(text = row.evidence, style = OrtType.cardBody, color = OrtColors.textDim)
     }
 }
 
