@@ -158,6 +158,13 @@ are individually green.*
   durable, nothing is lost) but a backlog left behind at stop waits for the next capture session.
   Building a post-capture drain is M8 streaming/M10 reprocessing scope, not P12's — see
   CHANGELOG.md.
+  **Audit F-022 (2026-09-07) fixed:** relaunching `MainActivity` while `RealCaptureService` was
+  already running always minted a fresh session id and handed it to `ReaderActivity`, so the
+  reader polled a session nothing was capturing into. `MainActivity` now checks
+  `CaptureState.sessionId`/`isCapturing` before starting the service or choosing which id to pass
+  on; `CaptureState.idle()` gained a `clearSession` parameter so only a deliberate `ACTION_STOP`
+  clears the published id; `ReaderActivity` also prefers the live id over its intent extra as
+  defence in depth. See CHANGELOG.md.
 - [x] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
   done 2026-09-08.
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no

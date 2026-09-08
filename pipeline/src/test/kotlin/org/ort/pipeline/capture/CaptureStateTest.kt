@@ -18,7 +18,7 @@ class CaptureStateTest {
 
     @BeforeEach
     fun reset() {
-        CaptureState.idle()
+        CaptureState.idle(clearSession = true)
     }
 
     @Test
@@ -64,5 +64,32 @@ class CaptureStateTest {
 
         assertTrue(CaptureState.isCapturing)
         assertNull(CaptureState.failureReason)
+    }
+
+    @Test
+    fun `FR_UI_7 a clean stop clears the session id`() {
+        CaptureState.capturing("SESSION01")
+        CaptureState.idle(clearSession = true)
+
+        assertFalse(CaptureState.isCapturing)
+        assertNull(
+            CaptureState.sessionId,
+            "a deliberate stop must not leave a session id that a relaunching MainActivity could" +
+                " mistake for still running (audit F-022)",
+        )
+    }
+
+    @Test
+    fun `FR_UI_7 an unclean stop leaves the last known session id in place`() {
+        CaptureState.capturing("SESSION01")
+        CaptureState.idle()
+
+        assertFalse(CaptureState.isCapturing)
+        assertEquals(
+            "SESSION01",
+            CaptureState.sessionId,
+            "an unclean stop (e.g. process death) is distinct from a deliberate ACTION_STOP -- only" +
+                " the latter clears the session id (audit F-022)",
+        )
     }
 }

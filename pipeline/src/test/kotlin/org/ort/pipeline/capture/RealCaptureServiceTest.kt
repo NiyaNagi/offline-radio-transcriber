@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -175,6 +176,59 @@ public class RealCaptureServiceTest {
             assertNotNull("a resumed gap must be closed with an end time", endedAt)
             assertTrue("a gap must have a bounded, non-negative duration", endedAt!! >= gaps[0].startedAt)
             assertEquals(sessionId, gaps[0].sessionId)
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    /**
+     * audit F-022: before this, nothing published the running session id anywhere `:app` could read
+     * it -- `MainActivity` always minted a fresh one on relaunch, and `RealCaptureService`'s own
+     * singleton guard (`onStartCommand`'s `if (source != null) return START_STICKY`) silently
+     * ignored the second start, leaving the reader polling a session nothing was capturing into.
+     * [CaptureState.sessionId] is the seam that fixes it: published the moment capture actually
+     * starts, and cleared only by a deliberate `ACTION_STOP` -- never by `onDestroy` alone, which
+     * a process death also triggers and which must not erase which session was last live.
+     */
+    @Test
+    @Requirement("FR-UI-7", "F-022")
+    public fun `FR_UI_7 CaptureState publishes the running session id and clears it only on a clean stop`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        val sessionId = "TEST-SESSION-22"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Unavailable("no model in this test") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            assertTrue("the service must publish that it is capturing", CaptureState.isCapturing)
+            assertEquals(
+                "a relaunching MainActivity must be able to discover the live session id",
+                sessionId,
+                CaptureState.sessionId,
+            )
+
+            val stopIntent = Intent(context, RealCaptureService::class.java).setAction(RealCaptureService.ACTION_STOP)
+            controller.withIntent(stopIntent).startCommand(0, 0)
+
+            assertFalse("a deliberate stop must no longer report capturing", CaptureState.isCapturing)
+            assertNull(
+                "a deliberate stop must clear the session id -- otherwise a relaunch could mistake" +
+                    " a dead session for a live one",
+                CaptureState.sessionId,
+            )
         } finally {
             controller.destroy()
         }

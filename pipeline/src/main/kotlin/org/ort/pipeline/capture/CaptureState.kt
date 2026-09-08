@@ -49,8 +49,17 @@ public object CaptureState {
         state = State.Interrupted(cause)
     }
 
-    public fun idle() {
+    /**
+     * audit F-022: [clearSession] is `true` only for a deliberate, clean stop (`ACTION_STOP`) --
+     * that is the one case where a relaunching `MainActivity` must not mistake this session for
+     * one still running. An unclean stop (process death, `onDestroy` without a prior
+     * `ACTION_STOP`) leaves [sessionId] as-is: the last known session stays visible on a
+     * [State.Idle]/[State.Failed] read, and in-process callers only ever treat a session as live
+     * when [isCapturing] is also true, so this cannot resurrect a dead session.
+     */
+    public fun idle(clearSession: Boolean = false) {
         state = State.Idle
+        if (clearSession) sessionId = null
     }
 
     /** True only while capture is genuinely running — never optimistic. */
