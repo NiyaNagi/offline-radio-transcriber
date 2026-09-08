@@ -32,6 +32,36 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-016)
+
+### (pending) — audit F-016 · WorkQueue.requeueFailed gives exhausted FAILED items a fresh run
+
+**Scope:** `:data` — `WorkQueue.kt`, `dao/WorkQueueDao.kt`, `WorkQueueTest.kt`.
+**Requirements/ACs:** FR-RUN-9, FR-REP-8 (reprocessing candidates); constitution III ("nothing is
+deleted quietly").
+**What changed:** `WorkQueueDao` gained `selectFailed(pass, lastErrorPrefix)` (both filters
+nullable — `null` matches everything) and `requeueToReady(id)`, which resets a `FAILED` row to
+`READY` with `attemptCount = 0` while leaving `lastError` untouched so the prior failure stays
+reachable until a new one overwrites it. `WorkQueue.requeueFailed(pass, lastErrorPrefix)`
+transactionally applies both to every matching item and, per item, moves the transmission along
+the state machine's already-documented reprocess path `FAILED` → `PROCESSING`
+(`core/TransmissionState.kt`), guarded by the same `TransmissionDao.canTransition` check
+`completePass`/`failPass` use so a sibling pass that already moved the transmission on is left
+alone. Returns the count requeued. Fixes F-016: before this, a transmission captured while no ASR
+model was installed drained against `UnavailableAsrEngine`, hit `maxAttempts`, landed terminally
+`FAILED`, and had no path back to `READY` — it stayed lost forever even after a model was
+installed. No new transmission state or `WorkQueueState` was introduced; the fix uses transitions
+the state machine already declares legal.
+**Verified:** Three new `WorkQueueTest` cases (`FR_RUN_9_a_failed_item_past_max_attempts_is_requeued_to_ready_with_attempts_reset`,
+`FR_RUN_9_items_not_failed_are_untouched`, `FR_RUN_9_requeueFailed_returns_the_count_and_honours_the_error_prefix_filter`)
+were written first and confirmed to fail with `Unresolved reference 'requeueFailed'` before the
+implementation existed. After the fix: `./gradlew :data:test` — 11/11 `WorkQueueTest` cases green
+(0 failures); `./gradlew build dependencyRules` — exit 0; `python tools/spec-check/spec_check.py`
+— all 8 checks PASS. All Robolectric/JVM only; no on-device verification was performed or claimed.
+**Left open / not done:** No caller wires this into a model-install action yet — that lives with
+F-008, which is a separate finding/module (`:app`/`:pipeline` orchestration) and was out of this
+fix's scope. No queue behavioural fake exists yet in `:testing` to update.
+
 ## 2026-09-08 (later — P16: correction, the inspection surface, and labelled-sample capture)
 
 ### (pending) — P16 · Correction, the inspection surface, and labelled-sample capture
