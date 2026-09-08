@@ -2,17 +2,20 @@ package org.ort.app.ui.navigation
 
 /**
  * The drawer's destinations, in the order `design/canvas/Menu.dc.html` lists them (build-plan
- * P13). `Now` and `Log` are backed by real screens in this prompt — the existing status and
- * transmission-list surfaces, ported to Compose (see `ui/screens/`). The rest are exposed in the
- * drawer, as the canvas requires, but render [ReaderDestination.hasScreen] `false`'s
- * [org.ort.app.ui.screens.PlaceholderScreen] until their own build-plan prompt (P15-P17) builds
+ * P13). `Now` and `Log` are P14's real screens; `Search` and `Threads` are build-plan P15's
+ * (FR-UI-3, FR-UI-2 — the `SEARCH` entry itself is a deliberate divergence from the canvas, which
+ * puts search behind a magnifying-glass icon on `Log.dc.html`'s own top bar rather than a drawer
+ * row — see `SearchScreen`'s own doc comment). The rest are exposed in the drawer, as the canvas
+ * requires, but render [ReaderDestination.hasScreen] `false`'s
+ * [org.ort.app.ui.screens.PlaceholderScreen] until their own build-plan prompt (P16-P17) builds
  * them — reachable and honest about not existing yet, rather than missing from the drawer or
  * silently faked. `Stations` and `Frequencies` are real screens as of build-plan P17.
  */
 public enum class ReaderDestination(public val label: String, public val hasScreen: Boolean) {
     NOW("Now", hasScreen = true),
     LOG("Log", hasScreen = true),
-    THREADS("Threads", hasScreen = false),
+    SEARCH("Search", hasScreen = true),
+    THREADS("Threads", hasScreen = true),
     STATIONS("Stations", hasScreen = true),
     FREQUENCIES("Frequencies", hasScreen = true),
     EARLIER_NIGHTS("Earlier nights", hasScreen = false),

@@ -105,8 +105,15 @@ are individually green.*
   `RealTransmissionAudioPlayer` plays retained audio through `:pipeline`'s existing
   `FlacSegmentAudioProvider`. FR-UI-1/4/5 and FR-A11Y-1..4 hold; the digest, thread grouping and
   FR-UI-8 lattice/prior panel are named divergences left to P15-P17. See CHANGELOG.md.
-- [ ] **P15 · Search and threads** *(`:app`, `:data`)* — FR-UI-2, FR-UI-3 over the FTS5 index P5
-  already built and nothing yet queries.
+- [x] **P15 · Search and threads** *(`:app`, `:data`)* — done 2026-09-08. `SearchDao` (a new DAO
+  file, per the prompt, to stay conflict-free with concurrent P17) queries the FTS5 index P5 built
+  and nothing queried until now, with callsign/frequency/date filters; `SearchScreen`/`ThreadScreen`
+  render it. FTS5 confirmed genuinely unavailable under this project's pinned Robolectric setup
+  (`no such module: fts5`, even in `sqliteMode=NATIVE`) — the one full-text DAO test is honestly
+  `Assume`-skipped rather than faked; filters, the query-construction logic, and the graceful
+  degrade-to-filters-only behaviour are all proven for real. Thread grouping is proven against the
+  real (currently always-null) `threadId` column with an honest "not yet grouped" fallback — M6
+  still owns actually populating it. See CHANGELOG.md.
 - [ ] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
   `:data`)* — FR-UI-6, FR-UI-8, and FR-OBS-4, the Must the implementation plan explicitly
   rehoused into M5.

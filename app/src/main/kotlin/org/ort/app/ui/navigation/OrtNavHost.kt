@@ -30,15 +30,23 @@ import org.ort.app.ui.data.NowSummaryMapper
 import org.ort.app.ui.data.NowSummaryViewState
 import org.ort.app.ui.data.ReaderPolling
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
+import org.ort.app.ui.data.SearchFilterInput
+import org.ort.app.ui.data.SearchFilterParser
+import org.ort.app.ui.data.SearchPolling
+import org.ort.app.ui.data.SearchResult
 import org.ort.app.ui.data.StationListEntryViewState
+import org.ort.app.ui.data.ThreadGroupViewState
+import org.ort.app.ui.data.ThreadPolling
 import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.screens.FrequenciesListScreen
 import org.ort.app.ui.screens.FrequencyDetailScreen
 import org.ort.app.ui.screens.LogScreen
 import org.ort.app.ui.screens.NowScreen
 import org.ort.app.ui.screens.PlaceholderScreen
+import org.ort.app.ui.screens.SearchScreen
 import org.ort.app.ui.screens.StationDetailScreen
 import org.ort.app.ui.screens.StationsListScreen
+import org.ort.app.ui.screens.ThreadScreen
 import org.ort.app.ui.screens.TransmissionDetailScreen
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
@@ -125,23 +133,58 @@ public fun OrtNavHost(sessionId: String?) {
                 )
             },
         ) { padding ->
-            val content = Modifier.padding(padding)
-            when {
-                current == ReaderDestination.NOW ->
-                    NowContent(sessionId = sessionId, modifier = content)
-
-                current == ReaderDestination.LOG ->
-                    LogContent(sessionId = sessionId, onOpen = { openTransmissionId = it }, modifier = content)
-
-                current == ReaderDestination.STATIONS ->
-                    StationsContent(context = context, onOpen = { openStationId = it }, modifier = content)
-
-                current == ReaderDestination.FREQUENCIES ->
-                    FrequenciesContent(context = context, onOpen = { openFrequencyHz = it }, modifier = content)
-
-                else -> PlaceholderScreen(destinationLabel = current.label, modifier = content)
-            }
+            DestinationContent(
+                current = current,
+                sessionId = sessionId,
+                context = context,
+                onOpenTransmission = { openTransmissionId = it },
+                onOpenStation = { openStationId = it },
+                onOpenFrequency = { openFrequencyHz = it },
+                modifier = Modifier.padding(padding),
+            )
         }
+    }
+}
+
+/**
+ * Dispatches the current drawer destination to its screen.
+ *
+ * Extracted from [OrtNavHost] when P15's and P17's destinations merged: with both sessions' real
+ * screens in one `when`, the host crossed detekt's method-length limit. Raising the limit would
+ * have been the wrong fix — the dispatch is a genuinely separate concern from the drawer and
+ * scaffold that surround it, and it is the part that grows with every future destination.
+ */
+@Composable
+private fun DestinationContent(
+    current: ReaderDestination,
+    sessionId: String?,
+    context: android.content.Context,
+    onOpenTransmission: (String) -> Unit,
+    onOpenStation: (String) -> Unit,
+    onOpenFrequency: (Long) -> Unit,
+    modifier: Modifier,
+) {
+    val content = modifier
+    when (current) {
+        ReaderDestination.NOW ->
+            NowContent(sessionId = sessionId, modifier = content)
+
+        ReaderDestination.LOG ->
+            LogContent(sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
+
+        ReaderDestination.SEARCH ->
+            SearchContent(onOpen = onOpenTransmission, modifier = content)
+
+        ReaderDestination.THREADS ->
+            ThreadContent(sessionId = sessionId, onOpen = onOpenTransmission, modifier = content)
+
+        ReaderDestination.STATIONS ->
+            StationsContent(context = context, onOpen = onOpenStation, modifier = content)
+
+        ReaderDestination.FREQUENCIES ->
+            FrequenciesContent(context = context, onOpen = onOpenFrequency, modifier = content)
+
+        else -> PlaceholderScreen(destinationLabel = current.label, modifier = content)
     }
 }
 
@@ -177,6 +220,45 @@ private fun LogContent(sessionId: String?, onOpen: (String) -> Unit, modifier: M
     }
     val entries = details.map { ReaderTransmissionViewStateMapper.listEntry(it) }
     LogScreen(entries = entries, onOpen = onOpen, modifier = modifier)
+}
+
+/**
+ * FR-UI-3 (build-plan P15): search runs on an explicit action, not on every keystroke — a search
+ * screen has no session-tied poll, unlike Now/Log, since it queries on demand rather than showing
+ * a live session's state.
+ */
+@Composable
+private fun SearchContent(onOpen: (String) -> Unit, modifier: Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var input by remember { mutableStateOf(SearchFilterInput()) }
+    var result by remember { mutableStateOf<SearchResult?>(null) }
+    SearchScreen(
+        input = input,
+        result = result,
+        onInputChange = { input = it },
+        onSearch = {
+            val params = SearchFilterParser.parse(input)
+            scope.launch { result = SearchPolling.search(context, params) }
+        },
+        onOpen = onOpen,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ThreadContent(sessionId: String?, onOpen: (String) -> Unit, modifier: Modifier) {
+    val context = LocalContext.current
+    var groups by remember { mutableStateOf(emptyList<ThreadGroupViewState>()) }
+    if (sessionId != null) {
+        LaunchedEffect(sessionId) {
+            while (true) {
+                groups = ThreadPolling.currentThreadGroups(context, sessionId)
+                delay(POLL_INTERVAL_MILLIS)
+            }
+        }
+    }
+    ThreadScreen(groups = groups, onOpen = onOpen, modifier = modifier)
 }
 
 @Composable

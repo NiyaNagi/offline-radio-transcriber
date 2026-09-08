@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -31,7 +33,11 @@ public fun ReaderDrawerContent(
     onSelect: (ReaderDestination) -> Unit,
 ) {
     ModalDrawerSheet {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        // Scrollable: build-plan P15 added Search and Threads as real destinations (nine rows
+        // became ten), and a fixed-height Column silently clips whatever falls below the visible
+        // drawer height rather than failing loudly — confirmed by this project's own
+        // ReaderAccessibilityTest, which asserts every destination row is actually displayed.
+        Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             ReaderDestination.entries.forEach { destination ->
                 DrawerRow(destination = destination, selected = destination == current, onSelect = onSelect)
             }

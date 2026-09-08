@@ -80,6 +80,18 @@ public object ReaderPolling {
         return detailFrom(context, db, entity)
     }
 
+    /**
+     * Builds a [TransmissionDetail] from an already-fetched [TransmissionEntity] (build-plan
+     * P15) — the identical mapping [currentTransmissionDetails]/[transmissionDetail] use, exposed
+     * so [org.ort.app.ui.data.SearchPolling] and [org.ort.app.ui.data.ThreadPolling] can turn a
+     * [org.ort.data.dao.SearchDao] result into the same view-model type the reader already
+     * renders, rather than building a second, drifting mapping.
+     */
+    public suspend fun detailFromEntity(context: Context, entity: TransmissionEntity): TransmissionDetail {
+        val db = OrtDatabase.create(context.applicationContext)
+        return detailFrom(context, db, entity)
+    }
+
     private suspend fun detailFrom(context: Context, db: OrtDatabase, entity: TransmissionEntity): TransmissionDetail {
         val versions = db.transcriptDao().getAllVersions(entity.id)
         val current = versions.firstOrNull { it.isCurrent }
@@ -95,6 +107,7 @@ public object ReaderPolling {
             currentTranscriptText = current?.text,
             supersededTranscriptTexts = superseded,
             hasAudio = audioFile.isFile,
+            threadId = entity.threadId,
         )
     }
 

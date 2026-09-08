@@ -267,6 +267,35 @@ def check_encoding(files: dict[str, str], r: Result) -> None:
     r.record("7. no mojibake, no tab characters", problems)
 
 
+# Exactly seven `<`/`=`/`>` — git's own marker width — and nothing wider. The width matters:
+# a first draft of this check used "starts with seven `=`" and immediately flagged
+# constitution.md's markdown setext heading underline (`==================`), which is precisely
+# the kind of false positive that gets a check switched off rather than fixed. `<<<<<<<` and
+# `>>>>>>>` carry a branch label after a space; `=======` stands alone on its line.
+# Built at runtime from repeated characters so this file cannot match itself.
+_CONFLICT_MARKER = re.compile(
+    rf"^(?:{'<' * 7}|{'>' * 7})(?: .*)?$|^{'=' * 7}$",
+)
+
+
+def check_no_conflict_markers(files: dict[str, str], r: Result) -> None:
+    """No unresolved git merge-conflict marker survives into a spec document.
+
+    Added 2026-09-08 after one did: a hand-resolved merge left a stray `>>>>>>>` line in
+    build-plan.md that survived four commits on `main` before another merge happened to remove
+    it. Every other check here passed the whole time, because none of them look at the text as
+    text. A conflict marker in a spec is a small, purely mechanical defect that is invisible in a
+    rendered diff and obvious to a machine — exactly the kind this checker exists to catch, and
+    the structural fix for a mistake that "be more careful next time" does not prevent.
+    """
+    problems: list[str] = []
+    for name, text in files.items():
+        for i, line in enumerate(text.splitlines(), start=1):
+            if _CONFLICT_MARKER.match(line):
+                problems.append(f"{name}: unresolved merge-conflict marker on line {i}: {line[:40]!r}")
+    r.record("8. no unresolved merge-conflict markers", problems)
+
+
 CHECKS = [
     check_ac_contiguous,
     check_no_dangling,
@@ -287,6 +316,7 @@ def run_checks(spec_dir: Path = DEFAULT_SPEC_DIR) -> Result:
     for check in CHECKS:
         check(files, result)
     check_encoding(_read_for_encoding(spec_dir), result)
+    check_no_conflict_markers(_read_for_encoding(spec_dir), result)
     return result
 
 

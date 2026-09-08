@@ -49,6 +49,43 @@ def test_a_tab_character_is_caught(tmp_path):
     assert not result.ok
 
 
+@pytest.mark.parametrize("marker", ["<" * 7 + " HEAD", "=" * 7, ">" * 7 + " some-branch"])
+def test_an_unresolved_conflict_marker_is_caught(tmp_path, marker):
+    """The meta-guard for check 8, which exists because a real one reached `main`.
+
+    A hand-resolved merge left a stray `>>>>>>>` line in build-plan.md that survived four commits;
+    every other check passed throughout, because none of them read the text as text.
+    """
+    work = tmp_path / "spec"
+    shutil.copytree(SPEC_DIR, work)
+    target = work / "build-plan.md"
+    target.write_text(target.read_text(encoding="utf-8") + f"\n{marker}\n", encoding="utf-8")
+
+    result = spec_check.run_checks(work)
+
+    assert not result.ok
+    problems = next(problems for name, _, problems in result.checks if name.startswith("8."))
+    assert any("build-plan.md" in p for p in problems), problems
+
+
+def test_a_markdown_heading_underline_is_not_a_conflict_marker(tmp_path):
+    """Seven-plus `=` under a heading is setext markdown, not a marker — the false positive that
+    a first draft of check 8 produced against constitution.md, and the reason it matches an
+    exactly-seven-character `=======` alone on its line rather than a prefix."""
+    work = tmp_path / "spec"
+    shutil.copytree(SPEC_DIR, work)
+    target = work / "build-plan.md"
+    target.write_text(
+        target.read_text(encoding="utf-8") + "\nA setext heading\n" + "=" * 18 + "\n",
+        encoding="utf-8",
+    )
+
+    result = spec_check.run_checks(work)
+
+    problems = next(problems for name, _, problems in result.checks if name.startswith("8."))
+    assert problems == [], f"a markdown heading underline must not be flagged: {problems}"
+
+
 def test_a_missing_ac_number_breaks_contiguity(tmp_path):
     work = tmp_path / "spec"
     shutil.copytree(SPEC_DIR, work)

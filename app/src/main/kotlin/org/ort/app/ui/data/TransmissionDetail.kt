@@ -25,6 +25,14 @@ public data class TransmissionDetail(
     val currentTranscriptText: String?,
     val supersededTranscriptTexts: List<String>,
     val hasAudio: Boolean,
+    /**
+     * The real `transmission.threadId` column (build-plan P15, FR-UI-2). Nothing populates it
+     * yet — threading is M6 — so this is `null` for every transmission today; carried through
+     * honestly rather than omitted, so [org.ort.app.ui.data.ThreadGroupingMapper] can render the
+     * true "not yet grouped" state instead of fabricating conversations the data does not
+     * support.
+     */
+    val threadId: String? = null,
 )
 
 /** One row of the live/log view — everything [org.ort.app.ui.screens.LogScreen] renders. */
@@ -77,6 +85,12 @@ public object ReaderTransmissionViewStateMapper {
         revisionHistory = detail.supersededTranscriptTexts,
         hasAudio = detail.hasAudio,
     )
+
+    /**
+     * Exposed for [org.ort.app.ui.data.ThreadGroupingMapper], which cross-references
+     * transmissions by time (FR-UI-2).
+     */
+    public fun timeLabelFor(detail: TransmissionDetail): String = timeLabel(detail.startedAtUtcMillis)
 
     private fun revisionNote(supersededCount: Int): String? = when {
         supersededCount <= 0 -> null
