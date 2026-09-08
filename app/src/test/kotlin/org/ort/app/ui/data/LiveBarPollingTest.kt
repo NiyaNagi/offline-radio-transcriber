@@ -226,6 +226,19 @@ class LiveBarPollingTest {
     }
 
     @Test
+    fun `F16 the meter itself stays green (NOMINAL) while the bar around it reads Act red`() = runTest {
+        // Register F16: Fail-Usb.dc.html draws the meter bars green ("audio fine") even though
+        // the rig needing USB permission halts the bar's own tone/label ("Act", halt-red).
+        CaptureState.capturing("s1")
+        DebugFailureOverride.show(FailurePresentation.Usb(UsbViewState("03:44", "03:47", 4)))
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(LiveBarTone.NOMINAL, state.meterTone)
+        assertEquals(LiveBarTone.HALTED, state.tone)
+    }
+
+    @Test
     @Requirement("R-128")
     fun `R_128 F6 the StorageAudioPaused debug override reads Text only`() = runTest {
         CaptureState.capturing("s1")
@@ -237,6 +250,7 @@ class LiveBarPollingTest {
 
         assertEquals(LiveBarTone.DEGRADED, state.tone)
         assertEquals("Text only", state.label)
+        assertEquals(null, state.meterTone) // no board splits the meter from the tone here — F16 alone does
     }
 
     @Test

@@ -1,14 +1,23 @@
 package org.ort.app.ui.failures
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -99,6 +108,46 @@ class FailureHostTest {
         }
         val top = composeTestRule.onNodeWithTag("failure-banner-overlay").getUnclippedBoundsInRoot().top
         assertTrue("banner top ($top) must clear the 44dp header", top >= 44.dp)
+    }
+
+    @Test
+    fun `R_178 at font scale 2_0 a taller banner still pushes content below its own bottom bound`() {
+        // Register R-178: a banner that wraps its copy onto more lines at maximum font scale must
+        // not just visually cover more of the content beneath it — the content itself moves down.
+        ShedStatus.update(level = 3, backlog = 41)
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    FailureHost(sessionId = null) { contentTopPadding ->
+                        // A 44dp stand-in for the real `ScreenHeader` `OrtNavHost.kt` always renders
+                        // above its own destination content — `contentTopPadding` is only ever meant
+                        // to apply *after* that header, exactly the shape `NavHostBody` composes.
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier.fillMaxWidth().height(44.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(top = contentTopPadding)
+                                    .testTag("test-content-below-banner"),
+                            ) {
+                                Text("underlying destination")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("failure-banner-overlay").fetchSemanticsNodes().isNotEmpty()
+        }
+        val bannerBottom = composeTestRule.onNodeWithTag("failure-banner-overlay").getUnclippedBoundsInRoot().bottom
+        val contentTop = composeTestRule.onNodeWithTag("test-content-below-banner").getUnclippedBoundsInRoot().top
+        assertTrue(
+            "content top ($contentTop) must be at or below the banner's bottom ($bannerBottom)",
+            contentTop >= bannerBottom,
+        )
     }
 
     @Test

@@ -232,7 +232,16 @@ public object FailureMapper {
         val thermal = signals.thermalStatus
         if (thermal is ThermalStatus.State.Warm || thermal is ThermalStatus.State.Hot) {
             val tier = (MAX_TIER - signals.shedLevel).coerceIn(0, MAX_TIER)
-            val label = clockLabel(signals.nowMillis)
+            // Register R-177: the real transition moment ThermalStatus recorded, never `now` —
+            // a mapper polled repeatedly must render the moment the tier actually dropped, not a
+            // clock that creeps forward on every 2s tick. `sinceMillis` lives on Warm/Hot, not the
+            // shared `State` interface, so it is read per-branch here rather than through `thermal`.
+            val sinceMillis = when (thermal) {
+                is ThermalStatus.State.Warm -> thermal.sinceMillis
+                is ThermalStatus.State.Hot -> thermal.sinceMillis
+                is ThermalStatus.State.Nominal -> signals.nowMillis
+            }
+            val label = clockLabel(sinceMillis)
             return FailurePresentation.Thermal(ThermalViewState(tier, label, thermal.realTimeFactor))
         }
         if (signals.shedBacklog >= BACKLOG_GROWING_THRESHOLD) {

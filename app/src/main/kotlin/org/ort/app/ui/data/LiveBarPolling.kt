@@ -34,13 +34,14 @@ public object LiveBarPolling {
     private const val LEVEL_BAR_COUNT = 4
 
     public suspend fun current(context: Context, sessionId: String?): LiveBarViewState {
-        val override = failureOverrideToneLabelAndPartial()
-        val (tone, label) = if (override != null) override.first to override.second else toneAndLabel()
+        val override = failureOverrideLiveBar()
+        val (tone, label) = if (override != null) override.tone to override.label else toneAndLabel()
         return LiveBarViewState(
             level = levelBars(),
-            partialText = override?.third ?: sessionId?.let { newestPassAPartial(context, it) },
+            partialText = override?.partialText ?: sessionId?.let { newestPassAPartial(context, it) },
             label = label,
             tone = tone,
+            meterTone = override?.meterTone,
         )
     }
 
@@ -73,6 +74,17 @@ public object LiveBarPolling {
         return ((dbfs - floor) / (ceiling - floor)).coerceIn(0f, 1f)
     }
 
+    /** The result [failureOverrideLiveBar] returns for the (currently two) `FailurePresentation`
+     * ids whose live bar cannot be computed from [toneAndLabel]'s real-signal reading alone.
+     * [meterTone] mirrors [LiveBarViewState.meterTone] — `null` means "follow [tone]", same
+     * contract as that field's own default. */
+    private data class OverrideLiveBar(
+        val tone: LiveBarTone,
+        val label: String,
+        val partialText: String?,
+        val meterTone: LiveBarTone? = null,
+    )
+
     /**
      * Register R-128: the live bar must follow every failure `FailureMapper` can raise, including
      * a debug override — `DebugFailureOverride.activeOverride` wins outright in `FailureMapper`'s
@@ -87,11 +99,23 @@ public object LiveBarPolling {
      * all (F14/F19/F20/F21/F22 are not Now/session screens) or because its board explicitly keeps
      * the live bar nominal while the informational card shows (F5/F15 both read "Live") — nothing
      * here invents a label a board never specified.
+     *
+     * F16 (register F16/R-128, WP2's `meterTone`): the rig needing USB permission is a permission
+     * problem, not an audio one — `Fail-Usb.dc.html` shows the meter itself staying green ("audio
+     * fine") while the label calls for action ("Act", `halt/text` red). `meterTone = NOMINAL`
+     * carries that distinction through to [LiveBarViewState.meterTone]; every other override here
+     * leaves it `null` (follow [tone]) because no other board draws that split.
      */
-    private fun failureOverrideToneLabelAndPartial(): Triple<LiveBarTone, String, String?>? =
+    private fun failureOverrideLiveBar(): OverrideLiveBar? =
         when (DebugFailureOverride.activeOverride) {
-            is FailurePresentation.Usb -> Triple(LiveBarTone.HALTED, "Act", "audio fine · radio needs permission")
-            is FailurePresentation.StorageAudioPaused -> Triple(LiveBarTone.DEGRADED, "Text only", null)
+            is FailurePresentation.Usb -> OverrideLiveBar(
+                tone = LiveBarTone.HALTED,
+                label = "Act",
+                partialText = "audio fine · radio needs permission",
+                meterTone = LiveBarTone.NOMINAL,
+            )
+            is FailurePresentation.StorageAudioPaused ->
+                OverrideLiveBar(tone = LiveBarTone.DEGRADED, label = "Text only", partialText = null)
             is FailurePresentation.Route, is FailurePresentation.Disconnect, is FailurePresentation.Level,
             is FailurePresentation.Killed, is FailurePresentation.StorageWarning, is FailurePresentation.StorageHalt,
             is FailurePresentation.Thermal, is FailurePresentation.Backlog, is FailurePresentation.Rig,
