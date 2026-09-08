@@ -58,6 +58,31 @@ public interface WorkQueueDao {
     )
     public suspend fun markFailed(id: Long, attemptCount: Int, error: String)
 
+    /**
+     * FR-RUN-9 / FR-REP-8: terminally `FAILED` items eligible for a fresh run, optionally
+     * narrowed to one [pass] and/or errors starting with [lastErrorPrefix] (e.g. "no ASR model
+     * installed" once F-008's model-install action fires this). Both filters are `null`-able —
+     * a `null` filter matches everything, so the default call requeues every `FAILED` item.
+     */
+    @Query(
+        "SELECT * FROM work_queue_item WHERE state = 'FAILED' " +
+            "AND (:pass IS NULL OR pass = :pass) " +
+            "AND (:lastErrorPrefix IS NULL OR lastError LIKE :lastErrorPrefix || '%')",
+    )
+    public suspend fun selectFailed(pass: String?, lastErrorPrefix: String?): List<WorkQueueItemEntity>
+
+    /**
+     * FR-RUN-9 / FR-REP-8: gives a `FAILED` item a fresh run. `attemptCount` resets to 0 so the
+     * bounded retry counter in [org.ort.data.WorkQueue.failPass] starts over; `lastError` is left
+     * untouched — the prior failure stays reachable until a new one overwrites it (constitution
+     * III, "nothing is deleted quietly").
+     */
+    @Query(
+        "UPDATE work_queue_item SET state = 'READY', attemptCount = 0, leaseRunId = NULL, " +
+            "deadlineAt = NULL, startedAt = NULL WHERE id = :id",
+    )
+    public suspend fun requeueToReady(id: Long)
+
     @Query("SELECT COUNT(*) FROM work_queue_item")
     public suspend fun count(): Int
 

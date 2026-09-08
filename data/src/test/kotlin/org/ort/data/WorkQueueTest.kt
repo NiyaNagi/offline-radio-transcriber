@@ -199,6 +199,74 @@ public class WorkQueueTest {
     }
 
     @Test
+    @Requirement("FR-RUN-9")
+    public fun FR_RUN_9_a_failed_item_past_max_attempts_is_requeued_to_ready_with_attempts_reset(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX-BAD"))
+        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        queue.enqueue("TX-BAD", PassId.B_OFFLINE)
+        val item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        queue.failPass(item, "no ASR model installed") // exhausts maxAttempts = 1 immediately
+        val exhausted = db.workQueueDao().getById(item.id)!!
+        assertEquals(WorkQueueState.FAILED, exhausted.state)
+        assertEquals(TransmissionState.FAILED, db.transmissionDao().getById("TX-BAD")!!.processingState)
+
+        val requeued = queue.requeueFailed()
+
+        assertEquals(1, requeued)
+        val row = db.workQueueDao().getById(item.id)!!
+        assertEquals(WorkQueueState.READY, row.state)
+        assertEquals(0, row.attemptCount)
+        // The prior error stays reachable rather than being erased silently (constitution III).
+        assertEquals("no ASR model installed", row.lastError)
+        // FAILED -> PROCESSING is the state machine's documented reprocess path (core/TransmissionState.kt).
+        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX-BAD")!!.processingState)
+    }
+
+    @Test
+    @Requirement("FR-RUN-9")
+    public fun FR_RUN_9_items_not_failed_are_untouched(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX-READY"))
+        db.transmissionDao().insert(TestFixtures.transmission("TX-LEASED"))
+        val queue = WorkQueue(db, clock)
+        queue.enqueue("TX-LEASED", PassId.D_RESOLVE)
+        val leasedItem = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single { it.transmissionId == "TX-LEASED" }
+        queue.enqueue("TX-READY", PassId.B_OFFLINE) // enqueued after the lease, so it stays READY
+
+        val requeued = queue.requeueFailed()
+
+        assertEquals(0, requeued)
+        val readyRow = db.workQueueDao().findByTransmissionAndPass("TX-READY", PassId.B_OFFLINE.name).single()
+        assertEquals(WorkQueueState.READY, readyRow.state)
+        val leasedRow = db.workQueueDao().getById(leasedItem.id)!!
+        assertEquals(WorkQueueState.LEASED, leasedRow.state)
+        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX-LEASED")!!.processingState)
+    }
+
+    @Test
+    @Requirement("FR-RUN-9")
+    public fun FR_RUN_9_requeueFailed_returns_the_count_and_honours_the_error_prefix_filter(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX-NO-MODEL"))
+        db.transmissionDao().insert(TestFixtures.transmission("TX-OTHER"))
+        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        queue.enqueue("TX-NO-MODEL", PassId.B_OFFLINE)
+        queue.enqueue("TX-OTHER", PassId.B_OFFLINE)
+        val leased = queue.leaseBatch("run-1", limit = 10) { 60_000L }
+        queue.failPass(leased.single { it.transmissionId == "TX-NO-MODEL" }, "no ASR model installed")
+        queue.failPass(leased.single { it.transmissionId == "TX-OTHER" }, "decoder crashed")
+
+        val requeued = queue.requeueFailed(lastErrorPrefix = "no ASR model")
+
+        assertEquals(1, requeued)
+        val stillFailed = db.workQueueDao().findByTransmissionAndPass("TX-OTHER", PassId.B_OFFLINE.name).single()
+        assertEquals(WorkQueueState.FAILED, stillFailed.state)
+        val nowReady = db.workQueueDao().findByTransmissionAndPass("TX-NO-MODEL", PassId.B_OFFLINE.name).single()
+        assertEquals(WorkQueueState.READY, nowReady.state)
+    }
+
+    @Test
     public fun the_active_state_index_does_not_restrict_a_terminal_failed_duplicate(): Unit = runTest {
         db.sessionDao().insert(TestFixtures.session())
         db.transmissionDao().insert(TestFixtures.transmission("TX1"))

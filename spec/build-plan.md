@@ -37,7 +37,7 @@ underlying breakdown each prompt draws on.
 
 - [x] **P3 · Lexicon: grammar** — units, ITU trie, FSA, confusion scoring *(`:lexicon`)* — done 2026-09-07
 - [x] **P4 · Capture and segmentation** — source, resampler, ring, VAD *(`:capture-api`, `:segment`)* — done 2026-09-07
-- [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07
+- [x] **P5 · Data layer and queue** — Room, FTS5, migrations, lifecycle *(`:data`)* — done 2026-09-07; audit F-016 (2026-09-07) added `WorkQueue.requeueFailed` so terminally `FAILED` items get a path back to `READY` (FR-RUN-9, FR-REP-8) — see CHANGELOG
 - [x] **P6 · Synthetic corpus and the two probes** — channel, generator, **R4**, **R1** *(`corpus/`)* — done 2026-09-07; both probes NOT RUN (no Fearless Steps / no LoRA+sherpa-onnx toolchain or GPU in this environment) — see `results/r4-speaker-separation.md`, `results/r1-lora-export.md`
 
 **Wave C — composition.**
