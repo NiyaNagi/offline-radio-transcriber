@@ -230,6 +230,7 @@ public object SettingsPolling {
             ),
             nightsLeftLabel = nightsLeft?.let { "${it.toInt().coerceAtLeast(0)} nights left" },
             autoPruneEnabled = store.autoPruneEnabled,
+            warnAtNightsLeft = StorageForecast.THREE_NIGHTS_THRESHOLD.toInt(),
         )
     }
 
@@ -323,9 +324,22 @@ public object SettingsPolling {
         minSdkLabel = "8.0",
     )
 
+    // R-138 (round 4, System validator): "1.0.0 · build 412 · 6aaa608" is the board's pattern —
+    // the real `versionName` and `versionCode`/`longVersionCode` are read from `PackageManager`
+    // below; the trailing commit hash is not, since no `BuildConfig` field carries the git commit
+    // this build was made at (grepped `app/build.gradle.kts` before writing this) — adding a
+    // fabricated one would be exactly the dishonesty constitution I forbids, so the label ends
+    // after the real build number rather than inventing a hash.
     private fun appVersionName(context: Context): String = try {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
-        info.versionName ?: "dev build"
+        val versionName = info.versionName ?: "dev build"
+        val buildNumber = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+        "$versionName · build $buildNumber"
     } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
         "dev build"
     }

@@ -13,6 +13,18 @@ public data class SettingsRootViewState(val sections: List<SettingsSectionViewSt
 
 /** `Settings-Capture.dc.html`: input/level facts come from `InputStatus`/`LevelStatus` (WP11c) —
  * this is the one row R-090's brief said would be written before those holders existed. */
+/** The three [org.ort.app.ui.components.ToggleRow] callbacks [org.ort.app.ui.settings.SettingsCaptureScreen]
+ * owns, bundled to keep that composable's own parameter list under detekt's threshold — the same
+ * reason `ui/navigation`'s `NavHostCallbacks` bundle exists. Lives here (a plain data holder, not a
+ * screen) rather than in `SettingsCaptureScreen.kt` because detekt's `MatchingDeclarationName` rule
+ * wants a file's one top-level class to share the file's name; that file's own top-level
+ * declaration is the `SettingsCaptureScreen` function. */
+public data class SettingsCaptureToggleActions(
+    val onToggleLevelWarn: (Boolean) -> Unit,
+    val onToggleNoiseReduction: (Boolean) -> Unit,
+    val onToggleBandPass: (Boolean) -> Unit,
+)
+
 public data class SettingsCaptureViewState(
     val inputLabel: String,
     val inputSubLine: String,
@@ -56,6 +68,14 @@ public data class SettingsStorageViewState(
     val categories: List<SettingsStorageCategoryViewState>,
     val nightsLeftLabel: String?,
     val autoPruneEnabled: Boolean,
+    /** R-133 (register, round 4 System validator): `StorageForecast.THREE_NIGHTS_THRESHOLD`, the
+     * real early-warning threshold FR-STO-3/R-105 already computes against — not a board literal. */
+    val warnAtNightsLeft: Int,
+    /** R-133: the same "100 MB" `:pipeline`'s `FailureMapper`/`Fail-Storage` already show for
+     * `RealCaptureService`'s hard floor — that constant is `internal` to `:pipeline` and not
+     * importable here, so this repeats the literal already shipped elsewhere for the same fact
+     * rather than inventing a new one. */
+    val hardFloorLabel: String = "100 MB",
 )
 
 public data class SettingsExportViewState(
@@ -72,7 +92,7 @@ public data class SettingsContributeViewState(
     val categories: List<SettingsContributeCategoryViewState>,
     /** Constitution V's closed list, verbatim — the four categories that never leave the device
      * under any setting here. */
-    val neverIncluded: List<String>,
+    val neverIncluded: List<NeverLeavesDeviceItem>,
 )
 
 public data class SettingsDiagnosticsFileViewState(val name: String, val description: String)
@@ -91,12 +111,26 @@ public data class SettingsAboutViewState(
     val minSdkLabel: String,
 )
 
-/** Constitution III/V, verbatim — the sentence [SettingsContributeViewState.neverIncluded] and
- * `Settings-Export`'s own "never exported" note both restate. Kept as one named constant so both
- * screens quote the same words rather than drifting apart. */
-public val NEVER_LEAVES_DEVICE: List<String> = listOf(
-    "Voiceprints and embeddings",
-    "Names and notes you gave stations",
-    "Station knowledge — who is a regular where, and when",
-    "Your location, precise or coarse",
+/** One row of [NEVER_LEAVES_DEVICE] — a title and, where `Settings-Contribute.dc.html` gives one,
+ * the sub-line explaining why (R-136, round 4 System validator: the title and sub-line had been
+ * merged into a single truncated string before this — "Voiceprints and embeddings" for
+ * "Voiceprints", "Station knowledge — who is a regular where, and when" for "Station knowledge"
+ * plus its own longer sub-line — losing the board's actual per-item wording). */
+public data class NeverLeavesDeviceItem(val title: String, val subLine: String? = null)
+
+/** Constitution III/V, `Settings-Contribute.dc.html` verbatim (R-136) — [SettingsContributeViewState.neverIncluded]
+ * quotes this exactly; `Settings-Export`'s own single-sentence "never exported" note is a separate,
+ * differently-worded restatement `Settings-Export.dc.html` itself gives, so it is not built from
+ * this list. */
+public val NEVER_LEAVES_DEVICE: List<NeverLeavesDeviceItem> = listOf(
+    NeverLeavesDeviceItem("Voiceprints", "a voice is a biometric · it is used here and only here"),
+    NeverLeavesDeviceItem("Names and notes you gave stations"),
+    NeverLeavesDeviceItem(
+        "Station knowledge",
+        "who is a regular where, when they are around — the patterns this phone has learned",
+    ),
+    NeverLeavesDeviceItem(
+        "Your location, precise or coarse",
+        "signal reports are stripped too — S-meter readings can place a receiver",
+    ),
 )

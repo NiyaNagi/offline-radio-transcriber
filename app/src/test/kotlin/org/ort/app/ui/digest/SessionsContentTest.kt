@@ -4,6 +4,8 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -133,9 +135,14 @@ class SessionsContentTest {
         composeTestRule.waitUntilTextExists("Tonight")
         composeTestRule.onNodeWithText("Tonight", substring = true).performClick()
 
-        composeTestRule.waitUntilTextExists("Log")
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Log"))
-        composeTestRule.onNodeWithText("Log").performClick()
+        // R-145 (round 4): the session detail screen now also carries a "Log" text action beside
+        // the `Overs` row (opens the same destination) — scrolling to "Export" (unique, the last
+        // action-bar chip) brings the whole action row into view, so the "Log" node clicked below
+        // (the last "Log" match in composition order) is the in-viewport action-bar one, not the
+        // Overs row's off-screen link.
+        composeTestRule.waitUntilTextExists("Export")
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Export"))
+        composeTestRule.onAllNodesWithText("Log").onLast().performClick()
 
         composeTestRule.waitUntilTextExists("TIME")
         composeTestRule.onNodeWithText("TIME").assertExists()
@@ -166,8 +173,8 @@ class SessionsContentTest {
         composeTestRule.waitUntilTextExists("W7NEW heard for the first time")
         composeTestRule.onNodeWithText("W7NEW heard for the first time").performClick()
 
-        composeTestRule.waitUntilTextExists("The 1 over(s)")
-        composeTestRule.onNodeWithText("The 1 over(s)").performClick()
+        composeTestRule.waitUntilTextExists("The 1 over")
+        composeTestRule.onNodeWithText("The 1 over").performClick()
 
         assert(tapped == "TX1") { "expected onOpenTransmission(\"TX1\"), got $tapped" }
     }

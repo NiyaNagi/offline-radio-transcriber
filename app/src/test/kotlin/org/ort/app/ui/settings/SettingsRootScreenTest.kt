@@ -1,6 +1,8 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import org.junit.Rule
@@ -62,5 +64,12 @@ class SettingsRootScreenTest {
         composeTestRule.onNodeWithContentDescription("Radio. No radio configured").performClick()
 
         assert(opened == SettingsScreenId.RIG) { "expected RIG, got $opened" }
+    }
+
+    @Test
+    fun `R_130 draws no drawer icon of its own — the host's ScreenHeader is the only one`() {
+        composeTestRule.setContent { OrtTheme { SettingsRootScreen(state = state(), onDrawer = {}, onOpen = {}) } }
+
+        composeTestRule.onAllNodesWithContentDescription("Open navigation").assertCountEquals(0)
     }
 }

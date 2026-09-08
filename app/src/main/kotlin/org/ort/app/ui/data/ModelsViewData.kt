@@ -187,6 +187,14 @@ public sealed interface ModelActionResult {
     public data class Failure(public val reason: String) : ModelActionResult
 }
 
+/** R-140 (register, round 4 System validator): a failed *download* specifically — split out of the
+ * generic `lastMessage` string so [org.ort.app.ui.screens.ModelsScreen] can render it as the amber
+ * `FailedState` guide §9 gives every other operator-facing failure, with a real `Retry`, instead of
+ * `:net`'s raw exception text ([reason]) sitting in plain body copy. [reason] is still the real,
+ * unedited failure text — never replaced with a fabricated one — just no longer the *only* thing
+ * shown. */
+public data class ModelDownloadFailureViewState(public val id: ModelId, public val reason: String)
+
 /**
  * Reads and drives model install state for the Models screen. Every write goes through
  * [ModelAcquisition] — this object never writes a model file itself — so "installed" always means

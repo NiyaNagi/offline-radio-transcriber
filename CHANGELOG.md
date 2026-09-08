@@ -32,6 +32,205 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10 round 4: System validator fixes across settings, improve, sessions, digest)
+
+### (pending) — ui-conformance WP10 · System validator fixes: single header, font-scale reflow, promise text, board copy and actions across settings, improve, sessions, digest
+
+**Scope:** `:app` — `ui/settings/**`, `ui/improve/**`, `ui/digest/**`, `ui/screens/ModelsScreen.kt`,
+`ui/data/ModelsViewData.kt`, `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, and tests
+beside each. Read (not edited) `ui/navigation/OrtNavHost.kt`/`ReaderNavigator.kt`/`SetupActivity.kt`
+to confirm the real `EXTRA_STEP`/`SetupStep.INPUT` entry point R-132 needed.
+
+**Requirements/ACs:** R-130, R-131, R-132, R-133, R-134, R-135, R-136, R-137, R-138, R-140, R-141,
+R-142, R-143, R-144, R-145, R-146, R-150, R-151 (this package's half: "R02"/Improve-Select), R-154 —
+the eighteen rows the System validator (V6 @5c8d144) filed against this package's round-3 build.
+Constitution I (Uncertainty Is Content), II (Test-Backed Change), III (nothing leaves the device).
+
+**What changed:**
+
+*Constitution Check.* Principle I: every new number is read from a real holder or computed from a
+real DAO query — `StorageForecast.THREE_NIGHTS_THRESHOLD` (R-133's real "Warn at" threshold), the
+real `versionCode`/`versionName` (R-138), the real per-tier ordinal (R-142's pass sub-lines) —
+never a board literal; where no real source exists (a git-commit `BuildConfig` field, a
+lexicon-import validator, `:onnx`'s runtime version string, a per-session model record queryable
+without the fts5 limitation below), the row states that plainly rather than inventing one, and
+each such gap is named below rather than silently dropped. Principle II: every behavioural change
+has a test named for its id, written against real state, in the same change.
+
+- **R-130 (single header, priority 1):** `SettingsRootScreen`/`SessionsScreen`/`ImproveScreen` each
+  drew their own `ScreenHeader` — `OrtNavHost`'s `NavHostBody` already draws one for the whole
+  destination before dispatching here, so every WP10 root screen doubled it. All three now draw no
+  header of their own; `onDrawer` stays an unused parameter on each (a `@Suppress` added, since
+  detekt's `UnusedParameter` does fire on public composable parameters) so `OrtNavHost.kt`'s call
+  sites — outside this round's file ownership — need no edit. `SettingsRootScreenTest`'s new
+  `R_130` case asserts zero "Open navigation" nodes render from the content itself.
+- **R-150/R-151 (font-scale reflow, priority 2):** `SettingsStorageScreen`'s budget-chip row and
+  category-legend row now sit inside `horizontalScroll` — at font scale 2.0 they previously
+  compressed each chip below its own text's intrinsic width, wrapping "Unlimited" one letter per
+  line. `ImproveSelectScreen` (R-151's "R02" half) was restructured so its scrolling body and its
+  action bar are two siblings in one `Column` (`Modifier.weight(1f)` on the body) rather than an
+  overlay pinned atop scrolled content with hand-matched bottom padding — Compose measures the
+  unweighted sibling first and subtracts its height before measuring the weighted one, so the
+  button can never clip or sit on top of the content at any font scale. F20/Fail-Migration (R-151's
+  other half) is WP11b's file, out of this package's row. New `SettingsStorageScreenTest` cases
+  (`R_150`, via `LocalDensity`/`fontScale = 2f` — `RowsTest.kt`'s own established idiom;
+  `@Config(qualifiers = "fontscale-2.0")` is not a valid Robolectric qualifier string and was tried
+  first) assert the budget chip and legend text each sit inside a scrollable ancestor.
+- **R-135/R-136 (promise text verbatim, priority 3):** `Settings-Export`'s never-exported sentence
+  now renders unconditionally (a `bg/card` banner with the lock icon), verbatim from
+  `Settings-Export.dc.html`, instead of only implicitly through the "not available" `FailedState` —
+  the fact is true regardless of whether an exporter exists. `Settings-Contribute`'s never-included
+  list is now `List<NeverLeavesDeviceItem>` (title + real sub-line, `SettingsViewData.kt`) instead
+  of one merged string per item — "Voiceprints and embeddings" is now "Voiceprints" with its own
+  sub-line, "Station knowledge — who is a regular where, and when" is now "Station knowledge" with
+  the board's own longer sub-line. New `SettingsPollingTest.R_136` case asserts both.
+- **R-141 (shared plural helper, recurs everywhere):** new `org.ort.app.ui.improve.Plurals.count(n,
+  singular, irregular)` — one place "1 overs", "1 session(s)", "N gap(s)" become "1 over"/"N overs"
+  — used across `DigestPolling`, `DigestScreens`, `SessionsScreens`, `ImprovePolling`,
+  `ImproveScreens`, `SettingsExportScreen`, `SettingsDiagnosticsScreen`. Lives in `ui/improve`
+  (Improve was the finding's first cited screen) rather than a new top-level package, since this
+  round's three packages already import across each other.
+- **R-131/R-142/R-143 (Improve content gaps):** `Improve`'s summary ("N overs can get better")
+  now sits in the `bg/card` container the board draws it in and uses `Plurals`; group rows read
+  "Captured at tier N" (the real tier ordinal — the board's "on the field phone" names a device
+  this build has no field for, so it is not asserted). `Improve-Select`'s three passes now carry
+  real sub-lines (pass name, and whether this group's real tier already ran it — no per-tier model
+  name is asserted, since this build has no tier→model-name table); the Estimate section is four
+  real `KeyValueRow`s (Time/Battery/Storage/Corrections) instead of two sentences, each honestly
+  "not estimated" where nothing is measured. R-143: `FakeImproveRunner`'s default per-item delay
+  rose from 40ms to 150ms, and the `field-tier1` debug scenario now seeds 12 overs instead of 1 —
+  at 40ms/1-over the whole run finished before an emulator screenshot script's own settle wait
+  could ever observe `Improve-Running`. `Improve-Done`'s "What changed" breakdown and `Review the N
+  changes` remain absent — no reprocessing engine exists in `:pipeline` to compute a real diff
+  (unchanged since the original WP10 entry; explicitly out of this package's `ui` row).
+- **R-144/R-145/R-146 (Sessions/Session/Digest content gaps):** `Sessions` now groups rows under a
+  real month header (`Instant`→`YearMonth`, local zone) whenever the month changes, and a gap
+  clause in the row's own sub-line carries the board's hatch swatch + `accent/gap` amber instead of
+  plain text. `Session`'s coverage chart no longer draws "COVERAGE" a second time (the
+  `SectionHeader` above it already does — `title = null`); its gap captions and the session's own
+  "not listening" summary now format seconds as "22m 0s" through one shared `secondsLabel` helper
+  instead of two of the three sites printing the raw second count. `Overs` gained the board's `Log`
+  text action; `Models` is a new row, honestly "not tracked per session in this build" — a real
+  per-session model reader would need `TranscriptDao`, which touches the `transcript_fts` virtual
+  table Robolectric's SQLite has no fts5 module for (the same limitation this package's round-3
+  report documented for `LogContent`'s own tests), so querying it here would make every
+  `SessionDetailScreen` test environment-dependent. The action row is now three equal `bg/chip`
+  buttons (Digest/Log/Export) instead of two outlined `SecondaryButton`s — `Export` disabled with
+  the same honest no-exporter reason `Digest`'s own new `Export this night` button gives.
+  `Digest`'s "By the numbers" tiles and `Session`'s own summary tiles both had the *same* bug: each
+  `Tile` asked for `Modifier.fillMaxWidth()` instead of `Modifier.weight(1f)` inside a `Row`, so
+  every tile after the first was measured at the row's full width and laid out off-screen — only
+  one of three ever rendered (matches R-137/R-146's "1 of 3 tiles" exactly). `WORTH KNOWING` now
+  renders (with the app's own "Nothing to report yet." sentence) whenever there is anything in
+  either digest section, not only when `items` itself is non-empty.
+- **R-132 (Settings-Capture actions):** `Device`'s `Change` and `Re-verify the route now`'s
+  `Verify` both launch `SetupActivity` with `EXTRA_STEP = SetupStep.INPUT.name` (the extra WP9's
+  round 3 added to `SetupActivity` — `ReaderNavigator.openSetupInput()` itself still does not pass
+  it, a WP3 file this round may not edit; `SettingsContent` builds its own `Intent` directly rather
+  than route through that stale wrapper). Both real actions land on the same place, since no
+  narrower "re-verify only, keep the same device" entry point exists. `Meter` calls a new
+  `onOpenLevelMeter: () -> Unit = {}`, threaded through `SettingsContent`'s own public signature the
+  same way `initialScreen` was added in round 3 — WP3's row to wire from the host. `Edit` beside the
+  manual frequency is now real: `SettingsStore.manualFrequencyMhz` was read-only in this screen
+  before; a real inline `TextField`/`Save` now writes it, gated on a caller wiring
+  `onEditManualFrequency` (a real value now, not the previous unconditional read-only row).
+- **R-133 (Settings-Storage retention):** added the real "Warn at" (reads
+  `StorageForecast.THREE_NIGHTS_THRESHOLD`, FR-STO-3/R-105's own real threshold), "Then stop
+  retaining audio, keep capturing text" (a fixed architecture fact), and "Hard floor" rows (repeats
+  the literal "100 MB" `:pipeline`'s own `FailureMapper`/`Fail-Storage` already show for
+  `RealCaptureService.STORAGE_FLOOR_BYTES`, which is `internal` to `:pipeline` and not importable
+  here). **Not done:** the board's "Keep audio for N nights · Change" nights-based retention model
+  (replacing the GB-budget chips) and a Lexicon storage category — the former is a real settings
+  persistence redesign (`SettingsStore.audioBudgetGb` is GB-based throughout this build, not
+  nights-based) too large to land safely within this round without its own TDD pass; the latter has
+  no query enumerating every installed lexicon asset id (`CatalogDao.versionsFor` takes one
+  specific id, there is no "list installed" call) to sum real bytes from, so a fabricated 0 B row
+  was not added.
+- **R-134 (Settings-Tier static content):** added "The tiers" (three real, static capability rows —
+  what each tier can/cannot do is a fixed design fact needing no live signal, per the finding's own
+  note) and consequence sub-lines on the override rows, both `Settings-Tier.dc.html` verbatim.
+- **R-137 (Settings-Diagnostics):** the same `fillMaxWidth()`-in-`Row` bug as R-146 above — fixed
+  the same way. Header reads "In the bundle · N files" (`Plurals`) — the board's own "· X.X MB" is
+  not appended, since no producer writes these files yet, so no real total size exists to report
+  (`Settings-Diagnostics.dc.html`'s "2.1 MB" is an illustrative example, not a fact this build could
+  compute). The ~1180px blank gap the finding also named was not independently reproduced from the
+  current source (no absolute-positioned or fixed-height element between the tile row and the file
+  list exists in this file); it may already be resolved by the tile-row fix above, since three
+  tiles rendered hundreds of dp off-screen to the right is exactly the kind of layout bug that
+  produces an unrelated-looking large scroll region — not confirmed on an emulator.
+- **R-138 (Settings-About):** added a `Runtime` row ("ONNX Runtime · NNAPI where this device
+  offers it" — the linked runtime's own version string is not queryable through `:onnx`'s public
+  API, so no version number is asserted) and a title-row icon (`OrtIcons.settings` reused — the
+  guide's stroke set has no bespoke "about" glyph, and `ui/components` is outside this round's file
+  ownership to add one to). The version label now reads "`versionName` · build `versionCode`" — a
+  real `PackageManager` value on both sides — never a fabricated commit hash (`app/build.gradle.kts`
+  carries no `BuildConfig` field for the git commit this build was made at).
+- **R-140 (Settings-Assets):** `ModelsScreen`'s asset list is now grouped by real model family
+  ("Whisper tiny.en (speech to text)" for the three encoder/decoder/tokens files, "Silero VAD
+  (voice activity)" alone) via an exhaustive `when` over every `ModelId` — each part keeps its own
+  real per-file Download/Install actions, since encoder/decoder/tokens are independently
+  downloadable/sideloadable in `ModelsController`; grouping states the split honestly rather than
+  hiding it or leaving it unexplained. A failed download (`ModelsContent`'s new
+  `ModelDownloadFailureViewState`) now renders the amber `FailedState` with a real `Retry` (reuses
+  `onDownload` with the failed asset's own id) instead of `:net`'s raw exception text sitting in
+  the same plain-body slot a success message uses.
+- **R-154 (Fail-Lexicon/F12) — not fixed, and why:** grepped `:app`, `:lexicon` and `:net` before
+  writing this — no lexicon-import validator exists anywhere in the codebase. F12/FR-LEX-12's
+  refusal screen and the validation logic behind it are an unbuilt feature, not a debug-scenario
+  staging gap; a `lexicon-corrupt` scenario cannot "run the same import validation" when there is no
+  import validation to run. Building one is `:lexicon`/`:net` engineering work outside this round's
+  `ui`-package file ownership and this round's time; reported rather than faked with a scenario
+  that calls into nothing.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, unfiltered) — `BUILD SUCCESSFUL in 1m 46s`,
+  every test `PASSED`, including new/changed cases: `SettingsRootScreenTest.R_130`,
+  `SettingsStorageScreenTest` (new file, `R_133` ×1 + `R_150` ×2), `SettingsPollingTest.R_133`/
+  `R_136`/`R_138`, `ModelsScreenTest.R_140` ×2, `SessionsContentTest.FR_UI_1`/`FR_DIG_9` (both
+  updated for the new session-detail layout and re-verified), `ImprovePollingTest` (updated for
+  `ImproveGroupViewState.tierOrdinal`), `DigestPollingTest` (all prior cases still green against
+  the `Plurals`/`secondsLabel` rewiring).
+- `.\gradlew.bat :app:detekt` and `.\gradlew.bat :app:ktlintFormat` — both `BUILD SUCCESSFUL`, zero
+  remaining findings (fixed along the way: `LongParameterList`/`LongMethod` on
+  `SettingsCaptureScreen`/`SettingsSubScreen`/`SettingsExportScreen`/`SettingsStorageScreen`/
+  `ModelsScreen` via extracted composables and a `SettingsCaptureToggleActions` bundle;
+  `UnusedParameter` on the three de-headered root screens' `onDrawer` via `@Suppress`;
+  `MatchingDeclarationName` by moving `SettingsCaptureToggleActions` to `SettingsViewData.kt`).
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 2m 10s`, 845
+  actionable tasks; `dependencyRules: OK`; `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` — `183 covered of 419` (register-only ids like these rows are not
+  in `spec/`'s counted set, so this number is unchanged from the round-3 entry; the FR-cited ids
+  this round touches — e.g. the plural/font-scale/promise fixes — were already covered by tests
+  the round-3 entry's own coverage run counted).
+- `.\gradlew.bat coverageMatrixCheck` — `up to date (183 covered of 419)`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+
+**Left open / not done:**
+- R-133: the nights-based retention model (vs. this build's GB-budget one) and a Lexicon storage
+  category — see that row's own note above for exactly what query/persistence change each needs.
+- R-137: the ~1180px blank-gap symptom not independently reproduced past the tile-row fix that may
+  already resolve it — needs an emulator check, not a Robolectric one.
+- R-138: no real ONNX Runtime version string, no bespoke About icon, no build-commit hash — each
+  needs a capability (`:onnx` API, a new icon in `ui/components`, a `BuildConfig` field) outside
+  this round's row.
+- R-140/R-145: no real per-session/per-asset model-name or Diagnostics total-size figures — both
+  blocked on the same fts5-under-Robolectric limitation or a query this build does not have (see
+  each row's own note).
+- R-143: `Improve-Done`'s "What changed" breakdown and `Review the N changes` remain absent — needs
+  a real reprocessing engine in `:pipeline` (R-091's own long-standing gap), not a `ui`-package fix.
+- R-154: not fixed — no lexicon-import validator exists anywhere in this codebase to stage a
+  scenario against; this is an unbuilt-feature gap, not a staging gap. See that row's note above.
+- Coordinator's process note (unrelated to this package's work, recorded per instruction): this
+  session never ran `gradlew --stop`; one `BUILD FAILED — Gradle build daemon has been stopped:
+  stop command received` was observed mid-session from a concurrent process elsewhere and resolved
+  on retry with no source change.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP2: no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation)
 
 ### (pending) — ui-conformance WP2 · no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation
@@ -830,8 +1029,7 @@ could not previously produce).
   "Act now"), it will not pick up the halt-red override automatically. This mirrors how the rest
   of this component already works (`label`/`partialText` are opaque strings this component does
   not interpret beyond what the guide specifies), but is worth a caller knowing about rather than
-  discovering by a blank amber "Act now".---
-## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)
+  discovering by a blank amber "Act now".---## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)
 
 ### (pending) — ui-conformance WP9 · setup step entry and Install destination
 

@@ -15,6 +15,7 @@ import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.Tile
+import org.ort.app.ui.improve.Plurals
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -42,25 +43,30 @@ public fun SettingsDiagnosticsScreen(
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
             )
 
+            // R-137 (round 4, System validator): each `Tile` asked for `fillMaxWidth()` instead of
+            // `weight(1f)` — inside a `Row`, that makes every tile claim the *whole* row's width
+            // (not a fair share of it), so the second and third tiles were laid out entirely off
+            // the visible screen to the right rather than side by side. Only the first ("capture
+            // state") ever showed.
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
                 horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
             ) {
-                Tile(figure = state.aliveLabel, caption = "capture state", modifier = Modifier.fillMaxWidth())
-                Tile(
-                    figure = state.realTimeFactorLabel,
-                    caption = "RTF, small model",
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Tile(figure = state.aliveLabel, caption = "capture state", modifier = Modifier.weight(1f))
+                Tile(figure = state.realTimeFactorLabel, caption = "RTF, small model", modifier = Modifier.weight(1f))
                 Tile(
                     figure = state.failedPassCount?.toString() ?: "not tracked",
                     caption = "failed passes",
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                 )
             }
 
+            // R-137: "In the bundle · N files · X.X MB" is the board's header shape — the byte
+            // total is not repeated here (no producer writes these files, so no real size exists
+            // to report; `Settings-Diagnostics.dc.html`'s "2.1 MB" is an illustrative example, not
+            // a fact this build could compute — constitution I).
             SectionHeader(
-                label = "Would include ${state.files.size} files",
+                label = "In the bundle · ${Plurals.count(state.files.size, "file")}",
                 modifier = Modifier.padding(top = OrtSpacing.lg),
             )
             state.files.forEach { file ->

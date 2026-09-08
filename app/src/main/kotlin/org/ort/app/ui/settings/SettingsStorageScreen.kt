@@ -1,6 +1,7 @@
 package org.ort.app.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -64,7 +65,15 @@ public fun SettingsStorageScreen(
                 value = state.budgetGb?.let { "$it GB" } ?: "not set",
                 subLine = state.nightsLeftLabel ?: "not enough data to project nights left",
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md)) {
+            // R-150 (round 4, System validator): at font scale 2.0 a fixed-width `Row` squeezes
+            // each chip's `Text` below its own intrinsic width, wrapping "Unlimited" one letter per
+            // line rather than the whole word. `horizontalScroll` keeps every chip at its natural
+            // width and lets the row scroll instead — guide §4/AC-63's "reflow or scroll, never
+            // wrap intra-word".
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
+            ) {
                 listOf(10, 20, 30, 60).forEach { gb ->
                     TextAction(text = "$gb GB", onClick = { onSetBudgetGb(gb) })
                 }
@@ -77,6 +86,7 @@ public fun SettingsStorageScreen(
             )
 
             SectionHeader(label = "When space runs low", modifier = Modifier.padding(top = OrtSpacing.lg))
+            LowSpaceRows(warnAtNightsLeft = state.warnAtNightsLeft, hardFloorLabel = state.hardFloorLabel)
             ToggleRow(
                 label = "Automatically prune the oldest audio first",
                 checked = state.autoPruneEnabled,
@@ -106,6 +116,32 @@ public fun SettingsStorageScreen(
     }
 }
 
+/** R-133 (register, round 4 System validator): "Warn at" reads the real threshold FR-STO-3/R-105's
+ * `StorageForecast` already computes against (not a board literal); "Hard floor" repeats the same
+ * "100 MB" `:pipeline`'s own failure screens already show for `RealCaptureService`'s real,
+ * internal-to-:pipeline constant (see [SettingsStorageViewState]). Split out of
+ * [SettingsStorageScreen] purely to keep that function under detekt's length limit. */
+@Composable
+private fun LowSpaceRows(warnAtNightsLeft: Int, hardFloorLabel: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        KeyValueRow(
+            key = "Warn at",
+            value = "$warnAtNightsLeft nights left",
+            subLine = "notification and status surface",
+        )
+        KeyValueRow(
+            key = "Then stop retaining audio, keep capturing text",
+            value = "always",
+            subLine = "the order is fixed: audio goes before transcripts, and capture never stops silently",
+        )
+        KeyValueRow(
+            key = "Hard floor",
+            value = hardFloorLabel,
+            subLine = "capture stops loudly, never quietly, below this",
+        )
+    }
+}
+
 /** The storage-category bar + legend, split out of [SettingsStorageScreen] purely to keep that
  * function under detekt's length limit. */
 @Composable
@@ -126,8 +162,11 @@ private fun StorageCategoryBreakdown(
                 ) {}
             }
         }
+        // R-150: same fix as the budget chips above — the legend wrapped "Records / 0.0 / GB"
+        // across separate lines at font scale 2.0 when each label was squeezed into a fixed share
+        // of the row's width; scrolling keeps every legend entry intact.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
+            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm).horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
         ) {
             categories.forEach { category ->

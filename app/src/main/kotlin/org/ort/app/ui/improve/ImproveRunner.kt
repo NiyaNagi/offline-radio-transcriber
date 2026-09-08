@@ -40,8 +40,16 @@ public class FakeImproveRunner(
     private val context: Context,
     /** A small per-item delay so a real collector can pause or cancel mid-run (`flow {}`'s `emit`
      * suspends until the collector is ready for the next value — a cold flow's natural backpressure
-     * is what makes `Improve-Running`'s Pause/Cancel genuinely stop work, not just stop display). */
-    private val perItemDelayMillis: Long = 40L,
+     * is what makes `Improve-Running`'s Pause/Cancel genuinely stop work, not just stop display).
+     *
+     * R-143 (round 4, System validator): raised from 40ms — at 40ms, a small group (the
+     * `field-tier1` scenario seeded one over before this round) finished before an emulator
+     * screenshot script's own settle wait could ever observe `Improve-Running` — the screen was
+     * real but effectively unreachable. 150ms keeps a modest group's run visible for a couple of
+     * seconds without making a real, larger reprocess run tediously slow; `ImprovePollingTest`
+     * still passes `0L` where a test wants the run to finish immediately.
+     */
+    private val perItemDelayMillis: Long = 150L,
 ) : ImproveRunner {
     override fun run(transmissionIds: List<String>): Flow<ImproveRunProgress> = flow {
         val db = OrtDatabase.create(context.applicationContext)

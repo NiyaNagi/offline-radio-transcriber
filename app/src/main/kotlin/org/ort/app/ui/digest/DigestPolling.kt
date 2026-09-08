@@ -5,6 +5,7 @@ import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.GapWindow
 import org.ort.app.ui.data.NightlyDeparture
 import org.ort.app.ui.data.SessionWindow
+import org.ort.app.ui.improve.Plurals
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
 import org.ort.core.Tier
@@ -81,10 +82,12 @@ public object DigestPolling {
                 tierChipLabel = tier?.name,
                 canBeImproved = canBeImproved,
                 live = CaptureState.isCapturing && CaptureState.sessionId == session.id,
+                startedAtUtc = session.startedAt,
             )
         }
         return SessionsViewState(
-            headline = "${sessions.size} session(s) · ${totalHours.toInt()} h listened · $totalOvers overs",
+            headline = "${Plurals.count(sessions.size, "session")} · ${totalHours.toInt()} h listened · " +
+                Plurals.count(totalOvers, "over"),
             sessions = rows,
         )
     }
@@ -116,7 +119,7 @@ public object DigestPolling {
             uncleanEndLabel = uncleanEndLabel(session),
             coverage = coverage,
             notListeningLabel = if (gapEntities.isNotEmpty()) {
-                "${gapEntities.size} gap(s) · ${notListeningSeconds}s"
+                "${Plurals.count(gapEntities.size, "gap")} · ${secondsLabel(notListeningSeconds)}"
             } else {
                 null
             },
@@ -331,10 +334,16 @@ public object DigestPolling {
         val seconds = ((gap.endedAt ?: gap.startedAt) - gap.startedAt) / 1000
         val clock = CLOCK_FORMAT.format(Instant.ofEpochMilli(gap.startedAt))
         return DigestNotKnownItemViewState(
-            headline = "${seconds}s at $clock — ${causeProse(gap.cause)}",
+            headline = "${secondsLabel(seconds)} at $clock — ${causeProse(gap.cause)}",
             subLine = "anything transmitted then is not in the record",
         )
     }
+
+    /** R-145 (register, round 4 System validator): the one place a gap's duration in seconds
+     * becomes "22m 0s" prose — [notListeningLabel] and [gapNotKnownItem] used to print the raw
+     * second count ("1320s"); [gapRow] already formatted it this way, so this pulls that formatting
+     * out for all three instead of leaving two of them raw. */
+    private fun secondsLabel(totalSeconds: Long): String = "${totalSeconds / 60}m ${totalSeconds % 60}s"
 
     private fun sessionLabel(session: SessionEntity): String {
         val instant = Instant.ofEpochMilli(session.startedAt)
@@ -368,7 +377,7 @@ public object DigestPolling {
         val durationSeconds = ((gap.endedAt ?: gap.startedAt) - gap.startedAt) / 1000
         return SessionGapRowViewState(
             timeLabel = CLOCK_FORMAT.format(Instant.ofEpochMilli(gap.startedAt)),
-            durationLabel = "${durationSeconds / 60}m ${durationSeconds % 60}s",
+            durationLabel = secondsLabel(durationSeconds),
             causeLabel = causeProse(gap.cause),
             resumedLabel = if (gap.recoveredAutomatically) "resumed automatically" else "recovered manually",
         )

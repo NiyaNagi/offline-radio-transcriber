@@ -23,7 +23,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
-import org.ort.app.ui.components.ScreenHeader
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -35,7 +34,15 @@ import org.ort.app.ui.theme.OrtType
  * state. Before this, the `SETTINGS` destination opened straight into `ModelsScreen` with no root
  * at all (R-090's `what is wrong`) — every row here now drills into its own screen with WP2's
  * [org.ort.app.ui.components.DrillInHeader].
+ *
+ * R-130 (round 4, System validator): this screen draws no `ScreenHeader` of its own — `OrtNavHost`'s
+ * `NavHostBody` already renders one for the whole `SETTINGS` destination (root and every sub-screen
+ * alike) before dispatching to `SettingsContent`, so a second one here stacked two bare drawer-icon
+ * rows and pushed every section down. [onDrawer] stays a parameter (unused in this file) only so
+ * `SettingsContent`'s own signature — and `OrtNavHost.kt`'s call site, outside this package's row —
+ * need no edit.
  */
+@Suppress("UnusedParameter") // onDrawer: kept only so SettingsContent's signature needs no edit — see kdoc above.
 @Composable
 public fun SettingsRootScreen(
     state: SettingsRootViewState,
@@ -44,7 +51,6 @@ public fun SettingsRootScreen(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        ScreenHeader(onDrawer = onDrawer)
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Text(
                 text = "Settings",

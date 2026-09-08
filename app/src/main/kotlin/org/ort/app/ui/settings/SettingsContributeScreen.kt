@@ -73,12 +73,17 @@ public fun SettingsContributeScreen(
                         tint = OrtColors.textDim,
                         modifier = Modifier.padding(top = 3.dp).size(15.dp),
                     )
-                    Text(
-                        text = item,
-                        style = OrtType.control,
-                        color = OrtColors.textBody,
-                        modifier = Modifier.padding(start = OrtSpacing.md),
-                    )
+                    Column(modifier = Modifier.padding(start = OrtSpacing.md)) {
+                        Text(text = item.title, style = OrtType.control, color = OrtColors.textBody)
+                        item.subLine?.let {
+                            Text(
+                                text = it,
+                                style = OrtType.subLine,
+                                color = OrtColors.textDim,
+                                modifier = Modifier.padding(top = 1.dp),
+                            )
+                        }
+                    }
                 }
             }
 

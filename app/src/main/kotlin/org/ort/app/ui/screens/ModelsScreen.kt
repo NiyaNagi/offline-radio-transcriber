@@ -23,6 +23,7 @@ import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.data.ModelDownloadFailureViewState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
@@ -58,6 +59,12 @@ public fun ModelsScreen(
     onSideload: (ModelId) -> Unit,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    // R-140: a failed download renders as this amber `FailedState`, not the plain-text
+    // `lastMessage` above (mutually exclusive in practice — `ModelsContent` clears one when it
+    // sets the other) — `null` (the default) keeps every existing caller compiling unchanged.
+    // `Retry` reuses [onDownload] itself (with the failed asset's own id) rather than adding a
+    // tenth parameter for what is, structurally, the same action.
+    downloadFailure: ModelDownloadFailureViewState? = null,
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         onBack?.let { back -> DrillInHeader(parentLabel = "Settings", onBack = back) }
@@ -103,10 +110,37 @@ public fun ModelsScreen(
                         .semantics { contentDescription = "Last action: $message" },
                 )
             }
+            // R-140: a failed download used to leave `:net`'s raw exception text sitting in the
+            // same plain-body slot a success message uses — this is the amber `FailedState`
+            // every other operator-facing failure in this build gets, with a real `Retry`.
+            downloadFailure?.let { failure ->
+                FailedState(
+                    title = "${failure.id.label} could not be downloaded",
+                    body = "The download did not complete: ${failure.reason}. The version already " +
+                        "installed, if any, is unchanged.",
+                    actionLabel = "Retry",
+                    onAction = { onDownload(failure.id) },
+                    modifier = Modifier.padding(top = OrtSpacing.sm),
+                )
+            }
 
             SectionHeader(label = "Assets", modifier = Modifier.padding(top = OrtSpacing.lg))
-            state.rows.forEach { row ->
-                AssetRow(row = row, isBusy = row.id in busy, onDownload = onDownload, onSideload = onSideload)
+            // R-140 (round 4, System validator): grouped by real model family — was one flat row
+            // per [ModelId], so the Whisper encoder/decoder/tokens files (three real, independently
+            // downloadable/sideloadable parts of *one* model — `ModelsController`'s own unit of
+            // action) read as three unrelated assets. Grouping states the split honestly (a family
+            // caption, each part still its own row with its own real actions) rather than either
+            // hiding the split or leaving it unexplained.
+            groupAssetRows(state.rows).forEach { group ->
+                Text(
+                    text = group.familyLabel,
+                    style = OrtType.subLine,
+                    color = OrtColors.textFaint,
+                    modifier = Modifier.padding(top = OrtSpacing.sm),
+                )
+                group.parts.forEach { row ->
+                    AssetRow(row = row, isBusy = row.id in busy, onDownload = onDownload, onSideload = onSideload)
+                }
             }
 
             Text(
@@ -196,6 +230,26 @@ private fun AssetRow(
             )
         }
     }
+}
+
+/** R-140: [ModelId]'s real family grouping — the ASR encoder/decoder/tokens are three files of one
+ * Whisper model; VAD stands alone. A `when` over every [ModelId] (no `else`) so a future asset
+ * added to that enum fails to compile here rather than silently landing in the wrong (or no)
+ * group. */
+private fun familyOf(id: ModelId): String = when (id) {
+    ModelId.ASR_ENCODER, ModelId.ASR_DECODER, ModelId.ASR_TOKENS -> "Whisper tiny.en (speech to text)"
+    ModelId.VAD -> "Silero VAD (voice activity)"
+}
+
+private data class AssetGroup(val familyLabel: String, val parts: List<ModelRowViewState>)
+
+/** Groups [rows] by [familyOf], preserving each family's first-seen order (never re-sorted —
+ * [ModelsViewState.rows]' own order is [ModelCatalog][org.ort.data.ModelCatalog]'s, not this
+ * screen's to reinterpret). */
+private fun groupAssetRows(rows: List<ModelRowViewState>): List<AssetGroup> {
+    val order = LinkedHashMap<String, MutableList<ModelRowViewState>>()
+    rows.forEach { row -> order.getOrPut(familyOf(row.id)) { mutableListOf() }.add(row) }
+    return order.map { (family, parts) -> AssetGroup(family, parts) }
 }
 
 private val MARKER_COLUMN_WIDTH = 17.dp

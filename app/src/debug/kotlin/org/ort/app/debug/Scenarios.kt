@@ -74,6 +74,9 @@ public object Scenarios {
 
     public data class LoadResult(val transmissionCount: Int, val sessionCount: Int, val primarySessionId: String?)
 
+    /** R-143: how many overs [fieldTier1] seeds — see that function's own doc comment. */
+    private const val FIELD_TIER1_OVER_COUNT: Int = 12
+
     /**
      * Every scenario name `spec/ui-conformance-plan.md` §E and `design/design-intent.md` need
      * reachable. WP11a (register R-104/R-105/R-106) closed the three gaps this list used to note
@@ -557,9 +560,15 @@ public object Scenarios {
 
     /**
      * `field-tier1` — a session flagged as captured at tier 1 ([org.ort.data.entity.SessionEntity.deviceTier]
-     * is the only tier field `:data` carries, and it is a plain, freely-settable `String?`).
-     * **Nothing in the built reader renders it yet** (`Settings-Tier`/CF05 is a placeholder,
-     * register R-090) — representable in data, not yet wired to any screen; reported as such.
+     * is the only tier field `:data` carries, and it is a plain, freely-settable `String?`). Now
+     * wired end to end by WP10 (register R-090/R-091, round 3): `Settings-Tier`/CF05 and
+     * `Improve`/`Improve-Select`/`Improve-Running` all read it.
+     *
+     * R-143 (round 4, System validator): a single over made `Improve-Running` (R03) unreachable on
+     * the emulator — [FakeImproveRunner]'s per-item delay times the *whole* run, so one over
+     * finished before a screenshot script's own settle wait could ever catch it running. Twelve
+     * overs (`FIELD_TIER1_OVER_COUNT`), still a real, honest number [ImprovePolling] counts for
+     * real, gives the run a visible multi-second span at the runner's default per-item delay.
      */
     private suspend fun fieldTier1(db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("field-tier1")
@@ -571,30 +580,33 @@ public object Scenarios {
                 deviceTier = org.ort.core.Tier.T1.name,
             ),
         )
-        val startedAt = SystemClock.wallMillis() - 400_000L
-        val txId = "$sessionId-tx1"
-        db.transmissionDao().insert(
-            ScenarioFixtures.transmission(
-                id = txId,
-                sessionId = sessionId,
-                startedAtUtc = startedAt,
-                samplePosition = 1L,
-                frequencyHz = 146_960_000L,
-                attributionState = AttributionState.INFERRED,
-                stationId = "K7LWH",
-                attributionConfidence = 0.68,
-            ),
-        )
-        db.transcriptDao().insert(
-            ScenarioFixtures.transcript(
-                id = "$txId-t1",
-                transmissionId = txId,
-                text = "roger that, good copy on the repeater this morning",
-                isCurrent = true,
-                createdAt = startedAt + 1_000L,
-            ),
-        )
-        return LoadResult(1, 1, sessionId)
+        val baseStartedAt = SystemClock.wallMillis() - 400_000L
+        repeat(FIELD_TIER1_OVER_COUNT) { i ->
+            val txId = "$sessionId-tx${i + 1}"
+            val startedAt = baseStartedAt + i * 20_000L
+            db.transmissionDao().insert(
+                ScenarioFixtures.transmission(
+                    id = txId,
+                    sessionId = sessionId,
+                    startedAtUtc = startedAt,
+                    samplePosition = (i + 1).toLong(),
+                    frequencyHz = 146_960_000L,
+                    attributionState = AttributionState.INFERRED,
+                    stationId = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size],
+                    attributionConfidence = 0.68,
+                ),
+            )
+            db.transcriptDao().insert(
+                ScenarioFixtures.transcript(
+                    id = "$txId-t1",
+                    transmissionId = txId,
+                    text = "roger that, good copy on the repeater this morning",
+                    isCurrent = true,
+                    createdAt = startedAt + 1_000L,
+                ),
+            )
+        }
+        return LoadResult(FIELD_TIER1_OVER_COUNT, 1, sessionId)
     }
 
     /** `search-corpus` — enough transcripts containing "park activation" for ~14 hits across 3 nights. */

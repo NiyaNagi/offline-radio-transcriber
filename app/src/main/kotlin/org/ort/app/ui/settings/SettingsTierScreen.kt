@@ -1,7 +1,9 @@
 package org.ort.app.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -60,20 +62,85 @@ public fun SettingsTierScreen(
                 )
             }
 
+            // R-134 (round 4, System validator): "the tiers" is static architecture copy — what
+            // each tier can and cannot do is a fixed design fact, not a live measurement, so it
+            // needs no signal to state honestly (`Settings-Tier.dc.html` verbatim).
+            SectionHeader(label = "The tiers", modifier = Modifier.padding(top = OrtSpacing.lg))
+            TIER_CAPABILITIES.forEach { tier -> TierCapabilityRow(tier) }
+
             SectionHeader(label = "Override", modifier = Modifier.padding(top = OrtSpacing.lg))
             RadioRow(
                 label = "Let the phone choose",
                 selected = !state.isOverridden,
                 onClick = { onSelectOverride(null) },
+                subtitle = "drops a tier when warm or behind, comes back when it can, tells you both times",
             )
             listOf("T0", "T1", "T2").forEach { tier ->
                 RadioRow(
                     label = "Hold at $tier",
                     selected = state.isOverridden && state.overrideLabel == "Held at $tier",
                     onClick = { onSelectOverride(tier) },
+                    subtitle = OVERRIDE_CONSEQUENCES[tier],
                 )
             }
             Column(modifier = Modifier.padding(bottom = OrtSpacing.lg)) {}
+        }
+    }
+}
+
+/** One row of [TIER_CAPABILITIES] — tier number, name, and what it does/does not know. */
+private data class TierCapability(val ordinal: Int, val title: String, val detail: String)
+
+/** `Settings-Tier.dc.html` verbatim (R-134) — static per-tier architecture facts, true regardless
+ * of which tier is currently running, so no live signal is needed to state them. */
+private val TIER_CAPABILITIES: List<TierCapability> = listOf(
+    TierCapability(
+        ordinal = 1,
+        title = "Capture and a live transcript",
+        detail = "Tiny model only. No voice match, no Pass C, no threads. Attributes only what it " +
+            "hears spelled out plainly — everything else is unknown, not guessed. The field-phone tier.",
+    ),
+    TierCapability(
+        ordinal = 2,
+        title = "Adds the small model and voice matching",
+        detail = "Fewer transcript errors, inferred attributions, threads. Pass C off — ambiguous " +
+            "overs stay ambiguous rather than resolve from the audio. Where this phone lands when warm.",
+    ),
+    TierCapability(
+        ordinal = 3,
+        title = "Everything",
+        detail = "Pass C resolves callsigns against the audio itself, not the transcript. The most " +
+            "callsigns, and the ones it is least sure of are still marked that way.",
+    ),
+)
+
+/** `Settings-Tier.dc.html` verbatim (R-134): the consequence line under each hold-at-tier override
+ * — `null` (T0/T1) means the board draws no such row for that tier; the option itself still works,
+ * it just states no consequence beyond what "The tiers" above already says. */
+private val OVERRIDE_CONSEQUENCES: Map<String, String?> = mapOf(
+    "T2" to "cooler and longer on battery · Pass C can be run later from Improve records",
+)
+
+@Composable
+private fun TierCapabilityRow(tier: TierCapability, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.sm),
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
+    ) {
+        Text(
+            text = "${tier.ordinal}",
+            style = OrtType.rowTitle,
+            color = OrtColors.textHigh,
+            modifier = Modifier.padding(top = 1.dp),
+        )
+        Column {
+            Text(text = tier.title, style = OrtType.control, color = OrtColors.textHigh)
+            Text(
+                text = tier.detail,
+                style = OrtType.subLine,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = 2.dp),
+            )
         }
     }
 }

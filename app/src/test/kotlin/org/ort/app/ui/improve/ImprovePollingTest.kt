@@ -112,7 +112,7 @@ class ImprovePollingTest {
     fun `R_091 select computes a real corrections-to-reapply count, never fabricated`(): Unit = runTest {
         db.sessionDao().insert(session("S1", tier = "T1"))
         db.transmissionDao().insert(transmission("TX1", "S1"))
-        val group = ImproveGroupViewState("g", "headline", "sub", 1, listOf("TX1"))
+        val group = ImproveGroupViewState("g", "headline", "sub", 1, listOf("TX1"), tierOrdinal = 1)
 
         val select = ImprovePolling.select(context, group)
 
