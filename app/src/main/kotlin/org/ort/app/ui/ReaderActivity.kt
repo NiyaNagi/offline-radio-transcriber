@@ -11,6 +11,7 @@ import org.ort.app.ui.failures.FailureHostActions
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.navigation.rememberReaderNavigator
+import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.CaptureState
@@ -33,6 +34,14 @@ import org.ort.pipeline.capture.CaptureState
  * activity only consumes the extra, per this package's row). An unset or unrecognised extra value
  * falls back to [ReaderDestination.NOW], exactly as no extra at all does.
  *
+ * [EXTRA_SETTINGS_SCREEN] (round 5, defined here for WP9 to pass later): the name of a
+ * [SettingsScreenId] to land [org.ort.app.ui.settings.SettingsContent] on directly, alongside
+ * [EXTRA_DESTINATION]`=SETTINGS` — Setup S12's `Install` action is its intended first caller (it
+ * wants `Assets`, not the `Settings` root); no caller passes it yet, since S12 itself is WP9's file,
+ * outside this package's row this round. An unset, unrecognised, or absent value falls back to
+ * `null` (the `Settings` root), the same "honest until wired" treatment [resolveInitialDestination]
+ * already gives [EXTRA_DESTINATION].
+ *
  * audit F-022: [CaptureState.sessionId] -- published by `RealCaptureService.startCapture()` the
  * moment capture actually starts -- is preferred over the intent extra whenever the two differ and
  * capture is genuinely live. This activity is not only reached through `MainActivity`'s own fix for
@@ -50,26 +59,38 @@ import org.ort.pipeline.capture.CaptureState
  *
  * ui-conformance-plan WP11b, register R-100/R-101: [org.ort.app.ui.failures.FailureHost] mounts
  * here, above [OrtNavHost] — the one edit WP11b made to this file. Round 3 (WP3, this package)
- * wires the remaining recovery actions through a [org.ort.app.ui.navigation.ReaderNavigator],
- * shared with [OrtNavHost] below so both act on the same drawer state:
+ * wired the remaining recovery actions through a [org.ort.app.ui.navigation.ReaderNavigator],
+ * shared with [OrtNavHost] below so both act on the same drawer state; round 5 upgrades three of
+ * them from "lands on the `Settings` root, the operator finds the row themselves" to "lands
+ * directly on the real sub-screen", now that WP10 merged `SettingsContent.initialScreen`
+ * (confirmed by reading that file before rewiring this):
  * - `onOpenBatteryExemptionSettings` still launches the OS's own battery-exemption settings screen
  *   directly (WP11b's own wiring, unchanged — it names a real platform surface this package has no
  *   in-app equivalent for).
- * - `onOpenStorageSettings`/`onOpenRetentionSettings` ("Free up space"/"Retention") now open this
- *   app's own `Settings` destination via [org.ort.app.ui.navigation.ReaderNavigator.openSettingsStorage]
- *   instead of the OS storage settings screen, now that WP10's real Storage sub-screen exists —
- *   landing on `Settings`' *root*, not the `Storage` sub-screen directly, since `SettingsContent`
- *   exposes no way to open at a specific sub-screen (see that function's own report/CHANGENOTE).
- * - `onSetFrequencyByHand` opens `Settings` the same way, for the same reason (the Rig sub-screen
- *   is where a hand-entered frequency would live, and is equally unreachable directly).
- * - `onChooseAnotherInput` calls [org.ort.app.ui.navigation.ReaderNavigator.openSetupInput] —
+ * - `onOpenStorageSettings`/`onOpenRetentionSettings` (F6, "Free up space"/"Retention") now open
+ *   [org.ort.app.ui.navigation.ReaderNavigator.openSettings] with [SettingsScreenId.STORAGE] —
+ *   landing directly on the real Storage sub-screen, not its root.
+ * - `onReconnectRig` (F9, "Reconnect") is a real target for the first time: `openSettings` with
+ *   [SettingsScreenId.RIG] — previously a documented no-op stub, since navigating anywhere useful
+ *   needed the same sub-screen entry this round adds.
+ * - `onSetFrequencyByHand` now also uses `openSettings`, with [SettingsScreenId.CAPTURE] rather
+ *   than `RIG` — reading `SettingsCaptureScreen.kt` before wiring this found the hand-entered
+ *   frequency row ("Log overs against, MHz", subline "used only while the rig is disconnected or
+ *   absent" — exactly this failure's own condition) lives under `Settings-Capture`, not
+ *   `Settings-Rig`; the round-3 comment that guessed `Rig` was wrong, corrected here.
+ * - `onChooseAnotherInput` still calls [org.ort.app.ui.navigation.ReaderNavigator.openSetupInput] —
  *   see that function's own doc comment for why it cannot reliably reach Setup's `Input` step.
- * - `onRetryInput`/`onReconnectRig` stay documented no-op stubs: "retry the current input" and
- *   "reconnect the rig" are capture/rig actions, not navigation — this package's row is everything
- *   under `ui/navigation`, and neither `:capture-android` nor `:pipeline` (F9's rig module,
- *   unbuilt — register R-084) exposes a callable retry/reconnect entry point today.
- *   `onEndSession`/`onRequestUsbPermission` are untouched this round (not named in this round's
- *   brief).
+ * - `onRetryInput`/`onEndSession`/`onRequestUsbPermission` stay documented no-op stubs: "retry the
+ *   current input", "end the session" and "grant USB permission" are capture/system actions, not
+ *   navigation — this package's row is everything under `ui/navigation`, and neither
+ *   `:capture-android` nor `:pipeline` exposes a callable entry point for any of the three today
+ *   (checked again this round; unchanged from round 3/4's own finding).
+ * - "N06 `Adjust`" (round 5 brief) has no real target to route: `LevelMeterScreen.kt`'s own text
+ *   ("In the band. Nothing to adjust.", R-175) is a status sentence, not a button — grepped
+ *   `CaptureStatusContent.kt`/`LevelMeterScreen.kt` for "Adjust" again this round and found nothing,
+ *   confirming round 4's own conclusion. `Settings-Capture`'s own re-verify action needs no routing
+ *   here either — it is already real, wired entirely inside `ui/settings/SettingsContent.kt`
+ *   (`onOpenInputSetup`, confirmed by reading that file), not a `FailureHostActions` entry.
  *
  * Register R-178 (WP11b follow-up): [FailureHost]'s `content` slot now hands back the currently
  * showing banner's real, measured height — forwarded straight into [OrtNavHost]'s own
@@ -87,9 +108,13 @@ public class ReaderActivity : ComponentActivity() {
             isCapturing = CaptureState.isCapturing,
         )
         val initialDestination = resolveInitialDestination(intent?.getStringExtra(EXTRA_DESTINATION))
+        val initialSettingsScreen = resolveInitialSettingsScreen(intent?.getStringExtra(EXTRA_SETTINGS_SCREEN))
         setContent {
             OrtTheme {
-                val navigator = rememberReaderNavigator(initialDestination = initialDestination)
+                val navigator = rememberReaderNavigator(
+                    initialDestination = initialDestination,
+                    initialSettingsScreen = initialSettingsScreen,
+                )
                 FailureHost(
                     sessionId = sessionId,
                     actions = FailureHostActions(
@@ -97,9 +122,10 @@ public class ReaderActivity : ComponentActivity() {
                         onOpenBatteryExemptionSettings = {
                             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                         },
-                        onOpenStorageSettings = { navigator.openSettingsStorage() },
-                        onOpenRetentionSettings = { navigator.openSettingsStorage() },
-                        onSetFrequencyByHand = { navigator.open(ReaderDestination.SETTINGS) },
+                        onOpenStorageSettings = { navigator.openSettings(SettingsScreenId.STORAGE) },
+                        onOpenRetentionSettings = { navigator.openSettings(SettingsScreenId.STORAGE) },
+                        onSetFrequencyByHand = { navigator.openSettings(SettingsScreenId.CAPTURE) },
+                        onReconnectRig = { navigator.openSettings(SettingsScreenId.RIG) },
                     ),
                 ) { contentTopPadding ->
                     OrtNavHost(sessionId = sessionId, navigator = navigator, contentTopPadding = contentTopPadding)
@@ -111,6 +137,7 @@ public class ReaderActivity : ComponentActivity() {
     public companion object {
         public const val EXTRA_SESSION_ID: String = "session_id"
         public const val EXTRA_DESTINATION: String = "destination"
+        public const val EXTRA_SETTINGS_SCREEN: String = "settings_screen"
     }
 }
 
@@ -121,6 +148,15 @@ public class ReaderActivity : ComponentActivity() {
  */
 internal fun resolveInitialDestination(extra: String?): ReaderDestination =
     ReaderDestination.entries.firstOrNull { it.name == extra } ?: ReaderDestination.NOW
+
+/**
+ * [ReaderActivity.EXTRA_SETTINGS_SCREEN]'s parse (round 5): the same "fall back rather than crash"
+ * shape as [resolveInitialDestination], for the identical reason — `null` (unset, unrecognised, or
+ * a caller that never passes this extra at all) opens `SettingsContent`'s root, exactly as before
+ * this extra existed.
+ */
+internal fun resolveInitialSettingsScreen(extra: String?): SettingsScreenId? =
+    SettingsScreenId.entries.firstOrNull { it.name == extra }
 
 /**
  * R-007's routing decision, pulled out as a pure function (no `Activity`, no `Context`) so it is
