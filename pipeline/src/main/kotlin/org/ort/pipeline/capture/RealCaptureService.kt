@@ -152,6 +152,15 @@ public class RealCaptureService : Service() {
     // actually been fed to it (Segmenter.position(), unchanged in :segment).
     private var segmenter: Segmenter? = null
 
+    // R-113: captured once at open so every InputStatus republish (route change, device loss,
+    // resume) reuses the same expected device and open timestamp rather than re-deriving them.
+    // io/device are locals inside startCapture(); these are the fields the event handlers in
+    // runCaptureFlow() read instead.
+    private var selectedInputDevice: AudioDeviceDescriptor? = null
+    private var currentAudioIo: AudioIo? = null
+    private var inputOpenedAtWallMillis: Long = 0L
+    private var inputRouteConfirmedThisSession = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -216,6 +225,24 @@ public class RealCaptureService : Service() {
         val audioSource = AudioRecordSource(io, device)
         source = audioSource
         CaptureState.capturing(sessionId)
+
+        // R-113: published honestly as "not yet verified" here -- the OS has not actually routed
+        // anything until AudioRecordSource's first successful read confirms it. runCaptureFlow's
+        // CaptureEvent.Frames branch republishes this with routeVerified/routedDeviceMatches true
+        // the moment that first read succeeds (AudioRecordSource never emits Frames before its own
+        // route check passes -- see that class's kdoc).
+        currentAudioIo = io
+        selectedInputDevice = device
+        inputOpenedAtWallMillis = SystemClock.wallMillis()
+        inputRouteConfirmedThisSession = false
+        InputStatus.opened(
+            descriptor = device,
+            nativeRateHz = audioSource.deviceFormat.sampleRate,
+            resamplerId = resamplerIdLabel(audioSource.resamplerIdentity),
+            routeVerified = false,
+            routedDeviceMatches = false,
+            openedAtMillis = inputOpenedAtWallMillis,
+        )
 
         // audit F-028: before this, nothing in the running service constructed a GapTracker --
         // AudioRecordSource emitted Interrupted/Resumed (and, after F-010, a dropped-span cause)
@@ -319,6 +346,14 @@ public class RealCaptureService : Service() {
             when (event) {
                 is CaptureEvent.Frames -> {
                     builtSegmenter.onAudio(shortsToFloats(event.pcm))
+                    publishLevelStatus(audioSource)
+                    if (!inputRouteConfirmedThisSession) {
+                        // AudioRecordSource never emits Frames before its own first-read route
+                        // check has already passed (see that class's kdoc) -- this is the
+                        // accurate "verified" signal, not an assumption.
+                        inputRouteConfirmedThisSession = true
+                        refreshInputStatusFromRoute(audioSource)
+                    }
                     val now = SystemClock.wallMillis()
                     if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
                         lastHeartbeatAt = now
@@ -327,15 +362,23 @@ public class RealCaptureService : Service() {
                 }
                 is CaptureEvent.Failed -> {
                     CaptureState.failed(event.error)
+                    // R-113: the only other path (besides RouteChanged) that can land on a route
+                    // mismatch -- AudioRecordSource's very first read can fail verification before
+                    // any RouteChanged event was ever pending. See RouteVerifier's message shape.
+                    if (event.error.startsWith(ROUTE_MISMATCH_ERROR_PREFIX)) {
+                        refreshInputStatusFromRoute(audioSource)
+                    }
                     updateNotification(CaptureNotificationContent.State.FAILED)
                 }
-                CaptureEvent.RouteChanged -> Unit
+                CaptureEvent.RouteChanged -> refreshInputStatusFromRoute(audioSource)
                 is CaptureEvent.Interrupted -> {
                     CaptureState.interrupted(event.cause)
+                    InputStatus.lost(sinceMillis = SystemClock.wallMillis())
                     updateNotification(CaptureNotificationContent.State.INTERRUPTED)
                 }
                 CaptureEvent.Resumed -> {
                     CaptureState.capturing(sessionId)
+                    refreshInputStatusFromRoute(audioSource)
                     updateNotification(CaptureNotificationContent.State.CAPTURING)
                 }
                 CaptureEvent.EndOfStream -> Unit
@@ -483,6 +526,61 @@ public class RealCaptureService : Service() {
         CaptureState.failed(reason)
         updateNotification(CaptureNotificationContent.State.FAILED)
         source?.stop()
+    }
+
+    /**
+     * R-113: reads the OS's live routed device the same way [AudioRecordSource] itself does
+     * ([AudioIo.routedDevice]) and republishes [InputStatus] accordingly — a match republishes
+     * [InputStatus.State.Opened] with both booleans true; a mismatch (or nothing routed) publishes
+     * [InputStatus.State.Mismatch] instead, never silently keeping the old [InputStatus.opened]
+     * (constitution IV). Called wherever the route can actually have changed: the first confirmed
+     * read this session, every [CaptureEvent.RouteChanged], a route-mismatch [CaptureEvent.Failed],
+     * and [CaptureEvent.Resumed] after the device reopens.
+     */
+    private fun refreshInputStatusFromRoute(audioSource: AudioRecordSource) {
+        val expected = selectedInputDevice ?: return
+        val routed = currentAudioIo?.routedDevice()
+        if (routed != null && routed.id == expected.id) {
+            InputStatus.opened(
+                descriptor = expected,
+                nativeRateHz = audioSource.deviceFormat.sampleRate,
+                resamplerId = resamplerIdLabel(audioSource.resamplerIdentity),
+                routeVerified = true,
+                routedDeviceMatches = true,
+                openedAtMillis = inputOpenedAtWallMillis,
+            )
+        } else {
+            InputStatus.mismatch(expected, routed)
+        }
+    }
+
+    /**
+     * R-113: [org.ort.captureapi.ResamplerIdentity] is nullable (a native-rate device resamples
+     * nothing); `InputStatus.Opened.resamplerId` is not, so "no resampler" is stated honestly
+     * rather than left blank.
+     */
+    private fun resamplerIdLabel(identity: org.ort.captureapi.ResamplerIdentity?): String =
+        identity?.toString() ?: "none (native rate matches output)"
+
+    /**
+     * R-112: reads [AudioRecordSource.levelMeter]'s already-computed snapshot — a cheap, lock-free
+     * field read, never blocking the frame path — and republishes it through [LevelStatus]. A
+     * no-op until the meter has processed its first frame this session (`snapshot` still `null`).
+     */
+    private fun publishLevelStatus(audioSource: AudioRecordSource) {
+        val snapshot = audioSource.levelMeter.snapshot ?: return
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = snapshot.peakDbfs,
+                rmsDbfs = snapshot.rmsDbfs,
+                noiseFloorDbfs = snapshot.noiseFloorDbfs,
+                clipped = snapshot.clipped,
+                clipCountLastSecond = snapshot.clipCountLastSecond,
+                sampleRateHz = snapshot.sampleRateHz,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = snapshot.peakHistoryDbfs,
+        )
     }
 
     private fun onHeartbeat() {
@@ -768,6 +866,14 @@ public class RealCaptureService : Service() {
          * duplicating the string.
          */
         internal const val OS_STOPPED_GAP_CAUSE: String = "os stopped: unclean end detected on launch"
+
+        /**
+         * R-113: the literal prefix [org.ort.capture.android.AudioRecordSource] emits both places
+         * it can fail a route check (`"route mismatch: " + verdict.reason`) — matched, not
+         * duplicated, so [refreshInputStatusFromRoute] only fires for an actual route mismatch and
+         * not some other [CaptureEvent.Failed] reason (e.g. "device open failed").
+         */
+        internal const val ROUTE_MISMATCH_ERROR_PREFIX: String = "route mismatch:"
 
         /**
          * R-102: the explicit component this app's own notification's Open action targets — see

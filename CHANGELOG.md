@@ -32,6 +32,140 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11c)
+
+### (pending) — ui-conformance WP11c · LevelStatus and InputStatus holders, capture-path level meter, level and input scenarios
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/capture/{LevelStatus,InputStatus}.kt`;
+`RealCaptureService.kt` (wiring only — the frame-path `LevelStatus` publish and the `InputStatus`
+publish at open/route-change/device-loss/resume); new
+`capture-android/src/main/kotlin/org/ort/capture/android/LevelMeter.kt`; `AudioRecordSource.kt`
+(the single tap point that hands frames to the new `levelMeter` field — two lines, nothing else in
+that file); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (`level-low`, `level-clip`,
+`input-verified`, `input-mismatch`, plus resetting the two new holders in
+`resetProcessWideFacets()`); tests beside each (new: `LevelStatusTest.kt`, `InputStatusTest.kt`,
+`LevelMeterTest.kt`; additions to `ScenariosTest.kt`); `results/ui-audit/README.md` (scenario
+table, one new "Known gaps" entry for `input-mismatch`). `results/coverage-matrix.md` regenerated
+(gate side-effect, not hand-edited). No file under `app/src/main/**` touched.
+
+**Requirements/ACs:** register R-112, R-113; F1, F3 (spec §12); FR-CAP-2a, FR-CAP-3, FR-CAP-3a,
+FR-RUN-11, FR-UI-7.
+
+**Constitution check.** Principle I (uncertainty is content) bore throughout: `LevelStatus`/
+`InputStatus` both default to an honest `NotMeasured`/`None` rather than an invented reading;
+`InputStatus.opened` is published at device-selection time with `routeVerified = false` and only
+republished `true` once `AudioRecordSource`'s own first-read verification has actually passed
+(it never emits `Frames` before that check succeeds — the accurate signal, not an assumption);
+`InputStatus.lost` refuses to invent a placeholder descriptor when there is no real prior `Opened`
+to carry forward. Principle IV (capture never blocks, never lies) bore directly on `LevelMeter`:
+O(n) arithmetic over the frame already in memory, one immutable snapshot published per call to a
+`@Volatile` field, no lock anywhere, single writer — proved, not just argued, by
+`R_112_a_slow_consumer_never_blocks_the_frame_path`. It also bore on route mismatch: verified below
+that `AudioRecordSource` already halts (never continues on the built-in mic) at both places it can
+land on `RouteVerdict.Mismatch` — this package added no new stop behaviour, only the honest
+`InputStatus.Mismatch` publish alongside the existing halt. Principle VII (structural boundaries):
+`LevelMeter`/`AudioDeviceDescriptor` carry no Android dependency beyond what `:capture-android`
+already has, and `:pipeline`'s two new holders stay pure — `LevelStatus` does no arithmetic,
+`InputStatus` does no I/O — exactly the `ShedStatus`/`ThermalStatus` pattern. `:capture-android`
+gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `:capture-android`,
+`dependencyRules` enforces the direction) — `LevelMeter` publishes its own snapshot;
+`RealCaptureService` reads it and republishes through `LevelStatus`, never the reverse.
+`dependencyRules`/`platformGuards` both passed unchanged.
+
+**What changed:**
+
+- **R-112 — `LevelStatus`** (new, `:pipeline`): `NotMeasured` / `Measured(peakDbfs, rmsDbfs,
+  noiseFloorDbfs?, clipped, clipCountLastSecond, sampleRateHz, updatedAtMillis)`, plus a
+  `peakHistoryDbfs: List<Float>` snapshot (last up to 60 s of per-second peaks) set together with
+  `state` in one `update()` call. A pure holder — no arithmetic, no Android dependency.
+- **R-112 — `LevelMeter`** (new, `:capture-android`): the arithmetic. `onFrame(samples, count,
+  sampleRateHz)` computes peak/RMS/clip count over the frame in raw `Short` PCM (O(n), one
+  immutable `Snapshot` allocated at the end, no per-sample allocation), tracked in **audio time**
+  (derived from sample count ÷ rate, never wall-clock, so results are deterministic regardless of
+  scheduling jitter): a trailing ~1 s clip-count window, a per-second peak history capped at 60
+  entries, and a noise floor as the minimum of the last 10 *completed* one-second RMS buckets —
+  `null` until that window has actually completed (never invented early). Clipping is counted at
+  full scale (`abs(sample) >= Short.MAX_VALUE`, i.e. `>= 32767`), matching a full-scale sample's
+  exact 0 dBFS reading. `AudioRecordSource` gained one field (`val levelMeter = LevelMeter(clock)`)
+  and one call (`levelMeter.onFrame(raw, n, deviceFormat.sampleRate)`, placed *after* the existing
+  first-read route check succeeds — a mismatched route's audio is never fed to the meter) — nothing
+  else in that file changed. `RealCaptureService`'s `CaptureEvent.Frames` branch reads
+  `audioSource.levelMeter.snapshot` (a cheap, lock-free field read) and republishes it through
+  `LevelStatus.update(...)` on the same frame path.
+- **R-113 — `InputStatus`** (new, `:pipeline`): `None` / `Opened(descriptor, nativeRateHz,
+  resamplerId, routeVerified, routedDeviceMatches, openedAtMillis)` / `Lost(lastKnown, sinceMillis)`
+  / `Mismatch(expected, actual)`. `RealCaptureService.startCapture()` publishes `Opened` (honestly
+  `routeVerified = false`) the moment the device is selected; a new `refreshInputStatusFromRoute()`
+  helper reads `AudioIo.routedDevice()` — the exact live fact `AudioRecordSource` itself checks —
+  and republishes `Opened` (both booleans `true`) on a match or `Mismatch` otherwise, called on the
+  first confirmed `Frames` event, every `CaptureEvent.RouteChanged`, a route-mismatch
+  `CaptureEvent.Failed` (matched by the literal `"route mismatch:"` prefix `AudioRecordSource`
+  emits at both its call sites — a new `ROUTE_MISMATCH_ERROR_PREFIX` constant, not a duplicated
+  string), and `CaptureEvent.Resumed`. `CaptureEvent.Interrupted` publishes `InputStatus.lost(...)`.
+  `resamplerId` is `ResamplerIdentity?.toString()` or the honest literal `"none (native rate
+  matches output)"` when the device already runs at the output rate — never left blank.
+- **Route mismatch mid-session already halts capture — verified, not assumed.** Both places
+  `AudioRecordSource.start()` can land on `RouteVerdict.Mismatch` (the `RouteChanged` handler and
+  the first-read check) do `emit(CaptureEvent.Failed(...)); io.close(); return@flow` — the flow
+  ends, so no further `CaptureEvent.Frames` can ever be emitted for that session (cited lines:
+  `AudioRecordSource.kt:116-119` and `:132-136` as they stand after this change). The existing,
+  unmodified test `AudioRecordSourceTest.FR_RUN_13 a route change mid-session that lands on a
+  mismatch halts exactly as FR-CAP-3` already asserts "no frames must be recorded from the
+  mismatched route after the change" and passed unchanged. **This package added no stop-behaviour
+  change** — R-101 (`Fail-Route` UI) remains WP11b's, and the register's own R-113 row only ever
+  asked for the honest `Mismatch` publish, which this delivers alongside the halt that was already
+  there.
+- **Scenarios**: `level-low` (peak −38 dBFS, floor −60 dBFS, no clip, capture running),
+  `level-clip` (peak 0 dBFS, clipped, 12 clips in the last second), `input-verified` (`Opened` with
+  a USB descriptor, native 48 kHz, a recorded resampler identity, both booleans verified),
+  `input-mismatch` (`Mismatch` built-in mic vs. USB — capture deliberately **not** marked running,
+  since `Fail-Route.dc.html` states capture stops in the same second a mismatch lands). All four
+  set the holder directly, the same way `thermal`/`rig-lost`/`backlog` already do — a real capture
+  tick would overwrite them; noted in `results/ui-audit/README.md`'s "Known gaps" for
+  `input-mismatch` specifically, since it is also the one new scenario in this batch that departs
+  from `markCapturing`.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (841 actionable tasks;
+  every module's tests, detekt, ktlint, lint green). `dependencyRules: checked 17 modules ... OK`.
+  `platformGuards: checked 17 modules' external dependencies and 17 manifests ... OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered. `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — up to date (181 covered of 419).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Targeted reruns, all green: `:pipeline:testDebugUnitTest --tests LevelStatusTest --tests
+  InputStatusTest`; `:capture-android:testDebugUnitTest --tests LevelMeterTest --tests
+  AudioRecordSourceTest` (15 tests, including the six pre-existing `AudioRecordSourceTest` cases,
+  unchanged); `:pipeline:testDebugUnitTest` and `:capture-android:testDebugUnitTest` in full;
+  `:app:testDebugUnitTest --tests ScenariosTest`.
+- Did **not** use the emulator (this package's brief: validators do that after merge; Robolectric
+  is the builder's gate).
+
+**Left open / not done:**
+- **No `ServiceController` harness exists for `RealCaptureService` itself yet** (finding F-011,
+  still open) — following the same precedent `RealCaptureServiceShedTest`/WP11a used
+  (`ShedEventRelay`, `storageFloorBreached` tested directly, not through the running service),
+  `refreshInputStatusFromRoute`/`publishLevelStatus`'s *wiring* into `RealCaptureService`'s event
+  handlers is verified by code citation (line numbers above) and by `LevelStatus`/`InputStatus`
+  themselves being fully unit-tested as the exact values a real call would pass, not by an
+  end-to-end service test.
+- **`input-mismatch` seeds the holder directly on an idle process**, like `thermal`/`rig-lost`
+  before it — it does not drive a real capture tick, so it cannot itself prove `RealCaptureService`
+  publishes `Mismatch` at the moment a real mismatch lands; that connection is established by the
+  wiring citation above plus `InputStatusTest`'s direct coverage of `InputStatus.mismatch(...)`'s
+  own shape.
+- **`LevelMeter`'s "about 10 Hz" cadence is emergent, not enforced** — it is exactly however often
+  `AudioRecordSource` completes a read (roughly 100 ms at 16 kHz with the default 1,600-frame
+  buffer, faster at a higher native rate); the meter itself paces its second/10-second/60-second
+  windows by audio time, not by an assumed call frequency, so this varies by device without
+  affecting correctness, but a caller expecting a strict 10 Hz publish rate would not get one from
+  a 48 kHz USB adapter.
+- Register rows R-112/R-113 are left for the lead to mark — this package does not edit
+  `results/ui-audit/register.md`.
+
+---
+
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
 ### (pending) — ui-conformance WP3 · drawer, header, live bar, drill-in header, navigation origin

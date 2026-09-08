@@ -1,6 +1,8 @@
 package org.ort.app.debug
 
 import android.content.Context
+import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.capture.android.heartbeat.HeartbeatRecord
 import org.ort.core.AttributionState
@@ -15,6 +17,8 @@ import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
@@ -55,7 +59,8 @@ public object Scenarios {
      * Every scenario name `spec/ui-conformance-plan.md` §E and `design/design-intent.md` need
      * reachable. WP11a (register R-104/R-105/R-106) closed the three gaps this list used to note
      * as unreachable from `:app` — `thermal`/`rig-lost`/`os-stopped` are new; `storage-warn` now
-     * uses [StorageForecast] instead of reusing F6's exhaustion string.
+     * uses [StorageForecast] instead of reusing F6's exhaustion string. WP11c (register R-112/
+     * R-113) adds `level-low`/`level-clip`/`input-verified`/`input-mismatch`.
      */
     public val NAMES: List<String> = listOf(
         "empty",
@@ -76,6 +81,10 @@ public object Scenarios {
         "storage-warn",
         "thermal",
         "rig-lost",
+        "level-low",
+        "level-clip",
+        "input-verified",
+        "input-mismatch",
     )
 
     public suspend fun load(context: Context, name: String): LoadResult {
@@ -102,6 +111,10 @@ public object Scenarios {
             "storage-warn" -> storageWarn(context, db)
             "thermal" -> thermal(context, db)
             "rig-lost" -> rigLost(context, db)
+            "level-low" -> levelLow(context, db)
+            "level-clip" -> levelClip(context, db)
+            "input-verified" -> inputVerified(context, db)
+            "input-mismatch" -> inputMismatch(db)
             else -> error("unreachable — guarded by the require() above")
         }
     }
@@ -150,11 +163,12 @@ public object Scenarios {
     /**
      * Every process-wide capture-facet singleton [org.ort.app.ui.data.ReaderPolling] reads
      * ([CaptureState], [AsrAvailability], [VadAvailability], [ShedStatus], and — WP11a, register
-     * R-104/R-105 — [ThermalStatus]/[RigStatus]/[StorageForecast]) reset to their own honest "not
-     * started" default before a scenario applies its own facts — otherwise a facet a previous
-     * scenario set (e.g. `model-missing`'s [AsrAvailability.unavailable]) would leak into the next
-     * scenario loaded in the same process, which is exactly the kind of silent cross-contamination
-     * this simulator exists to prevent.
+     * R-104/R-105 — [ThermalStatus]/[RigStatus]/[StorageForecast], and — WP11c, register R-112/
+     * R-113 — [LevelStatus]/[InputStatus]) reset to their own honest "not started" default before a
+     * scenario applies its own facts — otherwise a facet a previous scenario set (e.g.
+     * `model-missing`'s [AsrAvailability.unavailable]) would leak into the next scenario loaded in
+     * the same process, which is exactly the kind of silent cross-contamination this simulator
+     * exists to prevent.
      */
     private fun resetProcessWideFacets() {
         CaptureState.idle(clearSession = true)
@@ -164,6 +178,8 @@ public object Scenarios {
         ThermalStatus.reset()
         RigStatus.reset()
         StorageForecast.reset()
+        LevelStatus.reset()
+        InputStatus.reset()
     }
 
     // ---------------------------------------------------------------------------------------
@@ -615,6 +631,99 @@ public object Scenarios {
             ),
         )
         RigStatus.stale(lastKnown, sinceMillis = SystemClock.wallMillis() - 30 * 60_000L)
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `level-low` — F3, register R-112. Peak −38 dBFS, floor −60 dBFS, no clipping
+     * (`Fail-Level.dc.html`'s own figures) — the radio's volume has drifted quiet, but capture is
+     * still genuinely running.
+     */
+    private suspend fun levelLow(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("level-low")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 90 * 60_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -38f,
+                rmsDbfs = -44f,
+                noiseFloorDbfs = -60f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = List(60) { -40f + (it % 5) },
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `level-clip` — F3, register R-112. Peak 0 dBFS, clipped, 12 clips in the last second
+     * (`Level-Meter.dc.html`'s own clip-count row) — the radio's volume is too hot.
+     */
+    private suspend fun levelClip(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("level-clip")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 20 * 60_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = 0f,
+                rmsDbfs = -6f,
+                noiseFloorDbfs = -55f,
+                clipped = true,
+                clipCountLastSecond = 12,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = List(60) { if (it % 4 == 0) 0f else -8f },
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `input-verified` — R-113. [InputStatus.State.Opened] with a USB descriptor, native 48 kHz, a
+     * recorded resampler identity, and a verified matching route (`Setup-Verify.dc.html`'s four
+     * checks all satisfied).
+     */
+    private suspend fun inputVerified(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("input-verified")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 10 * 60_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `input-mismatch` — R-113, F1. [InputStatus.State.Mismatch]: the built-in mic routed instead
+     * of the chosen USB device (`Setup-Route-Mismatch.dc.html`/`Fail-Route.dc.html`'s own pairing).
+     * Capture is deliberately **not** marked running — a mismatch halts capture in the same second
+     * (`Fail-Route.dc.html`: "Capture stopped in the same second"; see this package's report for
+     * exactly where `RealCaptureService`/`AudioRecordSource` already do that), so a scenario naming
+     * this state must not also claim capture is still live.
+     */
+    private suspend fun inputMismatch(db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("input-mismatch")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 5 * 60_000L, endedAt = null),
+        )
+        InputStatus.mismatch(
+            expected = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            actual = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone"),
+        )
         return LoadResult(0, 1, sessionId)
     }
 }
