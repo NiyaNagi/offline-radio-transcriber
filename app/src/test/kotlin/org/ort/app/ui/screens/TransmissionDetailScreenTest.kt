@@ -11,6 +11,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
+import org.ort.app.ui.data.CandidateInspectionViewState
+import org.ort.app.ui.data.InspectionViewState
+import org.ort.app.ui.data.LatticeInspectionViewState
+import org.ort.app.ui.data.PriorContributionViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
@@ -144,6 +148,46 @@ class TransmissionDetailScreenTest {
         }
 
         composeTestRule.onNodeWithText("first partial").assertExists()
+    }
+
+    @Test
+    fun `AC_14 the candidate list and phonetic lattice are viewable on the detail screen`() {
+        val inspection = InspectionViewState(
+            lattice = LatticeInspectionViewState(
+                source = "TEXT_DERIVED",
+                modelId = "text-derived-v1",
+                createdAt = 100L,
+            ),
+            candidates = listOf(
+                CandidateInspectionViewState(
+                    callsign = "K7ABC",
+                    rank = 0,
+                    score = 1.5,
+                    grammarValid = true,
+                    databaseHit = true,
+                    selected = true,
+                    priorContributions = listOf(
+                        PriorContributionViewState(priorName = "database", logOdds = 0.8, isColdStart = false),
+                    ),
+                ),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state().copy(inspection = inspection),
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                )
+            }
+        }
+
+        // AC-14 / FR-UI-8: a resolved callsign's candidate list and phonetic lattice must actually
+        // be viewable on this screen, not merely computable by the mapper (InspectionViewStateMapperTest
+        // already proves the mapping; this proves the render).
+        composeTestRule.onNodeWithText("Lattice: TEXT_DERIVED (model text-derived-v1)").assertExists()
+        composeTestRule.onNodeWithText("K7ABC — score 1.50").assertExists()
+        composeTestRule.onNodeWithText("  database: +0.80 (supported)").assertExists()
     }
 
     @Test
