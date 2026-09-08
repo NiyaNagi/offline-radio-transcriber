@@ -6,6 +6,8 @@ import androidx.compose.ui.test.onNodeWithText
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LiveBarTone
+import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.data.LevelViewStateMapper
 import org.ort.app.ui.theme.OrtTheme
@@ -60,5 +62,58 @@ class LevelMeterScreenTest {
         composeTestRule.onNodeWithTag("level-meter-clipped").assertExists()
         composeTestRule.onNodeWithText("-14 dBFS", substring = true).assertExists()
         composeTestRule.onNodeWithText("-58 dBFS", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("R-175")
+    fun `R_175 the weakest-over row, the band-state sentence and the pinned live bar all render`() {
+        val state = LevelViewStateMapper.from(
+            level = LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            history = List(60) { -20f },
+            inputLabel = "USB Audio Device · last 60 s",
+            weakestOverLabel = "S2",
+        )
+        val liveBar = LiveBarViewState(
+            level = listOf(0.1f, 0.2f, 0.1f, 0.3f),
+            partialText = null,
+            label = "Quiet",
+            tone = LiveBarTone.NOMINAL,
+        )
+        composeTestRule.setContent { OrtTheme { LevelMeterScreen(state = state, liveBar = liveBar) } }
+
+        composeTestRule.onNodeWithTag("level-meter-weakest-over").assertExists()
+        composeTestRule.onNodeWithText("S2", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("level-meter-band-state").assertExists()
+        composeTestRule.onNodeWithText("In the band. Nothing to adjust.", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("level-meter-livebar").assertExists()
+    }
+
+    @Test
+    @Requirement("R-175")
+    fun `R_175 the weakest-over row is honestly absent, never a fabricated zero, when no over recorded a signal`() {
+        val state = LevelViewStateMapper.from(
+            level = LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = null,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            history = List(60) { -20f },
+            inputLabel = "USB Audio Device · last 60 s",
+        )
+        composeTestRule.setContent { OrtTheme { LevelMeterScreen(state = state) } }
+
+        composeTestRule.onNodeWithTag("level-meter-weakest-over").assertDoesNotExist()
     }
 }

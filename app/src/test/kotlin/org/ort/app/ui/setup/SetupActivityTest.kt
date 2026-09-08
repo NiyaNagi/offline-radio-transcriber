@@ -3,6 +3,8 @@ package org.ort.app.ui.setup
 import android.Manifest
 import android.app.Application
 import android.content.Intent
+import android.os.Looper
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -15,6 +17,7 @@ import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
+import org.ort.pipeline.capture.RigStatus
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.util.ReflectionHelpers
@@ -42,10 +45,11 @@ class SetupActivityTest {
     @After
     fun tearDown() {
         clearPrefs()
-        // Process-wide singletons (same pattern as CaptureState/RigStatus elsewhere in this
-        // suite) -- reset so a stray value from this class never leaks into a later test.
+        // Process-wide singletons (same pattern as CaptureState elsewhere in this suite) -- reset
+        // so a stray value from this class never leaks into a later test.
         InputStatus.reset()
         LevelStatus.reset()
+        RigStatus.reset()
     }
 
     private fun clearPrefs() {
@@ -211,6 +215,35 @@ class SetupActivityTest {
             val next = shadowOf(app).nextStartedActivity
             assertEquals(ReaderActivity::class.java.name, next?.component?.className)
             assertEquals(ReaderDestination.SETTINGS.name, next?.getStringExtra(ReaderActivity.EXTRA_DESTINATION))
+        }
+    }
+
+    /**
+     * R-125 (validator finding, register R-120..R-125, halt): [RigStatus.State.Absent] discovered
+     * *while already on S11* (this test's `RigStatus.absent()` call, standing in for the rig
+     * dropping out entirely between [SetupActivity.onChooseRadio]'s snapshot and the next
+     * recomposition — `onResume`'s own re-check here) must route back to S09 with a banner, never
+     * leave the operator on the blank screen the validator screenshotted.
+     */
+    @Test
+    fun `R_125 an Absent rig discovered on S11 routes back to S09 with a banner, never a blank screen`() {
+        RigStatus.connected("Kenwood TH-D75A", emptyList())
+        storeEverySetupGateExceptComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onChooseRadio(RadioChoice.TH_D75A) }
+            scenario.onActivity { activity -> assertEquals(SetupStep.RADIO_VERIFIED, activity.currentStepForTest) }
+
+            RigStatus.absent()
+            // Drives a real onPause -> onResume cycle (onResume is not accessible from here
+            // directly) so SetupActivity re-checks RigStatus.state exactly as a real backgrounded-
+            // then-foregrounded operator visit would.
+            scenario.moveToState(Lifecycle.State.STARTED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            shadowOf(Looper.getMainLooper()).idle()
+
+            scenario.onActivity { activity -> assertEquals(SetupStep.RADIO, activity.currentStepForTest) }
         }
     }
 }

@@ -183,6 +183,43 @@ class ReaderPollingTest {
         assertNull(badges.captureElapsedLabel)
     }
 
+    @Test
+    @Requirement("R-172")
+    fun `R_172 effectiveSessionId prefers the real live CaptureState session over the host's own`() {
+        CaptureState.capturing("S2")
+        assertEquals("S2", ReaderPolling.effectiveSessionId("S1"))
+        assertEquals("S2", ReaderPolling.effectiveSessionId(null))
+    }
+
+    @Test
+    @Requirement("R-172")
+    fun `R_172 effectiveSessionId falls back to the host's own sessionId when nothing is capturing`() {
+        assertEquals("S1", ReaderPolling.effectiveSessionId("S1"))
+        assertNull(ReaderPolling.effectiveSessionId(null))
+    }
+
+    @Test
+    @Requirement("R-175")
+    fun `R_175 weakestOverLabel is the lowest recorded signal strength this session, honestly null otherwise`(): Unit =
+        runTest {
+            db.sessionDao().insert(session("S1"))
+            db.transmissionDao().insert(transmission("S1-tx1", samplePosition = 1L, signalStrength = 7.0))
+            db.transmissionDao().insert(transmission("S1-tx2", samplePosition = 2L, signalStrength = 2.0))
+            db.transmissionDao().insert(transmission("S1-tx3", samplePosition = 3L, signalStrength = 5.0))
+
+            assertEquals("S2", ReaderPolling.weakestOverLabel(context, "S1"))
+        }
+
+    @Test
+    @Requirement("R-175")
+    fun `R_175 weakestOverLabel is honestly null when no over this session recorded a signal strength`(): Unit =
+        runTest {
+            db.sessionDao().insert(session("S1"))
+            db.transmissionDao().insert(transmission("S1-tx1", samplePosition = 1L, signalStrength = null))
+
+            assertNull(ReaderPolling.weakestOverLabel(context, "S1"))
+        }
+
     private fun session(id: String = "S1") = SessionEntity(
         id = id,
         startedAt = 0L,

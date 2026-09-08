@@ -8,6 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import org.ort.app.ui.components.Banner
+import org.ort.app.ui.components.BannerTone
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
@@ -19,9 +21,14 @@ import org.ort.app.ui.theme.OrtType
  * board itself has no filled button, only `Not now`). Selecting TH-D75A or another CAT rig moves
  * to [RadioUsbScreen]/[RadioVerifiedScreen] depending on [org.ort.pipeline.capture.RigStatus] —
  * see [SetupActivity] for that dispatch, which this screen does not know about.
+ *
+ * [banner] (register R-120..R-125 follow-up): non-null when [SetupActivity] has just routed back
+ * here after an S11 verification found [org.ort.pipeline.capture.RigStatus.State.Absent]
+ * unexpectedly — "routes back to S09 with a banner, never a blank screen" (the validator finding's
+ * own words). `null` on every ordinary visit to this step.
  */
 @Composable
-public fun RadioScreen(onChoose: (RadioChoice) -> Unit, onNotNow: () -> Unit) {
+public fun RadioScreen(onChoose: (RadioChoice) -> Unit, onNotNow: () -> Unit, banner: String? = null) {
     SetupScaffold(
         step = SetupStep.RADIO,
         title = "Radio",
@@ -37,6 +44,14 @@ public fun RadioScreen(onChoose: (RadioChoice) -> Unit, onNotNow: () -> Unit) {
             }
         },
     ) {
+        banner?.let {
+            Banner(
+                title = "The rig connection was lost",
+                body = it,
+                tone = BannerTone.DEGRADED,
+                modifier = Modifier.fillMaxWidth().testTag("setup-radio-absent-banner"),
+            )
+        }
         Text(
             text = "Without a radio connection every over is logged against the frequency you " +
                 "type in. With one, the app reads the frequency, mode and squelch per band as " +

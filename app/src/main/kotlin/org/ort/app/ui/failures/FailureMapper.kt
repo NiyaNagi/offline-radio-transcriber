@@ -32,7 +32,24 @@ public data class FailureSignals(
     public val newestGap: CaptureGapEntity?,
     public val nowMillis: Long,
     public val debugOverride: FailurePresentation?,
+    /** Register R-126: the current session's own start time, for F1's "after H:MM:SS" subtitle —
+     * `null` when there is no session to measure against (never fabricated). */
+    public val sessionStartedAtMillis: Long? = null,
+    /** Register R-126: the current session's transmission count, for F1's "N overs kept". */
+    public val sessionTransmissionCount: Int = 0,
+    /** Register R-149: every `StorageForecast` transition `FailureSignalsPolling` has actually
+     * observed this process's lifetime, oldest first — never a fabricated multi-day history. */
+    public val storageForecastHistory: List<StorageForecastSample> = emptyList(),
+    /** Register R-149: the real, in-process-observed `ShedStatus.backlog` depth for up to the
+     * last 30 minutes, oldest first. */
+    public val backlogHistory: List<BacklogSample> = emptyList(),
 )
+
+/** One observed [org.ort.pipeline.capture.StorageForecast.State] transition, timestamped. */
+public data class StorageForecastSample(public val state: StorageForecast.State, public val atMillis: Long)
+
+/** One observed [org.ort.pipeline.capture.ShedStatus.backlog] reading, timestamped. */
+public data class BacklogSample(public val count: Int, public val atMillis: Long)
 
 /**
  * The mapper's one result: at most one failure to show, typed by exactly which of this package's
@@ -91,11 +108,19 @@ public object FailureMapper {
     private fun mapTakeover(signals: FailureSignals): FailurePresentation? {
         val input = signals.inputStatus
         if (input is InputStatus.State.Mismatch) {
+            val startedAt = signals.sessionStartedAtMillis
             return FailurePresentation.Route(
                 RouteViewState(
                     expectedLabel = input.expected.label,
                     actualLabel = input.actual?.label ?: "an unrecognised device",
                     sinceLabel = clockLabel(signals.nowMillis),
+                    elapsedLabel = if (startedAt != null) {
+                        hoursMinutesSecondsLabel(signals.nowMillis - startedAt)
+                    } else {
+                        "0:00:00"
+                    },
+                    oversKeptCount = signals.sessionTransmissionCount,
+                    sessionElapsedKnown = startedAt != null,
                 ),
             )
         }
@@ -155,31 +180,72 @@ public object FailureMapper {
                 ),
             )
         }
+        val timeline = storageTimeline(signals.storageForecastHistory)
         return when (val storage = signals.storageForecast) {
             is StorageForecast.State.OneNightLeft ->
                 FailurePresentation.StorageWarning(
-                    StorageWarningViewState(nightsLeftLabel = "1", freeLabel = bytesLabel(storage.freeBytes)),
+                    StorageWarningViewState(
+                        nightsLeftLabel = "1",
+                        freeLabel = bytesLabel(storage.freeBytes),
+                        timeline = timeline,
+                    ),
                 )
             is StorageForecast.State.ThreeNightsLeft ->
                 FailurePresentation.StorageWarning(
                     StorageWarningViewState(
                         nightsLeftLabel = nightsLabel(storage.nightsLeft),
                         freeLabel = bytesLabel(storage.freeBytes),
+                        timeline = timeline,
                     ),
                 )
             else -> null
         }
     }
 
+    /** Register R-149: `Fail-Storage.dc.html`'s own "How this unfolded" stage copy, keyed to
+     * exactly the transitions [signals.storageForecastHistory] recorded — a stage never appears
+     * unless `FailureSignalsPolling` actually observed it. The hard-floor row is always appended
+     * "not reached" here, since reaching it takes the takeover path (`StorageHalt`), never this
+     * banner. */
+    private fun storageTimeline(history: List<StorageForecastSample>): List<StorageTimelineStage> {
+        val stages = history.mapNotNull { sample ->
+            val (headline, detail) = when (sample.state) {
+                is StorageForecast.State.ThreeNightsLeft ->
+                    "warned at 3 nights left" to "notification and status surface · retention set to 30 nights"
+                is StorageForecast.State.OneNightLeft -> "warned at 1 night left" to "same channels, louder"
+                is StorageForecast.State.AtFloor ->
+                    "audio stopped, text continues" to
+                        "the order is fixed: audio goes before transcripts, transcripts before capture"
+                else -> null
+            } ?: return@mapNotNull null
+            StorageTimelineStage(label = "${clockLabel(sample.atMillis)} · $headline", detail = detail, reached = true)
+        }
+        val floorStage = StorageTimelineStage(
+            label = "Not reached",
+            detail = "500 MB hard floor — capture would halt with the red banner, never quietly",
+            reached = false,
+        )
+        return stages + floorStage
+    }
+
     private fun mapThermalOrBacklogOrRigBanner(signals: FailureSignals): FailurePresentation? {
         val thermal = signals.thermalStatus
         if (thermal is ThermalStatus.State.Warm || thermal is ThermalStatus.State.Hot) {
             val tier = (MAX_TIER - signals.shedLevel).coerceIn(0, MAX_TIER)
-            val label = clockLabel(signals.nowMillis)
+            // Register R-177: the real transition moment ThermalStatus recorded, never `now` —
+            // a mapper polled repeatedly must render the moment the tier actually dropped, not a
+            // clock that creeps forward on every 2s tick. `sinceMillis` lives on Warm/Hot, not the
+            // shared `State` interface, so it is read per-branch here rather than through `thermal`.
+            val sinceMillis = when (thermal) {
+                is ThermalStatus.State.Warm -> thermal.sinceMillis
+                is ThermalStatus.State.Hot -> thermal.sinceMillis
+                is ThermalStatus.State.Nominal -> signals.nowMillis
+            }
+            val label = clockLabel(sinceMillis)
             return FailurePresentation.Thermal(ThermalViewState(tier, label, thermal.realTimeFactor))
         }
         if (signals.shedBacklog >= BACKLOG_GROWING_THRESHOLD) {
-            return FailurePresentation.Backlog(BacklogViewState(signals.shedBacklog))
+            return FailurePresentation.Backlog(backlogViewState(signals))
         }
         val rig = signals.rigStatus
         if (rig is RigStatus.State.Stale) {
@@ -188,6 +254,40 @@ public object FailureMapper {
             )
         }
         return null
+    }
+
+    /** Register R-149: `Fail-Backlog.dc.html`'s Waiting/Rate/Capture rows, built only from real
+     * signals — `queueHistory` from `FailureSignalsPolling`'s own rolling backlog samples,
+     * `growthRateLabel` measured (Δbacklog/Δtime) across them rather than a fabricated "band
+     * overs/min vs Pass B overs/min" split this codebase has no separate signal for, and
+     * `captureLabel` from `CaptureState` alone — never a dropped-sample or ring-buffer figure
+     * nothing publishes. */
+    private fun backlogViewState(signals: FailureSignals): BacklogViewState {
+        val history = signals.backlogHistory
+        val maxDepth = (history.maxOfOrNull { it.count } ?: signals.shedBacklog).coerceAtLeast(1)
+        val queueHistory = history.map { it.count.toFloat() / maxDepth }
+        val growthRateLabel = backlogGrowthRateLabel(history)
+        val captureLabel = if (signals.captureState is CaptureState.State.Capturing) {
+            "Nominal — every over is on disk"
+        } else {
+            "Not capturing"
+        }
+        return BacklogViewState(
+            waitingCount = signals.shedBacklog,
+            queueHistory = queueHistory,
+            growthRateLabel = growthRateLabel,
+            captureLabel = captureLabel,
+        )
+    }
+
+    private fun backlogGrowthRateLabel(history: List<BacklogSample>): String? {
+        if (history.size < 2) return null
+        val first = history.first()
+        val last = history.last()
+        val minutes = (last.atMillis - first.atMillis) / 60_000.0
+        if (minutes <= 0.0) return null
+        val rate = (last.count - first.count) / minutes
+        return "%.1f overs/min".format(Locale.ROOT, rate)
     }
 
     private fun isRecentCallGap(signals: FailureSignals): Boolean {
@@ -219,6 +319,17 @@ public object FailureMapper {
             m > 0 -> "$m m $s s"
             else -> "$s s"
         }
+    }
+
+    /** `Fail-Route.dc.html`'s subtitle: "H:MM:SS" (hours unpadded, minutes/seconds zero-padded) —
+     * `"6:42"` below an hour is never produced here on purpose, register R-126's cited pattern
+     * always carries all three components, unlike [LiveBarPolling]'s shorter elapsed label. */
+    internal fun hoursMinutesSecondsLabel(millis: Long): String {
+        val totalSeconds = (millis / 1000).coerceAtLeast(0)
+        val h = totalSeconds / 3600
+        val m = (totalSeconds % 3600) / 60
+        val s = totalSeconds % 60
+        return "%d:%02d:%02d".format(Locale.ROOT, h, m, s)
     }
 
     internal fun bytesLabel(bytes: Long): String {

@@ -19,10 +19,12 @@ import org.ort.app.ui.data.CandidateInspectionViewState
 import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.InspectionViewState
 import org.ort.app.ui.data.LatticeInspectionViewState
+import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.PriorContributionViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
+import org.ort.core.PassId
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -294,6 +296,81 @@ class TransmissionDetailScreenTest {
 
         composeTestRule.onNodeWithText("Not right?").performClick()
         assert(notRightCalled)
+    }
+
+    // ---- R-153, F18 Fail-Pass, FR-RUN-9 ----
+
+    private fun failedState(attempts: Int = 3, lastError: String = "out of memory in the decoder") =
+        DetailViewStateMapper.from(
+            detail(attribution = Attribution.unknown(), transcriptText = "okay so for the net tonight"),
+            PassFailureViewState(
+                passId = PassId.B_OFFLINE,
+                passLabel = "Pass B",
+                lastError = lastError,
+                attempts = attempts,
+            ),
+        )
+
+    @Test
+    fun `R_153_a_failed_pass_shows_which_pass_failed_the_recorded_error_and_attempts`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = failedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule.onNodeWithText("not transcribed").assertExists()
+        composeTestRule.onNodeWithText("Pass B errored 3 times", substring = true).assertExists()
+        // SectionHeader uppercases its label — matched case-insensitively rather than assuming the exact case.
+        composeTestRule
+            .onNodeWithText("What went wrong · 3 times", substring = true, ignoreCase = true)
+            .assertExists()
+        composeTestRule.onNodeWithTag("pass-failure-last-error").assertExists()
+        composeTestRule.onNodeWithText("Out of memory in the decoder", substring = true).assertExists()
+    }
+
+    @Test
+    fun `R_153_the_rest_of_the_over_still_renders_audio_and_partial_text_when_a_pass_has_failed`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = failedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        // The waveform card (audio) and the Pass A partial transcript both still render — a failed
+        // pass never hides the rest of the over (constitution III, FR-RUN-9).
+        composeTestRule.onNodeWithTag("waveform-card").assertExists()
+        composeTestRule.onNodeWithText("okay so for the net tonight", substring = true).assertExists()
+    }
+
+    @Test
+    fun `FR_RUN_9_retry_this_pass_is_always_offered_and_calls_back`() {
+        var retried = false
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = failedState(),
+                    player = FakeTransmissionAudioPlayer(),
+                    onRetryPass = { retried = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Retry now").performClick()
+        assert(retried)
+    }
+
+    @Test
+    fun `FR_RUN_9_keep_the_partial_is_offered_beside_retry_and_never_blocks_the_screen`() {
+        var kept = false
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = failedState(),
+                    player = FakeTransmissionAudioPlayer(),
+                    onKeepPartial = { kept = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Keep the partial").performClick()
+        assert(kept)
     }
 
     /** Matches any node whose visible text looks like a two-decimal confidence value (e.g. "0.82"). */

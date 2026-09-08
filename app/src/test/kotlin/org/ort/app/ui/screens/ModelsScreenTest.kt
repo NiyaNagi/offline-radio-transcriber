@@ -256,4 +256,53 @@ class ModelsScreenTest {
         composeTestRule.onNodeWithText("Requeued 3 previously failed transmission(s).").assertExists()
         composeTestRule.onNodeWithText("Silero VAD: installed, checksum verified.").assertExists()
     }
+
+    @Test
+    @Requirement("R-140")
+    fun `R_140 the three Whisper file rows are grouped under one family caption, not three loose assets`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.ASR_ENCODER, ModelRowStatus.NOT_INSTALLED),
+                            row(ModelId.ASR_DECODER, ModelRowStatus.NOT_INSTALLED),
+                            row(ModelId.ASR_TOKENS, ModelRowStatus.NOT_INSTALLED),
+                            row(ModelId.VAD, ModelRowStatus.NOT_INSTALLED),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Whisper tiny.en (speech to text)").assertExists()
+        composeTestRule.onNodeWithText("Silero VAD (voice activity)").assertExists()
+    }
+
+    @Test
+    @Requirement("R-140")
+    fun `R_140 a failed download renders the amber FailedState with the real reason and a Retry`() {
+        var retried: ModelId? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(rows = listOf(row(ModelId.VAD, ModelRowStatus.NOT_INSTALLED))),
+                    downloadFailure = org.ort.app.ui.data.ModelDownloadFailureViewState(
+                        id = ModelId.VAD,
+                        reason = "Unable to resolve host",
+                    ),
+                    onDownload = { retried = it },
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Silero VAD could not be downloaded").assertExists()
+        composeTestRule.onNodeWithText("Unable to resolve host", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Retry").performClick()
+
+        assert(retried == ModelId.VAD) { "expected Retry to re-run the download for VAD, got $retried" }
+    }
 }

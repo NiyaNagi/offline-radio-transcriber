@@ -42,7 +42,17 @@ import org.ort.app.ui.theme.OrtType
  */
 @Composable
 public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val palette = liveBarPalette(state)
+    val palette = liveBarPalette(state.tone)
+    // R-128 (`Fail-Usb.dc.html`): the meter can disagree with the label's tone — audio is fine
+    // (green bars) even while the label itself calls for action in halt-red, because the failure
+    // is "the radio needs a permission", not "capture stopped hearing audio". `meterTone` is the
+    // override for exactly that case; `null` (every caller before this existed) means "follow
+    // `tone`", so this is additive.
+    val meterColor = meterColorFor(state.meterTone ?: state.tone, state.level)
+    // guide: "Act" is the live bar's own halt-red call-to-action word, distinct from whatever
+    // colour the rest of the bar is in (amber for a degraded tone, in Fail-Usb's case) — it reads
+    // halt-red whenever the label itself says so, not only when the whole bar's tone is HALTED.
+    val labelColor = liveBarLabelColor(state.label, palette.labelColor)
     val description = buildString {
         append(state.label)
         state.partialText?.let {
@@ -71,7 +81,7 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
                     .padding(start = OrtSpacing.lg, end = OrtSpacing.lg, top = 10.dp, bottom = 14.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                LevelMeter(level = state.level, color = palette.meterColor)
+                LevelMeter(level = state.level, color = meterColor)
                 Spacer(modifier = Modifier.width(11.dp))
                 if (state.partialText != null) {
                     Text(
@@ -89,7 +99,7 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
                 Text(
                     text = state.label,
                     style = OrtType.textAction.copy(fontWeight = FontWeight.Medium),
-                    color = palette.labelColor,
+                    color = labelColor,
                 )
             }
         }
@@ -110,36 +120,50 @@ private fun LevelMeter(level: List<Float>, color: Color, modifier: Modifier = Mo
     }
 }
 
-private data class LiveBarPalette(
-    val background: Color,
-    val topEdge: Color,
-    val labelColor: Color,
-    val meterColor: Color,
-)
+private data class LiveBarPalette(val background: Color, val topEdge: Color, val labelColor: Color)
 
-@Composable
-private fun liveBarPalette(state: LiveBarViewState): LiveBarPalette = when (state.tone) {
+// `OrtColors` is a plain object of constant `Color` values, not `CompositionLocal`-backed, so
+// none of `liveBarPalette`/`meterColorFor`/`liveBarLabelColor` need `@Composable` — deliberately
+// plain functions so R-128's tone-resolution logic is directly unit-testable (the pattern R-054's
+// `scrubFraction` established: a rendered `Color`/pixel isn't something Robolectric can verify
+// reliably here, but the pure decision that produces it is exactly, and cheaply, testable).
+private fun liveBarPalette(tone: LiveBarTone): LiveBarPalette = when (tone) {
     LiveBarTone.NOMINAL -> LiveBarPalette(
         background = OrtColors.bgLive,
         topEdge = OrtColors.lineStrong,
         labelColor = OrtColors.accentGreen,
-        meterColor = if (state.level.any { it > 0f }) OrtColors.accentGreen else OrtColors.meterIdle,
     )
 
     LiveBarTone.DEGRADED -> LiveBarPalette(
         background = OrtColors.bgRowGap,
         topEdge = OrtColors.bannerAmberBorder,
         labelColor = OrtColors.accentAmberDim,
-        meterColor = OrtColors.meterWarn,
     )
 
     LiveBarTone.HALTED -> LiveBarPalette(
         background = OrtColors.haltBg,
         topEdge = OrtColors.haltBorder,
         labelColor = OrtColors.haltText,
-        meterColor = OrtColors.haltFill,
     )
 }
+
+/** The meter's own colour for [tone] — split out from [liveBarPalette] because R-128
+ * (`Fail-Usb.dc.html`) needs the meter to answer a different question ("is audio itself fine?")
+ * than the label/background do ("what does the operator need to know?"); `LiveBarViewState`'s
+ * `meterTone` lets a caller drive this with a tone distinct from the bar's overall one. */
+internal fun meterColorFor(tone: LiveBarTone, level: List<Float>): Color = when (tone) {
+    LiveBarTone.NOMINAL -> if (level.any { it > 0f }) OrtColors.accentGreen else OrtColors.meterIdle
+    LiveBarTone.DEGRADED -> OrtColors.meterWarn
+    LiveBarTone.HALTED -> OrtColors.haltFill
+}
+
+/** R-128 (`Fail-Usb.dc.html`): the live bar's own halt-red call-to-action word — "Act" reads
+ * `haltText` regardless of [fallback] (the rest-of-bar tone's own label colour, which is what
+ * this would otherwise be), because the failure this word names is urgent even when the bar
+ * around it is only degraded amber, not fully halted. Any other [label] keeps [fallback]
+ * unchanged — additive, not a new rule for the labels every caller already had. */
+internal fun liveBarLabelColor(label: String, fallback: Color): Color =
+    if (label == "Act") OrtColors.haltText else fallback
 
 /** The live bar's three tones (R-022): nominal (running normally), degraded (a tier drop,
  * backlog, thermal or stale-rig warning — always amber, per constitution "red is for one thing"),
@@ -151,11 +175,18 @@ public enum class LiveBarTone { NOMINAL, DEGRADED, HALTED }
  * than four entries render fewer bars; more than four is truncated to four. [partialText] is the
  * live Pass A partial (null when nothing has been heard yet — the bar then shows just the meter
  * and label). [label] is "Live" nominal, or the degradation/halt reason ("Tier 2", "Halted — no
- * route") — this component does not invent copy, it renders what it is given.
+ * route", "Act") — this component does not invent copy, it renders what it is given.
+ *
+ * [meterTone], when non-null, overrides [tone] for the meter bars' colour only — the background,
+ * top edge and label keep following [tone]. R-128 (`Fail-Usb.dc.html`): a USB-permission failure
+ * is a rig problem, not an audio one, so the bar as a whole reads degraded/halt (the label calls
+ * for action) while the meter itself stays green ("audio fine"). `null` (every caller before this
+ * existed) means "follow [tone]" — additive, no existing caller's rendering changes.
  */
 public data class LiveBarViewState(
     val level: List<Float>,
     val partialText: String?,
     val label: String,
     val tone: LiveBarTone,
+    val meterTone: LiveBarTone? = null,
 )

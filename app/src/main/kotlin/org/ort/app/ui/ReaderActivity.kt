@@ -70,6 +70,11 @@ import org.ort.pipeline.capture.CaptureState
  *   unbuilt — register R-084) exposes a callable retry/reconnect entry point today.
  *   `onEndSession`/`onRequestUsbPermission` are untouched this round (not named in this round's
  *   brief).
+ *
+ * Register R-178 (WP11b follow-up): [FailureHost]'s `content` slot now hands back the currently
+ * showing banner's real, measured height — forwarded straight into [OrtNavHost]'s own
+ * `contentTopPadding` so a banner that grows taller (font scale 2.0) pushes the destination
+ * content down to clear itself instead of just covering more of it.
  */
 public class ReaderActivity : ComponentActivity() {
 
@@ -96,8 +101,8 @@ public class ReaderActivity : ComponentActivity() {
                         onOpenRetentionSettings = { navigator.openSettingsStorage() },
                         onSetFrequencyByHand = { navigator.open(ReaderDestination.SETTINGS) },
                     ),
-                ) {
-                    OrtNavHost(sessionId = sessionId, navigator = navigator)
+                ) { contentTopPadding ->
+                    OrtNavHost(sessionId = sessionId, navigator = navigator, contentTopPadding = contentTopPadding)
                 }
             }
         }

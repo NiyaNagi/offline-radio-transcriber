@@ -3,7 +3,10 @@ package org.ort.app.ui.failures
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.PathEffect
@@ -39,6 +43,7 @@ public fun FailCalibrationScreen(state: CalibrationViewState, onInstall: () -> U
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
+            .failureScreenInset()
             .verticalScroll(rememberScrollState())
             .testTag("failure-calibration-screen"),
     ) {
@@ -71,6 +76,15 @@ public fun FailCalibrationScreen(state: CalibrationViewState, onInstall: () -> U
                 .height(110.dp)
                 .testTag("failure-calibration-chart"),
         )
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.End) {
+            Text(text = "score →", style = OrtType.axis, color = OrtColors.textLow)
+        }
+        Text(
+            text = "Dots below the diagonal are over-confident. The high-score end is where it drifted.",
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
+        )
         SectionLabel("Fix", modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
         Text(
             text = "Install calibration ${state.calibrationVersion} — takes effect next session, scores on " +
@@ -91,18 +105,33 @@ public fun FailCalibrationScreen(state: CalibrationViewState, onInstall: () -> U
             color = OrtColors.textDim,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
         )
+        Text(
+            text = "The four states are thresholds on a calibrated probability, so miscalibration cannot " +
+                "make an inferred over read as confirmed. What it can do is make the score chip overstate " +
+                "— and this notice exists so you know to trust the shape more than the number until it is " +
+                "fixed.",
+            style = OrtType.cardBody,
+            color = OrtColors.textDim,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp).testTag("failure-calibration-closing"),
+        )
     }
 }
 
 @Composable
 private fun ReliabilityChart(points: List<Pair<Float, Float>>, modifier: Modifier = Modifier) {
     val description = "Reliability chart: ${points.size} points, actually-right against score"
-    Column(
+    Box(
         modifier = modifier
             .background(OrtColors.bgScreen, RoundedCornerShape(4.dp))
             .border(1.dp, OrtColors.lineDefault, RoundedCornerShape(4.dp))
             .semantics { contentDescription = description },
     ) {
+        Text(
+            text = "actually right",
+            style = OrtType.axis,
+            color = OrtColors.textLow,
+            modifier = Modifier.align(Alignment.TopStart).padding(start = 4.dp, top = 2.dp),
+        )
         Canvas(modifier = Modifier.fillMaxWidth().height(96.dp).padding(8.dp)) {
             val w = size.width
             val h = size.height

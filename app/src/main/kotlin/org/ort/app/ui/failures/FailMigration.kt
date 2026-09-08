@@ -9,9 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,52 +35,57 @@ public fun FailMigrationScreen(
     onSaveDiagnosticBundle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(OrtColors.bgScreen)
+            .failureScreenInset()
             .testTag("failure-migration-screen"),
     ) {
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 30.dp),
-            ) {
-                Icon(imageVector = OrtIcons.models, contentDescription = null, tint = OrtColors.accentGreen)
-                Text(text = state.versionLabel, style = OrtType.columnHeader, color = OrtColors.textFaint)
-            }
-            Text(
-                text = state.headline,
-                style = OrtType.screenTitle,
-                color = OrtColors.textHigh,
-                modifier = Modifier.padding(horizontal = 20.dp),
-            )
-            SectionLabel("What happened", modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
-            state.steps.forEach { step -> MigrationStepRow(step) }
-            Text(
-                text = "A migration can never destroy audio or a superseded transcript — that is tested " +
-                    "against every released version before this one ships.",
-                style = OrtType.cardBody,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-            )
-        }
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PrimaryButton(
-                text = "Rebuild now and continue",
-                onClick = onRebuildNow,
-                modifier = Modifier.fillMaxWidth().testTag("failure-migration-rebuild"),
-            )
-            TextAction(
-                text = "Save a diagnostic bundle first",
-                onClick = onSaveDiagnosticBundle,
-                modifier = Modifier.fillMaxWidth().testTag("failure-migration-save-diagnostics"),
-            )
-        }
+        FailureActionBarScaffold(
+            content = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 30.dp),
+                ) {
+                    Icon(imageVector = OrtIcons.models, contentDescription = null, tint = OrtColors.accentGreen)
+                    Text(text = state.versionLabel, style = OrtType.columnHeader, color = OrtColors.textFaint)
+                }
+                Text(
+                    text = state.headline,
+                    style = OrtType.screenTitle,
+                    color = OrtColors.textHigh,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+                SectionLabel("What happened", modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+                state.steps.forEach { step -> MigrationStepRow(step) }
+                Text(
+                    text = "A migration can never destroy audio or a superseded transcript — that is tested " +
+                        "against every released version before this one ships.",
+                    style = OrtType.cardBody,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                )
+            },
+            actionBar = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PrimaryButton(
+                        text = "Rebuild now and continue",
+                        onClick = onRebuildNow,
+                        modifier = Modifier.fillMaxWidth().testTag("failure-migration-rebuild"),
+                    )
+                    TextAction(
+                        text = "Save a diagnostic bundle first",
+                        onClick = onSaveDiagnosticBundle,
+                        modifier = Modifier.fillMaxWidth().testTag("failure-migration-save-diagnostics"),
+                    )
+                }
+            },
+        )
     }
 }
 

@@ -83,4 +83,47 @@ class ThermalStatusTest {
         assertEquals(ThermalStatus.THERMAL_STATUS_NONE, state.osThermalStatus)
         assertNull(state.realTimeFactor)
     }
+
+    @Test
+    @Requirement("R-177")
+    fun `R_177_since_is_the_transition_moment_not_now`() {
+        val transitionMillis = 1_000_000L
+        ThermalStatus.sample(ThermalStatus.THERMAL_STATUS_SEVERE, nowMillis = transitionMillis)
+        val firstTick = ThermalStatus.state as ThermalStatus.State.Hot
+        assertEquals(transitionMillis, firstTick.sinceMillis)
+
+        // Later ticks, still Hot: sinceMillis must not creep forward to each new "now" (R-177's
+        // finding -- the banner's "at HH:MM:SS" advanced on every poll before this existed).
+        ThermalStatus.sample(ThermalStatus.THERMAL_STATUS_SEVERE, nowMillis = transitionMillis + 21_000L)
+        val secondTick = ThermalStatus.state as ThermalStatus.State.Hot
+        assertEquals(transitionMillis, secondTick.sinceMillis, "sinceMillis must stay the real transition moment")
+
+        ThermalStatus.sample(ThermalStatus.THERMAL_STATUS_SHUTDOWN, nowMillis = transitionMillis + 43_000L)
+        val thirdTick = ThermalStatus.state as ThermalStatus.State.Hot
+        assertEquals(transitionMillis, thirdTick.sinceMillis, "still Hot (worse, not a different tier) -- unchanged")
+    }
+
+    @Test
+    @Requirement("R-177")
+    fun `R_177_a_tier_change_gets_its_own_fresh_sinceMillis`() {
+        ThermalStatus.sample(ThermalStatus.THERMAL_STATUS_MODERATE, nowMillis = 1_000L)
+        val warm = ThermalStatus.state as ThermalStatus.State.Warm
+        assertEquals(1_000L, warm.sinceMillis)
+
+        ThermalStatus.sample(ThermalStatus.THERMAL_STATUS_SEVERE, nowMillis = 5_000L)
+        val hot = ThermalStatus.state as ThermalStatus.State.Hot
+        assertEquals(5_000L, hot.sinceMillis, "Warm -> Hot is its own transition, not a continuation of Warm's")
+
+        ThermalStatus.sample(ThermalStatus.THERMAL_STATUS_MODERATE, nowMillis = 9_000L)
+        val warmAgain = ThermalStatus.state as ThermalStatus.State.Warm
+        assertEquals(9_000L, warmAgain.sinceMillis, "Hot -> Warm is also its own fresh transition")
+    }
+
+    @Test
+    @Requirement("R-177")
+    fun `R_177_update_accepts_an_explicit_sinceMillis_for_the_scenario_simulator`() {
+        ThermalStatus.update(ThermalStatus.THERMAL_STATUS_MODERATE, realTimeFactor = 0.9, sinceMillis = 42_000L)
+        val state = ThermalStatus.state as ThermalStatus.State.Warm
+        assertEquals(42_000L, state.sinceMillis)
+    }
 }

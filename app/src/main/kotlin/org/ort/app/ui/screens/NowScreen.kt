@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +30,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.ort.app.status.StatusViewState
 import org.ort.app.ui.components.ActivityPatternChart
@@ -226,7 +229,19 @@ private fun ActiveContent(
         modifier = Modifier.padding(top = 3.dp).semantics { contentDescription = state.summaryLabel },
     )
 
-    if (state.activityPattern.isNotEmpty()) {
+    if (state.overCount == 0) {
+        // R-174: a session seconds old genuinely has not listened through the other ~23 hours of
+        // the day — ActivityPatternChart would honestly draw them as the full-width NOT_LISTENING
+        // hatch (FR-UI-12), which is accurate but is exactly the alarming full-hatch chart
+        // `Now-First.dc.html` deliberately avoids this early. This is not the same chart with
+        // different data; it is a distinct, near-empty baseline that commits to nothing about
+        // hours not yet lived through.
+        FirstSessionChartBaseline(
+            axisStart = state.axisStartLabel,
+            axisEnd = state.axisEndLabel,
+            modifier = Modifier.padding(top = OrtSpacing.lg).testTag("now-first-session-chart"),
+        )
+    } else if (state.activityPattern.isNotEmpty()) {
         ActivityPatternChart(
             pattern = state.activityPattern,
             modifier = Modifier.padding(top = OrtSpacing.lg).testTag("now-activity-chart"),
@@ -288,6 +303,57 @@ private fun ActiveContent(
         }
     }
 }
+
+/**
+ * `Now-First.dc.html`'s flat chart baseline (R-174): a near-flat bar strip (the first bar carries a
+ * faint 6%-height mark — this session's own first, still-forming hour — every other bar is bottom
+ * ruled only, committing to nothing) with "the chart fills as the night goes on" centered between
+ * the axis labels, replacing [ActivityPatternChart] for the one state where that chart's honest
+ * per-hour hatch would misread as alarm rather than freshness. See [NowViewState.Active]'s own doc
+ * comment for why [ActivityPatternChart] itself is not reused, only called, for this case.
+ */
+@Composable
+private fun FirstSessionChartBaseline(axisStart: String?, axisEnd: String?, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(38.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(1.5.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(0.06f)
+                    .background(OrtColors.textFaint.copy(alpha = 0.35f)),
+            )
+            repeat(FIRST_SESSION_BASELINE_BAR_COUNT - 1) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(1.dp)
+                        .align(Alignment.Bottom)
+                        .background(OrtColors.textFaint.copy(alpha = 0.25f)),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            axisStart?.let { Text(text = it, style = OrtType.timeFreq, color = OrtColors.textFaint) }
+            Text(
+                text = "the chart fills as the night goes on",
+                style = OrtType.subLine,
+                color = OrtColors.textFaint,
+                modifier = Modifier.weight(1f).padding(horizontal = OrtSpacing.sm),
+                textAlign = TextAlign.Center,
+            )
+            axisEnd?.let { Text(text = it, style = OrtType.timeFreq, color = OrtColors.textFaint) }
+        }
+    }
+}
+
+private const val FIRST_SESSION_BASELINE_BAR_COUNT = 16
 
 @Composable
 private fun WorthKnowingRow(item: WorthKnowingItem) {

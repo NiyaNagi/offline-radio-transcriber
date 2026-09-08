@@ -21,6 +21,13 @@ private const val POLL_INTERVAL_MILLIS = 2_000L
  * file) dispatches `ReaderDestination.NOW` here once WP3 deletes its own inline `NowContent` and
  * calls this one instead (this package's brief's own words; see `NowScreen`'s deprecated overload
  * for what keeps the build green until then).
+ *
+ * R-172: [sessionId] is a fallback only — every poll re-derives the session actually worth
+ * showing via [ReaderPolling.effectiveSessionId] (`CaptureState.sessionId` whenever it is
+ * genuinely capturing), so a session that starts *after* this screen is already composed — a
+ * fresh `Start capture` tap here, or a scenario broadcast setting `CaptureState` directly while
+ * the reader is already open (R-171) — is picked up on the very next tick, never stuck on
+ * whichever session was live (or not) when this composable first ran.
  */
 @Composable
 public fun NowContent(
@@ -40,14 +47,27 @@ public fun NowContent(
     onOpenStations: () -> Unit = {},
     onOpenModels: () -> Unit = {},
 ) {
-    var activeSessionId by remember(sessionId) { mutableStateOf(sessionId) }
     var state by remember { mutableStateOf<NowViewState>(NowViewState.Idle(null, null, null, null, emptyList(), null)) }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
+    // Bumped after `Start capture` so the next tick fires immediately rather than waiting up to
+    // POLL_INTERVAL_MILLIS — a snappier UX only, not what makes the new session show up at all
+    // (that is `effectiveSessionId`'s job, and it works with or without this).
+    var pollGeneration by remember { mutableStateOf(0) }
 
-    LaunchedEffect(activeSessionId) {
+    LaunchedEffect(sessionId, pollGeneration) {
         while (true) {
-            state = ReaderPolling.nowViewState(context, activeSessionId)
-            liveBar = if (state is NowViewState.Active) LiveBarPolling.current(context, activeSessionId) else null
+            // Two calls, one resolution: `nowViewState` already resolves `sessionId` through
+            // `effectiveSessionId` internally (its own kdoc), so passing the raw, unresolved
+            // `sessionId` here is correct, not a shortcut. `effectiveSessionId` is computed again,
+            // locally, only because `LiveBarPolling.current` — unlike `nowViewState` — takes the
+            // session id it should read directly and does no resolution of its own.
+            val effectiveSessionId = ReaderPolling.effectiveSessionId(sessionId)
+            state = ReaderPolling.nowViewState(context, sessionId)
+            liveBar = if (state is NowViewState.Active) {
+                LiveBarPolling.current(context, effectiveSessionId)
+            } else {
+                null
+            }
             delay(POLL_INTERVAL_MILLIS)
         }
     }
@@ -57,7 +77,10 @@ public fun NowContent(
         modifier = modifier,
         liveBar = liveBar,
         onOpenLive = {},
-        onStartCapture = { activeSessionId = ReaderPolling.startCapture(context) },
+        onStartCapture = {
+            ReaderPolling.startCapture(context)
+            pollGeneration++
+        },
         onOpenStation = onOpenStation,
         onOpenStations = onOpenStations,
         onOpenModels = onOpenModels,

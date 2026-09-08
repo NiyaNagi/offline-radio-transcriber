@@ -26,6 +26,7 @@ import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.Tile
+import org.ort.app.ui.improve.Plurals
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -46,8 +47,9 @@ public fun DigestScreen(
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
             Text(text = state.headline, style = OrtType.screenTitle, color = OrtColors.textHigh)
             Text(
-                text = "${state.timeRangeLabel} · ${state.overCount} overs · ${state.stationCount} stations · " +
-                    "${state.bandCount} band(s)" + if (state.gapCount > 0) " · ${state.gapCount} gap(s)" else "",
+                text = "${state.timeRangeLabel} · ${Plurals.count(state.overCount, "over")} · " +
+                    "${Plurals.count(state.stationCount, "station")} · ${Plurals.count(state.bandCount, "band")}" +
+                    if (state.gapCount > 0) " · ${Plurals.count(state.gapCount, "gap")}" else "",
                 style = OrtType.subtitle,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
@@ -60,9 +62,23 @@ public fun DigestScreen(
                 )
             }
 
-            if (state.items.isNotEmpty()) {
+            // R-146: this section header used to render only when `items` was non-empty, so a
+            // session with nothing in `Worth knowing` but something in `Not known tonight` skipped
+            // straight to the second section with no acknowledgement of the first — the board
+            // always shows `WORTH KNOWING`, with the app's own empty-state sentence when it has
+            // nothing to report (the same pattern `Now`'s digest section already uses).
+            if (state.items.isNotEmpty() || state.notKnown.isNotEmpty()) {
                 SectionHeader(label = "Worth knowing", modifier = Modifier.padding(top = OrtSpacing.md))
-                state.items.forEach { item -> DigestRow(item = item, onClick = { onOpenItem(item) }) }
+                if (state.items.isEmpty()) {
+                    Text(
+                        text = "Nothing to report yet.",
+                        style = OrtType.bodyProse,
+                        color = OrtColors.textDim,
+                        modifier = Modifier.padding(top = OrtSpacing.xs),
+                    )
+                } else {
+                    state.items.forEach { item -> DigestRow(item = item, onClick = { onOpenItem(item) }) }
+                }
             }
 
             if (state.notKnown.isNotEmpty()) {
@@ -76,20 +92,33 @@ public fun DigestScreen(
             }
 
             SectionHeader(label = "By the numbers", modifier = Modifier.padding(top = OrtSpacing.md))
+            // R-146 (round 4, System validator): same root cause as R-137's Diagnostics tiles —
+            // `fillMaxWidth()` on each `Tile` (instead of `weight(1f)`) made every tile claim the
+            // whole row's width, so only the first ("overs") ever rendered on screen.
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
                 horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
             ) {
-                Tile(figure = "${state.overCount}", caption = "overs", modifier = Modifier.fillMaxWidth())
-                Tile(figure = state.attributedPercentLabel, caption = "attributed", modifier = Modifier.fillMaxWidth())
-                Tile(figure = "${state.rejectedCount}", caption = "rejected", modifier = Modifier.fillMaxWidth())
+                Tile(figure = "${state.overCount}", caption = "overs", modifier = Modifier.weight(1f))
+                Tile(figure = state.attributedPercentLabel, caption = "attributed", modifier = Modifier.weight(1f))
+                Tile(figure = "${state.rejectedCount}", caption = "rejected", modifier = Modifier.weight(1f))
             }
 
-            SecondaryButton(
-                text = "Full log",
-                onClick = onFullLog,
+            Row(
                 modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
-            )
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+            ) {
+                SecondaryButton(text = "Full log", onClick = onFullLog, modifier = Modifier.weight(1f))
+                // R-146: no exporter exists in :app/:pipeline/:net (WP10's original entry, unchanged
+                // since — grepped again before writing this) — disabled with an honest reason
+                // rather than a fake "Export this night" success, per constitution I.
+                SecondaryButton(
+                    text = "Export this night",
+                    onClick = {},
+                    enabled = false,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }
@@ -168,7 +197,7 @@ public fun DigestItemScreen(
         )
 
         SecondaryButton(
-            text = "The ${item.transmissionIds.size} over(s)",
+            text = "The " + Plurals.count(item.transmissionIds.size, "over"),
             onClick = onOpenTheOvers,
             modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg),
         )

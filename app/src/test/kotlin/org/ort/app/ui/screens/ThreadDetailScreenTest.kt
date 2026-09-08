@@ -31,12 +31,13 @@ class ThreadDetailScreenTest {
     private val over1Transcript = "this is whiskey seven november papa charlie"
     private val over2Reasoning = "inherited by voice from 02:16:02"
 
-    private fun state() = ThreadDetailViewState(
+    private fun state(kindLabel: String? = null, modeLabel: String? = null) = ThreadDetailViewState(
         threadId = "T1",
-        kindLabel = null,
+        kindLabel = kindLabel,
         frequencyLabel = "145.230",
+        modeLabel = modeLabel,
         titleText = "W7NPC and K7LWH",
-        metaText = "4 overs · 02:14:07 – 02:16:02",
+        metaText = "4 overs · 02:14:07 – 02:16:02 · 1 m 55 s",
         howAttributed = listOf(
             ThreadAttributionExplanationLine(Attribution.confirmed("W7NPC", 0.95), "W7NPC heard in overs 1 and 3"),
             ThreadAttributionExplanationLine(
@@ -70,8 +71,10 @@ class ThreadDetailScreenTest {
         onOpenOver: (String) -> Unit = {},
         onOpenSourceOver: (String) -> Unit = {},
         backLabel: String = "Threads",
+        kindLabel: String? = null,
+        modeLabel: String? = null,
     ) = ThreadDetailScreen(
-        state = state(),
+        state = state(kindLabel = kindLabel, modeLabel = modeLabel),
         onBack = onBack,
         onOpenOver = onOpenOver,
         onOpenSourceOver = onOpenSourceOver,
@@ -124,6 +127,46 @@ class ThreadDetailScreenTest {
         composeTestRule.onNodeWithContentDescription("Back to Threads").performClick()
 
         assert(backPressed)
+    }
+
+    @Test
+    fun `R_161 the header line leads with the frequency and adds kind and mode only when the data has them`() {
+        composeTestRule.setContent { OrtTheme { screen() } }
+
+        composeTestRule.onNodeWithText("145.230").assertExists()
+    }
+
+    @Test
+    fun `R_161 the header line renders kind and mode when both are derivable`() {
+        composeTestRule.setContent { OrtTheme { screen(kindLabel = "QSO", modeLabel = "FM") } }
+
+        composeTestRule.onNodeWithText("QSO · 145.230 · FM").assertExists()
+    }
+
+    @Test
+    fun `R_161 the span duration renders on the meta line`() {
+        composeTestRule.setContent { OrtTheme { screen() } }
+
+        composeTestRule.onNodeWithText("4 overs · 02:14:07 – 02:16:02 · 1 m 55 s").assertExists()
+    }
+
+    @Test
+    fun `R_161 the per-over table has no FREQ column, just time and over`() {
+        composeTestRule.setContent { OrtTheme { screen() } }
+
+        composeTestRule.onNodeWithText("TIME").assertExists()
+        composeTestRule.onNodeWithText("OVER").assertExists()
+        composeTestRule.onNodeWithText("FREQ").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_162 a CONFIRMED line in how-these-were-attributed never announces a confidence number`() {
+        composeTestRule.setContent { OrtTheme { screen() } }
+
+        // W7NPC's line is CONFIRMED (0.95) — AttributionRow's own description (guide §9) never
+        // states a confidence figure for CONFIRMED, unlike the legacy AttributionMarker path
+        // (whose `legacyMarkerDescription` appended one regardless of `showConfidence`).
+        composeTestRule.onNodeWithContentDescription("filled circle, Confirmed").assertExists()
     }
 
     @Test

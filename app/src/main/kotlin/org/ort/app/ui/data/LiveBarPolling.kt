@@ -3,6 +3,8 @@ package org.ort.app.ui.data
 import android.content.Context
 import org.ort.app.ui.components.LiveBarTone
 import org.ort.app.ui.components.LiveBarViewState
+import org.ort.app.ui.failures.DebugFailureOverride
+import org.ort.app.ui.failures.FailurePresentation
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.CaptureState
@@ -32,12 +34,14 @@ public object LiveBarPolling {
     private const val LEVEL_BAR_COUNT = 4
 
     public suspend fun current(context: Context, sessionId: String?): LiveBarViewState {
-        val (tone, label) = toneAndLabel()
+        val override = failureOverrideLiveBar()
+        val (tone, label) = if (override != null) override.tone to override.label else toneAndLabel()
         return LiveBarViewState(
             level = levelBars(),
-            partialText = sessionId?.let { newestPassAPartial(context, it) },
+            partialText = override?.partialText ?: sessionId?.let { newestPassAPartial(context, it) },
             label = label,
             tone = tone,
+            meterTone = override?.meterTone,
         )
     }
 
@@ -69,6 +73,57 @@ public object LiveBarPolling {
         val ceiling = LevelViewState.CHART_CEILING_DBFS
         return ((dbfs - floor) / (ceiling - floor)).coerceIn(0f, 1f)
     }
+
+    /** The result [failureOverrideLiveBar] returns for the (currently two) `FailurePresentation`
+     * ids whose live bar cannot be computed from [toneAndLabel]'s real-signal reading alone.
+     * [meterTone] mirrors [LiveBarViewState.meterTone] — `null` means "follow [tone]", same
+     * contract as that field's own default. */
+    private data class OverrideLiveBar(
+        val tone: LiveBarTone,
+        val label: String,
+        val partialText: String?,
+        val meterTone: LiveBarTone? = null,
+    )
+
+    /**
+     * Register R-128: the live bar must follow every failure `FailureMapper` can raise, including
+     * a debug override — `DebugFailureOverride.activeOverride` wins outright in `FailureMapper`'s
+     * own priority (see that object's kdoc), so it is consulted here too, ahead of every
+     * real-signal branch in [toneAndLabel]. Exhaustive over every `FailurePresentation` id this
+     * project owns, so the mapping is documented and testable per F-id (this package's brief) —
+     * two ids genuinely need an override here (`Fail-Usb.dc.html`'s live bar reads "audio fine ·
+     * radio needs permission" in `halt/text` red — F16 has no real signal at all, only the debug
+     * override; `Fail-Storage.dc.html`'s "text only" stage the same way, register R-100's own
+     * "Left open" note on `StorageAudioPausedViewState`). Every other id falls through (`null`) to
+     * [toneAndLabel]'s real-signal computation, either because its own board shows no live bar at
+     * all (F14/F19/F20/F21/F22 are not Now/session screens) or because its board explicitly keeps
+     * the live bar nominal while the informational card shows (F5/F15 both read "Live") — nothing
+     * here invents a label a board never specified.
+     *
+     * F16 (register F16/R-128, WP2's `meterTone`): the rig needing USB permission is a permission
+     * problem, not an audio one — `Fail-Usb.dc.html` shows the meter itself staying green ("audio
+     * fine") while the label calls for action ("Act", `halt/text` red). `meterTone = NOMINAL`
+     * carries that distinction through to [LiveBarViewState.meterTone]; every other override here
+     * leaves it `null` (follow [tone]) because no other board draws that split.
+     */
+    private fun failureOverrideLiveBar(): OverrideLiveBar? =
+        when (DebugFailureOverride.activeOverride) {
+            is FailurePresentation.Usb -> OverrideLiveBar(
+                tone = LiveBarTone.HALTED,
+                label = "Act",
+                partialText = "audio fine · radio needs permission",
+                meterTone = LiveBarTone.NOMINAL,
+            )
+            is FailurePresentation.StorageAudioPaused ->
+                OverrideLiveBar(tone = LiveBarTone.DEGRADED, label = "Text only", partialText = null)
+            is FailurePresentation.Route, is FailurePresentation.Disconnect, is FailurePresentation.Level,
+            is FailurePresentation.Killed, is FailurePresentation.StorageWarning, is FailurePresentation.StorageHalt,
+            is FailurePresentation.Thermal, is FailurePresentation.Backlog, is FailurePresentation.Rig,
+            is FailurePresentation.Call, is FailurePresentation.Clock, is FailurePresentation.Interrupted,
+            is FailurePresentation.Reconcile, is FailurePresentation.Migration, is FailurePresentation.AssetSwap,
+            is FailurePresentation.Calibration, FailurePresentation.None, null,
+            -> null
+        }
 
     /**
      * `Flow-Degrade.dc.html`'s own priority order: capture actually stopped outranks every
@@ -104,10 +159,14 @@ public object LiveBarPolling {
                 StorageForecast.state is StorageForecast.State.OneNightLeft ->
                 LiveBarTone.DEGRADED to "Low storage"
 
-            shedLevel > 0 -> LiveBarTone.DEGRADED to "Tier ${(MAX_TIER - shedLevel).coerceIn(0, MAX_TIER)}"
-
+            // Register R-149: this must match `FailureMapper.mapThermalOrBacklogOrRigBanner`'s own
+            // order exactly (thermal, then backlog, then rig) — a bare `shedLevel > 0` check used
+            // to sit here *before* backlog, so the `backlog` scenario (shed level 3, thermal
+            // nominal) read "Tier 0" instead of "112 behind": found by V6, `backlog/F8-banner.png`.
+            // `FailureMapper` has no standalone "tier dropped, no thermal reason" case at all — the
+            // tier number is only ever shown *as the reason `Fail-Thermal.dc.html` gives*.
             thermal is ThermalStatus.State.Warm || thermal is ThermalStatus.State.Hot ->
-                LiveBarTone.DEGRADED to "Running warm"
+                LiveBarTone.DEGRADED to "Tier ${(MAX_TIER - shedLevel).coerceIn(0, MAX_TIER)}"
 
             shedBacklog >= BACKLOG_GROWING_THRESHOLD -> LiveBarTone.DEGRADED to "$shedBacklog behind"
 

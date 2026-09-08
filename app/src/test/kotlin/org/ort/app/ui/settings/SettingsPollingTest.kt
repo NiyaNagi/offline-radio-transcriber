@@ -110,10 +110,35 @@ class SettingsPollingTest {
     }
 
     @Test
+    fun `R_136 the never-included list is Settings-Contribute-dc-html verbatim, title and sub-line real fields`() {
+        val state = SettingsPolling.contribute(InMemorySettingsStore())
+
+        val voiceprints = state.neverIncluded.first { it.title == "Voiceprints" }
+        assert(voiceprints.subLine == "a voice is a biometric · it is used here and only here") {
+            "expected the board's own sub-line, got ${voiceprints.subLine}"
+        }
+        val stationKnowledge = state.neverIncluded.first { it.title == "Station knowledge" }
+        assert(stationKnowledge.subLine != null && stationKnowledge.subLine!!.contains("patterns this phone")) {
+            "expected the real per-item sub-line, not a title+description merge"
+        }
+        assert(state.neverIncluded.none { it.title.contains("and embeddings") }) {
+            "R-136: title must not be the old merged 'Voiceprints and embeddings' string"
+        }
+    }
+
+    @Test
     fun `R_090 about reads the real app version from the package manager, not a literal`() {
         val state = SettingsPolling.about(context)
         assert(state.appVersionLabel.isNotBlank())
         assert(state.minSdkLabel == "8.0")
+    }
+
+    @Test
+    fun `R_138 about's version label carries a real build number from the package manager`() {
+        val state = SettingsPolling.about(context)
+        assert(state.appVersionLabel.contains("· build ")) {
+            "expected 'version · build N' (R-138), got ${state.appVersionLabel}"
+        }
     }
 
     @Test
@@ -123,6 +148,13 @@ class SettingsPollingTest {
         assert(state.categories.any { it.label == "Models" })
         assert(state.budgetGb == null)
     }
+
+    @Test
+    fun `R_133 storage warnAtNightsLeft reads the real StorageForecast threshold, not a board literal`(): Unit =
+        runTest {
+            val state = SettingsPolling.storage(context, InMemorySettingsStore())
+            assert(state.warnAtNightsLeft == org.ort.pipeline.capture.StorageForecast.THREE_NIGHTS_THRESHOLD.toInt())
+        }
 
     @Test
     fun `R_090 export counts real sessions and overs from the database`(): Unit = runTest {

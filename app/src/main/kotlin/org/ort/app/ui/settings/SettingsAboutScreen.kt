@@ -1,28 +1,48 @@
 package org.ort.app.ui.settings
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.KeyValueRow
+import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 
 /** `Settings-About.dc.html`: the offline promise, stated plainly, plus the real app/Android
- * version read from the package manager (never a literal copied from the artboard). */
+ * version read from the package manager (never a literal copied from the artboard).
+ *
+ * R-138 (round 4, System validator): the title row gains a leading icon — the guide's stroke set
+ * (`ui/components/OrtIcons.kt`, outside this round's file ownership) has no bespoke "about" glyph,
+ * so this reuses [OrtIcons.settings] rather than adding one to a package this round may not edit;
+ * a closer match is WP2's to add.
+ */
 @Composable
 public fun SettingsAboutScreen(state: SettingsAboutViewState, onBack: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DrillInHeader(parentLabel = "Settings", onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
-            Text(text = "Offline radio transcriber", style = OrtType.screenTitle, color = OrtColors.textHigh)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = OrtIcons.settings,
+                    contentDescription = null,
+                    tint = OrtColors.accentGreen,
+                    modifier = Modifier.padding(end = OrtSpacing.sm).size(20.dp),
+                )
+                Text(text = "Offline radio transcriber", style = OrtType.screenTitle, color = OrtColors.textHigh)
+            }
             Text(
                 text = state.appVersionLabel,
                 style = OrtType.subtitle,
@@ -58,6 +78,11 @@ public fun SettingsAboutScreen(state: SettingsAboutViewState, onBack: () -> Unit
             SectionHeader(label = "Build", modifier = Modifier.padding(top = OrtSpacing.lg))
             KeyValueRow(key = "Android", value = state.androidVersionLabel, subLine = "min ${state.minSdkLabel}")
             KeyValueRow(key = "Models", value = "sherpa-onnx · whisper · Silero")
+            // R-138: the `Runtime` row `Settings-About.dc.html` draws — the linked ONNX Runtime's
+            // own version string is not queryable through `:onnx`'s public API (checked before
+            // writing this), so this states the real architecture fact (which inference runtime,
+            // that NNAPI is used when the device offers it) without a fabricated version number.
+            KeyValueRow(key = "Runtime", value = "ONNX Runtime · NNAPI where this device offers it")
             KeyValueRow(key = "Radio", value = "usb-serial-for-android")
             KeyValueRow(key = "Licences", value = "Apache 2.0 · third-party notices")
 

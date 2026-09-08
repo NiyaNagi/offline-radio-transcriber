@@ -74,6 +74,13 @@ public data class TransmissionDetail(
      * [LogViewData]'s badge precedence.
      */
     val corrected: Boolean = false,
+    /**
+     * R-161 (ui-conformance WP5): the real `transmission.mode` column, `null` when the rig/CAT
+     * link never reported one. [ui/data/ReaderPolling.kt]'s own `detailFrom` (WP4's file, not this
+     * package's) does not set this field yet — a caller needing it re-attaches it from a direct
+     * `entity.mode` read of its own (see `ThreadPolling`'s doc comment) rather than fabricating it.
+     */
+    val mode: String? = null,
 )
 
 /** One row of the live/log view — everything [org.ort.app.ui.screens.LogScreen] renders. */

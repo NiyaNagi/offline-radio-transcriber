@@ -39,7 +39,7 @@ an identical second AVD for port 5556; at most two AVDs run at once
 | `boot.ps1 -Avd <name> -Port <n>` | Boots the named AVD headless and waits for `sys.boot_completed`. |
 | `create-avd.ps1 -Name <name>` | Creates a Pixel 6 / API 34 / x86_64 / google_apis AVD (`ort_audit_2` for port 5556). |
 | `install.ps1 -Port <n>` | `:app:assembleDebug`, installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`. |
-| `scenario.ps1 -Port <n> -Name <scenario>` | Force-stops the app, broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`. |
+| `scenario.ps1 -Port <n> -Name <scenario> [-NoRestart]` | Force-stops the app (unless `-NoRestart`), broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`. |
 | `shoot.ps1 -Port <n> -Scenario <s> -Screen <name>` | `screencap -p` to a device file, then `adb pull` — to `results/ui-audit/<s>/<name>.png`. |
 | `nav.ps1 -Port <n> -Screen <name>` | Replays the tap sequence for `<name>` from `screens.json`. |
 | `run-set.ps1 -Port <n> -Set <V3\|V5>` | Runs every (scenario, screen) pair of one phase-E set from `sets.json`, end to end. |
@@ -64,6 +64,37 @@ $env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start `
 .\tools\ui-audit\nav.ps1 -Port 5554 -Screen log
 .\tools\ui-audit\shoot.ps1 -Port 5554 -Scenario overnight -Screen log
 ```
+
+### Watching a live transition (register R-179)
+
+The sequence above force-stops the app before every broadcast, so nothing already on screen can
+ever witness the scenario's own effect — the process reading it is a fresh launch every time. To
+watch a running UI observe a real transition (a degraded banner clearing, a recovery toast, a poll
+picking up a session that just started capturing), load the *first* scenario normally, launch the
+reader, then broadcast the *second* scenario with `-NoRestart` so it lands in the same
+already-running process instead of a new one:
+
+```powershell
+.\tools\ui-audit\scenario.ps1 -Port 5554 -Name thermal
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5554 shell am start `
+    -n org.ort.app/.debug.ScenarioReaderActivity --es session_id scenario-thermal
+.\tools\ui-audit\nav.ps1 -Port 5554 -Screen now
+# ... the reader is now open and polling on the thermal scenario ...
+.\tools\ui-audit\scenario.ps1 -Port 5554 -Name empty -NoRestart
+# watch the open UI, or shoot.ps1 a few seconds later, to see the banner clear / recover live.
+```
+
+**Verified (R-179): `ScenarioReceiver` updates the process-wide holders in-process, not out of
+band.** It is a plain manifest-registered `BroadcastReceiver` (`app/src/debug/AndroidManifest.xml`)
+with no IPC boundary of its own — when the broadcast (an explicit `-n` target, so it is delivered
+even to a background process) lands in the app's already-running process, `onReceive` runs
+`Scenarios.load(...)` in that same process, which calls `CaptureState`/`ThermalStatus`/
+`RigStatus`/`LevelStatus`/`InputStatus`/... directly — the exact singleton instances the reader's
+own poll loops (`ReaderPolling`, `LiveBarPolling`, `FailureHost`'s mapper) are already reading. This
+was read from `ScenarioReceiver.kt`'s and `Scenarios.kt`'s source, not just inferred: there is no
+second process, no serialization boundary, and no cache to go stale — the write and the read share
+the same JVM heap. `-NoRestart` only changes whether Android delivers the broadcast to a fresh
+process or the one already on screen; it does not change how the receiver updates state.
 
 Or, for a whole phase-E set at once:
 
@@ -102,9 +133,11 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `first-session` | One session started 3 minutes ago, no transmissions, capture marked running. |
 | `overnight` | A real 6h42m, two-frequency session with ~42 overs exercising every `Rows.dc.html` variant: CONFIRMED, INFERRED (linked to its confirming over), AMBIGUOUS, UNKNOWN, a corrected row, a revised row (two transcript versions), a rejected row (retained), a first-heard station, a QSO thread (4 overs, shared `threadId`), a 38s capture gap, mixed signal strength, mixed retained audio, and lattice/candidate rows for the confirmed/inferred/ambiguous overs — including one cold-start and one negative prior, for `Detail-Why`. |
 | `gap-call` | `overnight` plus a second capture gap, cause `CALL` (register R-106 — `CaptureGapCause.CALL` added by WP11a). |
+| `overnight-live` | The same `overnight` fixture, but `SessionEntity.endedAt` is `null` and `CaptureState` is actually `capturing` on that id, with a fresh heartbeat (register R-171) — reaches the *populated, running* shape of `Main.dc.html` (N01) and `Capture-Status.dc.html` (N04) that neither `overnight` (populated but ended) nor `first-session` (running but empty) can reach on its own. |
 | `unclean-end` | A heartbeat file that reads as an unclean end (never marked clean shutdown) for a prior session; this process is not capturing. |
 | `os-stopped` | The same unclean-end heartbeat as `unclean-end`, plus the `CaptureGapCause.OS_STOPPED` gap `RealCaptureService` itself now persists on relaunch, from the last heartbeat to the moment of detection (F5, register R-106). Does not "reopen" the previous session — a policy the lead has not decided. |
 | `pass-a-partial` | A transmission whose only transcript row is a current Pass A partial, `processingState = PROCESSING`. |
+| `pass-failed` | R-153, F18 `Fail-Pass.dc.html`: a transmission whose Pass B is terminally `FAILED` (a real `work_queue_item` row, 3 attempts, `lastError = "out of memory in the decoder"`), `processingState = FAILED`, its Pass A partial kept as the current transcript, and retained audio. |
 | `corrected` | A single transmission carrying the exact shape a one-tap correction produces, plus its `CorrectionEntity` audit row. |
 | `no-audio` | A confirmed transmission with no retained-audio file at all. |
 | `revisions` | A single transmission with two transcript versions, the older superseded. |

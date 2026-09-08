@@ -57,6 +57,7 @@ class ThreadScreenTest {
                     state = ThreadListViewState.Ungrouped(
                         totalOvers = 412,
                         byFrequency = listOf(FrequencyMeanwhileEntry(145_230_000L, "145.230", 318, 12)),
+                        currentTier = 1,
                     ),
                     onOpenThread = {},
                 )
@@ -66,6 +67,48 @@ class ThreadScreenTest {
         composeTestRule.onNodeWithText("Conversations are not built on this phone yet").assertExists()
         composeTestRule.onNodeWithText("145.230").assertExists()
         composeTestRule.onNodeWithText("318 overs · 12 stations heard").assertExists()
+    }
+
+    @Test
+    fun `R_163 the ungrouped paragraph and link name the same real tier, and the section label is upper case`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ThreadScreen(
+                    state = ThreadListViewState.Ungrouped(
+                        totalOvers = 1,
+                        byFrequency = emptyList(),
+                        currentTier = 2,
+                    ),
+                    onOpenThread = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(
+            "Grouping overs into QSOs needs speaker identity, which runs at tier 2 and above. " +
+                "This phone is at tier 2, so every over is here individually and " +
+                "nothing has been guessed about who was talking to whom.",
+        ).assertExists()
+        composeTestRule.onNodeWithText("What tier 2 can and cannot do").assertExists()
+        composeTestRule.onNodeWithText("BY FREQUENCY, MEANWHILE").assertExists()
+    }
+
+    @Test
+    fun `R_163 the by-frequency row names the plural correctly for one over and one station`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ThreadScreen(
+                    state = ThreadListViewState.Ungrouped(
+                        totalOvers = 1,
+                        byFrequency = listOf(FrequencyMeanwhileEntry(145_230_000L, "145.230", 1, 1)),
+                        currentTier = 3,
+                    ),
+                    onOpenThread = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("1 over · 1 station heard").assertExists()
     }
 
     @Test

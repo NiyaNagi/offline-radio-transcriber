@@ -32,7 +32,1084 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)
+## 2026-09-08 (ui-conformance WP2: line length)
+
+### (pending) — ui-conformance WP2 · line length
+
+**Scope:** `:app` `ui/components/ActivityPatternChart.kt` and `RowsTest.kt` only — a follow-up to
+this package's previous commit (`34385e8`, merged as `68f84bc`). `main` fast-forward merged first
+(`git merge --ff-only main`; this branch already an ancestor; no rebase, no stash) — no other
+package's files touched.
+
+**Requirements/ACs:** none new — a lint/style fix, not a behaviour change.
+
+**What changed:**
+- **Wrapped the five over-120-character lines the coordinator named**:
+  `ActivityPatternChart.kt:291` (a `Row(...)` call's argument list, now multi-line) and
+  `RowsTest.kt:219, 220, 240, 241` (four `assert(...) { "…" }` calls, each now wrapping its
+  message lambda onto its own line). No logic changed in either file — purely line-shape.
+- **Investigated why the previous commit's own full-gate run reported clean** despite these real
+  violations, since the coordinator's report ruled out (correctly) that it was these five lines
+  simply being missed by eye. It is not a line-ending or per-worktree config difference on this
+  branch: `:app:detekt` and every `:app:*ktlint*SourceSet*` task currently report **`NO-SOURCE`**
+  for this checkout — confirmed with a completely fresh Gradle daemon and `--rerun-tasks` (so
+  neither a stale daemon nor the build cache explains it), for `:app:detekt`/`:app:ktlintCheck`
+  run directly *and* when reached through the full `build` task graph.
+  `buildSrc/src/main/kotlin/ort.common.gradle.kts` (outside this package, merged from a different
+  round's "build tooling: lint/detekt ignore nested worktrees under .claude" change and
+  subsequently rewritten, per its own doc comment, from a relative glob to an absolute-path
+  predicate) excludes any file whose absolute path contains a `.claude` directory segment
+  (`isUnderClaudeDirectory`), meant to keep one worktree's build from reading or caching another,
+  sibling worktree's files nested under `.claude/worktrees/`. But every builder's *own* checkout —
+  this one included — is itself a worktree living at
+  `…/offline-radio-transcriber/.claude/worktrees/<name>/…`, so that same absolute-path check
+  matches every real source file in the checkout doing the building, not only a sibling's. The
+  result: `:app:detekt`/every `:app:*ktlint*` task sees **zero input files** for any
+  worktree-isolated builder — including this one, on every previous round's "clean" full-gate
+  report in this package's own history — and a task with no input files reports success
+  vacuously, not because there is nothing to flag. This is a real, currently-live gap outside this
+  package's boundary (`buildSrc/**`, not `ui/components/**`), so it has not been fixed here; it is
+  reported so whoever owns `buildSrc` can (the fix is presumably distinguishing "this checkout's
+  own root is under `.claude/worktrees/<name>/`" from "a *descendant* path inside this checkout
+  additionally contains a *second* `.claude/worktrees/` segment," rather than a bare substring
+  match against the whole absolute path).
+- **Verified the fix by direct inspection instead**, since detekt cannot currently do it: swept
+  every `.kt` file under `ui/components/**` (both `src/main` and `src/test`, not just the two
+  files named) for any line over 120 characters — none found, anywhere in the package, after this
+  commit's two wraps.
+
+**Verified:**
+- Direct line-length sweep (PowerShell, `Get-Content` line-by-line) of every `.kt` file under
+  `app/src/main/kotlin/org/ort/app/ui/components/` and `app/src/test/kotlin/org/ort/app/ui
+  /components/` — **zero lines over 120 characters**, package-wide.
+- `.\gradlew.bat :app:detekt :app:ktlintCheck` and `.\gradlew.bat build dependencyRules
+  platformGuards --rerun-tasks` (a fresh daemon, no caching) — **BUILD SUCCESSFUL**, but per "What
+  changed" above this does not certify detekt/ktlint actually inspected this package's files;
+  `dependencyRules`/`platformGuards`/the test suite/`coverageMatrix` are unaffected by the
+  `.claude`-exclusion bug (none of them filter by that path) and their results below are genuine.
+- `.\gradlew.bat :app:testDebugUnitTest` — **923 of 923 passing, 0 failed** (summed from every
+  `app/build/test-results/testDebugUnitTest/*.xml` report's `tests`/`failures`; the rise from 891
+  is other packages' work merged via `main`, not this commit's own — it added no tests).
+  `dependencyRules: checked 17 modules ... OK.` `platformGuards: checked 17 modules' external
+  dependencies and 17 manifests ... OK.` `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+  `python tools\spec-check\spec_check.py` — 8/8 `[PASS]`. `.\gradlew.bat coverageMatrix` — `419
+  requirements, 183 covered` (unchanged). `.\gradlew.bat coverageMatrixCheck` (separate
+  invocation) — `up to date (183 covered of 419)`.
+- **A build daemon was killed mid-build by another process during this work** (`Gradle build
+  daemon has been stopped: stop command received`, on a `:app:detekt :app:ktlintCheck
+  --rerun-tasks` invocation) — not run by this session; retried on a fresh daemon per the
+  coordinator's own instruction never to run `gradlew --stop` in a shared checkout.
+
+**Left open / not done:**
+- **The `buildSrc` self-exclusion bug is reported, not fixed** — outside this package's boundary.
+  Until it is fixed, no worktree-isolated builder's `:app:detekt`/`:app:*ktlint*` result (this
+  round's or any other package's) actually certifies anything; every "clean" report from any
+  builder since that change landed should be treated the same way this one is here — confirmed by
+  direct inspection, not trusted at face value.
+- **The register/coordinator's own tracking of this finding is outside this package** — this entry
+  records it for this package's own record; flagging it to whoever owns `buildSrc` is the
+  coordinator's call.
+
+---
+
+
+## 2026-09-08 (ui-conformance WP10 round 4: System validator fixes across settings, improve, sessions, digest)
+
+### (pending) — ui-conformance WP10 · System validator fixes: single header, font-scale reflow, promise text, board copy and actions across settings, improve, sessions, digest
+
+**Scope:** `:app` — `ui/settings/**`, `ui/improve/**`, `ui/digest/**`, `ui/screens/ModelsScreen.kt`,
+`ui/data/ModelsViewData.kt`, `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, and tests
+beside each. Read (not edited) `ui/navigation/OrtNavHost.kt`/`ReaderNavigator.kt`/`SetupActivity.kt`
+to confirm the real `EXTRA_STEP`/`SetupStep.INPUT` entry point R-132 needed.
+
+**Requirements/ACs:** R-130, R-131, R-132, R-133, R-134, R-135, R-136, R-137, R-138, R-140, R-141,
+R-142, R-143, R-144, R-145, R-146, R-150, R-151 (this package's half: "R02"/Improve-Select), R-154 —
+the eighteen rows the System validator (V6 @5c8d144) filed against this package's round-3 build.
+Constitution I (Uncertainty Is Content), II (Test-Backed Change), III (nothing leaves the device).
+
+**What changed:**
+
+*Constitution Check.* Principle I: every new number is read from a real holder or computed from a
+real DAO query — `StorageForecast.THREE_NIGHTS_THRESHOLD` (R-133's real "Warn at" threshold), the
+real `versionCode`/`versionName` (R-138), the real per-tier ordinal (R-142's pass sub-lines) —
+never a board literal; where no real source exists (a git-commit `BuildConfig` field, a
+lexicon-import validator, `:onnx`'s runtime version string, a per-session model record queryable
+without the fts5 limitation below), the row states that plainly rather than inventing one, and
+each such gap is named below rather than silently dropped. Principle II: every behavioural change
+has a test named for its id, written against real state, in the same change.
+
+- **R-130 (single header, priority 1):** `SettingsRootScreen`/`SessionsScreen`/`ImproveScreen` each
+  drew their own `ScreenHeader` — `OrtNavHost`'s `NavHostBody` already draws one for the whole
+  destination before dispatching here, so every WP10 root screen doubled it. All three now draw no
+  header of their own; `onDrawer` stays an unused parameter on each (a `@Suppress` added, since
+  detekt's `UnusedParameter` does fire on public composable parameters) so `OrtNavHost.kt`'s call
+  sites — outside this round's file ownership — need no edit. `SettingsRootScreenTest`'s new
+  `R_130` case asserts zero "Open navigation" nodes render from the content itself.
+- **R-150/R-151 (font-scale reflow, priority 2):** `SettingsStorageScreen`'s budget-chip row and
+  category-legend row now sit inside `horizontalScroll` — at font scale 2.0 they previously
+  compressed each chip below its own text's intrinsic width, wrapping "Unlimited" one letter per
+  line. `ImproveSelectScreen` (R-151's "R02" half) was restructured so its scrolling body and its
+  action bar are two siblings in one `Column` (`Modifier.weight(1f)` on the body) rather than an
+  overlay pinned atop scrolled content with hand-matched bottom padding — Compose measures the
+  unweighted sibling first and subtracts its height before measuring the weighted one, so the
+  button can never clip or sit on top of the content at any font scale. F20/Fail-Migration (R-151's
+  other half) is WP11b's file, out of this package's row. New `SettingsStorageScreenTest` cases
+  (`R_150`, via `LocalDensity`/`fontScale = 2f` — `RowsTest.kt`'s own established idiom;
+  `@Config(qualifiers = "fontscale-2.0")` is not a valid Robolectric qualifier string and was tried
+  first) assert the budget chip and legend text each sit inside a scrollable ancestor.
+- **R-135/R-136 (promise text verbatim, priority 3):** `Settings-Export`'s never-exported sentence
+  now renders unconditionally (a `bg/card` banner with the lock icon), verbatim from
+  `Settings-Export.dc.html`, instead of only implicitly through the "not available" `FailedState` —
+  the fact is true regardless of whether an exporter exists. `Settings-Contribute`'s never-included
+  list is now `List<NeverLeavesDeviceItem>` (title + real sub-line, `SettingsViewData.kt`) instead
+  of one merged string per item — "Voiceprints and embeddings" is now "Voiceprints" with its own
+  sub-line, "Station knowledge — who is a regular where, and when" is now "Station knowledge" with
+  the board's own longer sub-line. New `SettingsPollingTest.R_136` case asserts both.
+- **R-141 (shared plural helper, recurs everywhere):** new `org.ort.app.ui.improve.Plurals.count(n,
+  singular, irregular)` — one place "1 overs", "1 session(s)", "N gap(s)" become "1 over"/"N overs"
+  — used across `DigestPolling`, `DigestScreens`, `SessionsScreens`, `ImprovePolling`,
+  `ImproveScreens`, `SettingsExportScreen`, `SettingsDiagnosticsScreen`. Lives in `ui/improve`
+  (Improve was the finding's first cited screen) rather than a new top-level package, since this
+  round's three packages already import across each other.
+- **R-131/R-142/R-143 (Improve content gaps):** `Improve`'s summary ("N overs can get better")
+  now sits in the `bg/card` container the board draws it in and uses `Plurals`; group rows read
+  "Captured at tier N" (the real tier ordinal — the board's "on the field phone" names a device
+  this build has no field for, so it is not asserted). `Improve-Select`'s three passes now carry
+  real sub-lines (pass name, and whether this group's real tier already ran it — no per-tier model
+  name is asserted, since this build has no tier→model-name table); the Estimate section is four
+  real `KeyValueRow`s (Time/Battery/Storage/Corrections) instead of two sentences, each honestly
+  "not estimated" where nothing is measured. R-143: `FakeImproveRunner`'s default per-item delay
+  rose from 40ms to 150ms, and the `field-tier1` debug scenario now seeds 12 overs instead of 1 —
+  at 40ms/1-over the whole run finished before an emulator screenshot script's own settle wait
+  could ever observe `Improve-Running`. `Improve-Done`'s "What changed" breakdown and `Review the N
+  changes` remain absent — no reprocessing engine exists in `:pipeline` to compute a real diff
+  (unchanged since the original WP10 entry; explicitly out of this package's `ui` row).
+- **R-144/R-145/R-146 (Sessions/Session/Digest content gaps):** `Sessions` now groups rows under a
+  real month header (`Instant`→`YearMonth`, local zone) whenever the month changes, and a gap
+  clause in the row's own sub-line carries the board's hatch swatch + `accent/gap` amber instead of
+  plain text. `Session`'s coverage chart no longer draws "COVERAGE" a second time (the
+  `SectionHeader` above it already does — `title = null`); its gap captions and the session's own
+  "not listening" summary now format seconds as "22m 0s" through one shared `secondsLabel` helper
+  instead of two of the three sites printing the raw second count. `Overs` gained the board's `Log`
+  text action; `Models` is a new row, honestly "not tracked per session in this build" — a real
+  per-session model reader would need `TranscriptDao`, which touches the `transcript_fts` virtual
+  table Robolectric's SQLite has no fts5 module for (the same limitation this package's round-3
+  report documented for `LogContent`'s own tests), so querying it here would make every
+  `SessionDetailScreen` test environment-dependent. The action row is now three equal `bg/chip`
+  buttons (Digest/Log/Export) instead of two outlined `SecondaryButton`s — `Export` disabled with
+  the same honest no-exporter reason `Digest`'s own new `Export this night` button gives.
+  `Digest`'s "By the numbers" tiles and `Session`'s own summary tiles both had the *same* bug: each
+  `Tile` asked for `Modifier.fillMaxWidth()` instead of `Modifier.weight(1f)` inside a `Row`, so
+  every tile after the first was measured at the row's full width and laid out off-screen — only
+  one of three ever rendered (matches R-137/R-146's "1 of 3 tiles" exactly). `WORTH KNOWING` now
+  renders (with the app's own "Nothing to report yet." sentence) whenever there is anything in
+  either digest section, not only when `items` itself is non-empty.
+- **R-132 (Settings-Capture actions):** `Device`'s `Change` and `Re-verify the route now`'s
+  `Verify` both launch `SetupActivity` with `EXTRA_STEP = SetupStep.INPUT.name` (the extra WP9's
+  round 3 added to `SetupActivity` — `ReaderNavigator.openSetupInput()` itself still does not pass
+  it, a WP3 file this round may not edit; `SettingsContent` builds its own `Intent` directly rather
+  than route through that stale wrapper). Both real actions land on the same place, since no
+  narrower "re-verify only, keep the same device" entry point exists. `Meter` calls a new
+  `onOpenLevelMeter: () -> Unit = {}`, threaded through `SettingsContent`'s own public signature the
+  same way `initialScreen` was added in round 3 — WP3's row to wire from the host. `Edit` beside the
+  manual frequency is now real: `SettingsStore.manualFrequencyMhz` was read-only in this screen
+  before; a real inline `TextField`/`Save` now writes it, gated on a caller wiring
+  `onEditManualFrequency` (a real value now, not the previous unconditional read-only row).
+- **R-133 (Settings-Storage retention):** added the real "Warn at" (reads
+  `StorageForecast.THREE_NIGHTS_THRESHOLD`, FR-STO-3/R-105's own real threshold), "Then stop
+  retaining audio, keep capturing text" (a fixed architecture fact), and "Hard floor" rows (repeats
+  the literal "100 MB" `:pipeline`'s own `FailureMapper`/`Fail-Storage` already show for
+  `RealCaptureService.STORAGE_FLOOR_BYTES`, which is `internal` to `:pipeline` and not importable
+  here). **Not done:** the board's "Keep audio for N nights · Change" nights-based retention model
+  (replacing the GB-budget chips) and a Lexicon storage category — the former is a real settings
+  persistence redesign (`SettingsStore.audioBudgetGb` is GB-based throughout this build, not
+  nights-based) too large to land safely within this round without its own TDD pass; the latter has
+  no query enumerating every installed lexicon asset id (`CatalogDao.versionsFor` takes one
+  specific id, there is no "list installed" call) to sum real bytes from, so a fabricated 0 B row
+  was not added.
+- **R-134 (Settings-Tier static content):** added "The tiers" (three real, static capability rows —
+  what each tier can/cannot do is a fixed design fact needing no live signal, per the finding's own
+  note) and consequence sub-lines on the override rows, both `Settings-Tier.dc.html` verbatim.
+- **R-137 (Settings-Diagnostics):** the same `fillMaxWidth()`-in-`Row` bug as R-146 above — fixed
+  the same way. Header reads "In the bundle · N files" (`Plurals`) — the board's own "· X.X MB" is
+  not appended, since no producer writes these files yet, so no real total size exists to report
+  (`Settings-Diagnostics.dc.html`'s "2.1 MB" is an illustrative example, not a fact this build could
+  compute). The ~1180px blank gap the finding also named was not independently reproduced from the
+  current source (no absolute-positioned or fixed-height element between the tile row and the file
+  list exists in this file); it may already be resolved by the tile-row fix above, since three
+  tiles rendered hundreds of dp off-screen to the right is exactly the kind of layout bug that
+  produces an unrelated-looking large scroll region — not confirmed on an emulator.
+- **R-138 (Settings-About):** added a `Runtime` row ("ONNX Runtime · NNAPI where this device
+  offers it" — the linked runtime's own version string is not queryable through `:onnx`'s public
+  API, so no version number is asserted) and a title-row icon (`OrtIcons.settings` reused — the
+  guide's stroke set has no bespoke "about" glyph, and `ui/components` is outside this round's file
+  ownership to add one to). The version label now reads "`versionName` · build `versionCode`" — a
+  real `PackageManager` value on both sides — never a fabricated commit hash (`app/build.gradle.kts`
+  carries no `BuildConfig` field for the git commit this build was made at).
+- **R-140 (Settings-Assets):** `ModelsScreen`'s asset list is now grouped by real model family
+  ("Whisper tiny.en (speech to text)" for the three encoder/decoder/tokens files, "Silero VAD
+  (voice activity)" alone) via an exhaustive `when` over every `ModelId` — each part keeps its own
+  real per-file Download/Install actions, since encoder/decoder/tokens are independently
+  downloadable/sideloadable in `ModelsController`; grouping states the split honestly rather than
+  hiding it or leaving it unexplained. A failed download (`ModelsContent`'s new
+  `ModelDownloadFailureViewState`) now renders the amber `FailedState` with a real `Retry` (reuses
+  `onDownload` with the failed asset's own id) instead of `:net`'s raw exception text sitting in
+  the same plain-body slot a success message uses.
+- **R-154 (Fail-Lexicon/F12) — not fixed, and why:** grepped `:app`, `:lexicon` and `:net` before
+  writing this — no lexicon-import validator exists anywhere in the codebase. F12/FR-LEX-12's
+  refusal screen and the validation logic behind it are an unbuilt feature, not a debug-scenario
+  staging gap; a `lexicon-corrupt` scenario cannot "run the same import validation" when there is no
+  import validation to run. Building one is `:lexicon`/`:net` engineering work outside this round's
+  `ui`-package file ownership and this round's time; reported rather than faked with a scenario
+  that calls into nothing.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, unfiltered) — `BUILD SUCCESSFUL in 1m 46s`,
+  every test `PASSED`, including new/changed cases: `SettingsRootScreenTest.R_130`,
+  `SettingsStorageScreenTest` (new file, `R_133` ×1 + `R_150` ×2), `SettingsPollingTest.R_133`/
+  `R_136`/`R_138`, `ModelsScreenTest.R_140` ×2, `SessionsContentTest.FR_UI_1`/`FR_DIG_9` (both
+  updated for the new session-detail layout and re-verified), `ImprovePollingTest` (updated for
+  `ImproveGroupViewState.tierOrdinal`), `DigestPollingTest` (all prior cases still green against
+  the `Plurals`/`secondsLabel` rewiring).
+- `.\gradlew.bat :app:detekt` and `.\gradlew.bat :app:ktlintFormat` — both `BUILD SUCCESSFUL`, zero
+  remaining findings (fixed along the way: `LongParameterList`/`LongMethod` on
+  `SettingsCaptureScreen`/`SettingsSubScreen`/`SettingsExportScreen`/`SettingsStorageScreen`/
+  `ModelsScreen` via extracted composables and a `SettingsCaptureToggleActions` bundle;
+  `UnusedParameter` on the three de-headered root screens' `onDrawer` via `@Suppress`;
+  `MatchingDeclarationName` by moving `SettingsCaptureToggleActions` to `SettingsViewData.kt`).
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 2m 10s`, 845
+  actionable tasks; `dependencyRules: OK`; `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` — `183 covered of 419` (register-only ids like these rows are not
+  in `spec/`'s counted set, so this number is unchanged from the round-3 entry; the FR-cited ids
+  this round touches — e.g. the plural/font-scale/promise fixes — were already covered by tests
+  the round-3 entry's own coverage run counted).
+- `.\gradlew.bat coverageMatrixCheck` — `up to date (183 covered of 419)`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+
+**Left open / not done:**
+- R-133: the nights-based retention model (vs. this build's GB-budget one) and a Lexicon storage
+  category — see that row's own note above for exactly what query/persistence change each needs.
+- R-137: the ~1180px blank-gap symptom not independently reproduced past the tile-row fix that may
+  already resolve it — needs an emulator check, not a Robolectric one.
+- R-138: no real ONNX Runtime version string, no bespoke About icon, no build-commit hash — each
+  needs a capability (`:onnx` API, a new icon in `ui/components`, a `BuildConfig` field) outside
+  this round's row.
+- R-140/R-145: no real per-session/per-asset model-name or Diagnostics total-size figures — both
+  blocked on the same fts5-under-Robolectric limitation or a query this build does not have (see
+  each row's own note).
+- R-143: `Improve-Done`'s "What changed" breakdown and `Review the N changes` remain absent — needs
+  a real reprocessing engine in `:pipeline` (R-091's own long-standing gap), not a `ui`-package fix.
+- R-154: not fixed — no lexicon-import validator exists anywhere in this codebase to stage a
+  scenario against; this is an unbuilt-feature gap, not a staging gap. See that row's note above.
+- Coordinator's process note (unrelated to this package's work, recorded per instruction): this
+  session never ran `gradlew --stop`; one `BUILD FAILED — Gradle build daemon has been stopped:
+  stop command received` was observed mid-session from a concurrent process elsewhere and resolved
+  on retry with no source change.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
+
+## 2026-09-08 (ui-conformance WP2: no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation)
+
+### 34385e8 — ui-conformance WP2 · no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation
+
+**Scope:** `:app` `ui/components/Rows.kt`, `ui/components/Controls.kt`, `ui/components
+/ActivityPatternChart.kt` and their tests only. Register findings R-205, R-209, R-211
+(`results/ui-audit/register.md`, V5 validator). `main` fast-forward merged first (`git merge
+--ff-only main`; this branch already an ancestor; no rebase, no stash) — no other package's
+files touched.
+
+**Requirements/ACs:** R-205 (`LogRow`/`RejectedRow`/`GapRow`/`ColumnHeaderRow` time/frequency
+columns must not wrap mid-value, on an emulator, at the guide's own font scale), R-211
+(`FilterChipRow` must scroll horizontally rather than clip an overflowing chip), R-209
+(`DayOfWeekGrid` must lay out days as rows per `Station-Pattern.dc.html`, with the board's own
+legend wording).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-205 directly: "16:28:5" /
+  "6" split across two lines is not merely ugly, it reads as two different numbers to a glance —
+  the same family of harm as any other fabricated-looking display. Principle II (Test-Backed
+  Change) governs the whole entry: every fix here is backed by a test that fails without it,
+  including the two — R-211, R-209's legend — that turned out to already be correct and needed a
+  test written to prove it rather than code changed.
+- **R-205 — root cause.** R-152's `widthIn(min = …)` fix (an earlier entry in this file) assumed
+  content at the guide's own font scale (1.0) always already fit inside the 52dp/56dp floor,
+  leaving `widthIn` free to grow the column only when a *larger* scale needed more room. The V5
+  validator found that assumption false on a real emulator: "16:28:56"/"146.960" in
+  `OrtType.timeFreq` do not fit in 52dp/56dp even at 1.0. `widthIn`'s floor can only help a `Text`
+  that has already decided it needs more room — a `Text` given room to wrap onto a second line
+  instead of asking its parent for more width will do exactly that, so the wrap happened before
+  `widthIn` ever got a chance to matter.
+- **R-205 — the fix.** Every time/frequency `Text` in `LogRow`, `RejectedRow`, `GapRow` and
+  `ColumnHeaderRow` now carries `maxLines = 1, softWrap = false`, forbidding the wrap outright
+  regardless of available width. The column floor itself is no longer the bare `LOG_TIME_COLUMN`/
+  `LOG_FREQ_COLUMN` constants but two new `@Composable fun rememberTimeColumnWidth()`/
+  `rememberFreqColumnWidth()`, which measure a representative value ("16:28:56", "146.960") in
+  `OrtType.timeFreq` with `rememberTextMeasurer()` at the real, current density/font scale and
+  return `maxOf(the guide's constant, that measurement)` — correct against whatever a given host's
+  actual font metrics are, not a guessed dp number that can quietly drift out of date the way
+  52dp/56dp did. `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN` themselves are unchanged (still exported,
+  still 52dp/56dp) — two other files outside this package (`ui/screens/ThreadDetailScreen.kt`,
+  `ui/screens/StationScreen.kt`) reference them directly with their own hand-rolled `Text`s that
+  reproduce this same defect (visible in the register's own `ST02-detail.png` citation); switching
+  those to the new `remember*ColumnWidth()` functions is those packages' own follow-up, outside
+  this commit's boundary.
+- **R-211 — confirmed, not changed.** `FilterChipRow` already wraps its content in
+  `Modifier.horizontalScroll(rememberScrollState())` (its own KDoc already said "scroll
+  horizontally and never wrap"); no other caller in this package hand-rolls a chip row that could
+  clip. The register's finding was against `Station-Pattern.dc.html`'s own screen (WP8), not this
+  component — this package's obligation was to prove the component itself does not clip, which had
+  never actually been tested until now.
+- **R-209 — root cause.** `DayOfWeekGrid` drew hours as rows (24 of them) and days as columns,
+  with single-letter day initials ("M"/"T"/"W"/"T"/"F"/"S"/"S", six of seven indistinguishable)
+  below the grid and no hour axis at all — the transpose of `Station-Pattern.dc.html`'s actual
+  layout (days as rows, Mon..Sun down the left in full 3-letter form, an hour axis along the top).
+  The legend also read "heard"/"quiet", not the board's own "heard often"/"listened, not heard".
+- **R-209 — the fix.** New `DayOfWeekGridOrientation { DaysAsRows, HoursAsRows }`, defaulting to
+  `DaysAsRows` — one row per `DayOfWeek`, a `dayAbbreviation()` ("Mon".."Sun") on the left
+  (`widthIn(min = 28.dp)`, `maxLines = 1`, `softWrap = false` — the same R-205 lesson applied here
+  too, rather than a hard `width()` that could someday not fit), each hour's `GridCell` given
+  `Modifier.weight(1f)` to fill the row (a new `GridCell(modifier)` contract: it now only sets
+  `height(GRID_CELL)` internally and expects its caller to supply width, since the two
+  orientations need different width strategies — a fixed square for `HoursAsRows`, a flexible
+  share for `DaysAsRows`), and a sparse hour axis (`hourAxisLabel()`, one label every sixth column,
+  "00"/"06"/"12"/"18" for the default 24-hour range) above the grid, aligned past the day-label
+  column exactly as the board's own axis row is. `HoursAsRows` is the previous behaviour, byte-for
+  -byte unchanged, kept for any caller that still needs it (`StationPatternScreen`, this
+  repository's one real caller, takes the default and is corrected with no call-site change of its
+  own). The legend's two non-hatch swatches are renamed: the low/neutral one from "quiet" to
+  "listened, not heard", the green one from "heard" to "heard often" — the hatch's "not listening"
+  was already right and is unchanged.
+- **A measurement limitation, confirmed a third time.** A first version of an R-205 test tried to
+  prove the wrap-prevention mechanism directly: render the same string with and without
+  `maxLines = 1` in an intentionally narrow (down to 1dp) box and compare `TextLayoutResult
+  .lineCount`. Even at 1dp, the *uncapped* text reported exactly one line — Robolectric's `Paint`
+  in this environment does not merely under-measure glyph widths (the R-152/NavRow finding
+  already in this file), it appears not to force a wrap at all regardless of available width for
+  this codebase's custom `fontFamily`s. Dropped that test; R-205's tests instead check two
+  deterministic, host-independent properties — the column floor is never less than the guide's own
+  52dp/56dp (a `widthIn(min = …)` guarantee, not a measurement), and the full label renders
+  verbatim rather than a truncated/summarised substring.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **891 of 891 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`: `Total: 891, Failures: 0`; was 844 before this commit). New tests:
+  `RowsTest`'s `R_205_log_row and rejected_row time and freq columns meet the guide's floor and
+  render in full`, `R_205_gap_row and column_header_row time and freq columns meet the guide's
+  floor and render in full`; `ControlsTest`'s `R_211_filter_chip_row scrolls so an overflowing
+  last chip is reachable at font scale 2` (constrains the row to 200dp at font scale 2.0 with
+  three real chip labels including "Change over time" — the register's own example — and uses
+  `performScrollTo()` to prove the last chip is reachable, which fails if the row clips instead of
+  scrolling); `ActivityPatternChartTest`'s `R_209_the default orientation lays days out as rows,
+  Mon through Sun, per Station-Pattern_dc_html`, `R_209_the previous HoursAsRows orientation is
+  still available for a caller that needs it`, `R_209_the legend reads the board's own wording,
+  not the previous heard-slash-quiet copy`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**, clean on the first
+  full-gate run (no detekt/ktlint fixes needed). `dependencyRules: checked 17 modules ... OK —
+  every edge is permitted by the design graph.` `platformGuards: checked 17 modules' external
+  dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 183 covered`
+  (unchanged — R-205/R-209/R-211 are validator findings, not spec requirement ids, so no new
+  coverage row). `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (183
+  covered of 419)`. `.\gradlew.bat :app:assembleDebug` — included in and passed as part of the
+  `build` run above.
+
+**Left open / not done:**
+- **`ThreadDetailScreen.kt`/`StationScreen.kt`'s own hand-rolled time/freq `Text`s are not
+  migrated** to `rememberTimeColumnWidth()`/`rememberFreqColumnWidth()` — they are outside this
+  package (`ui/screens/**`) and still use `Modifier.width(LOG_TIME_COLUMN)`/`width
+  (LOG_FREQ_COLUMN)` directly, the exact defect class R-205 fixes here. Their own package's
+  follow-up.
+- **`StationPatternScreen.kt`'s chip row is not confirmed to actually call `FilterChipRow`** —
+  R-211's fix proves the *component* scrolls; whether the specific screen the register screenshot
+  came from is built on this component (rather than a hand-rolled `Row` of its own) is WP8's own
+  file, outside this package, to confirm or fix.
+- **The register is not updated by this commit** — closing out R-205/R-209/R-211 (marking them
+  fixed, citing this commit) is the validator/coordinator's own bookkeeping on that file, outside
+  this package.
+- **No screenshot/emulator re-capture** of `search-corpus/Q03-back-intact.png`/`stations-14-nights
+  /ST02-detail.png`/`ST03-hourxday2.png`/`ST03@2x.png` to visually confirm any of the three fixes
+  against the actual artboards — Robolectric assertions only, per the plan (Phase E/Validators own
+  screenshot verification), and R-205 in particular is a class of defect this package's Robolectric
+  setup has now repeatedly been shown unable to reproduce directly (see "A measurement limitation"
+  above) — the emulator is the only host that caught it in the first place.
+- **`DayOfWeekGrid`'s hour-axis label stride (every sixth column) is a fixed constant
+  (`HOUR_LABEL_STRIDE`), not derived from the board's specific 12/18/00 spacing** — reasonable for
+  the default 24-hour range this component ships with, but a caller supplying an unusual `hours`
+  list (very short, or not starting at 0) gets a stride-6 axis that may not land on the same clock
+  hours the board's own mockup happens to show.
+
+---
+
+## 2026-09-08 (ui-conformance WP4, round five: validator fixes — live session keying, locale dates, first-session Now, level meter completion, overnight-live and no-restart scenarios)
+
+### (pending) — ui-conformance WP4 · validator fixes: live session keying, locale dates, first-session Now, level meter completion, overnight-live and no-restart scenarios
+
+**Scope:** `:app` (this package's own row), `app/src/debug/**` (scenarios), `tools/ui-audit/scenario.ps1`
+and `results/ui-audit/README.md` — fifth addendum to the WP4 entries below, after merging `main`
+(`git merge --ff-only main`, fast-forwarded cleanly onto `59383e0`, "ui-conformance · V2 Capture
+validation at 3e2d4ee: R-170..R-179 filed" — confirmed an ancestor first; no rebase, no stash).
+Responds to the Capture validator's (V2) seven findings against this package: R-170, R-171, R-172
+(halt), R-174, R-175, R-176, R-179.
+
+**Requirements/ACs:** R-170, R-171, R-172, R-174, R-175, R-176, R-179 (register findings — see
+`results/ui-audit/register.md`); FR-UI-9/FR-UI-12/R-030/R-033/R-039/R-112 (the artboards these rows
+sit inside, all previously established); constitution I (uncertainty is content) and constitution VI
+(fold/machine/provider discipline) govern every fix below.
+
+**What changed:**
+
+- **Constitution Check.** Principle I governs almost every fix this round: R-175's "Weakest over
+  resolved tonight" row is the real minimum `signalStrength` among this session's own transmissions,
+  formatted the same "S%.0f" way every other S-meter label in this codebase already is — never
+  paired with a fabricated dBFS figure, since nothing in `:pipeline` records a per-over dBFS reading
+  (only `LevelStatus`'s own live, session-wide peak/RMS does); the row is honestly absent, not a
+  fabricated zero, when no over recorded a strength. R-175's bottom sentence is judged only against
+  the real measured peak vs. the fixed target band already in `LevelViewState` — no new claim beyond
+  what `LevelStatus.State.Measured` actually carries. R-174's fix is not to fabricate 23 hours of
+  "quiet, but listened-through" (a session three minutes old has not listened through them) — it is
+  to not commit to the real hour-by-hour pattern at all yet, with a distinct, near-empty baseline
+  chart instead of `ActivityPatternChart`'s honest-but-alarming full hatch. R-176 is a **deliberate
+  reversal** of this package's own earlier documented choice ("N unidentified overs" over the
+  artboard's "N unidentified voices" — round two's changelog entry — reasoning that "voices" implies
+  distinct-voice/voiceprint clustering nothing here measures): the lead's explicit ruling on this
+  artboard-vs-honesty tension is followed, with the reasoning kept in `unidentifiedVoicesLabel`'s own
+  kdoc as a labelling choice made by the lead, not a claim this code verifies — every over from an
+  unattributed transmission is one speaker, so the over-count and the board's "voices" wording name
+  the same real count. Principle VI governs R-179's `-NoRestart`: it changes nothing about *what* is
+  measured, only whether the process reading a scenario broadcast is a fresh launch or the one
+  already on screen — documented at length in `results/ui-audit/README.md` so a future validator
+  does not have to re-derive from source that `ScenarioReceiver` updates the same in-process holders
+  either way.
+- **R-172 (halt) — `ReaderPolling.effectiveSessionId(hostSessionId)`**: `CaptureState.sessionId`
+  whenever `CaptureState.isCapturing`, full stop; the host's own `sessionId` argument is a fallback
+  only, for the one case there is genuinely no live session to prefer. `nowViewState`/`captureStatus`
+  now route through it, and `NowContent`/`CaptureStatusContent` both resolve the session fresh every
+  poll tick instead of once at first composition (the old `if (sessionId != null)` outer gate on
+  `CaptureStatusContent` is gone — before this fix a `null` host `sessionId` meant the screen never
+  started polling at all, even once a session genuinely started capturing later in the same
+  composition). Root cause was two independent bugs: the outer gate, and `captureStatus` trusting its
+  `sessionId` argument for every DB-scoped fact while `Input`/`Level`/`Thermal`/`Tier` (process-wide
+  holders) were always correct — producing a coherent-looking but internally inconsistent screen
+  exactly like the validator's screenshot.
+- **R-170 — `ReaderPolling.nightDateFormat` now uses `Locale.getDefault()`**, not `Locale.ROOT`
+  (`Locale.ROOT` has no real month-name data, so `"MMM"` degraded to the literal `"M09"` instead of
+  `"Sep"`). Times/frequencies elsewhere in the file stay `Locale.ROOT` deliberately — only night dates
+  are prose, read in the device's own locale.
+- **R-174 — `NowViewState.Active` gained `overCount: Int`** (both `NowViewStateMapper.active` and the
+  legacy bridge populate it). `NowScreen` now renders a new `FirstSessionChartBaseline` composable
+  (a near-flat bar strip plus "the chart fills as the night goes on", centered between axis labels)
+  instead of `ActivityPatternChart` whenever `overCount == 0` — see the Constitution Check above for
+  why. The `first-session` debug scenario now sets `RigStatus.connected(...)` (145.230/146.960) so
+  `Now-First`'s "listening on 145.230 and 146.960" subtitle is honestly reachable — the mapper
+  already built this text correctly whenever `RigStatus.state` is `Connected`; nothing set it before.
+- **R-175 — `LevelMeterScreen` completed**: `liveBar: LiveBarViewState? = null` + `onOpenLive`
+  parameters, pinned at the bottom the same way `CaptureStatusScreen`/`NowScreen` already do (this
+  closes a real compile error — `CaptureStatusContent` already passed `liveBar` before this
+  parameter existed). `LevelViewState` gained `weakestOverLabel: String?` (see
+  `ReaderPolling.weakestOverLabel`, new) and `bandStateSentence`/`bandStateTone: CaptureStateTone?`
+  (`LevelViewStateMapper` computes the sentence from the real peak vs. the existing fixed target
+  band — "In the band. Nothing to adjust." / "Above the band. Turn the volume down." / "Below the
+  band. Turn the volume up." / "Clipping. Turn the volume down.", a closed set). The chart's
+  right-edge dB axis labels (0 / target-band top / target-band bottom / the real noise floor, when
+  tracked) are new — positioned via `BoxWithConstraints` at the same fractional height the sibling
+  `Canvas` draws its reference lines at, so the label and the line it names can never visually drift
+  apart. The fourth label is the actual measured noise floor, never a fixed "-58" — the artboard's
+  own figure is that particular fixture's real reading, not a constant.
+- **R-176 — `NowViewState.kt`'s `unidentifiedVoicesLabel(count)`** replaces the old inline
+  `"$unidentifiedCount unidentified overs"` string: `"N unidentified voices"` / `"1 unidentified
+  voice"` (correct singular), per the lead's ruling — see the Constitution Check above.
+- **R-171 — `OvernightScenario.overnightLive(context, db)`** (new): the same ~40-over `overnight`
+  fixture, but `SessionEntity.endedAt = null` and `CaptureState` actually `capturing` on that id
+  (via `ScenarioFixtures.markCapturing`, the same primitive `backlog`/`thermal`/`rig-lost` already
+  use) — reaches the populated, *running* shape of `Main.dc.html` (N01) and `Capture-Status.dc.html`
+  (N04) that neither `overnight` (populated but ended) nor `first-session` (running but empty) can
+  reach alone. `build()` gained a `live: Boolean = false` parameter; `overnight`/`gap-call` pass
+  `false` (unchanged behaviour). Registered in `Scenarios.NAMES`/`load()`'s dispatch and documented
+  in `results/ui-audit/README.md`'s scenario table.
+- **R-179 — `tools/ui-audit/scenario.ps1` gained a `-NoRestart` switch**: when set, the app is not
+  force-stopped before the broadcast, so a scenario can be sent into whatever process is already
+  running (and already on screen) instead of a fresh launch. `results/ui-audit/README.md` gained a
+  new "Watching a live transition" section with a worked example and a documented finding: read from
+  `ScenarioReceiver.kt`'s and `Scenarios.kt`'s own source (not just inferred), `ScenarioReceiver` is
+  a plain manifest-registered `BroadcastReceiver` with no IPC boundary of its own — when the
+  broadcast lands in the app's already-running process, `Scenarios.load(...)` calls the exact same
+  process-wide holder singletons (`CaptureState`/`ThermalStatus`/`RigStatus`/`LevelStatus`/
+  `InputStatus`/...) the running UI's own poll loops are already reading, so recovery toasts and
+  degraded→nominal transitions are now genuinely observable this way.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded cleanly onto `59383e0` ("ui-conformance · V2 Capture
+  validation at 3e2d4ee: R-170..R-179 filed…"), confirmed an ancestor first; no rebase, no stash.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** ($env:JAVA_HOME set to
+  the JDK 17 install, $env:ANDROID_HOME to the SDK — the default JRE 8 on PATH cannot run this
+  build's toolchain). `detekt` needed one real pass: `LevelHistoryChart` grew past the `LongMethod`
+  threshold (99 lines, suppressed with the same `@Suppress("LongMethod")` pattern
+  `OvernightScenario.build` already uses) plus two `MaxLineLength` wraps (`NowScreen.kt`,
+  `NowScreenTest.kt`). `ktlintTestSourceSetCheck` needed one auto-format pass
+  (`:app:ktlintMainSourceSetFormat :app:ktlintTestSourceSetFormat`) for `NowContentTest.kt`'s import
+  order; clean after.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 181 covered** (unchanged — register R-ids are not spec FR/AC
+  ids, so this round's new tests do not move this number); `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **835 of 835 passing**, zero
+  failures (the jump from round four's 714 is mostly `main`'s other WPs' work landing via the
+  `--ff-only` merge, not this round's own 14 new tests). New tests, by name: `R_172 effectiveSessionId
+  prefers the real live CaptureState session over the host's own`, `R_172 effectiveSessionId falls
+  back to the host's own sessionId when nothing is capturing` (`ReaderPollingTest`); `R_172 follows
+  CaptureState's live session, never a stale host-supplied sessionId, while capturing`, `R_172 a null
+  host sessionId still polls once a session starts capturing, not stuck idle forever`
+  (`CaptureStatusContentTest`); `R_172 Now follows CaptureState's live session, never the host's
+  stale sessionId argument` (new `NowContentTest.kt`); `R_174 overCount reflects the real over total
+  and is zero for a fresh first session` (`NowViewStateMapperTest`); `R_174 a fresh zero over session
+  shows the flat chart baseline, never the hatched pattern` (`NowScreenTest`); `R_175 weakestOverLabel
+  is the lowest recorded signal strength this session, honestly null otherwise`, `R_175
+  weakestOverLabel is honestly null when no over this session recorded a signal strength`
+  (`ReaderPollingTest`); `R_175 weakestOverLabel is carried straight through, honestly null when the
+  caller has none`, `R_175 the band-state sentence reads in-band, above, below or clipping per the
+  real peak` (`LevelViewStateMapperTest`); `R_175 the weakest-over row, the band-state sentence and
+  the pinned live bar all render`, `R_175 the weakest-over row is honestly absent, never a fabricated
+  zero, when no over recorded a signal` (`LevelMeterScreenTest`); `R_176 the unidentified count reads
+  voices per the board, singular for exactly one` (`NowViewStateMapperTest`).
+
+**Left open / not done:**
+- **R-179's "recovery toasts can be validated" is enabled, not itself proven here** — this round adds
+  the mechanism (`-NoRestart`) and documents that `ScenarioReceiver` updates holders in-process from
+  source, but running an actual `-NoRestart` session against a booted emulator to watch a toast fire
+  is a validator (V2/V-follow-up) action, outside this package's own gate.
+- **`gap-call`'s own F15 gap remains** (documented pre-existing, `results/ui-audit/README.md`'s
+  "Known gaps"): `overnight-live` reaches the populated-and-running shape R-171 asked for, but does
+  not itself carry a `CaptureGapCause.CALL` gap, so F15's banner specifically still needs either a
+  future `gap-call`-plus-`live` variant or a small change to `gap-call` itself — not asked for this
+  round, noted so a future pass does not assume it is already covered.
+- **R-175's weakest-over row reads this *session's* transmissions only** (via `ReaderPolling
+  .weakestOverLabel`), matching "tonight's overs" in the register's own wording — it does not (and
+  should not) aggregate across prior nights.
+## 2026-09-08 (ui-conformance WP2: NavRow and tier badge)
+
+### (pending) — ui-conformance WP2 · NavRow and tier badge
+
+**Scope:** `:app` `ui/components/Rows.kt` and `RowsTest.kt` only. Requested by WP10, for
+`Settings.dc.html`/`Improve.dc.html`/`Sessions.dc.html`'s row family; register finding R-131
+(`Settings` rows lack their 18px leading icons — a `NavRow` is the shared component that carries
+one). `main` fast-forward merged first (`git merge --ff-only main`; this branch already an
+ancestor; no rebase, no stash) — no other package's files touched.
+
+**Requirements/ACs:** R-131 (`Settings.dc.html`'s row family: an 18px leading icon, a sub-line
+that names what it needs to, never truncated).
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) governs this directly: WP10
+  needs one shared row across three destination screens rather than three hand-rolled ones, so the
+  target/description/pressed-state contract lives in one place, testable once, rather than
+  re-derived per screen with its own chance of drifting from the guide. Principle III (never
+  delete quietly) governs `NavRowTone.NotBuilt`: a destination the guide describes but no module
+  has shipped yet still renders and still navigates — dimmer, not hidden.
+- **`NavRow` (new, `Rows.kt`).** `rowTitle: String`, `onClick: () -> Unit`, `modifier: Modifier =
+  Modifier`, `icon: ImageVector? = null` (18dp, `OrtIcons`), `subLine: String? = null` (wraps —
+  no `maxLines`/`overflow` restriction, so a real status sentence is never cut to one ellipsised
+  line), `trailing: (@Composable () -> Unit)? = null` (a free slot for a value or a `Badge` — the
+  guide's mono-value styling is the caller's call, per `Controls.dc.html`, not this component's to
+  impose), `tone: NavRowTone = NavRowTone.Neutral`. A real >=44dp target (`heightIn(min = 44.dp)`),
+  `Role.Button`, one merged content description (`"<rowTitle>. <subLine>"`, or bare `rowTitle`
+  when there is no sub-line — never a dangling `". "`), `bg/pressed` while pressed (the
+  `TextAction`/guide §6.7 pattern: a real `MutableInteractionSource` + `collectIsPressedAsState`,
+  not a ripple), and an always-present trailing `OrtIcons.chevron` — every row here is a
+  destination, so unlike `icon`/`subLine`/`trailing` the chevron is not optional.
+- **`NavRowTone { Neutral, NotBuilt }` (new).** `NotBuilt` dims the title/icon to `textFaint`
+  (from `textHigh`/`textDim`) for a destination the guide describes but no module has shipped —
+  the row still renders, still navigates, and still has its full sub-line; only the colour signals
+  "not yet real," and per the constitution that signal is never colour alone in isolation — the
+  caller supplying this tone is expected to say so in the sub-line's own words too, the same
+  contract `RadioRow`'s `RowTone.Warning` already established for this package.
+- **`BadgeKind.TIER` — confirmed, not added.** Checked against guide §6.14/the design guide
+  (`design/design-guide.md`, "the tier chip (`text/dim` on `line/chip`, `TIER 1`)"): `BadgeKind
+  .TIER` already exists in `Controls.kt` (`Badge(text, kind = BadgeKind.TIER)` →
+  `Triple(Color.Transparent, OrtColors.lineChip, OrtColors.textDim)`) and matches that spec
+  exactly — transparent background, `lineChip` border, `textDim` foreground, uppercase mono/sans
+  per `OrtType.badge`. `NEW`/`REVISED`/`CORRECTED` were already in the same enum from R-023. No
+  code change was needed; `R_131_nav_row fires onClick and renders an optional trailing slot
+  beside the chevron` below exercises `NavRow`'s `trailing` slot with exactly this badge
+  (`Badge(text = "Tier 1", kind = BadgeKind.TIER)`) to prove the two compose together, which is
+  the actual WP10 use case this was requested for.
+- **A measurement limitation, again.** The first version of the sub-line test tried to prove
+  wrapping directly by comparing a long-sub-line row's measured height against a short-sub-line
+  row's at font scale 2.0 — both rows measured identically (88px) regardless of sub-line length,
+  the same degenerate-glyph-metrics finding this file already recorded against R-152's fix.
+  Dropped that approach; the sub-line test instead confirms the full sentence survives verbatim
+  into the semantics tree (catches a future truncation/summarisation regression, which needs no
+  font metric to detect) and documents, in its own body, why a rendered-height assertion isn't
+  attempted here.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **844 of 844 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`: `Total: 844, Failures: 0`; was 828 before this commit). New tests, all in
+  `RowsTest`: `R_131_nav_row carries its leading icon, title, sub-line and a trailing chevron`,
+  `R_131_nav_row is a real 44dp Role_Button target with a merged title-then-subLine description`,
+  `R_131_nav_row fires onClick and renders an optional trailing slot beside the chevron`,
+  `R_131_nav_row's sub-line renders in full at font scale 2 point 0, never truncated`,
+  `R_131_nav_row's NotBuilt tone dims the row without hiding it`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**, clean on the first
+  full-gate run this round (no detekt/ktlint fixes needed). `dependencyRules: checked 17 modules
+  ... OK — every edge is permitted by the design graph.` `platformGuards: checked 17 modules'
+  external dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 183 covered`
+  (up from 181 before this branch's changes, already reflected by `main`'s own merged coverage
+  before this commit's own tests were added — `git status` shows no diff on
+  `results/coverage-matrix.md` from this commit specifically). `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — `up to date (183 covered of 419)`. `.\gradlew.bat
+  :app:assembleDebug` — included in and passed as part of the `build` run above.
+
+**Left open / not done:**
+- **WP10's own screens are not migrated to `NavRow` by this commit** — they are outside this
+  package (`ui/screens/**`/wherever WP10 owns). WP10 requested this component; switching
+  `Settings`/`Improve`/`Sessions`' own row call sites to it is WP10's own follow-up.
+- **The register is not updated by this commit** — closing out R-131 (marking it fixed, citing
+  this commit) is the validator/coordinator's own bookkeeping on that file, outside this package.
+- **No screenshot/emulator re-capture** of `overnight/CF01-settings.png` to visually confirm
+  `NavRow` against the actual artboard once WP10 adopts it — Robolectric assertions only, per the
+  plan (Phase E/Validators own screenshot verification).
+- **`NavRow`'s `bg/pressed` state has no dedicated test** — `TextAction`, the pattern it copies,
+  has none either in this package's existing test suite; pressed-state visuals are, like the
+  wrapping question above, a rendered-pixel property this package's Robolectric setup cannot
+  verify reliably, and the interaction wiring itself (`MutableInteractionSource` +
+  `collectIsPressedAsState`) is standard, unmodified Compose API usage, not custom logic this
+  package invented and could get subtly wrong.
+
+---
+
+## 2026-09-08 (ui-conformance WP11c follow-up: R-173, R-177)
+
+### (pending) — ui-conformance WP11c · sessions end when capture stops; thermal state carries its transition time
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/{RealCaptureService,ThermalStatus}.kt`
+(wiring/holder only); `data/src/main/kotlin/org/ort/data/dao/SessionDao.kt` (two new `@Query`
+methods, no schema change — lead-approved `:data` exception, `data/**` is free per the coordinator's
+message); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (`thermal` now sets an explicit
+`sinceMillis`); tests beside each (new: `data/.../dao/SessionDaoTest.kt`,
+`pipeline/.../RealCaptureServiceSessionEndTest.kt`; additions to `ThermalStatusTest.kt`,
+`ScenariosTest.kt`; one existing assertion corrected in `RealCaptureServiceUncleanEndGapTest.kt` —
+see What changed). `results/coverage-matrix.md` regenerated (gate side-effect). Addresses two
+validator findings filed against WP11c's own `:pipeline` ownership (register R-173, R-177; V2
+Capture validation at `3e2d4ee`). No file under `app/src/main/**` touched.
+
+**Requirements/ACs:** register R-173 (halt), R-177; FR-RUN-16, FR-RUN-12.
+
+**Constitution check.** Principle I (uncertainty is content) is the whole point of both fixes: a
+session that never wrote `endedAt` read "still running" forever — a confident lie about a fact the
+service genuinely knew — and a thermal banner whose "since" crept forward on every poll misreported
+*when* a real transition happened, which is exactly a "confident wrong" reading the constitution
+calls worse than an honest unknown. Principle IV (capture never lies) bore on getting the fix
+correct under real concurrency, not just correct in the common case: `stopCaptureInternal`'s session-
+ending writes are now ordered *before* `source?.stop()` specifically so a genuinely concurrent
+audio-thread check (`runCaptureFlow`'s own `CaptureState.isCapturing` check, running on `scope`'s
+real `Dispatchers.IO`) cannot race a deliberate stop and either report `Failed` for a clean stop or
+downgrade `TerminationReason.USER` to `UNKNOWN` — verified by a test that reproduced the race before
+the reorder (see What changed) and stayed green after it. Principle VII (structural boundaries):
+`SessionDao.closeIfStillOpen`'s own `WHERE endedAt IS NULL` guard is a structural, not a
+remembered-convention, protection against the on-next-launch recovery pass clobbering a session some
+other, more precise path already closed. `dependencyRules`/`platformGuards` both passed unchanged —
+no module edge touched.
+
+**What changed:**
+
+- **R-173 — every path that ends a session now writes `SessionEntity.endedAt`.** New
+  `SessionDao.setEnded(id, endedAt, terminationReason)` (unconditional) and
+  `SessionDao.closeIfStillOpen(id, endedAt, terminationReason)` (guarded, `WHERE endedAt IS NULL`) —
+  no schema/entity change, so no migration (`endedAt`/`terminationReason` already existed; only two
+  new `@Query` methods). `RealCaptureService` gained one shared private helper,
+  `endSessionRow(reason: TerminationReason?)`, called from every session-ending path: `USER` from a
+  deliberate `ACTION_STOP`, `KILLED` from an unclean stop that still reached `onDestroy` (matching
+  `DigestPolling`'s existing "ended unclean — the phone stopped the app" label for that value),
+  `STORAGE` from the storage-floor stop, and `UNKNOWN` from any other `CaptureEvent.Failed`
+  (including a route-mismatch halt — no `TerminationReason` names that specifically; the closed
+  five-value enum's closest honest fit, flagged here rather than silently picked without comment)
+  or the "flow ended unexpectedly" fallback. Guarded by a new `sessionEndRecorded` flag so whichever
+  path reaches it first wins — real risk without it: `stopCapture()` calls
+  `stopCaptureInternal(markClean = true)`, then `stopSelf()` asynchronously triggers `onDestroy()` →
+  `stopCaptureInternal(markClean = false)` a **second** time for the same session, which must not
+  downgrade `USER` to `KILLED`. `endSessionRow` uses `runBlocking(Dispatchers.IO)`, not `scope.launch`
+  — deliberately, so the write always completes before the caller proceeds (`onDestroy` calls
+  `scope.cancel()` immediately after `stopCaptureInternal` returns, which would race and could lose
+  an async write); Room forbids a query on the *calling* thread, not the dispatcher the suspend body
+  actually executes on, so this is safe from `onStartCommand`/`onDestroy`'s own main thread — the
+  same reasoning `RealSegmentSink.close`'s existing `runBlocking` already relies on in this same
+  file, made explicit about the dispatcher here since this call, unlike that one, can run on main.
+- **A real ordering bug found and fixed while writing `R_173_stop_writes_endedAt`**: the first draft
+  called `source?.stop()` *before* `endSessionRow`/`CaptureState.idle()` inside
+  `stopCaptureInternal`. Because `scope` runs on real `Dispatchers.IO` (no test-dispatcher seam in
+  this class), the concurrent `runCaptureFlow` coroutine could observe `stopRequested` flip true,
+  let its flow end, and reach its own "did the flow end unexpectedly?" check
+  (`if (CaptureState.isCapturing) { CaptureState.failed(...); endSessionRow(UNKNOWN) }`) *before*
+  the main thread's `CaptureState.idle()`/`endSessionRow(USER)` had run — a genuine race the test
+  caught directly (`terminationReason` landed `UNKNOWN` instead of `USER`, twice, reproducibly).
+  Fixed by reordering `stopCaptureInternal` to publish every "this session just ended" fact
+  *before* `source?.stop()`: the JMM's happens-before chain (a volatile write happens-before a later
+  read of the *same* volatile by another thread; happens-before is transitive across a thread's own
+  program order) then guarantees the audio-thread's later read of `CaptureState.state` sees `Idle`,
+  not stale `Capturing`, once it has observed `stopRequested = true`. All three
+  `RealCaptureServiceSessionEndTest` cases pass after the reorder, including one written
+  specifically to catch a regression of this exact race
+  (`R_173_a_second_stopCaptureInternal_call_never_overwrites_the_first_ending`).
+- **FR-RUN-16 — the previous session found still open at next launch is closed at its last
+  heartbeat, flagged unclean.** `persistUncleanEndGapIfAny` (already the one place
+  `UncleanEndDetector(heartbeatStore).detect()` runs) now also calls
+  `db.sessionDao().closeIfStillOpen(previousLaunchGap.sessionId, previousLaunchGap
+  .lastHeartbeatWallMillis, TerminationReason.KILLED)` in the same launched coroutine as its
+  existing gap persist. `closeIfStillOpen`'s guard matters here specifically: if
+  `stopCaptureInternal` already closed that session correctly (an unclean stop that still reached
+  `onDestroy`, just without `ACTION_STOP` — `hadUncleanEnd()` still reads true in that case, since
+  only a *clean* stop marks the heartbeat clean), this recovery pass must not overwrite that more
+  precise timestamp with a stale "last heartbeat" one. **Corrected an existing test assertion**:
+  `RealCaptureServiceUncleanEndGapTest`'s own test previously asserted the previous session's
+  `endedAt` stayed `null` after recovery, reading its own comment as "does not reopen the previous
+  session" — that assertion was itself observing the bug this fix closes; updated to assert
+  `endedAt == lastHeartbeatWallMillis` and `terminationReason == KILLED` instead, with the comment
+  corrected to explain why closing a session honestly is not "reopening" it.
+- **R-177 — `ThermalStatus.State.Warm`/`Hot` carry `sinceMillis`**, set once at the moment `sample`
+  first observes *that* tier and preserved unchanged across every later same-tier tick — the same
+  shape `RigStatus.State.Stale.sinceMillis` already uses. A tier change (`Warm` → `Hot` or the
+  reverse) is its own fresh transition, same as entering from `Nominal`. `sample(osThermalStatus,
+  nowMillis = SystemClock.wallMillis())` gained an optional `nowMillis` (only consulted on a fresh
+  transition; the real 10 s production tick never needs to pass it). `update(osThermalStatus,
+  realTimeFactor, sinceMillis = null)` gained an optional explicit `sinceMillis` for the scenario
+  simulator/tests — verbatim when given, the same auto-tracking `sample` uses otherwise.
+  `Warm`/`Hot`'s own `sinceMillis` constructor parameter defaults to `SystemClock.wallMillis()`
+  *only* so the handful of existing fixtures elsewhere that construct one directly without a
+  transition to track (`RecoveryAnnouncerTest`, `FailureMapperTest`, `CaptureStatusMapperTest` —
+  all outside this package's ownership, left untouched) still compile; every real caller in this
+  file always passes an explicit value. The `thermal` scenario now sets `sinceMillis` to a real 12
+  minutes before "now" rather than leaving it to a same-moment default, so the banner reads a fixed
+  clock time on repeated polls instead of one that advances — the exact behaviour the register row
+  found wrong (`08:59:05` → `:26` → `:48` on an untouched scenario).
+- **New signatures WP11b needs to consume `sinceMillis`**: `ThermalStatus.State.Warm.sinceMillis:
+  Long` and `ThermalStatus.State.Hot.sinceMillis: Long` — both already-published, non-nullable
+  fields on the existing sealed states; no new state, no removed field. The mapper (out of this
+  package's ownership) reads `(ThermalStatus.state as? ThermalStatus.State.Warm)?.sinceMillis` /
+  `.Hot`'s equivalent and formats it as a clock time exactly once per real transition, the same way
+  `RigStatus.State.Stale.sinceMillis` is presumably already consumed elsewhere.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (845 actionable tasks;
+  every module's tests, detekt, ktlint, lint green). `dependencyRules: checked 17 modules ... OK`.
+  `platformGuards: checked 17 modules' external dependencies and 17 manifests ... OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered (unchanged — R-173/R-177 are
+  register, not functional-spec, ids, and FR-RUN-16 was already covered by an existing test before
+  this). `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Targeted reruns, all green: `:data:testDebugUnitTest --tests SessionDaoTest` (5 tests);
+  `:pipeline:testDebugUnitTest --tests ThermalStatusTest` (9 tests, 3 new);
+  `:pipeline:testDebugUnitTest --tests RealCaptureServiceSessionEndTest --tests
+  RealCaptureServiceUncleanEndGapTest` (5 tests — this is the run that first caught, then confirmed
+  the fix for, the ordering race described above); `:pipeline:testDebugUnitTest` and
+  `:data:testDebugUnitTest` in full; `:app:testDebugUnitTest --tests ScenariosTest` (2 new).
+- Did **not** use the emulator — Robolectric is the builder's gate; validators exercise the
+  emulator after merge.
+
+**Left open / not done:**
+- **No `TerminationReason` value names a route mismatch specifically.** The generic
+  `CaptureEvent.Failed` path (which also covers a route-mismatch halt) writes `UNKNOWN` — the
+  closest honest fit in the existing closed five-value enum (`USER`/`CRASH`/`STORAGE`/`KILLED`/
+  `UNKNOWN`). Adding a more specific value (mirroring how `CaptureGapCause` gained `ROUTE_LOST` in
+  WP11a) was judged out of scope for a two-row fix; flagged for the lead rather than resolved
+  silently.
+- **`sessionEndRecorded` is per-service-instance, reset only in `startCapture()`.** This is correct
+  for the real service's lifecycle (one instance per running session) but means a test harness that
+  reuses a single `RealCaptureService` instance across two full sessions without a fresh
+  `Robolectric.buildService(...)` would need to be aware of it; none of this package's own tests do,
+  and none needed to.
+- Register rows R-173/R-177 are left for the lead to mark — this package does not edit
+  `results/ui-audit/register.md`. R-177 also names WP11b (the `Fail-Thermal` mapper) as a second
+  owner — this entry closes only the holder half.
+
+
+## 2026-09-08 (ui-conformance WP9 · validator fixes: timeout state, stale rig, step counter, route types, font-scale scaffold, level meter)
+
+### (pending) — ui-conformance WP9 · validator fixes: timeout state, stale rig, step counter, route types, font-scale scaffold, level meter
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**` and their tests only — the same row this
+package's four earlier WP9 entries (below) own. `main` fast-forward merged first
+(`git merge --ff-only main`, this branch already an ancestor, at `f8430b8` — "ui-conformance WP9
+round 3: setup step entry, Install destination"); no rebase, no stash. This entry addresses the
+V1 Setup validator's six findings (register.md R-120..R-125, `results/ui-audit/register.md`),
+filed against the build at `6aaa608` on the emulator at `5c8d144` — two of the six (`R-121`,
+`R-125`) filed as `halt`. Every screenshot the register cites (`results/ui-audit/setup/**`,
+`level-low/**`, `level-clip/**`, `rig-lost/**`) was read (the `Read` tool on the PNGs) before any
+fix, not inferred from the register's prose alone.
+
+**Requirements/ACs:** R-120 (S01/S04's duplicated step counter), R-081/R-121 (S05's
+`RouteCheckState.TimedOut`, halt), R-081/R-122 (S04/S06's device typing and refusal), FR-A11Y-3/
+R-123 (font-scale-2.0 scaffold clearance), FR-CAP-3/R-082/R-124 (S07's level meter), FR-RIG-2/3/
+R-084/R-125 (S11's `Stale`/`Absent` rendering, halt), plus the coordinator's own S12 observation
+(no register id — the Level row's "Not measured" beside a green marker).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs the two most consequential
+  fixes here: R-121's timed-out signal check must say plainly that nothing was heard rather than
+  silently reverting every check to unfilled, and R-124's level meter must draw the *real*
+  measured scale rather than a compressed one that made every reading look the same. Principle
+  VII (Boundaries Are Structural) shaped every fix that touched a shared WP2 component's *absence*
+  of a capability (no icon slot on `RadioRow`, no way to suppress `StepIndicator`'s own built-in
+  label): each is solved by composing around the shared component from within this row's own
+  files, or by building a small local equivalent, never by editing `ui/components/Controls.kt`
+  itself (WP2's file, outside this row's owned files this round) or by silently hand-rolling a
+  full look-alike where the shared component still does most of the real work.
+- **R-121 (halt) — `RouteCheckState.TimedOut`.** `VerifyScreen` used to fall into
+  `else -> emptySet()` for every check's `passed` set on a timeout, silently reverting the two
+  genuinely-completed checks (native rate, route match — `RealRouteCheck`'s own flow always
+  clears them before the signal wait) to unfilled, offered no honest explanation, kept `Continue`
+  disabled forever, and passed `onBack = null` unconditionally — a real dead end, confirmed on
+  `setup/S05-verify-stuck.png`. Now: the two completed checks stay ticked, the signal check shows
+  an honest failed mark and "No signal heard in 30 s on `<device>`" (from
+  `VerifyViewState.inputLabel`, already on hand — no new field on `RouteCheckState.TimedOut`
+  needed), `Continue` is replaced by `Try again`/`Choose another input` (`SetupActivity`'s already-
+  existing `onTryVerifyAgain`/`onChooseAnotherInput`, the same recovery `RouteMismatchScreen`
+  already offered for the sibling halt), and `onBack` is now always supplied to `SetupScaffold`.
+- **R-125 (halt) — `RadioVerifiedScreen`'s blank screen on `Stale`.** Used to accept only
+  `RigStatus.State.Connected` and `return` (rendering nothing) for anything else — a `Stale`
+  reading (the real `rig-lost` scenario) hit exactly that `return`, confirmed blank on
+  `rig-lost/S11-check.png`. Now takes the full `RigStatus.State` and dispatches: `Connected`
+  unchanged; `Stale` renders `Fail-Rig.dc.html`'s "last known … stale since HH:MM:SS" treatment
+  (the same `RigVerifiedContent` grid `RadioVerifiedConnected` uses, fed `stale.lastKnown`) with
+  `Reconnect`/`Change radio` (no `Continue` — setup has not started capture yet, so "stale before
+  ever really connecting" is closer to `RouteMismatchScreen`'s halt than to the running-capture
+  banner's "continue, marked stale"); `Absent` is handled one level up, in
+  `SetupActivity.RenderRadioVerified`, *before* this composable is ever invoked — a
+  `LaunchedEffect` routes back to S09 with a new `RadioScreen(banner = ...)` rather than ever
+  showing a blank RADIO_VERIFIED. `SetupActivity.onReconnectRadio()` re-reads `RigStatus.state`
+  honestly (no fabricated reconnect handshake — `:rig`/`:rig-usb` are still unbuilt).
+- **R-120 — the duplicated "N of 7".** `SetupScaffold`'s own header row already drew "n of N"
+  (correct, matches the board); WP2's shared `StepIndicator` (`Controls.kt`) draws an identical
+  "n of N" of its own directly above its segment bars, with no parameter to suppress it — confirmed
+  by reading `Controls.kt` before writing this, and out of this row's owned files to edit this
+  round. Fix: a new private `SegmentBars` in `SetupScaffold.kt` draws only the coloured segments
+  (the board's own "unlabeled" segment row), preserving the `contentDescription` TalkBack read
+  from `StepIndicator` so accessibility does not regress just because the visible label moved.
+  `StepIndicator` itself is untouched, still used and tested by WP2's own `ControlsTest.kt`.
+- **R-122 — device typing and refusal.** `InputRouteEnumerator.subtitleFor` only distinguished
+  `AudioDeviceKind.BUILT_IN_MIC` from everything else, and `AndroidAudioIo.toKind()`
+  (`:capture-android`, outside this row's owned files) collapses every type it does not
+  recognise — telephony among them — into `UNKNOWN`, confirmed against the validator's own
+  emulator screenshot (`setup/S04-input.png`: three of four rows read "Unknown"). Rather than
+  widen `:capture-android`'s `AudioDeviceKind`, `InputRouteEnumerator` now reads the real
+  `android.media.AudioDeviceInfo.type` directly, by id (`typesById()`, the same best-effort
+  pattern `nativeRatesById()` already used), and a new `DeviceTypeNaming` resolves it into a real
+  name (built-in mic / telephony / USB audio / wired headset / Bluetooth / an honestly-numbered
+  "unrecognised type N") with the guide §7 icon where one already exists in `OrtIcons` (`null`,
+  never a substituted wrong icon, for Bluetooth — no such icon exists yet, a real gap left open
+  below) — falling back to `DeviceTypeNaming.forKind` when no real `AudioManager` entry matches
+  (every existing `FakeAudioIo`-driven test, which cannot produce a matching real device id).
+  Every source that is not plausibly an external adapter (not only the built-in mic) is now
+  refused. `RadioRow` has no icon slot (`Controls.kt`, confirmed by reading it, outside this row's
+  files) — `InputScreen` composes a small leading `Icon` alongside `RadioRow` rather than editing
+  the shared component or hand-rolling a look-alike radio row. `InputRouteOption.isBuiltInMic`
+  is renamed `refused` (more precise now that more than the built-in mic is refused) — every
+  caller and test updated. S06's "chosen X · routed Y" row (`RouteMismatchScreen`) now appends
+  each device's real type in parentheses via the same `DeviceTypeNaming.forKind`, so two devices
+  sharing one raw label (the validator's own emulator: every route reads `sdk_gphone64_x86_64`)
+  are still distinguishable.
+- **R-123 — font-scale-2.0 scaffold clearance.** At a larger font scale the fixed bottom action
+  bar grows taller; the scrollable content above it needs a bottom spacer exactly that tall so the
+  last item, once scrolled to, clears the bar rather than sitting flush against it (confirmed on
+  `setup/S01-welcome@2x.png`/`S04-input@2x.png`: the last visible line was clipped right at the
+  button's top edge). `SetupScaffold` now measures the real `bottomActions` height via
+  `onGloballyPositioned` and appends a `Spacer` of that exact height to the scrollable content —
+  never a guessed constant that would drift from the bar's actual height at any given font scale.
+  `WelcomeScreen` (S01, the one screen with no `SetupScaffold` chrome at all) carries the identical
+  fix locally, since it cannot share the scaffold's own implementation.
+- **R-124 — the level meter.** Three real bugs, confirmed on `level-low/S07-level-low.png` and
+  `level-clip/S07-level-clip.png`: (1) `levelBarFraction` scaled against a local `-90 dBFS` floor
+  three times wider than `LevelViewState`'s own `-60..0` real chart range
+  (`ui/screens/LevelMeterScreen.kt`, WP4 — read, its scale constants reused via import, not
+  duplicated, per the brief), compressing ordinary speech into the top third of the bar and making
+  `-38 dBFS` look nearly as full as `0 dBFS` clipping — fixed by switching to
+  `LevelViewState.CHART_FLOOR_DBFS`/`CHART_CEILING_DBFS`; (2) the meter drew bars only, no target
+  band, no clip line, no noise-floor line — `LevelMeter` is now a `Canvas` mirroring
+  `LevelHistoryChart`'s visual spec (that composable is `private` to its own file, so this is a
+  second, small Canvas built to the same spec, not a shared one) — translucent green target band,
+  a halt-coloured clip line at 0 dBFS (WP4's own rule: "never amber," preserved), and a dashed
+  noise-floor line once one is tracked; (3) `LevelReading.headroomDb`'s `-peakDbfs` produced IEEE
+  754 `-0.0` for an exact `0.0` dBFS peak, which `"%.0f"` formats as the literal string "-0 dB" —
+  fixed by using `0.0 - peakDbfs` (subtraction of two positive zeros is always `+0.0`). Also: the
+  clipping status *dot* (the live state indicator, distinct from the chart's own fixed clip line)
+  changed from `haltFill` (red) to `accentAmber` — guide §3: "red is for one thing — capture has
+  stopped"; a setup-time clip warning is a degradation, not a halt. The "noise −58" axis label was
+  a hardcoded literal regardless of the real reading (both level-low and level-clip screenshots
+  showed the identical text) — now built from `reading.noiseFloorDbfs`.
+- **S12's Level row** (coordinator's own observation, no register id): `readyRowsFor`'s Level row
+  derived `ok`/`statusText` from `store.levelInBand` alone, so a stored flag `true` with no
+  measured peak (`store.levelPeakDbfs == null` — the exact drift a test-only `SharedPreferences`
+  setup can produce, and the shape of a real bug were the two ever to fall out of sync) rendered a
+  green "in band" marker beside "Not measured". Extracted into `levelRow`, which now requires a
+  real, non-null peak before `ok` can ever be true — never derived from the flag alone.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.MainActivityTest"` — **121 passing**, zero failures (up from round 3's 97; this
+  entry's new/updated tests: `SetupScaffoldTest` (new file, R-120/R-123), `VerifyScreenTest`
+  (R-121 × 4 new + 1 back-chevron), `RadioVerifiedScreenTest` (R-125 × 2 new), `SetupActivityTest`
+  (R-125's Absent-discovered-on-S11 routing), `InputRouteEnumeratorTest`/`InputScreenTest`
+  (R-122), `RouteMismatchScreenTest` (R-122), `WelcomeScreenTest` (R-123), `LevelCheckTest`/
+  `LevelScreenTest` (R-124 × 6 new), `ReadyRowsForTest` (S12 Level row × 2 new)).
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **817 PASSED, 0 failed**,
+  BUILD SUCCESSFUL (up from round 3's 793 — this entry's 24 new tests, no other module changed).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — clean on the final run. Two real `LongMethod`
+  fixes needed along the way: `RouteMismatchScreen` (extracted `MismatchChecks`) and
+  `SetupScaffold` (extracted `ScaffoldHeaderRow`), both over detekt's 80-line threshold once the
+  new logic landed; `ktlintFormat` auto-fixed one import-order violation.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` unchanged this round.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- The font-scale-2.0 tests use `CompositionLocalProvider(LocalDensity provides Density(fontScale =
+  2f))`, matching `FailureScreensTest`'s/`ReaderAccessibilityTest`'s own established V7 pattern —
+  **not** `@Config(qualifiers = "fontscale-2.0")` as the brief's wording suggested: Robolectric
+  rejects that string outright (`fontscale-2.0` is not a real Android resource-qualifier format;
+  confirmed by running it first and reading the `IllegalArgumentException`), and the codebase's
+  own precedent for this exact scenario already exists and works.
+
+**Left open / not done:**
+- **No Bluetooth icon exists in `OrtIcons`** (`ui/components/OrtIcons.kt`, WP2's file) — a
+  Bluetooth-typed route's row carries no leading icon (`icon = null`), stated honestly rather than
+  reusing an unrelated icon. Reported, not fixed, per this row's file ownership this round.
+  `RadioRow` also still has no icon slot at all; `InputScreen` composes around it rather than
+  waiting on that gap.
+- **`InputRouteEnumerator`'s finer-grained typing (`typesById`) is real-`AudioManager`-only** —
+  exactly like `nativeRatesById`'s existing, unchanged limitation, a `FakeAudioIo`-driven unit
+  test can only exercise the `DeviceTypeNaming.forKind` fallback path, never the richer
+  `forAndroidType` path a real device's `AudioDeviceInfo.type` would take. Manual verification on
+  the emulator (or a physical device) is the only way to confirm the telephony/USB-accessory cases
+  render as intended.
+- **`RigStatus.State.Absent` discovered mid-S11 is exercised in tests via a forced
+  `Lifecycle.State.STARTED` → `RESUMED` transition**, standing in for a real backgrounded-then-
+  foregrounded visit — genuinely rare in practice (`onChooseRadio` itself already routes a
+  same-moment `Absent` reading to S10, never S11), and stated as such in code.
+- Every register row this entry closes (R-120..R-125) remains Robolectric-verified only, per this
+  program's own rule; no on-device or emulator re-confirmation is claimed here — that is the next
+  validator pass's job, not this builder's.
+## 2026-09-08 (ui-conformance WP2: marker descriptions in prose without confidence; live-bar meter tone override)
+
+### (pending) — ui-conformance WP2 · marker descriptions in prose without confidence; live-bar meter tone override
+
+**Scope:** `:app` `ui/components/AttributionMarker.kt`, `ui/components/LiveBar.kt` and both files'
+tests only. Validator findings R-162 and R-128 in `results/ui-audit/register.md`. `main`
+fast-forward merged first (`git merge --ff-only main`; this branch already an ancestor; no
+rebase, no stash) — no other package's files touched.
+
+**Requirements/ACs:** R-162 (the legacy `AttributionMarker` shim's content description must name
+the state in prose, no glyph, and mention a confidence only when the chip it describes is
+actually rendered — guide §6.1/§11.2), R-128 (`Fail-Usb.dc.html`'s live bar: green meter bars —
+"audio fine" — beside a halt-red `Act` label, which the live bar's single tone-to-colour mapping
+could not previously produce).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-162 directly: a
+  description claiming a confidence that isn't actually shown (or a state named by a sighted-only
+  glyph a screen reader can't read) is exactly the "silent but wrong" signal the constitution
+  warns against — a description is not decoration, it is the only account a screen-reader user
+  gets. Principle VII (Boundaries Are Structural) governs R-128: the meter and the label answer
+  two different questions ("is audio itself fine?" vs "what does the operator need to know?"),
+  and forcing them through one `tone` field conflated those questions structurally, not just
+  visually.
+- **R-162 — `legacyMarkerDescription` (`AttributionMarker.kt`).** Previously built its description
+  around `TransmissionListViewStateMapper`'s `attributionLabel` — a *display* string carrying a
+  `✓`/`~`/`?`/`—` glyph meant for eyes, and always appended `attribution.confidence` whenever the
+  data had one, regardless of the `showConfidence` parameter the shape actually renders under.
+  That is the exact bug the register caught: T02's "How these were attributed" line called
+  `AttributionMarker` with `showConfidence = false` (shape only, no chip), yet the description
+  read "confidence 0.85" anyway. Now `legacyMarkerDescription(attribution, showConfidence)` uses
+  `stateProse` — the same prose helper `AttributionRow`/`TitleAttributionRow` already use
+  ("Confirmed", "Inferred", "Ambiguous", "Unknown") — and appends a confidence only when
+  `showConfidence` is true *and* the attribution carries one, i.e. only when the chip this
+  description is meant to describe is actually on screen. `TransmissionListViewStateMapper`
+  is no longer imported by this file.
+- **R-162 — glyph audit.** Grepped every `contentDescription =`/`onClickLabel =` literal and
+  `buildString` block across `ui/components/**` for `✓`/`~`/`?`/`—`: none of the other components'
+  descriptions carry one (they were already clean prose — "Back to Log", "Open navigation",
+  "43 percent", etc.) — `legacyMarkerDescription` was the one holdover, now fixed. A new test,
+  `R_162 no legacy marker description carries a checkmark, tilde, question mark or dash glyph`,
+  checks all four states of the legacy marker directly so a future regression here is caught
+  without needing to re-grep the file by hand.
+- **R-128 — `LiveBarViewState.meterTone: LiveBarTone? = null` (`LiveBar.kt`).** `null` (every
+  caller before this existed) means "follow `tone`", so this is additive. `LiveBar` now resolves
+  the meter's colour from `state.meterTone ?: state.tone` and the rest of the bar (background, top
+  edge, label) from `state.tone` — the two can disagree, which is exactly what `Fail-Usb.dc.html`
+  needs: a USB-permission failure is a rig problem, not an audio one, so the meter stays green
+  ("audio fine") while the bar around it reads degraded/halted.
+- **R-128 — the "Act" label.** `Fail-Usb.dc.html`'s live bar pairs its amber/degraded palette with
+  a halt-red `Act` word specifically (the call to action), not the tone's own label colour. `Act`
+  now reads `OrtColors.haltText` regardless of `tone`; any other label keeps the tone's own colour
+  unchanged.
+- **Refactor for testability, not just correctness.** `liveBarPalette`/the new `meterColorFor`/the
+  new `liveBarLabelColor` were `@Composable` for no real reason — `OrtColors` is a plain object of
+  constant `Color` values, not `CompositionLocal`-backed — so they are now plain `private`/
+  `internal` functions. This follows the same pattern R-054's `scrubFraction` established
+  earlier in this package: a rendered pixel colour isn't something Robolectric can verify reliably
+  here (confirmed directly while writing R-152's tests, a prior entry in this file), but the pure
+  tone-to-colour decision that produces it is exactly, and cheaply, testable without Compose at
+  all. `meterColorFor`/`liveBarLabelColor` are `internal` (test-visible); `liveBarPalette` stays
+  `private` (its only remaining caller is `LiveBar` itself).
+- Changed signatures: `LiveBarViewState` gained `meterTone: LiveBarTone? = null` (additive, last
+  parameter, default preserves every existing caller's behaviour); `liveBarPalette` now takes
+  `tone: LiveBarTone` directly rather than the whole `LiveBarViewState` (an internal, non-public
+  function — no caller outside this file exists to break).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **828 of 828 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`: `Total: 828, Failures: 0`; was 792 before this commit). New/changed tests:
+  `AttributionMarkerTest`'s `R_162 the legacy marker names the state in prose with no glyph and no
+  confidence when no chip renders`, `R_162 the legacy marker mentions confidence only when
+  showConfidence actually renders the chip`, `R_162 no legacy marker description carries a
+  checkmark, tilde, question mark or dash glyph` (new), plus `AC_62 all four attribution states
+  carry distinct, non-colour content descriptions`'s `expectedStateName` map updated from
+  `"CONFIRMED"`/etc. to `"Confirmed"`/etc. (same test, now asserting the corrected prose).
+  `LiveBarTest`'s `R_128_meterColorFor follows the given tone directly, independent of any
+  bar-wide tone`, `R_128_a meterTone override lets the meter read green while the bar around it is
+  degraded or halted`, `R_128_liveBarLabelColor reads Act in haltText regardless of the tone's own
+  label colour`, `R_128_a live bar with an Act label and a degraded tone still renders and
+  describes both` (all new). No other package's test broke from the description-format change
+  (the full 828/828 run is itself the confirmation — no caller outside this package asserts the
+  legacy marker's old all-caps/glyph description text).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** (one intermediate
+  `ktlintMainSourceSetCheck` failure fixed along the way: removing `LiveBarPalette`'s fourth field
+  let its primary constructor fit on one line, and ktlint's `standard:class-signature` rule
+  requires collapsing to single-line once it fits — collapsed it, rebuilt clean). `dependencyRules:
+  checked 17 modules ... OK — every edge is permitted by the design graph.` `platformGuards:
+  checked 17 modules' external dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`
+  (unchanged — R-162/R-128 are validator findings, not spec requirement ids, so no new coverage
+  row). `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (181 covered of
+  419)`. `.\gradlew.bat :app:assembleDebug` — included in and passed as part of the `build` run
+  above.
+
+**Left open / not done:**
+- **The register is not updated by this commit** — closing out R-162/R-128 (marking them fixed,
+  citing this commit) is the validator/coordinator's own bookkeeping on that file, outside this
+  package.
+- **No screenshot/emulator re-capture** of `T02-thread.png`/`usb-permission/F16-fail-usb.png` to
+  visually confirm either fix against the actual artboard — Robolectric assertions only, per the
+  plan (Phase E/Validators own screenshot verification).
+- **The `"Act"` label match is an exact string equality**, not a semantic "is this a
+  call-to-action" property — if a future caller phrases the same call-to-action differently (e.g.
+  "Act now"), it will not pick up the halt-red override automatically. This mirrors how the rest
+  of this component already works (`label`/`partialText` are opaque strings this component does
+  not interpret beyond what the guide specifies), but is worth a caller knowing about rather than
+  discovering by a blank amber "Act now".---## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)
 
 ### (pending) — ui-conformance WP9 · setup step entry and Install destination
 
@@ -137,6 +1214,98 @@ directly before writing this — names as the missing piece for F1's "Choose ano
 
 ## 2026-09-08 (build tooling: lint/detekt ignore nested worktrees under .claude)
 
+### (pending) — build · every source set and lint task ignores nested worktrees under .claude
+
+**Scope:** build tooling only, lead-approved for build files — `buildSrc/src/main/kotlin/ort.common.gradle.kts`
+(the only file this fix needed). No product code touched. `main` fast-forward merged first
+(`git merge --ff-only main`, this branch already an ancestor, no stash, no rebase) — to `b73f19c`.
+
+**Requirements/ACs:** none new — process/tooling, a follow-up correcting the entry directly below
+this one after main's gate failed again on `:app:ktlintTestSourceSetCheck` (25 violations in
+`agent-a00d1a3768138ef87`'s `LevelCheckTest.kt`/`LevelScreenTest.kt`) despite that earlier fix.
+
+**What changed — the earlier diagnosis (entry below) was wrong, and this entry corrects it:**
+
+- **The earlier entry's theory** — "ktlint's and detekt's Gradle plugins... resolve their file set
+  for a module as every `.kt` file the JVM finds walking down from that module's source
+  directories" — **does not hold**, and its own `**/.claude/**` exclude was never actually doing
+  anything. Proved directly this round: `:app:runKtlintCheckOverTestSourceSet`'s own declared
+  `source` (`FileCollection`, inspected via reflection through a temporary `doFirst` diagnostic,
+  removed before this commit) was **already** built from exactly this worktree's own
+  `app/src/test/kotlin/**` — 108 files, 0 from any other worktree — with or without the exclude. A
+  relative glob like `**/.claude/**` could never have mattered anyway: `.claude` is an *ancestor*
+  of every module's real source directory (`<repo>/.claude/worktrees/<name>/app/src/test/kotlin`),
+  never a *descendant* of it, so it can never appear as a segment in a path measured relative to
+  that source root — the pattern was inert by construction, for either source set.
+- **The real root cause: Gradle's local build cache, not file resolution.**
+  `org.gradle.caching=true` (`gradle.properties`, outside this fix's file scope) enables Gradle's
+  local build cache, which lives under `$GRADLE_USER_HOME` — one directory shared by every
+  worktree on this machine, not one per checkout. `KtLintCheckTask` (and its aggregating
+  `Generate­ReportsTask`) and `Detekt` are cacheable tasks whose cache key is a content hash of
+  their (correctly, narrowly scoped) input files. Two worktrees whose `app/src/test/kotlin/**`
+  happens to hash identically — routine right after a shared merge, before either agent has
+  touched the files it owns — get the *same* cache key, and Gradle legitimately serves one
+  worktree's cached task output to the other. That would be harmless for most tasks, but ktlint's
+  (and detekt's) cached report is not actually relocatable the way Gradle's cache model assumes:
+  each finding's **absolute file path is baked into the cached output as data**, not just tracked
+  as build metadata a relocated cache entry could safely disregard. So build A, having never
+  touched the affected files itself, reports violations at build B's absolute paths — exactly the
+  symptom both this round's and the original failure report describe, and exactly why it hit
+  *test* specifically each time: whichever source set's content happened to still hash-match
+  another live worktree's at that moment.
+- **The fix.** `settings.gradle.kts` (a per-worktree local build-cache directory) and
+  `gradle.properties` (disabling caching outright) are both outside this fix's approved file
+  scope, so the fix lives in `ort.common.gradle.kts` instead — the one convention plugin every
+  module applies. Every task whose name contains `"ktlint"` (worker and aggregator tasks alike;
+  the ktlint Gradle plugin's task types are `internal`, so matched by name rather than
+  `tasks.withType<...>()`, confirmed against this build's own `:app:tasks --all`) and every
+  `Detekt`-typed task now carries `outputs.doNotCacheIf("<reason>") { true }` — not
+  `cacheIf { false }`, so the reason string is visible in diagnostics, and a future, genuinely
+  relocatable version of either plugin only has to remove this block, not rediscover why it
+  exists. This disables *build-cache* participation only — a worktree's own local up-to-date
+  checking (based on that worktree's own `.gradle`/`build` state, not the shared cache) is
+  untouched, so repeated runs within one worktree are exactly as fast as before.
+- **The exclude glob kept, upgraded, and honestly re-scoped.** `KtlintExtension.filter { exclude }`
+  and `tasks.withType<Detekt>().configureEach { exclude }` now match on each `FileTreeElement`'s
+  own **absolute** `file.path` (`it.file.path.contains("${File.separator}.claude${File.separator}")`,
+  the coordinator's own suggested shape) rather than a relative glob — strictly more robust against
+  any future change in which base directory either plugin measures a relative pattern from. Kept as
+  defense-in-depth and documented as exactly that in `ort.common.gradle.kts`'s own comment: proven,
+  this round, *not* to be what fixes today's failure, since ktlint's file resolution was already
+  correctly scoped before this change.
+- **Proved, not just configured.** Created throwaway, deliberately unparseable
+  `.claude/worktrees/zz-test/app/src/{main,test}/kotlin/**/Broken.kt` inside this worktree, ran
+  `.\gradlew.bat :app:ktlintCheck :app:detekt :app:testDebugUnitTest --build-cache` — `BUILD
+  SUCCESSFUL` with both broken files present, **no `FROM-CACHE` outcome on any ktlint or detekt
+  task** in that run (checked the full task-execution log line by line) — then deleted the
+  throwaway directory; `git status --porcelain` confirmed nothing throwaway survived.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintCheck :app:detekt :app:testDebugUnitTest --build-cache` with the
+  throwaway broken files present — **BUILD SUCCESSFUL**, no ktlint/detekt task reported
+  `FROM-CACHE`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged, no product code
+  touched) and `.\gradlew.bat coverageMatrixCheck` (separate invocation, up to date) — both
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open:**
+- The genuinely ideal fix — a per-worktree local build-cache directory
+  (`settings.gradle.kts`'s `buildCache { local { directory = ... } }`) — would let ktlint/detekt
+  keep caching *within* a worktree while never sharing across worktrees at all, and is outside this
+  round's approved file scope (`settings.gradle.kts`, `gradle.properties`). `doNotCacheIf` is the
+  correct fix reachable from `buildSrc/**`/root `build.gradle.kts`/`app/build.gradle.kts` alone; a
+  future change to `settings.gradle.kts` could restore cross-run caching for these tasks once
+  isolated per worktree.
+- Not re-checked this round: `dependencyRules`/`platformGuards`/`coverageMatrix`/AGP `lint` — the
+  entry below already confirmed none of them walk the filesystem in a way that could reach
+  `.claude/`, and nothing in this round's fix changes how any of them resolve their inputs.
+
+---
+
 ### (pending) — build · lint and analysis ignore nested worktrees under .claude
 
 **Scope:** build tooling only — `buildSrc/src/main/kotlin/ort.common.gradle.kts` (the one
@@ -195,6 +1364,122 @@ this package's report to the lead, not restated here.
 **Left open:** none — the three things asked for (ktlint, detekt, and the "check lint/
 dependencyRules/platformGuards/coverageMatrix too" instruction) are all addressed, the latter by
 confirming no change was needed and recording why.
+
+---
+
+## 2026-09-08 (ui-conformance WP2: key-value and column widths grow with font scale)
+
+### (pending) — ui-conformance WP2 · key-value and column widths grow with font scale
+
+**Scope:** `:app` `ui/components/Rows.kt` and `RowsTest.kt` only. Validator finding R-152 in
+`results/ui-audit/register.md` (screenshot `results/ui-audit/stations-14-nights/DG04@2x.png`).
+`main` fast-forward merged first (`git merge --ff-only main`; this branch already an ancestor; no
+rebase, no stash) — no other package's files touched.
+
+**Requirements/ACs:** R-152 (`Session`/`Capture-Status` at font scale 2.0: `KeyValueRow`'s
+fixed-width label column does not grow, so label and value collide — "Stations5").
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) bears indirectly: a collided label
+  and value ("Stations5") is not just ugly, it is a reading a user could misattribute to the wrong
+  field entirely — the same family of harm as an unlabelled number. Principle II (Test-Backed
+  Change) governs the audit itself: rather than eyeballing the other fixed-width columns, each one
+  now has a Robolectric test at font scale 2.0 that measures real screen positions and asserts no
+  overlap, so "fixed what breaks" is a checked claim, not an impression.
+- **Root cause.** `KeyValueRow`'s key `Text` used `Modifier.width(96.dp)` — an exact width, not a
+  floor — with no `horizontalArrangement` gap on the `Row` at all: the *only* separation between
+  the key box and the value column was whatever slack the key's own text left unused inside its
+  96dp box. At the guide's own text scale, short keys ("Route", "Input") leave plenty of that
+  slack, and it reads as the gap. At font scale 2.0 a key like "Stations" needs nearly the full
+  96dp, the slack disappears, and the value starts drawing immediately after with no whitespace
+  between them — "Stations5". The same fragile pattern — a `width()` ceiling on a label/column,
+  sized for the guide's scale and never revisited for a larger one — is shared by
+  `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN`/the signal column (`Rows.kt` file-level constants, used by
+  `ColumnHeaderRow`, `LogRow`, `RejectedRow`, `GapRow`) and by `NotificationCard`'s expanded
+  key/value rows (`Modifier.width(62.dp)` on the row key) — all audited for the same defect.
+- **The fix.** Every one of these `Modifier.width(X)` label/column declarations is now
+  `Modifier.widthIn(min = X)` — a floor, not a ceiling: at the guide's own scale (1.0), where every
+  label/value pair already fits inside `X`, this is visually a no-op (the same width results,
+  since `widthIn(min = X)` and `width(X)` coincide once content is narrower than `X`). At a larger
+  scale, the column can grow past `X` to fit its content instead of being pinned there regardless.
+  `KeyValueRow` also gained `horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm)` (8dp) —
+  this is the part that actually fixes the reported defect: `LogRow`, `RejectedRow`,
+  `ColumnHeaderRow` and `GapRow` already had `Arrangement.spacedBy(10dp)` between their columns
+  (a real, unconditional gap regardless of any column's width), and `NotificationCard`'s expanded
+  rows already had `spacedBy(8dp)`; `KeyValueRow` was the one row with *no* arrangement gap at
+  all, which is what let its slack-as-gap illusion collapse to zero in the first place.
+  `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN`'s KDoc now says "floor" explicitly, so a future caller
+  doesn't reintroduce a hard `width()` against them.
+- Changed: `KeyValueRow`'s key `Text` (`width(96.dp)` → `widthIn(min = 96.dp)`, plus the new
+  `spacedBy` gap); `ColumnHeaderRow`'s three fixed-column `Text`s; `LogRow`'s time/freq/signal
+  `Text`s; `RejectedRow`'s time/freq `Text`s; `GapRow`'s time `Text`; `NotificationCard`'s expanded
+  row key `Text`. No signature changed on any of these composables — every fix is inside the
+  existing function body.
+- **A measurement limitation found and worked around while writing the tests, worth recording.**
+  The first version of this fix's tests tried to prove the "grows past the floor for a wide key"
+  behaviour directly, by rendering a 23-character key at font scale 2.0 and asserting its measured
+  width exceeded 96dp. It didn't — Robolectric's `Paint` returns degenerate glyph metrics for this
+  codebase's custom `sans`/`mono` `fontFamily`s in the unit-test JVM (confirmed directly: the
+  23-character key measured exactly 96px — the floor, unmoved — and a lone digit measured 1px,
+  regardless of the 2.0 font scale actually being applied to the `Density` the content composed
+  under). An intrinsic-text-width assertion in this environment would therefore pass or fail on an
+  artefact of the test host's font substitution, not on real behaviour, so it was dropped. What
+  *is* deterministic and host-independent — because it follows from Compose's own documented
+  `widthIn`/`Arrangement.spacedBy` semantics rather than from font rendering — is that a real,
+  code-enforced minimum gap now exists between every one of these column pairs; that is what the
+  tests below check instead, and it is exactly the property `KeyValueRow` was missing.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **792 of 792 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`: `Total: 792, Failures: 0`; was 737 before this commit — 55 new tests, mostly
+  from other packages' concurrent work already merged via `main`, plus this commit's own 5). New
+  tests, all in `RowsTest`, named for R-152: `R_152_a key value row keeps a real enforced gap
+  between its label and its value at font scale 2`, `R_152_a column header row keeps a real
+  enforced gap between its time and freq columns at font scale 2`, `R_152_a log row keeps a real
+  enforced gap between its time and freq columns at font scale 2`, `R_152_a rejected row keeps a
+  real enforced gap between its time and freq columns at font scale 2`, `R_152_a notification
+  card's expanded key-value row keeps a real enforced gap at font scale 2`. Each measures the real
+  `positionInRoot`/`size` of the two adjacent columns' `Text` nodes at `Density(fontScale = 2f)`
+  (`useUnmergedTree = true` — `LogRow`/`RejectedRow`/`NotificationCard` wrap their content in
+  `semantics(mergeDescendants = true)` for a single accessible target, which on the default merged
+  tree collapses every column's `Text` into one outer node, making a naive bounds check compare
+  the same merged node with itself — confirmed the hard way: the first version of these tests,
+  before adding `useUnmergedTree = true`, reported nonsense like `'145.230' (starting at 0.0px)`
+  because that string had resolved to the whole row's merged node, not the frequency `Text`) and
+  asserts the enforced gap between them is at least the row's own declared `Arrangement.spacedBy`
+  value (8px for `KeyValueRow`/`NotificationCard`, 10px for the others) — not merely non-negative,
+  so a regression back to zero explicit spacing is caught even though the boxes would still be
+  technically non-overlapping. Re-verified genuinely, not just by construction: temporarily
+  reverted `KeyValueRow` to `width(96.dp)` with no arrangement (its exact pre-fix form) and reran
+  its test — it failed with `expected at least 8px between 'Stations' (ending at 96.0px) and '5'
+  (starting at 96.0px) at font scale 2.0, got 0.0px`, i.e. the two columns touching exactly, zero
+  gap — real, logged proof of the defect this fix removes, not an assumption; then restored the
+  fix and reran clean.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**. `dependencyRules:
+  checked 17 modules ... OK — every edge is permitted by the design graph.` `platformGuards:
+  checked 17 modules' external dependencies and 17 manifests ... OK.`
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`, `spec-check: OK`. `.\gradlew.bat coverageMatrix` — `419 requirements, 181 covered`
+  (unchanged — R-152 is a validator finding, not a spec requirement id, so no new coverage row).
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (181 covered of 419)`.
+  `.\gradlew.bat :app:assembleDebug` — included in and passed as part of the `build` run above.
+
+**Left open / not done:**
+- **The register (`results/ui-audit/register.md`) is not updated by this commit** — closing out
+  R-152's row (marking it fixed, citing this commit) is the validator/coordinator's own
+  bookkeeping on that file, outside this package.
+- **No screenshot/emulator re-capture** of `DG04@2x.png` to visually confirm the fix against the
+  actual artboard — Robolectric position assertions only, per the plan (Phase E/Validators own
+  screenshot verification). This one matters more than usual here, given the font-metrics
+  limitation above: a real-device/emulator capture is the only way to see the *actual* grown width
+  of a genuinely long key, which Robolectric cannot exercise meaningfully.
+- **`GapRow`'s time column got the same `widthIn` fix but has no dedicated R-152 test** — its
+  column is followed by an `Icon`, not a `Text`, so the `onNodeWithText`-based gap-measurement
+  helper this commit's other tests use doesn't apply to it directly. The fix is the same
+  mechanical change (`width(LOG_TIME_COLUMN)` → `widthIn(min = LOG_TIME_COLUMN)`) as every other
+  row built from that constant, and `GapRow`'s existing `a gap row and a rejected row stay
+  reachable rather than disappearing` test still passes unchanged.
 
 ---
 
@@ -281,6 +1566,109 @@ other component, without an unmerged-tree trick.
 
 ---
 
+
+## 2026-09-08 (ui-conformance WP10 round 3: session row taps and settings sub-screen entry exposed to the host)
+
+### (pending) — ui-conformance WP10 · session row taps and settings sub-screen entry exposed to the host
+
+**Scope:** `:app` — `ui/digest/SessionsContent.kt`, `ui/settings/SettingsContent.kt`,
+`ui/digest/DigestPolling.kt`, and their tests (new `ui/digest/SessionsContentTest.kt`, new
+`ui/settings/SettingsContentTest.kt`, extended `ui/digest/DigestPollingTest.kt`). No file outside
+`ui/settings/**`, `ui/digest/**`, `ui/improve/**` and tests was touched; `ui/navigation/
+OrtNavHost.kt`/`ReaderDestination.kt` were read (to confirm WP3's host-side use of the two entry
+points below) but not edited — both already compile unchanged against the new optional
+parameters, as required.
+
+**Requirements/ACs:** R-090 (settings sub-screen entry), R-092/FR-DIG-2a/FR-DIG-9/FR-UI-1
+(session row taps hand a real transmission id to the host; the two previously-uncomputed digest
+item kinds), constitution I (Uncertainty Is Content — an item is computed only where a real query
+answers it) and II (Test-Backed Change).
+
+**What changed:**
+
+*Constitution Check.* Principle I: both new digest item kinds are computed from real rows only —
+`longThreadItems` reads every historical thread's length from `TransmissionDao.listAll()` grouped
+by `threadId`, `regularAbsentItems` reads the last four same-UTC-weekday sessions' station sets —
+neither invents a number when the underlying history is too thin (see the two "insufficient
+history" tests). Principle II: each new/changed behaviour has a test named for its id, written
+against real `OrtDatabase` rows, before this changelog entry.
+
+- **`SessionsContent(..., onOpenTransmission: (String) -> Unit = {})`** (FR-UI-1, FR-DIG-9): the
+  embedded `Log`'s row taps (`LogContent(..., onOpen = onOpenTransmission, ...)`, a direct
+  pass-through) and `Digest-Item`'s "The N over(s)" action (`onOpenTheOvers = {
+  current.item.transmissionIds.firstOrNull()?.let(onOpenTransmission) }`) now hand a real
+  transmission id up to whatever hosts this composable, closing the gap the previous entry's
+  "Left open" section named (`SessionsContent`'s embedded `Log` passed `onOpen = {}`). The default
+  keeps every existing call site (including `OrtNavHost.kt`, unedited) compiling and behaving as
+  before. `FR_UI_1`'s test proves the real navigation hop (Tonight → session → embedded `Log`,
+  header and columns rendered for real) but does not drive an actual row tap through to the
+  callback: `LogContent`'s row detail (`TransmissionDetail.buildDetail`) calls
+  `transcriptDao().getAllVersions(...)`, and Robolectric's bundled SQLite has no fts5 module —
+  `transcript_fts` fails to attach at database-open time for every test database here (confirmed
+  by the `no such module: fts5` warning, and by a 15-second wait with the semantics tree printed
+  showing the row list permanently empty) — so `LogContent`'s own row-tap-to-callback behaviour
+  remains WP5's `LogScreenTest`'s to prove against a hand-built view-state. `FR_DIG_9`'s test does
+  drive the full real path end-to-end (insert a session and a first-heard transmission, tap
+  Tonight → Digest → the digest item → "The 1 over(s)", assert the callback received the real
+  `"TX1"`) and passes.
+- **`SettingsContent(..., initialScreen: SettingsScreenId? = null)`** (R-090): lets a caller land
+  directly on `ASSETS`, `STORAGE`, `RIG`, or `CAPTURE` instead of always opening the `Settings`
+  root first — the entry points WP3's host round named (Now's "Install a model" and Setup S12's
+  `Install` → Assets; F6's "Free space" → Storage; F9's "Reconnect" → Rig; N06's `Adjust` →
+  Capture). `null` (the default) is unchanged root-first behaviour, keeping `OrtNavHost.kt`
+  compiling and behaving as before. Five new `SettingsContentTest` cases, one per screen plus the
+  no-param default, each asserting a real screen-specific label renders and (for the non-root
+  cases) that the root's own section labels do not.
+- **Digest's two previously-uncomputed item kinds** (`DigestPolling.digest`, FR-DIG-2a): both are
+  now real queries, not literals.
+  - *Long thread*: `longThreadItems` groups tonight's transmissions by `threadId`, groups every
+    historical transmission the same way to compute a real average thread length
+    (`TransmissionDao.listAll()`), and flags a tonight thread whose length is at least double that
+    average (floored at 5 overs so a single average of near-zero doesn't flag trivial threads).
+    The sub-line states the real rounded average ("usual is N over(s)"), never an artboard number.
+  - *Regular absent*: `regularAbsentItems` takes the last four sessions on the exact same UTC
+    weekday as tonight (`SessionEntity.startedAt`'s weekday), and — once at least three exist —
+    intersects their per-session station sets (`TransmissionDao.listBySession`) to find stations
+    heard in every one of them; any such station not heard tonight is flagged, naming the real
+    weekday and week count. Both kinds report nothing when their history threshold is unmet
+    (proved by the existing `R_092 digest never invents a long-thread or absent-station item...`
+    test, still green) rather than a false positive from a single data point.
+  - Four new `DigestPollingTest` cases (`FR_DIG_2a ...`) cover: a thread well above the historical
+    average is flagged with the real average in its sub-line; a thread at/below average is never
+    flagged; a station heard every matching weekday but absent tonight is flagged, once enough
+    history exists; a station heard tonight is never flagged absent even with matching history.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.digest.SessionsContentTest"` —
+  `FR_DIG_9 ... PASSED`, `FR_UI_1 ... PASSED`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.SettingsContentTest"
+  --tests "org.ort.app.ui.digest.DigestPollingTest"` — all 5 `SettingsContentTest` and all 9
+  `DigestPollingTest` cases `PASSED`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:testDebugUnitTest` (full module, no filter) — `BUILD SUCCESSFUL`, no
+  regression in any pre-existing test.
+- `.\gradlew.bat build dependencyRules platformGuards` — `BUILD SUCCESSFUL in 1m 40s`, 845
+  actionable tasks (38 executed, 9 from cache, 798 up-to-date); `dependencyRules: OK`;
+  `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL in 3s`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 183 covered ->
+  results\coverage-matrix.md` (up from 181; `FR-DIG-2A`, `FR-DIG-9` and `R-090` newly covered,
+  `FR-UI-1` gained `SessionsContentTest`).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date
+  (183 covered of 419)`, `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+
+**Left open / not done:**
+- `LogContent`'s own row-tap-to-callback behaviour is still unproven from inside
+  `SessionsContentTest` (the fts5/Robolectric limitation above) — it remains covered by WP5's
+  `LogScreenTest` against a hand-built view-state; only the wiring above it (`onOpen =
+  onOpenTransmission`) is this package's to prove, and is proven.
+- No third or fourth digest item kind beyond the two computed this round and the three the
+  previous entry already computed (first-heard, frequency departure, AMBIGUOUS/UNKNOWN counts) —
+  none was asked for.
+- Not validated on an emulator (builder rule — validators do that after merge).
+
+---
 
 ## 2026-09-08 (ui-conformance WP10: settings root and sub-screens, assets presentation, improve, sessions, digest)
 
@@ -760,7 +2148,90 @@ action — not the row's own value text doing double duty as an affordance).
 
 ## 2026-09-08 (ui-conformance WP11b: failure screens, failure host, recovery announcements)
 
-### (pending) — ui-conformance WP11b · failure screens F1-F22 UI, failure host, recovery announcements, debug failure scenarios
+### (pending) — ui-conformance WP11b · system-bar insets on failure overlays, Fail-Route why-link and subtitle, live-bar tone from every failure
+
+**Scope:** `:app` — `ui/failures/**` (`FailureViewState.kt`, `FailureMapper.kt`,
+`FailureSignalsPolling.kt`, `FailRoute.kt`, `FailStorage.kt`, `FailUsb.kt`, `FailReconcile.kt`,
+`FailMigration.kt`, `FailAssetSwap.kt`, `FailCalibration.kt`, `FailureHost.kt`) and their tests;
+`ui/data/LiveBarPolling.kt` and its test (WP4 idle this round, per the coordinator). Follow-up to
+the two WP11b commits below, at the Setup validator's (V1, `5c8d144`) request — `git merge --ff-only
+main` first (this branch already an ancestor of main at `2ca13dc`, which carries `5c8d144`'s
+validation commit — no rebase, no stash, no other package's files touched).
+
+**Requirements/ACs:** R-126, R-127, R-128 (register); FR-CAP-2a, FR-CAP-3, FR-CAP-3a, FR-RUN-13
+(cited by the new "Why this halts" sheet); FR-A11Y-2 (44dp targets, unaffected); constitution I
+(never invent a number — F1's elapsed/overs clauses are omitted, not fabricated, when there is no
+session to measure) and IV ("capture never blocks, never drops, never lies" — the live bar must
+never read nominal while a real failure is showing, R-128's own finding).
+
+**What changed:**
+
+- **R-127/R-126 — every banner and takeover now carries the 44dp status-bar inset.** V1's
+  screenshots (`input-mismatch/F01-fail-route.png`, `level-low/F03-fail-level-banner.png`) showed
+  "Halted" and the level banner's icon/title colliding with the clock — every full-screen
+  `Fail*Screen` root and `FailureHost`'s `BannerOverlay` drew from y=0. Fixed with the exact
+  pattern `SetupScaffold.kt` already uses (the reference the coordinator named):
+  `.windowInsetsPadding(WindowInsets.statusBars)` on the outer container, right after
+  `.background(...)`. Centralised as `Modifier.failureScreenInset()` in `FailRoute.kt` (this
+  package's existing home for shared internal helpers) and applied to `FailRouteScreen`,
+  `FailStorageHaltScreen`, `FailUsbScreen`, `FailReconcileScreen`, `FailMigrationScreen`,
+  `FailAssetSwapScreen`, `FailCalibrationScreen` and `FailureHost`'s `BannerOverlay` — every
+  takeover and every banner this package owns, in one place each. Robolectric resolves
+  `WindowInsets.statusBars` to zero (no real system bar to measure in that harness), so the pixel
+  offset itself cannot be asserted by a unit test — `R_127_...` proves the modifier chain compiles
+  and every screen still renders its content with it applied, the same way `SetupScaffold`'s own
+  (already-correct, V1-passing) screens do; the actual visual fix is what the next validator run
+  confirms by screenshot, same as V1 caught the bug.
+- **R-126 — `Fail-Route`'s subtitle now follows the board's own "HH:MM:SS · after H:MM:SS · N
+  overs kept" pattern**, sourced from `CaptureState` by way of the session it names:
+  `FailureSignals` gained `sessionStartedAtMillis`/`sessionTransmissionCount`
+  (`FailureSignalsPolling` reads them via `SessionDao.getById`/`TransmissionDao.listBySession`,
+  the same pattern `improvableCount` already used), and `FailureMapper`'s Route mapping computes
+  `RouteViewState.elapsedLabel` (a new `hoursMinutesSecondsLabel` formatter, "H:MM:SS") and
+  `oversKeptCount` from them. When there is no session to measure against,
+  `sessionElapsedKnown = false` and the subtitle falls back to the plain sentence rather than
+  inventing a zero (constitution I).
+- **R-126 — `Fail-Route` gets the board's "Why this halts" link.** `Banner`'s `secondaryActionLabel`
+  now opens a scrim + WP2 `Sheet` (guide §6.9: dismissing is the host screen's job, not `Sheet`'s
+  own — built the same way `FailUsbScreen`'s own scrim already is) citing FR-CAP-3/FR-CAP-3a (the
+  actual halt rule — "a route that is not the selected device halts capture, never a silent
+  fallback") and FR-CAP-2a (why the exact device matters: every retained recording carries the
+  input rate and resampler identity that produced it). Dismissed by tapping the scrim or a "Close"
+  text action.
+- **R-128 — the live bar now follows every failure `FailureMapper` can raise, including the debug
+  override.** V1 found the live bar reading nominal "Live" in green while F16's takeover was up
+  (`usb-permission/F16-fail-usb.png`) — `LiveBarPolling` never consulted `DebugFailureOverride` at
+  all. Added `failureOverrideToneLabelAndPartial()`, exhaustive over every `FailurePresentation`
+  id, consulted ahead of the existing real-signal `toneAndLabel()`: F16 (`Fail-Usb.dc.html`) reads
+  `LiveBarTone.HALTED` ("Act" in `halt/text` red — the board's own live-bar background/border/label
+  are halt-red throughout, not amber; see "Left open" for the one thing this file cannot fix) with
+  partial text "audio fine · radio needs permission"; F6's `StorageAudioPaused` (`Fail-Storage.dc.html`'s
+  "text only" stage) reads `DEGRADED` "Text only". Every other id falls through to the real-signal
+  computation unchanged — most because their own board shows no live bar at all (F14/F19/F20/F21/F22
+  are not Now/session screens) or explicitly keeps it nominal (F5/F15 both read "Live" on their own
+  boards) — nothing here invents a label a board never specified. Tested per id (`R_128_...`),
+  including that the override wins outright over a real degradation, matching `FailureMapper`'s own
+  priority.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. Targeted tests (`org.ort.app.ui.failures.*`, `LiveBarPollingTest`, `ScenariosTest`) —
+110 tests, all green (`FailureMapperTest` 21, `RecoveryAnnouncerTest` 9, `FailureScreensTest` 19,
+`FailureHostTest` 3, `DebugFailureOverrideTest` 4, `LiveBarPollingTest` 17, `ScenariosTest` 37).
+Full gate reported in this package's report to the lead.
+
+**Left open:**
+
+- **F16's live-bar meter bars render `halt/fill` red, not the board's green** — `LiveBar`'s own
+  palette ties meter colour to `LiveBarTone` with no per-call override, and `ui/components/LiveBar.kt`
+  is WP2's file, outside this round's authorization (build files/`ui/failures/**`/
+  `ui/data/LiveBarPolling.kt` only). `Fail-Usb.dc.html`'s own live bar shows green meter bars
+  ("audio capture is fine") inside an otherwise halt-red bar — a genuine per-tone-component
+  override `LiveBar.kt` does not support today. Flagged, not silently accepted.
+- **The exact pixel status-bar offset is unverified by unit test** (Robolectric resolves
+  `WindowInsets.statusBars` to zero) — the next V1-style emulator screenshot is what actually
+  confirms the fix, the same way V1 found the bug in the first place.
+
+
 
 **Scope:** `:app` — new `ui/failures/**` (`FailureViewState.kt`, `FailureMapper.kt`,
 `FailureSignalsPolling.kt`, `DebugFailureOverride.kt`, `RecoveryAnnouncer.kt`, `FailureHost.kt`,
@@ -950,6 +2421,194 @@ all green. Full gate reported in this package's report to the lead.
 **Left open:** unchanged from the entry above — this follow-up touched only the three things the
 coordinator asked about, all three now checked and either fixed or recorded as deliberately not
 fixed with why.
+---
+
+### (pending) — ui-conformance WP11b · banners below the header, full-screen clock and interrupted boards, board copy completion, storage and backlog histories, font-scale action bars
+
+**Scope:** `:app` — `ui/failures/**` (`FailureHost.kt`, `FailureMapper.kt`,
+`FailureSignalsPolling.kt`, `FailureViewState.kt`, `FailureBanners.kt`, `FailInfoCards.kt`,
+`FailAssetSwap.kt`, `FailCalibration.kt`, `FailMigration.kt`, `FailReconcile.kt`, `FailRoute.kt`,
+`FailStorage.kt`, and a new `FailureActionBarScaffold.kt`), `ui/data/LiveBarPolling.kt` (WP4 idle
+this round, as before), `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, and the matching
+test files. Follow-up to the two WP11b commits above, at the coordinator's request, after
+`git merge --ff-only main` (R-126/R-127/R-128 already merged and flipped to fixed at `e4ed6d4`; no
+rebase, no stash, no other package's files touched). Fixes register rows R-147, R-148, R-149,
+R-151, R-164 (System/Reader validators, V6 `@5c8d144`).
+
+**Requirements/ACs:** R-147, R-148, R-149, R-151, R-164; constitution I (never fabricate a number
+or a history — the storage timeline and backlog chart are built only from samples actually
+observed) and IV (a banner must never make part of the running app unreachable).
+
+**What changed:**
+
+- **R-164 (halt): a banner can no longer cover the header.** `FailureHost`'s `BannerOverlay` now
+  clears a `HEADER_HEIGHT` (44dp, `ScreenHeader.kt`'s own guaranteed `heightIn(min = 44.dp)` — that
+  file exports no named constant to import, so this mirrors it exactly, cited in code) before its
+  own `OrtSpacing.lg` padding, so the drawer icon, live dot and search stay reachable while any
+  banner shows. `R_164 a banner never covers the header` (`FailureHostTest`) asserts the rendered
+  `failure-banner-overlay`'s top bound (`getUnclippedBoundsInRoot()`) is `>= 44.dp`, against the
+  same `backlog` scenario `backlog/T01-threads-live-header.png` caught.
+- **R-147: F14 (`Fail-Clock`) and F17 (`Fail-Interrupted`) are now full-screen presentations, not
+  small floating cards.** New `FailClockScreen`/`FailInterruptedScreen` (`FailInfoCards.kt`) carry
+  each board's facts table (window/ran-for/change, or gap/backlog) and its log
+  (`ClockViewState.logRows` → "Around the change"; `InterruptedViewState.overs` → "The N overs"),
+  routed through `FailureHost`'s existing `TakeoverOrScreen` group rather than `BannerOverlay`, and
+  dismissed the same way F5/F15 are (keyed by `windowLabel`/`gapLabel`, via a new
+  `FailureDismissState` bundling all four dismissable labels so `FailurePresentationOverlay` stays
+  under detekt's `LongParameterList`). `FailClockCard`/`FailInterruptedCard` are kept, documented as
+  the shape a future Session-detail embedding would use — **that embedding stays a WP10
+  follow-up**, this package owns no `Detail*.kt`. `Scenarios.kt`'s `clockDst()`/`interruptedPass()`
+  now seed the boards' own fictional content (`Fail-Clock.dc.html`'s "Overnight, Sat 31 Oct" window
+  and W7NPC/KJ7ABC log rows; `Fail-Interrupted.dc.html`'s three timed over rows). Tests:
+  `R_147 F14/F17 becomes a full screen…` (`FailureScreensTest`), `R_147 a clock-DST override takes
+  over the whole screen…` (`FailureHostTest`), `R_147 F14/F17…carries the facts and…log the full
+  screen needs` (`ScenariosTest`).
+- **R-148: board copy verified or completed on F19/F21/F22 — the status-bar inset itself was
+  already fixed by R-127's `failureScreenInset()` modifier, confirmed present on all three by
+  re-reading each file.** F19 (`FailReconcile.kt`): orphan-file rows now carry a `Play` action,
+  honestly disabled by default (`ReconcileFile.playable = false`) — `TransmissionAudioPlayer` is
+  keyed by transmission id, not an arbitrary retained-audio path, so no real player entry point
+  exists for a file with no record by definition; wired to `onPlay` when one is supplied. F21
+  (`FailAssetSwap.kt`, `FailureViewState.kt`): `AssetSwapViewState.options` is now
+  `List<AssetSwapOption>` (label + sub-line), each option row showing its sub-line, and the
+  Lexicon rows carry a marker dot (solid for active, hollow ring for staged) — `Scenarios.kt`'s
+  `assetSwap()` updated to the new type with the board's own three sub-lines. F22
+  (`FailCalibration.kt`): added the "score →" axis label, the "Dots below the diagonal are
+  over-confident…" caption, and the closing "The four states are thresholds…" paragraph, copied
+  verbatim from `Fail-Calibration.dc.html`. Tests: `R_148 F19/F21/F22 …` (`FailureScreensTest`),
+  `R_148 F21_asset-swap's options each carry a real sub-line…` (`ScenariosTest`).
+- **R-149: F6's "How this unfolded" timeline and F8's queue chart/rows are now real, observed
+  history — never a fabricated multi-day figure.** `FailureSignalsPolling` keeps two small
+  in-process rolling histories (`storageHistory`, capped at 20 entries; `backlogHistory`, a 30-
+  minute window), recorded every poll tick and cleared by `reset()` (now called from
+  `Scenarios.resetProcessWideFacets()` too, so one scenario's history never leaks into the next).
+  `FailureMapper.storageTimeline()` turns only the `StorageForecast` transitions actually observed
+  into `StorageTimelineStage` rows (`ThreeNightsLeft`/`OneNightLeft`/`AtFloor` → the board's own
+  three headlines), always appending an unreached "500 MB hard floor" stage — rendered by
+  `FailStorageWarningBanner`'s new "How this unfolded" section. `FailureMapper.backlogViewState()`
+  builds `BacklogViewState.queueHistory` (normalized against the observed max), a
+  `growthRateLabel` (Δbacklog/Δtime, `null` under two samples — never invented), and a
+  `captureLabel` from `CaptureState` alone; rendered by `FailBacklogBanner`'s new "Queue, last 30
+  minutes" line chart plus Waiting/Rate/Capture/In-the-log rows. **The live-bar "Tier 0" bug is
+  fixed**: `LiveBarPolling`'s tier-number branch used to be a standalone `shedLevel > 0` check with
+  no equivalent in `FailureMapper`'s own order, so the `backlog` scenario (shed level 3, thermal
+  nominal) read "Tier 0" instead of "112 behind" — the tier computation now lives only inside the
+  thermal branch, exactly matching `mapThermalOrBacklogOrRigBanner`'s real order (thermal →
+  backlog → rig). Tests: `R_149 the storage timeline carries only the stages…observed…`,
+  `R_149 with no observed history, only the unreached floor stage shows…`,
+  `R_149 F8 backlog carries a growth-rate label…`, `R_149 F8 backlog with fewer than two
+  samples never invents a growth rate` (`FailureMapperTest`); `R_149 a thermal-caused tier drop
+  still outranks a stale rig`, `R_149 a bare tier drop…falls through…never Tier N`,
+  `R_149 F8_backlog reads N behind, not Tier 0…` (`LiveBarPollingTest`).
+- **R-151: every takeover with a fixed bottom action bar now scrolls its content above the bar,
+  with bottom padding equal to the bar's real (font-scale-reactive) height.** New
+  `FailureActionBarScaffold` (a `Box` with a scrollable content `Column` padded by an
+  `onGloballyPositioned`-measured action-bar height, replacing the old `weight(1f)` sibling-Column
+  split) is now used by `FailAssetSwapScreen`, `FailMigrationScreen`, `FailStorageHaltScreen`
+  (`FailStorage.kt`) and `FailRouteScreen` (`FailRoute.kt`) — one shared place, per the
+  coordinator's "same class as R-123" note, rather than four separate calculations. Tests (font
+  scale 2.0, `CompositionLocalProvider(LocalDensity provides Density(fontScale = 2f))`, matching
+  this file's own established pattern rather than a Robolectric `@Config` qualifier):
+  `R_151 F20 migration scrolls its content above the action bar…`, `R_151 F21 asset-swap scrolls
+  its content above the Done bar…` (`FailureScreensTest`) — both prove the fixed bar's own button
+  is on screen with no scroll needed, and the last piece of scrolled content (a truncated bullet,
+  a second option row) reaches the screen only by scrolling past the bar's own footprint.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.debug.ScenariosTest"` — all green
+(69 tests across `FailureScreensTest`/`FailureHostTest`/`FailureMapperTest`/
+`DebugFailureOverrideTest`/`RecoveryAnnouncerTest` plus `LiveBarPollingTest` and `ScenariosTest`
+selected by that filter). `.\gradlew.bat :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL, zero
+issues. `python tools/spec-check/spec_check.py` — OK, all 8 checks pass. Full gate
+(`.\gradlew.bat build dependencyRules platformGuards`, `.\gradlew.bat -p buildSrc test`,
+`.\gradlew.bat coverageMatrix`, `.\gradlew.bat coverageMatrixCheck`,
+`.\gradlew.bat :app:assembleDebug`) reported in this package's report to the lead.
+
+**Left open:** the F14/F17 Session-detail embedding (WP10's, per the coordinator's own framing);
+`FailStorageWarningBanner`'s timeline and `FailBacklogBanner`'s chart render inside the top banner
+overlay rather than a dedicated scrollable surface — acceptable for the amount of content each
+board actually specifies, but a future round should watch for either growing past a phone's usable
+top-of-screen space.
+---
+
+### (pending) — ui-conformance WP11b · thermal transition time, banner height pushes content, usb live-bar meter tone
+
+**Scope:** `:app` — `ui/failures/FailureMapper.kt`, `ui/failures/FailureHost.kt`,
+`ui/data/LiveBarPolling.kt` (WP4 idle this round, as before), `ui/ReaderActivity.kt` (this
+package's own file, one edit), and `ui/navigation/OrtNavHost.kt` (WP3 idle this round — see below
+for exactly what was touched, per the coordinator's explicit narrow grant). Follow-up to the three
+WP11b commits above, at the coordinator's request, after `git merge --ff-only main` (batch two —
+R-147, R-148, R-149, R-151, R-164 — already merged and flipped to fixed at `11946ab`; no rebase, no
+stash, no other package's files touched beyond the narrow `OrtNavHost.kt` grant).
+
+**Requirements/ACs:** R-177, R-178; F16 (register R-128's own id, WP2's new `meterTone` field);
+constitution I (never render a time the mapper did not actually observe) and IV (a growing banner
+must not silently hide more of the running app — it must make room for itself).
+
+**What changed:**
+
+- **R-177: `Fail-Thermal`'s "dropped to tier N at HH:MM:SS" now reads the real transition moment,
+  never `now`.** WP11c merged `ThermalStatus.State.Warm/Hot.sinceMillis` — set once when `sample`/
+  `update` first observes that tier, carried forward unchanged across every later tick at the same
+  tier. `FailureMapper.mapThermalOrBacklogOrRigBanner` was still computing the banner's `sinceLabel`
+  from `signals.nowMillis` (the poll tick's own clock, not the state's own history) — a mapper
+  polled every 2s therefore rendered a label that crept forward every tick instead of staying fixed
+  at the real drop time. Fixed: the label is now `clockLabel(thermal.sinceMillis)`, read per-branch
+  (`sinceMillis` lives on `Warm`/`Hot`, not the shared `State` interface). Test:
+  `R_177_thermal_banner_time_is_the_transition_moment` (`FailureMapperTest`) — sets a `Warm` state
+  transitioned 400s before `nowMillis` and asserts the rendered label is `clockLabel` of the
+  transition, not of `now`.
+- **R-178: a banner that grows taller (font scale 2.0 wraps its copy onto more lines) now pushes
+  the destination content down instead of just covering more of it.** `FailureHost`'s `content`
+  slot signature changed from `@Composable () -> Unit` to `@Composable (contentTopPadding: Dp) ->
+  Unit` — it now hands the caller the currently-showing banner's real, `onGloballyPositioned`-
+  measured height (`0.dp` while no banner shows: a takeover already covers the whole screen, and
+  `None` has nothing to clear). The measurement point in `BannerOverlay`'s modifier chain is
+  deliberate: it sits between the two `padding` calls (`padding(top = HEADER_HEIGHT)` then
+  `onGloballyPositioned` then `padding(OrtSpacing.lg)`), so the reported value is `lg + banner
+  content + lg` — the *extra* room the destination content needs beyond its own natural position
+  right after the header, not the banner's absolute screen position (which would double-count the
+  header height once padding is applied to already-header-relative content).
+  `ReaderActivity.kt` (this package's own file) forwards the reported value straight into
+  `OrtNavHost`'s new `contentTopPadding: Dp = 0.dp` parameter. `OrtNavHost.kt` (WP3's file, touched
+  under the coordinator's explicit narrow grant): exactly one new parameter on `OrtNavHost` itself,
+  threaded through to `NavHostBody`'s own new parameter, applied as exactly one
+  `Modifier.padding(top = contentTopPadding)` on the destination/drill-in content `Box` — never on
+  `ScreenHeader` or `LiveBar`, both stay exactly where they already were. Test:
+  `R_178 at font scale 2_0 a taller banner still pushes content below its own bottom bound`
+  (`FailureHostTest`) — under `CompositionLocalProvider(LocalDensity provides Density(fontScale =
+  2f))`, asserts the (stand-in-headered) content's top bound is `>=` the banner's own bottom bound.
+- **F16 (register R-128's own id): the live bar's meter now stays green while its label reads red
+  "Act".** WP2 merged `LiveBarViewState.meterTone: LiveBarTone? = null`, rendered by
+  `meterColorFor` in `LiveBar.kt` (that override affects the meter bars' colour only — background,
+  top edge and label keep following the bar's own `tone`). `LiveBarPolling`'s override table
+  (renamed `failureOverrideToneLabelAndPartial` → `failureOverrideLiveBar`, returning a new private
+  `OverrideLiveBar` data class instead of a bare `Triple`, so a fourth field could be added legibly)
+  now sets `meterTone = LiveBarTone.NOMINAL` for the F16/`FailurePresentation.Usb` override —
+  `Fail-Usb.dc.html`'s own reading: the rig needing USB permission is a permission problem, not an
+  audio one, so the meter draws green ("audio fine") while the bar's tone/label still call for
+  action (`HALTED`/"Act", `halt/text` red). Every other override (`StorageAudioPaused`) leaves
+  `meterTone` `null` (follow `tone`) — no other board draws this split. Tests:
+  `F16 the meter itself stays green (NOMINAL) while the bar around it reads Act red`, and the
+  existing `R_128 F6 the StorageAudioPaused debug override reads Text only` extended with an
+  explicit `meterTone == null` assertion so F16 reads as the one deliberate exception, not a
+  default anyone could accidentally rely on (`LiveBarPollingTest`).
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.ReaderAccessibilityTest"` — BUILD SUCCESSFUL, all green (127 tests, 0 failed).
+`.\gradlew.bat :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL, zero issues. Full gate
+(`.\gradlew.bat build dependencyRules platformGuards`, `.\gradlew.bat -p buildSrc test`,
+`.\gradlew.bat coverageMatrix`, `.\gradlew.bat coverageMatrixCheck`,
+`.\gradlew.bat :app:assembleDebug`) reported in this package's report to the lead.
+
+**Left open:** `contentTopPadding` is only ever exactly right when the destination content sits
+directly beneath `ScreenHeader` at its own natural, unpadded position (true of every real
+destination `OrtNavHost` composes today, confirmed by reading `NavHostBody`) — a future destination
+that inserted its own extra top spacing before its content would need re-checking against this same
+arithmetic, not a new mechanism.
 ---
 
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)
@@ -1539,6 +3198,146 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 ## 2026-09-08 (ui-conformance WP2: shared components)
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
+
+### (pending) — ui-conformance WP6 · failed-pass detail state and pass-failed scenario
+
+**Scope:** `:app`, this package's files only — `ui/data/DetailViewState.kt`,
+`ui/data/CorrectionPolling.kt`, `ui/screens/TransmissionDetailScreen.kt`,
+`ui/screens/TransmissionDetailContent.kt`; `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+(granted for this round only — WP11b's directory, otherwise free); `results/ui-audit/README.md`
+(documenting the new scenario only); `app/src/test/.../ui/data/CorrectionPollingTest.kt`,
+`app/src/test/.../ui/screens/TransmissionDetailScreenTest.kt`,
+`app/src/test/.../ui/screens/TransmissionDetailContentTest.kt`. Addendum to the WP6 entry below,
+a follow-up commit at the coordinator's request after `main` (merged here at `4390683`) landed
+register row R-153.
+
+**Requirements/ACs:** R-153 (closed — F18 `Fail-Pass.dc.html` now has a real detail state and a
+seeding scenario), FR-RUN-9 (closed for this surface — a failed pass reads with its recorded
+error, stays visible, offers a manual retry, and never blocks the rest of the over from
+rendering).
+
+**Constitution Check.** Principle I ("never fabricate a number/fact"): [`PassFailureViewState`]
+carries only what `:data`'s `WorkQueueItemEntity` actually stores (`attemptCount`, the single
+`lastError`) — the artboard's three separately-timestamped attempts cannot be built from this
+schema and are not invented; the gap is named in the view-state's own doc comment and below.
+Principle III ("nothing deleted quietly"): retrying a failed pass keeps the prior `lastError` in
+place (`WorkQueueDao.requeueToReady` never touches it) rather than clearing it. Principle IX
+("`:capture-*` must never depend on `:asr-*`/`:lexicon`/`:identity`"): unaffected — this is a
+`:data`-read-only UI surface. FR-RUN-9's "never blocking": the retry write can fail to find a
+match (already retried, already completed) and returns `false` rather than throwing, so a stale
+button press cannot crash the screen; the rest of the over (audio, the Pass A partial) renders
+unconditionally, never gated on the failure lookup succeeding.
+
+**What changed:**
+
+1. **The real schema, read.** `WorkQueueItemEntity` (`state`, `pass`, `attemptCount`, `lastError`)
+   is the *only* record `:data` keeps of a failed pass — no per-attempt table exists anywhere.
+   `CorrectionPolling.passFailure(context, transmissionId)` checks every `PassId` (pipeline order)
+   via `WorkQueueDao.findByTransmissionAndPass`, since no `:data` query finds a failed item by
+   transmission alone, and returns the first terminally-`FAILED` match as a real
+   `PassFailureViewState` (`passId`, `passLabel` in guide §9's "pass" vocabulary, `lastError`,
+   `attempts`) — `null` for every other transmission.
+2. **`DetailViewState.passFailure: PassFailureViewState?`**, default `null` so every existing call
+   site compiles unchanged; `DetailViewStateMapper.from(detail, passFailure = null)` gained the
+   optional second parameter the same way.
+3. **`TransmissionDetailContent`** now looks up `passFailure` in `refresh()`, gated on
+   `processingState == FAILED` (never an extra read for a healthy transmission), and passes it
+   into the mapper.
+4. **`TransmissionDetailScreen` renders the failed-pass state** in place of the normal
+   attribution-based header and bottom bar exactly when `state.passFailure != null` — never
+   alongside it, since the transmission's own `DetailBodyViewState` (typically UNKNOWN) would
+   otherwise render a misleading "no callsign heard, voice matched no one" sentence for an over
+   whose pass simply never finished. The new `FailedPassHeaderSection` shows: an italic "not
+   transcribed" title beside a marker adapting design-guide.md §6.13's "Resolving" open-quadrant
+   ring (amber, matching `Fail-Pass.dc.html`'s halted reading — no shared composable for either
+   ring exists in `AttributionMarker.kt` yet, so this is a minimal, local, documented one, not a
+   look-alike of a component that exists); the real explanation sentence ("Pass B errored 3 times
+   on this over and stopped trying..."); the same meta row (extracted into a shared `MetaRow`
+   composable); a "What went wrong · N times" section showing the one honest line the schema
+   supports (never a fabricated three-row attempt list). The waveform (`PlaybackSection`) and the
+   transcript (`TranscriptSection`, which already shows the real Pass A partial when one exists, or
+   the honest `"(transcription failed)"` label via `ReaderTransmissionViewStateMapper.transcriptLabel`
+   when it does not) render completely unchanged below it — "the rest of the over" was already
+   real and needed no new plumbing. The bottom bar becomes `Keep the partial` (secondary, writes
+   nothing — there is nothing to change) / `Retry now` (primary).
+5. **`CorrectionPolling.retryFailedPass(context, transmissionId, pass)`** — `Retry this pass`,
+   scoped to exactly this transmission's item via `WorkQueueDao.requeueToReady` plus the same
+   `TransmissionDao.canTransition`/`requireLegalTransition` FAILED→PROCESSING pairing
+   `WorkQueue.failPass`/`requeueFailed` use internally, in one `db.withTransaction`. **Deliberately
+   not** `WorkQueue.requeueFailed(pass, ...)` — that matches every `FAILED` item for a pass across
+   the whole queue, which would retry every other stuck transmission too. **Searched
+   `pipeline/src/main/kotlin` for a scheduler/`WorkManager` job to trigger a synchronous re-run —
+   none exists** (the only hit is a comment in `RealCaptureService.kt` noting the drain is
+   in-process only, M8/M10 work), so this write — a genuine, durable `FAILED`→`READY` +
+   `FAILED`→`PROCESSING` flip the next drain picks up — is the real re-queue this build has, not a
+   no-op standing in for one.
+6. **`pass-failed` debug scenario** (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`): a
+   transmission with `processingState = FAILED`, a real `work_queue_item` row
+   (`pass = B_OFFLINE`, `state = FAILED`, 3 attempts, `lastError = "out of memory in the decoder"`),
+   its Pass A partial as the current transcript, and retained audio — the same "write the shape the
+   real write path produces" approach `os-stopped` already uses for its gap row.
+   `clearPriorScenarioData` gained a `work_queue_item` delete (the first scenario to write that
+   table). Documented in `results/ui-audit/README.md`'s scenario table.
+
+**Named schema gap** (reported honestly per this round's instruction, not fixed): `:data` keeps
+only the aggregate `attemptCount` and the single most recent `lastError` for a work-queue item —
+`Fail-Pass.dc.html`'s three individually-timestamped attempts, each with its own message and
+backoff, cannot be built from what exists today. `PassFailureViewState`'s own doc comment and the
+screen's inline comment both name this rather than rendering a fabricated attempt list.
+
+**New tests:**
+- `CorrectionPollingTest`: `R_153_passFailure_reads_the_real_failed_items_pass_attempts_and_error`,
+  `R_153_passFailure_is_null_when_no_work_queue_item_is_terminally_failed`,
+  `FR_RUN_9_retryFailedPass_requeues_the_item_and_returns_the_transmission_to_processing`,
+  `FR_RUN_9_retryFailedPass_is_scoped_to_this_transmissions_item_only`,
+  `FR_RUN_9_retryFailedPass_returns_false_and_never_throws_when_nothing_matches`.
+- `TransmissionDetailScreenTest`:
+  `R_153_a_failed_pass_shows_which_pass_failed_the_recorded_error_and_attempts`,
+  `R_153_the_rest_of_the_over_still_renders_audio_and_partial_text_when_a_pass_has_failed`,
+  `FR_RUN_9_retry_this_pass_is_always_offered_and_calls_back`,
+  `FR_RUN_9_keep_the_partial_is_offered_beside_retry_and_never_blocks_the_screen`.
+- `TransmissionDetailContentTest`:
+  `R_153_a_failed_transmission_shows_the_failed_pass_state_from_the_real_queue_row`,
+  `FR_RUN_9_tapping_retry_now_requeues_the_real_item_and_returns_the_transmission_to_processing`
+  (a real tap through the composed screen, polling the real `OrtDatabase` afterwards — not a
+  direct call to `retryFailedPass`).
+
+**testTags added** (validator reachability): `pass-failure-section` (the whole failed-pass header
+block), `pass-failure-last-error` (the recorded-error line). `waveform-card` (already existed,
+R-054) and the `Retry now`/`Keep the partial` button labels (via `onNodeWithText`, `ActionBar`'s
+own established pattern) round out reachability for this state — no further tags were needed since
+every other new element is discoverable by its visible text, matching this package's existing
+convention throughout WP6.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.CorrectionPollingTest"
+  --tests "org.ort.app.ui.screens.TransmissionDetailScreenTest"
+  --tests "org.ort.app.ui.screens.TransmissionDetailContentTest"` — **BUILD SUCCESSFUL**, all 44
+  tests green across the three classes (21 in `CorrectionPollingTest`, 16 in
+  `TransmissionDetailScreenTest`, 7 in `TransmissionDetailContentTest`).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged; R-153/FR-RUN-9 were
+  already counted as covered by other requirements' rows) and `.\gradlew.bat coverageMatrixCheck`
+  (separate invocation) — both **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- Whole-module count: 107 test classes, **798 tests, 0 failures** (`app/build/test-results/testDebugUnitTest/*.xml`, summed).
+- `:app:ktlintFormat` then `:app:detekt` — both **BUILD SUCCESSFUL**, no violations.
+
+**Left open / not done:**
+- Per-attempt history (three separate timestamped attempts with distinct messages, as
+  `Fail-Pass.dc.html` shows) cannot be built — no `:data` table records one row per attempt, only
+  the aggregate count and the most recent error. Adding that would be a `:data` schema change,
+  outside this package's row.
+- `Retry this pass` changes real, durable queue state (`FAILED`→`READY`) but does not trigger a
+  synchronous re-run — there is no scheduler/`WorkManager` job anywhere in `:pipeline` today (only
+  in-process draining during active capture); the retried item runs whenever the queue next drains.
+- `Keep the partial` is a genuine no-op — there is no field left to write once the over already
+  reads honestly as it is; wired for discoverability and symmetry with `Fail-Pass.dc.html`'s own
+  two-button bar, not because it changes state.
+
+---
 
 ### (pending) — ui-conformance WP6 · title attribution row and waveform scrubbing
 
@@ -2236,6 +4035,124 @@ left open), P9, guide §9.
 
 **Left open:**
 - The other "Left open" items from the two WP5 entries above are unchanged by this follow-up.
+
+### (pending) — ui-conformance WP5 · Log savers and real-activity smoke test; thread kind, duration, plurals, attribution rows
+
+**Scope:** `ui/screens/LogContent.kt`, `ui/screens/ThreadDetailScreen.kt`, `ui/screens/ThreadScreen.kt`,
+`ui/data/ThreadViewData.kt`, and their tests — plus a new `LogAndThreadContentActivityTest.kt`. One
+commit later, now that `main` carries the V3 Reader validation run (merged `main` fast-forward,
+`1f98b6f`, with `e66728b` — "ui-conformance · V3 Reader validation at 3e2d4ee" — confirmed an ancestor).
+
+**Requirements/ACs:** R-129 (halt), R-160, R-161, R-162, R-163, register.md rows read in full before
+starting.
+
+**Constitution Check.** Principle I (Uncertainty Is Content): `deriveKind` only ever returns "QSO" or
+"Activity" for the two patterns the data can support honestly (a clean two-station alternation, or one
+station repeating) — three-plus stations, a non-alternating pair, or any unresolved over in the thread
+all fall through to `null`, never a guessed label. Principle II (Test-Backed Change): the R-129 fix ships
+with `LogAndThreadContentActivityTest`, an `ActivityScenario`-hosted regression guard proven to fail
+(confirmed by deliberately reverting the `Saver` and re-running it, then restoring the fix) exactly the
+way Robolectric's `createComposeRule` could not catch, plus dedicated tests for every `deriveKind`
+boundary, `deriveMode`, the span-duration formatter, and `pluralize` itself.
+
+**What changed:**
+- **R-129 (halt).** `LogContent.kt`'s `quickFilter` (`LogQuickFilterId`, a plain `sealed interface`) and
+  `selection` (`LogFilterSelection`, a plain data class) were held in `rememberSaveable` with no `Saver`
+  — Compose's default `Saver` cannot handle either type, so the *first* composition inside a real
+  `SaveableStateRegistry` (any real Activity; Robolectric's `createComposeRule` installs none) threw
+  `IllegalArgumentException: MutableState containing All cannot be saved…`, crashing the app before Log
+  ever rendered. Fixed with two purpose-built savers: `LogQuickFilterIdSaver` (a `Saver<LogQuickFilterId,
+  String>` encoding `"All"`/`"Named"`/`"Rejected"`/`"Frequency:<hz>"`, falling back to `All` on an
+  unrecognised saved value rather than crashing restore) and `LogFilterSelectionSaver` (a `listSaver`
+  joining `attributionStates` into one delimited string alongside the selection's already-primitive
+  fields). Grepped every WP5-owned file for other non-primitive `rememberSaveable` use — none found;
+  `ThreadContent.kt` and `LogFilterSheet.kt` hold no `rememberSaveable` at all, and `LogContent.kt`'s
+  remaining `sheetOpen` is a plain `Boolean` the default `Saver` already handles.
+- **New `LogAndThreadContentActivityTest.kt`** (`R_129_log_and_threads_compose_inside_a_real_activity`):
+  composes `LogContent` and `ThreadContent` as siblings inside one `createAndroidComposeRule<ComponentActivity>().setContent`
+  call (a real Activity, a real `SaveableStateRegistry`) — the exact environment the crash needed and
+  Robolectric's plain `createComposeRule` never installs. Verified this test genuinely catches the
+  regression: reverting the `Saver` fix reproduces the real crash stack trace under this test; restoring
+  the fix passes it again.
+- **R-160 (`ThreadViewData.kt`, `ThreadListMapper.deriveKind`).** A thread card's kind token now renders
+  when — and only when — the data honestly supports one: every over in the thread names a resolved
+  station (an unresolved over makes the whole pattern uncertain, so this returns `null` rather than
+  classify around the gap) AND either exactly one distinct station repeats (**"Activity"**) or exactly
+  two distinct stations alternate with no two consecutive overs from the same one (**"QSO"**). Three or
+  more stations, two stations *not* alternating, or a single over all fall through to `null` — the card
+  then leads with the frequency alone, per the register's stated fallback rule.
+- **R-161 (`ThreadViewData.kt` + `ThreadDetailScreen.kt`).**
+  - `TransmissionDetail` gains `mode: String?` (the real `transmission.mode` column;
+    `ui/data/ReaderPolling.kt`'s `detailFrom`, WP4's file, does not set it, so `ThreadPolling.threadDetail`
+    re-attaches it from a direct `entity.mode` read via a new private `attachModes`, called only on the
+    detail path to avoid an extra query on the frequently-polled list path).
+    `ThreadDetailViewState.modeLabel` and `ThreadListMapper.deriveMode` (the first recorded mode among the
+    thread's overs, `null` when none recorded one) carry it through.
+  - `ThreadListMapper.spanDurationLabel` renders "1 m 55 s" / "38 s" (first over start to last over
+    start), appended to `detailState`'s `metaText`.
+  - `ThreadDetailScreen`'s header line is now `"$kindPrefix${frequencyLabel}$modeSuffix"` — kind and mode
+    each render only when the data has them, the frequency always anchors the line.
+  - The per-over table's own header is a new, genuinely 2-column `ThreadDetailColumnHeader` (`time` /
+    `over`, no `freq` slot) rather than the shared 4-column `ColumnHeaderRow` — every over in a thread
+    already shares the header's own frequency, so that component's fixed shape would only ever show it
+    blank here; a doc comment explains why this is a different component, not a look-alike of it.
+- **R-162 (`ThreadDetailScreen.kt`).** `HowAttributedCard`'s marker switched from the legacy
+  `AttributionMarker(attribution = line.attribution, showConfidence = false)` — whose
+  `legacyMarkerDescription` appended a confidence figure to the accessibility description *regardless* of
+  `showConfidence`, so a CONFIRMED line still announced one — to `AttributionRow(attribution =
+  line.attribution, callsign = null)`, whose own description only ever states a confidence for INFERRED.
+  `callsign = null` because `line.text` already names the station in prose ("W7NPC heard in overs 1 and
+  3"); the marker's merged description stays shape + state only.
+- **R-163 (`ThreadListMapper.listState`/`ThreadScreen.kt`).**
+  - New shared `pluralize(count, singular, plural = "${singular}s")` (`ThreadViewData.kt`) replaces the
+    ad hoc pluralisation that had drifted into "1 overs" (audit V3) — used by the Ungrouped summary, the
+    Grouped summary, the by-frequency rows, and `detailState`'s `metaText`.
+  - `ThreadListViewState.Ungrouped` gains `currentTier: Int` (the real
+    `(3 - ShedStatus.currentLevel).coerceIn(0, 3)` formula `RealCaptureService.tierFromShedLevel()` /
+    `CaptureStatusViewState.tierFacts` already use — duplicated with a citing doc comment, not imported,
+    since both of those are `private` in files/packages this one does not own); `ThreadPolling` computes
+    it via a new private `currentTier()` and threads it into `ThreadListMapper.listState`'s now-required
+    third parameter. `UngroupedThreads`'s paragraph ("This phone is at tier N…") and its "What tier N can
+    and cannot do" link now read this same number, so they can never disagree.
+  - The ambiguous marker in `UngroupedThreads` now sits inline with its headline inside one `Row`
+    (`Arrangement.spacedBy(8.dp)`), not on its own line above it.
+  - "By frequency, meanwhile" renders in `OrtType.sectionLabel` style, matching every other section label
+    in the app.
+
+**Verified:**
+- Read `R-129`, `R-160`..`R-163` in `results/ui-audit/register.md` in full before starting; all five
+  fixes above map directly to that text.
+- Fast-forward merge: `git merge --ff-only main` — `Updating e66728b..1f98b6f, Fast-forward` (77 files
+  changed); `git merge-base --is-ancestor HEAD main` — exit 0 before merging (confirmed the branch was
+  already an ancestor); HEAD after merge is `1f98b6f`, with `e66728b` (the V3 validation commit) in its
+  history.
+- Targeted run first — `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.ThreadViewDataTest"
+  --tests "org.ort.app.ui.screens.ThreadScreenTest" --tests "org.ort.app.ui.screens.ThreadDetailScreenTest"
+  --tests "org.ort.app.ui.screens.LogAndThreadContentActivityTest"` — BUILD SUCCESSFUL, 34/34 `PASSED`,
+  including `R_129_log_and_threads_compose_inside_a_real_activity`.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL in 2m 18s (845 actionable
+  tasks, 348 executed, 347 from cache, 150 up-to-date); `:app:ktlintMainSourceSetCheck` and
+  `:app:ktlintTestSourceSetCheck` both passed (no line-length/signature-formatting violations);
+  `:app:assembleDebug`, `:app:assembleRelease`, `:app:lint` all succeeded; every `:app` test `PASSED`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]` (including "no mojibake"), `spec-check: OK`.
+- `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 183 covered -> results\coverage-matrix.md`.
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (183
+  covered of 419)`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL (also covered by the combined run above).
+- New/changed tests, all `PASSED`: `LogAndThreadContentActivityTest` (new file, 1 test) ·
+  `ThreadViewDataTest` (18 tests, +9 new: three `R_160` alternation/repetition/never-guess cases beyond
+  the two already covered, `R_161` mode-present/absent, `R_161` span duration under/over a minute, `R_163`
+  `pluralize`) · `ThreadScreenTest` (6 tests, +2 new: `R_163` tier-consistent paragraph/link/section-label,
+  `R_163` singular by-frequency row) · `ThreadDetailScreenTest` (13 tests, +5 new: `R_161` frequency-only
+  header, `R_161` kind+mode header, `R_161` span duration, `R_161` no FREQ column, `R_162` no confidence on
+  a CONFIRMED marker).
+
+**Left open:**
+- The other "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- `results/ui-audit/register.md`'s own `open`/`fixed` status column for R-129/R-160/R-161/R-162/R-163 is
+  the auditor's ledger, not this package's file — not edited here; the next validator pass reads this
+  CHANGELOG entry and the diff to close them out.
 
 ---
 

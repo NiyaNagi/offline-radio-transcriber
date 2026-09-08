@@ -5,29 +5,42 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FailedState
+import org.ort.app.ui.components.LiveBar
+import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.components.SectionHeader
+import org.ort.app.ui.data.CaptureStateTone
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
+import java.util.Locale
 
 /**
  * `Level-Meter.dc.html` (ui-conformance-plan WP4, R-039; real data since R-112/WP11c added
@@ -40,12 +53,31 @@ import org.ort.app.ui.theme.OrtType
  * (never a standalone drawer destination), so this always carries [DrillInHeader]'s own back
  * affordance — [onBack] defaults to a no-op only so a caller that has not wired real navigation
  * yet (this screen's own tests) keeps compiling.
+ *
+ * R-175: [liveBar] is the same pinned live bar every other reader destination shows, fed at the
+ * same poll cadence as [state] by [CaptureStatusContent] — the meter is a drill-in of Capture, not
+ * a separate context, so it never loses the "still listening" affordance the parent screen has.
  */
 @Composable
-public fun LevelMeterScreen(state: LevelViewState, modifier: Modifier = Modifier, onBack: () -> Unit = {}) {
+public fun LevelMeterScreen(
+    state: LevelViewState,
+    modifier: Modifier = Modifier,
+    liveBar: LiveBarViewState? = null,
+    onOpenLive: () -> Unit = {},
+    onBack: () -> Unit = {},
+) {
     Column(modifier = modifier.fillMaxSize()) {
         DrillInHeader(parentLabel = "Capture", onBack = onBack, modifier = Modifier.testTag("level-meter-back"))
-        LevelMeterBody(state = state, modifier = Modifier.padding(OrtSpacing.lg))
+        LevelMeterBody(
+            state = state,
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(OrtSpacing.lg),
+        )
+        if (liveBar != null) {
+            LiveBar(state = liveBar, onClick = onOpenLive, modifier = Modifier.testTag("level-meter-livebar"))
+        }
     }
 }
 
@@ -81,7 +113,39 @@ private fun LevelMeterBody(state: LevelViewState, modifier: Modifier = Modifier)
                 state.clippedLastSecondLabel,
                 testTag = "level-meter-clipped",
             )
+            // R-175: absent, not "not measured" — see LevelViewState.weakestOverLabel's own kdoc.
+            state.weakestOverLabel?.let { label ->
+                LevelFact("Weakest over resolved tonight", label, testTag = "level-meter-weakest-over")
+            }
+
+            state.bandStateSentence?.let { sentence ->
+                BandStateSentence(
+                    sentence = sentence,
+                    tone = state.bandStateTone,
+                    modifier = Modifier.padding(top = OrtSpacing.lg).testTag("level-meter-band-state"),
+                )
+            }
         }
+    }
+}
+
+/** R-175: the bottom state sentence with its dot — "In the band. Nothing to adjust." or one of
+ * [org.ort.app.ui.data.LevelViewStateMapper]'s other closed-set variants. */
+@Composable
+private fun BandStateSentence(sentence: String, tone: CaptureStateTone?, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val dotColor = when (tone) {
+            CaptureStateTone.NOMINAL -> OrtColors.accentGreen
+            CaptureStateTone.DEGRADED -> OrtColors.accentAmber
+            CaptureStateTone.HALTED -> OrtColors.haltFill
+            CaptureStateTone.IDLE, null -> OrtColors.markerUnknown
+        }
+        Box(modifier = Modifier.size(9.dp).background(dotColor, CircleShape))
+        Text(text = sentence, style = OrtType.subtitle, color = OrtColors.textHigh)
     }
 }
 
@@ -93,10 +157,11 @@ private fun LevelMeterBody(state: LevelViewState, modifier: Modifier = Modifier)
  * bar per history entry, coloured by where it falls relative to the target band — never a
  * fabricated waveform (constitution I: every bar is [LevelViewState.historyDbfs], nothing else).
  */
+@Suppress("LongMethod")
 @Composable
 private fun LevelHistoryChart(history: List<Float>, noiseFloorDbfs: Float?, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -170,12 +235,63 @@ private fun LevelHistoryChart(history: List<Float>, noiseFloorDbfs: Float?, modi
                     }
                 }
             }
+
+            // R-175: the right-edge dB axis labels for the three fixed reference lines the Canvas
+            // above draws (ceiling, target-band top, target-band bottom) plus the real noise-floor
+            // line's own value when one has actually been tracked — never a fixed "-58", since the
+            // artboard's own figure is that particular fixture's real noise floor, not a constant.
+            val canvasTop = 10.dp
+            val canvasHeight = maxHeight - 20.dp
+            fun labelOffset(dbfs: Float): Dp {
+                val ceiling = LevelViewState.CHART_CEILING_DBFS
+                val floor = LevelViewState.CHART_FLOOR_DBFS
+                val fraction = ((ceiling - dbfs) / (ceiling - floor)).coerceIn(0f, 1f)
+                return canvasTop + canvasHeight * fraction - 6.dp
+            }
+            AxisDbfsLabel(
+                text = "0",
+                color = OrtColors.haltText,
+                yOffset = labelOffset(LevelViewState.CHART_CEILING_DBFS),
+            )
+            AxisDbfsLabel(
+                text = "%.0f".format(Locale.ROOT, LevelViewState.TARGET_BAND_TOP_DBFS),
+                color = OrtColors.accentGreen,
+                yOffset = labelOffset(LevelViewState.TARGET_BAND_TOP_DBFS),
+            )
+            AxisDbfsLabel(
+                text = "%.0f".format(Locale.ROOT, LevelViewState.TARGET_BAND_BOTTOM_DBFS),
+                color = OrtColors.accentGreen,
+                yOffset = labelOffset(LevelViewState.TARGET_BAND_BOTTOM_DBFS),
+            )
+            if (noiseFloorDbfs != null) {
+                AxisDbfsLabel(
+                    text = "%.0f".format(Locale.ROOT, noiseFloorDbfs),
+                    color = OrtColors.accentGapDim,
+                    yOffset = labelOffset(noiseFloorDbfs),
+                )
+            }
         }
         Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(text = "-60 s", style = OrtType.axis, color = OrtColors.textLow)
             Text(text = "now", style = OrtType.axis, color = OrtColors.textLow)
         }
     }
+}
+
+/** One right-edge dB axis label (R-175) — absolutely positioned within the enclosing
+ * `BoxWithConstraints` at [yOffset] from its top, matching the reference line the same [yFor]-shaped
+ * math draws inside the sibling `Canvas`. */
+@Composable
+private fun BoxScope.AxisDbfsLabel(text: String, color: Color, yOffset: Dp) {
+    Text(
+        text = text,
+        style = OrtType.axis,
+        color = color,
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .offset(y = yOffset)
+            .padding(end = 4.dp),
+    )
 }
 
 @Composable

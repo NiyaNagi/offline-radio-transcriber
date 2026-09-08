@@ -1,11 +1,15 @@
 package org.ort.app.debug
 
 import android.content.Context
+import org.ort.app.ui.failures.AssetSwapOption
 import org.ort.app.ui.failures.AssetSwapViewState
 import org.ort.app.ui.failures.CalibrationViewState
+import org.ort.app.ui.failures.ClockLogRow
 import org.ort.app.ui.failures.ClockViewState
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
+import org.ort.app.ui.failures.FailureSignalsPolling
+import org.ort.app.ui.failures.InterruptedOverRow
 import org.ort.app.ui.failures.InterruptedViewState
 import org.ort.app.ui.failures.MigrationStep
 import org.ort.app.ui.failures.MigrationViewState
@@ -18,6 +22,7 @@ import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.capture.android.heartbeat.HeartbeatRecord
 import org.ort.core.AttributionState
+import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -27,6 +32,8 @@ import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TranscriptPass
+import org.ort.data.entity.WorkQueueItemEntity
+import org.ort.data.entity.WorkQueueState
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -67,6 +74,9 @@ public object Scenarios {
 
     public data class LoadResult(val transmissionCount: Int, val sessionCount: Int, val primarySessionId: String?)
 
+    /** R-143: how many overs [fieldTier1] seeds — see that function's own doc comment. */
+    private const val FIELD_TIER1_OVER_COUNT: Int = 12
+
     /**
      * Every scenario name `spec/ui-conformance-plan.md` §E and `design/design-intent.md` need
      * reachable. WP11a (register R-104/R-105/R-106) closed the three gaps this list used to note
@@ -82,10 +92,12 @@ public object Scenarios {
         "empty",
         "first-session",
         "overnight",
+        "overnight-live",
         "unclean-end",
         "os-stopped",
         "gap-call",
         "pass-a-partial",
+        "pass-failed",
         "corrected",
         "no-audio",
         "revisions",
@@ -119,10 +131,12 @@ public object Scenarios {
             "empty" -> empty(db)
             "first-session" -> firstSession(context, db)
             "overnight" -> OvernightScenario.overnight(context, db)
+            "overnight-live" -> OvernightScenario.overnightLive(context, db)
             "gap-call" -> OvernightScenario.gapCall(context, db)
             "unclean-end" -> uncleanEnd(context, db)
             "os-stopped" -> osStopped(context, db)
             "pass-a-partial" -> passAPartial(db)
+            "pass-failed" -> passFailed(context, db)
             "corrected" -> corrected(db)
             "no-audio" -> noAudio(db)
             "revisions" -> revisions(context, db)
@@ -176,6 +190,13 @@ public object Scenarios {
                 "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
             likeScenario,
         )
+        // R-153: `pass-failed` is the first scenario to write a work_queue_item row — cleared by
+        // the same transmissionId-through-sessionId join every other per-transmission table uses.
+        sql.execSQL(
+            "DELETE FROM work_queue_item WHERE transmissionId IN " +
+                "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
+            likeScenario,
+        )
         sql.execSQL("DELETE FROM thread WHERE sessionId LIKE ?", likeScenario)
         sql.execSQL("DELETE FROM capture_gap WHERE sessionId LIKE ?", likeScenario)
         sql.execSQL("DELETE FROM transmission WHERE sessionId LIKE ?", likeScenario)
@@ -211,6 +232,7 @@ public object Scenarios {
         LevelStatus.reset()
         InputStatus.reset()
         DebugFailureOverride.clear()
+        FailureSignalsPolling.reset()
     }
 
     // ---------------------------------------------------------------------------------------
@@ -226,6 +248,17 @@ public object Scenarios {
         val startedAt = SystemClock.wallMillis() - 3 * 60_000L
         db.sessionDao().insert(ScenarioFixtures.session(id, startedAt = startedAt, endedAt = null))
         ScenarioFixtures.markCapturing(context, id)
+        // R-174: `Now-First.dc.html`'s subtitle reads "listening on 145.230 and 146.960" —
+        // `NowViewStateMapper.active` only ever says that when `RigStatus.state` is actually
+        // `Connected` (`ReaderPolling.activeNowViewState`'s own `listeningOnLabel`), so a scenario
+        // that never sets it renders an honestly-blank subtitle instead, not this artboard's text.
+        RigStatus.connected(
+            descriptor = "TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = false),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+        )
         return LoadResult(0, 1, id)
     }
 
@@ -336,6 +369,65 @@ public object Scenarios {
                 isCurrent = true,
                 createdAt = startedAt + 1_000L,
                 confidence = null,
+            ),
+        )
+        return LoadResult(1, 1, sessionId)
+    }
+
+    /**
+     * `pass-failed` — R-153, F18 `Fail-Pass.dc.html`, FR-RUN-9: a transmission whose Pass B
+     * ([PassId.B_OFFLINE]) errored out under [org.ort.data.WorkQueue.failPass]'s bound and is now
+     * terminally [WorkQueueState.FAILED] (3 attempts, the real `lastError` text), while its Pass A
+     * partial ([TranscriptPass.A], `isCurrent = true`) is the honest text
+     * [org.ort.app.ui.data.ReaderTransmissionViewStateMapper.transcriptLabel] shows in place of a
+     * final transcript — this scenario writes the [WorkQueueItemEntity] row directly (the same
+     * shape [org.ort.data.WorkQueue.failPass] itself writes via
+     * [org.ort.data.dao.WorkQueueDao.markFailed]) rather than driving a real pass through failure,
+     * the same "prove the rendering path, not the pipeline" approach [osStopped] already uses for
+     * its gap row. Retained audio is written so `Retry this pass`/the waveform have a real over to
+     * act on, matching `Fail-Pass.dc.html`'s own "the audio is here" reading.
+     */
+    private suspend fun passFailed(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("pass-failed")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 90 * 60_000L, endedAt = null),
+        )
+        val txId = "$sessionId-tx1"
+        val startedAt = SystemClock.wallMillis() - 5 * 60_000L
+        val tx = ScenarioFixtures.transmission(
+            id = txId,
+            sessionId = sessionId,
+            startedAtUtc = startedAt,
+            durationMs = 28_400L,
+            samplePosition = 1L,
+            frequencyHz = 145_230_000L,
+            signalStrength = 8.0,
+            attributionState = AttributionState.UNKNOWN,
+            processingState = TransmissionState.FAILED,
+        )
+        db.transmissionDao().insert(tx)
+        ScenarioFixtures.writeAudioFixture(context, tx)
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txId-t1",
+                transmissionId = txId,
+                text = "okay so for the net tonight we've got the following announcements first the club " +
+                    "meeting has moved to the second thursday and second the",
+                pass = TranscriptPass.A,
+                isCurrent = true,
+                createdAt = startedAt + 1_000L,
+                confidence = null,
+            ),
+        )
+        db.workQueueDao().insert(
+            WorkQueueItemEntity(
+                transmissionId = txId,
+                pass = PassId.B_OFFLINE,
+                state = WorkQueueState.FAILED,
+                priority = 0,
+                attemptCount = 3,
+                lastError = "out of memory in the decoder",
+                enqueuedAt = startedAt,
             ),
         )
         return LoadResult(1, 1, sessionId)
@@ -468,9 +560,15 @@ public object Scenarios {
 
     /**
      * `field-tier1` — a session flagged as captured at tier 1 ([org.ort.data.entity.SessionEntity.deviceTier]
-     * is the only tier field `:data` carries, and it is a plain, freely-settable `String?`).
-     * **Nothing in the built reader renders it yet** (`Settings-Tier`/CF05 is a placeholder,
-     * register R-090) — representable in data, not yet wired to any screen; reported as such.
+     * is the only tier field `:data` carries, and it is a plain, freely-settable `String?`). Now
+     * wired end to end by WP10 (register R-090/R-091, round 3): `Settings-Tier`/CF05 and
+     * `Improve`/`Improve-Select`/`Improve-Running` all read it.
+     *
+     * R-143 (round 4, System validator): a single over made `Improve-Running` (R03) unreachable on
+     * the emulator — [FakeImproveRunner]'s per-item delay times the *whole* run, so one over
+     * finished before a screenshot script's own settle wait could ever catch it running. Twelve
+     * overs (`FIELD_TIER1_OVER_COUNT`), still a real, honest number [ImprovePolling] counts for
+     * real, gives the run a visible multi-second span at the runner's default per-item delay.
      */
     private suspend fun fieldTier1(db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("field-tier1")
@@ -482,30 +580,33 @@ public object Scenarios {
                 deviceTier = org.ort.core.Tier.T1.name,
             ),
         )
-        val startedAt = SystemClock.wallMillis() - 400_000L
-        val txId = "$sessionId-tx1"
-        db.transmissionDao().insert(
-            ScenarioFixtures.transmission(
-                id = txId,
-                sessionId = sessionId,
-                startedAtUtc = startedAt,
-                samplePosition = 1L,
-                frequencyHz = 146_960_000L,
-                attributionState = AttributionState.INFERRED,
-                stationId = "K7LWH",
-                attributionConfidence = 0.68,
-            ),
-        )
-        db.transcriptDao().insert(
-            ScenarioFixtures.transcript(
-                id = "$txId-t1",
-                transmissionId = txId,
-                text = "roger that, good copy on the repeater this morning",
-                isCurrent = true,
-                createdAt = startedAt + 1_000L,
-            ),
-        )
-        return LoadResult(1, 1, sessionId)
+        val baseStartedAt = SystemClock.wallMillis() - 400_000L
+        repeat(FIELD_TIER1_OVER_COUNT) { i ->
+            val txId = "$sessionId-tx${i + 1}"
+            val startedAt = baseStartedAt + i * 20_000L
+            db.transmissionDao().insert(
+                ScenarioFixtures.transmission(
+                    id = txId,
+                    sessionId = sessionId,
+                    startedAtUtc = startedAt,
+                    samplePosition = (i + 1).toLong(),
+                    frequencyHz = 146_960_000L,
+                    attributionState = AttributionState.INFERRED,
+                    stationId = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size],
+                    attributionConfidence = 0.68,
+                ),
+            )
+            db.transcriptDao().insert(
+                ScenarioFixtures.transcript(
+                    id = "$txId-t1",
+                    transmissionId = txId,
+                    text = "roger that, good copy on the repeater this morning",
+                    isCurrent = true,
+                    createdAt = startedAt + 1_000L,
+                ),
+            )
+        }
+        return LoadResult(FIELD_TIER1_OVER_COUNT, 1, sessionId)
     }
 
     /** `search-corpus` — enough transcripts containing "park activation" for ~14 hits across 3 nights. */
@@ -637,7 +738,14 @@ public object Scenarios {
         )
         ScenarioFixtures.markCapturing(context, sessionId)
         ShedStatus.update(level = 3, backlog = 112)
-        ThermalStatus.update(osThermalStatus = ThermalStatus.THERMAL_STATUS_MODERATE, realTimeFactor = 0.9)
+        // R-177: a real, fixed "minutes ago" transition moment -- not "now" -- so the banner's
+        // "dropped to tier N at HH:MM:SS" reads the same real clock time on every poll instead of
+        // advancing each time the mapper re-renders it.
+        ThermalStatus.update(
+            osThermalStatus = ThermalStatus.THERMAL_STATUS_MODERATE,
+            realTimeFactor = 0.9,
+            sinceMillis = SystemClock.wallMillis() - 12 * 60_000L,
+        )
         return LoadResult(0, 1, sessionId)
     }
 
@@ -779,6 +887,13 @@ public object Scenarios {
                     ranForLabel = "8 h 30 m",
                     startedLabel = "23:10",
                     endedLabel = "06:40",
+                    nightLabel = "Overnight, Sat 31 Oct",
+                    windowLabel = "23:10 – 06:40 · 8 h 30 m · the clock went back at 02:00",
+                    logRows = listOf(
+                        ClockLogRow("01:58:40", "before", "W7NPC", "copy on the repeater, seven three"),
+                        ClockLogRow("01:01:12", "after (was 02:01:12)", "KJ7ABC", "back to you, seven three"),
+                        ClockLogRow("01:04:03", "after (was 02:04:03)", null, "break, break — anyone on frequency"),
+                    ),
                 ),
             ),
         )
@@ -808,7 +923,18 @@ public object Scenarios {
         )
         ScenarioFixtures.markCapturing(context, sessionId)
         DebugFailureOverride.show(
-            FailurePresentation.Interrupted(InterruptedViewState(overCount = 3, gapLabel = "03:12 – 06:48")),
+            FailurePresentation.Interrupted(
+                InterruptedViewState(
+                    overCount = 3,
+                    gapLabel = "03:12 – 06:48",
+                    backlogLabel = "3 overs waiting",
+                    overs = listOf(
+                        InterruptedOverRow("03:12:31", "audio only", "no transcript — the pass never started"),
+                        InterruptedOverRow("03:12:08", "partial", "a Pass A partial, superseded by nothing yet"),
+                        InterruptedOverRow("03:11:40", "audio only", "no transcript — the pass never started"),
+                    ),
+                ),
+            ),
         )
         return LoadResult(0, 1, sessionId)
     }
@@ -900,9 +1026,17 @@ public object Scenarios {
                     activeLabel = "2026.08 · active · this session · 1,104,208 records",
                     stagedLabel = "2026.09 · staged · next session · 1,122,410 records",
                     options = listOf(
-                        "Wait for the session to end",
-                        "Stop capture, swap, start a new session",
-                        "Afterwards, re-run tonight on 2026.09",
+                        AssetSwapOption("Wait for the session to end", "the default · nothing else to do"),
+                        AssetSwapOption(
+                            "Stop capture, swap, start a new session",
+                            "tonight's log ends here · a second session begins on 2026.09 · both stay in " +
+                                "Earlier nights",
+                        ),
+                        AssetSwapOption(
+                            "Afterwards, re-run tonight on 2026.09",
+                            "Improve records will offer it · 12 ambiguous overs might resolve with the new " +
+                                "prefixes",
+                        ),
                     ),
                     selectedOption = 0,
                 ),

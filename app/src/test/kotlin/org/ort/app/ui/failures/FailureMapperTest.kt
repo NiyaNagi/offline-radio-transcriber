@@ -41,9 +41,14 @@ class FailureMapperTest {
         newestGap: CaptureGapEntity? = null,
         nowMillis: Long = 1_000_000L,
         debugOverride: FailurePresentation? = null,
+        sessionStartedAtMillis: Long? = null,
+        sessionTransmissionCount: Int = 0,
+        storageForecastHistory: List<StorageForecastSample> = emptyList(),
+        backlogHistory: List<BacklogSample> = emptyList(),
     ) = FailureSignals(
         captureState, inputStatus, levelStatus, thermalStatus, rigStatus, storageForecast,
         shedLevel, shedBacklog, newestGap, nowMillis, debugOverride,
+        sessionStartedAtMillis, sessionTransmissionCount, storageForecastHistory, backlogHistory,
     )
 
     @Test
@@ -59,6 +64,38 @@ class FailureMapperTest {
         presentation as FailurePresentation.Route
         assertEquals("USB Audio Device", presentation.state.expectedLabel)
         assertEquals("Built-in microphone", presentation.state.actualLabel)
+    }
+
+    @Test
+    @Requirement("R-126")
+    fun `R_126 a route mismatch computes the session's elapsed time and overs kept`() {
+        val presentation = FailureMapper.map(
+            signals(
+                inputStatus = InputStatus.State.Mismatch(usbDevice, builtInMic),
+                nowMillis = 1_000_000L + (3 * 3_600_000L + 9 * 60_000L + 40_000L),
+                sessionStartedAtMillis = 1_000_000L,
+                sessionTransmissionCount = 188,
+            ),
+        )
+        assertTrue(presentation is FailurePresentation.Route)
+        presentation as FailurePresentation.Route
+        assertEquals("3:09:40", presentation.state.elapsedLabel)
+        assertEquals(188, presentation.state.oversKeptCount)
+        assertTrue(presentation.state.sessionElapsedKnown)
+    }
+
+    @Test
+    @Requirement("R-126")
+    fun `R_126 a route mismatch with no session to measure against reports elapsed as unknown, never invented`() {
+        val presentation = FailureMapper.map(
+            signals(
+                inputStatus = InputStatus.State.Mismatch(usbDevice, builtInMic),
+                sessionStartedAtMillis = null,
+            ),
+        )
+        assertTrue(presentation is FailurePresentation.Route)
+        presentation as FailurePresentation.Route
+        assertTrue(!presentation.state.sessionElapsedKnown)
     }
 
     @Test
@@ -153,6 +190,81 @@ class FailureMapperTest {
         )
         assertTrue(presentation is FailurePresentation.StorageWarning)
         assertEquals("1", (presentation as FailurePresentation.StorageWarning).state.nightsLeftLabel)
+    }
+
+    @Test
+    @Requirement("R-149")
+    fun `R_149 the storage timeline carries only the stages FailureSignalsPolling actually observed, oldest first`() {
+        val history = listOf(
+            StorageForecastSample(StorageForecast.State.ThreeNightsLeft(6_000_000_000L, 0L, 2.4), atMillis = 900_000L),
+            StorageForecastSample(StorageForecast.State.OneNightLeft(2_000_000_000L, 0L, 0.8), atMillis = 950_000L),
+        )
+        val presentation = FailureMapper.map(
+            signals(
+                storageForecast = StorageForecast.State.OneNightLeft(2_000_000_000L, 900_000_000L, 0.8),
+                storageForecastHistory = history,
+            ),
+        )
+        assertTrue(presentation is FailurePresentation.StorageWarning)
+        val timeline = (presentation as FailurePresentation.StorageWarning).state.timeline
+        assertEquals(3, timeline.size)
+        assertTrue(timeline[0].label.endsWith("warned at 3 nights left"))
+        assertTrue(timeline[1].label.endsWith("warned at 1 night left"))
+        assertEquals("Not reached", timeline[2].label)
+        assertTrue(timeline[0].reached)
+        assertTrue(!timeline[2].reached)
+    }
+
+    @Test
+    @Requirement("R-149")
+    fun `R_149 with no observed history, only the unreached floor stage shows, never a fabricated one`() {
+        val presentation = FailureMapper.map(
+            signals(storageForecast = StorageForecast.State.OneNightLeft(2_000_000_000L, 900_000_000L, 0.8)),
+        )
+        val timeline = (presentation as FailurePresentation.StorageWarning).state.timeline
+        assertEquals(1, timeline.size)
+        assertTrue(!timeline[0].reached)
+    }
+
+    @Test
+    @Requirement("R-149")
+    fun `R_149 F8 backlog carries a growth-rate label computed from the real backlog history`() {
+        val history = listOf(
+            BacklogSample(count = 20, atMillis = 0L),
+            BacklogSample(count = 41, atMillis = 60_000L),
+        )
+        val presentation = FailureMapper.map(signals(shedBacklog = 41, backlogHistory = history))
+        assertTrue(presentation is FailurePresentation.Backlog)
+        val state = (presentation as FailurePresentation.Backlog).state
+        assertEquals("21.0 overs/min", state.growthRateLabel)
+        assertEquals(2, state.queueHistory.size)
+        assertEquals(1f, state.queueHistory.last())
+    }
+
+    @Test
+    @Requirement("R-149")
+    fun `R_149 F8 backlog with fewer than two samples never invents a growth rate`() {
+        val presentation = FailureMapper.map(
+            signals(shedBacklog = 41, backlogHistory = listOf(BacklogSample(count = 41, atMillis = 0L))),
+        )
+        val state = (presentation as FailurePresentation.Backlog).state
+        assertEquals(null, state.growthRateLabel)
+    }
+
+    @Test
+    @Requirement("R-177")
+    fun R_177_thermal_banner_time_is_the_transition_moment() {
+        val transitionedAt = 500_000L
+        val presentation = FailureMapper.map(
+            signals(
+                thermalStatus = ThermalStatus.State.Warm(2, 0.9, sinceMillis = transitionedAt),
+                shedLevel = 1,
+                nowMillis = 900_000L,
+            ),
+        )
+        assertTrue(presentation is FailurePresentation.Thermal)
+        presentation as FailurePresentation.Thermal
+        assertEquals(FailureMapper.clockLabel(transitionedAt), presentation.state.sinceLabel)
     }
 
     @Test

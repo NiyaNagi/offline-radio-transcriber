@@ -21,6 +21,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
@@ -128,10 +130,22 @@ private val SearchFilterInputSaver: Saver<SearchFilterInput, String> = Saver(
  * [sessionId] is null when the host is opened with no active or prior capture session (for
  * example, opened directly rather than from the status flow) - `Now`/`Log` then show their
  * empty/idle state rather than polling a session that does not exist.
+ *
+ * [contentTopPadding] (ui-conformance-plan register R-178, WP11b's follow-up — WP3 idle this
+ * round, one line touched here): [org.ort.app.ui.failures.FailureHost] mounts above this host and
+ * reports the currently-showing banner's own real, measured height through it (`0.dp` while none
+ * shows), so a banner that grows taller — font scale 2.0 wraps its copy onto more lines — pushes
+ * the destination content down to clear itself, rather than just covering more of it. Applied only
+ * to the destination/drill-in content ([NavHostBody]'s inner `Box`), never to [ScreenHeader] or
+ * [LiveBar] — both stay exactly where they already were.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-public fun OrtNavHost(sessionId: String?, navigator: ReaderNavigator = rememberReaderNavigator()) {
+public fun OrtNavHost(
+    sessionId: String?,
+    navigator: ReaderNavigator = rememberReaderNavigator(),
+    contentTopPadding: Dp = 0.dp,
+) {
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -196,6 +210,7 @@ public fun OrtNavHost(sessionId: String?, navigator: ReaderNavigator = rememberR
         Scaffold { padding ->
             NavHostBody(
                 modifier = Modifier.padding(padding).fillMaxSize(),
+                contentTopPadding = contentTopPadding,
                 ids = NavHostIds(current, openedFrom, openTransmissionId, openStationId, openFrequencyHz, openThreadId),
                 callbacks = NavHostCallbacks(
                     onOpenDrawer = { scope.launch { drawerState.open() } },
@@ -290,6 +305,7 @@ private fun NavHostBody(
     drawerLive: DrawerLiveState,
     audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
     search: SearchHostState,
+    contentTopPadding: Dp = 0.dp,
 ) {
     Column(modifier = modifier) {
         val drillInIds = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId)
@@ -323,7 +339,7 @@ private fun NavHostBody(
         // passes `ids.openedFrom.label`, so the header names the true origin (R-017), e.g. "Back to
         // Search" for a transmission opened from a search result.
 
-        Box(modifier = Modifier.weight(1f)) {
+        Box(modifier = Modifier.weight(1f).padding(top = contentTopPadding)) {
             when {
                 ids.transmissionId != null -> TransmissionDetailContent(
                     context = context,

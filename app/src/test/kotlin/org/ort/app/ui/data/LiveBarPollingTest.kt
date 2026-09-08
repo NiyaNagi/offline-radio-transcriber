@@ -7,6 +7,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.components.LiveBarTone
+import org.ort.app.ui.failures.CallViewState
+import org.ort.app.ui.failures.ClockViewState
+import org.ort.app.ui.failures.DebugFailureOverride
+import org.ort.app.ui.failures.FailurePresentation
+import org.ort.app.ui.failures.InterruptedViewState
+import org.ort.app.ui.failures.KilledViewState
+import org.ort.app.ui.failures.StorageAudioPausedViewState
+import org.ort.app.ui.failures.UsbViewState
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.pipeline.capture.CaptureState
@@ -38,6 +46,7 @@ class LiveBarPollingTest {
         StorageForecast.reset()
         LevelStatus.reset()
         InputStatus.reset()
+        DebugFailureOverride.clear()
     }
 
     @Test
@@ -114,13 +123,34 @@ class LiveBarPollingTest {
     }
 
     @Test
-    @Requirement("R-100")
-    fun `R_100 a tier drop still outranks a stale rig, matching the prior priority order`() = runTest {
+    @Requirement("R-149")
+    fun `R_149 a thermal-caused tier drop still outranks a stale rig`() = runTest {
         CaptureState.capturing("s1")
         ShedStatus.update(level = 1, backlog = 0)
+        ThermalStatus.update(osThermalStatus = ThermalStatus.THERMAL_STATUS_MODERATE, realTimeFactor = 0.7)
         RigStatus.stale(RigStatus.State.Connected("TH-D75A", emptyList()), sinceMillis = 0L)
         val state = LiveBarPolling.current(context, null)
         assertEquals("Tier 2", state.label)
+    }
+
+    @Test
+    @Requirement("R-149")
+    fun `R_149 a bare tier drop with no thermal reason falls through to the next real signal, never Tier N`() =
+        runTest {
+            CaptureState.capturing("s1")
+            ShedStatus.update(level = 1, backlog = 0)
+            RigStatus.stale(RigStatus.State.Connected("TH-D75A", emptyList()), sinceMillis = 0L)
+            val state = LiveBarPolling.current(context, null)
+            assertEquals("Rig lost", state.label)
+        }
+
+    @Test
+    @Requirement("R-149")
+    fun `R_149 F8_backlog reads N behind, not Tier 0, when the shed level is also raised`() = runTest {
+        CaptureState.capturing("s1")
+        ShedStatus.update(level = 3, backlog = 112)
+        val state = LiveBarPolling.current(context, null)
+        assertEquals("112 behind", state.label)
     }
 
     @Test
@@ -180,5 +210,94 @@ class LiveBarPollingTest {
 
         assertEquals(LiveBarTone.DEGRADED, state.tone)
         assertEquals(listOf(0.5f, 1f, 0.5f, 1f), state.level)
+    }
+
+    @Test
+    @Requirement("R-128")
+    fun `R_128 F16 the Usb debug override reads the red Act label with the audio-fine partial text`() = runTest {
+        CaptureState.capturing("s1")
+        DebugFailureOverride.show(FailurePresentation.Usb(UsbViewState("03:44", "03:47", 4)))
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(LiveBarTone.HALTED, state.tone)
+        assertEquals("Act", state.label)
+        assertEquals("audio fine · radio needs permission", state.partialText)
+    }
+
+    @Test
+    fun `F16 the meter itself stays green (NOMINAL) while the bar around it reads Act red`() = runTest {
+        // Register F16: Fail-Usb.dc.html draws the meter bars green ("audio fine") even though
+        // the rig needing USB permission halts the bar's own tone/label ("Act", halt-red).
+        CaptureState.capturing("s1")
+        DebugFailureOverride.show(FailurePresentation.Usb(UsbViewState("03:44", "03:47", 4)))
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(LiveBarTone.NOMINAL, state.meterTone)
+        assertEquals(LiveBarTone.HALTED, state.tone)
+    }
+
+    @Test
+    @Requirement("R-128")
+    fun `R_128 F6 the StorageAudioPaused debug override reads Text only`() = runTest {
+        CaptureState.capturing("s1")
+        DebugFailureOverride.show(
+            FailurePresentation.StorageAudioPaused(StorageAudioPausedViewState("2.1 GB free", "05:20", 14)),
+        )
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(LiveBarTone.DEGRADED, state.tone)
+        assertEquals("Text only", state.label)
+        assertEquals(null, state.meterTone) // no board splits the meter from the tone here — F16 alone does
+    }
+
+    @Test
+    @Requirement("R-128")
+    fun `R_128 the Usb override wins outright over a real degradation, matching FailureMapper's own priority`() =
+        runTest {
+            CaptureState.capturing("s1")
+            ShedStatus.update(level = 1, backlog = 0) // would otherwise read "Tier 2"
+            DebugFailureOverride.show(FailurePresentation.Usb(UsbViewState("03:44", "03:47", 4)))
+
+            val state = LiveBarPolling.current(context, null)
+
+            assertEquals("Act", state.label)
+        }
+
+    @Test
+    @Requirement("R-128")
+    fun `R_128 F5 and F15's boards read Live on their own footer, so the Killed override falls through`() = runTest {
+        CaptureState.capturing("s1")
+        DebugFailureOverride.show(FailurePresentation.Killed(KilledViewState("03:12:40", "3 h 36 m")))
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(LiveBarTone.NOMINAL, state.tone)
+        assertEquals("Live", state.label)
+    }
+
+    @Test
+    @Requirement("R-128")
+    fun `R_128 F14 F17 F19-F22's boards show no live bar at all, so their overrides fall through too`() = runTest {
+        CaptureState.capturing("s1")
+
+        DebugFailureOverride.show(FailurePresentation.Clock(ClockViewState("PDT → PST", "8 h 30 m", "23:10", "06:40")))
+        assertEquals("Live", LiveBarPolling.current(context, null).label)
+
+        DebugFailureOverride.show(FailurePresentation.Interrupted(InterruptedViewState(3, "03:12 – 06:48")))
+        assertEquals("Live", LiveBarPolling.current(context, null).label)
+    }
+
+    @Test
+    @Requirement("R-128")
+    fun `R_128 F15 a Call override also falls through, matching Fail-Call's own Live footer`() = runTest {
+        CaptureState.capturing("s1")
+        DebugFailureOverride.show(FailurePresentation.Call(CallViewState("38 s")))
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals("Live", state.label)
     }
 }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -36,6 +37,17 @@ private val CHART_HEIGHT = 38.dp
 private val BAR_GAP = 1.5.dp
 private val GRID_CELL = 16.dp
 private val GRID_GAP = 3.dp
+
+/** R-209 (`Station-Pattern.dc.html`'s `.dl` class): the day-label column's floor — a mono 3-letter
+ * abbreviation ("Mon".."Sun") in [DayOfWeekGridOrientation.DaysAsRows], never a hard `width()`
+ * that content could someday outgrow (the exact class of bug R-152/R-205 already found and fixed
+ * elsewhere in this package's row family). */
+private val DAY_LABEL_MIN_WIDTH = 28.dp
+
+/** R-209: the board labels the top hour axis sparsely (every sixth hour — "12", "18", "00" for
+ * the default 24-hour range), not one label per column, which twenty-four 16dp-ish columns has no
+ * room for. */
+private const val HOUR_LABEL_STRIDE = 6
 private val SPARK_WIDTH = 56.dp
 private val SPARK_HEIGHT = 18.dp
 private val SPARK_GAP = 1.dp
@@ -214,19 +226,30 @@ internal fun DrawScope.drawHatchRegion(
 /** One hour-of-day/day-of-week cell of the [DayOfWeekGrid] (FR-UI-11's day-of-week detail). */
 public data class DayHourCell(val dayOfWeek: DayOfWeek, val hourOfDayUtc: Int, val state: HourActivityState)
 
+/** [DayOfWeekGrid]'s layout — R-209: the board (`Station-Pattern.dc.html`) lays days out as
+ * rows, Mon..Sun top to bottom, a mono day abbreviation on the left of each, with an hour axis
+ * along the top; the grid this component drew before that finding was transposed (hours as rows,
+ * days as columns, no hour axis at all — [HoursAsRows], below). [DaysAsRows] is now the default,
+ * matching the board; [HoursAsRows] is kept, unrenamed in its own behaviour, for any caller that
+ * still needs the previous layout — this repository has exactly one caller today
+ * ([org.ort.app.ui.screens.StationPatternScreen], outside this package) and it takes the default,
+ * so this alone corrects it with no call-site change. */
+public enum class DayOfWeekGridOrientation { DaysAsRows, HoursAsRows }
+
 /**
- * `Station-Pattern.dc.html`'s hour x day grid: 16dp cells on a 3dp gap, one column per
- * [DayOfWeek] with a mono day-initial label beneath, and the same three-way distinction
- * [ActivityPatternChart] draws (heard / listened-but-silent / not-listening, the last always
- * hatched — FR-UI-12). An (day, hour) pair absent from [cells] renders as not-listening, exactly
- * as an untouched hour does in [org.ort.app.ui.data.ActivityPatternMapper] — absence of data and
- * absence of listening read identically on purpose (constitution I).
+ * `Station-Pattern.dc.html`'s hour x day grid: 16dp cells on a 3dp gap, the same three-way
+ * distinction [ActivityPatternChart] draws (heard / listened-but-silent / not-listening, the
+ * last always hatched — FR-UI-12), and [orientation] deciding which axis is which (see its own
+ * doc). An (day, hour) pair absent from [cells] renders as not-listening, exactly as an untouched
+ * hour does in [org.ort.app.ui.data.ActivityPatternMapper] — absence of data and absence of
+ * listening read identically on purpose (constitution I).
  */
 @Composable
 public fun DayOfWeekGrid(
     cells: List<DayHourCell>,
     modifier: Modifier = Modifier,
     hours: List<Int> = (0 until 24).toList(),
+    orientation: DayOfWeekGridOrientation = DayOfWeekGridOrientation.DaysAsRows,
 ) {
     val byDayHour = cells.associateBy { it.dayOfWeek to it.hourOfDayUtc }
     val heard = cells.count { it.state == HourActivityState.HEARD }
@@ -236,30 +259,81 @@ public fun DayOfWeekGrid(
         "$notListening not listening"
 
     Column(modifier = modifier.semantics(mergeDescendants = true) { contentDescription = summary }) {
-        Row(horizontalArrangement = Arrangement.spacedBy(GRID_GAP)) {
-            DayOfWeek.entries.forEach { day ->
-                Column(verticalArrangement = Arrangement.spacedBy(GRID_GAP)) {
-                    hours.forEach { hour -> GridCell(state = byDayHour[day to hour]?.state) }
-                }
-            }
-        }
-        Row(modifier = Modifier.padding(top = OrtSpacing.xs), horizontalArrangement = Arrangement.spacedBy(GRID_GAP)) {
-            DayOfWeek.entries.forEach { day ->
-                Text(
-                    text = dayInitial(day),
-                    style = OrtType.axis,
-                    color = OrtColors.textLow,
-                    modifier = Modifier.width(GRID_CELL),
-                )
-            }
+        when (orientation) {
+            DayOfWeekGridOrientation.DaysAsRows -> DaysAsRowsGrid(hours = hours, byDayHour = byDayHour)
+            DayOfWeekGridOrientation.HoursAsRows -> HoursAsRowsGrid(hours = hours, byDayHour = byDayHour)
         }
         DayOfWeekGridLegend(modifier = Modifier.padding(top = OrtSpacing.sm))
     }
 }
 
 @Composable
+private fun DaysAsRowsGrid(hours: List<Int>, byDayHour: Map<Pair<DayOfWeek, Int>, DayHourCell>) {
+    // Aligns the hour axis past the day-label column below (`Station-Pattern.dc.html`'s own
+    // `padding-left` on its axis row, for the same reason).
+    Row(
+        modifier = Modifier.padding(start = DAY_LABEL_MIN_WIDTH + GRID_GAP),
+        horizontalArrangement = Arrangement.spacedBy(GRID_GAP),
+    ) {
+        hours.forEachIndexed { index, hour ->
+            Box(modifier = Modifier.weight(1f)) {
+                if (index % HOUR_LABEL_STRIDE == 0) {
+                    Text(text = hourAxisLabel(hour), style = OrtType.axis, color = OrtColors.textLow)
+                }
+            }
+        }
+    }
+    Column(
+        modifier = Modifier.padding(top = OrtSpacing.xs),
+        verticalArrangement = Arrangement.spacedBy(GRID_GAP),
+    ) {
+        DayOfWeek.entries.forEach { day ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(GRID_GAP),
+            ) {
+                Text(
+                    text = dayAbbreviation(day),
+                    style = OrtType.axis,
+                    color = OrtColors.textLow,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.widthIn(min = DAY_LABEL_MIN_WIDTH),
+                )
+                hours.forEach { hour ->
+                    GridCell(state = byDayHour[day to hour]?.state, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HoursAsRowsGrid(hours: List<Int>, byDayHour: Map<Pair<DayOfWeek, Int>, DayHourCell>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(GRID_GAP)) {
+        DayOfWeek.entries.forEach { day ->
+            Column(verticalArrangement = Arrangement.spacedBy(GRID_GAP)) {
+                hours.forEach { hour ->
+                    GridCell(state = byDayHour[day to hour]?.state, modifier = Modifier.width(GRID_CELL))
+                }
+            }
+        }
+    }
+    Row(modifier = Modifier.padding(top = OrtSpacing.xs), horizontalArrangement = Arrangement.spacedBy(GRID_GAP)) {
+        DayOfWeek.entries.forEach { day ->
+            Text(
+                text = dayInitial(day),
+                style = OrtType.axis,
+                color = OrtColors.textLow,
+                modifier = Modifier.width(GRID_CELL),
+            )
+        }
+    }
+}
+
+@Composable
 private fun GridCell(state: HourActivityState?, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.size(GRID_CELL)) {
+    Canvas(modifier = modifier.height(GRID_CELL)) {
         val radius = CornerRadius(2.dp.toPx())
         when (state) {
             HourActivityState.HEARD -> drawRoundRect(color = OrtColors.chartGreenRamp[0], cornerRadius = radius)
@@ -281,11 +355,16 @@ private fun GridCell(state: HourActivityState?, modifier: Modifier = Modifier) {
     }
 }
 
+/** R-209 (`Station-Pattern.dc.html`'s exact legend copy): the low/neutral swatch reads "listened,
+ * not heard" (was "quiet" — a word the board never uses here), and the green swatch reads "heard
+ * often" (was "heard" — this grid's green is the *frequent*-contact end of the ramp
+ * [ActivityPatternChart] itself draws with several steps, not a plain yes/no). The hatch stays
+ * "not listening", unchanged — that wording was already right. */
 @Composable
 private fun DayOfWeekGridLegend(modifier: Modifier = Modifier) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md)) {
-        LegendSwatch(color = OrtColors.chartGreenRamp[0], label = "heard")
-        LegendSwatch(color = OrtColors.chartNeutralListenedSilent, label = "quiet")
+        LegendSwatch(color = OrtColors.chartNeutralListenedSilent, label = "listened, not heard")
+        LegendSwatch(color = OrtColors.chartGreenRamp[0], label = "heard often")
         NotListeningLegend(notListeningLabel = null)
     }
 }
@@ -313,6 +392,24 @@ private fun dayInitial(day: DayOfWeek): String = when (day) {
     DayOfWeek.SATURDAY -> "S"
     DayOfWeek.SUNDAY -> "S"
 }
+
+/** R-209 (`Station-Pattern.dc.html`'s `.dl` class, "Mon".."Sun"): [DayOfWeekGridOrientation
+ * .DaysAsRows]'s row label — a 3-letter abbreviation, not [dayInitial]'s single letter, because a
+ * whole column of "M"/"T"/"W"/"T"/"F"/"S"/"S" running down the left edge is ambiguous in exactly
+ * the way a row of single-letter day labels always is. */
+private fun dayAbbreviation(day: DayOfWeek): String = when (day) {
+    DayOfWeek.MONDAY -> "Mon"
+    DayOfWeek.TUESDAY -> "Tue"
+    DayOfWeek.WEDNESDAY -> "Wed"
+    DayOfWeek.THURSDAY -> "Thu"
+    DayOfWeek.FRIDAY -> "Fri"
+    DayOfWeek.SATURDAY -> "Sat"
+    DayOfWeek.SUNDAY -> "Sun"
+}
+
+/** R-209: the top hour-axis label for one hour value, `Station-Pattern.dc.html`'s "00"/"12"/"18"
+ * two-digit 24-hour form. */
+private fun hourAxisLabel(hour: Int): String = hour.toString().padStart(2, '0')
 
 // ---------------------------------------------------------------------------------------------
 // Sparkline — Frequencies.dc.html's per-frequency 14-night strip.

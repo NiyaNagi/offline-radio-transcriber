@@ -15,8 +15,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import org.ort.app.ui.components.Toast
 import org.ort.app.ui.theme.OrtSpacing
@@ -55,19 +59,30 @@ public data class FailureHostActions(
  * toast queue. F5/F15 are the only two dismissable presentations (guide's "dismissable only where
  * the board says so" — both report a past, already-resolved event; every other banner clears
  * itself the moment its own signal stops matching, never by a manual dismiss).
+ *
+ * Register R-178: [content] now takes the currently-showing banner's real, measured height (`0.dp`
+ * when no banner shows — a takeover already covers the whole screen, and `None` has nothing to
+ * clear) so the caller can pad its own content column by it — `ReaderActivity.kt` does exactly
+ * that, passing it on to [org.ort.app.ui.navigation.OrtNavHost]'s own `contentTopPadding`. Without
+ * this, a banner that grows taller (font scale 2.0 wraps its copy onto more lines) only visually
+ * covered more of the destination content sitting at its fixed position underneath, rather than
+ * making room for itself.
  */
 @Composable
 public fun FailureHost(
     sessionId: String?,
     modifier: Modifier = Modifier,
     actions: FailureHostActions = FailureHostActions(),
-    content: @Composable () -> Unit,
+    content: @Composable (contentTopPadding: Dp) -> Unit,
 ) {
     val context = LocalContext.current
     var presentation by remember { mutableStateOf<FailurePresentation>(FailurePresentation.None) }
     var toasts by remember { mutableStateOf<List<RecoveryToast>>(emptyList()) }
     var dismissedKilledLabel by remember(sessionId) { mutableStateOf<String?>(null) }
     var dismissedCallLabel by remember(sessionId) { mutableStateOf<String?>(null) }
+    var dismissedClockLabel by remember(sessionId) { mutableStateOf<String?>(null) }
+    var dismissedInterruptedLabel by remember(sessionId) { mutableStateOf<String?>(null) }
+    var bannerHeight by remember { mutableStateOf(0.dp) }
 
     LaunchedEffect(sessionId) {
         pollFailureSignals(context, sessionId) { mapped, newToasts ->
@@ -77,7 +92,7 @@ public fun FailureHost(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        content()
+        content(bannerHeight)
 
         FailurePresentationOverlay(
             presentation = presentation,
@@ -86,6 +101,11 @@ public fun FailureHost(
             onDismissKilled = { dismissedKilledLabel = it },
             dismissedCallLabel = dismissedCallLabel,
             onDismissCall = { dismissedCallLabel = it },
+            dismissedClockLabel = dismissedClockLabel,
+            onDismissClock = { dismissedClockLabel = it },
+            dismissedInterruptedLabel = dismissedInterruptedLabel,
+            onDismissInterrupted = { dismissedInterruptedLabel = it },
+            onBannerHeightChanged = { bannerHeight = it },
         )
 
         ToastSlot(toasts = toasts, onToastShown = { toasts = toasts.drop(1) })
@@ -135,13 +155,63 @@ private fun ToastSlot(toasts: List<RecoveryToast>, onToastShown: () -> Unit, mod
     )
 }
 
-/** Every banner/card renders pinned near the top of the current destination — see class kdoc for why. */
+/** guide's own header row (`ScreenHeader.kt`, WP2): `Box(...).heightIn(min = 44.dp)` around one
+ * 21dp icon row with 10dp vertical padding — the 44dp minimum is what actually governs its
+ * height, so that is the token this package clears by. `ScreenHeader` exports no named height
+ * constant to import, so this mirrors its own guaranteed minimum precisely, cited here rather than
+ * silently re-derived. */
+private val HEADER_HEIGHT: Dp = 44.dp
+
+/** Every banner/card renders pinned near the top of the current destination, below both the
+ * status bar ([failureScreenInset]) and the destination's own header row ([HEADER_HEIGHT]) — see
+ * class kdoc for why an overlay is this package's only placement option. Register R-164 (halt):
+ * without the header clearance, a banner covered the drawer icon, live dot and search entirely —
+ * `backlog/T01-threads-live-header.png` — making the header unreachable while any banner showed.
+ *
+ * Register R-178: [onHeightMeasured] reports this box's own height — deliberately measured
+ * *inside* the `padding(top = HEADER_HEIGHT)` layer (that padding is already accounted for by the
+ * destination content's own natural position, right after its header) but *including* the
+ * `OrtSpacing.lg` padding around the banner's content, so the reported value is exactly how much
+ * *extra* room the destination content needs to clear this banner, not the banner's absolute
+ * position on screen.
+ */
 @Composable
-private fun BoxScope.BannerOverlay(content: @Composable () -> Unit) {
-    Box(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(OrtSpacing.lg)) {
+private fun BoxScope.BannerOverlay(onHeightMeasured: (Dp) -> Unit, content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .fillMaxWidth()
+            .failureScreenInset()
+            .padding(top = HEADER_HEIGHT)
+            // `onGloballyPositioned` reports the size of the node *at this point in the chain* —
+            // everything to its right (padding(lg) and the content) but nothing to its left, so
+            // this deliberately sits between the two `padding` calls: it measures `lg + content +
+            // lg`, excluding `HEADER_HEIGHT` (already accounted for by the content column's own
+            // natural position, right after its header — see this function's own kdoc).
+            .onGloballyPositioned { coordinates ->
+                onHeightMeasured(with(density) { coordinates.size.height.toDp() })
+            }
+            .padding(OrtSpacing.lg)
+            .testTag("failure-banner-overlay"),
+    ) {
         content()
     }
 }
+
+/** Register R-147: bundles the four dismissable-banner labels (F5/F15) and, now, the two
+ * "OK, continue" full screens (F14/F17) into one value so [FailurePresentationOverlay] stays under
+ * detekt's `LongParameterList` rather than growing a parameter for every dismissable presentation. */
+private data class FailureDismissState(
+    val killedLabel: String?,
+    val onDismissKilled: (String) -> Unit,
+    val callLabel: String?,
+    val onDismissCall: (String) -> Unit,
+    val clockLabel: String?,
+    val onDismissClock: (String) -> Unit,
+    val interruptedLabel: String?,
+    val onDismissInterrupted: (String) -> Unit,
+)
 
 @Suppress("LongParameterList")
 @Composable
@@ -152,70 +222,112 @@ private fun BoxScope.FailurePresentationOverlay(
     onDismissKilled: (String) -> Unit,
     dismissedCallLabel: String?,
     onDismissCall: (String) -> Unit,
+    dismissedClockLabel: String?,
+    onDismissClock: (String) -> Unit,
+    dismissedInterruptedLabel: String?,
+    onDismissInterrupted: (String) -> Unit,
+    onBannerHeightChanged: (Dp) -> Unit,
 ) {
+    val dismiss = FailureDismissState(
+        killedLabel = dismissedKilledLabel,
+        onDismissKilled = onDismissKilled,
+        callLabel = dismissedCallLabel,
+        onDismissCall = onDismissCall,
+        clockLabel = dismissedClockLabel,
+        onDismissClock = onDismissClock,
+        interruptedLabel = dismissedInterruptedLabel,
+        onDismissInterrupted = onDismissInterrupted,
+    )
     when (presentation) {
         is FailurePresentation.Route, is FailurePresentation.StorageHalt, is FailurePresentation.Usb,
         is FailurePresentation.Reconcile, is FailurePresentation.Migration, is FailurePresentation.AssetSwap,
         is FailurePresentation.Calibration,
-        -> TakeoverOrScreen(presentation, actions)
+        -> {
+            onBannerHeightChanged(0.dp)
+            TakeoverOrScreen(presentation, actions, dismiss)
+        }
 
-        is FailurePresentation.Disconnect -> BannerOverlay {
+        is FailurePresentation.Clock -> if (presentation.state.windowLabel != dismiss.clockLabel) {
+            onBannerHeightChanged(0.dp)
+            TakeoverOrScreen(presentation, actions, dismiss)
+        }
+        is FailurePresentation.Interrupted -> if (presentation.state.gapLabel != dismiss.interruptedLabel) {
+            onBannerHeightChanged(0.dp)
+            TakeoverOrScreen(presentation, actions, dismiss)
+        }
+
+        is FailurePresentation.Disconnect -> BannerOverlay(onBannerHeightChanged) {
             FailDisconnectBanner(
                 state = presentation.state,
                 onRetry = actions.onRetryInput,
                 onChooseAnotherInput = actions.onChooseAnotherInput,
             )
         }
-        is FailurePresentation.Level -> BannerOverlay { FailLevelBanner(state = presentation.state) }
-        is FailurePresentation.Killed -> if (presentation.state.stoppedAtLabel != dismissedKilledLabel) {
-            BannerOverlay {
+        is FailurePresentation.Level -> BannerOverlay(onBannerHeightChanged) {
+            FailLevelBanner(state = presentation.state)
+        }
+        is FailurePresentation.Killed -> if (presentation.state.stoppedAtLabel != dismiss.killedLabel) {
+            BannerOverlay(onBannerHeightChanged) {
                 FailKilledBanner(
                     state = presentation.state,
                     onOpenBatterySettings = actions.onOpenBatteryExemptionSettings,
                     onDismiss = { onDismissKilled(presentation.state.stoppedAtLabel) },
                 )
             }
+        } else {
+            onBannerHeightChanged(0.dp)
         }
-        is FailurePresentation.StorageWarning -> BannerOverlay {
+        is FailurePresentation.StorageWarning -> BannerOverlay(onBannerHeightChanged) {
             FailStorageWarningBanner(
                 state = presentation.state,
                 onFreeUpSpace = actions.onOpenStorageSettings,
                 onOpenRetentionSettings = actions.onOpenRetentionSettings,
             )
         }
-        is FailurePresentation.StorageAudioPaused -> BannerOverlay {
+        is FailurePresentation.StorageAudioPaused -> BannerOverlay(onBannerHeightChanged) {
             FailStorageAudioPausedBanner(
                 state = presentation.state,
                 onFreeUpSpace = actions.onOpenStorageSettings,
                 onOpenRetentionSettings = actions.onOpenRetentionSettings,
             )
         }
-        is FailurePresentation.Thermal -> BannerOverlay { FailThermalBanner(state = presentation.state) }
-        is FailurePresentation.Backlog -> BannerOverlay { FailBacklogBanner(state = presentation.state) }
-        is FailurePresentation.Rig -> BannerOverlay {
+        is FailurePresentation.Thermal -> BannerOverlay(onBannerHeightChanged) {
+            FailThermalBanner(state = presentation.state)
+        }
+        is FailurePresentation.Backlog -> BannerOverlay(onBannerHeightChanged) {
+            FailBacklogBanner(state = presentation.state)
+        }
+        is FailurePresentation.Rig -> BannerOverlay(onBannerHeightChanged) {
             FailRigBanner(
                 state = presentation.state,
                 onReconnect = actions.onReconnectRig,
                 onSetFrequencyByHand = actions.onSetFrequencyByHand,
             )
         }
-        is FailurePresentation.Call -> if (presentation.state.durationLabel != dismissedCallLabel) {
-            BannerOverlay {
+        is FailurePresentation.Call -> if (presentation.state.durationLabel != dismiss.callLabel) {
+            BannerOverlay(onBannerHeightChanged) {
                 FailCallBanner(
                     state = presentation.state,
                     onDismiss = { onDismissCall(presentation.state.durationLabel) },
                 )
             }
+        } else {
+            onBannerHeightChanged(0.dp)
         }
-        is FailurePresentation.Clock -> BannerOverlay { FailClockCard(state = presentation.state) }
-        is FailurePresentation.Interrupted -> BannerOverlay { FailInterruptedCard(state = presentation.state) }
-        FailurePresentation.None -> Unit
+        FailurePresentation.None -> onBannerHeightChanged(0.dp)
     }
 }
 
-/** F1/F16/F19/F20/F21/F22 — every full-screen takeover or standalone screen this package owns. */
+/** F1/F14/F16/F17/F19/F20/F21/F22 — every full-screen takeover or standalone screen this package
+ * owns. Register R-147: F14/F17 joined this group (were a small [BannerOverlay] card) — each is
+ * dismissed the same way F5/F15 are, keyed by its own distinguishing label so a *new* clock jump
+ * or interruption re-shows after a prior one was dismissed. */
 @Composable
-private fun TakeoverOrScreen(presentation: FailurePresentation, actions: FailureHostActions) {
+private fun TakeoverOrScreen(
+    presentation: FailurePresentation,
+    actions: FailureHostActions,
+    dismiss: FailureDismissState,
+) {
     when (presentation) {
         is FailurePresentation.Route -> FailRouteScreen(
             state = presentation.state,
@@ -238,6 +350,14 @@ private fun TakeoverOrScreen(presentation: FailurePresentation, actions: Failure
         is FailurePresentation.AssetSwap ->
             FailAssetSwapScreen(state = presentation.state, onSelectOption = {}, onDone = {})
         is FailurePresentation.Calibration -> FailCalibrationScreen(state = presentation.state, onInstall = {})
+        is FailurePresentation.Clock -> FailClockScreen(
+            state = presentation.state,
+            onContinue = { dismiss.onDismissClock(presentation.state.windowLabel) },
+        )
+        is FailurePresentation.Interrupted -> FailInterruptedScreen(
+            state = presentation.state,
+            onContinue = { dismiss.onDismissInterrupted(presentation.state.gapLabel) },
+        )
         else -> Unit
     }
 }

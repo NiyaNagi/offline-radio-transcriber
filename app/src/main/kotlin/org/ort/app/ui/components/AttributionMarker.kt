@@ -20,8 +20,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import org.ort.app.transmissions.TransmissionListViewStateMapper
-import org.ort.app.transmissions.TransmissionRow
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -72,7 +70,7 @@ public fun AttributionMarker(
 ) {
     Row(
         modifier = modifier.semantics(mergeDescendants = true) {
-            contentDescription = legacyMarkerDescription(attribution)
+            contentDescription = legacyMarkerDescription(attribution, showConfidence)
         },
     ) {
         AttributionShape(state = attribution.state, size = MARKER_ROW_SIZE)
@@ -251,17 +249,19 @@ private fun AttributionShape(state: AttributionState, size: Dp, modifier: Modifi
     }
 }
 
-/** [AttributionMarker]'s content description — unchanged from before R-020 so every existing
- * caller's content-description assertions keep passing even though the *visible* render is now
- * shape-only (see this file's top doc comment). */
-private fun legacyMarkerDescription(attribution: Attribution): String {
-    val row = TransmissionListViewStateMapper.from(
-        TransmissionRow(id = "", transcript = "", attribution = attribution),
-    )
-    return buildString {
-        append(shapeDescription(attribution.state))
-        append(", ")
-        append(row.attributionLabel)
+/** [AttributionMarker]'s content description — R-162: the state is named in prose (`stateProse`,
+ * the same helper [AttributionRow]/[TitleAttributionRow] use), never a glyph — the previous form
+ * borrowed `TransmissionListViewStateMapper`'s `attributionLabel`, which is a display string
+ * carrying a `✓`/`~`/`?`/`—` marker glyph meant for eyes, not a screen reader's ears, and a
+ * confidence is named only when [showConfidence] is true and the chip it describes is actually
+ * rendered (guide §6.1/§11.2: a description must never claim a confidence the marker doesn't
+ * show) — this fixes T02's "How these were attributed" line reading "confidence 0.85" on a
+ * CONFIRMED marker that renders no chip at all. */
+private fun legacyMarkerDescription(attribution: Attribution, showConfidence: Boolean): String = buildString {
+    append(shapeDescription(attribution.state))
+    append(", ")
+    append(stateProse(attribution.state))
+    if (showConfidence) {
         attribution.confidence?.let { append(", confidence %.2f".format(it)) }
     }
 }

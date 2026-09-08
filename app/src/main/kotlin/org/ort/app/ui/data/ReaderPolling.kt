@@ -137,12 +137,22 @@ public object ReaderPolling {
      * [RigStatus]/[StorageForecast] are the same process-wide holders [currentStatus] above already
      * reads, and [InputStatus]/[LevelStatus] (WP11c, register R-112/R-113) are the two that used to
      * be honestly "not measured" here — see [org.ort.app.ui.data.CaptureStatusMapper]'s own kdoc.
+     *
+     * R-172: [sessionId] is [effectiveSessionId]'s **fallback** argument, not necessarily the
+     * session actually read — see that function's own kdoc. Before this fix, every counted fact
+     * below (`Overs`, `Since`/elapsed, `Backlog`'s "not measured" gate) was read straight from the
+     * caller-supplied [sessionId] regardless of what was genuinely capturing, which is exactly how
+     * a real, minute-old session's Since/elapsed/Overs line ended up mixed with an unrelated fixture
+     * session's counts while every process-wide-holder fact (Input/Level/Thermal/Tier) stayed
+     * correctly live — those never depended on [sessionId] at all, which is why only half the
+     * screen was wrong.
      */
     public suspend fun captureStatus(context: Context, sessionId: String): CaptureStatusViewState {
+        val effectiveSessionId = effectiveSessionId(sessionId) ?: sessionId
         val db = OrtDatabase.create(context.applicationContext)
-        val session = db.sessionDao().getById(sessionId)
-        val transmissions = db.transmissionDao().listBySession(sessionId)
-        val gapCount = db.captureGapDao().listBySession(sessionId).size
+        val session = db.sessionDao().getById(effectiveSessionId)
+        val transmissions = db.transmissionDao().listBySession(effectiveSessionId)
+        val gapCount = db.captureGapDao().listBySession(effectiveSessionId).size
         val rejectedCount = transmissions.count { it.processingState == TransmissionState.REJECTED }
         val failedCount = transmissions.count { it.processingState == TransmissionState.FAILED }
 
@@ -187,6 +197,21 @@ public object ReaderPolling {
         )
     }
 
+    /**
+     * `Level-Meter.dc.html`'s "Weakest over resolved tonight" row (R-175): the lowest recorded
+     * [org.ort.data.entity.TransmissionEntity.signalStrength] among this session's own overs,
+     * formatted the same "S%.0f" way [TransmissionDetail]'s own `signalLabel` does everywhere else
+     * — never a fabricated dBFS figure alongside it: nothing in `:pipeline` records a per-over dBFS
+     * reading (only [org.ort.pipeline.capture.LevelStatus]'s own live, session-wide peak/RMS does),
+     * so the honest label is the S-meter reading alone. `null` when no over this session recorded a
+     * signal strength at all — the row is then honestly absent, not a fabricated zero.
+     */
+    public suspend fun weakestOverLabel(context: Context, sessionId: String): String? {
+        val db = OrtDatabase.create(context.applicationContext)
+        val weakest = db.transmissionDao().listBySession(sessionId).mapNotNull { it.signalStrength }.minOrNull()
+        return weakest?.let { "S%.0f".format(Locale.ROOT, it) }
+    }
+
     /** `%02d:%02d` in UTC — matches [ReaderTransmissionViewStateMapper]'s own row-time convention. */
     private fun hourMinuteUtcLabel(utcMillis: Long): String {
         val totalMinutes = Math.floorDiv(utcMillis, 60_000L)
@@ -208,18 +233,35 @@ public object ReaderPolling {
     // Now home (ui-conformance-plan WP4, R-030/R-033/R-036/R-037) — Main/Now-Idle/Now-First.dc.html.
     // -------------------------------------------------------------------------------------------
 
-    private val nightDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ROOT)
+    // R-170: Locale.ROOT has no real month-name data, so "MMM" degraded to the literal "M09"
+    // rather than "Sep" — guide §9's dates are prose, read in the device's own locale, not the
+    // numeric/mono formatting the guide reserves for times and frequencies (those stay
+    // Locale.ROOT elsewhere in this file, deliberately unchanged by this fix).
+    private val nightDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
         .withZone(ZoneId.systemDefault())
 
     /**
-     * The "Now" home's full read path. Renders [NowViewState.Idle] whenever [sessionId] is not
-     * the session [CaptureState] itself says is live right now — matching
-     * [MainActivity][org.ort.app.MainActivity]'s own same-process liveness check, never trusting a
-     * caller-supplied id that capture is not actually running.
+     * R-172: `CaptureState.sessionId` is the live session whenever [CaptureState.isCapturing] is
+     * true, full stop — [hostSessionId] (`NowContent`/`CaptureStatusContent`'s own `sessionId`
+     * parameter, fixed once at `ReaderActivity.onCreate` per that class's own kdoc) is consulted
+     * only as a **fallback**, for the one case there is genuinely no live session to prefer.
+     * Centralised here — both content composables' only two entry points into this object
+     * (`nowViewState`, `captureStatus`) route through it — so neither can drift out of step on
+     * what "the live session" means, and so a session that starts capturing *after* this reader
+     * already launched (a fresh `Start capture` tap from Now, or a scenario broadcast setting
+     * [CaptureState] directly while the reader is already open — R-171) is picked up on the very
+     * next poll tick, never stuck showing whichever session happened to be current at launch.
+     */
+    public fun effectiveSessionId(hostSessionId: String?): String? =
+        CaptureState.sessionId.takeIf { CaptureState.isCapturing } ?: hostSessionId
+
+    /**
+     * The "Now" home's full read path. Renders [NowViewState.Idle] whenever nothing is capturing
+     * right now — see [effectiveSessionId] for how the session to read is chosen.
      */
     public suspend fun nowViewState(context: Context, sessionId: String?): NowViewState {
         val nowMillis = SystemClock.wallMillis()
-        val liveSessionId = sessionId?.takeIf { CaptureState.isCapturing && CaptureState.sessionId == it }
+        val liveSessionId = effectiveSessionId(sessionId)?.takeIf { CaptureState.isCapturing }
         return if (liveSessionId == null) {
             idleNowViewState(context)
         } else {

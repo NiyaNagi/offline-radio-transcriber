@@ -1,11 +1,14 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,6 +36,19 @@ class WelcomeScreenTest {
         composeTestRule.onNodeWithText("A radio to read the frequency from").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-welcome-begin").performClick()
         assert(begun)
+    }
+
+    /** Matches `FailureScreensTest`'s/`ReaderAccessibilityTest`'s own V7 font-scale pattern — see
+     * `SetupScaffoldTest`'s identical note on why this is not `@Config(qualifiers = ...)`. */
+    @Test
+    fun `R_123 the fifth ask scrolls clear of Begin at font scale 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme { WelcomeScreen(onBegin = {}) }
+            }
+        }
+
+        composeTestRule.onNodeWithText("A radio to read the frequency from").performScrollTo().assertIsDisplayed()
     }
 
     @Test

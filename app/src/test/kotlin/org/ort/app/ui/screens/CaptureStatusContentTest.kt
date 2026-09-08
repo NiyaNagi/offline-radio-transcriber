@@ -2,10 +2,12 @@ package org.ort.app.ui.screens
 
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
@@ -15,8 +17,11 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.core.AttributionState
+import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -71,8 +76,14 @@ class CaptureStatusContentTest {
         }
     }
 
-    private fun session() = SessionEntity(
-        id = "S1",
+    private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 5_000) {
+        waitUntil(timeoutMillis) {
+            onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun session(id: String = "S1") = SessionEntity(
+        id = id,
         startedAt = 0L,
         endedAt = null,
         profileId = null,
@@ -81,6 +92,35 @@ class CaptureStatusContentTest {
         terminationReason = null,
         sourceId = null,
         schemaVersion = OrtDatabase.SCHEMA_VERSION,
+    )
+
+    private fun transmission(id: String, sessionId: String, samplePosition: Long) = TransmissionEntity(
+        id = id,
+        sessionId = sessionId,
+        threadId = null,
+        startedAtUtc = samplePosition,
+        endedAtUtc = samplePosition + 1_000L,
+        durationMs = 4_200L,
+        audioFormat = "flac/16k/mono",
+        preRollMs = 200,
+        postRollMs = 200,
+        frequencyHz = 146_960_000L,
+        frequencyProvenance = "measured",
+        mode = null,
+        signalStrength = 7.0,
+        channelName = null,
+        voiceprintId = null,
+        attributionState = AttributionState.UNKNOWN,
+        stationId = null,
+        attributionConfidence = null,
+        attributionSourceTransmissionId = null,
+        processingState = TransmissionState.CAPTURED,
+        rejectionReason = null,
+        samplePosition = samplePosition,
+        monotonicStartNanos = 0L,
+        utcOffsetMinutes = 0,
+        calibrationId = null,
+        executionProvider = null,
     )
 
     @Test
@@ -118,6 +158,45 @@ class CaptureStatusContentTest {
         composeTestRule.waitUntilTagExists("capture-status-title")
         composeTestRule.onNodeWithTag("capture-status-title").assertExists()
         composeTestRule.onNodeWithTag("level-meter-chart").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-172")
+    fun `R_172 follows CaptureState's live session, never a stale host-supplied sessionId, while capturing`() {
+        // S1 is the host's own (stale) sessionId argument — say, the session the reader launched
+        // against — and S2 is the session actually capturing right now (CaptureState.sessionId),
+        // e.g. a fresh Start-capture tap or a scenario broadcast after this reader was already
+        // open (R-171). The screen must show S2's own facts throughout, never a mix of S1's DB rows
+        // and S2's live holders.
+        runBlocking {
+            db.sessionDao().insert(session("S1"))
+            db.transmissionDao().insert(transmission("S1-tx1", "S1", 1L))
+            db.sessionDao().insert(session("S2"))
+            db.transmissionDao().insert(transmission("S2-tx1", "S2", 1L))
+            db.transmissionDao().insert(transmission("S2-tx2", "S2", 2L))
+        }
+        CaptureState.capturing("S2")
+
+        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
+
+        composeTestRule.waitUntilTextExists("2 captured")
+        composeTestRule.onNodeWithText("2 captured", substring = true).assertExists()
+        composeTestRule.onNodeWithText("1 captured", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-172")
+    fun `R_172 a null host sessionId still polls once a session starts capturing, not stuck idle forever`() {
+        runBlocking {
+            db.sessionDao().insert(session("S2"))
+            db.transmissionDao().insert(transmission("S2-tx1", "S2", 1L))
+        }
+        CaptureState.capturing("S2")
+
+        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = null) } }
+
+        composeTestRule.waitUntilTextExists("1 captured")
+        composeTestRule.onNodeWithText("1 captured", substring = true).assertExists()
     }
 
     @Test

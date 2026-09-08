@@ -624,6 +624,7 @@ public object LogPolling {
             rejectionReason = entity.rejectionReason,
             currentTranscriptPass = current?.pass,
             corrected = entity.corrected,
+            mode = entity.mode,
         )
     }
 

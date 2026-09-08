@@ -5,6 +5,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.app.ui.data.LevelViewState
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.fake.FakeAudioIo
@@ -83,5 +84,40 @@ class LevelCheckTest {
 
         val last = states.filterIsInstance<LevelCheckState.Reading>().last().level
         assertEquals(-last.peakDbfs, last.headroomDb, 0.001)
+    }
+
+    @Test
+    fun `R_124 headroom at exactly 0 dBFS peak reads a clean positive zero, never the string -0 dB`() {
+        val reading =
+            LevelReading(bars = emptyList(), peakDbfs = 0.0, noiseFloorDbfs = null, band = LevelBand.CLIPPING)
+        val formatted = "%.0f".format(reading.headroomDb)
+
+        assertEquals("0", formatted, "got \"$formatted dB\"")
+    }
+
+    @Test
+    fun `R_124 a genuinely over-0dBFS peak still reads a real negative headroom`() {
+        val reading = LevelReading(bars = emptyList(), peakDbfs = 0.3, noiseFloorDbfs = null, band = LevelBand.CLIPPING)
+
+        assertEquals(-0.3, reading.headroomDb, 0.001)
+    }
+
+    @Test
+    fun `R_124 levelBarFraction uses the same -60 to 0 dBFS scale as WP4's real level chart`() {
+        assertEquals(0f, levelBarFraction(LevelViewState.CHART_FLOOR_DBFS.toDouble()), 0.001f)
+        assertEquals(1f, levelBarFraction(LevelViewState.CHART_CEILING_DBFS.toDouble()), 0.001f)
+        // -38 dBFS (too-quiet territory) must sit visibly below half height on the real chart scale
+        // -- on the old -90 dBFS floor this fraction was ~0.58 (looked nearly full); R-124's fix
+        // makes clipping (0 dBFS, fraction 1.0) and a quiet -38 dBFS signal actually distinguishable.
+        assertTrue(
+            levelBarFraction(-38.0) < 0.4f,
+            "a -38 dBFS bar must read well under half height on the real chart scale",
+        )
+    }
+
+    @Test
+    fun `R_124 levelBarFraction never exceeds 0f-1f even for a peak past 0 dBFS or below the floor`() {
+        assertEquals(1f, levelBarFraction(5.0), 0.001f)
+        assertEquals(0f, levelBarFraction(-120.0), 0.001f)
     }
 }

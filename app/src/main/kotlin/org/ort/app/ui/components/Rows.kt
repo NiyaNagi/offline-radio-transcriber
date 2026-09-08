@@ -2,6 +2,8 @@ package org.ort.app.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,16 +15,20 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -30,6 +36,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -40,16 +48,70 @@ import org.ort.core.AttributionState
 /**
  * R-023 (ui-conformance-plan WP2): the row family from guide §6.5 and `Rows.dc.html` — the
  * densest part of the product (P7). Time and frequency are fixed-width columns so they align
- * down the whole log; the station block grows; signal is right-aligned mono.
+ * down the whole log at the guide's own text scale; the station block grows; signal is
+ * right-aligned mono.
+ *
+ * R-152: every column built from these constants is applied as a `widthIn(min = …)` floor, never
+ * a `width(…)` ceiling — at a large font scale the guide's own column widths are too narrow for
+ * the scaled text they hold, and a hard `width()` lets that overflow run straight into whatever
+ * sits to its right with no visible gap (`Session`/`Capture-Status`'s "Stations5"). A floor keeps
+ * every row's columns aligned at the guide's scale (1.0) — where content is always narrower than
+ * the floor — and lets a column grow past it, never collide, at 2.0.
+ *
+ * R-205: R-152's floor was not enough by itself — found on an emulator, not just at a larger font
+ * scale, that the guide's own 52dp/56dp widths are already too narrow for real content ("16:28:56",
+ * "146.960") in [OrtType.timeFreq] even at the guide's own scale (1.0): a `Text` given room to
+ * wrap onto a second line will do exactly that rather than ask its parent for more width, so
+ * `widthIn(min = …)` alone never got the chance to grow the column — the wrap happened first.
+ * [rememberTimeColumnWidth]/[rememberFreqColumnWidth] fix the root cause two ways: `maxLines = 1`
+ * and `softWrap = false` on every time/frequency `Text` forbid the wrap outright, and the floor
+ * itself is `LOG_TIME_COLUMN`/`LOG_FREQ_COLUMN` widened, if needed, to whatever
+ * [rememberTextMeasurer] actually measures a representative value to need in [OrtType.timeFreq]
+ * at the *real*, current density/font scale — correct against real font metrics on whatever host
+ * renders it, not a guessed constant that can quietly drift out of date the way 52dp/56dp did.
  */
 
-/** Fixed time column — 52dp, so every row's time aligns down the whole log (guide §6.5/§5). */
-public val LOG_TIME_COLUMN: androidx.compose.ui.unit.Dp = 52.dp
+/** Time column floor — 52dp at the guide's own scale, so every row's time aligns down the whole
+ * log there (guide §6.5/§5); grows past 52dp rather than colliding with what follows it at a
+ * larger font scale. R-205: callers render at [rememberTimeColumnWidth] instead, which never
+ * returns less than this constant. */
+public val LOG_TIME_COLUMN: Dp = 52.dp
 
-/** Fixed frequency column — 56dp. */
-public val LOG_FREQ_COLUMN: androidx.compose.ui.unit.Dp = 56.dp
+/** Frequency column floor — 56dp at the guide's own scale. R-205: callers render at
+ * [rememberFreqColumnWidth] instead, which never returns less than this constant. */
+public val LOG_FREQ_COLUMN: Dp = 56.dp
 
 private val SIGNAL_COLUMN = 24.dp
+
+/** R-205: HH:MM:SS, the widest real shape [LogRowViewState.timeLabel]/`GapRow`/`RejectedRow`'s
+ * `timeLabel` ever take — every caller in this codebase uses this exact format, so measuring this
+ * one representative value (rather than each row's own, different, digits) is what keeps every
+ * row's time column the same width, aligned down the whole log. */
+private const val TIME_COLUMN_SAMPLE = "16:28:56"
+
+/** R-205: NNN.NNN MHz, the widest real shape a frequency label takes in this codebase. */
+private const val FREQ_COLUMN_SAMPLE = "146.960"
+
+/** R-205: [LOG_TIME_COLUMN] widened, if the real, current font metrics need it, to fit
+ * [TIME_COLUMN_SAMPLE] on one line in [OrtType.timeFreq] — measured with [rememberTextMeasurer],
+ * not guessed, so it is correct on this host's actual fonts rather than only the guide's. */
+@Composable
+public fun rememberTimeColumnWidth(): Dp = rememberMonoColumnWidth(TIME_COLUMN_SAMPLE, LOG_TIME_COLUMN)
+
+/** R-205: [LOG_FREQ_COLUMN] widened, if needed, to fit [FREQ_COLUMN_SAMPLE] — see
+ * [rememberTimeColumnWidth]. */
+@Composable
+public fun rememberFreqColumnWidth(): Dp = rememberMonoColumnWidth(FREQ_COLUMN_SAMPLE, LOG_FREQ_COLUMN)
+
+@Composable
+private fun rememberMonoColumnWidth(sample: String, floor: Dp): Dp {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val measuredWidth = remember(density.density, density.fontScale, sample) {
+        with(density) { measurer.measure(text = sample, style = OrtType.timeFreq).size.width.toDp() }
+    }
+    return maxOf(floor, measuredWidth)
+}
 
 // ---------------------------------------------------------------------------------------------
 // Section / header rows.
@@ -175,13 +237,17 @@ public fun ColumnHeaderRow(
             text = "time".uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
-            modifier = Modifier.width(LOG_TIME_COLUMN),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
         )
         Text(
             text = "freq".uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
-            modifier = Modifier.width(LOG_FREQ_COLUMN),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.widthIn(min = rememberFreqColumnWidth()),
         )
         Text(
             text = stationLabel.uppercase(),
@@ -193,13 +259,17 @@ public fun ColumnHeaderRow(
             text = signalLabel.uppercase(),
             style = OrtType.columnHeader,
             color = OrtColors.textDisabled,
-            modifier = Modifier.width(SIGNAL_COLUMN),
+            modifier = Modifier.widthIn(min = SIGNAL_COLUMN),
         )
     }
 }
 
-/** `Capture-Status.dc.html`'s key/value row: a 96dp key column, a value + optional sub-line, and
- * an optional trailing marker slot. */
+/** `Capture-Status.dc.html`'s key/value row: a key column sized to its content (a 96dp floor,
+ * per the guide, but never a fixed ceiling — R-152: at large font scales a fixed-width column
+ * cannot grow, so a long key runs directly into the value with no gap between them, e.g.
+ * "Stations5"), a value + optional sub-line, and an optional trailing marker slot. The row's own
+ * [OrtSpacing.sm] gap between columns is the floor that keeps key and value apart even when the
+ * key's intrinsic width already reaches the value column's edge. */
 @Composable
 public fun KeyValueRow(
     key: String,
@@ -211,13 +281,97 @@ public fun KeyValueRow(
     Row(
         modifier = modifier.fillMaxWidth().heightIn(min = 44.dp).padding(vertical = OrtSpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
-        Text(text = key, style = OrtType.control, color = OrtColors.textDim, modifier = Modifier.width(96.dp))
+        Text(
+            text = key,
+            style = OrtType.control,
+            color = OrtColors.textDim,
+            modifier = Modifier.widthIn(min = 96.dp),
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(text = value, style = OrtType.control, color = OrtColors.textHigh)
             subLine?.let { Text(text = it, style = OrtType.subLine, color = OrtColors.textDim) }
         }
         trailingMarker?.invoke()
+    }
+}
+
+/** [NavRow]'s tone — `NotBuilt` is a destination the guide describes but no module has shipped
+ * yet (`Settings-Rig.dc.html`'s rig row before a rig module exists, for one): the row still
+ * navigates (there is something to show — an honest "not built yet" state, constitution I), it
+ * just reads visibly dimmer than a working destination so the operator isn't surprised by what
+ * they find. `Neutral` (the default) is every ordinary destination row. */
+public enum class NavRowTone { Neutral, NotBuilt }
+
+/**
+ * R-131 (`Settings.dc.html`/`Improve.dc.html`/`Sessions.dc.html`'s row family): an 18dp leading
+ * [icon] (optional — a few destinations, like a bare "Improve" list entry, have none),
+ * [rowTitle], an optional [subLine] status that may wrap onto a second line rather than truncate
+ * (a real status sentence outranks a single line, per the guide's own multi-line rows elsewhere),
+ * an optional [trailing] slot for a value or a [Badge] (mono where it is a value, per
+ * `Controls.dc.html` — not this component's to impose a style on, so it is a free composable
+ * slot),
+ * and an always-present trailing [OrtIcons.chevron] — every row here goes somewhere, so the
+ * affordance is not optional the way [icon]/[subLine]/[trailing] are.
+ *
+ * A real >=44dp target, `Role.Button`, one merged content description ("<title>. <subLine>",
+ * or bare `rowTitle` when there is no sub-line — never a dangling ". "), and `bg/pressed` while
+ * pressed (the [TextAction]/guide §6.7 pattern, not a ripple).
+ */
+@Composable
+public fun NavRow(
+    rowTitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    subLine: String? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    tone: NavRowTone = NavRowTone.Neutral,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val titleColor = if (tone == NavRowTone.NotBuilt) OrtColors.textFaint else OrtColors.textHigh
+    val iconTint = if (tone == NavRowTone.NotBuilt) OrtColors.textFaint else OrtColors.textDim
+    val description = subLine?.let { "$rowTitle. $it" } ?: rowTitle
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .background(if (pressed) OrtColors.bgPressed else Color.Transparent)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
+            .semantics(mergeDescendants = true) { contentDescription = description },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        icon?.let {
+            Icon(imageVector = it, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = rowTitle, style = OrtType.control, color = titleColor)
+            subLine?.let {
+                Text(
+                    text = it,
+                    style = OrtType.chip,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+        trailing?.invoke()
+        Icon(
+            imageVector = OrtIcons.chevron,
+            contentDescription = null,
+            tint = OrtColors.textDisabled,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -356,13 +510,17 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
                 text = state.timeLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.width(LOG_TIME_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
             )
             Text(
                 text = state.frequencyLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.width(LOG_FREQ_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberFreqColumnWidth()),
             )
             Column(modifier = Modifier.weight(1f)) {
                 LogRowMarkerLine(state = state)
@@ -378,7 +536,7 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
                     text = it,
                     style = OrtType.signal,
                     color = OrtColors.textLow,
-                    modifier = Modifier.width(SIGNAL_COLUMN),
+                    modifier = Modifier.widthIn(min = SIGNAL_COLUMN),
                 )
             }
         }
@@ -516,7 +674,9 @@ public fun GapRow(timeLabel: String, label: String, modifier: Modifier = Modifie
                 text = timeLabel,
                 style = OrtType.signal,
                 color = OrtColors.accentGap,
-                modifier = Modifier.width(LOG_TIME_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
             )
             Icon(
                 imageVector = OrtIcons.gapWarn,
@@ -567,13 +727,17 @@ public fun RejectedRow(
                 text = timeLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.width(LOG_TIME_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
             )
             Text(
                 text = frequencyLabel,
                 style = OrtType.timeFreq,
                 color = OrtColors.textTime,
-                modifier = Modifier.width(LOG_FREQ_COLUMN),
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.widthIn(min = rememberFreqColumnWidth()),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -682,7 +846,8 @@ public fun NotificationCard(
                             text = row.key,
                             style = OrtType.cardBody,
                             color = OrtColors.textFaint,
-                            modifier = Modifier.width(62.dp),
+                            // R-152: a floor, not a ceiling — see LOG_TIME_COLUMN's doc.
+                            modifier = Modifier.widthIn(min = 62.dp),
                         )
                         Text(text = row.value, style = OrtType.cardBody, color = OrtColors.textPrior)
                     }
