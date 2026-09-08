@@ -32,6 +32,131 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: log row badges wrap at large font scale; column headers never split)
+
+### (pending) — ui-conformance WP2 · log row badges wrap at large font scale; column headers never split
+
+**Scope:** `:app` `ui/components/Rows.kt` and `RowsTest.kt` only. Register findings R-244, R-245,
+and R-240 (`results/ui-audit/register.md`, V3 Reader validator pass 2, `overnight/L01-log@2x.png`
+and `overnight/L01-log.png`). `git merge --ff-only main` first (this branch already an ancestor;
+no rebase, no stash, no `--stop`) — no other package's files touched.
+
+**Requirements/ACs:** R-244 (`LogRow`'s badges must wrap below the callsign at a large font scale,
+never clip to a sliver), R-245 (`ColumnHeaderRow` labels must never wrap mid-word), R-240 (an
+AMBIGUOUS `LogRow` must show the kept candidate's callsign beside `" or <alternate>"`, not just
+the alternate alone).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-240 directly: an
+  AMBIGUOUS row reading only "or KE7QRS" doesn't just look wrong, it silently drops which
+  candidate the system actually kept — a real fact going missing, not a cosmetic gap. Principle
+  VII (Boundaries Are Structural) governs R-244: the fix lives in `LogRowMarkerLine`'s own layout
+  (a `FlowRow`), not by changing `AttributionRow`'s internals, which is shared far too widely for
+  a `LogRow`-scoped finding to touch.
+- **R-244 — `LogRowMarkerLine` (private, `LogRow`'s marker line).** Was a plain `Row`, which never
+  wraps — when a real callsign plus the trailing `Badge` (`NEW`/`REVISED`/`CORRECTED`) no longer
+  fit on one line at a large font scale, the badge had nowhere to go but clip to a sliver or
+  vanish. Now a `FlowRow` (`@OptIn(ExperimentalLayoutApi::class)` — the API detekt itself flagged
+  as experimental when this was first written; opted in deliberately, not suppressed). The
+  attribution (`AttributionRow`: shape + callsign + its own INFERRED score chip, or the AMBIGUOUS
+  `" or <alternate>"`) is passed as one atomic flow item — `AttributionRow` is shared across the
+  whole app and this fix does not touch its own internal layout — and the trailing `Badge` is a
+  second flow item that now wraps to its own line when there isn't room, rather than clipping.
+  Each item carries `Modifier.align(Alignment.CenterVertically)` (`FlowRowScope`'s own alignment,
+  the `RowScope.align` equivalent) so single-line rendering is visually unchanged from before.
+- **R-245 — `ColumnHeaderRow`.** The `TIME`/`FREQ` labels already had `maxLines = 1, softWrap =
+  false` from the R-205 fix (an earlier entry in this file); the `STATION` label (on its flexible
+  `weight(1f)` column) and the `SIG` label did not, and "STATION" wrapping mid-word to
+  "STATIO"/"N" at font scale 2.0 was the register's exact screenshot. Both now carry the same
+  `maxLines = 1, softWrap = false` — there is no second line for a column *header* to wrap onto
+  the way a data row's own content legitimately can, so this is an unconditional fix, not a floor/
+  ceiling tradeoff the way R-205's column widths were.
+- **R-240 — `LogRowViewState` gains `callsign: String? = null`.** `AttributionState.AMBIGUOUS`
+  never carries a `stationId` (`Attribution.ambiguous()` sets it `null` — more than one candidate
+  survived, so the data layer has no single resolved station to name), so before this field
+  existed an AMBIGUOUS row could only ever read "or KE7QRS" — the kept candidate silently missing,
+  both visually and from the description. `null` (every caller before this existed) falls back to
+  `Attribution.stationId` exactly as before — additive, CONFIRMED/INFERRED rows (which do carry
+  one) are unaffected. `LogRowMarkerLine` now passes `callsign = state.callsign ?:
+  attribution.stationId` into `AttributionRow` (previously it passed no `callsign` argument at
+  all, silently relying on `AttributionRow`'s own default — the same default, made explicit here
+  so the override is visible at the call site).
+- **A pre-existing, unrelated semantics-merging gap, found and left alone.** While writing R-240's
+  test, `onNodeWithTag("ambiguous").assert(hasContentDescription(...))` against `LogRow`'s own
+  outer merged node failed to find the callsign/alternate at all, even though the same content
+  renders correctly and is independently reachable via `onNodeWithText`. `AttributionRow` is
+  itself its own `semantics(mergeDescendants = true)` boundary; `LogRow`'s outer `Box` is a
+  *second*, nested boundary around it, and — consistent with this package's own prior finding
+  against `TextField` (an earlier entry in this file) that not every semantics property merges
+  reliably through a nested boundary in this Compose version — `AttributionRow`'s own
+  `contentDescription` does not bubble up into `LogRow`'s merged description here. Pre-existing
+  (no test asserted this before), unrelated to R-240's own scope (which only asked to confirm the
+  *visible* text), and left unfixed — R-240's test was adjusted to check `onNodeWithText` instead
+  of chasing this separate gap.
+- **Detekt findings, precisely scoped.** `.\gradlew.bat build dependencyRules platformGuards`
+  failed with real findings in `:lexicon`, `:pipeline`, and several `:app` files outside this
+  package (`ui/screens/**`, `ui/data/**`, `ui/setup/**`, `ui/navigation/**`,
+  `app/src/debug/**`) — this is the previous entry's own buildSrc fix working exactly as
+  described: real, pre-existing debt across the whole project, invisible while detekt/ktlint saw
+  `NO-SOURCE` everywhere, now surfacing for every builder. Checked precisely which of `:app:
+  detekt`'s 14 findings were in this package: **one** — this commit's own `RowsTest.kt:188`, a
+  test function name long enough to exceed `MaxLineLength` once the real check started running
+  again. Shortened it. The other 13 (`StationScreen.kt`, `StationPatternScreen.kt`,
+  `ModelsViewData.kt`, `FrequencyScreen.kt`, `LevelScreen.kt`, `ScenariosTest.kt`,
+  `ModelsControllerLexiconTest.kt`, `ReaderActivityDestinationSmokeTest.kt`) and every `:lexicon`/
+  `:pipeline` finding are outside `ui/components/**` and were not touched.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — **992 of 992 passing, 0 failed**
+  (confirmed by summing every `app/build/test-results/testDebugUnitTest/*.xml` report's
+  `tests`/`failures`; was 923 before this commit — the rise is other packages' concurrent work
+  already merged via `main`, plus this commit's own 5 new tests). New tests, all in `RowsTest`:
+  `R_240_an ambiguous row with a callsign shows it beside the alternate, never just or-alternate`,
+  `R_240_an ambiguous row with no callsign supplied still falls back to Attribution_stationId`,
+  `R_244_a badge that no longer fits beside the attribution wraps below it, never clipping` (at
+  font scale 2.0, a narrow-width `LogRow` — real, non-text-driven minimums do the forcing:
+  `AttributionShape`'s own fixed `Canvas` size, `Badge`'s own padding, neither dependent on font
+  metrics Robolectric can't measure reliably here — proven by a height comparison: the same narrow
+  row with a badge measures taller than without one, meaning the badge wrapped onto a second line
+  rather than clipping), `R_245_column_header_row's STATION label renders whole, never split
+  mid-word, at font scale 2` (Robolectric cannot force or verify a rendered wrap here, a limitation
+  recorded repeatedly elsewhere in this file — what this checks instead is the one thing that *is*
+  host-independently meaningful: the full word survives into the semantics tree, not a
+  hyphen-split substring).
+- **Full gate — passed for everything this package's boundary reaches, precisely scoped where it
+  did not.** `.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest` — **BUILD SUCCESSFUL**
+  (compilation and the whole test suite, both unaffected by the other-package detekt/ktlint
+  findings described above). `.\gradlew.bat dependencyRules platformGuards` (isolated) —
+  `dependencyRules: checked 17 modules ... OK.` `platformGuards: checked 17 modules' external
+  dependencies and 17 manifests ... OK.` `app/build/reports/ktlint/ktlintMainSourceSetCheck/
+  ktlintMainSourceSetCheck.txt` and `.../ktlintTestSourceSetCheck.txt` — both **empty** (zero
+  violations) after the one `RowsTest.kt` line-length fix. `.\gradlew.bat build dependencyRules
+  platformGuards` (the aggregate) — **fails**, but exclusively on findings outside this package
+  (see "What changed" above) — not a regression introduced by this commit.
+  `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+  8/8 `[PASS]`. `.\gradlew.bat coverageMatrix` — `419 requirements, 185 covered` (up from 183 —
+  R_240/R_244/R_245's test names picked up those register-adjacent requirement ids).
+  `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `up to date (185 covered of 419)`.
+
+**Left open / not done:**
+- **The 13 other-package `:app:detekt` findings and every `:lexicon`/`:pipeline:detekt` finding
+  are reported here, not fixed** — outside `ui/components/**`. Whoever owns `ui/screens/**`,
+  `ui/data/**`, `ui/setup/**`, `ui/navigation/**`, `app/src/debug/**`, `:lexicon`, and `:pipeline`
+  needs a follow-up round for these now that detekt genuinely sees their files.
+  `app/src/debug/kotlin/org/ort/app/debug/FrequencyChangeFixtures.kt` also fails
+  `ktlintDebugSourceSetCheck` (many `Argument should be on a separate line` findings) — same
+  situation, same "not this package" boundary.
+- **The nested-semantics-merging gap found while testing R-240** (`AttributionRow`'s own
+  `contentDescription` not bubbling into `LogRow`'s outer merged node) is recorded above but not
+  fixed — outside R-240's own scope, and accessibility-completeness work broader than this
+  register finding asked for.
+- **The register is not updated by this commit** — closing out R-244/R-245/R-240 is the
+  validator/coordinator's own bookkeeping, outside this package.
+- **No screenshot/emulator re-capture** of `overnight/L01-log@2x.png`/`L01-log.png` to visually
+  confirm any of the three fixes against the actual artboard — Robolectric assertions only, per
+  the plan (Phase E/Validators own screenshot verification).
+
+
 ## 2026-09-08 (ui-conformance WP9 · lint)
 
 ### (pending) — ui-conformance WP9 · lint
@@ -286,8 +411,7 @@ over an ad hoc long parameter list.
   `:lexicon:detekt` (16 issues), both entirely in other work packages' files (confirmed via `git
   log -1 --` on each), not this package's to fix under file-ownership rules. Flagged for the lead
   to route to the owning packages, the same way this package's own earlier reports have flagged
-  gaps found outside their row rather than silently absorbing them.
----
+  gaps found outside their row rather than silently absorbing them.---
 
 ## 2026-09-08 (ui-conformance WP9 · pass-2 fixes: ghost action, route types, InputStatus-driven verify, font-scale footer and rows, setup-verified scenario)
 
