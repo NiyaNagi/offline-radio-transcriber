@@ -151,14 +151,7 @@ public fun readyRowsFor(
         actionLabel = "Fix".takeIf { !store.inputVerified },
         onAction = actions.onFixInput,
     ),
-    ReadyRow(
-        label = "Level",
-        value = store.levelPeakDbfs?.let { "Peaks %.0f dBFS".format(it) } ?: "Not measured",
-        ok = store.levelInBand,
-        statusText = "in band".takeIf { store.levelInBand },
-        actionLabel = "Fix".takeIf { !store.levelInBand },
-        onAction = actions.onFixLevel,
-    ),
+    levelRow(store, actions.onFixLevel),
     ReadyRow(
         label = "Overnight",
         value = if (batteryExempt) "Battery exemption granted" else "Battery exemption skipped",
@@ -170,6 +163,28 @@ public fun readyRowsFor(
     radioRow(store, rigStatus, actions.onFixRadio),
     modelRow(asrState, actions.onInstallModel),
 )
+
+/**
+ * Validator finding (ui-conformance-plan WP9, register R-120..R-125 follow-up): this row must
+ * never show a green "in band" marker beside "Not measured" — [SetupStore.levelInBand] and
+ * [SetupStore.levelPeakDbfs] are two independently-stored preferences (`onLevelStateChanged`
+ * writes them together on the real path, but nothing enforces that they can never drift — a
+ * test setting one without the other is exactly how this surfaced), so `ok` is derived from the
+ * peak actually being present, never the flag alone (constitution I: an attribution — here, "the
+ * level is fine" — without its backing measurement is a bug, not a UI nicety).
+ */
+private fun levelRow(store: SetupStore, onFixLevel: () -> Unit): ReadyRow {
+    val measured = store.levelPeakDbfs
+    val inBand = measured != null && store.levelInBand
+    return ReadyRow(
+        label = "Level",
+        value = measured?.let { "Peaks %.0f dBFS".format(it) } ?: "Not measured",
+        ok = inBand,
+        statusText = "in band".takeIf { inBand },
+        actionLabel = "Fix".takeIf { !inBand },
+        onAction = onFixLevel,
+    )
+}
 
 private fun radioRow(store: SetupStore, rigStatus: RigStatus.State, onFixRadio: () -> Unit): ReadyRow =
     when (store.radioChoice) {

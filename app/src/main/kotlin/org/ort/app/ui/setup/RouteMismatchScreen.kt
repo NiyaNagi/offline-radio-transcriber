@@ -20,6 +20,7 @@ import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
+import org.ort.capture.android.AudioDeviceDescriptor
 
 /** S06 (`Setup-Route-Mismatch.dc.html`, R-081) — the one halt in the whole sequence
  * (`Flow-Setup.dc.html`: "no continue"). No `Continue` exists on this screen at all; the only way
@@ -57,42 +58,7 @@ public fun RouteMismatchScreen(
             body = "You chose ${mismatch.selected.label}, but Android routed the recording to the " +
                 "phone's own mic. Nothing has been recorded.",
         )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = OrtIcons.check,
-                contentDescription = "done",
-                tint = OrtColors.accentOnGreen,
-                modifier = Modifier.size(20.dp).background(OrtColors.accentGreen, CircleShape).padding(4.dp),
-            )
-            Text(
-                text = "Opened at native rate",
-                style = OrtType.control,
-                color = OrtColors.textHigh,
-                modifier = Modifier.padding(start = 13.dp),
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = OrtIcons.dismiss,
-                contentDescription = "does not match",
-                tint = OrtColors.haltOnFill,
-                modifier = Modifier.size(20.dp).background(OrtColors.haltFill, CircleShape).padding(4.dp),
-            )
-            Column(modifier = Modifier.padding(start = 13.dp)) {
-                Text(text = "Routed device does not match", style = OrtType.control, color = OrtColors.textHigh)
-                Text(
-                    text = "chosen ${mismatch.selected.label} · routed ${mismatch.routed?.label ?: "nothing"}",
-                    style = OrtType.timeFreq,
-                    color = OrtColors.textDim,
-                )
-            }
-        }
+        MismatchChecks(mismatch)
         Column {
             Text(text = "Usually one of".uppercase(), style = OrtType.sectionLabel, color = OrtColors.textFaint)
             listOf(
@@ -110,3 +76,55 @@ public fun RouteMismatchScreen(
         }
     }
 }
+
+@Composable
+private fun MismatchChecks(mismatch: RouteCheckState.Mismatch) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = OrtIcons.check,
+            contentDescription = "done",
+            tint = OrtColors.accentOnGreen,
+            modifier = Modifier.size(20.dp).background(OrtColors.accentGreen, CircleShape).padding(4.dp),
+        )
+        Text(
+            text = "Opened at native rate",
+            style = OrtType.control,
+            color = OrtColors.textHigh,
+            modifier = Modifier.padding(start = 13.dp),
+        )
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = OrtIcons.dismiss,
+            contentDescription = "does not match",
+            tint = OrtColors.haltOnFill,
+            modifier = Modifier.size(20.dp).background(OrtColors.haltFill, CircleShape).padding(4.dp),
+        )
+        Column(modifier = Modifier.padding(start = 13.dp)) {
+            Text(text = "Routed device does not match", style = OrtType.control, color = OrtColors.textHigh)
+            Text(
+                text = "chosen ${describeDevice(mismatch.selected)} · " +
+                    "routed ${mismatch.routed?.let(::describeDevice) ?: "nothing"}",
+                style = OrtType.timeFreq,
+                color = OrtColors.textDim,
+            )
+        }
+    }
+}
+
+/**
+ * R-122 (validator finding, register R-120..R-125): on a device where every route's raw label is
+ * identical (the validator's own emulator — every entry reads `sdk_gphone64_x86_64`), "chosen X ·
+ * routed X" gave the operator no way to tell the two apart. [DeviceTypeNaming.forKind] is the same
+ * real-type resolution S04 uses (a device the operator picked always has a real
+ * [org.ort.capture.android.AudioDeviceKind] from `:capture-android`'s own enumeration, so this
+ * never needs the `AudioManager`-backed lookup S04 falls back to for finer-grained types).
+ */
+private fun describeDevice(descriptor: AudioDeviceDescriptor): String =
+    "${descriptor.label} (${DeviceTypeNaming.forKind(descriptor.kind).label})"

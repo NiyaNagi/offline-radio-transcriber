@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.InProgressRing
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
+import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 
@@ -27,12 +28,32 @@ import org.ort.app.ui.theme.OrtType
  * enables only on [RouteCheckState.Passed]; a [RouteCheckState.Mismatch] hands off to
  * [RouteMismatchScreen] instead (this screen never renders the halt itself — [SetupActivity]
  * switches screens on that state).
+ *
+ * Validator finding (register R-120..R-125, halt): [RouteCheckState.TimedOut] used to fall through
+ * to no branch at all — every check icon reverted to unfilled (the `else -> emptySet()` below), the
+ * screen offered no honest explanation, `Continue` stayed disabled forever, and [onBack] was
+ * unconditionally `null`, trapping the operator with no way out at all. Now: the two stages that
+ * genuinely completed before the 30 s listening window ran out
+ * ([RealRouteCheck]'s own flow — `NATIVE_RATE`/`ROUTE_MATCH` always precede the signal wait) stay
+ * ticked, the signal check shows an honest failed mark and "No signal heard in 30 s on
+ * `<device>`", `Continue` is replaced by `Try again`/`Choose another input` (the same recovery
+ * [RouteMismatchScreen] already offers for a route mismatch — this is the same kind of stuck state,
+ * just discovered differently), and [onBack] is now always supplied — a genuinely halted
+ * verification is exactly the situation where "the back chevron must always exist" matters most.
  */
 @Composable
-public fun VerifyScreen(state: VerifyViewState, onContinue: () -> Unit) {
+public fun VerifyScreen(
+    state: VerifyViewState,
+    onContinue: () -> Unit,
+    onBack: () -> Unit,
+    onTryAgain: () -> Unit,
+    onChooseAnotherInput: () -> Unit,
+) {
+    val timedOut = state.check is RouteCheckState.TimedOut
     val passed = when (val check = state.check) {
         is RouteCheckState.InProgress -> check.passed
         is RouteCheckState.Passed -> RouteCheckStage.entries.toSet()
+        RouteCheckState.TimedOut -> setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH)
         else -> emptySet()
     }
     val allPassed = state.check is RouteCheckState.Passed
@@ -41,14 +62,29 @@ public fun VerifyScreen(state: VerifyViewState, onContinue: () -> Unit) {
         step = SetupStep.VERIFY,
         title = "Verifying the route",
         subtitle = state.inputLabel,
-        onBack = null,
+        onBack = onBack,
         bottomActions = {
-            PrimaryButton(
-                text = "Continue",
-                onClick = onContinue,
-                enabled = allPassed,
-                modifier = Modifier.fillMaxWidth().testTag("setup-verify-continue"),
-            )
+            if (timedOut) {
+                PrimaryButton(
+                    text = "Try again",
+                    onClick = onTryAgain,
+                    modifier = Modifier.fillMaxWidth().testTag("setup-verify-try-again"),
+                )
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TextAction(
+                        text = "Choose another input",
+                        onClick = onChooseAnotherInput,
+                        modifier = Modifier.testTag("setup-verify-choose-another"),
+                    )
+                }
+            } else {
+                PrimaryButton(
+                    text = "Continue",
+                    onClick = onContinue,
+                    enabled = allPassed,
+                    modifier = Modifier.fillMaxWidth().testTag("setup-verify-continue"),
+                )
+            }
         },
     ) {
         val nativeRateHz = when (val check = state.check) {
@@ -70,8 +106,13 @@ public fun VerifyScreen(state: VerifyViewState, onContinue: () -> Unit) {
         )
         CheckRow(
             title = "Listening for signal",
-            detail = "Key the radio, or wait for traffic — up to 30 s",
+            detail = if (timedOut) {
+                "No signal heard in 30 s on ${state.inputLabel}"
+            } else {
+                "Key the radio, or wait for traffic — up to 30 s"
+            },
             done = RouteCheckStage.SIGNAL in passed,
+            failed = timedOut,
             inProgress = state.check is RouteCheckState.InProgress && RouteCheckStage.SIGNAL !in passed,
             testTag = "setup-verify-check-signal",
         )
@@ -92,6 +133,7 @@ private fun CheckRow(
     testTag: String,
     modifier: Modifier = Modifier,
     inProgress: Boolean = false,
+    failed: Boolean = false,
 ) {
     Row(
         modifier = modifier
@@ -102,6 +144,15 @@ private fun CheckRow(
     ) {
         Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
             when {
+                failed -> Icon(
+                    imageVector = OrtIcons.dismiss,
+                    contentDescription = "did not complete",
+                    tint = OrtColors.haltOnFill,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .background(OrtColors.haltFill, CircleShape)
+                        .padding(4.dp),
+                )
                 done -> Icon(
                     imageVector = OrtIcons.check,
                     contentDescription = "done",
@@ -119,7 +170,7 @@ private fun CheckRow(
             Text(
                 text = title,
                 style = OrtType.control,
-                color = if (done || inProgress) OrtColors.textHigh else OrtColors.textLow,
+                color = if (done || inProgress || failed) OrtColors.textHigh else OrtColors.textLow,
             )
             detail?.let { Text(text = it, style = OrtType.timeFreq, color = OrtColors.textDim) }
         }

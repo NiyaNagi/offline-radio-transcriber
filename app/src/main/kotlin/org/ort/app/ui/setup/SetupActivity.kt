@@ -79,6 +79,12 @@ public class SetupActivity : ComponentActivity() {
 
     private var rigStatusSnapshot by mutableStateOf(RigStatus.state)
 
+    /** Set just before [RenderRadioVerified] routes an unexpected [RigStatus.State.Absent] back to
+     * S09 — see that function's doc comment. Cleared the moment the operator acts on S09 again
+     * ([onChooseRadio]/[onRadioNotNow]/[onChangeRadio]), never left stale on a later, unrelated
+     * visit to S09. */
+    private var radioAbsentBanner by mutableStateOf<String?>(null)
+
     /** Test-only window into [step] — see `MainActivity.currentScreenForTest`'s identical pattern. */
     internal val currentStepForTest: SetupStep? get() = step
 
@@ -288,6 +294,7 @@ public class SetupActivity : ComponentActivity() {
 
     internal fun onChooseRadio(choice: RadioChoice) {
         store.radioChoice = choice
+        radioAbsentBanner = null
         when (choice) {
             RadioChoice.NONE -> refreshStep(pushCurrent = true)
             RadioChoice.TH_D75A, RadioChoice.OTHER_CAT_RIG -> {
@@ -304,6 +311,7 @@ public class SetupActivity : ComponentActivity() {
 
     internal fun onRadioNotNow() {
         store.radioChoice = RadioChoice.NONE
+        radioAbsentBanner = null
         refreshStep(pushCurrent = true)
     }
 
@@ -323,7 +331,18 @@ public class SetupActivity : ComponentActivity() {
 
     internal fun onChangeRadio() {
         store.radioChoice = null
+        radioAbsentBanner = null
         step = SetupStep.RADIO
+    }
+
+    /** S11's `Reconnect` on a [RigStatus.State.Stale] reading (register R-120..R-125) — re-reads
+     * [RigStatus.state] rather than any real reconnect handshake, since `:rig`/`:rig-usb` are
+     * unbuilt (there is nothing to actually command); this is honest re-polling, not a fabricated
+     * action. Reaches [RigStatus.State.Connected] once the debug scenario (the only real producer
+     * today) or, eventually, a real rig module reports current data again. */
+    internal fun onReconnectRadio() {
+        rigStatusSnapshot = RigStatus.state
+        step = SetupStep.RADIO_VERIFIED
     }
 
     // --- S12 Ready ------------------------------------------------------------------------------
@@ -399,7 +418,11 @@ public class SetupActivity : ComponentActivity() {
             SetupStep.ROUTE_MISMATCH -> RenderRouteMismatch()
             SetupStep.LEVEL -> RenderLevel()
             SetupStep.OVERNIGHT -> OvernightScreen(onOpenSetting = ::onOpenBatterySetting, onSkip = ::onSkipOvernight)
-            SetupStep.RADIO -> RadioScreen(onChoose = ::onChooseRadio, onNotNow = ::onRadioNotNow)
+            SetupStep.RADIO -> RadioScreen(
+                onChoose = ::onChooseRadio,
+                onNotNow = ::onRadioNotNow,
+                banner = radioAbsentBanner,
+            )
             SetupStep.RADIO_USB -> RadioUsbScreen(
                 rigStatus = rigStatusSnapshot,
                 onBack = ::onBack,
@@ -433,6 +456,9 @@ public class SetupActivity : ComponentActivity() {
         VerifyScreen(
             state = VerifyViewState(inputLabel = selectedInputLabel ?: "", check = verifyState),
             onContinue = ::onVerifyContinue,
+            onBack = ::onBack,
+            onTryAgain = ::onTryVerifyAgain,
+            onChooseAnotherInput = ::onChooseAnotherInput,
         )
     }
 
@@ -479,13 +505,34 @@ public class SetupActivity : ComponentActivity() {
         LevelScreen(state = levelState, onContinue = ::onLevelContinue)
     }
 
+    /**
+     * Validator finding (register R-120..R-125, halt): this used to cast straight to
+     * [RigStatus.State.Connected] and `return` (rendering nothing) for anything else — a
+     * [RigStatus.State.Stale] reading (the real `rig-lost` scenario, reached through
+     * [onChooseRadio]) hit exactly that `return` and left the operator on a blank black screen.
+     * [RadioVerifiedScreen] itself now renders `Connected`/`Stale` both honestly; the one case
+     * still handled here, before ever calling it, is [RigStatus.State.Absent] — reachable only if
+     * the rig status changes *between* [onChooseRadio]'s snapshot and this composition (e.g. an
+     * `onResume` re-check while already on S11), since [onChooseRadio] itself already routes an
+     * `Absent` reading to S10, never S11. "Routes back to S09 with a banner, never a blank
+     * screen" (the finding's own words) is exactly what this `LaunchedEffect` does.
+     */
     @Composable
     private fun RenderRadioVerified() {
-        val connected = rigStatusSnapshot as? RigStatus.State.Connected ?: return
+        val status = rigStatusSnapshot
+        if (status is RigStatus.State.Absent) {
+            LaunchedEffect(Unit) {
+                radioAbsentBanner = "The rig connection was lost before setup could verify it. " +
+                    "Choose a radio again, or enter the frequency by hand."
+                step = SetupStep.RADIO
+            }
+            return
+        }
         RadioVerifiedScreen(
-            connected = connected,
+            state = status,
             onContinue = ::onRadioVerifiedContinue,
             onChangeRadio = ::onChangeRadio,
+            onReconnect = ::onReconnectRadio,
         )
     }
 

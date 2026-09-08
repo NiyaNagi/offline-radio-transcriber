@@ -33,7 +33,9 @@ class RadioVerifiedScreenTest {
     @Test
     fun `R_084 shows the connected title, both bands and the verified command list`() {
         composeTestRule.setContent {
-            OrtTheme { RadioVerifiedScreen(connected = connected, onContinue = {}, onChangeRadio = {}) }
+            OrtTheme {
+                RadioVerifiedScreen(state = connected, onContinue = {}, onChangeRadio = {}, onReconnect = {})
+            }
         }
 
         composeTestRule.onNodeWithText("Kenwood TH-D75A connected").assertIsDisplayed()
@@ -51,15 +53,55 @@ class RadioVerifiedScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 RadioVerifiedScreen(
-                    connected = connected,
+                    state = connected,
                     onContinue = { continued = true },
                     onChangeRadio = { changed = true },
+                    onReconnect = {},
                 )
             }
         }
 
         composeTestRule.onNodeWithTag("setup-radio-verified-continue").performClick()
         assert(continued)
+        composeTestRule.onNodeWithTag("setup-radio-verified-change").performClick()
+        assert(changed)
+    }
+
+    // --- R-125 (validator finding, halt): Stale must render, never a blank screen --------------
+
+    private val stale = RigStatus.State.Stale(lastKnown = connected, sinceMillis = 0L)
+
+    @Test
+    fun `R_125 a Stale rig renders the last-known reading, never a blank screen`() {
+        composeTestRule.setContent {
+            OrtTheme { RadioVerifiedScreen(state = stale, onContinue = {}, onChangeRadio = {}, onReconnect = {}) }
+        }
+
+        composeTestRule.onNodeWithText("Kenwood TH-D75A — last known").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-radio-verified-band-A").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-radio-verified-reconnect").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-radio-verified-change").assertIsDisplayed()
+        // No Continue on a stale reading -- Reconnect/Change radio are the only ways forward.
+        composeTestRule.onNodeWithTag("setup-radio-verified-continue").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_125 Reconnect and Change radio on a Stale rig both invoke their own callback`() {
+        var reconnected = false
+        var changed = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(
+                    state = stale,
+                    onContinue = {},
+                    onChangeRadio = { changed = true },
+                    onReconnect = { reconnected = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-radio-verified-reconnect").performClick()
+        assert(reconnected)
         composeTestRule.onNodeWithTag("setup-radio-verified-change").performClick()
         assert(changed)
     }

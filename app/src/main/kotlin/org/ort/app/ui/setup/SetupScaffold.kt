@@ -10,25 +10,32 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
-import org.ort.app.ui.components.StepIndicator
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -36,12 +43,28 @@ import org.ort.app.ui.theme.OrtType
 /**
  * R-080 (ui-conformance-plan WP9): the shell every step of the guided sequence shares except
  * [WelcomeScreen] (`Setup-Welcome.dc.html`'s header is the app wordmark, not this step chrome) —
- * the 44dp status-bar inset, a 44dp back target (guide §5), WP2's [StepIndicator] (guide §6.10),
- * the title/subtitle pair, the screen's own scrollable content, and a [bottomActions] slot each
- * screen fills with whatever `Controls.dc.html` combination its own board shows (a single
- * `Verify this input`, `Continue` + a secondary text action, a halting primary + a retry, or S09's
- * bare "Not now" with no filled button at all) — the variety across boards is real, not
- * accidental, so this scaffold does not force one shape on it.
+ * the 44dp status-bar inset, a 44dp back target (guide §5), guide §6.10's step indicator, the
+ * title/subtitle pair, the screen's own scrollable content, and a [bottomActions] slot each screen
+ * fills with whatever `Controls.dc.html` combination its own board shows (a single `Verify this
+ * input`, `Continue` + a secondary text action, a halting primary + a retry, or S09's bare "Not
+ * now" with no filled button at all) — the variety across boards is real, not accidental, so this
+ * scaffold does not force one shape on it.
+ *
+ * Two validator findings (register R-120..R-125) fixed here, both shared by every screen this
+ * scaffold serves:
+ * - **R-120**: the counter used to render twice — this header row's own "n of N" (kept; the board
+ *   places it here) *and* WP2's [org.ort.app.ui.components.StepIndicator], which draws an
+ *   identical "n of N" of its own directly above its segment bars (`Controls.kt` — not this row's
+ *   file to edit, confirmed by reading it before writing this: it has no way to suppress that
+ *   label). [SegmentBars] below draws only the coloured segments themselves — the board's own
+ *   "unlabeled" segment row — without pulling in a second shared component's built-in counter;
+ *   the semantics [contentDescription] `StepIndicator` carried for TalkBack is preserved here too.
+ * - **R-123**: at a larger font scale the fixed [bottomActions] bar grows taller, and the
+ *   scrollable content above it (already `weight(1f)` + `verticalScroll`, so a Column sibling, not
+ *   an overlay) needs a bottom [Spacer] exactly [actionsBarHeight] tall so the last item, once
+ *   scrolled to, clears the bar rather than sitting flush against it — [actionsBarHeight] is
+ *   measured for real via [onGloballyPositioned], never a guessed constant that would drift from
+ *   the bar's actual height at any given font scale.
  */
 @Composable
 public fun SetupScaffold(
@@ -54,6 +77,9 @@ public fun SetupScaffold(
     bottomActions: @Composable ColumnScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    var actionsBarHeightPx by remember { mutableIntStateOf(0) }
+    val actionsBarHeight = with(LocalDensity.current) { actionsBarHeightPx.toDp() }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -61,40 +87,9 @@ public fun SetupScaffold(
             .windowInsetsPadding(WindowInsets.statusBars)
             .testTag("setup-screen-${step.name}"),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (onBack != null) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clickable(onClickLabel = "Back", role = Role.Button, onClick = onBack)
-                        .testTag("setup-back"),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = OrtIcons.back,
-                        contentDescription = "Back",
-                        tint = OrtColors.textIcon,
-                        modifier = Modifier.size(21.dp),
-                    )
-                }
-            }
-            Row(modifier = Modifier.weight(1f)) {}
-            val index = step.indicatorIndex()
-            if (index != null) {
-                Text(
-                    text = "$index of $SETUP_TOTAL_STEPS",
-                    style = OrtType.signal,
-                    color = OrtColors.textDim,
-                )
-            }
-        }
+        ScaffoldHeaderRow(step = step, onBack = onBack)
         step.indicatorIndex()?.let { index ->
-            StepIndicator(
+            SegmentBars(
                 steps = SETUP_TOTAL_STEPS,
                 currentStep = index,
                 haltedStep = if (step.isHalted()) index else null,
@@ -121,12 +116,78 @@ public fun SetupScaffold(
             verticalArrangement = Arrangement.spacedBy(OrtSpacing.md),
         ) {
             content()
+            Box(modifier = Modifier.height(actionsBarHeight))
         }
         Column(
-            modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+            modifier = Modifier
+                .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
+                .onGloballyPositioned { actionsBarHeightPx = it.size.height },
             verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
         ) {
             bottomActions()
+        }
+    }
+}
+
+/** The back target + "n of N" counter row — see [SetupScaffold]'s own doc comment for the R-120
+ * fix this counter is half of. Split out purely to keep [SetupScaffold] itself under detekt's
+ * `LongMethod` threshold; it has no state or behaviour of its own worth documenting separately. */
+@Composable
+private fun ScaffoldHeaderRow(step: SetupStep, onBack: (() -> Unit)?) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (onBack != null) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clickable(onClickLabel = "Back", role = Role.Button, onClick = onBack)
+                    .testTag("setup-back"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = OrtIcons.back,
+                    contentDescription = "Back",
+                    tint = OrtColors.textIcon,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+        }
+        Row(modifier = Modifier.weight(1f)) {}
+        val index = step.indicatorIndex()
+        if (index != null) {
+            Text(text = "$index of $SETUP_TOTAL_STEPS", style = OrtType.signal, color = OrtColors.textDim)
+        }
+    }
+}
+
+/** guide §6.10's segment row alone — equal segments, `accent/green` for done/current, `line/default`
+ * for the rest, a `halt/text` segment where [haltedStep] names one — with no counter text of its
+ * own (see [SetupScaffold]'s own doc comment for why: this scaffold's header row already carries
+ * it). The `contentDescription` WP2's labelled `StepIndicator` carries for TalkBack is preserved
+ * here so accessibility does not regress just because the visible label moved. */
+@Composable
+private fun SegmentBars(steps: Int, currentStep: Int, modifier: Modifier = Modifier, haltedStep: Int? = null) {
+    Row(
+        modifier = modifier.semantics(mergeDescendants = true) {
+            contentDescription = if (haltedStep != null) {
+                "Step $currentStep of $steps, halted at step $haltedStep"
+            } else {
+                "Step $currentStep of $steps"
+            }
+        },
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        for (segment in 1..steps) {
+            val color = when {
+                segment == haltedStep -> OrtColors.haltText
+                segment <= currentStep -> OrtColors.accentGreen
+                else -> OrtColors.lineDefault
+            }
+            Box(modifier = Modifier.weight(1f).height(3.dp).background(color, RoundedCornerShape(2.dp)))
         }
     }
 }
