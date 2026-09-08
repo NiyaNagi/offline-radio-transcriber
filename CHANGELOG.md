@@ -32,6 +32,56 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-07 (audit — F-025)
+
+### (pending) — audit F-025 · record that the Pass B backlog only drains while `RealCaptureService` is alive
+
+**Scope:** `spec/build-plan.md` (P12 progress note only), `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt` (KDoc only, no behaviour change), `CHANGELOG.md`.
+
+**Requirements/ACs:** FR-RUN-2 (the durable on-disk work queue — confirmed still holding; this
+entry documents a limitation, not a defect in it). No new id established.
+
+**What changed:** `results/audit-2026-09-07.md`'s F-025 records that `CaptureProcessingLoop`
+(built by `RealCaptureService.startProcessingLoop`) runs as a coroutine in the service's own
+`CoroutineScope`, cancelled by the same `scope.cancel()` that `onDestroy()` already calls for
+everything else — there is no `WorkManager` job, `PeriodicWorkRequest`, or any other scheduler
+that resumes draining the backlog once the service stops. Confirmed by grep, run before this
+change's own KDoc edit landed: no reference to `WorkManager` or `PeriodicWorkRequest` anywhere
+under `app/`, `pipeline/`, or `data/`'s `src/main` trees (`Grep` for
+`WorkManager|PeriodicWorkRequest` over those three modules' `src/main/**` returned no files) —
+i.e. no such dependency exists in code, only the two mentions this very entry's KDoc paragraph
+now adds to `RealCaptureService.startProcessingLoop`'s doc comment, in prose, to name the
+scheduler that is absent. FR-RUN-2 holds regardless — the queue is durable and a backlog
+left behind at stop is not lost, it is picked up again the next time capture starts — but the
+wait for "the next time capture starts" was previously undocumented anywhere a reader would find
+it. The register's fix sketch offered "record or build"; **record** is the decision here, because
+building a post-capture drain (a `WorkManager` job, or equivalent, that continues draining
+`WorkQueue` after `RealCaptureService.onDestroy()`) is M8 streaming/M10 reprocessing scope per
+`spec/build-plan.md`'s own milestone breakdown (M8 is explicitly listed as owning "the
+drain-outside-service gap (F-025)"), and the constitution's capture-never-blocks-on-processing
+principle (IV) is about capture not depending on processing, not about processing depending on
+capture being alive — but scheduling processing work is still a real design decision (queue
+scheduling policy, wake-lock/battery cost of running unattended on the ColorOS reference device,
+interaction with the shed/backpressure system) that does not belong improvised into a
+documentation-only audit fix. This change is therefore two things, done exactly as scoped: (1) a
+one-line "Left open" addition to `spec/build-plan.md`'s newest P12 progress note stating the
+limitation and that M8/M10 own the fix; (2) a KDoc paragraph on
+`RealCaptureService.startProcessingLoop` stating the same, citing FR-RUN-2 and F-025.
+
+**Verified:** Documentation/KDoc only — no behaviour changed, so no test was written and none is
+claimed; adding a fake test to satisfy TDD for a comment-only change would test nothing and was
+deliberately not done (constitution II: "a test that passes before its implementation exists is
+testing nothing" applies in spirit to a test with no implementation to fail against at all).
+Verified instead by: `Grep` for `WorkManager|PeriodicWorkRequest` over `app/pipeline/data`'s
+`src/main/**` (no matches, confirming the finding's premise) and `./gradlew :pipeline:compileDebugKotlin --console=plain -q` green after the KDoc edit (Robolectric/JVM
+tooling only; no device involved, nothing to verify on one for a comment change).
+
+**Left open / not done:** Building the actual post-capture drain is explicitly not done here —
+it is M8/M10 scope, and the fix sketch's alternative (build it now, e.g. via `WorkManager`) was
+rejected for the reasons above: it is a scheduling and battery-behaviour design decision on the
+ColorOS reference device (constitution IV's liveness-by-heartbeat concern), not a documentation
+fix, and belongs to the milestone that already claims it.
+
 ## 2026-09-07 (audit — F-008)
 
 ### (pending) — audit F-008 (`:app` half) · a "Models" screen is the declared, user-initiated channel through which an ASR/VAD model reaches the device

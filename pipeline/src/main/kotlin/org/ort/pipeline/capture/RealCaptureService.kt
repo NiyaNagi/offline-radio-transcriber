@@ -310,6 +310,17 @@ public class RealCaptureService : Service() {
      * session's scope (see CHANGELOG). When no model is installed, [AsrAvailability] is set to
      * [AsrAvailability.State.Unavailable] and the queue still drains against [UnavailableAsrEngine]
      * so a rejection/failure reason is recorded honestly rather than nothing happening at all.
+     *
+     * **Audit F-025 (2026-09-07, recorded not fixed):** this loop only exists as long as
+     * [RealCaptureService] does -- it is a coroutine in the service-scoped `scope`, cancelled by
+     * `scope.cancel()` in [onDestroy] alongside everything else. There is no `WorkManager` job or
+     * any other scheduler that resumes draining after the service stops. FR-RUN-2 still holds --
+     * the backlog sits in the durable [WorkQueue] and nothing is lost, process death included --
+     * but a backlog left behind when capture stops waits for the *next* capture session to start
+     * before it drains further, and that wait is currently invisible to the user. Building a
+     * post-capture drain (WorkManager or equivalent) is out of scope here: it is M8 streaming/M10
+     * reprocessing work, not something to bolt on ad hoc from the capture-wiring prompt that owns
+     * this file. See CHANGELOG.md's F-025 entry.
      */
     private suspend fun startProcessingLoop(db: OrtDatabase, queue: WorkQueue) {
         val availability = dependencies.asrEngine(filesDir)

@@ -151,6 +151,13 @@ are individually green.*
   `Interrupted`/`Resumed` pair yields a real `capture_gap` row (AC-48, F-028) — all through the
   service's own composition, not a hand-wired harness. Still Robolectric/JVM only; no device has
   run this. See CHANGELOG.md.
+  **Left open (audit F-025, 2026-09-07, recorded not fixed):** the Pass B backlog drains only
+  while `RealCaptureService` is alive — `startProcessingLoop`'s coroutine runs in the same
+  service-scoped `scope` that `onDestroy()` cancels, and there is no `WorkManager` job or other
+  scheduler that resumes draining after the service stops. FR-RUN-2 still holds (the queue is
+  durable, nothing is lost) but a backlog left behind at stop waits for the next capture session.
+  Building a post-capture drain is M8 streaming/M10 reprocessing scope, not P12's — see
+  CHANGELOG.md.
 - [x] **P13 · Compose foundation: theme, navigation, the design canvas made real** *(`:app`)* —
   done 2026-09-08.
   `design/canvas/` has seven designed screens and the app has none; `ort.android-app` has no
