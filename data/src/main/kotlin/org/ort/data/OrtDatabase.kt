@@ -45,6 +45,7 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintEntity
 import org.ort.data.entity.WorkQueueItemEntity
+import java.util.concurrent.Executors
 
 /**
  * The schema (functional spec §8; technical design §12.1). Schema version 5 — v1 was the first
@@ -361,6 +362,50 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * Coordinator escalation, 2026-09-08 (blocks every merge): since the FTS5/driver merge
+         * (register R-204), every Compose screen that collects a Room `Flow` took minutes instead
+         * of seconds to go idle under `RobolectricIdlingStrategy.runUntilIdle` — fine alone, only
+         * under many concurrent Gradle workers/test classes sharing one JVM.
+         *
+         * Root cause, confirmed by disassembling the shipped `room-runtime` 2.7.2 classes (there is
+         * no public API to inspect this): [RoomDatabase.Builder.build] — when neither
+         * `setQueryExecutor` nor `setTransactionExecutor` nor `setQueryCoroutineContext` is called,
+         * which was true here both before and after the driver switch — falls back to
+         * `androidx.arch.core.executor.ArchTaskExecutor.getIOThreadExecutor()`, itself
+         * `Executors.newFixedThreadPool(4, ...)`: a **static, JVM-process-wide singleton**, shared
+         * with every other AndroidX Architecture Components consumer in the same test JVM (LiveData,
+         * WorkManager-compat, Paging), not per-`OrtDatabase`-instance. `RoomDatabase.getCoroutineScope()`
+         * — the dispatcher `androidx.room.util.DBUtil.getCoroutineContext` hands to *every* suspend
+         * query outside an explicit transaction, including [TriggerBasedInvalidationTracker]'s
+         * `Flow` collector every `Flow`-returning DAO query subscribes to — is built directly on
+         * that same 4-thread pool (`ExecutorsKt.from(internalQueryExecutor) + SupervisorJob()`).
+         *
+         * That pool was already the (undocumented) default before R-204. What changed at the driver
+         * switch is [applyHandWrittenSchema] now running through [useWriterConnection] on *every*
+         * [create] call (the `RoomDatabase.Callback` path it replaces never touched an executor at
+         * all — see that function's doc comment) — so opening a database now itself round-trips
+         * through this same shared 4-thread pool, on every test, on top of the [configureBusyTimeout]
+         * 10s ceiling (register R-204 follow-up) a stuck writer can now hold a pool thread for. Under
+         * one JVM running many test classes (each constructing its own `OrtDatabase`) at once, that
+         * pool saturates; a Compose screen's `Flow` collector queued behind it can't produce its next
+         * value, so `runUntilIdle` spins — at 100% CPU, since it is polling for idleness, not blocked
+         * — until the queue finally drains. A single class run alone never saturates 4 threads.
+         *
+         * Fix: give every `OrtDatabase` its own dedicated, cached (not fixed) pool via
+         * `setQueryExecutor` (Room reuses it for `transactionExecutor` too when only this is set —
+         * `RoomDatabase.Builder.build`'s own fallback, confirmed the same way) so opening a database,
+         * running a query, and collecting an invalidation `Flow` never again contend with whatever
+         * else in the process happens to be using [androidx.arch.core.executor.ArchTaskExecutor]'s
+         * pool — the actual isolation failure, not the pool being "too small" in absolute terms. One
+         * `Executors.newCachedThreadPool()`, held for the process's lifetime (never shut down; Room
+         * itself has no `OrtDatabase`-scoped shutdown hook, and a per-instance pool would leak threads
+         * across the many short-lived `OrtDatabase.create(..., inMemory = true)` instances tests
+         * already create) — idle threads in a cached pool time out after 60s on their own, so this
+         * never grows unbounded the way a per-instance never-`shutdown()` pool would.
+         */
+        private val queryExecutor: java.util.concurrent.ExecutorService by lazy { Executors.newCachedThreadPool() }
+
+        /**
          * WAL + the hand-written schema (technical design §12.1) + [BundledSQLiteDriver]
          * (register R-204, FR-UI-3) — the production and test factory, and the **only** place a
          * connection is opened, so every caller — the shipped app and every Robolectric/JVM test —
@@ -376,6 +421,9 @@ public abstract class OrtDatabase : RoomDatabase() {
          * thread until the writer connection's setup completes is the same shape opening a database
          * has always had (the classic `SupportSQLiteOpenHelper` path is synchronous too); it keeps
          * `create()` non-suspend, which every existing caller across the app depends on.
+         *
+         * `.setQueryExecutor(queryExecutor)` — see [queryExecutor]'s own doc comment for why every
+         * `OrtDatabase` instance needs a pool dedicated to this module, not Room's shared default.
          */
         @Suppress("SpreadOperator") // MIGRATIONS is tiny; addMigrations(vararg) has no non-spread overload.
         public fun create(context: Context, name: String = DATABASE_NAME, inMemory: Boolean = false): OrtDatabase {
@@ -387,6 +435,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             if (!inMemory) builder.setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
             val db = builder
                 .setDriver(BundledSQLiteDriver())
+                .setQueryExecutor(queryExecutor)
                 .addMigrations(*MIGRATIONS)
                 .build()
             runBlocking {
