@@ -125,6 +125,11 @@ private fun LogListItemRow(
             // it — a rejected row merely interleaved into the normal chronological list (the
             // sheet's "Also show" toggle) stays the compact one-line row it always was.
             why = if (showWhy) item.why else null,
+            // R-242 (wired now that main carries `RejectedRow(durationLabel)`, WP2): the DUR
+            // column only exists on the dedicated Rejected view's header (`ColumnHeaderRow`'s own
+            // `signalLabel = "dur"` branch below) — the interleaved row stays exactly as compact
+            // as it always was, same gating as `why` above.
+            durationLabel = if (showWhy) item.durationLabel else null,
         )
     }
 }

@@ -62,11 +62,10 @@ public sealed interface LogListItem {
         val why: String? = null,
         /**
          * R-242 (V3 pass 2 @de56368): the segment's own duration, through the shared
-         * [ReaderTransmissionViewStateMapper.durationLabel]. **Not yet rendered** —
-         * `ui/components/Rows.kt`'s `RejectedRow` (WP2's package) has no duration slot at all
-         * (`Log-Rejected.dc.html`'s DUR column has never had a value to show), so this is carried
-         * on the model, ready for a WP2 change to consume, rather than dropped. See this package's
-         * CHANGELOG entry for this date.
+         * [ReaderTransmissionViewStateMapper.durationLabel]. Wired into `RejectedRow`'s own
+         * `durationLabel` param (`ui/components/Rows.kt`, `LogScreen.kt`) now that main carries
+         * WP2's DUR-column change — shown only in the dedicated Rejected view, the same gating
+         * [why] already uses (the interleaved list stays the compact row it always was).
          */
         val durationLabel: String? = null,
     ) : LogListItem {

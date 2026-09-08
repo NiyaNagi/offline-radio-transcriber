@@ -354,6 +354,52 @@ class LogScreenTest {
     }
 
     @Test
+    fun `R_242 the DUR column shows in the dedicated Rejected view`() {
+        val item = LogListItem.RejectedItem(
+            "TX1",
+            "02:16:40",
+            "146.960",
+            "no speech detected",
+            durationLabel = "0.4 s",
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(item), rejectedFocus = true),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.4 s").assertExists()
+    }
+
+    @Test
+    fun `R_242 the DUR column stays hidden in the interleaved list`() {
+        val item = LogListItem.RejectedItem(
+            "TX1",
+            "02:16:40",
+            "146.960",
+            "no speech detected",
+            durationLabel = "0.4 s",
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(item), rejectedFocus = false),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0.4 s").assertDoesNotExist()
+    }
+
+    @Test
     fun `R_041 a hearing partial has no state marker and shows the streaming text`() {
         composeTestRule.setContent {
             OrtTheme {
