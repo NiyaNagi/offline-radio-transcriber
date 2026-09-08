@@ -32,6 +32,142 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11d)
+
+### (pending) — ui-conformance WP11d · reprocessing engine: re-run passes at the current tier, pausable, capture-safe
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/{ReprocessRunner,ReprocessStatus}.kt`
+and their tests; new `app/src/main/kotlin/org/ort/app/ui/improve/RealImproveRunner.kt` (the one
+file this package's brief granted outside `:pipeline`) and its test. No `:data` change, no
+`RealCaptureService` refactor — see What changed for why neither was needed. No file under
+`OrtApplication`/DI touched (`ImproveContent.kt` constructs its runner directly, not through DI —
+see Left open). `results/coverage-matrix.md` regenerated (gate side-effect). Addresses register
+R-091/R-143.
+
+**Requirements/ACs:** register R-091, R-143; FR-REP-1, FR-REP-5, FR-REP-6, FR-REP-8, FR-REP-9,
+FR-REP-11; FR-RUN-8; P12.
+
+**Constitution check.** Principle III (audio is the source of truth) bears directly: `ReprocessRunner`
+re-runs Pass B as a pure function of `(audio, lexicon snapshot, model set, config)` through the
+exact same `PassBFactory`/`WorkQueue` machinery live capture uses — never a second, parallel
+implementation that could drift from it — and every supersede goes through `TranscriptDao.supersede`/
+`DataPassBResultSink`, so nothing is ever deleted (old transcript/lattice/candidate rows stay
+reachable). Principle I (uncertainty is content) bears on `ReprocessStatus.Summary` counting only
+*measured* before/after differences, never a fabricated "N improved," and on `SUPPORTED_PASSES`
+throwing for Pass C rather than silently no-opping a pass that has no runner. Principle IV (capture
+never blocks) bears on the capture-priority yield: `ReprocessRunner` checks `CaptureState.isCapturing`
+and the shed level before every item, publishing `ReprocessStatus.Paused` and polling rather than
+contending with live capture for the one inference slot. Principle VII (structural boundaries):
+no new module edge — `ReprocessRunner` composes only classes `:pipeline` already owned
+(`RealAsrEngineProvider`, `PassBFactory`, `WorkQueue`, `PassDrainRunner`); `dependencyRules`/
+`platformGuards` both passed unchanged.
+
+**What changed:**
+
+- **R-091 — `ReprocessRunner`** (new): `run(transmissionIds, passes = setOf(PassId.B_OFFLINE)):
+  Flow<ReprocessProgress>` (`ReprocessProgress(done, total, currentId)`), matching
+  `org.ort.app.ui.improve.ImproveRunner`'s own contract exactly (`done == total` on the last
+  emission; a collector that stops collecting stops the run, via the same cold-`Flow` backpressure
+  `FakeImproveRunner` already relies on). For each id: skips nothing outright (a `corrected`
+  transmission is still reprocessed for a possibly-better transcript — see the attribution note
+  below), enqueues the requested pass(es) at `REPROCESS_QUEUE_PRIORITY` (below live capture's own
+  default `0`, "live traffic > reprocessing" per technical design §7.1), and drains via the real
+  `WorkQueue`/`PassDrainRunner`/`PassBFactory` at the **current tier** (`PassBFactory.create`'s own
+  pre-existing, previously-unused `tier` parameter — the live path always passes `Tier.T0`;
+  reprocessing is the first caller to pass a different one). Before/after snapshots of each
+  transmission's current transcript text and attribution (state, station) determine
+  `ReprocessStatus.Summary.transcriptsChanged`/`attributionsChanged` — measured, never assumed.
+- **No `RealCaptureService` refactor was needed, and no `:data` change either.** Every collaborator
+  a real Pass B run requires — `RealAsrEngineProvider`, `PassBFactory` (its `tier` parameter
+  already existed, just unused), `WorkQueue`, `PassDrainRunner` — was already an independently
+  constructible class outside `RealCaptureService`; that service merely composes them the same way
+  `realPassBFor` does here. `org.ort.core.TransmissionLifecycle`'s legal-transition table already
+  reserves `COMPLETE`/`REJECTED` → `PROCESSING` for exactly "reprocess requested / a higher tier is
+  available", and `TransmissionDao.updateAttribution`'s existing `AND corrected = 0` guard
+  (build-plan P16, FR-SPK-7) already structurally protects a user's correction — this class relies
+  on both rather than re-implementing either.
+- **Idempotent by construction (FR-RUN-8)**: re-running over the same ids twice is safe — a
+  transmission with an already-active queue row for the requested pass is reused
+  (`enqueueOrReuseActive`), never double-enqueued (the partial unique index over active states
+  would otherwise reject it), and `DataPassBResultSink` only ever supersedes.
+- **Capture-priority-safe (FR-REP-6)**: `isCaptureBusy` defaults to `CaptureState.isCapturing` *and*
+  the shed level is at or past `BUSY_SHED_LEVEL_THRESHOLD = 3` — the same level technical design
+  §7.3 already downgrades the live Pass B model at — checked before every item, not once at the
+  start, so a long run started while idle still yields the moment capture needs the inference slot.
+- **Interruptible and resumable (FR-REP-11), no extra state of its own**: cancelling the collecting
+  coroutine (navigating away) stops this class immediately via ordinary coroutine cancellation;
+  whatever was already enqueued but not yet drained sits in the durable `work_queue_item` table,
+  where a live session's own restart or a later reprocess run picks it up.
+- **`RealImproveRunner`** (new, `:app`): the adapter satisfying WP10's `ImproveRunner` over
+  `ReprocessRunner`, constructing its own `OrtDatabase`/`filesDir` from the given `Context` exactly
+  as `FakeImproveRunner` does. Not yet wired into `ImproveContent.kt` — see Left open.
+
+**A real `kotlinx-coroutines-test` gotcha found and worked around, not papered over.**
+`ReprocessRunnerTest` initially used `kotlinx.coroutines.test.runTest` and failed non-deterministically:
+`WorkQueue.runLeased`'s real `withTimeoutOrNull` raced `runTest`'s virtual-time auto-advance —
+Room dispatches suspend DAO calls onto its own real executor thread, so a coroutine awaiting one
+*looks* idle to `runTest`'s scheduler, which then fires the (nominally 20 s) timeout immediately,
+reported as `Errored("timeout")` on every attempt until `WorkQueue`'s bounded retry exhausted it to
+`FAILED` — with no real 20 s ever having elapsed. Fixed by switching every test to
+`kotlinx.coroutines.runBlocking`, the same real-dispatcher reasoning `RealCaptureServiceTest`'s own
+kdoc already documents; recorded in `ReprocessRunnerTest`'s own kdoc for the next person who reaches
+for `runTest` against this class.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (795 actionable tasks;
+  every module's tests, detekt, ktlint, lint green). `dependencyRules: checked 17 modules ... OK`.
+  `platformGuards: checked 17 modules' external dependencies and 17 manifests ... OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 184 covered (+3 over the prior entry: FR-REP-1/
+  FR-REP-6/FR-REP-9/FR-REP-11/FR-RUN-8/R-091/R-143 now have real tests). `.\gradlew.bat
+  coverageMatrixCheck` (separate invocation) — up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Targeted reruns, all green: `:pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"`
+  (11 tests: `ReprocessRunnerTest` × 6, `ReprocessStatusTest` × 5); `:app:testDebugUnitTest --tests
+  RealImproveRunnerTest` (1 test); `:pipeline:testDebugUnitTest` and `:app:testDebugUnitTest` in
+  full.
+- Did **not** use the emulator — Robolectric is the builder's gate; validators exercise the
+  emulator after merge.
+
+**Left open / not done:**
+- **`ImproveContent.kt` still constructs `FakeImproveRunner(context)` directly** (`remember {
+  FakeImproveRunner(context) }`), not through `OrtApplication`/DI — there is no DI graph to wire
+  into (`OrtApplication` is still the P8-placeholder shell), and `ImproveContent.kt` is WP10's own
+  file, not this package's to edit. Swapping the fake for `RealImproveRunner` is a one-line change,
+  left for the lead/WP10.
+- **Only `PassId.B_OFFLINE` is supported.** `PassId.C_SPOT` exists as an id (technical design §9.7,
+  M4 — "may be deleted at the fork") but no runner for it exists anywhere in `:pipeline` (grepped
+  the tree before writing this); `ReprocessRunner.run` throws `IllegalArgumentException` for it
+  rather than silently no-opping, tested directly.
+- **"Current tier" is threaded into `PassFingerprint.tier` honestly, but nothing in `:data` persists
+  a queryable per-transmission tier.** FR-REP-2 asks for one; no column exists yet, and adding one
+  is a `:data` change this package was not granted (unlike WP11c's lead-approved exception, this
+  brief named only `pipeline/.../reprocess/**` and the one `RealImproveRunner.kt` file). Concretely:
+  `app/.../improve/ImprovePolling.root()`'s own eligibility computation groups by
+  `SessionEntity.deviceTier` (a session-level field), which a successful reprocess has no way to
+  clear — a session `Improve` already offered as a tier-1 candidate will keep showing as one even
+  after every one of its transmissions has been reprocessed at the current tier, until either
+  `:data` gains a per-transmission tier column reprocessing can clear, or `ImprovePolling` derives
+  eligibility some other way. Flagged for the lead, not silently worked around.
+- **No `TerminationReason`-style closed enum exists for "why did this pass not change anything"** —
+  `ReprocessStatus.Summary` reports `transcriptsChanged`/`attributionsChanged`/`rejected`/`failed`/
+  `correctedCount` as independent counts rather than a single classified reason per transmission;
+  sufficient for `Improve-Done`'s "N changed" headline (R-143), not for a per-row breakdown, which
+  register R-143's `Fail-Thermal`-style "What changed" list (if WP10 builds one) would need to read
+  from somewhere richer than this summary — flagged, not built, since no artboard for it was named
+  in this package's brief beyond the summary counts.
+- **`RealImproveRunner`'s own test does not exercise a model-present, transcript-actually-changes
+  path** (no ASR model file is available in this Robolectric environment) — that exact path is
+  covered instead by `ReprocessRunnerTest`'s `FR_REP_1` case, which uses a `FakeAsrEngine` through
+  the real `PassBFactory` composition; `RealImproveRunnerTest` only proves the adapter's own Flow
+  mapping and `OrtDatabase`/`filesDir` wiring, honestly, against the no-model case.
+- Register rows R-091/R-143 are left for the lead to mark — this package does not edit
+  `results/ui-audit/register.md`.
+
+---
+
+
 ## 2026-09-08 (ui-conformance lexicon: import validator, R-154)
 
 ### (pending) — ui-conformance lexicon · import validator rejects corrupt lexicons and keeps the previous one active; lexicon-corrupt scenario
@@ -460,7 +596,6 @@ package's files touched.
   coordinator's call.
 
 ---
-
 
 ## 2026-09-08 (ui-conformance WP10 round 4: System validator fixes across settings, improve, sessions, digest)
 
