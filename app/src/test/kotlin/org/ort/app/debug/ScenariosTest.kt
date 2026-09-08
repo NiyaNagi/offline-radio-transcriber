@@ -11,6 +11,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.failures.DebugFailureOverride
+import org.ort.app.ui.failures.FailurePresentation
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -59,6 +61,7 @@ class ScenariosTest {
         StorageForecast.reset()
         LevelStatus.reset()
         InputStatus.reset()
+        DebugFailureOverride.clear()
     }
 
     @Test
@@ -432,5 +435,79 @@ class ScenariosTest {
         assertEquals("USB Audio Device", state.expected.label)
         assertEquals("Built-in microphone", state.actual?.label)
         assertFalse("a mismatch must not claim capture is still running", CaptureState.isCapturing)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // WP11b (register R-100): the seven ids with no runtime signal today, driven through
+    // DebugFailureOverride — each scenario's only real job is to set the exact FailurePresentation
+    // its board needs, so these tests assert exactly that rather than re-testing the composables
+    // (FailureScreensTest already does that).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("F-014", "R-100")
+    fun `F14_clock-dst sets the Clock debug override`() = runTest {
+        Scenarios.load(context, "clock-dst")
+        assertTrue(DebugFailureOverride.current is FailurePresentation.Clock)
+    }
+
+    @Test
+    @Requirement("F-016", "R-100")
+    fun `F16_usb-permission sets the Usb debug override`() = runTest {
+        Scenarios.load(context, "usb-permission")
+        assertTrue(DebugFailureOverride.current is FailurePresentation.Usb)
+    }
+
+    @Test
+    @Requirement("F-017", "R-100")
+    fun `F17_interrupted-pass sets the Interrupted debug override`() = runTest {
+        Scenarios.load(context, "interrupted-pass")
+        assertTrue(DebugFailureOverride.current is FailurePresentation.Interrupted)
+    }
+
+    @Test
+    @Requirement("F-019", "R-100")
+    fun `F19_reconcile sets the Reconcile debug override with both mismatch directions`() = runTest {
+        Scenarios.load(context, "reconcile")
+        val presentation = DebugFailureOverride.current
+        assertTrue(presentation is FailurePresentation.Reconcile)
+        presentation as FailurePresentation.Reconcile
+        assertTrue(presentation.state.recordsNoFile.isNotEmpty())
+        assertTrue(presentation.state.filesNoRecord.isNotEmpty())
+    }
+
+    @Test
+    @Requirement("F-020", "R-100")
+    fun `F20_migration-failed sets the Migration debug override with a failed step`() = runTest {
+        Scenarios.load(context, "migration-failed")
+        val presentation = DebugFailureOverride.current
+        assertTrue(presentation is FailurePresentation.Migration)
+        presentation as FailurePresentation.Migration
+        assertTrue(presentation.state.steps.any { !it.ok })
+    }
+
+    @Test
+    @Requirement("F-021", "R-100")
+    fun `F21_asset-swap sets the AssetSwap debug override`() = runTest {
+        Scenarios.load(context, "asset-swap")
+        assertTrue(DebugFailureOverride.current is FailurePresentation.AssetSwap)
+    }
+
+    @Test
+    @Requirement("F-022", "R-100")
+    fun `F22_calibration sets the Calibration debug override`() = runTest {
+        Scenarios.load(context, "calibration")
+        assertTrue(DebugFailureOverride.current is FailurePresentation.Calibration)
+    }
+
+    @Test
+    @Requirement("R-100")
+    fun `R_100 loading a real-signal scenario clears a prior debug override`() = runTest {
+        Scenarios.load(context, "clock-dst")
+        assertNotNull(DebugFailureOverride.current)
+
+        Scenarios.load(context, "thermal")
+
+        assertNull("a later scenario must not leave the previous one's override behind", DebugFailureOverride.current)
     }
 }

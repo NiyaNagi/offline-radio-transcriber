@@ -1,9 +1,13 @@
 package org.ort.app.ui
 
+import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import org.ort.app.ui.failures.FailureHost
+import org.ort.app.ui.failures.FailureHostActions
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
@@ -34,6 +38,17 @@ import org.ort.pipeline.capture.CaptureState
  *
  * ui-conformance-plan R-008: [OrtSystemBarStyle] keeps the status/navigation bar icons light
  * regardless of the OS's night-mode state — see that constant's own doc comment.
+ *
+ * ui-conformance-plan WP11b, register R-100/R-101: [org.ort.app.ui.failures.FailureHost] mounts
+ * here, above [OrtNavHost] — the one edit this package makes to this file (its own row names
+ * nothing else in this class). Two of its recovery actions reach a real platform surface directly
+ * ([onOpenBatteryExemptionSettings]/[onOpenStorageSettings] launch OS Settings screens that need
+ * no manifest permission); the rest — choosing another input, retrying, reconnecting the rig,
+ * setting a frequency by hand, requesting USB permission — have no destination or entry point
+ * this package can reach without editing a file another package owns (`OrtNavHost.kt` is WP3's;
+ * `:capture-android` exposes no USB-permission call yet, FR-RIG unbuilt). Those stay documented
+ * no-op stubs at [FailureHost]'s own default — see this package's report for exactly what each
+ * needs and from whom.
  */
 public class ReaderActivity : ComponentActivity() {
 
@@ -47,7 +62,22 @@ public class ReaderActivity : ComponentActivity() {
         )
         setContent {
             OrtTheme {
-                OrtNavHost(sessionId = sessionId)
+                FailureHost(
+                    sessionId = sessionId,
+                    actions = FailureHostActions(
+                        onOpenBatteryExemptionSettings = {
+                            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        },
+                        onOpenStorageSettings = {
+                            startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS))
+                        },
+                        onOpenRetentionSettings = {
+                            startActivity(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS))
+                        },
+                    ),
+                ) {
+                    OrtNavHost(sessionId = sessionId)
+                }
             }
         }
     }

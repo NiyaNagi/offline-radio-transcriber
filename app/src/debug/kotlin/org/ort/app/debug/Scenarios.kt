@@ -1,6 +1,18 @@
 package org.ort.app.debug
 
 import android.content.Context
+import org.ort.app.ui.failures.AssetSwapViewState
+import org.ort.app.ui.failures.CalibrationViewState
+import org.ort.app.ui.failures.ClockViewState
+import org.ort.app.ui.failures.DebugFailureOverride
+import org.ort.app.ui.failures.FailurePresentation
+import org.ort.app.ui.failures.InterruptedViewState
+import org.ort.app.ui.failures.MigrationStep
+import org.ort.app.ui.failures.MigrationViewState
+import org.ort.app.ui.failures.ReconcileFile
+import org.ort.app.ui.failures.ReconcileRecord
+import org.ort.app.ui.failures.ReconcileViewState
+import org.ort.app.ui.failures.UsbViewState
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
@@ -60,7 +72,11 @@ public object Scenarios {
      * reachable. WP11a (register R-104/R-105/R-106) closed the three gaps this list used to note
      * as unreachable from `:app` — `thermal`/`rig-lost`/`os-stopped` are new; `storage-warn` now
      * uses [StorageForecast] instead of reusing F6's exhaustion string. WP11c (register R-112/
-     * R-113) adds `level-low`/`level-clip`/`input-verified`/`input-mismatch`.
+     * R-113) adds `level-low`/`level-clip`/`input-verified`/`input-mismatch`. WP11b (register
+     * R-100) adds `clock-dst`/`usb-permission`/`interrupted-pass`/`reconcile`/`migration-failed`/
+     * `asset-swap`/`calibration` — the seven ids with no runtime signal today, driven through
+     * `org.ort.app.ui.failures.DebugFailureOverride` (that object's own kdoc says exactly why for
+     * each).
      */
     public val NAMES: List<String> = listOf(
         "empty",
@@ -85,6 +101,13 @@ public object Scenarios {
         "level-clip",
         "input-verified",
         "input-mismatch",
+        "clock-dst",
+        "usb-permission",
+        "interrupted-pass",
+        "reconcile",
+        "migration-failed",
+        "asset-swap",
+        "calibration",
     )
 
     public suspend fun load(context: Context, name: String): LoadResult {
@@ -115,6 +138,13 @@ public object Scenarios {
             "level-clip" -> levelClip(context, db)
             "input-verified" -> inputVerified(context, db)
             "input-mismatch" -> inputMismatch(db)
+            "clock-dst" -> clockDst(context, db)
+            "usb-permission" -> usbPermission(context, db)
+            "interrupted-pass" -> interruptedPass(context, db)
+            "reconcile" -> reconcile(context, db)
+            "migration-failed" -> migrationFailed(context, db)
+            "asset-swap" -> assetSwap(context, db)
+            "calibration" -> calibration(context, db)
             else -> error("unreachable — guarded by the require() above")
         }
     }
@@ -180,6 +210,7 @@ public object Scenarios {
         StorageForecast.reset()
         LevelStatus.reset()
         InputStatus.reset()
+        DebugFailureOverride.clear()
     }
 
     // ---------------------------------------------------------------------------------------
@@ -723,6 +754,182 @@ public object Scenarios {
         InputStatus.mismatch(
             expected = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
             actual = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone"),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // WP11b (register R-100): the seven ids with no runtime signal today —
+    // `DebugFailureOverride.kt`'s kdoc says exactly why for each. Each scenario below sets
+    // [DebugFailureOverride.show] with the exact [FailurePresentation] its board needs, on top of
+    // a minimal session so the reader beneath the takeover is not a bare crash surface.
+    // ---------------------------------------------------------------------------------------
+
+    /** `clock-dst` — F14, `Fail-Clock.dc.html`. */
+    private suspend fun clockDst(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("clock-dst")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 8 * 3_600_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        DebugFailureOverride.show(
+            FailurePresentation.Clock(
+                ClockViewState(
+                    offsetChangeLabel = "PDT → PST",
+                    ranForLabel = "8 h 30 m",
+                    startedLabel = "23:10",
+                    endedLabel = "06:40",
+                ),
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** `usb-permission` — F16, `Fail-Usb.dc.html`. */
+    private suspend fun usbPermission(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("usb-permission")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 3 * 3_600_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        DebugFailureOverride.show(
+            FailurePresentation.Usb(
+                UsbViewState(detachedAtLabel = "03:44", reattachedAtLabel = "03:47", staleOversCount = 4),
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** `interrupted-pass` — F17, `Fail-Interrupted.dc.html`. */
+    private suspend fun interruptedPass(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("interrupted-pass")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 10 * 60_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        DebugFailureOverride.show(
+            FailurePresentation.Interrupted(InterruptedViewState(overCount = 3, gapLabel = "03:12 – 06:48")),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** `reconcile` — F19, `Fail-Reconcile.dc.html`. */
+    private suspend fun reconcile(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("reconcile")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 8 * 3_600_000L, endedAt = null),
+        )
+        DebugFailureOverride.show(
+            FailurePresentation.Reconcile(
+                ReconcileViewState(
+                    recordsNoFile = listOf(
+                        ReconcileRecord(
+                            "W7NPC",
+                            "Fri 4 Sep 01:22 · 28.4 s",
+                            "transcript, attribution and lattice intact",
+                        ),
+                        ReconcileRecord(
+                            "KJ7ABC",
+                            "Fri 4 Sep 01:23 · 4.1 s",
+                            "same session, same minute — likely the same cause",
+                        ),
+                        ReconcileRecord("unknown station", "Fri 4 Sep 01:23 · 2.0 s", null),
+                    ),
+                    filesNoRecord = listOf(
+                        ReconcileFile(
+                            "a/2026-09-04/03-12-31.flac",
+                            "6.2 s",
+                            "written while the app was stopped mid-write",
+                        ),
+                        ReconcileFile("a/2026-09-04/03-12-40.flac", "1.8 s", "same"),
+                    ),
+                    causeText = "The OS stopped the app at 03:12 on Fri 4 Sep with writes in flight. The three " +
+                        "records lost their files to an interrupted retention pass the next morning; the two " +
+                        "files are overs whose records never landed.",
+                ),
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** `migration-failed` — F20, `Fail-Migration.dc.html`. */
+    private suspend fun migrationFailed(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("migration-failed")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 60_000L, endedAt = null),
+        )
+        DebugFailureOverride.show(
+            FailurePresentation.Migration(
+                MigrationViewState(
+                    versionLabel = "Updated to 1.1.0",
+                    headline = "The records did not fully carry over",
+                    steps = listOf(
+                        MigrationStep("Audio untouched", "38.2 GB · 4,318 files · checksums match", ok = true),
+                        MigrationStep(
+                            "Transcripts, all versions, untouched",
+                            "current and superseded · 6,904 rows",
+                            ok = true,
+                        ),
+                        MigrationStep(
+                            "Attributions, corrections, stations untouched",
+                            "every state, every correction",
+                            ok = true,
+                        ),
+                        MigrationStep(
+                            "Activity patterns need rebuilding",
+                            "the hour-bucket table changed shape · 4,318 overs marked · runs in the background",
+                            ok = false,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** `asset-swap` — F21, `Fail-Asset-Swap.dc.html`. */
+    private suspend fun assetSwap(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("asset-swap")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 3_600_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        DebugFailureOverride.show(
+            FailurePresentation.AssetSwap(
+                AssetSwapViewState(
+                    activeLabel = "2026.08 · active · this session · 1,104,208 records",
+                    stagedLabel = "2026.09 · staged · next session · 1,122,410 records",
+                    options = listOf(
+                        "Wait for the session to end",
+                        "Stop capture, swap, start a new session",
+                        "Afterwards, re-run tonight on 2026.09",
+                    ),
+                    selectedOption = 0,
+                ),
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** `calibration` — F22, `Fail-Calibration.dc.html`. */
+    private suspend fun calibration(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("calibration")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 3_600_000L, endedAt = null),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        DebugFailureOverride.show(
+            FailurePresentation.Calibration(
+                CalibrationViewState(
+                    sinceLabel = "1 Sep",
+                    scoreLabel = "0.90",
+                    accuracyLabel = "78%",
+                    points = listOf(0.30f to 0.22f, 0.50f to 0.38f, 0.70f to 0.52f, 0.86f to 0.66f, 0.94f to 0.74f),
+                    calibrationVersion = "2026.09-a",
+                    correctionsCount = 22,
+                    correctionsNeeded = 100,
+                ),
+            ),
         )
         return LoadResult(0, 1, sessionId)
     }

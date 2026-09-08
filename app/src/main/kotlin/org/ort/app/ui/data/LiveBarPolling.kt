@@ -6,6 +6,8 @@ import org.ort.app.ui.components.LiveBarViewState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
@@ -47,24 +49,44 @@ public object LiveBarPolling {
      * `Flow-Degrade.dc.html`'s own priority order: capture actually stopped outranks every
      * degradation, a stated tier drop outranks an unstated one, and a stale rig is the last, most
      * specific reason checked — the first real one found is shown, never stacked (guide §6.6: this
-     * component "does not invent copy, it renders what it is given").
+     * component "does not invent copy, it renders what it is given"). ui-conformance-plan WP11b
+     * (register R-100) added the input/level/storage-warning/backlog branches — each board names
+     * its own live-bar label verbatim: `Fail-Disconnect.dc.html` "Gap", `Fail-Level.dc.html`
+     * "Quiet"/`Level-Meter.dc.html`'s clip case "Hot", `Fail-Backlog.dc.html` "N behind",
+     * `Fail-Rig.dc.html` "Rig lost" (renamed from the placeholder "Radio disconnected" this file
+     * carried before no board had been checked against).
      */
     private fun toneAndLabel(): Pair<LiveBarTone, String> {
         val captureState = CaptureState.state
         val shedLevel = ShedStatus.currentLevel
+        val shedBacklog = ShedStatus.backlog
         val thermal = ThermalStatus.state
+        val level = LevelStatus.state
         return when {
             captureState !is CaptureState.State.Capturing ->
                 LiveBarTone.HALTED to if (captureState is CaptureState.State.Idle) "Not capturing" else "Halted"
 
             StorageForecast.state is StorageForecast.State.AtFloor -> LiveBarTone.HALTED to "Halted"
 
+            InputStatus.state is InputStatus.State.Lost -> LiveBarTone.DEGRADED to "Gap"
+
+            level is LevelStatus.State.Measured && level.clipped -> LiveBarTone.DEGRADED to "Hot"
+
+            level is LevelStatus.State.Measured && level.peakDbfs <= QUIET_PEAK_THRESHOLD_DBFS ->
+                LiveBarTone.DEGRADED to "Quiet"
+
+            StorageForecast.state is StorageForecast.State.ThreeNightsLeft ||
+                StorageForecast.state is StorageForecast.State.OneNightLeft ->
+                LiveBarTone.DEGRADED to "Low storage"
+
             shedLevel > 0 -> LiveBarTone.DEGRADED to "Tier ${(MAX_TIER - shedLevel).coerceIn(0, MAX_TIER)}"
 
             thermal is ThermalStatus.State.Warm || thermal is ThermalStatus.State.Hot ->
                 LiveBarTone.DEGRADED to "Running warm"
 
-            RigStatus.state is RigStatus.State.Stale -> LiveBarTone.DEGRADED to "Radio disconnected"
+            shedBacklog >= BACKLOG_GROWING_THRESHOLD -> LiveBarTone.DEGRADED to "$shedBacklog behind"
+
+            RigStatus.state is RigStatus.State.Stale -> LiveBarTone.DEGRADED to "Rig lost"
 
             else -> LiveBarTone.NOMINAL to "Live"
         }
@@ -97,4 +119,12 @@ public object LiveBarPolling {
     }
 
     private const val MAX_TIER: Int = 3
+
+    /** Matches `org.ort.app.ui.failures.FailureMapper.QUIET_PEAK_THRESHOLD_DBFS` — the same
+     * threshold, so the live bar and the F3 banner never disagree about whether the level is
+     * "too quiet". */
+    private const val QUIET_PEAK_THRESHOLD_DBFS: Float = -30f
+
+    /** Matches `org.ort.app.ui.failures.FailureMapper.BACKLOG_GROWING_THRESHOLD`. */
+    private const val BACKLOG_GROWING_THRESHOLD: Int = 10
 }

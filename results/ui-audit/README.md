@@ -120,8 +120,72 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `level-clip` | `LevelStatus.Measured` peak 0 dBFS, clipped, 12 clips in the last second (F3, register R-112). |
 | `input-verified` | `InputStatus.Opened` with a USB descriptor, native 48 kHz, a recorded resampler identity, `routeVerified`/`routedDeviceMatches` both true (register R-113). |
 | `input-mismatch` | `InputStatus.Mismatch` — built-in mic routed instead of the chosen USB device (F1, register R-113). Capture is **not** marked running — see "Known gaps" below. |
+| `clock-dst` | F14 (`Fail-Clock.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Clock`. No runtime signal exists; see "Known gaps" below. |
+| `usb-permission` | F16 (`Fail-Usb.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Usb`. No runtime signal exists. |
+| `interrupted-pass` | F17 (`Fail-Interrupted.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Interrupted`. No runtime signal exists. |
+| `reconcile` | F19 (`Fail-Reconcile.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Reconcile`, three records with no file and two files with no record. No runtime signal exists. |
+| `migration-failed` | F20 (`Fail-Migration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Migration`, one failed step (activity patterns) among three passed ones. No runtime signal exists. |
+| `asset-swap` | F21 (`Fail-Asset-Swap.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.AssetSwap`, an active and a staged lexicon. No runtime signal exists. |
+| `calibration` | F22 (`Fail-Calibration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Calibration`, a five-point reliability scatter. No runtime signal exists. |
+
+### WP11b's failure screens (register R-100/R-101/R-103)
+
+`org.ort.app.ui.failures.FailureHost`, mounted in `ReaderActivity.kt` above `OrtNavHost`, maps
+`CaptureState`/`InputStatus`/`LevelStatus`/`ThermalStatus`/`RigStatus`/`StorageForecast`/
+`ShedStatus` plus the newest `CaptureGapEntity` to at most one failure to show
+(`FailureMapper.map`, pure and unit-tested — `app/src/test/kotlin/org/ort/app/ui/failures/
+FailureMapperTest.kt`). Nine of the seventeen F-ids this package owns have a real signal today and
+need no scenario beyond the ones WP0/WP11a/WP11c already added above: **F1** `input-mismatch`,
+**F2** any scenario that sets `InputStatus.Lost` (none yet seeds this directly — see "Known gaps"),
+**F3** `level-low`/`level-clip`, **F5** `os-stopped`, **F6** `storage-warn` (warning stage) —
+the hard-floor takeover needs `StorageForecast.AtFloor` *and* `CaptureState.Failed` together,
+which nothing seeds directly either, **F7** `thermal`, **F8** `backlog`, **F9** `rig-lost`, **F15**
+`gap-call` (though see "Known gaps" — it does not currently produce a *live* session, which F15's
+own trigger requires). The seven scenarios this table's last block adds
+(`clock-dst`/`usb-permission`/`interrupted-pass`/`reconcile`/`migration-failed`/`asset-swap`/
+`calibration`) are the ones with no real signal at all — `org.ort.app.ui.failures.
+DebugFailureOverride`'s own kdoc says precisely what each would need and from which package.
 
 ### Known gaps (report to the lead, not fixed here)
+
+- **F2's disconnect banner and F6's hard-floor takeover have no scenario that seeds them
+  directly.** Both are real, mapped signals (`InputStatus.State.Lost`,
+  `StorageForecast.State.AtFloor` + `CaptureState.State.Failed`) — `FailureMapperTest` proves the
+  mapping — but no existing scenario in this file sets either combination; the closest are
+  `input-mismatch` (a different `InputStatus` state) and `storage-warn` (the earlier warning
+  stage, not the floor). A future scenario for either is a small, additive change to this file,
+  outside this package's remaining time.
+- **`gap-call`'s `CaptureGapCause.CALL` gap does not currently trigger F15's banner from the
+  emulator**, because `FailureMapper.map` requires `CaptureState.State.Capturing` for F15 (a
+  banner about a call that just ended must not show on a session that has already ended), and
+  `gap-call` (`OvernightScenario.kt`, outside this package's file ownership) sets `endedAt` on the
+  session rather than marking it live. `FailureMapperTest`'s own unit tests prove the F15 mapping
+  works given a live session; reaching it from the emulator needs either a new scenario or a small
+  change to `gap-call` itself, both outside this package's row.
+- **`input-mismatch` seeds the holder directly; it does not drive a real capture tick.** Like
+  `thermal`/`rig-lost`/`backlog` before it, this scenario sets `InputStatus.mismatch(...)` on an
+  idle process rather than running `RealCaptureService` end to end — a real capture tick would
+  overwrite it with whatever the (non-existent, in the simulator) audio route actually reports.
+  Capture is deliberately left marked idle for this one scenario specifically (unlike the others in
+  this batch): `Fail-Route.dc.html` states "capture stopped in the same second" on a mismatch, so a
+  scenario claiming both `Mismatch` and `CaptureState.isCapturing` would misrepresent the one thing
+  this state exists to show.
+- **F16's "grant USB permission again" recovery action has no real destination.** `:capture-android`
+  exposes no `UsbManager`/`PendingIntent` permission-request call (FR-RIG unbuilt, register R-084);
+  `FailureHost`'s `onRequestUsbPermission` stays a documented no-op until it does.
+- **"Choose another input"/"Retry"/"Reconnect"/"Set the frequency by hand" have no destination this
+  package can reach.** They would navigate into Setup or a rig-detail screen, both inside
+  `OrtNavHost.kt` (WP3's file, not this package's row) or unbuilt (FR-RIG). `FailureHost`'s
+  corresponding callbacks stay documented no-op stubs at their default; only
+  `onOpenBatteryExemptionSettings`/`onOpenStorageSettings`/`onOpenRetentionSettings` reach a real
+  platform surface (`Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS`/
+  `Settings.ACTION_INTERNAL_STORAGE_SETTINGS`, wired in `ReaderActivity.kt`).
+- **Banners render as a fixed top-anchored overlay across every destination, not embedded inside
+  each screen's own layout.** This package owns no individual screen's content file
+  (`NowContent.kt`/`CaptureStatusContent.kt`/`LogContent.kt`/... belong to WP4/WP5/WP8), so an
+  overlay `FailureHost` itself draws is the only placement achievable without editing a file
+  outside this package's row. `F14`/`F17`'s cards render the same way for now, though the boards
+  place them inline in a session-detail screen that does not exist yet.
 
 - **`input-mismatch` seeds the holder directly; it does not drive a real capture tick.** Like
   `thermal`/`rig-lost`/`backlog` before it, this scenario sets `InputStatus.mismatch(...)` on an
