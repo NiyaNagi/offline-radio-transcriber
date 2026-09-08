@@ -32,6 +32,113 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (debug: scenarios complete their writes before returning; clear step is one transaction)
+
+### (pending) — debug · scenarios complete their writes before returning; clear step is one transaction
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
+`app/src/test/kotlin/org/ort/app/debug/ScenariosTest.kt` (both explicitly granted this round),
+plus `app/src/test/kotlin/org/ort/app/ui/data/CorrectionPollingTest.kt` (its own `@After` was
+missing the same fix, per the coordinator's follow-up — see "What changed" #4). `main` fast-forward
+merged first (`git merge --ff-only main`, no stash, no rebase) to `1f89541`.
+
+**Requirements/ACs:** R-110 (the debug scenario simulator; `ScenariosTest` establishes it) — no new
+requirement, a reliability fix for an existing one's test infrastructure.
+
+**Constitution Check.** Principle VIII (Measurement Discipline: "never report a number without its
+fold, machine and provider") governs how this is reported below — every failure-rate figure here
+names the exact run count it came from, never a bare "it's flaky"/"it's fixed". Principle III
+("never delete quietly") is why the clear step's fix is a transaction, not a change to *what* it
+deletes — the scenario simulator's own contract (every session/transmission a `scenario-`-prefixed
+scenario wrote, plus the unconditional `station`/`voiceprint` rows) is unchanged; only *how
+atomically* it happens changed.
+
+**What changed:**
+
+1. **Ruled out first, not assumed:** no scenario builder (nor `Scenarios.load` itself) launches a
+   writer of its own. Checked directly — no `.launch`, `CoroutineScope(`, or `async` anywhere in
+   `app/src/debug/kotlin/org/ort/app/debug/**` other than `ScenarioReceiver`'s own broadcast-only
+   entry point, which `ScenariosTest` never goes through (it calls `Scenarios.load` directly). Every
+   scenario's own writes were already a single, sequential, awaited suspend chain.
+2. **The real bug: `clearPriorScenarioData` ran as nine-plus separate `execSQL` calls** against
+   `OrtDatabase.openHelper`'s raw `writableDatabase` — each its own implicit transaction, entirely
+   outside Room's own transaction/connection bookkeeping. **Fixed**: the whole clear is now one
+   `androidx.room.RoomDatabase.withTransaction` block (`Scenarios.clearScenarioRowsInOneTransaction`),
+   atomic and Room-coordinated. Measured: 10/10 clean runs of `ScenariosTest` with `--rerun-tasks`
+   before this fix reproduced `SQLiteBusyException: [database is locked]` on 2 of 4 (the
+   coordinator's own count); after this change alone (measured separately, before the two fixes
+   below), 3 of 10 still failed — real, substantial improvement, not a full fix.
+3. **The residual cause: dozens of never-closed `OrtDatabase` instances sharing one file.** Every
+   test method's `@Before` opened a *fresh* `RoomDatabase` (its own connection pool, its own
+   `InvalidationTracker`) against the same on-disk `ort.db`, and nothing closed the previous one —
+   over three dozen tests in one `ScenariosTest` run, dozens of still-warm, never-released instances
+   ended up pointed at the same file. **Fixed**: `ScenariosTest` now closes its own `OrtDatabase` in
+   a new `@After fun closeDatabase()`. This closed most, but — reproduced directly by this file's own
+   new regression test, which drives 150 back-to-back `Scenarios.load` calls against one *already
+   open* `OrtDatabase` instance in a single test method — a locked-database error could still occur
+   even with #2 and #3 both in place (1 of 10 runs), pointing at something below the application
+   layer (most plausibly Room's own `InvalidationTracker` background version-refresh, which
+   Robolectric's `sqlite4java` driver is known to occasionally still be settling when the next writer
+   arrives — distinct from, though compounded by, the `no such module: fts5` noise Robolectric's
+   SQLite logs for this project's FTS5 tables, itself expected and harmless, and already caught
+   narrowly in `OrtDatabase.createFtsIndex`).
+4. **A bounded, backed-off retry on a transient lock**, entirely inside `clearPriorScenarioData` —
+   the SQLite-documented response to `SQLITE_BUSY` ("the application should... retry after a short
+   delay"; up to 5 attempts, 25ms × attempt number backoff), scoped narrowly to exceptions whose
+   message (or a cause's) actually says "busy"/"locked" (`isTransientlyLocked`), so a genuine,
+   non-transient failure still surfaces immediately. `OrtDatabase`'s own builder (`:data`, outside
+   this file's ownership) is where a `PRAGMA busy_timeout` would ideally live instead of an
+   application-level retry — noted in "Left open" rather than reached by editing a file this package
+   does not own.
+5. **`CorrectionPollingTest` had the identical gap** (no `@After` at all) — the coordinator flagged
+   `CorrectionPollingTest :: R_058 confirming records station_confirmed with an unchanged value`
+   failing on the same class of error on main's gate. `CorrectionPolling.confirm`'s own logic is
+   unchanged and was not the cause (a single insert then a single read, nothing concurrent of its
+   own) — this is the same "never-closed file-backed `OrtDatabase` compounds across a whole Gradle
+   test-worker JVM" issue, closed the same way (`@After fun closeDatabase() { db.close() }`).
+
+**New tests:**
+- `ScenariosTest`: `` `R_110 loading every scenario back to back five times never hits a
+  database-locked error` `` — 150 back-to-back `Scenarios.load` calls (30 scenarios × 5 passes) in
+  one test method against one already-open `OrtDatabase`, several times the failure rate the
+  coordinator's own report needed to show itself (2 of 4 runs).
+
+**Verified:**
+- Reproduced the original bug before any fix (multi-statement clear, no `@After` close): 2 of 4
+  `ScenariosTest --rerun-tasks` runs failed with `SQLiteBusyException`, matching the coordinator's
+  report.
+- After the single-transaction fix alone: 3 of 10 runs still failed (measured separately).
+- After adding `ScenariosTest`'s `@After` close on top: 1 of 10 runs still failed — reproduced by
+  this round's own new regression test specifically.
+- After adding the bounded busy-retry on top of both: **10/10 consecutive clean runs** of
+  `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.ScenariosTest" --tests
+  "org.ort.app.ui.data.CorrectionPollingTest" --rerun-tasks` — **BUILD SUCCESSFUL** every time.
+- `.\gradlew.bat :app:testDebugUnitTest --rerun-tasks` (whole module, full suite): run **three times
+  in a row**, all three **BUILD SUCCESSFUL** (143 tasks executed each time — every task genuinely
+  re-ran, not cached).
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 183 covered — up from 181, the two new/changed
+  test files add real coverage) and `.\gradlew.bat coverageMatrixCheck` (separate invocation, up to
+  date) — both **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open:**
+- The genuinely ideal fix for the residual `InvalidationTracker`/Robolectric-driver contention —
+  `OrtDatabase`'s own builder (`:data/src/main/kotlin/org/ort/data/OrtDatabase.kt`) setting
+  `PRAGMA busy_timeout` at the connection-open level, or a single-threaded transaction executor
+  matching `sqlite4java`'s per-connection thread-affinity requirement — is outside this fix's file
+  scope (`:data` is not owned by this round). The retry-with-backoff added here is the pragmatic,
+  SQLite-documented, self-contained mitigation reachable from `app/src/debug/**` alone; reported to
+  the lead as a candidate follow-up for whoever owns `:data` next.
+- Every *other* test class across `app/src/test/kotlin/**` that opens a file-backed `OrtDatabase`
+  without closing it in `@After` (confirmed: `ReaderPollingTest` is one of several) carries the same
+  latent risk this round's fix closed for exactly the two classes the coordinator named. A repo-wide
+  sweep is outside this round's file scope; named here so it is not silently forgotten.
+
+---
+
 ## 2026-09-08 (ui-conformance WP9 · validator fixes: timeout state, stale rig, step counter, route types, font-scale scaffold, level meter)
 
 ### (pending) — ui-conformance WP9 · validator fixes: timeout state, stale rig, step counter, route types, font-scale scaffold, level meter

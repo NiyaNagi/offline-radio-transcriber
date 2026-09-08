@@ -2,6 +2,7 @@ package org.ort.app.ui.data
 
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -39,6 +40,23 @@ class CorrectionPollingTest {
     @Before
     fun openDatabase() {
         db = OrtDatabase.create(context)
+    }
+
+    /**
+     * Register R-110's `ScenariosTest` flake (`SQLiteBusyException: [database is locked]`) turned
+     * out to be, in part, every file-backed-`OrtDatabase` test class in this module opening a fresh
+     * `RoomDatabase` (its own connection pool, its own `InvalidationTracker`) against the *same*
+     * on-disk `ort.db` and never closing the previous one — a leaked-writer effect that compounds
+     * across an entire Gradle test-worker JVM, not just within one test class (Gradle can run many
+     * test classes in one forked worker; `OrtDatabase.create(context)`'s default name is the same
+     * every time). This class had exactly that gap — no `@After` at all — closed here the same way
+     * `ScenariosTest` (`app/src/test/kotlin/org/ort/app/debug/ScenariosTest.kt`) now closes its own,
+     * so this class stops being one of the never-closed instances a *different* test class's run
+     * could contend against.
+     */
+    @After
+    fun closeDatabase() {
+        db.close()
     }
 
     private fun session() = SessionEntity(

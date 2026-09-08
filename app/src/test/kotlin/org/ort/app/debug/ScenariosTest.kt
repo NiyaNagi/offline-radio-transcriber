@@ -50,6 +50,24 @@ class ScenariosTest {
         db = OrtDatabase.create(context)
     }
 
+    /**
+     * Closes this test's own [OrtDatabase] instance before the next test method opens a fresh one
+     * against the *same* on-disk `ort.db` (`OrtDatabase.create(context)`'s default `name`,
+     * unchanged per test — Robolectric's `filesDir` is stable across test methods within one JVM
+     * fork, and this class calls [OrtDatabase.create] once per test, over three dozen tests plus
+     * the five-times-thirty-scenario regression test below). Left un-closed, each test method's
+     * `RoomDatabase` instance — its own connection pool, its own `InvalidationTracker` — stayed
+     * alive for the rest of the run, so by the end there were dozens of live, still-warm writers
+     * all pointed at one file: part of what let `clearPriorScenarioData`'s `BEGIN IMMEDIATE`
+     * intermittently race a stale instance's own background bookkeeping into
+     * `SQLiteBusyException: [database is locked]` (see `Scenarios.clearPriorScenarioData`'s doc
+     * comment for the other half — the un-transacted multi-statement clear this closes off too).
+     */
+    @After
+    fun closeDatabase() {
+        db.close()
+    }
+
     @After
     fun resetProcessWideAvailability() {
         AsrAvailability.reset()
@@ -70,6 +88,28 @@ class ScenariosTest {
         Scenarios.NAMES.forEach { name ->
             val result = Scenarios.load(context, name)
             assertTrue("'$name' reported a negative session count", result.sessionCount >= 0)
+        }
+    }
+
+    /**
+     * Regression test for the intermittent `SQLiteBusyException` `clearPriorScenarioData` used to
+     * throw (main's gate, `SQLiteBusyException: [database is locked]` during its `DELETE FROM
+     * correction ...` step) — root-caused to that function running as several separate `execSQL`
+     * calls against [OrtDatabase.openHelper]'s raw connection, outside Room's own transaction
+     * coordination, racing Room's `InvalidationTracker` background bookkeeping (see
+     * `Scenarios.clearPriorScenarioData`'s own doc comment for the full diagnosis). Loading every
+     * scenario five times back-to-back — several times the failure rate the coordinator reported
+     * (2 of 4 runs) needed to show itself — is the regression proof: every one of 150 loads
+     * (30 scenarios × 5 passes) must complete without a locked-database exception.
+     */
+    @Test
+    @Requirement("R-110")
+    fun `R_110 loading every scenario back to back five times never hits a database-locked error`() = runTest {
+        repeat(5) { pass ->
+            Scenarios.NAMES.forEach { name ->
+                val result = Scenarios.load(context, name)
+                assertTrue("pass $pass, '$name' reported a negative session count", result.sessionCount >= 0)
+            }
         }
     }
 
