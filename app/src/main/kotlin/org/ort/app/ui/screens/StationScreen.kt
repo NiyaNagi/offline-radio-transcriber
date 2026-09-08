@@ -17,6 +17,7 @@ import androidx.compose.ui.semantics.semantics
 import org.ort.app.ui.components.ActivityPatternChart
 import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationListEntryViewState
+import org.ort.app.ui.data.dayOfWeekShortLabel
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 
@@ -93,6 +94,25 @@ public fun StationDetailScreen(state: StationDetailViewState, onBack: () -> Unit
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.md),
             )
             ActivityPatternChart(pattern = state.activityPattern)
+            if (state.dayOfWeekPattern.isNotEmpty()) {
+                ActivityPatternChart(
+                    pattern = state.dayOfWeekPattern,
+                    modifier = Modifier.padding(top = OrtSpacing.md),
+                    title = "ACTIVITY BY DAY OF WEEK",
+                    summaryLabel = "Activity by day of week",
+                    barLabels = state.dayOfWeekPattern.map { dayOfWeekShortLabel(it.dayOfWeek) },
+                )
+            }
+            if (state.weekOverWeekSummary.isNotEmpty()) {
+                Text(
+                    text = "THIS WEEK VS LAST",
+                    style = OrtType.sectionLabel,
+                    modifier = Modifier.padding(top = OrtSpacing.md),
+                )
+                state.weekOverWeekSummary.forEach { line ->
+                    Text(text = line, style = OrtType.caption)
+                }
+            }
         }
         if (state.transmissions.isEmpty()) {
             Text(

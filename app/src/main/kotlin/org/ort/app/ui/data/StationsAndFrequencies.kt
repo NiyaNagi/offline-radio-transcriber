@@ -4,6 +4,7 @@ import org.ort.data.entity.StationEntity
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.util.Locale
 
 /**
@@ -30,6 +31,10 @@ public data class StationDetailViewState(
     val label: String,
     val transmissionCount: Int,
     val activityPattern: List<HourActivityBucket>,
+    /** FR-UI-11's "by day of week" half (audit F-019). */
+    val dayOfWeekPattern: List<DayOfWeekActivityBucket> = emptyList(),
+    /** FR-UI-11's "and how that has changed" half (audit F-019) — one line per weekday, honest text only. */
+    val weekOverWeekSummary: List<String> = emptyList(),
     val transmissions: List<TransmissionListEntryViewState>,
 )
 
@@ -39,6 +44,10 @@ public data class FrequencyDetailViewState(
     val label: String,
     val transmissionCount: Int,
     val activityPattern: List<HourActivityBucket>,
+    /** FR-UI-11's "by day of week" half (audit F-019). */
+    val dayOfWeekPattern: List<DayOfWeekActivityBucket> = emptyList(),
+    /** FR-UI-11's "and how that has changed" half (audit F-019) — one line per weekday, honest text only. */
+    val weekOverWeekSummary: List<String> = emptyList(),
     val transmissions: List<TransmissionListEntryViewState>,
 )
 
@@ -56,11 +65,15 @@ public object StationViewMapper {
         label: String,
         transmissions: List<TransmissionDetail>,
         activityPattern: List<HourActivityBucket>,
+        dayOfWeekPattern: List<DayOfWeekActivityBucket> = emptyList(),
+        weekOverWeekComparison: List<WeekOverWeekBucket> = emptyList(),
     ): StationDetailViewState = StationDetailViewState(
         stationId = stationId,
         label = label,
         transmissionCount = transmissions.size,
         activityPattern = activityPattern,
+        dayOfWeekPattern = dayOfWeekPattern,
+        weekOverWeekSummary = weekOverWeekSummaryText(weekOverWeekComparison),
         transmissions = transmissions.map { ReaderTransmissionViewStateMapper.listEntry(it) },
     )
 }
@@ -78,11 +91,15 @@ public object FrequencyViewMapper {
         frequencyHz: Long,
         transmissions: List<TransmissionDetail>,
         activityPattern: List<HourActivityBucket>,
+        dayOfWeekPattern: List<DayOfWeekActivityBucket> = emptyList(),
+        weekOverWeekComparison: List<WeekOverWeekBucket> = emptyList(),
     ): FrequencyDetailViewState = FrequencyDetailViewState(
         frequencyHz = frequencyHz,
         label = frequencyLabel(frequencyHz),
         transmissionCount = transmissions.size,
         activityPattern = activityPattern,
+        dayOfWeekPattern = dayOfWeekPattern,
+        weekOverWeekSummary = weekOverWeekSummaryText(weekOverWeekComparison),
         transmissions = transmissions.map { ReaderTransmissionViewStateMapper.listEntry(it) },
     )
 
@@ -93,3 +110,21 @@ private val LABEL_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-
     .withZone(ZoneOffset.UTC)
 
 private fun dateTimeLabel(utcMillis: Long?): String? = utcMillis?.let { LABEL_FORMAT.format(Instant.ofEpochMilli(it)) }
+
+/**
+ * Turns FR-UI-11's "how that has changed" comparison into the one honest sentence per weekday
+ * (audit F-019) — text only, never a chart, since a single-week-over-week sample is too thin to
+ * plot as a trend line without implying more precision than it has.
+ */
+public fun dayOfWeekShortLabel(dayOfWeek: java.time.DayOfWeek): String =
+    dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ROOT)
+
+internal fun weekOverWeekSummaryText(buckets: List<WeekOverWeekBucket>): List<String> = buckets.map { bucket ->
+    val day = bucket.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ROOT)
+    when (bucket.trend) {
+        WeekTrend.NO_DATA -> "$day: no data"
+        WeekTrend.UP -> "$day: up (${bucket.currentHeardCount} vs ${bucket.previousHeardCount} last week)"
+        WeekTrend.DOWN -> "$day: down (${bucket.currentHeardCount} vs ${bucket.previousHeardCount} last week)"
+        WeekTrend.FLAT -> "$day: flat (${bucket.currentHeardCount})"
+    }
+}
