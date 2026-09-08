@@ -38,7 +38,7 @@ public object FailureSignalsPolling {
             shedBacklog = ShedStatus.backlog,
             newestGap = newestGap,
             nowMillis = SystemClock.wallMillis(),
-            debugOverride = DebugFailureOverride.current,
+            debugOverride = DebugFailureOverride.activeOverride,
         )
     }
 

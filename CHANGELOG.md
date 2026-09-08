@@ -218,8 +218,73 @@ full in this package's own report to the lead, not restated here.
   package's report to the lead, verified but not restated here to avoid this entry going stale if
   a later package's own gate run changes an unrelated number.
 
----
+### (pending) — ui-conformance WP11b · debug override gated on BuildConfig, notification card in failure boards, storage stages
 
+**Scope:** `:app` — `app/build.gradle.kts` (one line: `buildFeatures { buildConfig = true }`),
+`ui/failures/DebugFailureOverride.kt`, `ui/failures/FailureSignalsPolling.kt`, and a new
+`ui/failures/DebugFailureOverrideTest.kt`. Follow-up to the WP11b commit above, at the
+coordinator's request, after `git merge --ff-only main` (this branch already an ancestor of main
+at `18ebc1e`, which carries `7850a9e`'s merge — no rebase, no stash, no other package's files
+touched).
+
+**Requirements/ACs:** R-100 (unchanged, still fixed); constitution V (a debug-only surface must
+never leak into a shipped build) and I (never wire a banner to claim something the running code
+does not actually do).
+
+**What changed:**
+
+- **`DebugFailureOverride`'s read is now gated on `BuildConfig.DEBUG`, not just on nothing calling
+  `show()`.** `app/build.gradle.kts` gained `buildFeatures { buildConfig = true }` (AGP 8 defaults
+  it off, so `BuildConfig` was not generated before this), and `DebugFailureOverride` gained
+  `activeOverride` — `current` gated behind `isDebugBuild()`, `null` outright in any non-debug
+  build regardless of what `current` holds. `current` itself is unchanged (still what `show()`
+  set, still what `ScenariosTest` asserts against — it is testing what a scenario wrote, not what
+  is "active"). `FailureSignalsPolling.current` — the one caller `FailureMapper.map` actually
+  reads through — switched from `DebugFailureOverride.current` to `.activeOverride`.
+  `isDebugBuild` is a settable function reference (default `{ BuildConfig.DEBUG }`) rather than
+  the bare constant: Robolectric only ever compiles this module's **debug** variant
+  (`ort.android-app.gradle.kts`'s `testBuildType = "debug"`), so `BuildConfig.DEBUG` reads `true`
+  in every unit test no matter what — proving "ignored when not debug" needed a seam a test can
+  flip, restored to the real default in `@AfterEach` including on failure.
+  `DebugFailureOverrideTest.kt` (4 new tests) proves: the real default reflects `BuildConfig.DEBUG`;
+  a shown override is active while `isDebugBuild()` is true; it reads `null` the moment
+  `isDebugBuild()` is flipped to false even though `current` still holds it; and
+  `FailureMapper.map` never sees it either, in the same circumstance.
+- **`NotificationCard` (WP2's follow-up) — checked against every one of this package's 16 boards,
+  wired nowhere.** None of them draw the notification's collapsed shape (`bg/notification`
+  `oklch(0.17 0.008 250)`, the 34px icon disc, title+elapsed+count on one line) — confirmed by
+  grepping every `Fail-*.dc.html`/`Flow-Degrade.dc.html` this package owns for that token pair;
+  only `Capture-Notification.dc.html` (R-102, not this package's board) uses it. `Fail-Killed.dc.html`
+  specifically — the coordinator's own candidate — uses the plain amber `Banner` shape (icon left,
+  title+body right) for its "the phone stopped the app" card and a separate, un-notification-shaped
+  "Make it less likely next time" list for the battery-exemption re-guide; neither is the
+  notification's collapsed state. Nothing changed here — recorded so the check is not re-done.
+- **`StorageForecast.State.OneNightLeft` does *not* map to `Fail-Storage.dc.html`'s "audio paused,
+  capture continues" stage — checked, and deliberately left unwired.** The board's own "How this
+  unfolded" timeline lists four *distinct* moments: "warned at 3 nights left" (`ThreeNightsLeft`),
+  "warned at 1 night left" (`OneNightLeft`), "audio stopped, text continues" (no state today), then
+  the 500 MB floor (`AtFloor`) — `OneNightLeft` is one stage *before* the audio-pause moment, not
+  the same one. More importantly: nothing in `RealCaptureService`'s write path actually pauses
+  audio retention at any point before the hard floor — it keeps writing audio right up to
+  `STORAGE_FLOOR_BYTES`. Wiring `OneNightLeft` to `FailStorageAudioPausedBanner`'s "audio is no
+  longer being written" copy would claim a real, false thing about the running system
+  (constitution I), not just render an early warning early. `FailureMapper`'s existing mapping
+  (`OneNightLeft` → `FailStorageWarningBanner`, "warned — 1 night left") is unchanged.
+  `StorageAudioPausedViewState`/`FailStorageAudioPausedBanner` stay exactly what the original
+  entry said: built against the shape the signal would need, reachable only through the debug
+  override until `:pipeline` adds a real "audio paused" state.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL (confirms `BuildConfig` now generates and compiles). `.\gradlew.bat :app:testDebugUnitTest
+--tests "org.ort.app.ui.failures.*" --tests "org.ort.app.ui.data.LiveBarPollingTest" --tests
+"org.ort.app.debug.ScenariosTest"` — 95 tests (the prior 91 plus `DebugFailureOverrideTest`'s 4),
+all green. Full gate reported in this package's report to the lead.
+
+**Left open:** unchanged from the entry above — this follow-up touched only the three things the
+coordinator asked about, all three now checked and either fixed or recorded as deliberately not
+fixed with why.
+
+---
 
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)
 

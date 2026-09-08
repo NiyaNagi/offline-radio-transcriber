@@ -1,5 +1,7 @@
 package org.ort.app.ui.failures
 
+import org.ort.app.BuildConfig
+
 /**
  * WP11b's own instruction: six of this package's seventeen ids have no real signal to trigger
  * them from anywhere in the built app today —
@@ -28,25 +30,29 @@ package org.ort.app.ui.failures
  * these six from a real signal. This object is how a debug scenario (`app/src/debug/kotlin/org/
  * ort/app/debug/Scenarios.kt`, this package's own addition) still makes every one of them
  * reachable for a validator: it sets [current] to the exact [FailurePresentation] the scenario
- * wants rendered, and [FailureMapper.map] returns it outright — see that function's own kdoc.
+ * wants rendered, and [activeOverride] — [FailureMapper.map]'s own read, via
+ * [FailureSignalsPolling] — returns it outright when this is a debug build; see that function's
+ * own kdoc.
  *
- * **Why this is safe in a shipped build even though it lives in `ui/failures/` (the main source
- * set, not `app/src/debug/`) rather than being compiled out of release entirely:** [current]
- * starts `null` and stays `null` unless something calls [show] — and the only caller anywhere in
- * this codebase is `Scenarios.kt`, which is itself only ever compiled into a debug build (AGP's
- * `app/src/debug` source set is never merged into a release variant). A release build therefore
- * carries this object but nothing in it ever calls [show], so [current] is always `null` and
- * [FailureMapper.map] always falls through to the real signals. A stronger guarantee — gating the
- * *read* itself on `BuildConfig.DEBUG` — needs `buildFeatures.buildConfig = true` added to
- * `app/build.gradle.kts` (it is not declared today, so `BuildConfig.DEBUG` does not compile);
- * that file is not in this package's row (spec/ui-conformance-plan.md §D), so this package does
- * not add it — flagged in this package's report rather than done silently.
+ * **Read gated on `BuildConfig.DEBUG`** (WP11b follow-up — `app/build.gradle.kts` now declares
+ * `buildFeatures.buildConfig = true` so this compiles): a release build must never consult this
+ * object even in the (already impossible, per [show]'s own doc) case that something in it had a
+ * value — [activeOverride] reads `null` outright whenever [isDebugBuild] is false, never touching
+ * [current]. [isDebugBuild] is a settable function reference, not the bare constant, because
+ * Robolectric only ever compiles this module's **debug** variant (`ort.android-app.gradle.kts`'s
+ * `testBuildType = "debug"`) — `BuildConfig.DEBUG` is `true` in every unit test regardless of what
+ * this class does, so proving "ignored when not debug" needs a seam a test can flip;
+ * `DebugFailureOverrideTest` restores the real default in every case, including on failure.
  */
 public object DebugFailureOverride {
 
     @Volatile
     public var current: FailurePresentation? = null
         private set
+
+    /** Test seam (see class kdoc) — production code never assigns this. */
+    @Volatile
+    internal var isDebugBuild: () -> Boolean = { BuildConfig.DEBUG }
 
     /** The scenario simulator's own entry point (debug-sourceset-only caller — see class kdoc). */
     public fun show(presentation: FailurePresentation) {
@@ -56,4 +62,9 @@ public object DebugFailureOverride {
     public fun clear() {
         current = null
     }
+
+    /** [FailureSignalsPolling]'s own read — the gated one. `null` in any non-debug build, no
+     * matter what [current] holds. */
+    public val activeOverride: FailurePresentation?
+        get() = if (isDebugBuild()) current else null
 }

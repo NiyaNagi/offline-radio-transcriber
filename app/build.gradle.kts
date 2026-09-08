@@ -7,6 +7,12 @@ plugins {
 extensions.configure<BaseAppModuleExtension> {
     testOptions { unitTests.isIncludeAndroidResources = true }
 
+    // ui-conformance WP11b follow-up: AGP 8 defaults `buildConfig` to false, so `BuildConfig` was
+    // not generated at all — `org.ort.app.ui.failures.DebugFailureOverride` needs `BuildConfig.DEBUG`
+    // to gate its read on a real build-type check (a release build must never consult a debug-only
+    // override, even if nothing in it happened to call `show()`), which needs this turned on.
+    buildFeatures { buildConfig = true }
+
     // build-plan P9 / M2.21a: the on-device harness runner and its JVM-side verification must
     // call the exact same code, or "same report format as the JVM harness" is only asserted, not
     // proven. `src/harnessShared` holds that one implementation; wiring it into both `test` (JVM,
