@@ -185,7 +185,6 @@ public object Scenarios {
     // Clearing
     // ---------------------------------------------------------------------------------------
 
-<<<<<<< HEAD
     /**
      * **Root cause of the intermittent `SQLiteBusyException` this function used to throw**
      * (register R-110, `ScenariosTest :: R_110 every declared scenario name loads without
