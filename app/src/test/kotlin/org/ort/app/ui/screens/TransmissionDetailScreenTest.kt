@@ -592,12 +592,27 @@ class TransmissionDetailScreenTest {
         }
 
         composeTestRule.onNodeWithTag("rejected-section").assertExists()
-        composeTestRule
-            .onNodeWithText("rejected · VAD_NO_SPEECH: squelch tail, 0.4 s", ignoreCase = true, substring = true)
-            .assertExists()
-        composeTestRule.onNodeWithText("VAD_NO_SPEECH: squelch tail, 0.4 s", substring = true).assertExists()
+        // R-331: the operator-prose mapping, not the raw record — `LogItemsMapper.whyFor` turns
+        // "VAD_NO_SPEECH: squelch tail, 0.4 s" into "No speech detected, squelch tail, 0.4 s".
+        composeTestRule.onNodeWithText("No speech detected, squelch tail, 0.4 s", substring = true).assertExists()
         // The audio is retained (constitution III) — the waveform card still renders.
         composeTestRule.onNodeWithTag("waveform-card").assertExists()
+    }
+
+    /**
+     * R-331: `Fail-Hallucination.dc.html`'s own title is "REJECTED" alone — the validator's own
+     * finding was the raw `"$rule: $detail"` record rendering in the title
+     * ("REJECTED · VAD_NO_SPEECH: SQUELCH TAIL, 0.4 S"). Proved two ways: the title text is exactly
+     * "REJECTED", and the raw rule token never appears anywhere on screen.
+     */
+    @Test
+    fun `R_331_detail_title`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = rejectedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule.onNodeWithText("REJECTED").assertExists()
+        composeTestRule.onNodeWithText("VAD_NO_SPEECH", substring = true).assertDoesNotExist()
     }
 
     @Test

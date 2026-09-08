@@ -246,4 +246,76 @@ class SetupActivityTest {
             scenario.onActivity { activity -> assertEquals(SetupStep.RADIO, activity.currentStepForTest) }
         }
     }
+
+    // --- R-344 (validator pass 4, halt): S09's third row routes through a real frequency entry ---
+
+    /**
+     * Reproduces the exact defect first (choosing the row alone must NOT already satisfy the
+     * `RADIO` gate — S10 collects the value, not the row tap itself), then walks it through to S12
+     * and confirms the frequency the operator actually typed is what shows there — the same "S09 →
+     * third row → field → S12" walk the finding names, driven the way every other test in this file
+     * drives `SetupActivity` (real `Activity`, real `SharedPreferences`, no fabricated shortcut).
+     */
+    @Test
+    fun `R_344 choosing No radio routes to the frequency field, not straight past RADIO`() {
+        // Not storeEverySetupGateExceptComplete() -- its own RADIO_CHOICE=NONE would defeat this
+        // test before it starts; every other gate is set by hand instead.
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
+            .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
+            .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
+            .apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.RADIO, activity.currentStepForTest) }
+
+            scenario.onActivity { activity -> activity.onChooseRadio(RadioChoice.NONE) }
+            scenario.onActivity { activity ->
+                assertEquals(
+                    "the row tap alone must not already satisfy the RADIO gate -- S10 collects the value",
+                    SetupStep.RADIO_USB,
+                    activity.currentStepForTest,
+                )
+            }
+
+            scenario.onActivity { activity -> activity.onEnterFrequency(145_230_000L) }
+            scenario.onActivity { activity -> assertEquals(SetupStep.READY, activity.currentStepForTest) }
+        }
+
+        val store = SharedPreferencesSetupStore(
+            ApplicationProvider.getApplicationContext<Application>()
+                .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE),
+        )
+        assertEquals(RadioChoice.NONE, store.radioChoice)
+        assertEquals(145_230_000L, store.manualFrequencyHz)
+    }
+
+    /** [SetupActivity.onEnterFrequency]'s own null guard (constitution I) -- a blank/unparseable
+     * entry must never be what [RadioUsbScreen]'s disabled button lets through in practice, but this
+     * proves the activity-level function refuses it too, not only the UI. */
+    @Test
+    fun `R_344 onEnterFrequency with a null value never advances or writes a fabricated choice`() {
+        storeEverySetupGateExceptComplete()
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().remove(SharedPreferencesSetupStore.KEY_RADIO_CHOICE).apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onChooseRadio(RadioChoice.NONE) }
+            scenario.onActivity { activity -> activity.onEnterFrequency(null) }
+            scenario.onActivity { activity -> assertEquals(SetupStep.RADIO_USB, activity.currentStepForTest) }
+        }
+
+        val store = SharedPreferencesSetupStore(
+            ApplicationProvider.getApplicationContext<Application>()
+                .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE),
+        )
+        assertEquals(null, store.radioChoice)
+    }
 }

@@ -47,8 +47,9 @@ public class CallsignGrammar(
                 .take(config.beamWidth)
         }
         val span = 0 until lattice.slots.size
+        val slotDetails = slotDetailsFor(lattice, span)
         return frontier
-            .mapNotNull { path -> toCandidate(path, span) }
+            .mapNotNull { path -> toCandidate(path, span, slotDetails) }
             .groupBy { it.text }
             .map { (_, group) -> group.maxByOrNull { it.score } ?: group.first() }
             .sortedWith(compareByDescending<CallsignCandidate> { it.score }.thenBy { it.text })
@@ -75,12 +76,32 @@ public class CallsignGrammar(
         return out
     }
 
-    private fun toCandidate(path: Path, span: IntRange): CallsignCandidate? {
+    private fun toCandidate(path: Path, span: IntRange, slotDetails: List<SlotDetail>): CallsignCandidate? {
         val parsed = parseCallsign(path.units) ?: return null
         val allocation = itu.allocationFor(parsed.core)
             ?: parsed.secondaryPrefix?.let { itu.allocationFor(it) }
             ?: return null
-        return CallsignCandidate(parsed, allocation, path.acoustic, path.penalty, span)
+        return CallsignCandidate(parsed, allocation, path.acoustic, path.penalty, span, slotDetails)
+    }
+
+    /**
+     * R-320/FR-UI-8, R-182/FR-UI-4: one [SlotDetail] per [span] index, built straight from
+     * [lattice]'s own [LatticeSlot.top]/[LatticeSlot.runnerUp]/char-span — the same real per-slot
+     * data every [expand] call already reads from [LatticeSlot.alts], now surfaced on the result
+     * instead of only feeding the aggregate acoustic/penalty score. Identical across every
+     * candidate `parse` returns for the same [lattice] (it is a fact about the lattice, not about
+     * any one candidate's parsed text) — computed once per call, not once per candidate.
+     */
+    private fun slotDetailsFor(lattice: PhoneticLattice, span: IntRange): List<SlotDetail> = span.map { i ->
+        val slot = lattice.slots[i]
+        SlotDetail(
+            index = i,
+            unit = slot.top.unit.symbol.toString(),
+            score = slot.top.logProb.toDouble(),
+            keptAlternate = slot.runnerUp?.unit?.symbol?.toString(),
+            charStart = slot.charStart,
+            charEnd = slot.charEnd,
+        )
     }
 
     // --- the finite-state acceptor, expressed as small total functions -----------------------
