@@ -41,6 +41,7 @@ import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.data.dao.WorkQueueDao
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.CaptureProcessingLoop
 import org.ort.pipeline.GapPersister
@@ -161,6 +162,15 @@ public class RealCaptureService : Service() {
     private var inputOpenedAtWallMillis: Long = 0L
     private var inputRouteConfirmedThisSession = false
 
+    // R-173: every path that ends a session (stopCaptureInternal for both a clean and an unclean
+    // stop, the storage floor, a route-mismatch/other Failed halt, the "flow ended unexpectedly"
+    // fallback) calls endSessionRow() -- guarded by this flag so a session is only ever closed
+    // once, by whichever path gets there first. A real risk without it: stopCapture() (ACTION_STOP)
+    // calls stopCaptureInternal(markClean = true), then stopSelf() asynchronously triggers
+    // onDestroy() -> stopCaptureInternal(markClean = false) a second time for the SAME session --
+    // the second call must not overwrite an honest USER-stop with KILLED.
+    private var sessionEndRecorded = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -205,9 +215,10 @@ public class RealCaptureService : Service() {
     private fun startCapture() {
         val db = dependencies.database(applicationContext)
         this.db = db
+        sessionEndRecorded = false
         val queue = WorkQueue(db, SystemClock)
         val gapPersister = GapPersister(db.captureGapDao(), SystemClock)
-        persistUncleanEndGapIfAny(gapPersister)
+        persistUncleanEndGapIfAny(db, gapPersister)
 
         // R-104/F9: the rig module (FR-RIG) is unbuilt (register R-084) -- this is the one real
         // producer RigStatus has today. Honest, not a placeholder: there genuinely is no rig.
@@ -270,8 +281,15 @@ public class RealCaptureService : Service() {
      * `UncleanEndDetector(heartbeatStore).detect()`. Deliberately synchronous, before anything in
      * [startCapture] can write to [heartbeatStore]. Does not "reopen" the previous session
      * (`Fail-Killed.dc.html`'s wording); that policy call is left to the lead.
+     *
+     * **FR-RUN-16 (register R-173)**: the same detection also closes the PREVIOUS session's row —
+     * `endedAt` = its last heartbeat, flagged unclean ([TerminationReason.KILLED]) — via
+     * [SessionDao.closeIfStillOpen][org.ort.data.dao.SessionDao.closeIfStillOpen], which only
+     * writes when that row is genuinely still open (`endedAt IS NULL`): if `stopCaptureInternal`
+     * already closed it correctly (e.g. an unclean `onDestroy` that still ran, just without
+     * `ACTION_STOP`), this must not clobber that more-precise timestamp with a stale heartbeat.
      */
-    private fun persistUncleanEndGapIfAny(gapPersister: GapPersister) {
+    private fun persistUncleanEndGapIfAny(db: OrtDatabase, gapPersister: GapPersister) {
         val previousLaunchGap = UncleanEndDetector(heartbeatStore).detect() ?: return
         val detectedAtWallMillis = SystemClock.wallMillis()
         val detectedAtMonotonicNanos = SystemClock.monotonicNanos()
@@ -287,6 +305,11 @@ public class RealCaptureService : Service() {
                     endWallMillis = detectedAtWallMillis,
                     cause = OS_STOPPED_GAP_CAUSE,
                 ),
+            )
+            db.sessionDao().closeIfStillOpen(
+                id = previousLaunchGap.sessionId,
+                endedAt = previousLaunchGap.lastHeartbeatWallMillis,
+                terminationReason = TerminationReason.KILLED,
             )
         }
     }
@@ -368,6 +391,12 @@ public class RealCaptureService : Service() {
                     if (event.error.startsWith(ROUTE_MISMATCH_ERROR_PREFIX)) {
                         refreshInputStatusFromRoute(audioSource)
                     }
+                    // R-173: covers the route-mismatch halt and every other Failed reason alike --
+                    // no TerminationReason names "route mismatch" specifically (the closed enum is
+                    // USER/CRASH/KILLED/STORAGE/UNKNOWN), so UNKNOWN is the honest closest fit,
+                    // flagged here rather than silently picking a more specific value that would
+                    // overclaim (see this package's report).
+                    endSessionRow(TerminationReason.UNKNOWN)
                     updateNotification(CaptureNotificationContent.State.FAILED)
                 }
                 CaptureEvent.RouteChanged -> refreshInputStatusFromRoute(audioSource)
@@ -386,7 +415,10 @@ public class RealCaptureService : Service() {
         }
         // The flow completing means the source stopped for good — halted on a route mismatch
         // or an unrecoverable failure. Never leave the surface claiming "Capturing".
-        if (CaptureState.isCapturing) CaptureState.failed("capture stopped unexpectedly")
+        if (CaptureState.isCapturing) {
+            CaptureState.failed("capture stopped unexpectedly")
+            endSessionRow(TerminationReason.UNKNOWN)
+        }
     }
 
     /**
@@ -524,6 +556,7 @@ public class RealCaptureService : Service() {
     private fun stopForStorageExhaustion() {
         val reason = "storage exhausted: free space below the ${STORAGE_FLOOR_BYTES / (1024 * 1024)} MiB floor"
         CaptureState.failed(reason)
+        endSessionRow(TerminationReason.STORAGE)
         updateNotification(CaptureNotificationContent.State.FAILED)
         source?.stop()
     }
@@ -599,16 +632,61 @@ public class RealCaptureService : Service() {
         stopSelf()
     }
 
+    /**
+     * **Ordering is deliberate, not incidental (R-173).** Every "this session just ended" fact —
+     * [endSessionRow], [CaptureState.idle] — is published *before* [source]`?.stop()`. `[scope]`
+     * runs on real `Dispatchers.IO` (no test-dispatcher seam in this class), so `runCaptureFlow`'s
+     * own "did the flow end unexpectedly?" check (`if (CaptureState.isCapturing) ...`, its own
+     * kdoc) executes on a *different thread* once [source] actually stops — and only runs after
+     * observing [AudioRecordSource]'s `@Volatile stopRequested` flip true. The JMM's happens-before
+     * chain (a volatile write happens-before a later read of the *same* volatile by another thread;
+     * happens-before is transitive across a thread's own program order) guarantees that thread then
+     * sees this thread's *prior* writes too — including [CaptureState.idle]'s — so it correctly
+     * reads `Idle`, not stale `Capturing`, and never misclassifies a deliberate stop as unexpected
+     * or races [endSessionRow] for which reason wins. Stopping [source] first would not have this
+     * guarantee.
+     */
     private fun stopCaptureInternal(markClean: Boolean) {
-        source?.stop()
-        source = null
-        segmenter = null
+        // R-173: a deliberate stop (ACTION_STOP -> markClean = true) is TerminationReason.USER;
+        // an unclean stop that still reached onDestroy (markClean = false) is KILLED -- the same
+        // label DigestPolling already renders as "ended unclean -- the phone stopped the app". A
+        // genuine hard kill where onDestroy never runs at all is closed later, on next launch, by
+        // persistUncleanEndGapIfAny()'s closeIfStillOpen() call instead.
+        endSessionRow(if (markClean) TerminationReason.USER else TerminationReason.KILLED)
         // audit F-022: only a clean stop (ACTION_STOP) clears CaptureState.sessionId -- an
         // unclean stop (onDestroy without a prior ACTION_STOP, e.g. the OS killing the process)
         // leaves it in place so a Failed/Idle read still names the session that was running. See
         // CaptureState.idle()'s kdoc.
         CaptureState.idle(clearSession = markClean)
         if (markClean && sessionId.isNotEmpty()) heartbeatStore.markCleanShutdown(sessionId)
+        source?.stop()
+        source = null
+        segmenter = null
+    }
+
+    /**
+     * register R-173: the one place every session-ending path writes `SessionEntity.endedAt` —
+     * before this existed, nothing did, so a real session read "still running" forever
+     * (`Now-Idle`, `Sessions`). Guarded by [sessionEndRecorded] (see that field's own kdoc) so
+     * whichever path reaches here first wins and no later path can overwrite it with a less
+     * accurate reason. `runBlocking(Dispatchers.IO)`, not `scope.launch` — deliberately, so this
+     * always completes before the caller proceeds: [onDestroy] calls `scope.cancel()` immediately
+     * after [stopCaptureInternal] returns, which would race an async write launched on [scope]
+     * and could lose it. Room forbids a query on the *calling* thread, not the dispatcher the
+     * suspend body actually runs on, so this is safe to call from `onStartCommand`/`onDestroy`'s
+     * own (main) thread — the same reasoning [RealSegmentSink.close]'s existing `runBlocking` uses,
+     * made explicit about the dispatcher since this call, unlike that one, can run on the main
+     * thread.
+     */
+    private fun endSessionRow(reason: TerminationReason?) {
+        if (sessionEndRecorded) return
+        val database = db ?: return
+        if (sessionId.isEmpty()) return
+        val endedAt = SystemClock.wallMillis()
+        runBlocking(Dispatchers.IO) {
+            database.sessionDao().setEnded(sessionId, endedAt, reason)
+        }
+        sessionEndRecorded = true
     }
 
     /**

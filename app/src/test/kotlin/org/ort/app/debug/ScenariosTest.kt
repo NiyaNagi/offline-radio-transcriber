@@ -369,6 +369,18 @@ class ScenariosTest {
     }
 
     @Test
+    @Requirement("R-177")
+    fun `R_177_thermal sets a real transition moment, not now`() = runTest {
+        Scenarios.load(context, "thermal")
+
+        val state = ThermalStatus.state as ThermalStatus.State.Warm
+        assertTrue(
+            "sinceMillis must be a real 'minutes ago' moment, not the current instant",
+            state.sinceMillis <= System.currentTimeMillis() - 11 * 60_000L,
+        )
+    }
+
+    @Test
     @Requirement("F-009", "R-104")
     fun `F9_rig-lost sets RigStatus Stale since thirty minutes ago, last known 145_230`() = runTest {
         Scenarios.load(context, "rig-lost")

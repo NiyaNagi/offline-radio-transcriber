@@ -32,6 +32,154 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11c follow-up: R-173, R-177)
+
+### (pending) — ui-conformance WP11c · sessions end when capture stops; thermal state carries its transition time
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/{RealCaptureService,ThermalStatus}.kt`
+(wiring/holder only); `data/src/main/kotlin/org/ort/data/dao/SessionDao.kt` (two new `@Query`
+methods, no schema change — lead-approved `:data` exception, `data/**` is free per the coordinator's
+message); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (`thermal` now sets an explicit
+`sinceMillis`); tests beside each (new: `data/.../dao/SessionDaoTest.kt`,
+`pipeline/.../RealCaptureServiceSessionEndTest.kt`; additions to `ThermalStatusTest.kt`,
+`ScenariosTest.kt`; one existing assertion corrected in `RealCaptureServiceUncleanEndGapTest.kt` —
+see What changed). `results/coverage-matrix.md` regenerated (gate side-effect). Addresses two
+validator findings filed against WP11c's own `:pipeline` ownership (register R-173, R-177; V2
+Capture validation at `3e2d4ee`). No file under `app/src/main/**` touched.
+
+**Requirements/ACs:** register R-173 (halt), R-177; FR-RUN-16, FR-RUN-12.
+
+**Constitution check.** Principle I (uncertainty is content) is the whole point of both fixes: a
+session that never wrote `endedAt` read "still running" forever — a confident lie about a fact the
+service genuinely knew — and a thermal banner whose "since" crept forward on every poll misreported
+*when* a real transition happened, which is exactly a "confident wrong" reading the constitution
+calls worse than an honest unknown. Principle IV (capture never lies) bore on getting the fix
+correct under real concurrency, not just correct in the common case: `stopCaptureInternal`'s session-
+ending writes are now ordered *before* `source?.stop()` specifically so a genuinely concurrent
+audio-thread check (`runCaptureFlow`'s own `CaptureState.isCapturing` check, running on `scope`'s
+real `Dispatchers.IO`) cannot race a deliberate stop and either report `Failed` for a clean stop or
+downgrade `TerminationReason.USER` to `UNKNOWN` — verified by a test that reproduced the race before
+the reorder (see What changed) and stayed green after it. Principle VII (structural boundaries):
+`SessionDao.closeIfStillOpen`'s own `WHERE endedAt IS NULL` guard is a structural, not a
+remembered-convention, protection against the on-next-launch recovery pass clobbering a session some
+other, more precise path already closed. `dependencyRules`/`platformGuards` both passed unchanged —
+no module edge touched.
+
+**What changed:**
+
+- **R-173 — every path that ends a session now writes `SessionEntity.endedAt`.** New
+  `SessionDao.setEnded(id, endedAt, terminationReason)` (unconditional) and
+  `SessionDao.closeIfStillOpen(id, endedAt, terminationReason)` (guarded, `WHERE endedAt IS NULL`) —
+  no schema/entity change, so no migration (`endedAt`/`terminationReason` already existed; only two
+  new `@Query` methods). `RealCaptureService` gained one shared private helper,
+  `endSessionRow(reason: TerminationReason?)`, called from every session-ending path: `USER` from a
+  deliberate `ACTION_STOP`, `KILLED` from an unclean stop that still reached `onDestroy` (matching
+  `DigestPolling`'s existing "ended unclean — the phone stopped the app" label for that value),
+  `STORAGE` from the storage-floor stop, and `UNKNOWN` from any other `CaptureEvent.Failed`
+  (including a route-mismatch halt — no `TerminationReason` names that specifically; the closed
+  five-value enum's closest honest fit, flagged here rather than silently picked without comment)
+  or the "flow ended unexpectedly" fallback. Guarded by a new `sessionEndRecorded` flag so whichever
+  path reaches it first wins — real risk without it: `stopCapture()` calls
+  `stopCaptureInternal(markClean = true)`, then `stopSelf()` asynchronously triggers `onDestroy()` →
+  `stopCaptureInternal(markClean = false)` a **second** time for the same session, which must not
+  downgrade `USER` to `KILLED`. `endSessionRow` uses `runBlocking(Dispatchers.IO)`, not `scope.launch`
+  — deliberately, so the write always completes before the caller proceeds (`onDestroy` calls
+  `scope.cancel()` immediately after `stopCaptureInternal` returns, which would race and could lose
+  an async write); Room forbids a query on the *calling* thread, not the dispatcher the suspend body
+  actually executes on, so this is safe from `onStartCommand`/`onDestroy`'s own main thread — the
+  same reasoning `RealSegmentSink.close`'s existing `runBlocking` already relies on in this same
+  file, made explicit about the dispatcher here since this call, unlike that one, can run on main.
+- **A real ordering bug found and fixed while writing `R_173_stop_writes_endedAt`**: the first draft
+  called `source?.stop()` *before* `endSessionRow`/`CaptureState.idle()` inside
+  `stopCaptureInternal`. Because `scope` runs on real `Dispatchers.IO` (no test-dispatcher seam in
+  this class), the concurrent `runCaptureFlow` coroutine could observe `stopRequested` flip true,
+  let its flow end, and reach its own "did the flow end unexpectedly?" check
+  (`if (CaptureState.isCapturing) { CaptureState.failed(...); endSessionRow(UNKNOWN) }`) *before*
+  the main thread's `CaptureState.idle()`/`endSessionRow(USER)` had run — a genuine race the test
+  caught directly (`terminationReason` landed `UNKNOWN` instead of `USER`, twice, reproducibly).
+  Fixed by reordering `stopCaptureInternal` to publish every "this session just ended" fact
+  *before* `source?.stop()`: the JMM's happens-before chain (a volatile write happens-before a later
+  read of the *same* volatile by another thread; happens-before is transitive across a thread's own
+  program order) then guarantees the audio-thread's later read of `CaptureState.state` sees `Idle`,
+  not stale `Capturing`, once it has observed `stopRequested = true`. All three
+  `RealCaptureServiceSessionEndTest` cases pass after the reorder, including one written
+  specifically to catch a regression of this exact race
+  (`R_173_a_second_stopCaptureInternal_call_never_overwrites_the_first_ending`).
+- **FR-RUN-16 — the previous session found still open at next launch is closed at its last
+  heartbeat, flagged unclean.** `persistUncleanEndGapIfAny` (already the one place
+  `UncleanEndDetector(heartbeatStore).detect()` runs) now also calls
+  `db.sessionDao().closeIfStillOpen(previousLaunchGap.sessionId, previousLaunchGap
+  .lastHeartbeatWallMillis, TerminationReason.KILLED)` in the same launched coroutine as its
+  existing gap persist. `closeIfStillOpen`'s guard matters here specifically: if
+  `stopCaptureInternal` already closed that session correctly (an unclean stop that still reached
+  `onDestroy`, just without `ACTION_STOP` — `hadUncleanEnd()` still reads true in that case, since
+  only a *clean* stop marks the heartbeat clean), this recovery pass must not overwrite that more
+  precise timestamp with a stale "last heartbeat" one. **Corrected an existing test assertion**:
+  `RealCaptureServiceUncleanEndGapTest`'s own test previously asserted the previous session's
+  `endedAt` stayed `null` after recovery, reading its own comment as "does not reopen the previous
+  session" — that assertion was itself observing the bug this fix closes; updated to assert
+  `endedAt == lastHeartbeatWallMillis` and `terminationReason == KILLED` instead, with the comment
+  corrected to explain why closing a session honestly is not "reopening" it.
+- **R-177 — `ThermalStatus.State.Warm`/`Hot` carry `sinceMillis`**, set once at the moment `sample`
+  first observes *that* tier and preserved unchanged across every later same-tier tick — the same
+  shape `RigStatus.State.Stale.sinceMillis` already uses. A tier change (`Warm` → `Hot` or the
+  reverse) is its own fresh transition, same as entering from `Nominal`. `sample(osThermalStatus,
+  nowMillis = SystemClock.wallMillis())` gained an optional `nowMillis` (only consulted on a fresh
+  transition; the real 10 s production tick never needs to pass it). `update(osThermalStatus,
+  realTimeFactor, sinceMillis = null)` gained an optional explicit `sinceMillis` for the scenario
+  simulator/tests — verbatim when given, the same auto-tracking `sample` uses otherwise.
+  `Warm`/`Hot`'s own `sinceMillis` constructor parameter defaults to `SystemClock.wallMillis()`
+  *only* so the handful of existing fixtures elsewhere that construct one directly without a
+  transition to track (`RecoveryAnnouncerTest`, `FailureMapperTest`, `CaptureStatusMapperTest` —
+  all outside this package's ownership, left untouched) still compile; every real caller in this
+  file always passes an explicit value. The `thermal` scenario now sets `sinceMillis` to a real 12
+  minutes before "now" rather than leaving it to a same-moment default, so the banner reads a fixed
+  clock time on repeated polls instead of one that advances — the exact behaviour the register row
+  found wrong (`08:59:05` → `:26` → `:48` on an untouched scenario).
+- **New signatures WP11b needs to consume `sinceMillis`**: `ThermalStatus.State.Warm.sinceMillis:
+  Long` and `ThermalStatus.State.Hot.sinceMillis: Long` — both already-published, non-nullable
+  fields on the existing sealed states; no new state, no removed field. The mapper (out of this
+  package's ownership) reads `(ThermalStatus.state as? ThermalStatus.State.Warm)?.sinceMillis` /
+  `.Hot`'s equivalent and formats it as a clock time exactly once per real transition, the same way
+  `RigStatus.State.Stale.sinceMillis` is presumably already consumed elsewhere.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL (845 actionable tasks;
+  every module's tests, detekt, ktlint, lint green). `dependencyRules: checked 17 modules ... OK`.
+  `platformGuards: checked 17 modules' external dependencies and 17 manifests ... OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 181 covered (unchanged — R-173/R-177 are
+  register, not functional-spec, ids, and FR-RUN-16 was already covered by an existing test before
+  this). `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Targeted reruns, all green: `:data:testDebugUnitTest --tests SessionDaoTest` (5 tests);
+  `:pipeline:testDebugUnitTest --tests ThermalStatusTest` (9 tests, 3 new);
+  `:pipeline:testDebugUnitTest --tests RealCaptureServiceSessionEndTest --tests
+  RealCaptureServiceUncleanEndGapTest` (5 tests — this is the run that first caught, then confirmed
+  the fix for, the ordering race described above); `:pipeline:testDebugUnitTest` and
+  `:data:testDebugUnitTest` in full; `:app:testDebugUnitTest --tests ScenariosTest` (2 new).
+- Did **not** use the emulator — Robolectric is the builder's gate; validators exercise the
+  emulator after merge.
+
+**Left open / not done:**
+- **No `TerminationReason` value names a route mismatch specifically.** The generic
+  `CaptureEvent.Failed` path (which also covers a route-mismatch halt) writes `UNKNOWN` — the
+  closest honest fit in the existing closed five-value enum (`USER`/`CRASH`/`STORAGE`/`KILLED`/
+  `UNKNOWN`). Adding a more specific value (mirroring how `CaptureGapCause` gained `ROUTE_LOST` in
+  WP11a) was judged out of scope for a two-row fix; flagged for the lead rather than resolved
+  silently.
+- **`sessionEndRecorded` is per-service-instance, reset only in `startCapture()`.** This is correct
+  for the real service's lifecycle (one instance per running session) but means a test harness that
+  reuses a single `RealCaptureService` instance across two full sessions without a fresh
+  `Robolectric.buildService(...)` would need to be aware of it; none of this package's own tests do,
+  and none needed to.
+- Register rows R-173/R-177 are left for the lead to mark — this package does not edit
+  `results/ui-audit/register.md`. R-177 also names WP11b (the `Fail-Thermal` mapper) as a second
+  owner — this entry closes only the holder half.
+
+---
+
 ## 2026-09-08 (ui-conformance WP9 round 3: setup step entry and Install destination)
 
 ### (pending) — ui-conformance WP9 · setup step entry and Install destination
