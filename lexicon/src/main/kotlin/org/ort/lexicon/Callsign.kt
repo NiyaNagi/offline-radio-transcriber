@@ -38,6 +38,14 @@ public data class CallsignCandidate(
     val editPenalty: Float,
     /** The lattice slot indices this parse consumed. */
     val slotSpan: IntRange,
+    /**
+     * R-320/FR-UI-8 (`Detail-Why.dc.html` section 1), R-182/FR-UI-4 (transcript-highlight span):
+     * one [SlotDetail] per index in [slotSpan], in order — the lattice's own per-slot unit, score,
+     * kept alternate (or `null`) and transcript character span (or `null`/`null`). Defaults to
+     * `emptyList()` so every existing caller/constructor (`:data`, `:pipeline`) keeps compiling
+     * unchanged; [CallsignGrammar.parse] is the only real producer and always fills it.
+     */
+    val slotDetails: List<SlotDetail> = emptyList(),
 ) {
     /** The callsign string, e.g. `K7ABC` or `VE7/K7ABC/P`. */
     public val text: String get() = parsed.canonical

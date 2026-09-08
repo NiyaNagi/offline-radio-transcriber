@@ -32,6 +32,111 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance lexicon · resolver per-slot detail and transcript char span, R-320/R-182)
+
+### (pending) — ui-conformance lexicon · resolver per-slot detail and transcript char span (R-320, R-182)
+
+**Scope:** `:lexicon` public API and its tests only, per this round's instruction — new
+`lexicon/src/main/kotlin/org/ort/lexicon/SlotDetail.kt`; edits to `PhoneticLattice.kt`
+(`LatticeSlot`), `Callsign.kt` (`CallsignCandidate`), `CallsignGrammar.kt`, and
+`TextDerivedLatticeBuilder.kt`; new tests `SlotDetailTest.kt`, `CallsignGrammarSlotDetailTest.kt`,
+`TextDerivedLatticeBuilderAnchoredTest.kt`; `results/ui-audit/register.md` (R-320, R-182).
+`:data`/`:pipeline`/`:app` were read (to confirm nothing there needed to change) but not edited.
+
+**Requirements/ACs:** FR-UI-8 (candidate list and phonetic lattice viewable on demand), FR-UI-4
+(attribution confidence/callsign visibility), register R-320 (halt — D05's per-slot lattice grid)
+and R-182 (the D01/D03 transcript highlight span), cf. R-180. Constitution I (never fabricate what
+was not computed — every new nullable field's own doc comment and tests say exactly when it is
+`null` and why), VI (fold/machine/provider — see the fixture note below), VII (`:lexicon` stays a
+pure JVM module; no new dependency added).
+
+**What changed:**
+
+*Constitution Check.* Principle I bears most directly: the whole point of this change is that
+`keptAlternate`/`charStart`/`charEnd` must never be invented when the underlying computation
+genuinely has nothing — every code path that could report one instead reports `null`, and every
+test asserting a `null` case exists specifically to keep that honest. Principle VII: no new
+`:lexicon` dependency: `TextDerivedLatticeBuilder.buildAnchored` is plain `Regex`/`String`
+matching against the already-bundled `VariantTable`, not a new inference step.
+
+- **New `org.ort.lexicon.SlotDetail`**: `data class SlotDetail(val index: Int, val unit: String,
+  val score: Double, val keptAlternate: String? = null, val charStart: Int? = null, val charEnd:
+  Int? = null)`. `index` is the `PhoneticLattice.slots` index (same range as `slotSpan`); `unit`/
+  `score` are the lattice slot's own top alternative (`LatticeSlot.top`) — a fact about the
+  lattice, not about which candidate is being displayed, so it is identical across every candidate
+  `CallsignGrammar.parse` returns for the same lattice (tested explicitly). `keptAlternate` is the
+  slot's second-best alternative's unit symbol (`LatticeSlot.runnerUp`, new), `null` when a slot
+  has only one alternative — true of every `TEXT_DERIVED` slot today, since `VariantTable.resolve`
+  maps one spoken form to exactly one unit, never a ranked set. `charStart`/`charEnd` are a
+  half-open `[start, end)` range into the transcript text, `null`/`null` unless the lattice was
+  built by the new `buildAnchored`. Invariants enforced in `init`: `index >= 0`, `unit` non-blank,
+  `charStart`/`charEnd` both-null-or-both-set, `charStart <= charEnd`.
+- **`LatticeSlot` gains `charStart: Int? = null, charEnd: Int? = null`** (trailing defaults — every
+  existing `LatticeSlot(startMs, endMs, alts)` call site keeps compiling unchanged) and a new
+  `runnerUp: UnitScore?` convenience (second-highest-scoring alt, or `null`), with the same
+  both-null-or-both-set/`charStart <= charEnd` invariant `SlotDetail` carries.
+- **`CallsignCandidate` gains `slotDetails: List<SlotDetail> = emptyList()`** as a new trailing
+  parameter — every existing constructor call (`:data`'s test fixtures, `:pipeline`'s
+  `DataPassBResultSink`, `:lexicon`'s own existing tests) keeps compiling and passing unchanged;
+  confirmed by a clean `:pipeline:compileDebugKotlin :data:compileDebugKotlin
+  :app:compileDebugKotlin` and every pre-existing `:lexicon` test still green.
+- **`CallsignGrammar.parse` now populates `slotDetails`** via a new private `slotDetailsFor(lattice,
+  span)`, computed once per `parse()` call (not once per candidate, since it is lattice-wide, not
+  candidate-specific) and attached to every emitted `CallsignCandidate` through `toCandidate`'s new
+  third parameter.
+- **`TextDerivedLatticeBuilder.buildAnchored(sourceText: String, msPerSlot: Int = 100):
+  PhoneticLattice`** (new method; the existing `build(tokens: List<String>)` is untouched, keeping
+  its documented "throw on the first unrecognised word" contract for callers with an
+  already-filtered token list). `buildAnchored` whitespace-splits `sourceText` itself with each
+  match's own `[start, end)` range, resolves each token via `VariantTable.resolve` (not `require`),
+  and **silently excludes an unrecognised token** rather than aborting — the same choice
+  `:pipeline`'s `PassB.resolveFromText` already documents making for continuous speech containing
+  many non-spelled words (this round did not change `PassB.kt` — see "Left open").
+
+**Left open / not done:**
+- **`:pipeline`'s `PassB.resolveFromText` does not call `buildAnchored`.** It builds its own
+  `PhoneticLattice.ofUnits` inline from a `mapNotNull` over split tokens, which drops the original
+  token positions — so a real Pass B run's `TEXT_DERIVED` lattice still has `charStart`/`charEnd`
+  `null` on every slot today. Wiring `PassB` to `buildAnchored` instead is a `:pipeline` change,
+  outside this round's `:lexicon`-only file ownership; reported here rather than made unilaterally.
+- **`:data` schema v5 is not started** — `PhoneticLatticeEntity`/`CallsignCandidateEntity` do not
+  yet persist `slotDetails`; the `:data` agent's own follow-up (per this round's instruction).
+- **WP6's D05 per-slot grid and D01/D03 highlight are not rendered** — nothing in `:app` was
+  touched; WP6 renders once `:data` schema v5 exists.
+- Register R-320/R-182 updated to `partial` (from `open`), not `fixed` — the resolver-side gap
+  named in each is closed, the persistence/render gaps are not.
+
+**Verified:**
+- `.\gradlew.bat :lexicon:test --tests "org.ort.lexicon.SlotDetailTest" --tests
+  "org.ort.lexicon.CallsignGrammarSlotDetailTest" --tests
+  "org.ort.lexicon.TextDerivedLatticeBuilderAnchoredTest"` — `BUILD SUCCESSFUL`, all 22 new tests
+  `PASSED` on first run, including `FR_UI_8_slot_detail_reports_the_lattices_own_top_unit_and_score_per_slot`,
+  `FR_UI_8_slot_detail_kept_alternate_is_the_slots_second_best_unit`,
+  `FR_UI_8_slot_detail_kept_alternate_is_null_not_invented_when_a_slot_has_only_one_alternative`,
+  `R_182_char_span_locates_each_recognised_token_at_its_real_offset_in_the_source_text`,
+  `R_182_char_span_survives_into_the_resolved_candidates_slot_details`.
+  **Fixture provenance (constitution VI):** the spelled callsign in the `R_182_char_span_*` tests,
+  `N7XYZ`, is drawn from `corpus/manifest.json`'s **dev** fold (`synth-callsigns/dev-01`, `fold:
+  dev`), never `eval`; these are pure JVM unit tests of code (`TextDerivedLatticeBuilder` is string
+  matching against a bundled table, not a model), so no accuracy number is reported — no
+  fold/machine/provider triple applies beyond that fixture citation.
+- `.\gradlew.bat :lexicon:build` (compile + detekt + ktlintCheck + test, full module) —
+  `BUILD SUCCESSFUL`; every pre-existing `:lexicon` test (72 total) still green, unmodified.
+- `.\gradlew.bat :lexicon:detekt --rerun` — `BUILD SUCCESSFUL`; `lexicon/build/reports/detekt/
+  detekt.md`: **46 kt files** analysed (up from 42), **0 code smells**.
+- `.\gradlew.bat :pipeline:compileDebugKotlin :data:compileDebugKotlin :app:compileDebugKotlin` —
+  `BUILD SUCCESSFUL`, confirming instruction 1's "keep every existing field/constructor working" —
+  no source change needed in any of the three modules.
+- `.\gradlew.bat build dependencyRules platformGuards` (single top-level command) —
+  `BUILD SUCCESSFUL in 3m 20s`, 846 actionable tasks; `dependencyRules`/`platformGuards` both OK.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat coverageMatrix` — `190 covered of 419` (up from 185).
+- `.\gradlew.bat coverageMatrixCheck` — up to date (190/419), `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+
+---
+
 ## 2026-09-08 (ui-conformance data: busy timeout; processed tier per record)
 
 ### (pending) — ui-conformance data · busy timeout; processed tier per record
@@ -273,7 +378,6 @@ workaround). Principle V: `androidx.sqlite:sqlite-bundled` is a local, offline S
 ## 2026-09-08 (ui-conformance WP11c follow-up: R-133 storage accounting)
 
 ## 2026-09-08 (ui-conformance WP10 round 9: R-137 Preview/Save bundle wired to WP11e's real DiagnosticsBundleBuilder)
-
 ## 2026-09-08 (ui-conformance WP11c follow-up: FR-OBS-1 diagnostics log writers)
 
 ### (pending) — ui-conformance WP11c · the diagnostics log writer: real lifecycle/capture/pipeline/rig lines, structurally private
