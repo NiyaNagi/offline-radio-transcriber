@@ -171,7 +171,7 @@ public object Scenarios {
             "revisions" -> revisions(context, db)
             "stations-14-nights" -> StationsFixtures.stations14Nights(db)
             "frequency-change" -> FrequencyChangeFixtures.frequencyChange(db)
-            "field-tier1" -> fieldTier1(db)
+            "field-tier1" -> fieldTier1(context, db)
             "search-corpus" -> searchCorpus(db)
             "backlog" -> backlog(context, db)
             "model-missing" -> modelMissing(context, db)
@@ -697,8 +697,23 @@ public object Scenarios {
      * finished before a screenshot script's own settle wait could ever catch it running. Twelve
      * overs (`FIELD_TIER1_OVER_COUNT`), still a real, honest number [ImprovePolling] counts for
      * real, gives the run a visible multi-second span at the runner's default per-item delay.
+     *
+     * R-290 (halt): the *real* `RealImproveRunner`/[org.ort.pipeline.reprocess.ReprocessRunner]
+     * reaches this session's overs through [org.ort.pipeline.passb.FlacSegmentAudioProvider], which
+     * `check`s that a real file exists at [org.ort.data.entity.TransmissionEntity.audioPath] and
+     * throws if not — this fixture used to seed only the database rows, so R03/R04
+     * (`Improve-Running`/`Improve-Done`) crashed the app on the first item instead of ever
+     * completing. Every over here is, by definition, "improvable" (that is what a non-null
+     * `deviceTier` below the current one means — see [ImprovePolling.root]'s own kdoc), so every one
+     * of them now gets [ScenarioFixtures.writeAudioFixture]'s real, decodable file — the same
+     * synthetic-tone fixture `OvernightScenario`'s own `writeAudio = true` overs already write, and
+     * the exact container [FlacSegmentAudioProvider]'s default codec
+     * ([org.ort.capture.android.codec.DeflatePredictiveCodec]) decodes (its own class name aside,
+     * that is the real codec production reprocessing reads with — confirmed by reading
+     * [org.ort.pipeline.passb.FlacSegmentAudioProvider]'s own constructor default before writing
+     * this, not assumed from the file extension `TransmissionEntity.audioPath()` happens to use).
      */
-    private suspend fun fieldTier1(db: OrtDatabase): LoadResult {
+    private suspend fun fieldTier1(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("field-tier1")
         db.sessionDao().insert(
             ScenarioFixtures.session(
@@ -712,18 +727,20 @@ public object Scenarios {
         repeat(FIELD_TIER1_OVER_COUNT) { i ->
             val txId = "$sessionId-tx${i + 1}"
             val startedAt = baseStartedAt + i * 20_000L
-            db.transmissionDao().insert(
-                ScenarioFixtures.transmission(
-                    id = txId,
-                    sessionId = sessionId,
-                    startedAtUtc = startedAt,
-                    samplePosition = (i + 1).toLong(),
-                    frequencyHz = 146_960_000L,
-                    attributionState = AttributionState.INFERRED,
-                    stationId = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size],
-                    attributionConfidence = 0.68,
-                ),
+            val tx = ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = startedAt,
+                samplePosition = (i + 1).toLong(),
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.INFERRED,
+                stationId = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size],
+                attributionConfidence = 0.68,
             )
+            db.transmissionDao().insert(tx)
+            // R-290: real, decodable retained audio at the exact path the reprocess engine
+            // requires — not seeded before this fix (see this function's own kdoc).
+            ScenarioFixtures.writeAudioFixture(context, tx)
             db.transcriptDao().insert(
                 ScenarioFixtures.transcript(
                     id = "$txId-t1",

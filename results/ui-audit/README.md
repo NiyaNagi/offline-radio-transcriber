@@ -168,7 +168,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 |---|---|
 | `empty` | No sessions at all. |
 | `first-session` | One session started 3 minutes ago, no transmissions, capture marked running. |
-| `overnight` | A real 6h42m, two-frequency session with ~42 overs exercising every `Rows.dc.html` variant: CONFIRMED, INFERRED (linked to its confirming over), AMBIGUOUS, UNKNOWN, a corrected row, a revised row (two transcript versions), a rejected row (retained), a first-heard station, a QSO thread (4 overs, shared `threadId`), a 38s capture gap, mixed signal strength, mixed retained audio, and lattice/candidate rows for the confirmed/inferred/ambiguous overs — including one cold-start and one negative prior, for `Detail-Why`. |
+| `overnight` | A real 6h42m, two-frequency session with ~42 overs exercising every `Rows.dc.html` variant: CONFIRMED, INFERRED (linked to its confirming over), AMBIGUOUS, UNKNOWN, a corrected row, a revised row (two transcript versions), a rejected row (retained), a first-heard station, a QSO thread (4 overs, shared `threadId`), a 38s capture gap, mixed signal strength, mixed retained audio, and lattice/candidate rows for the confirmed/inferred/ambiguous overs — including one cold-start and one negative prior, for `Detail-Why`. The AMBIGUOUS over's own candidates are three, ranked and distinctly scored (`KE7QRS` 8.20 / `KE7QRF` 8.05 / `KE7QRZ` 7.90, register R-184), so `Detail-Correct-A`'s Tier A list has real rows to render, not one candidate filtered down to zero. |
 | `gap-call` | `overnight` plus a second capture gap, cause `CALL` (register R-106 — `CaptureGapCause.CALL` added by WP11a). |
 | `overnight-live` | The same `overnight` fixture, but `SessionEntity.endedAt` is `null` and `CaptureState` is actually `capturing` on that id, with a fresh heartbeat (register R-171) — reaches the *populated, running* shape of `Main.dc.html` (N01) and `Capture-Status.dc.html` (N04) that neither `overnight` (populated but ended) nor `first-session` (running but empty) can reach on its own. |
 | `unclean-end` | A heartbeat file that reads as an unclean end (never marked clean shutdown) for a prior session; this process is not capturing. |
@@ -178,8 +178,8 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `corrected` | A single transmission carrying the exact shape a one-tap correction produces, plus its `CorrectionEntity` audit row. |
 | `no-audio` | A confirmed transmission with no retained-audio file at all. |
 | `revisions` | A single transmission with two transcript versions, the older superseded. |
-| `stations-14-nights` | Fourteen sessions over a fifteen-day span (two weeks plus the skipped night), realistic hour-of-day/day-of-week spread across the design canvas's ~9 callsigns, a within-night hatch gap on most nights, and one whole calendar day with no session at all. |
-| `field-tier1` | A session with `deviceTier = "T1"` (see "Known gaps" — nothing renders this yet). |
+| `stations-14-nights` | Fourteen sessions over a fifteen-day span (two weeks plus the skipped night), realistic hour-of-day/day-of-week spread across the design canvas's ~9 callsigns, a within-night hatch gap on most nights, one whole calendar day with no session at all, (register R-184) one AMBIGUOUS over on the primary session with the same three ranked, distinctly-scored candidates `overnight`'s own AMBIGUOUS over carries, and (register R-272) `WA7HJR` bound to two real voiceprint clusters (`voiceprint-wa7hjr-a`/`-b`), each with a real, non-fabricated `memberCount` matching the overs actually assigned to it — so `Station-Identity`'s Split screen has a genuine multi-voice case to render, not just the single-cluster empty state. |
+| `field-tier1` | A session with `deviceTier = "T1"`, twelve overs, each with a real, decodable retained-audio file at the exact path `FlacSegmentAudioProvider`/the real `ReprocessRunner` reads (register R-290 — before this fix, only the database rows existed, so `Improve-Running`/`Improve-Done` (R03/R04) crashed the app on the first item instead of ever completing). |
 | `search-corpus` | Fourteen transcripts mentioning "park activation" across three sessions ("nights"). |
 | `backlog` | `ShedStatus` set to level 3 / backlog 112 (F8), capture marked running. |
 | `model-missing` | `AsrAvailability.unavailable(...)` (F13); captured but untranscribed transmissions. |
@@ -334,8 +334,13 @@ DebugFailureOverride`'s own kdoc says precisely what each would need and from wh
   with no `pass = B` row is exactly what a real in-flight Pass A produces, but the Log screen
   (register R-041) does not yet render a partial state at all — this scenario proves the data
   path is ready, not that the screen shows it.
-- **`field-tier1` is representable, unread.** `SessionEntity.deviceTier` is a free `String?`; no
-  screen renders it yet (register R-090, `Settings-Tier`/CF05 is a placeholder).
+- **`field-tier1` is now read, not just representable** — WP10 wired `Settings-Tier`/CF05 and
+  `Improve`/`Improve-Select`/`Improve-Running` to `SessionEntity.deviceTier` end to end (register
+  R-090/R-091). What was missing until register R-290's fix was retained audio: the real
+  `ReprocessRunner` reaches this scenario's overs through `FlacSegmentAudioProvider`, which requires
+  a real file at each transmission's `audioPath` — this scenario now writes one for every over (see
+  the scenario table above), so `Improve-Running`/`Improve-Done` (R03/R04) are actually reachable,
+  not just `Improve`/`Improve-Select` (R01/R02).
 - **`lexicon-corrupt` is representable, unread — and, unlike every other row in this list, the
   underlying feature is now real, not just the fixture.** R-154's own register row previously said
   "no lexicon-import validator exists in `:app`/`:lexicon`/`:net` — F12 is an unbuilt feature, not a

@@ -81,6 +81,7 @@ internal object ScenarioFixtures {
         processingState: TransmissionState = TransmissionState.COMPLETE,
         rejectionReason: String? = null,
         isReprocessCandidate: Boolean = false,
+        voiceprintId: String? = null,
     ): TransmissionEntity = TransmissionEntity(
         id = id,
         sessionId = sessionId,
@@ -96,7 +97,7 @@ internal object ScenarioFixtures {
         mode = "FM",
         signalStrength = signalStrength,
         channelName = null,
-        voiceprintId = null,
+        voiceprintId = voiceprintId,
         attributionState = attributionState,
         stationId = stationId,
         attributionConfidence = attributionConfidence,

@@ -245,6 +245,11 @@ class ScenariosTest {
         assertTrue("expected a negative (argued against) prior", breakdown.values.any { it < 0.0 })
     }
 
+    // R-184's own multi-candidate fixture tests moved to `AmbiguousCandidatesFixtureTest.kt`
+    // (detekt's `LargeClass` finding, same reason and same split pattern as `FieldTier1AudioTest.kt`
+    // above) — both `overnight` and `stations-14-nights`' own AMBIGUOUS-with-three-candidates
+    // assertions live there now, not here.
+
     @Test
     @Requirement("R-110")
     fun `R_110 every overnight transmission's attribution shape matches Attribution's own invariants`() = runTest {
@@ -377,6 +382,11 @@ class ScenariosTest {
 
         assertEquals("T1", session?.deviceTier)
     }
+
+    // R-290's own audio-fixture tests moved to `FieldTier1AudioTest.kt` (detekt's `LargeClass`
+    // finding, once this file's own new additions pushed it past a reasonable size) — the same
+    // split `NavRowTest.kt` already established for `RowsTest.kt`, for the same reason: a
+    // self-contained cluster, not entangled with the rest of what this file covers.
 
     @Test
     @Requirement("R-110")
