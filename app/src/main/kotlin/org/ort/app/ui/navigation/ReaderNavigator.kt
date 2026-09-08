@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
+import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStep
 
@@ -19,9 +20,15 @@ import org.ort.app.ui.setup.SetupStep
  * `OrtNavHost` used to own privately; [rememberReaderNavigator] creates it once, and `OrtNavHost`
  * now reads/writes it through this object instead of its own local `var` — save/restore behaviour
  * is unchanged, just relocated so a caller outside `OrtNavHost`'s own composition can reach it too.
+ *
+ * [settingsScreenState] (round 5): WP10 merged `SettingsContent(..., initialScreen:
+ * SettingsScreenId? = null)` (confirmed by reading `ui/settings/SettingsContent.kt` before wiring
+ * this) — a real "land on this sub-screen" entry that the round-3 `openSettingsStorage` (now
+ * removed) could not reach. [openSettings] is the new, general call this state backs.
  */
 public class ReaderNavigator internal constructor(
     internal val currentState: MutableState<ReaderDestination>,
+    internal val settingsScreenState: MutableState<SettingsScreenId?>,
     private val context: Context,
 ) {
     /** Switches the drawer's current destination — the same effect as tapping its drawer row. */
@@ -30,29 +37,32 @@ public class ReaderNavigator internal constructor(
     }
 
     /**
-     * FR-STO-3/R-105's "Free up space"/"Retention" actions on a storage warning or halt. WP10's
-     * `SettingsContent` (register R-090) has no external "land on this sub-screen" entry — its own
-     * `screen` state is entirely internal (confirmed by reading `ui/settings/SettingsContent.kt`
-     * before writing this) — so this can only open the `Settings` *root*, not its `Storage`
-     * sub-screen directly; the operator taps `Storage` from there themselves. Named separately
-     * from [open] so that gap stays visible at every call site, not just in a comment — the same
-     * treatment [org.ort.app.ui.screens.NowContent]'s `onOpenModels` gets for the `Assets`
-     * sub-screen, which has the identical limitation.
+     * Opens `Settings`, landing directly on [screen] (`null`, the default, opens the root — the
+     * same "opens there on launch, not always jumps there" contract `SettingsContent.initialScreen`
+     * itself documents: this only takes effect while `Settings` is not already the current
+     * destination, since re-entering it is what gives that composable's own `initialScreen` read a
+     * fresh first composition — see `OrtNavHost.kt`'s own doc comment on why that is sound). Round
+     * 5 (register R-139/F6/F9): replaces [openSettingsStorage], which could only ever reach the
+     * root; every call site that used it now names the real sub-screen it means instead.
      */
-    public fun openSettingsStorage() {
+    public fun openSettings(screen: SettingsScreenId? = null) {
+        settingsScreenState.value = screen
         currentState.value = ReaderDestination.SETTINGS
     }
 
     /**
-     * "Choose another input" (F3/F16 — route mismatch, USB permission denied) and "Set the
-     * frequency by hand" both name Setup's `Input` step as their real destination. WP9 merged
-     * `SetupActivity.EXTRA_STEP` for exactly this (ui-conformance-plan WP9, round 3 — confirmed by
-     * reading `ui/setup/SetupActivity.kt`'s own doc comment before wiring this, which names this
-     * exact call site): the requested step is honored only when the store's own gates before it are
-     * already satisfied, so this reliably reaches `Input` once setup has completed at least that far
-     * (true for both actions above, which only fire *during a running session*) and otherwise falls
-     * back to `SetupStateMachine`'s ordinary resume point rather than skipping ahead of an unmet
-     * gate — never a way around a verification the guide requires.
+     * "Choose another input" (F3/F16 — route mismatch, USB permission denied) names Setup's
+     * `Input` step as its real destination. WP9 merged `SetupActivity.EXTRA_STEP` for exactly this
+     * (ui-conformance-plan WP9, round 3 — confirmed by reading `ui/setup/SetupActivity.kt`'s own
+     * doc comment before wiring this, which names this exact call site): the requested step is
+     * honored only when the store's own gates before it are already satisfied, so this reliably
+     * reaches `Input` once setup has completed at least that far (true for the failure this backs,
+     * which only fires *during a running session*) and otherwise falls back to `SetupStateMachine`'s
+     * ordinary resume point rather than skipping ahead of an unmet gate — never a way around a
+     * verification the guide requires. Round 5: "Set the frequency by hand" no longer routes here —
+     * see [openSettings]'s call site in `ReaderActivity.kt` for where it goes now that `Settings-
+     * Capture`'s manual-frequency row (`SettingsCaptureScreen.kt`'s "Log overs against, MHz") is a
+     * real, reachable destination instead.
      */
     public fun openSetupInput() {
         context.startActivity(
@@ -67,12 +77,19 @@ public class ReaderNavigator internal constructor(
  * for the lifetime of this composition. [initialDestination] seeds the drawer's starting
  * destination once (a fresh `rememberSaveable`, so a later change to this parameter after the
  * first composition has no effect — matching "opens there on launch", not "always jumps there").
+ * [initialSettingsScreen] (round 5) does the same for [ReaderNavigator.openSettings]'s sub-screen —
+ * [org.ort.app.ui.ReaderActivity]'s `EXTRA_SETTINGS_SCREEN` is its one caller today, for Setup
+ * S12's `Install` action (`EXTRA_DESTINATION=SETTINGS` alongside it); only meaningful when
+ * [initialDestination] is itself `SETTINGS`, exactly as `SettingsContent.initialScreen` is only
+ * consulted while that composable is the one showing.
  */
 @Composable
 public fun rememberReaderNavigator(
     initialDestination: ReaderDestination = ReaderDestination.NOW,
+    initialSettingsScreen: SettingsScreenId? = null,
     context: Context = LocalContext.current,
 ): ReaderNavigator {
     val current = rememberSaveable { mutableStateOf(initialDestination) }
-    return remember(context) { ReaderNavigator(current, context) }
+    val settingsScreen = rememberSaveable { mutableStateOf(initialSettingsScreen) }
+    return remember(context) { ReaderNavigator(current, settingsScreen, context) }
 }

@@ -5963,6 +5963,170 @@ gained no dependency on `:pipeline` (it cannot: `:pipeline` already depends on `
 ---
 ## 2026-09-08 (ui-conformance WP3: drawer, header, live bar, drill-in header, navigation origin)
 
+### (pending) — ui-conformance WP3 · round 5: search header, settings sub-screen routes, sessions drill-in, failure actions complete
+
+**Scope:** `:app` `ui/navigation/**` (`ReaderNavigator.kt`, `OrtNavHost.kt`), `ui/ReaderActivity.kt`,
+tests (`ui/navigation/ReaderActivityDestinationSmokeTest.kt`, `ui/ReaderAccessibilityTest.kt` — the
+latter's own case regressed by this round's header change, fixed in the same commit), `CHANGELOG.md`.
+Sixth reconciliation addendum. `git merge --ff-only main` succeeded cleanly this time (branch was
+genuinely an ancestor, per the coordinator's own confirmation) — no stash, no rebase. `local.properties`
+(gitignored — `git check-ignore -v` confirmed) and `JAVA_HOME` were both missing/wrong in this
+worktree's shell at the start of this round (`sdk.dir`/`ANDROID_HOME` unset; `JAVA_HOME` pointed at a
+JRE, not a JDK) — set for every gate command below, not a code change, noted here only because the
+first compile attempt failed on it before any of this round's own edits were in play.
+
+**Requirements/ACs:** R-200 (Search's own header), R-090/R-139 (`SettingsContent.initialScreen`,
+Now's `onOpenModels` → `Assets`), F6/F9 (Storage/Rig failure-banner routing), R-092/R-107 (Sessions'
+transmission drill-in), R-017 (origin labels for both of the above), R-129 (smoke coverage extended
+to both new routes).
+
+**Constitution check.** Principle II (uncertainty is content, nothing silently faked): `onRetryInput`/
+`onEndSession`/`onRequestUsbPermission` stay documented no-op stubs (re-checked this round, still no
+real target in `:capture-android`/`:pipeline`) rather than wired to something that only looks real;
+"N06 `Adjust`" is reported as having no code to route to, not invented. Principle VII (structural
+boundaries, applied to this engagement's own file-ownership discipline as much as module edges): the
+Settings sub-screen double-header this round's own new test found (see What changed) is reported, not
+patched by reaching into `ui/settings/SettingsContent.kt`, which this row does not own. Principle I
+(uncertainty is content) also bears on why the smoke test's own new case only asserts the sub-screen
+renders and survives `recreate()`, not "exactly one header" — asserting a passing check that doesn't
+actually guard the defect would be worse than not asserting it.
+
+**What changed:**
+
+- **R-200 — `SEARCH` no longer draws the host's `ScreenHeader`.** `OrtNavHost.kt`'s `NavHostBody`
+  now skips it for `ids.current == ReaderDestination.SEARCH` the same way it already skips it for a
+  drill-in — `SearchContent` (WP7's file) draws its own back chevron + inline query field instead,
+  per that file's own doc comment naming this exactly as the "second half" WP3 owed it. A new
+  `searchOpenedFrom` piece of state (`rememberSaveable`, same shape as the existing drill-in
+  `openedFrom`) records which destination `Search` was opened from — set in `onSearchDestination`,
+  read by the new `onBack` wired into `SearchContent`'s dispatch — so the chevron returns to wherever
+  the operator actually was, not always `Now`. Kept separate from `openedFrom` deliberately: `Search`
+  is not a drill-in (it keeps its own header-icon entry point), and folding it into `openedFrom`
+  would have made a drill-in opened *from* `Search` claim origin `Search`'s own origin instead.
+  **Regression caught and fixed in the same commit:** `ReaderAccessibilityTest.kt`'s
+  `R_015 the search icon in the header opens the Search destination` (not in this row, but this
+  round's own change broke it directly) asserted `"Open navigation"` was still displayed after
+  tapping the header's search icon — true before this change, false after. Updated to assert
+  `"Back"` (`SearchScreen.kt`'s `search-back-chevron`) instead, which is what R-200 actually promises.
+
+- **R-090/R-139 — `SettingsContent.initialScreen` is real now (WP10 merged it); every caller that
+  used to land on the `Settings` root only now names the real sub-screen it means.**
+  `ReaderNavigator` gains `openSettings(screen: SettingsScreenId? = null)`, backed by a new
+  `settingsScreenState: MutableState<SettingsScreenId?>` hoisted the same way `currentState` already
+  was — `rememberReaderNavigator` grew a matching `initialSettingsScreen` parameter. Replaces the
+  round-3 `openSettingsStorage()` (removed; its own doc comment said outright it could only reach the
+  root). `OrtNavHost.kt` reads this state fresh into `SettingsContent(initialScreen = ...)` every time
+  `SETTINGS` becomes the current destination — sound because leaving and re-entering `SETTINGS`
+  disposes and rebuilds `SettingsContent`'s composition, so its own `remember { mutableStateOf
+  (initialScreen) }` genuinely re-reads the fresh value rather than a stale first one (confirmed by
+  reading that file's own doc comment on the same "opens there on launch" contract
+  `rememberReaderNavigator`'s `initialDestination` already has). Wired:
+  - `NowContent`'s `onOpenModels` → `openSettings(SettingsScreenId.ASSETS)` (was: `Settings` root).
+  - `ReaderActivity`'s `FailureHostActions.onOpenStorageSettings`/`onOpenRetentionSettings` (F6,
+    "Free up space"/"Retention") → `openSettings(SettingsScreenId.STORAGE)` (was: `Settings` root).
+  - `ReaderActivity`'s `FailureHostActions.onReconnectRig` (F9, "Reconnect") → `openSettings
+    (SettingsScreenId.RIG)` — **a real target for the first time**; previously a documented no-op,
+    since there was nowhere useful to send it before this round.
+  - `ReaderActivity`'s `FailureHostActions.onSetFrequencyByHand` → `openSettings
+    (SettingsScreenId.CAPTURE)`, **not** `RIG` as round 3's own comment guessed. Reading
+    `SettingsCaptureScreen.kt` before wiring this found the hand-entered frequency row ("Log overs
+    against, MHz", subline "used only while the rig is disconnected or absent" — exactly this
+    failure's own condition) lives under `Settings-Capture`, not `Settings-Rig`; corrected here.
+  - `EXTRA_SETTINGS_SCREEN` (new `ReaderActivity` companion constant, this round's own naming — WP9
+    is the intended future caller, for Setup S12's `Install` action alongside `EXTRA_DESTINATION=
+    SETTINGS`; no caller passes it yet, S12 itself is WP9's file). `resolveInitialSettingsScreen`
+    parses it the same fall-back-not-crash way `resolveInitialDestination` already does.
+  - "N06 `Adjust`" and "Settings-Capture's re-verify": **no routing added, and none was needed.**
+    Grepped `CaptureStatusContent.kt`/`LevelMeterScreen.kt` for "Adjust" again this round (as in
+    round 4) and found nothing — `LevelMeterScreen.kt`'s "In the band. Nothing to adjust." (R-175) is
+    a status sentence, not a button; there is no code to route. Settings-Capture's own re-verify
+    action (`onOpenInputSetup`) is already real, wired entirely inside `ui/settings/SettingsContent.kt`
+    itself (confirmed by reading that file) — not a `FailureHostActions` entry, nothing for this row.
+  - **Found, reported, not fixed here (outside this row's file to fix):** every `SETTINGS` sub-screen
+    (`SettingsRigScreen`, `SettingsStorageScreen`, `SettingsCaptureScreen`, and five more — confirmed
+    by grepping `ui/settings/*.kt` for `DrillInHeader`) draws its own `DrillInHeader(parentLabel =
+    "Settings", ...)`. `OrtNavHost.kt` has no way to know a sub-screen (as opposed to the root) is
+    showing — that state is entirely internal to `SettingsContent` — so its own `ScreenHeader` still
+    renders for every `SETTINGS` case, root or sub-screen alike (needed for the root, per R-130; not
+    needed, and not suppressed, for a sub-screen). A sub-screen reached via `initialScreen` therefore
+    shows **two** headers — a real, live double-header this round's own new smoke test case
+    deliberately does not assert against (see Constitution check), and does not fix, since the actual
+    fix needs `ui/settings/SettingsContent.kt` to expose its current sub-screen upward, which is
+    outside this row.
+
+- **R-092/R-107 — `SessionsContent`'s `onOpenTransmission` is real now (WP10 merged it); wired to
+  the transmission drill-in with origin "Earlier nights".** `OrtNavHost.kt`'s `EARLIER_NIGHTS`
+  dispatch now passes `onOpenTransmission = onOpenTransmission`, the same shared callback every other
+  destination's row-tap uses — `onOpenDrillIn` (unchanged) already records `openedFrom = current` at
+  the moment the tap fires, which is `EARLIER_NIGHTS` for every tap this dispatch can produce, so the
+  drill-in's `backLabel` reads `ReaderDestination.EARLIER_NIGHTS.label`, `"Earlier nights"`, with no
+  new state needed.
+
+- **`OrtNavHost` split to stay under detekt's `LongMethod` limit** (real for the first time this
+  round — see Left open on `ort.common.gradle.kts`): a new `NavHostNavState` bundles every
+  `MutableState` the function used to hold as separate `var ... by remember` locals (drill-in ids,
+  `openedFrom`/`searchOpenedFrom`, lifted `Search` input/result), built by a new `@Composable
+  rememberNavHostNavState()`; `navHostCallbacks(...)`/`searchHostState(...)` build
+  `NavHostCallbacks`/`SearchHostState` from it. Same reasoning `NavHostBody`/`DestinationContent`
+  were themselves split out for, applied one level further. No behavioural change — every `var x by
+  remember { ... }` became a `MutableState` field read/written through `.value` at the same call
+  sites, confirmed by the full test suite passing unchanged (see Verified).
+
+- **Smoke test:** two new cases. `R_129_SEARCH_composes_and_survives_recreation` now asserts `"Back"`
+  (not `"Open navigation"`, for the reason above) via a new `assertComposesAndSurvives(destination,
+  expectedContentDescription)` parameter.
+  `R_129_SETTINGS_RIG_initialScreen_composes_and_survives_recreation` launches `ReaderActivity` with
+  both `EXTRA_DESTINATION=SETTINGS` and the new `EXTRA_SETTINGS_SCREEN=RIG`, asserting `"Back to
+  Settings"` (`DrillInHeader`'s own content description) survives `recreate()` — `RIG` stands for all
+  eight non-`ASSETS` sub-screens, which share one dispatch and header shape. `runReaderActivity`/
+  `destinationIntent` both grew an optional `settingsScreen: SettingsScreenId?` parameter for this.
+  A private `ReaderComposeRule` type alias was added purely to keep
+  `waitUntilContentDescriptionExists`'s own declaration under both detekt's and ktlint's
+  max-line-length once the fully spelled-out generic receiver type was in play.
+
+- **ktlint/detekt are real for the first time this round** (`ort.common.gradle.kts`'s own fix to
+  `isUnderClaudeDirectory`, already on `main` before this round started, landed real checking after a
+  bug that had made every worktree's `:app:ktlint*`/`:app:detekt` vacuously pass with `NO-SOURCE`).
+  Found and fixed, all in this row's own files: `OrtNavHost.kt`'s `LongMethod` (the split above),
+  `ReaderNavigator.kt`'s import order, and three `MaxLineLength`/`function-signature` issues in
+  `ReaderActivityDestinationSmokeTest.kt`. Confirmed clean afterward — see Verified.
+
+**Verified:**
+- `git merge --ff-only main` — clean, HEAD `3238861` before this round's own edits.
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:ktlintCheck` — every task `UP-TO-DATE`/passing; zero findings anywhere under
+  `ui/navigation/**`, `ui/ReaderActivity.kt`, or the two touched test files.
+- `.\gradlew.bat :app:detekt` — `FAILED` with 3 weighted issues, **all three in `ui/screens/
+  StationScreen.kt` and `ui/screens/StationPatternScreen.kt` (WP8's files, not touched, not this
+  row)** — `LongParameterList` (`StationsListScreen`, 10 params) and two `ForEachOnRange`. Zero
+  findings in any file this round touched.
+- `.\gradlew.bat dependencyRules` — `OK`, 17 modules, no new edge.
+- `python tools/spec-check/spec_check.py` (AGENTS.md's documented path, `tools/spec_check.py`, does
+  not exist in this checkout — pre-existing drift, not this row) — 8/8 checks `PASS`.
+- `.\gradlew.bat :app:testDebugUnitTest` — `BUILD SUCCESSFUL`, 975 tests, 0 failed (one transient
+  `SQLiteDatabaseLockedException` in `CorrectionPollingTest` — an unrelated file, self-resolved on a
+  clean rerun with no code change, consistent with concurrent-worktree file-DB contention this
+  engagement has hit before, not a real finding).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` — `BUILD SUCCESSFUL`, 15 tests, 0 failed, including
+  both of this round's new cases.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 185 covered, regenerated (gate side-effect,
+  `results/coverage-matrix.md`, included in this commit as generated output, not hand-edited).
+
+**Left open / not done:**
+- The Settings sub-screen double-header (`ScreenHeader` + `DrillInHeader` both rendering when
+  `SETTINGS` is entered via `initialScreen` at a non-root sub-screen) — found this round, reported
+  above, not fixed; needs `ui/settings/SettingsContent.kt` to expose its own current sub-screen id
+  upward, outside this row.
+- `onRetryInput`/`onEndSession`/`onRequestUsbPermission` remain no-op stubs — re-checked this round,
+  still no callable target in `:capture-android`/`:pipeline`.
+- `SettingsContent`'s own `onOpenLevelMeter` (R-132, round 4's own finding) is still unwired to WP4's
+  real `Level-Meter` destination — not named in this round's brief, not touched.
+- `:app:detekt` cannot pass as a whole while `StationScreen.kt`/`StationPatternScreen.kt`'s
+  pre-existing findings stand (WP8's files) — reported above for the coordinator to route.
+- `tools/spec_check.py` (AGENTS.md's documented path) does not exist in this checkout; the real file
+  is at `tools/spec-check/spec_check.py` — a pre-existing doc/reality drift, not this row's file.
+
 ### (pending) — ui-conformance WP3 · destination smoke test runs in its own JVM; Settings single header
 
 **Scope:** `:app` `ui/navigation/**` (`OrtNavHost.kt`, `ReaderActivityDestinationSmokeTest.kt`),
