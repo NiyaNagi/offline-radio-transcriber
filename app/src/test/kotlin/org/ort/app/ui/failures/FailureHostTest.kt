@@ -17,6 +17,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.After
@@ -25,13 +26,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.data.CaptureStatusMapper
+import org.ort.app.ui.screens.CaptureStatusScreen
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
+import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.capture.StorageForecast
+import org.ort.pipeline.capture.ThermalStatus
+import org.ort.pipeline.capture.VadAvailability
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -198,5 +206,96 @@ class FailureHostTest {
         }
         composeTestRule.onNodeWithTag("failure-rig-banner").assertIsDisplayed()
         composeTestRule.onNodeWithText("underlying destination").assertIsDisplayed()
+    }
+
+    /**
+     * Register R-300 (halt, V2 pass 3): the `Fail-Storage` banner plus its "How this unfolded"
+     * card, at font scale 2.0, used to render as an unbounded fixed block that consumed nearly the
+     * whole viewport — `storage-warn/N04-capture-status-banner@2x-pass3.png` — squeezing
+     * `Capture-Status`'s own title and `capture-status-stop` into a sliver behind the live bar,
+     * with Stop's tap target collapsing to `[0,0][0,0]`. Composed exactly the way
+     * `ReaderActivity.kt` wires `FailureHost`/`OrtNavHost` together — [CaptureStatusScreen] reads
+     * `contentTopPadding` the same way every other destination does; this package's own fix is
+     * capping the banner (and therefore `contentTopPadding`) to a bounded fraction of the
+     * viewport, never touching `CaptureStatusScreen` itself (already scrollable, Stop already at
+     * its own top — WP4's half, unmodified here).
+     */
+    @Test
+    fun `R_300 the bounded storage banner leaves Capture-Status Stop reachable within one scroll, font scale 2_0`() {
+        DebugFailureOverride.show(
+            FailurePresentation.StorageWarning(
+                StorageWarningViewState(
+                    nightsLeftLabel = "2.4",
+                    freeLabel = "6.0 GB free",
+                    timeline = listOf(
+                        StorageTimelineStage(
+                            label = "12:28:15 · warned at 3 nights left",
+                            detail = "notification and status surface · retention set to 30 nights",
+                            reached = true,
+                        ),
+                        StorageTimelineStage(
+                            label = "Not reached",
+                            detail = "500 MB hard floor — capture would halt with the red banner, never quietly",
+                            reached = false,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val captureStatus = CaptureStatusMapper.from(
+            captureState = CaptureState.State.Capturing,
+            shedLevel = 0,
+            backlog = 0,
+            thermal = ThermalStatus.State.Nominal(0, null),
+            rig = RigStatus.State.Absent,
+            storage = StorageForecast.State.ThreeNightsLeft(6_000_000_000L, 0L, 2.4),
+            asr = AsrAvailability.State.NotYetChecked,
+            vad = VadAvailability.State.Real,
+            input = InputStatus.State.None,
+            level = LevelStatus.State.NotMeasured,
+            nowMillis = 5_430_000L,
+            sinceLabel = "11:00:00",
+            elapsedLabel = "1:30:54",
+            heartbeatSecondsAgo = 2L,
+            isAlive = true,
+            transmissionCount = 12,
+            rejectedCount = 0,
+            failedCount = 0,
+            gapCount = 0,
+            batteryPercent = 80,
+            batteryCharging = true,
+            batteryExemptionReportsIgnoring = false,
+        )
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    FailureHost(sessionId = "s1") { contentTopPadding ->
+                        CaptureStatusScreen(
+                            state = captureStatus,
+                            modifier = Modifier.padding(top = contentTopPadding),
+                            onStop = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("failure-banner-overlay").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val stopNode = composeTestRule.onNodeWithTag("capture-status-stop")
+        val boundsBeforeScroll = stopNode.getUnclippedBoundsInRoot()
+        val boundsWidth = boundsBeforeScroll.right - boundsBeforeScroll.left
+        val boundsHeight = boundsBeforeScroll.bottom - boundsBeforeScroll.top
+        assertTrue(
+            "Stop's tap target must have a real, non-zero size ($boundsBeforeScroll), never [0,0][0,0]",
+            boundsWidth > 0.dp && boundsHeight > 0.dp,
+        )
+
+        // "at most one scroll" — CaptureStatusScreen's own internal verticalScroll is what reaches
+        // it; this package's fix does not need it to already be visible with zero scrolling.
+        stopNode.performScrollTo().assertIsDisplayed()
     }
 }

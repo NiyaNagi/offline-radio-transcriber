@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
@@ -113,6 +114,14 @@ public fun FailKilledBanner(
 // F6 (warning stage) — Fail-Storage.
 // -------------------------------------------------------------------------------------------
 
+/** Register R-300: past this system font scale, `FailStorageWarningBanner` collapses "How this
+ * unfolded" behind a "Details" disclosure by default — the banner's total height (bounded to
+ * [BANNER_MAX_HEIGHT_FRACTION] of the viewport, `FailureHost.kt`'s own `BannerOverlay`) has less
+ * room per line at large scale, so keeping the timeline expanded by default is what pushed the
+ * destination's own controls off screen in the first place (`storage-warn/N04-capture-status-
+ * banner@2x-pass3.png`). Below this scale the board's own always-expanded look is unchanged. */
+private const val LARGE_FONT_SCALE_THRESHOLD = 1.3f
+
 @Composable
 public fun FailStorageWarningBanner(
     state: StorageWarningViewState,
@@ -121,6 +130,8 @@ public fun FailStorageWarningBanner(
     modifier: Modifier = Modifier,
 ) {
     val nightWord = if (state.nightsLeftLabel == "1") "night" else "nights"
+    val largeScale = LocalDensity.current.fontScale >= LARGE_FONT_SCALE_THRESHOLD
+    var detailsExpanded by remember(largeScale) { mutableStateOf(!largeScale) }
     Column(modifier = modifier.testTag("failure-storage-warning-banner")) {
         Banner(
             title = "Storage getting low — warned at ${state.nightsLeftLabel} $nightWord left",
@@ -133,7 +144,16 @@ public fun FailStorageWarningBanner(
             onSecondaryAction = onOpenRetentionSettings,
         )
         if (state.timeline.isNotEmpty()) {
-            StorageTimelineSection(state.timeline)
+            if (largeScale) {
+                TextAction(
+                    text = if (detailsExpanded) "Hide details" else "Details",
+                    onClick = { detailsExpanded = !detailsExpanded },
+                    modifier = Modifier.testTag("failure-storage-timeline-toggle"),
+                )
+            }
+            if (detailsExpanded) {
+                StorageTimelineSection(state.timeline)
+            }
         }
     }
 }

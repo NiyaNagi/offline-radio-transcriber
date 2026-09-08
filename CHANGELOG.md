@@ -5209,6 +5209,95 @@ so it adds no new coverage-matrix row). `python tools/spec-check/spec_check.py` 
 and out of this package's row.
 ---
 
+### (pending) — ui-conformance WP11b · the banner host bounds its own height (R-300)
+
+**Scope:** `:app` — `ui/failures/FailureHost.kt`, `ui/failures/FailureBanners.kt`, and their tests
+(`FailureHostTest.kt`: one new `R_300`; `FailureScreensTest.kt`: two new `R_300` tests for the
+"Details" disclosure). No `ui/screens/**`/WP4 file touched — `CaptureStatusScreen`/
+`CaptureStatusContent` were read, confirmed already scrollable with `capture-status-stop` at their
+own top, and left exactly as they were. Follow-up to the commit above, at the coordinator's
+request, after `git merge --ff-only main` (main at `d4ea9ed`; no rebase — `git merge --ff-only`
+used, not `git merge`, since the branch was already an ancestor; no `gradlew --stop`). Fixes
+register row R-300 (System validator, V2 pass 3, halt — `storage-warn/N04-capture-status-
+banner@2x-pass3.png`, `storage-warn/capture-status-banner-pass3-fresh@2x.png`), this package's
+half; WP4's half (confirmed already satisfied — see "What changed").
+
+**Requirements/ACs:** R-300 (halt); FR-UI-7; constitution IV (an operator-facing control must
+never become genuinely unreachable — R-300's own finding was `capture-status-stop`'s tap target
+collapsing to `[0,0][0,0]`, not just a visual nit).
+
+**What changed:**
+
+- **The banner block ("Fail-Storage" plus its "How this unfolded" card) was an unbounded fixed
+  overlay — at font scale 2.0 it could grow tall enough to consume nearly the whole viewport,**
+  pushing `contentTopPadding` (the value every destination pads its own content by, register R-178)
+  to match. `Capture-Status`'s own title, "Since … heartbeat" line and `capture-status-stop` sit
+  right at the *top* of its own content column — pushed down by that padding, they were squeezed
+  into a sliver behind the pinned live bar, and `capture-status-stop`'s own reported bounds
+  collapsed to `[0,0][0,0]`, an actually-untappable control, not merely a crowded one.
+- **The fix (the bounded-height option the coordinator's message offered as an alternative to
+  "hand the banner to the content column as its first scrolling item"): `FailureHost` now measures
+  its own real viewport (`BoxWithConstraints`) and caps every banner to `BANNER_MAX_HEIGHT_FRACTION`
+  (40%) of it.** Content taller than the cap now scrolls *inside the banner itself*
+  (`Modifier.verticalScroll`, added to `BannerOverlay`'s own box) rather than growing the box past
+  the cap — and since the reported `contentTopPadding` comes from the *same, now-capped* box
+  (`onGloballyPositioned` sits between the `heightIn(max = …)` and the `verticalScroll` in the
+  modifier chain, so it reports the *capped* size, never the box's uncapped natural size), the
+  destination is never pushed down by more than 40% of its own screen either. 40% leaves a
+  destination's own header, title and at least one real control reachable underneath on every
+  device this app targets. The `content`/`contentTopPadding` **contract itself did not change** —
+  same signature, same meaning, only the *value* `FailureHost` now reports is bounded; every
+  destination-owning package keeps reading it exactly as before, no coordination needed beyond this
+  report.
+- **`Fail-Storage`'s own "How this unfolded" card (the specific content that made this banner the
+  tallest one this package draws) now collapses behind a "Details" disclosure by default once the
+  system font scale reaches 1.3 — the board's own always-expanded look is unchanged below that.**
+  A toggle (`failure-storage-timeline-toggle`), not a permanent removal — the timeline is one tap
+  away, never lost, at any scale. Combined with the height cap above, this keeps the *common* case
+  (the warning banner alone, no expanded timeline) comfortably under 40% of the viewport at large
+  scale, so a scroll inside the banner is rarely actually needed in practice — it exists as the
+  bound of last resort for whichever banner or font-scale combination does exceed it.
+- **WP4's half of R-300 — checked, not touched.** `CaptureStatusScreen.kt` already wraps its own
+  content in `Modifier.weight(1f).verticalScroll(rememberScrollState())`, and
+  `capture-status-title`/`capture-status-stop` are the very first things it draws, at the top of
+  that same scrollable column — confirmed by reading the file before writing this line. Once
+  `contentTopPadding` is bounded (this package's fix), that column's own natural position keeps
+  Stop within the visible viewport with little or no scrolling needed at all; nothing in
+  `ui/screens/**` needed to change.
+- **Test: `R_300` (`FailureHostTest.kt`) composes `FailureHost` and the real `CaptureStatusScreen`
+  together exactly the way `ReaderActivity.kt` wires them** — `DebugFailureOverride` set to the
+  same `StorageWarning` presentation (with a two-stage timeline) the register row's own screenshots
+  show, at font scale 2.0 — and asserts `capture-status-stop`'s bounds are genuinely non-zero, then
+  reachable after at most one scroll (`performScrollTo().assertIsDisplayed()`), matching the
+  register row's own "after at most one scroll" wording. Two further tests (`FailureScreensTest.kt`)
+  cover the "Details" disclosure directly: expanded by default below the threshold, collapsed
+  behind the toggle at font scale 2.0, revealed on tap.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.debug.ScenariosTest" --tests
+"org.ort.app.ui.navigation.*"` — BUILD SUCCESSFUL, all green, all three new `R_300` tests confirmed
+passing by name. `.\gradlew.bat :app:detekt` and `.\gradlew.bat :app:ktlintCheck` — both BUILD
+SUCCESSFUL, zero issues. `.\gradlew.bat build dependencyRules platformGuards` — 1080 tests, 2
+failed: the same pre-existing, unrelated `org.ort.app.ui.setup.ReadyScreenTest`/`R_265` cases noted
+in the commit above (confirmed against the register's own `d4ea9ed` merge point, unchanged by this
+round); every `ui/failures`/`ui/navigation`/`ui/screens.CaptureStatus*` test in that same run
+passed. `.\gradlew.bat dependencyRules platformGuards` (standalone) — OK. `.\gradlew.bat -p buildSrc
+test` — BUILD SUCCESSFUL. `.\gradlew.bat coverageMatrix`/`coverageMatrixCheck` — 185 of 419
+covered, up to date (unchanged — R-300 is a register/validator id, not a
+`spec/functional-spec.md` requirement id). `python tools/spec-check/spec_check.py` — OK, 8/8.
+`.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL. Never ran `gradlew --stop`; used
+`git merge --ff-only main` (not `git stash` — last round's workaround, not repeated).
+
+**Left open:** the coordinator's *preferred* option (the host handing the banner to each
+destination's own content column as its first scrolling item) was not built this round — it would
+touch every banner-carrying destination (`Now`, `Capture-Status`, `Log`, `Settings`…), each owned
+by a different package, which the bounded-height option avoids entirely while still closing R-300
+as filed. If a future validator pass finds the bounded option insufficient for some destination
+whose own content does *not* already keep its primary control at the very top (unlike
+`Capture-Status`), that destination's owning package should say so and this package will revisit.
+---
+
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)
 
 ### (pending) — ui-conformance WP2 · highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card
