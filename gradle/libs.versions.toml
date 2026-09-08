@@ -12,7 +12,8 @@ androidxTestExt = "1.2.1"
 androidxTestCore = "1.6.1"
 ktlintPlugin = "12.1.1"
 detektPlugin = "1.23.7"
-room = "2.6.1"
+room = "2.7.2"
+androidxSqlite = "2.5.2"
 ksp = "2.0.21-1.0.28"
 sherpaOnnx = "1.13.7"
 # P13: Compose foundation (D15). The compiler plugin is pinned to the exact Kotlin version above
@@ -37,6 +38,10 @@ room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
+androidx-sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "androidxSqlite" }
+# AGP's unit-test runtime classpath resolves the Android-variant artifact even though the test
+# actually runs on the host JVM (Robolectric) — see data/build.gradle.kts's testImplementation.
+androidx-sqlite-bundled-jvm = { module = "androidx.sqlite:sqlite-bundled-jvm", version.ref = "androidxSqlite" }
 sherpa-onnx-jvm = { module = "com.github.k2-fsa.sherpa-onnx:sherpa-onnx-jvm", version.ref = "sherpaOnnx" }
 sherpa-onnx-native-win-x64 = { module = "com.github.k2-fsa.sherpa-onnx:sherpa-onnx-native-lib-win-x64", version.ref = "sherpaOnnx" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }

@@ -1,5 +1,6 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,22 +10,26 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import org.ort.app.ui.components.Banner
-import org.ort.app.ui.components.BannerTone
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.ToggleRow
+import org.ort.app.ui.improve.Plurals
 import org.ort.app.ui.navigation.toGigabyteLabel
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -42,6 +47,10 @@ public fun SettingsStorageScreen(
     onSetBudgetGb: (Int?) -> Unit,
     onToggleAutoPrune: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    // R-133 (round 8): defaults to a no-op so every existing caller keeps compiling unchanged —
+    // see [SettingsContent]'s own `onReviewSession` doc comment for why this package cannot
+    // resolve the real DG04 (`Session`) destination on its own.
+    onReviewSession: (sessionId: String) -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DrillInHeader(parentLabel = "Settings", onBack = onBack)
@@ -98,26 +107,19 @@ public fun SettingsStorageScreen(
                 onCheckedChange = onToggleAutoPrune,
                 subLine = "opt-in (FR-STO-3a) · off means you review and choose before anything is deleted",
             )
-            // R-133 (register, round 7 System validator pass 3): FR-STO-3a's own trigger is "on
-            // reaching a budget", not "at every visit to this screen regardless of state" — this
-            // banner used to show unconditionally whenever auto-prune was off, including with no
-            // budget set at all (nothing that could ever be "reached"), which the board's own
-            // mockup does not draw. Gating on the real budget-vs-used comparison is not a cosmetic
-            // match to the board so much as a correction toward what FR-STO-3a actually says; a
-            // `Review` action is not added here since no real prune-candidate computation exists
-            // yet to review (see this file's own doc comment on `SettingsStorageScreen`).
-            val budgetBytes = state.budgetGb?.let { it * 1_000_000_000L }
-            val budgetReached = budgetBytes != null && state.usedBytes >= budgetBytes
-            if (!state.autoPruneEnabled && budgetReached) {
-                Banner(
-                    title = "What will be deleted, now that the budget is reached",
-                    body = "This bulk export-and-prune preview names the exact sessions and over count " +
-                        "before anything is removed (FR-STO-3a/3b). Transcripts, attributions and " +
-                        "corrections are never deleted.",
-                    tone = BannerTone.DEGRADED,
-                    modifier = Modifier.padding(top = OrtSpacing.sm),
-                )
-            }
+            // R-133 (round 8, register): the round-7 amber `Banner` here is gone — `:pipeline`'s
+            // real `computeNextDeletion` (WP11c) now exists, so this is `Settings-Storage.dc.html`'s
+            // own "Next deletion: <date>" row (real session, real over count, real size, a `Review`
+            // link) instead of a banner the board never drew. `state.nextDeletion` is real whether
+            // or not auto-prune is on — [org.ort.pipeline.capture.NextDeletion]'s own doc comment:
+            // "what pruning would do the moment a budget is reached", the honest preview FR-STO-3a
+            // promises, not gated on the opt-in toggle that only controls whether it runs
+            // *automatically*.
+            NextDeletionRow(
+                state = state,
+                onReviewSession = onReviewSession,
+                modifier = Modifier.padding(top = OrtSpacing.sm),
+            )
 
             SectionHeader(label = "Never deleted", modifier = Modifier.padding(top = OrtSpacing.lg))
             Text(
@@ -154,6 +156,90 @@ private fun LowSpaceRows(warnAtNightsLeft: Int, hardFloorLabel: String, modifier
             value = hardFloorLabel,
             subLine = "capture stops loudly, never quietly, below this",
         )
+    }
+}
+
+/**
+ * `Settings-Storage.dc.html`'s "Next deletion" row (R-133, round 8): the half-filled amber marker,
+ * a real session/over-count/size sub-line, and a `Review` link into that session's own `Session`
+ * (DG04) detail — [org.ort.pipeline.capture.computeNextDeletion]'s real answer, not a preview this
+ * package invents.
+ *
+ * `state.nextDeletion == null` reads this package's own honest fallback wording — the board draws
+ * no such state at all (checked `Settings-Storage.dc.html` again before writing this; it shows
+ * only the populated row), so this is not board-verbatim copy: the exact real headroom when a
+ * budget is set ("Nothing scheduled — N GB below the budget"), or "no budget set" when there is
+ * none to be below.
+ */
+@Composable
+private fun NextDeletionRow(
+    state: SettingsStorageViewState,
+    onReviewSession: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val next = state.nextDeletion
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        NextDeletionMarker(modifier = Modifier.padding(top = 5.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            if (next != null) {
+                Text(
+                    text = "Next deletion: ${next.predictedDateLabel}",
+                    style = OrtType.rowTitle,
+                    color = OrtColors.textHigh,
+                )
+                Text(
+                    text = "audio from ${next.sessionDateLabel}, ${Plurals.count(next.overCount, "over")}, " +
+                        "${next.sizeLabel} · transcripts and attributions stay",
+                    style = OrtType.subLine,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            } else {
+                Text(text = "Next deletion", style = OrtType.rowTitle, color = OrtColors.textHigh)
+                Text(
+                    text = nothingScheduledLabel(state),
+                    style = OrtType.subLine,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+        if (next != null) {
+            TextAction(
+                text = "Review",
+                onClick = { onReviewSession(next.sessionId) },
+                modifier = Modifier.semantics {
+                    contentDescription = "Review the session from ${next.sessionDateLabel}"
+                },
+            )
+        }
+    }
+}
+
+private fun nothingScheduledLabel(state: SettingsStorageViewState): String {
+    val budgetGb = state.budgetGb
+    return if (budgetGb != null) {
+        val headroomBytes = (budgetGb * 1_000_000_000L - state.usedBytes).coerceAtLeast(0L)
+        "Nothing scheduled — ${headroomBytes.toGigabyteLabel()} below the budget"
+    } else {
+        "Nothing scheduled — no budget set"
+    }
+}
+
+/** The board's half-filled amber marker for "Next deletion" — the same ring-plus-half-fill
+ * technique `ui/components/Feedback.kt`'s own `FailedMarker` uses for a different (attention, not
+ * storage) meaning; drawn locally since that composable is `private` to its own file. */
+@Composable
+private fun NextDeletionMarker(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.size(9.dp)) {
+        val radius = size.minDimension / 2 - 0.75.dp.toPx()
+        drawCircle(color = OrtColors.accentAmber, radius = radius, style = Stroke(1.5.dp.toPx()))
+        clipRect(right = size.width / 2) {
+            drawCircle(color = OrtColors.accentAmber, radius = radius)
+        }
     }
 }
 
@@ -204,8 +290,13 @@ private fun StorageCategoryBreakdown(
  * clipping/not-scrolling at font scale 2.0. */
 internal const val BUDGET_CHIP_ROW_TEST_TAG: String = "settings-storage-budget-chip-row"
 
+// R-133 (round 8): `Settings-Storage.dc.html`'s four real swatches — Audio/Models (two greens),
+// Records (amber), Lexicon (a neutral grey, `oklch(0.62 0.008 250)` on the board, near-identical
+// to this token) — `Lexicon` no longer falls into the same `else` bucket `Records` does now that
+// there is a real fourth category to tell apart in the bar and its legend.
 private fun categoryColor(label: String): androidx.compose.ui.graphics.Color = when (label) {
     "Audio" -> OrtColors.meterIdle
     "Models" -> OrtColors.accentGreen
-    else -> OrtColors.accentAmber
+    "Records" -> OrtColors.accentAmber
+    else -> OrtColors.textDim
 }

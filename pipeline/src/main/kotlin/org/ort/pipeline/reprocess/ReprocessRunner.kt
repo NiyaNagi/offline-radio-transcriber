@@ -21,6 +21,7 @@ import org.ort.pipeline.Pass
 import org.ort.pipeline.PassDrainRunner
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.diagnostics.DiagnosticsLog
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
 import org.ort.pipeline.passb.RealAsrEngineProvider
@@ -120,12 +121,18 @@ public data class ReprocessTuning(
  *
  * **What this does not do yet**: only [PassId.B_OFFLINE] is supported — [PassId.C_SPOT] exists as
  * an id (technical design §9.7, M4) but no runner for it exists anywhere in `:pipeline` (grepped
- * the tree before writing this); requesting it throws rather than silently no-opping. "Current
- * tier" is threaded into [org.ort.core.PassFingerprint.tier] honestly, but nothing in `:data` today
- * persists a queryable per-transmission tier (FR-REP-2 asks for one; no column exists yet) — see
- * this package's report for why `app/.../improve/ImprovePolling`'s own `SessionEntity.deviceTier`
- * grouping is consequently not cleared by a successful reprocess, a gap this class cannot close
- * without a `:data` change outside its granted ownership.
+ * the tree before writing this); requesting it throws rather than silently no-opping.
+ *
+ * **Per-record processed tier (register R-204 follow-up, FR-REP-2/9): now persisted.** "Current
+ * tier" is threaded into [org.ort.core.PassFingerprint.tier] honestly, and every completed or
+ * rejected outcome below also stamps
+ * [org.ort.data.dao.TransmissionDao.setProcessedTier]`(id, tier)` — see
+ * [org.ort.data.entity.TransmissionEntity.processedTier]'s own doc comment. `:data` now also
+ * exposes [org.ort.data.dao.TransmissionDao.idsBelowProcessedTier] for "which records still need
+ * improving." **Not wired into a read path yet**: `app/.../improve/ImprovePolling`'s own grouping
+ * (by `SessionEntity.deviceTier`, session-level, set once at capture time) still does not
+ * subtract out records this class has already brought current — that is WP11d's read-path change
+ * to make with the two write/read primitives above, not a `:pipeline` one.
  */
 public class ReprocessRunner(
     private val db: OrtDatabase,
@@ -207,6 +214,10 @@ public class ReprocessRunner(
                 }
                 PassAttemptOutcome.Completed, PassAttemptOutcome.Rejected -> {
                     db.transmissionDao().setReprocessCandidate(id, false)
+                    // Register R-204 follow-up (FR-REP-2, FR-REP-9): both outcomes mean Pass B
+                    // genuinely ran this record at `tier` -- only Failed (handled above) means it
+                    // did not, so only Failed must leave `processedTier` untouched, still eligible.
+                    db.transmissionDao().setProcessedTier(id, tier)
                     if (outcome == PassAttemptOutcome.Rejected) {
                         rejected++
                     } else {
@@ -363,6 +374,10 @@ internal class SafePass(private val delegate: Pass) : Pass {
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        // FR-OBS-1 "SafePass failures": the exception's own class name only, never e.message --
+        // a message string is free text the failing library chose, exactly what DiagnosticsLog's
+        // structural no-free-text guarantee exists to keep out of pipeline.log.
+        DiagnosticsLog.logSafePassFailure(e::class.simpleName ?: "unknown")
         PassRunOutcome.Errored(e.message ?: e::class.simpleName ?: "unknown reprocess error")
     }
 }

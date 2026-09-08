@@ -9,9 +9,12 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.debug.Scenarios
 import org.ort.app.ui.components.LogRowBadge
 import org.ort.app.ui.components.LogRowPartial
 import org.ort.app.ui.components.LogRowViewState
@@ -19,6 +22,7 @@ import org.ort.app.ui.data.LogEmptyStateViewState
 import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.data.LogItemsMapper
 import org.ort.app.ui.data.LogListItem
+import org.ort.app.ui.data.LogPolling
 import org.ort.app.ui.data.LogQuickFilterChipViewState
 import org.ort.app.ui.data.LogQuickFilterId
 import org.ort.app.ui.data.LogScreenViewState
@@ -541,5 +545,37 @@ class LogScreenTest {
         // role — the row is a plain `Role.Button`).
         val chipMatcher = hasText("145.230") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox)
         composeTestRule.onNode(chipMatcher).assertIsSelected()
+    }
+
+    /**
+     * R-322 (V4 pass 2 @ee4fd07, reopened from R-240): reproduces the on-device bug directly —
+     * seeds the real `overnight` fixture through [Scenarios] (the same fixture `L01-log-pass2.png`
+     * was screenshotted against) and drives it through the real production call chain
+     * ([LogPolling.screenState] → [LogItemsMapper.toRowState] → [LogScreen] → `LogRow`), not a
+     * hand-built [LogRowViewState] the way the original R-240 test did — that test's fabricated
+     * `selected = true` candidate was exactly the gap between "passes in CI" and "still broken on
+     * device" the register named. This must fail before `LogItemsMapper.keptCandidateFor`'s
+     * rank-based fix and pass after it.
+     */
+    @Test
+    fun `R_322 the real overnight fixture's AMBIGUOUS row names its kept candidate, not just the alternate`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val state = runBlocking {
+            val result = Scenarios.load(context, "overnight")
+            val sessionId = requireNotNull(result.primarySessionId)
+            LogPolling.screenState(context, sessionId, LogFilterSelection(), LogQuickFilterId.All)
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(state = state, onOpen = {}, onQuickFilterSelect = {}, onFilterClick = {})
+            }
+        }
+
+        // The visible callsign, primary in `text/high` (guide: never just the alternate alone).
+        composeTestRule.onNodeWithText("KE7QRS").assertExists()
+        composeTestRule
+            .onNodeWithContentDescription("half-filled circle, Ambiguous, KE7QRS, or KE7QRF", substring = true)
+            .assertExists()
     }
 }

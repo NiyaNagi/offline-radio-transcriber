@@ -47,10 +47,12 @@ import org.ort.pipeline.CaptureProcessingLoop
 import org.ort.pipeline.GapPersister
 import org.ort.pipeline.Pass
 import org.ort.pipeline.PassDrainRunner
+import org.ort.pipeline.diagnostics.DiagnosticsLog
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
 import org.ort.pipeline.passb.RealAsrEngineProvider
 import org.ort.pipeline.passb.UnavailableAsrEngine
+import org.ort.pipeline.reprocess.ReprocessRunner
 import org.ort.pipeline.reprocess.SafePass
 import org.ort.pipeline.shed.AndroidShedSignals
 import org.ort.pipeline.shed.ShedController
@@ -180,6 +182,10 @@ public class RealCaptureService : Service() {
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ort:real-capture")
         ensureChannel()
         heartbeatStore = FileHeartbeatStore(File(filesDir, "heartbeat.txt"))
+        // FR-OBS-1: the one place this service's process configures where its four diagnostics
+        // logs live -- see DiagnosticsLog's own kdoc for why this is a plain File, not the :app
+        // DiagnosticsLogPaths type the bundle producer reads back with.
+        DiagnosticsLog.configure(filesDir)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -214,6 +220,8 @@ public class RealCaptureService : Service() {
     }
 
     private fun startCapture() {
+        // FR-OBS-1: the service-lifecycle log's first line for this session.
+        DiagnosticsLog.logServiceStarted(sessionId)
         val db = dependencies.database(applicationContext)
         this.db = db
         sessionEndRecorded = false
@@ -224,6 +232,7 @@ public class RealCaptureService : Service() {
         // R-104/F9: the rig module (FR-RIG) is unbuilt (register R-084) -- this is the one real
         // producer RigStatus has today. Honest, not a placeholder: there genuinely is no rig.
         RigStatus.absent()
+        DiagnosticsLog.logRigAbsent()
 
         // A real enumerated device — never a fabricated descriptor, which RouteVerifier would
         // (correctly) reject on the first read, halting capture. See defaultInputDevice()'s kdoc.
@@ -294,6 +303,13 @@ public class RealCaptureService : Service() {
         val previousLaunchGap = UncleanEndDetector(heartbeatStore).detect() ?: return
         val detectedAtWallMillis = SystemClock.wallMillis()
         val detectedAtMonotonicNanos = SystemClock.monotonicNanos()
+        // FR-OBS-1: "the F5 evidence" lifecycle.log's board clause names -- a killed-restart gap,
+        // logged against the PREVIOUS session, the same one the gap/session rows below are closed
+        // against.
+        DiagnosticsLog.logUncleanRestart(
+            previousSessionId = previousLaunchGap.sessionId,
+            gapMillis = (detectedAtWallMillis - previousLaunchGap.lastHeartbeatWallMillis).coerceAtLeast(0L),
+        )
         scope.launch {
             gapPersister.persist(
                 previousLaunchGap.sessionId,
@@ -404,6 +420,13 @@ public class RealCaptureService : Service() {
                 is CaptureEvent.Interrupted -> {
                     CaptureState.interrupted(event.cause)
                     InputStatus.lost(sinceMillis = SystemClock.wallMillis())
+                    DiagnosticsLog.logInputLost(SystemClock.wallMillis())
+                    // FR-OBS-1 "overruns": F-010's dropped-span encoding is the one Interrupted
+                    // cause this file can actually attribute a real duration to -- see
+                    // droppedSamplesMillisOrNull's own kdoc for why this duplicates GapPersister's
+                    // stable-prefix technique instead of importing capture-android's internal
+                    // DroppedSpanCause.
+                    droppedSamplesMillisOrNull(event.cause)?.let { DiagnosticsLog.logOverrun(it) }
                     updateNotification(CaptureNotificationContent.State.INTERRUPTED)
                 }
                 CaptureEvent.Resumed -> {
@@ -528,6 +551,12 @@ public class RealCaptureService : Service() {
         relay: ShedEventRelay,
         audioDirectoryBytesAtSessionStart: Long,
     ) {
+        // FR-OBS-1 "tier changes with their cause": the same shed-level -> Tier mapping
+        // ReprocessRunner.currentTierFromShedLevel() already applies to decide what a reprocess
+        // pass runs at -- reused here rather than duplicated, so live capture and reprocessing can
+        // never disagree about what shed level N means. "Cause" is the shed level itself: the one
+        // real fact this loop has for why the tier moved.
+        var previousTier = ReprocessRunner.currentTierFromShedLevel()
         while (source != null) {
             // refreshBacklog() is AndroidShedSignals's own live-read step (queueBacklog() then
             // returns a cache); a test's ShedSignals fake exposes queueBacklog() directly with no
@@ -538,6 +567,12 @@ public class RealCaptureService : Service() {
             relay.drain()
             ShedStatus.update(controller.currentLevel, signals.queueBacklog())
             ThermalStatus.sample(dependencies.osThermalStatus(applicationContext))
+
+            val currentTier = ReprocessRunner.currentTierFromShedLevel()
+            if (currentTier != previousTier) {
+                DiagnosticsLog.logTierChange(previousTier, currentTier, controller.currentLevel)
+                previousTier = currentTier
+            }
 
             val freeBytes = signals.freeStorageBytes()
             val audioBytesNow = audioDirectoryBytes()
@@ -593,8 +628,10 @@ public class RealCaptureService : Service() {
                 routedDeviceMatches = true,
                 openedAtMillis = inputOpenedAtWallMillis,
             )
+            DiagnosticsLog.logRouteVerified(expected.kind, audioSource.deviceFormat.sampleRate, true)
         } else {
             InputStatus.mismatch(expected, routed)
+            DiagnosticsLog.logRouteMismatch(expected.kind, routed?.kind)
         }
     }
 
@@ -605,6 +642,18 @@ public class RealCaptureService : Service() {
      */
     private fun resamplerIdLabel(identity: org.ort.captureapi.ResamplerIdentity?): String =
         identity?.toString() ?: "none (native rate matches output)"
+
+    /**
+     * FR-OBS-1: the encoded duration from `org.ort.capture.android.DroppedSpanCause.encode`'s
+     * output, or `null` if [cause] is not one of ours. `:pipeline` cannot reference that object
+     * (`internal`, a different module) -- [GapPersister.kt]'s own `causeFor` already duplicates the
+     * same stable `"dropped samples:"` prefix for exactly this reason (see its kdoc); this repeats
+     * only the narrower duration-extraction half that file does not itself expose.
+     */
+    private fun droppedSamplesMillisOrNull(cause: String): Long? {
+        if (!cause.startsWith("dropped samples:", ignoreCase = true)) return null
+        return DROPPED_SAMPLES_DURATION_PATTERN.find(cause)?.groupValues?.get(1)?.toLongOrNull()
+    }
 
     /**
      * R-112: reads [AudioRecordSource.levelMeter]'s already-computed snapshot — a cheap, lock-free
@@ -625,6 +674,11 @@ public class RealCaptureService : Service() {
             ),
             peakHistoryDbfs = snapshot.peakHistoryDbfs,
         )
+        // FR-OBS-1: only the clipped frames, never every ~10Hz tick -- capture.log would otherwise
+        // rotate constantly on ordinary healthy sessions, drowning out the events worth keeping.
+        if (snapshot.clipped) {
+            DiagnosticsLog.logLevelClip(snapshot.clipCountLastSecond, snapshot.peakDbfs.toDouble())
+        }
     }
 
     private fun onHeartbeat() {
@@ -663,7 +717,12 @@ public class RealCaptureService : Service() {
         // label DigestPolling already renders as "ended unclean -- the phone stopped the app". A
         // genuine hard kill where onDestroy never runs at all is closed later, on next launch, by
         // persistUncleanEndGapIfAny()'s closeIfStillOpen() call instead.
-        endSessionRow(if (markClean) TerminationReason.USER else TerminationReason.KILLED)
+        val reason = if (markClean) TerminationReason.USER else TerminationReason.KILLED
+        endSessionRow(reason)
+        // FR-OBS-1: logged even when sessionEndRecorded already short-circuited endSessionRow's own
+        // DB write above -- a second stopCaptureInternal call (R-173) is still a real service-stop
+        // event worth a lifecycle.log line, distinct from whether the DB row itself was touched.
+        DiagnosticsLog.logServiceStopped(sessionId, reason, markClean)
         // audit F-022: only a clean stop (ACTION_STOP) clears CaptureState.sessionId -- an
         // unclean stop (onDestroy without a prior ACTION_STOP, e.g. the OS killing the process)
         // leaves it in place so a Failed/Idle read still names the session that was running. See
@@ -954,6 +1013,9 @@ public class RealCaptureService : Service() {
          */
         internal const val STORAGE_FLOOR_BYTES: Long = 100L * 1024 * 1024
 
+        /** FR-OBS-1: matches `DroppedSpanCause.encode`'s `"... over ${durationMillis}ms ..."`. */
+        private val DROPPED_SAMPLES_DURATION_PATTERN = Regex("""over (\d+)ms""")
+
         /**
          * F5 (register R-106): the literal `GapPersister.causeFor` recognises as
          * `org.ort.data.entity.CaptureGapCause.OS_STOPPED`. Internal, not `private`, so
@@ -1022,6 +1084,9 @@ internal class ThermalTrackingPass(
         if (durationMs != null && durationMs > 0) {
             ThermalStatus.recordPassTiming(elapsedMillis.toDouble() / durationMs.toDouble())
         }
+        // FR-OBS-1 "per-pass latency": every real pass run this loop drives, tagged with the tier
+        // it ran at (the same mapping runShedMonitor's own tier-change logging uses).
+        DiagnosticsLog.logPassLatency(item.pass, ReprocessRunner.currentTierFromShedLevel(), elapsedMillis)
         return outcome
     }
 }

@@ -2,11 +2,16 @@ package org.ort.data
 
 import android.content.Context
 import androidx.room.Database
+import androidx.room.PooledConnection
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.Transactor
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
+import androidx.room.useWriterConnection
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import kotlinx.coroutines.runBlocking
 import org.ort.data.dao.ActivityDao
 import org.ort.data.dao.CaptureGapDao
 import org.ort.data.dao.CatalogDao
@@ -45,7 +50,9 @@ import org.ort.data.entity.WorkQueueItemEntity
  * released version (build-plan P5); v2 added [ShedEventEntity] (F-021, FR-RUN-3/4/5); v3 adds
  * [StationIdentityHistoryEntity], [VoiceprintBindingHistoryEntity] and [PriorAdjustmentEntity]
  * (register R-052, R-073; FR-SPK-10, FR-UI-6) so a station rename, a voiceprint rebinding and a
- * prior weight change each leave what they replaced reachable, not overwritten in place.
+ * prior weight change each leave what they replaced reachable, not overwritten in place; v4 adds
+ * [TransmissionEntity.processedTier] (register R-204 follow-up, FR-REP-2/9) so a reprocess run's
+ * outcome tier is queryable per record, not just per session.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -92,7 +99,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun stationIdentityDao(): StationIdentityDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 3
+        public const val SCHEMA_VERSION: Int = 4
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -119,8 +126,8 @@ public abstract class OrtDatabase : RoomDatabase() {
          * AC-53), verified by `MigrationTest`.
          *
          * Deliberately does **not** create `idx_prior_adjustment_one_current` here — that partial
-         * unique index lives only in [createHandWrittenSchema], the same choice already made for
-         * `idx_transcript_one_current` (see that index's comment): Room's schema validation
+         * unique index lives only in [applyHandWrittenSchema], the same choice already made for
+         * `idx_transcript_one_current` (see that function's comment): Room's schema validation
          * compares a migrated database only against what the `@Entity`/`@Index` annotations
          * declare, so a hand-written index created *by a `Migration`* would make every future
          * migration test fail a spurious "unexpected index" check. The accepted consequence,
@@ -164,85 +171,171 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v3 → v4 (register R-204 follow-up, FR-REP-2/9): adds `transmission.processedTier` —
+         * see [org.ort.data.entity.TransmissionEntity]'s own doc comment. No existing column is
+         * touched or dropped; every v3 row survives with `processedTier = NULL` (FR-AST-5/6 →
+         * AC-53), verified by `MigrationTest`. A nullable `ADD COLUMN` needs no `DEFAULT` clause —
+         * SQLite's own default for an added nullable column is `NULL`.
+         */
+        public val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transmission` ADD COLUMN `processedTier` TEXT")
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
-        public val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        public val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+
+        private suspend fun PooledConnection.exec(sql: String) {
+            usePrepared(sql) { it.step() }
+        }
 
         /**
          * Adds the schema Room's annotations cannot express (technical design §8.3, §12.1):
          * partial unique indices, and the FTS5 external-content table with its sync triggers.
          * Room's own schema validation never sees these — it only hashes what it generated.
+         *
+         * **Run explicitly from [create], every time, not from a `RoomDatabase.Callback`.**
+         * Register R-204: `RoomDatabase.Callback.onCreate`/`.onOpen` were the original home for
+         * this (and, before that, the only place `createFtsIndex` ran at all) — confirmed
+         * empirically, by instrumenting `onOpen` to throw unconditionally and observing that nothing
+         * in this module's test suite ever caught it, that **neither callback runs at all** once
+         * `RoomDatabase.Builder.setDriver(...)` is used (this project's Room version, 2.7.2): every
+         * hand-written index silently never existed, and `transcript_fts` silently never got built,
+         * with no error anywhere — exactly the kind of silent failure the constitution's "uncertainty
+         * is content" principle exists to prevent, just one layer down in the stack instead of in the
+         * product itself. Every statement below is idempotent (`IF NOT EXISTS`, or FTS5's own
+         * `'rebuild'` command), so calling this on every [create] — fresh install or the ten-thousandth
+         * launch alike — is deliberately cheap-and-safe rather than conditional.
          */
-        public val callback: Callback = object : Callback() {
-            override fun onCreate(db: SupportSQLiteDatabase) {
-                super.onCreate(db)
-                createHandWrittenSchema(db)
-            }
-
-            override fun onOpen(db: SupportSQLiteDatabase) {
-                super.onOpen(db)
-                db.execSQL("PRAGMA synchronous=NORMAL")
-            }
-        }
-
-        public fun createHandWrittenSchema(db: SupportSQLiteDatabase) {
+        private suspend fun applyHandWrittenSchema(connection: PooledConnection) {
             // Exactly one current transcript per transmission (FR-REP-3 → AC-31).
-            db.execSQL(
+            connection.exec(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_transcript_one_current " +
                     "ON transcript(transmissionId) WHERE isCurrent = 1",
             )
             // Active-state-only uniqueness so a completed or finally-failed pass is
             // re-enqueueable (technical design §7.1's draft-1 fix).
-            db.execSQL(
+            connection.exec(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_wq_active " +
                     "ON work_queue_item(transmissionId, pass) WHERE state IN ('READY','LEASED','DEFERRED')",
             )
             // Exactly one current weight per (station, named prior) — register R-052.
-            db.execSQL(
+            connection.exec(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_prior_adjustment_one_current " +
                     "ON prior_adjustment(stationId, name) WHERE isCurrent = 1",
             )
-            createFtsIndex(db)
+            ensureFtsIndex(connection)
         }
+
+        /**
+         * R-204: an install whose database predates this change (or, before it, one opened on a
+         * platform whose SQLite lacked fts5 entirely) never got `transcript_fts` built. Repaired
+         * every time [applyHandWrittenSchema] runs (every [create] call — see its doc comment)
+         * rather than as a one-shot `Migration`, because the failure being recovered from — "the
+         * index was never built" — is not tied to a schema version.
+         *
+         * [createFtsIndex]'s `CREATE VIRTUAL TABLE`/`CREATE TRIGGER` statements are already
+         * `IF NOT EXISTS`, so calling it unconditionally is safe; the FTS5 `'rebuild'` command is
+         * fts5's own built-in "recompute the whole index from the external content table"
+         * operation — also idempotent by definition — used here instead of a conditional "does the
+         * index already have rows" probe so this needs no extra raw-query round trip.
+         */
+        private suspend fun ensureFtsIndex(connection: PooledConnection) {
+            if (!createFtsIndex(connection)) return
+            connection.exec("INSERT INTO transcript_fts(transcript_fts) VALUES('rebuild')")
+        }
+
+        /**
+         * Register R-204's follow-up, from WP0's `Scenarios.kt` regression (register R-110,
+         * `ScenariosTest :: R_110 every declared scenario name loads without throwing`): a
+         * transient single-writer lock — two `OrtDatabase` instances open against the same
+         * on-disk file at once, one mid-write while the other opens, exactly the shape that
+         * test's own regression case reproduced — should make the *next* writer **wait**, not
+         * throw `SQLITE_BUSY`/`SQLITE_LOCKED` immediately.
+         *
+         * Room's own driver-mode connection pipeline already sets a `PRAGMA busy_timeout` of
+         * `BaseRoomConnectionManager.BUSY_TIMEOUT_MS` (3000ms — confirmed by disassembly of the
+         * shipped `room-runtime` class; there is no public API for it) on every connection it
+         * opens. That call is part of the same always-run `configureDatabase` step
+         * [applyHandWrittenSchema] discovered `RoomDatabase.Callback` is *not* part of, so, unlike
+         * this file's hand-written schema, it was never actually broken — every connection already
+         * gets a busy-timeout floor. This sets a longer, explicit value on the writer connection
+         * [create] already touches once per `OrtDatabase` instance — for headroom beyond that
+         * 3000ms default under exactly the kind of shared-machine/back-to-back-instance contention
+         * this project's own test suite has hit (`PRAGMA busy_timeout` only ever *raises* how long
+         * SQLite retries internally before giving up; it is always safe to set a larger value on
+         * top of Room's own). `Scenarios.kt`'s bounded, backed-off retry (register R-110) stays in
+         * place as defence in depth for whatever a 10-second wait does not itself absorb.
+         */
+        private suspend fun configureBusyTimeout(connection: PooledConnection) {
+            connection.exec("PRAGMA busy_timeout = $BUSY_TIMEOUT_MILLIS")
+        }
+
+        private const val BUSY_TIMEOUT_MILLIS = 10_000L
 
         /**
          * FTS5 external-content over the whole transcript table (technical design §12.1) —
          * `content_rowid='rowid'` is SQLite's implicit rowid, valid even though `id` (the
          * declared TEXT primary key) is a separate column.
          *
-         * minSdk 26's bundled SQLite always has the fts5 module; some *host-JVM* SQLite builds
-         * used by Robolectric on the desktop do not. That gap is real but test-only, so it is
-         * caught narrowly by message and skipped — not swallowed generally — leaving search
-         * unavailable under Robolectric while the transaction/lifecycle mechanics this module's
-         * acceptance criteria actually gate are unaffected.
+         * Returns whether the index was actually built. Before R-204 this module ran on whatever
+         * SQLite the platform (or Robolectric's host-JVM shadow) happened to ship, and some of
+         * those builds have no fts5 module at all — the API 34 reference emulator's among them —
+         * so this used to be a real, silently-accepted fallback. [create] now always installs
+         * [BundledSQLiteDriver], which bundles a SQLite built with fts5, so in practice this catch
+         * is unreachable; it is kept because "assume the platform SQLite has fts5" is exactly the
+         * assumption that was false, and a caller ([ensureFtsIndex]) still needs to know whether it
+         * can safely run the rebuild that depends on the table existing. The driver throws
+         * `android.database.SQLException` (its base Android-compatible type, not always the
+         * `SQLiteException` subclass) for a failed prepare, confirmed from this exact call site.
          */
-        private fun createFtsIndex(db: SupportSQLiteDatabase) {
+        private suspend fun createFtsIndex(connection: PooledConnection): Boolean {
             try {
-                db.execSQL(
+                connection.exec(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(" +
                         "text, content='transcript', content_rowid='rowid')",
                 )
-            } catch (e: android.database.sqlite.SQLiteException) {
+            } catch (e: android.database.SQLException) {
                 if (e.message?.contains("no such module: fts5") != true) throw e
-                return
+                return false
             }
-            db.execSQL(
+            connection.exec(
                 "CREATE TRIGGER IF NOT EXISTS transcript_ai AFTER INSERT ON transcript BEGIN " +
                     "INSERT INTO transcript_fts(rowid, text) VALUES (new.rowid, new.text); END",
             )
-            db.execSQL(
+            connection.exec(
                 "CREATE TRIGGER IF NOT EXISTS transcript_ad AFTER DELETE ON transcript BEGIN " +
                     "INSERT INTO transcript_fts(transcript_fts, rowid, text) " +
                     "VALUES('delete', old.rowid, old.text); END",
             )
-            db.execSQL(
+            connection.exec(
                 "CREATE TRIGGER IF NOT EXISTS transcript_au AFTER UPDATE ON transcript BEGIN " +
                     "INSERT INTO transcript_fts(transcript_fts, rowid, text) VALUES('delete', old.rowid, old.text); " +
                     "INSERT INTO transcript_fts(rowid, text) VALUES (new.rowid, new.text); END",
             )
+            return true
         }
 
-        /** WAL + the hand-written schema (technical design §12.1) — the production and test factory. */
+        /**
+         * WAL + the hand-written schema (technical design §12.1) + [BundledSQLiteDriver]
+         * (register R-204, FR-UI-3) — the production and test factory, and the **only** place a
+         * connection is opened, so every caller — the shipped app and every Robolectric/JVM test —
+         * gets the same SQLite build. Room's default driver defers to whatever SQLite the platform
+         * ships; the API 34 reference emulator's platform SQLite has no `fts5` module ("no such
+         * module: fts5"), and Robolectric's host-JVM shadow SQLite has the same gap.
+         * [BundledSQLiteDriver] bypasses the platform SQLite entirely and talks to a SQLite binary
+         * this app ships (`androidx.sqlite:sqlite-bundled`), built with fts5.
+         *
+         * [applyHandWrittenSchema] runs here, synchronously (`runBlocking`), rather than through
+         * `RoomDatabase.Builder.addCallback(...)` — see that function's doc comment for why the
+         * callback path silently does not run at all under `.setDriver(...)`. Blocking the calling
+         * thread until the writer connection's setup completes is the same shape opening a database
+         * has always had (the classic `SupportSQLiteOpenHelper` path is synchronous too); it keeps
+         * `create()` non-suspend, which every existing caller across the app depends on.
+         */
         @Suppress("SpreadOperator") // MIGRATIONS is tiny; addMigrations(vararg) has no non-spread overload.
         public fun create(context: Context, name: String = DATABASE_NAME, inMemory: Boolean = false): OrtDatabase {
             val builder = if (inMemory) {
@@ -251,10 +344,69 @@ public abstract class OrtDatabase : RoomDatabase() {
                 Room.databaseBuilder(context, OrtDatabase::class.java, name)
             }
             if (!inMemory) builder.setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-            return builder
+            val db = builder
+                .setDriver(BundledSQLiteDriver())
                 .addMigrations(*MIGRATIONS)
-                .addCallback(callback)
                 .build()
+            runBlocking {
+                db.useWriterConnection { connection ->
+                    configureBusyTimeout(connection)
+                    applyHandWrittenSchema(connection)
+                }
+            }
+            return db
+        }
+    }
+}
+
+/**
+ * Runs [block] — typically several DAO calls across more than one DAO, with ordinary Kotlin
+ * control flow in between — as one write transaction. [OrtDatabase.create] always installs
+ * [BundledSQLiteDriver] (register R-204), and `androidx.room.withTransaction`
+ * (`androidx.room:room-ktx`'s KTX helper this module used before) still assumes the classic
+ * `SupportSQLiteOpenHelper` internally — it throws `Cannot return a SupportSQLiteOpenHelper since
+ * no SupportSQLiteOpenHelper.Factory was configured with Room` the moment a driver is set. This is
+ * the driver-native replacement, built directly on [androidx.room.useWriterConnection] and
+ * [Transactor.withTransaction]: every suspend DAO call issued from [block] transparently reuses
+ * the same pooled connection and transaction (the same mechanism a `@Transaction`-annotated DAO
+ * default method already relies on — see [org.ort.data.dao.CorrectionDao.recordCorrection],
+ * [org.ort.data.dao.TranscriptDao.supersede] — which is why those kept working unchanged).
+ * `IMMEDIATE` (not `DEFERRED`) matches `withTransaction`'s old default: the write lock is taken up
+ * front, not on the first write statement, so two callers cannot both start and then discover a
+ * conflict partway through.
+ */
+public suspend fun <R> OrtDatabase.inWriteTransaction(block: suspend () -> R): R = useWriterConnection { transactor ->
+    transactor.withTransaction(Transactor.SQLiteTransactionType.IMMEDIATE) { block() }
+}
+
+/**
+ * Runs [sql] (typically `DELETE`/`UPDATE` with no result set — this is not a `SELECT` helper) with
+ * [args] bound positionally, the driver-native replacement for the removed
+ * `SupportSQLiteDatabase.execSQL(sql, args)` call callers reached via `OrtDatabase.openHelper` —
+ * itself unavailable once [BundledSQLiteDriver] is installed (register R-204; see
+ * [inWriteTransaction]'s doc comment for the same story on `androidx.room.withTransaction`).
+ * `:data` has no DAO for arbitrary/ad-hoc statements — build-plan P5 never needed one — so this is
+ * for the rare caller (today, only `app/src/debug/Scenarios.kt`'s scenario-data cleanup) that
+ * genuinely does need to run a raw statement Room's own generated DAOs cannot express, kept here
+ * rather than reinvented per-caller so there is exactly one binding implementation to get right.
+ */
+public suspend fun OrtDatabase.execRaw(sql: String, vararg args: Any?) {
+    useWriterConnection { transactor ->
+        transactor.usePrepared(sql) { statement ->
+            args.forEachIndexed { index, arg ->
+                val position = index + 1
+                when (arg) {
+                    null -> statement.bindNull(position)
+                    is String -> statement.bindText(position, arg)
+                    is Long -> statement.bindLong(position, arg)
+                    is Int -> statement.bindLong(position, arg.toLong())
+                    is Double -> statement.bindDouble(position, arg)
+                    is Boolean -> statement.bindBoolean(position, arg)
+                    is ByteArray -> statement.bindBlob(position, arg)
+                    else -> error("execRaw(...) cannot bind argument of type ${arg::class}: $arg")
+                }
+            }
+            statement.step()
         }
     }
 }

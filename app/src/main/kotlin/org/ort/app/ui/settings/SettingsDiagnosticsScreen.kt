@@ -12,7 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import org.ort.app.ui.components.DrillInHeader
-import org.ort.app.ui.components.FailedState
+import org.ort.app.ui.components.PrimaryButton
+import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.Tile
 import org.ort.app.ui.improve.Plurals
@@ -21,17 +22,35 @@ import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 
 /**
- * `Settings-Diagnostics.dc.html` (FR-OBS-3/5): what a bundle would contain, shown before it
- * exists. No diagnostics-bundle producer exists in `:app` or `:pipeline` (grepped before writing
- * this) — `Preview`/`Save bundle` are honestly disabled; the file list below is what the bundle
- * *would* contain, described, never claimed to already be sitting on disk with a fabricated size.
+ * `Settings-Diagnostics.dc.html` (FR-OBS-1/3/5): what a bundle contains, real and computed before
+ * it exists on disk — WP11e's `DiagnosticsBundleBuilder` (round 9, register R-137) is the real
+ * producer behind every file's size and the header total; `Preview`/`Save bundle` are both real
+ * actions now, wired by `SettingsContent` (this screen itself takes no `Context`, per this
+ * package's own polling-stays-out-of-screens rule).
+ *
+ * [onPreview] opens [previewOpen] — an in-app, full-screen listing of the exact same real entries
+ * (name, clause, size) and total `Save bundle` would write, before committing to it. The board's
+ * own prose ("Preview opens every file in a reader before you save") reads as launching a
+ * per-file *external* viewer — genuinely a different, larger feature (a `FileProvider`, a manifest
+ * change, one `ACTION_VIEW` intent per file) than a single Compose screen can add on its own; this
+ * is the honest, real, in-scope substitute reported to the coordinator for a decision on whether
+ * the external-reader shape is still wanted as a follow-up.
  */
 @Composable
 public fun SettingsDiagnosticsScreen(
     state: SettingsDiagnosticsViewState,
     onBack: () -> Unit,
+    onPreview: () -> Unit,
+    onSaveBundle: () -> Unit,
     modifier: Modifier = Modifier,
+    previewOpen: Boolean = false,
+    onDismissPreview: () -> Unit = {},
+    saveConfirmationLabel: String? = null,
 ) {
+    if (previewOpen) {
+        DiagnosticsPreviewScreen(state = state, onDone = onDismissPreview, modifier = modifier)
+        return
+    }
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DrillInHeader(parentLabel = "Settings", onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
@@ -61,41 +80,90 @@ public fun SettingsDiagnosticsScreen(
                 )
             }
 
-            // R-137: "In the bundle · N files · X.X MB" is the board's header shape — the byte
-            // total is not repeated here (no producer writes these files, so no real size exists
-            // to report; `Settings-Diagnostics.dc.html`'s "2.1 MB" is an illustrative example, not
-            // a fact this build could compute — constitution I).
+            // R-137 (round 9): "In the bundle · N files · X.X MB" is now the board's own shape,
+            // header total included — real, WP11e's `DiagnosticsBundleBuilder.preview`.
             SectionHeader(
-                label = "In the bundle · ${Plurals.count(state.files.size, "file")}",
+                label = "In the bundle · ${Plurals.count(state.files.size, "file")} · ${state.totalSizeLabel}",
                 modifier = Modifier.padding(top = OrtSpacing.lg),
             )
-            state.files.forEach { file ->
-                Column(modifier = Modifier.padding(vertical = OrtSpacing.xs)) {
-                    Text(text = file.name, style = OrtType.callsignRow, color = OrtColors.textHigh)
-                    Text(text = file.description, style = OrtType.subLine, color = OrtColors.textDim)
-                }
-            }
+            state.files.forEach { file -> DiagnosticsFileRow(file = file) }
 
             SectionHeader(label = "Never included", modifier = Modifier.padding(top = OrtSpacing.lg))
-            // R-137 (round 7, register): `Settings-Diagnostics.dc.html`'s own scrubbing example —
-            // "resolved [callsign] at 0.94" — names the exact shape a scrubbed log line takes, not
-            // a real logged value (there is no producer yet to log one, see this screen's own
-            // top doc comment); it stays inside the same illustrative sentence the board uses it
-            // in, never presented as a captured fact.
+            // R-137 (round 7, then round 9): `Settings-Diagnostics.dc.html`'s own scrubbing example
+            // — "resolved [callsign] at 0.94" — is real now, not hypothetical: WP11e's
+            // `CallsignScrubber` actually runs on every log entry `DiagnosticsBundleBuilder`
+            // renders, so this reads "are scrubbed", not "would be".
             Text(
-                text = "Audio. Transcripts. Callsigns. Voiceprints. Names. Location. The logs above would " +
-                    "be scrubbed of callsigns before they are written — a line reads " +
+                text = "Audio. Transcripts. Callsigns. Voiceprints. Names. Location. The logs above are " +
+                    "scrubbed of callsigns before they are written — a line reads " +
                     "\"resolved [callsign] at 0.94\", never the callsign itself.",
                 style = OrtType.cardBody,
                 color = OrtColors.textBody,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
             )
 
-            FailedState(
-                title = "Preview and Save bundle are not available in this build",
-                body = "No diagnostics-bundle producer exists in :app or :pipeline yet — this screen states " +
-                    "what a bundle would contain, not what one currently does.",
-                modifier = Modifier.padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
+            saveConfirmationLabel?.let { label ->
+                Text(
+                    text = label,
+                    style = OrtType.cardBody,
+                    color = OrtColors.accentGreen,
+                    modifier = Modifier.padding(top = OrtSpacing.lg),
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+            ) {
+                SecondaryButton(text = "Preview", onClick = onPreview, modifier = Modifier.weight(1f))
+                PrimaryButton(text = "Save bundle", onClick = onSaveBundle, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** One `IN THE BUNDLE` row — name, real clause, real trailing size (the board's own `.f`/`.sz`
+ * shape). Split out of [SettingsDiagnosticsScreen] purely to keep that function under detekt's
+ * length limit. */
+@Composable
+private fun DiagnosticsFileRow(file: SettingsDiagnosticsFileViewState, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = file.name, style = OrtType.callsignRow, color = OrtColors.textHigh)
+            Text(text = file.description, style = OrtType.subLine, color = OrtColors.textDim)
+        }
+        Text(text = file.sizeLabel, style = OrtType.subLine, color = OrtColors.textFaint)
+    }
+}
+
+/** `Preview` (R-137, round 9): the exact real entries/total `Save bundle` would write, shown
+ * before committing to it — see [SettingsDiagnosticsScreen]'s own doc comment for why this is an
+ * in-app listing rather than the board's own per-file external-reader wording. */
+@Composable
+private fun DiagnosticsPreviewScreen(
+    state: SettingsDiagnosticsViewState,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        DrillInHeader(parentLabel = "Diagnostics", onBack = onDone)
+        Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
+            Text(text = "Preview", style = OrtType.screenTitle, color = OrtColors.textHigh)
+            Text(
+                text = "Exactly what Save bundle will write · ${Plurals.count(state.files.size, "file")} · " +
+                    state.totalSizeLabel,
+                style = OrtType.subtitle,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
+            )
+            state.files.forEach { file -> DiagnosticsFileRow(file = file) }
+            PrimaryButton(
+                text = "Done",
+                onClick = onDone,
+                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
             )
         }
     }

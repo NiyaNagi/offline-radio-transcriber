@@ -13,13 +13,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import org.ort.app.ui.data.FrequencyChangeViewState
+import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.FrequencyDetailViewState
 import org.ort.app.ui.data.FrequencyPolling
 import org.ort.app.ui.data.TimeWindow
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
-
-private enum class FrequencySubScreen { NONE, CHANGE }
 
 /**
  * The frequency drill-in's polling wrapper (R-074, ui-conformance-plan WP8) — the `*Content.kt`
@@ -39,11 +38,16 @@ public fun FrequencyDetailContent(
     // unchanged until WP3 wires it, the same pattern `onOpenTransmission`/`onOpenStation` already
     // established elsewhere in this package.
     onOpenOvers: (Long, TimeWindow) -> Unit = { _, _ -> },
+    // R-276 (register, spec, coordinator round 2026-09-08): which sub-screen this drill-in opens
+    // on. Defaulted to `Detail` so every existing caller (`OrtNavHost.kt`) still compiles
+    // unchanged; WP3 passes `Change` when reopening after "The N overs" round-trips through the
+    // Log, so system back lands the operator on `Frequency-Change` again, not the drill-in root.
+    initialView: FrequencyDetailView = FrequencyDetailView.Detail,
     // R-017: passed straight through to `FrequencyDetailScreen`'s own `backLabel` — see
     // `StationDetailScreen`'s doc comment for the same reasoning.
     backLabel: String = "Frequencies",
 ) {
-    var sub by remember(frequencyHz) { mutableStateOf(FrequencySubScreen.NONE) }
+    var sub by remember(frequencyHz) { mutableStateOf(initialView) }
     var detail by remember(frequencyHz) { mutableStateOf<FrequencyDetailViewState?>(null) }
     var change by remember(frequencyHz) { mutableStateOf<FrequencyChangeViewState?>(null) }
 
@@ -51,18 +55,18 @@ public fun FrequencyDetailContent(
         detail = FrequencyPolling.frequencyDetail(context, frequencyHz, nowMillis = SystemClock.wallMillis())
     }
     LaunchedEffect(frequencyHz, sub) {
-        if (sub == FrequencySubScreen.CHANGE && change == null) {
+        if (sub == FrequencyDetailView.Change && change == null) {
             change = FrequencyPolling.frequencyChange(context, frequencyHz)
         }
     }
 
     when (sub) {
-        FrequencySubScreen.CHANGE -> {
+        FrequencyDetailView.Change -> {
             val current = change
             if (current != null) {
                 FrequencyChangeScreen(
                     state = current,
-                    onBack = { sub = FrequencySubScreen.NONE },
+                    onBack = { sub = FrequencyDetailView.Detail },
                     modifier = modifier,
                     onOpenOvers = onOpenOvers,
                 )
@@ -71,7 +75,7 @@ public fun FrequencyDetailContent(
             }
         }
 
-        FrequencySubScreen.NONE -> {
+        FrequencyDetailView.Detail -> {
             val current = detail
             if (current != null) {
                 FrequencyDetailScreen(
@@ -79,7 +83,7 @@ public fun FrequencyDetailContent(
                     onBack = onBack,
                     modifier = modifier,
                     onOpenStation = onOpenStation,
-                    onOpenChange = { sub = FrequencySubScreen.CHANGE },
+                    onOpenChange = { sub = FrequencyDetailView.Change },
                     backLabel = backLabel,
                 )
             } else {

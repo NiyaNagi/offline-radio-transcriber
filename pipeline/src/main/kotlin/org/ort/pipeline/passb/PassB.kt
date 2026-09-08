@@ -17,6 +17,7 @@ import org.ort.lexicon.RankedCandidate
 import org.ort.lexicon.RankingContext
 import org.ort.lexicon.VariantTable
 import org.ort.pipeline.Pass
+import org.ort.pipeline.diagnostics.DiagnosticsLog
 
 /** A closed segment's audio and the pre-decode facts Pass B's cheap rejection rules need. */
 public data class SegmentAudio(val samples: FloatArray, val candidate: SegmentCandidate)
@@ -110,7 +111,12 @@ public class PassB(
 
         return when (outcome) {
             is PassBOutcome.Accepted -> PassRunOutcome.Finished(TransmissionState.COMPLETE)
-            is PassBOutcome.Rejected -> PassRunOutcome.Finished(TransmissionState.REJECTED)
+            is PassBOutcome.Rejected -> {
+                // FR-OBS-1 "rejection reasons by count": the closed RejectionRuleId only -- never
+                // outcome.detail, which the rule itself may compose from the segment's own text.
+                DiagnosticsLog.logRejection(outcome.rule)
+                PassRunOutcome.Finished(TransmissionState.REJECTED)
+            }
             is PassBOutcome.Failed -> PassRunOutcome.Errored(outcome.reason)
         }
     }

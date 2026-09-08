@@ -1,7 +1,6 @@
 package org.ort.app.debug
 
 import android.content.Context
-import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import org.ort.app.ui.data.DebugLexiconImportOverride
@@ -40,6 +39,8 @@ import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
+import org.ort.data.execRaw
+import org.ort.data.inWriteTransaction
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -66,8 +67,9 @@ import java.io.File
  * not an exception to that).
  *
  * **Clearing prior scenario data.** None of `:data`'s DAOs expose a delete query (build-plan P5
- * never needed one), so [clearPriorScenarioData] reaches through [OrtDatabase.openHelper] — public
- * Room API, not a new dependency — and runs plain `DELETE` statements scoped to the
+ * never needed one), so [clearPriorScenarioData] reaches through [org.ort.data.execRaw] — `:data`'s
+ * own driver-native raw-statement helper (register R-204; `OrtDatabase.openHelper` throws once
+ * `BundledSQLiteDriver` is installed) — and runs plain `DELETE` statements scoped to the
  * `scenario-`-prefixed session/transmission ids every scenario here writes
  * ([ScenarioFixtures.SESSION_PREFIX]). `station`/`voiceprint` rows are cleared unconditionally
  * rather than by prefix: [org.ort.data.entity.TransmissionEntity.stationId] *is* the callsign
@@ -221,11 +223,16 @@ public object Scenarios {
      * `--rerun-tasks`** (this package's report to the lead has the exact run counts and failure
      * rates at each stage):
      *
-     * 1. **One Room-coordinated transaction**, not nine separate ones —
-     *    [androidx.room.RoomDatabase.withTransaction] runs the whole clear on Room's *own*
-     *    transaction dispatcher against Room's *own* connection, atomic besides (every `DELETE`
-     *    below commits together or not at all). This alone cut the failure rate roughly in half
-     *    but did not eliminate it.
+     * 1. **One Room-coordinated transaction**, not nine separate ones — [org.ort.data.inWriteTransaction]
+     *    runs the whole clear on Room's *own* pooled writer connection, atomic besides (every
+     *    `DELETE` below commits together or not at all). This alone cut the failure rate roughly in
+     *    half but did not eliminate it. (Originally built on
+     *    `androidx.room.RoomDatabase.withTransaction`; register R-204 replaced every use of that
+     *    KTX helper repo-wide once `:data` started installing `BundledSQLiteDriver` — it silently
+     *    stopped working the moment a driver is set, throwing `Cannot return a
+     *    SupportSQLiteOpenHelper` — with the driver-native `inWriteTransaction`, alongside
+     *    [org.ort.data.execRaw] replacing the raw `OrtDatabase.openHelper.writableDatabase.execSQL`
+     *    calls below for the identical reason.)
      * 2. **`ScenariosTest` now closes its own [OrtDatabase] in `@After`** — previously every test
      *    method opened a fresh `RoomDatabase` (its own connection pool, its own
      *    `InvalidationTracker`) against the *same* on-disk `ort.db` and never closed the previous
@@ -243,9 +250,9 @@ public object Scenarios {
      *    standard, SQLite-documented response to `SQLITE_BUSY` ("the application should... retry
      *    after a short delay"), scoped narrowly to messages that actually say "busy"/"locked" so a
      *    genuine, non-transient failure still surfaces immediately rather than retrying blindly.
-     *    [OrtDatabase]'s own builder (`:data`, outside this file's ownership) is where a
-     *    `PRAGMA busy_timeout` would ideally live instead; noted as left open in this package's
-     *    report rather than reached by editing a file this package does not own.
+     *    [OrtDatabase.create] now also sets a `PRAGMA busy_timeout` (register R-204's follow-up) so
+     *    a transient lock waits before it ever reaches SQLite's `SQLITE_BUSY` at all — this retry
+     *    stays as defence in depth for whatever a bounded busy-timeout does not itself absorb.
      */
     private suspend fun clearPriorScenarioData(context: Context, db: OrtDatabase) {
         var attempt = 0
@@ -271,25 +278,24 @@ public object Scenarios {
     }
 
     private suspend fun clearScenarioRowsInOneTransaction(db: OrtDatabase) {
-        db.withTransaction {
-            val sql = db.openHelper.writableDatabase
-            val likeScenario = arrayOf<Any>("${ScenarioFixtures.SESSION_PREFIX}%")
-            sql.execSQL(
+        db.inWriteTransaction {
+            val likeScenario = "${ScenarioFixtures.SESSION_PREFIX}%"
+            db.execRaw(
                 "DELETE FROM correction WHERE transmissionId IN " +
                     "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
                 likeScenario,
             )
-            sql.execSQL(
+            db.execRaw(
                 "DELETE FROM callsign_candidate WHERE transmissionId IN " +
                     "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
                 likeScenario,
             )
-            sql.execSQL(
+            db.execRaw(
                 "DELETE FROM phonetic_lattice WHERE transmissionId IN " +
                     "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
                 likeScenario,
             )
-            sql.execSQL(
+            db.execRaw(
                 "DELETE FROM transcript WHERE transmissionId IN " +
                     "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
                 likeScenario,
@@ -297,25 +303,25 @@ public object Scenarios {
             // R-153: `pass-failed` is the first scenario to write a work_queue_item row — cleared
             // by the same transmissionId-through-sessionId join every other per-transmission table
             // uses.
-            sql.execSQL(
+            db.execRaw(
                 "DELETE FROM work_queue_item WHERE transmissionId IN " +
                     "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
                 likeScenario,
             )
-            sql.execSQL("DELETE FROM thread WHERE sessionId LIKE ?", likeScenario)
-            sql.execSQL("DELETE FROM capture_gap WHERE sessionId LIKE ?", likeScenario)
-            sql.execSQL("DELETE FROM transmission WHERE sessionId LIKE ?", likeScenario)
-            sql.execSQL("DELETE FROM session WHERE id LIKE ?", likeScenario)
+            db.execRaw("DELETE FROM thread WHERE sessionId LIKE ?", likeScenario)
+            db.execRaw("DELETE FROM capture_gap WHERE sessionId LIKE ?", likeScenario)
+            db.execRaw("DELETE FROM transmission WHERE sessionId LIKE ?", likeScenario)
+            db.execRaw("DELETE FROM session WHERE id LIKE ?", likeScenario)
             // Unconditional — see this object's own doc comment for why station/voiceprint rows
             // cannot be tagged by the same session-id-prefix convention.
-            sql.execSQL("DELETE FROM station")
-            sql.execSQL("DELETE FROM voiceprint")
+            db.execRaw("DELETE FROM station")
+            db.execRaw("DELETE FROM voiceprint")
             // `lexicon-corrupt` (R-154) is the only scenario that writes `lexicon_version` — scoped
             // by asset id, the same reason station/voiceprint above are cleared unconditionally rather
             // than by the `scenario-` session-id prefix (a LexiconVersionEntity carries neither).
-            sql.execSQL(
+            db.execRaw(
                 "DELETE FROM lexicon_version WHERE assetId = ?",
-                arrayOf<Any>(org.ort.app.ui.data.ModelsController.CALLSIGN_LEXICON_ASSET_ID),
+                org.ort.app.ui.data.ModelsController.CALLSIGN_LEXICON_ASSET_ID,
             )
         }
     }

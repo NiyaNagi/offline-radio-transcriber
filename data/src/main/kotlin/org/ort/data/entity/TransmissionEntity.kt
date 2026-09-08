@@ -5,6 +5,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import org.ort.core.AttributionState
+import org.ort.core.Tier
 import org.ort.core.TransmissionState
 
 /**
@@ -12,6 +13,16 @@ import org.ort.core.TransmissionState
  * [TransmissionState] (FR-RUN-7). `STALE` is deliberately absent — it is derived from stored
  * pass fingerprints, not stored (technical design §7.2) — but [isReprocessCandidate] is the
  * flag FR-RUN-4 sets when shedding or a fingerprint mismatch marks the row for reprocessing.
+ *
+ * [processedTier] (schema v4, register R-204 follow-up, FR-REP-2/9): the tier the most recent
+ * *completed* Pass B/C run actually ran this transmission at — `null` until a pass first
+ * completes for it (this column tracks reprocessing outcomes, not live capture's own tier, which
+ * `SessionEntity.deviceTier` already carries). [org.ort.pipeline.reprocess.ReprocessRunner] is the
+ * only writer, via [org.ort.data.dao.TransmissionDao.setProcessedTier], set on both a completed
+ * and a rejected outcome (both mean "Pass B genuinely ran at this tier"), never on a failed one
+ * (which means it did not). This is what lets a read path answer "which records still need
+ * improving" without re-offering one a reprocess already brought current
+ * ([org.ort.data.dao.TransmissionDao.idsBelowProcessedTier]).
  */
 @Entity(
     tableName = "transmission",
@@ -61,6 +72,7 @@ public data class TransmissionEntity(
     val enhancementApplied: List<String> = emptyList(),
     val executionProvider: String?,
     val isReprocessCandidate: Boolean = false,
+    val processedTier: Tier? = null,
 ) {
     /**
      * The derived on-disk path for this transmission's audio (technical design §12.2): paths

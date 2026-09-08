@@ -1,10 +1,13 @@
 package org.ort.data
 
 import android.content.Context
+import androidx.room.useReaderConnection
+import androidx.room.useWriterConnection
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -83,10 +86,45 @@ public class DurabilityTest {
     public fun the_file_backed_database_runs_in_wal_journal_mode(): Unit = runTest {
         val db = OrtDatabase.create(context, name = dbName, inMemory = false)
         try {
-            db.openHelper.writableDatabase.query("PRAGMA journal_mode").use { cursor ->
-                cursor.moveToFirst()
-                assertEquals("wal", cursor.getString(0).lowercase())
+            // R-204: `db.openHelper` throws once a database uses `BundledSQLiteDriver` ("Cannot
+            // return a SupportSQLiteOpenHelper since no SupportSQLiteOpenHelper.Factory was
+            // configured with Room") — the driver-native way to run a raw PRAGMA is a reader
+            // connection's prepared statement.
+            val mode = db.useReaderConnection { connection ->
+                connection.usePrepared("PRAGMA journal_mode") { statement ->
+                    statement.step()
+                    statement.getText(0)
+                }
             }
+            assertEquals("wal", mode.lowercase())
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * Register R-204's follow-up (register R-110, `ScenariosTest`'s own regression for the
+     * intermittent single-writer-lock flake): [OrtDatabase.create] sets an explicit
+     * `PRAGMA busy_timeout` on its writer connection, longer than Room's own already-applied
+     * 3000ms driver default, so a transient lock waits rather than throwing immediately. Read
+     * back from a fresh [OrtDatabase.useWriterConnection] call — WAL mode's writer pool holds
+     * exactly one physical connection, so this is the same connection [OrtDatabase.create]
+     * configured, not a different one that would only show Room's own default.
+     */
+    @Test
+    @Requirement("R-204", "R-110")
+    public fun the_writer_connection_carries_a_busy_timeout_longer_than_rooms_own_default(): Unit = runTest {
+        val db = OrtDatabase.create(context, name = dbName, inMemory = false)
+        try {
+            val busyTimeoutMillis = db.useWriterConnection { connection ->
+                connection.usePrepared("PRAGMA busy_timeout") { statement ->
+                    statement.step()
+                    statement.getLong(0)
+                }
+            }
+            // Room's own internal default (BaseRoomConnectionManager.BUSY_TIMEOUT_MS) is 3000ms;
+            // the load-bearing check is that OrtDatabase.create's own PRAGMA raised it further.
+            assertTrue("expected > 3000ms, was ${busyTimeoutMillis}ms", busyTimeoutMillis > 3_000L)
         } finally {
             db.close()
         }

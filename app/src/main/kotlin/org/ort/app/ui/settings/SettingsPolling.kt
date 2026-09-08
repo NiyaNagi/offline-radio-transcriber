@@ -2,9 +2,9 @@ package org.ort.app.ui.settings
 
 import android.content.Context
 import org.ort.app.BuildConfig
-import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.navigation.StorageFooterViewState
 import org.ort.app.ui.navigation.toGigabyteLabel
+import org.ort.core.SystemClock
 import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -13,6 +13,13 @@ import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
+import org.ort.pipeline.capture.collectSessionStorageSummaries
+import org.ort.pipeline.capture.computeNextDeletion
+import org.ort.pipeline.capture.measureStorageAccounting
+import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -214,13 +221,32 @@ public object SettingsPolling {
         )
     }
 
-    public fun storage(context: Context, store: SettingsStore): SettingsStorageViewState {
+    // R-170 (ReaderPolling.kt's own established reasoning, mirrored here rather than imported —
+    // that file is WP4's alone): Locale.ROOT has no real month-name data ("Sep" degrades to
+    // "M09"); guide §9's dates are prose, read in the device's own locale.
+    private val nightDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
+        .withZone(ZoneId.systemDefault())
+
+    /** R-133 (round 8): mirrors `RealCaptureService.STORAGE_FLOOR_BYTES` — `internal` to
+     * `:pipeline`, not importable here, same limitation [SettingsStorageViewState.hardFloorLabel]'s
+     * own doc comment already names for the "100 MB" label this same real value backs. */
+    private const val HARD_FLOOR_BYTES: Long = 100L * 1024 * 1024
+
+    /**
+     * R-133 (round 8, register): now sourced from `:pipeline`'s real
+     * [org.ort.pipeline.capture.measureStorageAccounting]/[org.ort.pipeline.capture.collectSessionStorageSummaries]/
+     * [org.ort.pipeline.capture.computeNextDeletion] (WP11c) rather than this package's own ad-hoc
+     * directory sums — the four-segment usage bar (Audio/Models/Records/Lexicon, `Lexicon` honestly
+     * `0` today — see `StorageAccounting`'s own doc comment for why) and the "Next deletion" row
+     * are both real facts, never board literals. `suspend` (was not, before this round) because
+     * every one of those three calls is real file/database I/O.
+     */
+    public suspend fun storage(context: Context, store: SettingsStore): SettingsStorageViewState {
         val footer = StorageFooterViewState.fromAudioDirectory(context)
-        val modelsBytes = ModelCatalog.entries.sumOf { entry ->
-            val file = entry.destination(context.filesDir)
-            if (file.isFile) file.length() else 0L
-        }
-        val recordsBytes = context.getDatabasePath(OrtDatabase.DATABASE_NAME).let { if (it.isFile) it.length() else 0L }
+        val dbFile = context.getDatabasePath(OrtDatabase.DATABASE_NAME)
+        val databaseFiles = listOf(dbFile, File(dbFile.path + "-wal"), File(dbFile.path + "-shm"))
+        val accounting = measureStorageAccounting(context.filesDir, databaseFiles)
+
         val forecast = StorageForecast.state
         val nightsLeft = when (forecast) {
             is StorageForecast.State.Fine -> forecast.nightsLeft
@@ -228,18 +254,41 @@ public object SettingsPolling {
             is StorageForecast.State.OneNightLeft -> forecast.nightsLeft
             is StorageForecast.State.AtFloor, is StorageForecast.State.NotYetMeasured -> null
         }
+
+        val db = OrtDatabase.create(context.applicationContext)
+        val sessions = collectSessionStorageSummaries(db, context.filesDir)
+        val budgetBytes = store.audioBudgetGb?.let { it * 1_000_000_000L }
+        val nextDeletion = computeNextDeletion(
+            sessionsOldestFirst = sessions,
+            audioBytesUsed = accounting.audioBytes,
+            budgetBytes = budgetBytes,
+            floorBytes = HARD_FLOOR_BYTES,
+            freeBytes = footer.freeBytes,
+            nowMillis = SystemClock.wallMillis(),
+        )
+
         return SettingsStorageViewState(
-            usedBytes = footer.audioUsedBytes,
+            usedBytes = accounting.audioBytes,
             budgetGb = store.audioBudgetGb,
             deviceFreeBytes = footer.freeBytes,
             categories = listOf(
-                SettingsStorageCategoryViewState("Audio", footer.audioUsedBytes),
-                SettingsStorageCategoryViewState("Models", modelsBytes),
-                SettingsStorageCategoryViewState("Records", recordsBytes),
+                SettingsStorageCategoryViewState("Audio", accounting.audioBytes),
+                SettingsStorageCategoryViewState("Models", accounting.modelBytes),
+                SettingsStorageCategoryViewState("Records", accounting.recordBytes),
+                SettingsStorageCategoryViewState("Lexicon", accounting.lexiconBytes),
             ),
             nightsLeftLabel = nightsLeft?.let { "${it.toInt().coerceAtLeast(0)} nights left" },
             autoPruneEnabled = store.autoPruneEnabled,
             warnAtNightsLeft = StorageForecast.THREE_NIGHTS_THRESHOLD.toInt(),
+            nextDeletion = nextDeletion?.let {
+                SettingsNextDeletionViewState(
+                    sessionId = it.sessionId,
+                    predictedDateLabel = nightDateFormat.format(Instant.ofEpochMilli(it.predictedAtMillis)),
+                    sessionDateLabel = nightDateFormat.format(Instant.ofEpochMilli(it.startedAtMillis)),
+                    overCount = it.overCount,
+                    sizeLabel = it.bytes.toGigabyteLabel(),
+                )
+            },
         )
     }
 
@@ -289,53 +338,38 @@ public object SettingsPolling {
         neverIncluded = NEVER_LEAVES_DEVICE,
     )
 
-    public fun diagnostics(): SettingsDiagnosticsViewState {
+    /**
+     * R-137 (round 9, register): sourced from WP11e's real `DiagnosticsBundleBuilder.preview` —
+     * every file's real, current byte size (rendered through the exact same producer `write` uses,
+     * never a separate stat, so a preview number can never drift from what a save actually writes)
+     * and the board's own "In the bundle · N files · X.X MB" running total. `suspend` (was not,
+     * before this round) because `preview` is real file/database/asset I/O.
+     */
+    public suspend fun diagnostics(context: Context): SettingsDiagnosticsViewState {
         val thermal = ThermalStatus.state
+        val preview = org.ort.app.diagnostics.DiagnosticsBundleBuilder.preview(context)
         return SettingsDiagnosticsViewState(
             aliveLabel = if (CaptureState.isCapturing) "alive" else "not capturing",
             realTimeFactorLabel = thermal.realTimeFactor?.let { "%.2f".format(Locale.ROOT, it) } ?: "not measured",
             // No aggregate "failed passes across every pass id" query exists on `WorkQueueDao`
             // (its `selectFailed` takes a specific pass and error-prefix) — never fabricated here.
             failedPassCount = null,
-            // R-137 (register, round 7 System validator pass 3): every description below is now
-            // `Settings-Diagnostics.dc.html`'s own trailing clause verbatim — round 4 had dropped
-            // each file's second half (what the clause is *for*, or its own privacy note). The
-            // per-file byte size and the header's own running total stay absent: no diagnostics-
-            // bundle producer exists in `:app`/`:pipeline` (checked again before writing this) to
-            // report a real size for a file nothing here has ever written — `2.1 MB`/per-file KB
-            // figures on the board are illustrative, not a fact this build could compute
-            // (constitution I). See this file's own `SettingsDiagnosticsScreen` doc comment.
-            files = listOf(
-                SettingsDiagnosticsFileViewState(
-                    "lifecycle.log",
-                    "service start, stop, heartbeat gaps, OS kills — the F5 evidence",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "capture.log",
-                    "route verifications, input device changes, level warnings, overruns",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "pipeline.log",
-                    "per-pass timings, tier changes with their cause, queue depth over time",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "rig.log",
-                    "CAT traffic, band changes, disconnects · frequencies included, they are not private",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "assets.json",
-                    "every model and lexicon: name, version, checksum, install date",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "device.json",
-                    "SoC, RAM, Android version, OEM, thermal history · no serial, no IMEI, no account",
-                ),
-                SettingsDiagnosticsFileViewState(
-                    "counts.json",
-                    "overs by state, rejections by reason, corrections by tier · numbers only",
-                ),
-            ),
+            files = preview.entries.map { entry ->
+                SettingsDiagnosticsFileViewState(entry.fileName, entry.clause, formatDiagnosticsSize(entry.sizeBytes))
+            },
+            totalSizeLabel = formatDiagnosticsSize(preview.totalBytes),
         )
+    }
+
+    /** `140 KB`/`1.6 MB`-style tiered size — the board's own precision for a bundle file/total (a
+     * plain `toGigabyteLabel()` would round every one of these real, small files to `0.0 GB`). */
+    private fun formatDiagnosticsSize(bytes: Long): String {
+        val mb = bytes / 1_000_000.0
+        val kb = bytes / 1_000.0
+        return when {
+            mb >= 1.0 -> "%.1f MB".format(Locale.ROOT, mb)
+            else -> "%.0f KB".format(Locale.ROOT, kb)
+        }
     }
 
     public fun about(context: Context): SettingsAboutViewState = SettingsAboutViewState(

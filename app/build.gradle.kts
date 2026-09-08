@@ -96,6 +96,11 @@ dependencies {
     testImplementation(project(":capture-android"))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.robolectric)
+    // R-204 (see :data/build.gradle.kts's identical comment): this module's own Robolectric
+    // tests open a real OrtDatabase (via CorrectionPolling, StationPolling, ReaderPolling, ...),
+    // whose driver-mode native library AGP otherwise resolves to the Android-variant artifact
+    // even on a unit-test (host-JVM) classpath.
+    testImplementation(libs.androidx.sqlite.bundled.jvm)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.androidx.test.core)
     testRuntimeOnly(libs.junit.platform.launcher)
