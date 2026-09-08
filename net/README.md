@@ -14,6 +14,15 @@ This module is the declared channel technical design §16.3 requires: a `NetCapa
 gates every entry point, and only `:app`'s UI (a later, tiny follow-up commit) can construct one
 from a real user action.
 
+**The `android.permission.INTERNET` grant lives in exactly this manifest** (`net/src/main/
+AndroidManifest.xml`, audit F-008). Constitution V names the user-initiated model download as
+one of exactly two declared outbound channels; without the permission here, `ModelAcquisition.
+fetch()` fails at runtime with a `SecurityException` no matter what call site `:app` builds. The
+root `platformGuards` Gradle task enforces both directions structurally: it fails the build if
+any *other* module's manifest declares `INTERNET`, and — since F-008 — it also fails the build if
+`:net`'s own manifest does not. `NetManifestPermissionTest` in this module asserts the same thing
+directly against the manifests on disk, independent of the build script.
+
 ## What is here
 
 - `HttpRangeClient` — the one interface through which this module makes a network call.

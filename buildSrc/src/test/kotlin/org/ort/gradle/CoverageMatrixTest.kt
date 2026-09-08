@@ -170,6 +170,8 @@ class CoverageMatrixTest {
         val generated = "line one\nline two\n"
         val committed = "line one\r\nline TWO\r\n"
         assertFalse(CoverageMatrix.contentMatches(generated, committed))
+    }
+
     // F-027: corpus/ is Python (pyproject.toml, pytest), not Kotlin — the matrix must also scan
     // its test root so ids established there (FR-TST-6/8-style) are not stuck "not yet covered"
     // just because the requirement's home is the desktop tooling, not a Gradle module.

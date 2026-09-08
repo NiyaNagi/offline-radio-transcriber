@@ -62,4 +62,34 @@ class PlatformGuardsTest {
         val manifests = mapOf(":capture-android" to "<manifest />", ":net" to "<manifest />")
         assertTrue(PlatformGuards.internetPermissionViolations(manifests).isEmpty())
     }
+
+    // audit F-008: exclusivity alone is not the requirement — the declared channel must exist.
+    // A manifest set where every module (net included) lacks INTERNET passes
+    // internetPermissionViolations() vacuously; that is a defect on its own (constitution V — the
+    // user-initiated download channel must be able to reach the network at all, not just be the
+    // only one that could).
+    @Test
+    fun `F_008 constitution_V net missing the INTERNET permission is reported even though no one else has it`() {
+        val manifests = mapOf(":capture-android" to "<manifest />", ":net" to "<manifest />")
+        val violations = PlatformGuards.missingInternetPermissionViolations(manifests)
+        assertEquals(1, violations.size)
+        assertEquals(":net", violations.single().module)
+    }
+
+    @Test
+    fun `F_008 constitution_V net declaring INTERNET is not reported as missing`() {
+        val manifests = mapOf(
+            ":capture-android" to "<manifest />",
+            ":net" to """<manifest><uses-permission android:name="android.permission.INTERNET"/></manifest>""",
+        )
+        assertTrue(PlatformGuards.missingInternetPermissionViolations(manifests).isEmpty())
+    }
+
+    @Test
+    fun `F_008 constitution_V net absent from the manifest map entirely is reported as missing`() {
+        val manifests = mapOf(":capture-android" to "<manifest />")
+        val violations = PlatformGuards.missingInternetPermissionViolations(manifests)
+        assertEquals(1, violations.size)
+        assertEquals(":net", violations.single().module)
+    }
 }

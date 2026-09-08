@@ -28,20 +28,23 @@ abstract class PlatformGuardsTask : DefaultTask() {
         val telemetry = PlatformGuards.telemetryViolations(deps)
         val httpClient = PlatformGuards.httpClientViolations(deps)
         val internet = PlatformGuards.internetPermissionViolations(manifests)
+        val missingInternet = PlatformGuards.missingInternetPermissionViolations(manifests)
 
         logger.lifecycle(
             "platformGuards: checked ${deps.size} modules' external dependencies and " +
                 "${manifests.size} manifests — no analytics/telemetry SDK, no HTTP client outside :net, " +
-                "no android.permission.INTERNET declared outside :net (FR-OBS-5, NFR-6, AC-59).",
+                "android.permission.INTERNET declared by :net and only :net " +
+                "(FR-OBS-5, NFR-6, AC-59, audit F-008).",
         )
 
-        if (telemetry.isNotEmpty() || httpClient.isNotEmpty() || internet.isNotEmpty()) {
+        if (telemetry.isNotEmpty() || httpClient.isNotEmpty() || internet.isNotEmpty() || missingInternet.isNotEmpty()) {
             throw GradleException(
                 buildString {
-                    appendLine("Platform guard violation(s) — audit F-027:")
+                    appendLine("Platform guard violation(s) — audit F-008/F-027:")
                     telemetry.forEach { appendLine("  ${it.module} -> ${it.coordinate}   (${it.reason})") }
                     httpClient.forEach { appendLine("  ${it.module} -> ${it.coordinate}   (${it.reason})") }
                     internet.forEach { appendLine("  ${it.module}   (${it.reason})") }
+                    missingInternet.forEach { appendLine("  ${it.module}   (${it.reason})") }
                     appendLine()
                     appendLine(
                         "This is a declared-artifact check, not a runtime traffic capture — it proves " +
