@@ -137,6 +137,98 @@ directly before writing this — names as the missing piece for F1's "Choose ano
 
 ## 2026-09-08 (build tooling: lint/detekt ignore nested worktrees under .claude)
 
+### (pending) — build · every source set and lint task ignores nested worktrees under .claude
+
+**Scope:** build tooling only, lead-approved for build files — `buildSrc/src/main/kotlin/ort.common.gradle.kts`
+(the only file this fix needed). No product code touched. `main` fast-forward merged first
+(`git merge --ff-only main`, this branch already an ancestor, no stash, no rebase) — to `b73f19c`.
+
+**Requirements/ACs:** none new — process/tooling, a follow-up correcting the entry directly below
+this one after main's gate failed again on `:app:ktlintTestSourceSetCheck` (25 violations in
+`agent-a00d1a3768138ef87`'s `LevelCheckTest.kt`/`LevelScreenTest.kt`) despite that earlier fix.
+
+**What changed — the earlier diagnosis (entry below) was wrong, and this entry corrects it:**
+
+- **The earlier entry's theory** — "ktlint's and detekt's Gradle plugins... resolve their file set
+  for a module as every `.kt` file the JVM finds walking down from that module's source
+  directories" — **does not hold**, and its own `**/.claude/**` exclude was never actually doing
+  anything. Proved directly this round: `:app:runKtlintCheckOverTestSourceSet`'s own declared
+  `source` (`FileCollection`, inspected via reflection through a temporary `doFirst` diagnostic,
+  removed before this commit) was **already** built from exactly this worktree's own
+  `app/src/test/kotlin/**` — 108 files, 0 from any other worktree — with or without the exclude. A
+  relative glob like `**/.claude/**` could never have mattered anyway: `.claude` is an *ancestor*
+  of every module's real source directory (`<repo>/.claude/worktrees/<name>/app/src/test/kotlin`),
+  never a *descendant* of it, so it can never appear as a segment in a path measured relative to
+  that source root — the pattern was inert by construction, for either source set.
+- **The real root cause: Gradle's local build cache, not file resolution.**
+  `org.gradle.caching=true` (`gradle.properties`, outside this fix's file scope) enables Gradle's
+  local build cache, which lives under `$GRADLE_USER_HOME` — one directory shared by every
+  worktree on this machine, not one per checkout. `KtLintCheckTask` (and its aggregating
+  `Generate­ReportsTask`) and `Detekt` are cacheable tasks whose cache key is a content hash of
+  their (correctly, narrowly scoped) input files. Two worktrees whose `app/src/test/kotlin/**`
+  happens to hash identically — routine right after a shared merge, before either agent has
+  touched the files it owns — get the *same* cache key, and Gradle legitimately serves one
+  worktree's cached task output to the other. That would be harmless for most tasks, but ktlint's
+  (and detekt's) cached report is not actually relocatable the way Gradle's cache model assumes:
+  each finding's **absolute file path is baked into the cached output as data**, not just tracked
+  as build metadata a relocated cache entry could safely disregard. So build A, having never
+  touched the affected files itself, reports violations at build B's absolute paths — exactly the
+  symptom both this round's and the original failure report describe, and exactly why it hit
+  *test* specifically each time: whichever source set's content happened to still hash-match
+  another live worktree's at that moment.
+- **The fix.** `settings.gradle.kts` (a per-worktree local build-cache directory) and
+  `gradle.properties` (disabling caching outright) are both outside this fix's approved file
+  scope, so the fix lives in `ort.common.gradle.kts` instead — the one convention plugin every
+  module applies. Every task whose name contains `"ktlint"` (worker and aggregator tasks alike;
+  the ktlint Gradle plugin's task types are `internal`, so matched by name rather than
+  `tasks.withType<...>()`, confirmed against this build's own `:app:tasks --all`) and every
+  `Detekt`-typed task now carries `outputs.doNotCacheIf("<reason>") { true }` — not
+  `cacheIf { false }`, so the reason string is visible in diagnostics, and a future, genuinely
+  relocatable version of either plugin only has to remove this block, not rediscover why it
+  exists. This disables *build-cache* participation only — a worktree's own local up-to-date
+  checking (based on that worktree's own `.gradle`/`build` state, not the shared cache) is
+  untouched, so repeated runs within one worktree are exactly as fast as before.
+- **The exclude glob kept, upgraded, and honestly re-scoped.** `KtlintExtension.filter { exclude }`
+  and `tasks.withType<Detekt>().configureEach { exclude }` now match on each `FileTreeElement`'s
+  own **absolute** `file.path` (`it.file.path.contains("${File.separator}.claude${File.separator}")`,
+  the coordinator's own suggested shape) rather than a relative glob — strictly more robust against
+  any future change in which base directory either plugin measures a relative pattern from. Kept as
+  defense-in-depth and documented as exactly that in `ort.common.gradle.kts`'s own comment: proven,
+  this round, *not* to be what fixes today's failure, since ktlint's file resolution was already
+  correctly scoped before this change.
+- **Proved, not just configured.** Created throwaway, deliberately unparseable
+  `.claude/worktrees/zz-test/app/src/{main,test}/kotlin/**/Broken.kt` inside this worktree, ran
+  `.\gradlew.bat :app:ktlintCheck :app:detekt :app:testDebugUnitTest --build-cache` — `BUILD
+  SUCCESSFUL` with both broken files present, **no `FROM-CACHE` outcome on any ktlint or detekt
+  task** in that run (checked the full task-execution log line by line) — then deleted the
+  throwaway directory; `git status --porcelain` confirmed nothing throwaway survived.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintCheck :app:detekt :app:testDebugUnitTest --build-cache` with the
+  throwaway broken files present — **BUILD SUCCESSFUL**, no ktlint/detekt task reported
+  `FROM-CACHE`.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK**, 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` (419 requirements, 181 covered — unchanged, no product code
+  touched) and `.\gradlew.bat coverageMatrixCheck` (separate invocation, up to date) — both
+  **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+
+**Left open:**
+- The genuinely ideal fix — a per-worktree local build-cache directory
+  (`settings.gradle.kts`'s `buildCache { local { directory = ... } }`) — would let ktlint/detekt
+  keep caching *within* a worktree while never sharing across worktrees at all, and is outside this
+  round's approved file scope (`settings.gradle.kts`, `gradle.properties`). `doNotCacheIf` is the
+  correct fix reachable from `buildSrc/**`/root `build.gradle.kts`/`app/build.gradle.kts` alone; a
+  future change to `settings.gradle.kts` could restore cross-run caching for these tasks once
+  isolated per worktree.
+- Not re-checked this round: `dependencyRules`/`platformGuards`/`coverageMatrix`/AGP `lint` — the
+  entry below already confirmed none of them walk the filesystem in a way that could reach
+  `.claude/`, and nothing in this round's fix changes how any of them resolve their inputs.
+
+---
+
 ### (pending) — build · lint and analysis ignore nested worktrees under .claude
 
 **Scope:** build tooling only — `buildSrc/src/main/kotlin/ort.common.gradle.kts` (the one
