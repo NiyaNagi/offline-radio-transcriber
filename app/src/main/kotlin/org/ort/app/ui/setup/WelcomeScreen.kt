@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,14 +22,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
@@ -48,17 +44,19 @@ import org.ort.app.ui.theme.OrtType
  * carrying `Settings-About.dc.html`'s own "the offline promise" copy verbatim (P8's own board
  * cites that file for this text — this package does not invent it).
  *
- * R-123 (validator finding, register R-120..R-125): the same fixed-bar clearance fix
- * [SetupScaffold]'s own doc comment describes, duplicated here (not shared — this is the one
- * screen with no [SetupScaffold] chrome at all) because this screen does not use it. Without a
- * bottom [Spacer] sized to [WelcomeFooter]'s real, measured height, the fifth ask sat flush behind
- * `Begin` at a larger font scale instead of clearing it once scrolled to.
+ * R-123/R-220 (register R-120..R-125, R-220..R-227): `Column`'s own layout already keeps the
+ * fixed [WelcomeFooter] and the scrollable content above it from ever overlapping, at any font
+ * scale, with no extra machinery — the unweighted [WelcomeFooter] is always measured for its real
+ * height first, and the `weight(1f)` scrollable region above it gets exactly what is left. An
+ * earlier version of this fix added a redundant `onGloballyPositioned`-measured, state-fed-back
+ * `Spacer` on top of that already-correct layout; removed after register R-220 (validator finding)
+ * traced a static, reproducible ghost render to exactly that class of same-frame
+ * state-write-back-into-a-sibling's-measurement pattern (`SetupScaffold`'s own doc comment carries
+ * the fuller account — the two fixes are identical in shape and were removed together).
  */
 @Composable
 public fun WelcomeScreen(onBegin: () -> Unit, modifier: Modifier = Modifier) {
     var sheetOpen by remember { mutableStateOf(false) }
-    var footerHeightPx by remember { mutableIntStateOf(0) }
-    val footerHeight = with(LocalDensity.current) { footerHeightPx.toDp() }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -71,13 +69,8 @@ public fun WelcomeScreen(onBegin: () -> Unit, modifier: Modifier = Modifier) {
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 WelcomeHeader()
                 WelcomeAsks()
-                Box(modifier = Modifier.height(footerHeight))
             }
-            WelcomeFooter(
-                onBegin = onBegin,
-                onWhatIsCaptured = { sheetOpen = true },
-                modifier = Modifier.onGloballyPositioned { footerHeightPx = it.size.height },
-            )
+            WelcomeFooter(onBegin = onBegin, onWhatIsCaptured = { sheetOpen = true })
         }
 
         if (sheetOpen) {

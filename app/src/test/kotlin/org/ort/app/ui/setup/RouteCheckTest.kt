@@ -145,6 +145,59 @@ class RouteCheckTest {
         )
     }
 
+    /** R-224 (validator pass 2, register R-220..R-227): before this, the third check always ran
+     * its own real, up-to-30s listening loop even when [InputStatus] already reported this exact
+     * device open and route-verified -- against the validator's `input-verified` scenario (a live
+     * capture session already has the device open, so nothing else is feeding this check's own raw
+     * read loop) that always timed out. No frames are enqueued here at all, and the listen timeout
+     * is effectively zero -- if the short-circuit were not wired in, this would time out exactly
+     * like the validator's own screenshot, not reach [RouteCheckState.Passed]. */
+    @Test
+    fun `R_224 a route-verified InputStatus skips the raw signal probe entirely, never timing out`() = runTest {
+        InputStatus.opened(
+            descriptor = usb,
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 a1b2c3d4e5f6)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val io = FakeAudioIo(deviceSampleRate = 48_000)
+        io.forceRoutedDevice(usb)
+        // Deliberately no enqueued frames and a near-zero timeout -- the raw loop would time out
+        // immediately if the short-circuit did not fire first.
+
+        val states = RealRouteCheck(listenTimeoutMillis = 1L, pollIntervalMillis = 1L).run(io, usb).toList()
+
+        assertTrue(states.none { it is RouteCheckState.TimedOut }, "must never reach the raw probe at all")
+        val passed = states.last() as RouteCheckState.Passed
+        assertEquals(
+            "polyphase/v1 48000->16000 (L=1 M=3 taps=64 a1b2c3d4e5f6)",
+            passed.resamplerDescription,
+        )
+    }
+
+    /** A device [InputStatus] reports open but not yet route-verified (the moment right after
+     * selection, before `AudioRecordSource`'s own first real-read check) must still run the real
+     * probe -- `routeVerified` alone gates the short-circuit, not merely a matching device id. */
+    @Test
+    fun `R_224 an InputStatus that is open but not yet route-verified still runs the real probe`() = runTest {
+        InputStatus.opened(
+            descriptor = usb,
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 a1b2c3d4e5f6)",
+            routeVerified = false,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val io = FakeAudioIo(deviceSampleRate = 48_000)
+        io.forceRoutedDevice(usb) // route matches; nothing is ever heard
+
+        val states = RealRouteCheck(listenTimeoutMillis = 200L, pollIntervalMillis = 50L).run(io, usb).toList()
+
+        assertEquals(RouteCheckState.TimedOut, states.last(), "an unverified InputStatus must not be borrowed")
+    }
+
     @Test
     fun `R_081 a live InputStatus for a different device is never borrowed for this one`() = runTest {
         val otherDevice = AudioDeviceDescriptor("usb-2", AudioDeviceKind.USB_DEVICE, "A different adapter")

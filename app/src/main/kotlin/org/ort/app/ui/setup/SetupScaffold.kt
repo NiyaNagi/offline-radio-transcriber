@@ -21,15 +21,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -59,12 +53,21 @@ import org.ort.app.ui.theme.OrtType
  *   label). [SegmentBars] below draws only the coloured segments themselves — the board's own
  *   "unlabeled" segment row — without pulling in a second shared component's built-in counter;
  *   the semantics [contentDescription] `StepIndicator` carried for TalkBack is preserved here too.
- * - **R-123**: at a larger font scale the fixed [bottomActions] bar grows taller, and the
- *   scrollable content above it (already `weight(1f)` + `verticalScroll`, so a Column sibling, not
- *   an overlay) needs a bottom [Spacer] exactly [actionsBarHeight] tall so the last item, once
- *   scrolled to, clears the bar rather than sitting flush against it — [actionsBarHeight] is
- *   measured for real via [onGloballyPositioned], never a guessed constant that would drift from
- *   the bar's actual height at any given font scale.
+ * - **R-123**: at a larger font scale the fixed [bottomActions] bar grows taller. `Column`'s own
+ *   layout algorithm already handles this with no extra machinery needed: an unweighted sibling
+ *   (this scaffold's bottom `bottomActions` `Column`) is always measured for its real, natural
+ *   height *first*, and the `weight(1f)` scrollable content above it receives exactly what is left
+ *   — the two can never overlap, at any font scale, without this scaffold doing anything special.
+ *   An earlier version of this fix added a second mechanism on top of that — measuring the bar's
+ *   height via `onGloballyPositioned` into a `mutableIntStateOf`, then feeding it back as a bottom
+ *   `Spacer` inside the *same* recomposition's sibling — a same-frame state-write-back-into-a-
+ *   sibling's-measurement pattern Compose's own docs warn against for exactly this reason: register
+ *   R-220 (validator finding) found a static, reproducible ghost copy of the bottom bar's own
+ *   secondary action rendered near the status bar on every two-action screen, on every repeat —
+ *   consistent with that redundant feedback loop, not with anything to do with font scale itself.
+ *   Removed; `SetupScaffoldTest`'s own R-123 test (scroll to the last item, assert displayed)
+ *   still passes on the plain `weight(1f)` + `verticalScroll` layout alone, confirming the extra
+ *   mechanism was solving a problem `Column` had already solved.
  */
 @Composable
 public fun SetupScaffold(
@@ -77,9 +80,6 @@ public fun SetupScaffold(
     bottomActions: @Composable ColumnScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    var actionsBarHeightPx by remember { mutableIntStateOf(0) }
-    val actionsBarHeight = with(LocalDensity.current) { actionsBarHeightPx.toDp() }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -116,12 +116,9 @@ public fun SetupScaffold(
             verticalArrangement = Arrangement.spacedBy(OrtSpacing.md),
         ) {
             content()
-            Box(modifier = Modifier.height(actionsBarHeight))
         }
         Column(
-            modifier = Modifier
-                .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
-                .onGloballyPositioned { actionsBarHeightPx = it.size.height },
+            modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
             verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
         ) {
             bottomActions()

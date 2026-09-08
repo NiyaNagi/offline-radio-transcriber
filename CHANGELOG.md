@@ -32,6 +32,162 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9 · pass-2 fixes: ghost action, route types, InputStatus-driven verify, font-scale footer and rows, setup-verified scenario)
+
+### (pending) — ui-conformance WP9 · pass-2 fixes: ghost action, route types, InputStatus-driven verify, font-scale footer and rows, setup-verified scenario
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**`, their tests, and — new this round, for
+R-227 only — `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` and its test, plus
+`results/ui-audit/README.md` (documenting the new scenario, explicitly permitted this round).
+`main` fast-forward merged first (`git merge --ff-only main`, this branch already an ancestor, at
+`0ffb504` — "ui-conformance · V1 Setup pass 2 at 7293009: R-120..R-127 closed on device;
+R-220..R-227 filed"); no rebase, no stash. The V1 Setup validator's **second pass, on a real
+device** (not Robolectric), confirmed every one of round 3's six fixes (R-120..R-127, including
+R-126/R-127 which this row never touched) and filed eight smaller follow-ups (register.md
+R-220..R-227). Every screenshot cited was read (the `Read` tool, on the PNGs) before any fix —
+`results/ui-audit/setup/S02b-mic-denied.png`, `S06-route-mismatch-pass2.png`, `S04-input-pass2.png`,
+`S07-level-pass2@2x.png`, `S12-ready-pass2@2x.png`, `results/ui-audit/input-verified/
+S05-resampler-check.png`.
+
+**Requirements/ACs:** R-220 (ghost duplicate action), R-081/R-221/R-222 (S04 icon alignment, S06
+type loss), R-223 (S02b/S06 back chevron), FR-CAP-2a/R-113/R-224 (S05 reads `InputStatus`), AC-63/
+R-225 (S07 footer font scale), AC-63/R-226 (S12 rows), R-227 (a `setup-verified` debug scenario).
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) shaped the two hardest fixes
+  this round: R-220's root cause was traced to *this row's own* redundant mechanism, not a shared
+  component (see below) — removed rather than patched around; R-221's generic device icon and
+  R-226's marker-beside-`KeyValueRow` both compose around a WP2 shared component from within this
+  row's own files rather than editing `Controls.kt`/`Rows.kt`. Principle I (Uncertainty Is Content)
+  governs R-222 (the chosen device's real type must not silently degrade to "Unknown" between S04
+  and S06) and R-227's own doc comment (naming exactly what the new scenario does and does not
+  seed — real `SharedPreferences`, never the two OS permissions).
+- **R-220 (design) — the ghost duplicate action, root-caused, not papered over.** Traced to round
+  3's own R-123 "fix": a same-frame state-write-back-into-a-sibling's-measurement pattern
+  (`onGloballyPositioned` measuring the bottom bar's real height into a `mutableIntStateOf`, fed
+  back as a `Spacer` inside the *same* recomposition's scrollable sibling) — exactly the class of
+  bug Compose's own docs warn `onGloballyPositioned` can cause. Verified empirically before
+  concluding this: a scratch Robolectric test counted exactly one "Check again" node in the
+  semantics tree (Robolectric's simplified renderer does not reproduce the visible artifact, but
+  confirmed there is no *structural* duplicate composition either), then the mechanism was removed
+  from both `SetupScaffold.kt` and `WelcomeScreen.kt` and `SetupScaffoldTest`'s/`WelcomeScreenTest`'s
+  own R-123 tests (scroll to the last item, assert displayed) were re-run against the plain
+  `weight(1f)` + `verticalScroll` layout alone — still green, proving `Column`'s own layout
+  algorithm (an unweighted sibling is always measured for its real height *first*; the weighted
+  sibling gets exactly what is left, at any font scale, no extra machinery needed) already solved
+  what R-123 set out to fix, and the removed mechanism was solving nothing but creating R-220.
+- **R-221 (design) — a generic device icon on unrecognised-type rows.** `RadioRow`/`OrtIcons` have
+  no such icon and no slot to add one without editing WP2's files (confirmed by reading both before
+  writing this — `OrtIcons`' own `buildIcon`/`strokePath` helpers are `private`) — a small, local,
+  guide-§7-compliant (24-unit viewBox, round caps/joins, tinted by the caller) `ImageVector` is
+  built directly in `InputRouteEnumerator.kt` (`DeviceTypeNaming.genericDevice`) instead: a plain
+  rounded-rectangle-with-two-lines outline that never implies any one specific device type.
+- **R-222 (design) — the chosen device's type carried from S04 to S06.** `InputRouteOption` gained
+  a `typeLabel: String` field (the same real, resolved name `subtitle` is already built from);
+  `SetupActivity.RenderRouteMismatch` looks it up from S04's own still-held route list by id and
+  passes it into `RouteMismatchScreen` as `selectedTypeLabel`, replacing a *re-derivation* from
+  `RouteCheckState.Mismatch.selected`'s own coarse `AudioDeviceKind` (which is exactly where the
+  richness was lost — a telephony route chosen at S04 re-read as bare `UNKNOWN`, printing
+  "(Unknown)" instead of "(Telephony)", confirmed against the validator's own screenshot). The
+  *routed* device (almost always the already-correctly-typed built-in mic) still resolves through
+  the existing `describeDevice`/`AudioDeviceKind` path — the loss was one-sided.
+- **R-223 (design) — the header chevron on S02b/S06.** Both `Setup-Mic-Denied.dc.html` and
+  `Setup-Route-Mismatch.dc.html` draw it (confirmed by reading both boards before writing this) —
+  **rendered, not exempted in `design/design-intent.md`**, the choice this row was asked to make
+  explicitly. `MicrophoneDeniedScreen` wires it to `SetupActivity`'s ordinary back-stack `onBack`
+  (the same mechanism every non-halted screen already uses); `RouteMismatchScreen` wires it to the
+  existing `onChooseAnotherInput` instead of the generic back-stack pop — the back-stack entry
+  immediately under S06 is `VERIFY` with a still-`Mismatch` `verifyState`, which would redisplay a
+  stale, all-unfilled check list rather than anything useful, so the one action that actually
+  leaves this halt correctly is reused rather than a technically-present but confusing generic back.
+- **R-224 (spec) — `RouteCheck` reads `InputStatus` for checks 3 and 4, not only check 4.** Before:
+  the third check (`SIGNAL`) always ran its own real, up-to-30s raw-audio listening loop even when
+  `InputStatus` already reported the exact chosen device open, route-verified, with a real resampler
+  identity — against the validator's own `input-verified` scenario (a live capture session already
+  has the device open, feeding nothing into this check's own separate raw read loop) that timed out
+  every time despite the pipeline already knowing the route was good, confirmed on
+  `input-verified/S05-resampler-check.png`. `RealRouteCheck.run` now checks a new
+  `publishedVerificationFor(selected)` immediately after the second check passes: a real
+  `InputStatus.State.Opened` for this exact device (matched by id) with `routeVerified = true`
+  short-circuits stages three and four straight to `Passed` with the pipeline's own `resamplerId` —
+  never re-probing a device a live session already has open. `routeVerified` alone gates the
+  short-circuit (proven by a new test: an `Opened`-but-not-yet-`routeVerified` `InputStatus` still
+  runs the real probe) — a device merely open, not yet verified, must never be borrowed as if it
+  were a pass. The fresh-install, first-run path (nothing published yet) is otherwise unchanged.
+- **R-225 (spec) — S07's footer facts wrap at font scale 2.0.** The three facts ("noise −72",
+  "target −18 to −12", "clip 0") used to sit in a `Row(Arrangement.SpaceBetween)`, which never wraps
+  — at font scale 2.0 they collapsed into one concatenated, unreadable run (confirmed on
+  `setup/S07-level-pass2@2x.png`). A new `LevelFooterFacts` switches to a `Column` (each fact its
+  own line) at or above a `1.5f` font-scale threshold (the smallest scale confirmed broken; below it,
+  the original `Row` is unchanged) — chosen over `FlowRow` (available in this project's Compose BOM,
+  but unused anywhere in the codebase so far) to avoid introducing an untested new layout pattern for
+  one row, matching the brief's own "or a `Column` at large scale" alternative.
+- **R-226 (spec) — S12's rows on WP2's `KeyValueRow`.** The hand-rolled row used a *fixed* 82dp
+  label column (`Modifier.size(width = 82.dp, height = 18.dp)`), which at font scale 2.0 both
+  truncated labels ("Input" → "Inout", "Overnight" → "Overni") and collided with the leading marker
+  dot — confirmed on `setup/S12-ready-pass2@2x.png`. `KeyValueRow`'s own label column has no fixed
+  ceiling since its R-152 fix (only a 96dp floor — that component's own doc comment names the
+  identical bug class, "Stations5" colliding at large scale). `KeyValueRow` has no leading-marker
+  slot, so the marker dot is composed as a sibling in front of it, the same pattern this row already
+  used for R-122's device-type icons on `InputScreen` — never editing `Rows.kt` and never
+  hand-rolling a second full row component.
+- **R-227 (process) — a `setup-verified` debug scenario.** Before this, S07/S12 had no sanctioned
+  path on an emulator at all: `SetupStateMachine.stepFor` resumes at `SetupStep.INPUT` until
+  `SetupStore.inputVerified` is real, and that can only become real through S05's own 30 s
+  raw-signal listen actually hearing something — never true on a silent virtual mic — so the
+  validator resorted to editing `SharedPreferences` via `run-as`. The new scenario seeds the real
+  `org.ort.app.setup` preferences file through the real `SharedPreferencesSetupStore` class (never
+  duplicated key names) — input verified, level in band, overnight seen, `RadioChoice.NONE` — so
+  `stepFor` resumes at `SetupStep.READY` (S12) on its own, `setupComplete` deliberately left
+  `false`. S07 is then one real, sanctioned tap away (S12's own `Fix` on the Level row) or directly
+  reachable via `SetupActivity.EXTRA_STEP=LEVEL` (WP9 round 3's own mechanism — `LEVEL`'s ordinal
+  sits before the natural resume point, `READY`, so the ordinal gate honors the request).
+  **Cannot and does not seed the two OS permissions** `stepFor` also requires (`RECORD_AUDIO`/
+  `POST_NOTIFICATIONS` are live `PackageManager` state, confirmed by reading `stepFor` before
+  writing this) — `results/ui-audit/README.md`'s new "Reaching S07/S12" section documents granting
+  both via `adb shell pm grant`, exactly as `install.ps1` already does for every other scenario.
+- **S12's `Level` row change from round 4 is unaffected** by the `KeyValueRow` move — `levelRow`'s
+  own peak-presence-gated `ok` derivation is untouched; only the rendering shell changed.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.debug.ScenariosTest"` — **164 passing**, zero failures. New/updated tests by name:
+  `MicrophoneScreensTest.R_220_exactly_one_Check_again_renders…`/`R_223_the_back_chevron_renders…`,
+  `RouteMismatchScreenTest.R_222_the_chosen_device's_richer_type_label…`/
+  `R_223_the_back_chevron_renders…`, `InputRouteEnumeratorTest.R_221_an_unrecognised_device_type…`/
+  `R_222_typeLabel_carries…`, `RouteCheckTest.R_224_a_route-verified_InputStatus_skips…`/
+  `R_224_an_InputStatus_that_is_open_but_not_yet_route-verified…`, `LevelScreenTest.R_225_at_normal…`/
+  `R_225_at_font_scale_2_0…`, `ReadyScreenTest.R_226_the_full_label_renders…`,
+  `ScenariosTest.R_227_setup-verified_seeds_SetupStore…`/`R_227_setup-verified_does_not_and_cannot…`.
+- `.\gradlew.bat :app:testDebugUnitTest` (the whole `:app` module) — **948 PASSED, 0 failed**, BUILD
+  SUCCESSFUL (up from round 4's 817 — the larger jump is `main`'s own incoming WP10/other-WP work
+  from this merge, not solely this row's own ~20 new tests).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — clean, no fixes needed this round.
+- `.\gradlew.bat build dependencyRules platformGuards` — BUILD SUCCESSFUL.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  both BUILD SUCCESSFUL; `results/coverage-matrix.md` now 183 of 419 covered (up from 181 — R-224/
+  R-227's new named-id tests).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- **R-220's root cause is a reasoned diagnosis, not a device-confirmed one.** The scratch test
+  proved no *structural* semantics-tree duplicate exists either before or after the fix; it cannot
+  prove what a real device's compositor rendered. The fix removes the one mechanism in this row's
+  own code that matches Compose's own documented pitfall for this exact symptom class, and every
+  existing R-123 test still passes without it — the next validator pass on a real device is what
+  actually confirms or refutes this.
+- **`InputRouteEnumerator`'s richer typing remains real-`AudioManager`-only** (round 4's own,
+  unchanged limitation) — `DeviceTypeNaming.genericDevice`'s icon is exercised in unit tests only
+  through the `forKind`/`UNKNOWN` fallback path, never `forAndroidType`'s `else` branch against a
+  real device.
+- **`setup-verified` seeds preferences only** — it does not drive a real capture tick or grant
+  permissions; both limitations are stated in the scenario's own doc comment and in
+  `results/ui-audit/README.md`.
+- Every register row this entry closes (R-220..R-227) remains Robolectric-verified only, per this
+  program's own rule; the next validator pass on the real device is what actually confirms them.
+
 ## 2026-09-08 (ui-conformance WP11d)
 
 ### (pending) — ui-conformance WP11d · reprocessing engine: re-run passes at the current tier, pausable, capture-safe
@@ -594,7 +750,6 @@ package's files touched.
 - **The register/coordinator's own tracking of this finding is outside this package** — this entry
   records it for this package's own record; flagging it to whoever owns `buildSrc` is the
   coordinator's call.
-
 ---
 
 ## 2026-09-08 (ui-conformance WP10 round 4: System validator fixes across settings, improve, sessions, digest)
