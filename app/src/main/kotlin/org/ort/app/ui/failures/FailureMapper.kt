@@ -48,8 +48,16 @@ public data class FailureSignals(
 /** One observed [org.ort.pipeline.capture.StorageForecast.State] transition, timestamped. */
 public data class StorageForecastSample(public val state: StorageForecast.State, public val atMillis: Long)
 
-/** One observed [org.ort.pipeline.capture.ShedStatus.backlog] reading, timestamped. */
-public data class BacklogSample(public val count: Int, public val atMillis: Long)
+/** One observed [org.ort.pipeline.capture.ShedStatus.backlog] reading, timestamped — alongside the
+ * same tick's own [transmissionCount] (register R-254: the session's total captured-transmission
+ * count at that moment, the same number F1's "N overs kept" reads — see
+ * [FailureMapper.backlogRateLabel]'s own kdoc for why pairing the two lets the Rate row's "Band"
+ * half be a real measurement rather than a guess). */
+public data class BacklogSample(
+    public val count: Int,
+    public val atMillis: Long,
+    public val transmissionCount: Int = 0,
+)
 
 /**
  * The mapper's one result: at most one failure to show, typed by exactly which of this package's
@@ -256,17 +264,19 @@ public object FailureMapper {
         return null
     }
 
-    /** Register R-149: `Fail-Backlog.dc.html`'s Waiting/Rate/Capture rows, built only from real
-     * signals — `queueHistory` from `FailureSignalsPolling`'s own rolling backlog samples,
-     * `growthRateLabel` measured (Δbacklog/Δtime) across them rather than a fabricated "band
-     * overs/min vs Pass B overs/min" split this codebase has no separate signal for, and
-     * `captureLabel` from `CaptureState` alone — never a dropped-sample or ring-buffer figure
-     * nothing publishes. */
+    /** Register R-149/R-254: `Fail-Backlog.dc.html`'s Waiting/Rate/Capture/In-the-log rows and its
+     * "Queue, last 30 minutes" chart, built only from real signals — `queueHistory` from
+     * `FailureSignalsPolling`'s own rolling backlog samples, its two real clock-time endpoints
+     * ([BacklogViewState.queueHistoryOldestLabel]/[queueHistoryNewestLabel]) rather than the
+     * board's own relative "-30m"/"now" (this app has the real timestamps; using them is strictly
+     * more honest), [growthRateLabel] from [backlogRateLabel] (see that function's own kdoc for
+     * exactly how "Band"/"Pass B" are derived without fabricating either), [rateSubLabel] from the
+     * same tier/RTF pairing [FailThermalBanner] already reads, and `captureLabel` from
+     * `CaptureState` alone — never a dropped-sample or ring-buffer figure nothing publishes. */
     private fun backlogViewState(signals: FailureSignals): BacklogViewState {
         val history = signals.backlogHistory
         val maxDepth = (history.maxOfOrNull { it.count } ?: signals.shedBacklog).coerceAtLeast(1)
         val queueHistory = history.map { it.count.toFloat() / maxDepth }
-        val growthRateLabel = backlogGrowthRateLabel(history)
         val captureLabel = if (signals.captureState is CaptureState.State.Capturing) {
             "Nominal — every over is on disk"
         } else {
@@ -275,19 +285,44 @@ public object FailureMapper {
         return BacklogViewState(
             waitingCount = signals.shedBacklog,
             queueHistory = queueHistory,
-            growthRateLabel = growthRateLabel,
+            queueHistoryOldestLabel = history.firstOrNull()?.let { clockLabel(it.atMillis) },
+            queueHistoryNewestLabel = history.lastOrNull()?.let { clockLabel(it.atMillis) },
+            growthRateLabel = backlogRateLabel(history),
+            rateSubLabel = backlogRateSubLabel(signals),
             captureLabel = captureLabel,
         )
     }
 
-    private fun backlogGrowthRateLabel(history: List<BacklogSample>): String? {
+    /** Register R-254: `Fail-Backlog.dc.html`'s Rate row reads "Band N overs/min · Pass B M/min" —
+     * two *separate* rates this codebase has never published a direct signal for
+     * ([org.ort.pipeline.capture.ShedStatus] only ever exposes the net queue depth). Both halves
+     * are nonetheless real, not guessed: [BacklogSample.transmissionCount] is the session's own
+     * total *captured* count at that tick (the same number F1's "N overs kept" reads) — every
+     * capture is a "Band" arrival by definition, so its own delta over the window *is* the arrival
+     * rate, directly measured. The net backlog delta is *also* directly measured
+     * (`arrivals − completions`, by definition of what a backlog is), so "Pass B" — the completion
+     * rate — falls out algebraically (`arrivals − netDelta`) rather than needing its own signal:
+     * exact given two real measurements, not an estimate. `null` (rendered "Not measured") with
+     * fewer than two samples, or a non-positive time delta — never a fabricated single-sample rate. */
+    internal fun backlogRateLabel(history: List<BacklogSample>): String? {
         if (history.size < 2) return null
         val first = history.first()
         val last = history.last()
         val minutes = (last.atMillis - first.atMillis) / 60_000.0
         if (minutes <= 0.0) return null
-        val rate = (last.count - first.count) / minutes
-        return "%.1f overs/min".format(Locale.ROOT, rate)
+        val bandRate = (last.transmissionCount - first.transmissionCount) / minutes
+        val netRate = (last.count - first.count) / minutes
+        val passBRate = bandRate - netRate
+        return "Band %.1f overs/min · Pass B %.1f/min".format(Locale.ROOT, bandRate, passBRate)
+    }
+
+    /** Register R-254: `Fail-Backlog.dc.html`'s own Rate sub-line — "tier N, RTF X.XX while the
+     * net runs", from the same two facts [FailThermalBanner] already surfaces (never invented just
+     * for this row). `null` when the real-time factor has not been measured yet this session. */
+    private fun backlogRateSubLabel(signals: FailureSignals): String? {
+        val realTimeFactor = signals.thermalStatus.realTimeFactor ?: return null
+        val tier = (MAX_TIER - signals.shedLevel).coerceIn(0, MAX_TIER)
+        return "tier $tier, RTF %.2f while the net runs".format(Locale.ROOT, realTimeFactor)
     }
 
     private fun isRecentCallGap(signals: FailureSignals): Boolean {

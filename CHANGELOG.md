@@ -3890,6 +3890,91 @@ daemon, including another agent's in-flight gate).
 both reported above and both outside this package's row.
 ---
 
+### (pending) — ui-conformance WP11b · action bar reserved before first frame; backlog rate row and queue chart
+
+**Scope:** `:app` — `ui/failures/FailureActionBarScaffold.kt`, `ui/failures/FailureMapper.kt`,
+`ui/failures/FailureViewState.kt`, `ui/failures/FailureSignalsPolling.kt`,
+`ui/failures/FailureBanners.kt`, and their tests (a new `FailureActionBarScaffoldTest.kt`, plus
+additions to `FailureMapperTest.kt`/`FailureScreensTest.kt`). Follow-up to the five WP11b commits
+above, at the coordinator's request, after `git merge --ff-only main` (the `buildSrc`
+self-exclusion bug this package's own prior commit reported is fixed on `main` now — confirmed by
+reading `ort.common.gradle.kts`'s `isUnderClaudeDirectory`, which now relativizes against
+`rootProject.projectDir` instead of a bare substring match — so `:app:detekt`/`:app:ktlintCheck`
+ran directly this round, no `subst` workaround needed; `gradlew --stop` never run). Fixes register
+rows R-252 and R-254 (System validator, V6 pass 2, `migration-failed/F20-pass2@2x.png` and
+`backlog/F8-banner-pass2.png`).
+
+**Requirements/ACs:** R-252, R-254; constitution I (never fabricate a number — R-254's "Band"/
+"Pass B" split is derived from two real measurements, never guessed) and IV (a layout must be
+correct on the first frame it draws, not just once a later recomposition catches up).
+
+**What changed:**
+
+- **R-252: `FailureActionBarScaffold` now reserves the bar's height *before* the first frame is
+  ever drawn.** The `onGloballyPositioned` + `mutableStateOf` approach measured the bar correctly,
+  but only reported it back on the *next* recomposition — the frame the bar's own layout callback
+  fires within is not the frame the resulting state update is visible in. At maximum font scale,
+  where the bar's own text wraps onto more lines and grows taller, that one-frame lag was exactly
+  what V6 pass 2 caught: the last bullet clipped under the bar, "Save a diagnostic bundle first"
+  overlapping the closing paragraph, both correct only after a manual scroll forced a
+  recomposition. Rewritten on `SubcomposeLayout`: the bar is `subcompose`d and measured first,
+  synchronously, within the same measurement pass that then sizes the scrollable content's own
+  bottom padding — there is no second frame to have a gap during, because the bar's real height is
+  known before the content is even subcomposed. Every existing caller
+  (`FailRouteScreen`/`FailStorageHaltScreen`/`FailMigrationScreen`/`FailAssetSwapScreen`) is
+  unchanged — same two-slot `actionBar`/`content` API. Test: new `FailureActionBarScaffoldTest.kt`,
+  `R_252 the bar reserves its own height before the first frame is ever drawn, at font scale 2_0` —
+  `composeTestRule.mainClock.autoAdvance = false` before `setContent`, asserting geometry with *no*
+  `advanceTimeByFrame()` call first, isolating exactly the frame the register row's screenshot
+  caught.
+- **R-254: F8's Rate row and 30-minute queue chart, both honest about what is and is not
+  measured.** `Fail-Backlog.dc.html`'s Rate row reads "Band N overs/min · Pass B M/min" — two
+  *separate* rates `ShedStatus` has never published a signal for (it only ever exposes the net
+  queue depth). Rather than fabricate either half, both are derived from real measurements:
+  `BacklogSample` now also carries `transmissionCount` (the session's total *captured* count at
+  that tick — the same number F1's "N overs kept" reads, sampled at the same tick as the backlog
+  depth in `FailureSignalsPolling`). Every capture is a "Band" arrival by definition, so its own
+  delta over the window *is* the arrival rate, directly measured; the net backlog delta is *also*
+  directly measured, and a backlog is `arrivals − completions` by definition, so "Pass B" — the
+  completion rate — falls out algebraically (`arrivalRate − netRate`) rather than needing a signal
+  of its own: exact given two real numbers, never a guess. `FailureMapper.backlogRateLabel` (new,
+  `internal` for direct testing) returns `null` (rendered "Not measured") with fewer than two
+  samples or a non-positive time delta. The Rate row also carries a sub-line, "tier N, RTF X.XX
+  while the net runs", from the same tier/RTF pairing `FailThermalBanner` already reads — `null`
+  when the real-time factor has not been measured yet. The queue chart's axis labels are now the
+  real clock time of the oldest/newest sample (`queueHistoryOldestLabel`/`queueHistoryNewestLabel`)
+  rather than the board's own relative "-30m"/"now" — this app has the real timestamps, so using
+  them is strictly more honest than the board's own placeholder. Both the Rate row and the chart
+  now always render — "Not measured" (Rate) / "Not measured — needs at least two samples" (chart)
+  with fewer than two samples, never a silently-blank chart that could read as a real, flat one.
+  Fixed, in passing: the chart's fixed `56.dp` container height was too short to fit its own label,
+  40dp canvas and axis-label row together (a pre-existing bug this round's own new test caught,
+  never exercised by an assertion before) — now wraps its own content, the same "never guess a
+  fixed size" reasoning R-252's own fix applies. Tests: `R_254 Rate row derives Band from real
+  arrivals and Pass B algebraically…`, `R_254 Rate row reads Not measured with fewer than two
+  samples`, `R_254 the queue chart's axis labels are the real clock times…`, `R_254 the Rate row's
+  sub-line names the real tier and RTF…`, `R_254 the Rate row's sub-line is absent when the
+  real-time factor has not been measured` (`FailureMapperTest`); `R_254 F8 the Rate row and chart
+  read Not measured with fewer than two backlog samples`, `R_254 F8 the Rate row shows the Band
+  Pass B split and sub-line, and the chart's real axis times` (`FailureScreensTest`). The existing
+  `R_149 F8 backlog carries a growth-rate label…` test updated to the new label format and a
+  realistic `transmissionCount` fixture (was previously defaulted to `0` on both samples, which the
+  new derivation would otherwise read as an implausible negative Pass B rate).
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.debug.ScenariosTest"` — BUILD
+SUCCESSFUL, all green (147 tests, 0 failed), all seven new R-252/R-254 tests confirmed passing by
+name. `.\gradlew.bat :app:detekt` and `.\gradlew.bat :app:ktlintCheck` — both BUILD SUCCESSFUL, run
+directly (no `subst` workaround needed — the `buildSrc` fix landed on `main`), zero issues anywhere
+in `:app`, including the two `ui/components` files a prior round's addendum had to leave for WP2.
+Full gate reported in this package's report to the lead.
+
+**Left open:** nothing new — both register rows are closed. `oldestOverLabel` on `BacklogViewState`
+stays unwired (unrelated to either fix this round; noted for whoever next touches the Waiting row's
+own sub-line, `Fail-Backlog.dc.html`'s own "oldest 19:04 · Pass B ~11 min behind").
+---
+
 ## 2026-09-08 (ui-conformance WP2: highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card)
 
 ### (pending) — ui-conformance WP2 · highlight ranges, rejected why-line, title attribution row, waveform scrub, chart title, radio row subtitle, chip icon, text field, notification card

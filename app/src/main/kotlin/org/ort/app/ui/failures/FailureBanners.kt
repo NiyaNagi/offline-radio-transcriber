@@ -256,33 +256,47 @@ public fun FailBacklogBanner(state: BacklogViewState, modifier: Modifier = Modif
                 "their audio, and get a final transcript once the band quiets.",
             tone = BannerTone.DEGRADED,
         )
-        if (state.queueHistory.size >= 2) {
-            BacklogQueueChart(
-                history = state.queueHistory,
-                modifier = Modifier
-                    .padding(top = 12.dp)
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .testTag("failure-backlog-chart"),
-            )
-        }
+        // Wraps its own content height (the label, the 40dp canvas and the axis-label row together
+        // need more than a single guessed fixed value ever safely covers, especially once font
+        // scale grows the label/axis text) rather than a fixed height that could clip its own
+        // bottom row — the same "never guess a fixed size" reasoning R-252's own fix applies.
+        BacklogQueueChart(
+            state = state,
+            modifier = Modifier
+                .padding(top = 12.dp)
+                .fillMaxWidth()
+                .testTag("failure-backlog-chart"),
+        )
         BacklogStatRow("Waiting", "${state.waitingCount} overs")
-        state.growthRateLabel?.let { BacklogStatRow("Rate", it) }
+        BacklogStatRow("Rate", state.growthRateLabel ?: "Not measured", sub = state.rateSubLabel)
         BacklogStatRow("Capture", state.captureLabel)
         BacklogStatRow("In the log", "final once the band quiets")
     }
 }
 
-/** Register R-149: `Fail-Backlog.dc.html`'s "Queue, last 30 minutes" — the samples
- * [FailureSignalsPolling] has actually kept, plotted with no smoothing or fabricated points. */
+/** Register R-149/R-254: `Fail-Backlog.dc.html`'s "Queue, last 30 minutes" — the samples
+ * [FailureSignalsPolling] has actually kept, plotted with no smoothing or fabricated points, axis
+ * labels the real clock times of the oldest/newest sample (register R-254: more honest than the
+ * board's own relative "-30m"/"now" — this app has the real timestamps). Fewer than two samples
+ * reads "Not measured" (register R-254), never a silently-blank chart that looks like a real,
+ * flat one. */
 @Composable
-private fun BacklogQueueChart(history: List<Float>, modifier: Modifier = Modifier) {
+private fun BacklogQueueChart(state: BacklogViewState, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
         Text(text = "Queue, last 30 minutes", style = OrtType.sectionLabel, color = OrtColors.textFaint)
+        if (state.queueHistory.size < 2) {
+            Text(
+                text = "Not measured — needs at least two samples",
+                style = OrtType.axis,
+                color = OrtColors.textLow,
+                modifier = Modifier.padding(top = 8.dp).testTag("failure-backlog-chart-not-measured"),
+            )
+            return@Column
+        }
         Canvas(modifier = Modifier.fillMaxWidth().height(40.dp).padding(top = 4.dp)) {
             val w = size.width
             val h = size.height
-            if (history.size < 2) return@Canvas
+            val history = state.queueHistory
             val stepX = w / (history.size - 1)
             for (i in 0 until history.size - 1) {
                 val x1 = stepX * i
@@ -293,20 +307,27 @@ private fun BacklogQueueChart(history: List<Float>, modifier: Modifier = Modifie
             }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(text = "-30m", style = OrtType.axis, color = OrtColors.textLow)
-            Text(text = "now", style = OrtType.axis, color = OrtColors.textLow)
+            Text(text = state.queueHistoryOldestLabel.orEmpty(), style = OrtType.axis, color = OrtColors.textLow)
+            Text(text = state.queueHistoryNewestLabel.orEmpty(), style = OrtType.axis, color = OrtColors.textLow)
         }
     }
 }
 
 @Composable
-private fun BacklogStatRow(label: String, value: String, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(text = label, style = OrtType.subLine, color = OrtColors.textFaint)
-        Text(text = value, style = OrtType.subLine, color = OrtColors.textDim)
+private fun BacklogStatRow(label: String, value: String, modifier: Modifier = Modifier, sub: String? = null) {
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text(text = label, style = OrtType.subLine, color = OrtColors.textFaint)
+            Text(text = value, style = OrtType.subLine, color = OrtColors.textDim)
+        }
+        sub?.let {
+            Text(
+                text = it,
+                style = OrtType.axis,
+                color = OrtColors.textLow,
+                modifier = Modifier.testTag("failure-backlog-rate-sub"),
+            )
+        }
     }
 }
 

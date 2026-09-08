@@ -48,7 +48,7 @@ public object FailureSignalsPolling {
         val storageState = StorageForecast.state
         val backlog = ShedStatus.backlog
         recordStorageTransition(storageState, now)
-        recordBacklogSample(backlog, now)
+        recordBacklogSample(backlog, sessionTransmissionCount, now)
         return FailureSignals(
             captureState = CaptureState.state,
             inputStatus = InputStatus.state,
@@ -79,10 +79,12 @@ public object FailureSignalsPolling {
         while (storageHistory.size > STORAGE_HISTORY_MAX_ENTRIES) storageHistory.removeAt(0)
     }
 
-    /** Register R-149: one sample per tick, trimmed to [BACKLOG_HISTORY_WINDOW_MILLIS] — a real,
-     * bounded rolling window, never a fabricated full 30 minutes before the process has run one. */
-    private fun recordBacklogSample(backlog: Int, atMillis: Long) {
-        backlogHistory += BacklogSample(backlog, atMillis)
+    /** Register R-149/R-254: one sample per tick, trimmed to [BACKLOG_HISTORY_WINDOW_MILLIS] — a
+     * real, bounded rolling window, never a fabricated full 30 minutes before the process has run
+     * one. [transmissionCount] rides along so `FailureMapper.backlogRateLabel` can derive the Rate
+     * row's "Band"/"Pass B" split honestly — see that function's own kdoc. */
+    private fun recordBacklogSample(backlog: Int, transmissionCount: Int, atMillis: Long) {
+        backlogHistory += BacklogSample(backlog, atMillis, transmissionCount)
         backlogHistory.removeAll { atMillis - it.atMillis > BACKLOG_HISTORY_WINDOW_MILLIS }
     }
 

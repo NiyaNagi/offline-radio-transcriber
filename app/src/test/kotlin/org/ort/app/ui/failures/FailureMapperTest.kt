@@ -230,13 +230,13 @@ class FailureMapperTest {
     @Requirement("R-149")
     fun `R_149 F8 backlog carries a growth-rate label computed from the real backlog history`() {
         val history = listOf(
-            BacklogSample(count = 20, atMillis = 0L),
-            BacklogSample(count = 41, atMillis = 60_000L),
+            BacklogSample(count = 20, atMillis = 0L, transmissionCount = 200),
+            BacklogSample(count = 24, atMillis = 60_000L, transmissionCount = 210),
         )
         val presentation = FailureMapper.map(signals(shedBacklog = 41, backlogHistory = history))
         assertTrue(presentation is FailurePresentation.Backlog)
         val state = (presentation as FailurePresentation.Backlog).state
-        assertEquals("21.0 overs/min", state.growthRateLabel)
+        assertEquals("Band 10.0 overs/min · Pass B 6.0/min", state.growthRateLabel)
         assertEquals(2, state.queueHistory.size)
         assertEquals(1f, state.queueHistory.last())
     }
@@ -249,6 +249,68 @@ class FailureMapperTest {
         )
         val state = (presentation as FailurePresentation.Backlog).state
         assertEquals(null, state.growthRateLabel)
+    }
+
+    @Test
+    @Requirement("R-254")
+    fun `R_254 Rate row derives Band from real arrivals and Pass B algebraically, never a fabricated split`() {
+        // Band = Δ(sessionTransmissionCount)/Δt — a real, directly-measured arrival rate. Pass B =
+        // Band − net backlog growth — exact given two real measurements, not a guess.
+        val history = listOf(
+            BacklogSample(count = 20, atMillis = 0L, transmissionCount = 200),
+            BacklogSample(count = 30, atMillis = 120_000L, transmissionCount = 220),
+        )
+        assertEquals("Band 10.0 overs/min · Pass B 5.0/min", FailureMapper.backlogRateLabel(history))
+    }
+
+    @Test
+    @Requirement("R-254")
+    fun `R_254 Rate row reads Not measured with fewer than two samples`() {
+        val presentation = FailureMapper.map(
+            signals(shedBacklog = 41, backlogHistory = listOf(BacklogSample(count = 41, atMillis = 0L))),
+        )
+        val state = (presentation as FailurePresentation.Backlog).state
+        assertEquals(null, state.growthRateLabel)
+    }
+
+    @Test
+    @Requirement("R-254")
+    fun `R_254 the queue chart's axis labels are the real clock times of the oldest and newest sample`() {
+        val history = listOf(
+            BacklogSample(count = 20, atMillis = 1_000_000L, transmissionCount = 200),
+            BacklogSample(count = 30, atMillis = 1_120_000L, transmissionCount = 220),
+        )
+        val presentation = FailureMapper.map(signals(shedBacklog = 30, backlogHistory = history))
+        val state = (presentation as FailurePresentation.Backlog).state
+        assertEquals(FailureMapper.clockLabel(1_000_000L), state.queueHistoryOldestLabel)
+        assertEquals(FailureMapper.clockLabel(1_120_000L), state.queueHistoryNewestLabel)
+    }
+
+    @Test
+    @Requirement("R-254")
+    fun `R_254 the Rate row's sub-line names the real tier and RTF, never invented just for this row`() {
+        val history = listOf(
+            BacklogSample(count = 20, atMillis = 0L, transmissionCount = 200),
+            BacklogSample(count = 30, atMillis = 60_000L, transmissionCount = 210),
+        )
+        val presentation = FailureMapper.map(
+            signals(
+                shedBacklog = 30,
+                shedLevel = 1,
+                thermalStatus = ThermalStatus.State.Nominal(osThermalStatus = 0, realTimeFactor = 0.62),
+                backlogHistory = history,
+            ),
+        )
+        val state = (presentation as FailurePresentation.Backlog).state
+        assertEquals("tier 2, RTF 0.62 while the net runs", state.rateSubLabel)
+    }
+
+    @Test
+    @Requirement("R-254")
+    fun `R_254 the Rate row's sub-line is absent when the real-time factor has not been measured`() {
+        val presentation = FailureMapper.map(signals(shedBacklog = 30))
+        val state = (presentation as FailurePresentation.Backlog).state
+        assertEquals(null, state.rateSubLabel)
     }
 
     @Test
