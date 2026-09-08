@@ -365,6 +365,11 @@ internal class RealSegmentSink(
 
     private val flacStore = FlacStore(DeflatePredictiveCodec())
 
+    private companion object {
+        /** FR-SEG-6 / AC-72's `rejected:too_short` tag, as the free-text `rejectionReason` value. */
+        const val REJECTION_REASON_TOO_SHORT = "too_short"
+    }
+
     override fun open(id: SegmentId, startSample: Long): SegmentWriter {
         val staged = File(filesDir, "staging/${sessionId}_${id.index}.pcm")
         staged.parentFile?.mkdirs()
@@ -387,15 +392,19 @@ internal class RealSegmentSink(
 
             override fun close(record: SegmentRecord): SegmentRecord {
                 raf.close()
-                if (record.outcome != SegmentOutcome.SPEECH) {
-                    staged.delete() // rejected segment: this smoke test keeps SPEECH only, real product retains it
-                    return record
-                }
                 val transmissionId = "$sessionId-${record.id.index}"
                 // FR-RUN-15/16/18: derived from the session anchor plus this segment's sample
                 // position on the sample-accurate timeline -- never a fresh wall-clock read here,
                 // which would silently drift from when the audio actually happened.
                 val timestamps = sampleClock.timestampsAt(record.startSample)
+                // Constitution III "nothing is deleted quietly" / FR-SEG-6 -> AC-72: a too-short
+                // segment is recorded and its audio retained exactly like SPEECH, just marked
+                // REJECTED and never enqueued for Pass B (audit F-006 -- this used to delete the
+                // staged PCM here and return, losing the segment with no trace).
+                val (processingState, rejectionReason) = when (record.outcome) {
+                    SegmentOutcome.SPEECH -> TransmissionState.CAPTURED to null
+                    SegmentOutcome.REJECTED_TOO_SHORT -> TransmissionState.REJECTED to REJECTION_REASON_TOO_SHORT
+                }
                 val entity = TransmissionEntity(
                     id = transmissionId,
                     sessionId = sessionId,
@@ -416,8 +425,8 @@ internal class RealSegmentSink(
                     stationId = null,
                     attributionConfidence = null,
                     attributionSourceTransmissionId = null,
-                    processingState = TransmissionState.CAPTURED,
-                    rejectionReason = null,
+                    processingState = processingState,
+                    rejectionReason = rejectionReason,
                     samplePosition = record.startSample,
                     monotonicStartNanos = timestamps.monotonicStartNanos,
                     utcOffsetMinutes = timestamps.utcOffsetMinutes,
@@ -431,7 +440,7 @@ internal class RealSegmentSink(
 
                 runBlocking {
                     db.transmissionDao().insert(entity)
-                    queue.enqueue(transmissionId, PassId.B_OFFLINE)
+                    if (record.outcome == SegmentOutcome.SPEECH) queue.enqueue(transmissionId, PassId.B_OFFLINE)
                 }
                 onSegmentPersisted()
                 return record

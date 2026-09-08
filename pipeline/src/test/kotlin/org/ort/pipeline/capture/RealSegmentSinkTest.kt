@@ -3,12 +3,16 @@ package org.ort.pipeline.capture
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.PassId
 import org.ort.core.SampleClock
+import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.pipeline.PipelineTestFixtures
@@ -103,4 +107,65 @@ public class RealSegmentSinkTest {
         assertEquals(segmentConfig.preRollMs, persisted.preRollMs)
         assertEquals(segmentConfig.postRollMs, persisted.postRollMs)
     }
+
+    /**
+     * F-006 (audit-2026-09-07): before this fix, `RealSegmentSink.close()` deleted the staged
+     * PCM for every non-`SPEECH` outcome and returned without recording anything — a too-short
+     * segment vanished with no trace (constitution III "nothing is deleted quietly"; FR-SEG-6 →
+     * AC-72, "recording them as `rejected:too_short` rather than deleting them"). This proves a
+     * `REJECTED_TOO_SHORT` segment is instead FLAC-encoded and persisted as a `REJECTED`
+     * transmission row with its rejection reason set, its audio reachable on disk, and never
+     * enqueued for Pass B.
+     */
+    @Test
+    @Requirement("AC-72")
+    public fun `AC_72_a_too_short_segment_is_retained_as_a_rejected_row_with_its_audio_and_never_enqueued`(): Unit =
+        runBlocking {
+            val clock = TestClock(startMonotonicNanos = 500_000_000L, startWallMillis = 1_700_000_000_000L)
+            val sampleClock = SampleClock(
+                anchorMonotonicNanos = clock.monotonicNanos(),
+                anchorWallMillis = clock.wallMillis(),
+                anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+                sampleRate = FrameSpec.SAMPLE_RATE,
+            )
+            val segmentConfig = SegmentConfig()
+            val queue = WorkQueue(db, clock)
+
+            var persistedCalls = 0
+            val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, segmentConfig) {
+                persistedCalls++
+            }
+
+            val startSample = 0L
+            val endSample = FrameSpec.SAMPLE_RATE / 10L // 100ms: below the too-short floor
+            val writer = sink.open(SegmentId(0), startSample)
+            writer.append(FloatArray(endSample.toInt()) { 0.1f })
+            writer.close(
+                SegmentRecord(
+                    id = SegmentId(0),
+                    startSample = startSample,
+                    endSample = endSample,
+                    vadStartSample = startSample,
+                    vadEndSample = endSample,
+                    sampleCount = endSample,
+                    outcome = SegmentOutcome.REJECTED_TOO_SHORT,
+                ),
+            )
+
+            val transmissionId = "$sessionId-0"
+            val persisted = db.transmissionDao().getById(transmissionId)
+            assertNotNull("a too-short segment must still be recorded as a row", persisted)
+            assertEquals(TransmissionState.REJECTED, persisted!!.processingState)
+            assertEquals("too_short", persisted.rejectionReason)
+
+            val encoded = File(filesDir, persisted.audioPath())
+            assertTrue("the audio must be retained, not deleted", encoded.exists())
+
+            val staged = File(filesDir, "staging/${sessionId}_0.pcm")
+            assertFalse("the staged PCM is gone only because it was encoded, not left behind", staged.exists())
+
+            val queued = db.workQueueDao().findByTransmissionAndPass(transmissionId, PassId.B_OFFLINE.name)
+            assertTrue("a too-short segment must never be enqueued for Pass B", queued.isEmpty())
+            assertEquals(1, persistedCalls)
+        }
 }
