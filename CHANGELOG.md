@@ -3647,6 +3647,79 @@ legend wording).
 
 ---
 
+## 2026-09-08 (ui-conformance WP4, round ten: -Clear install and a stray-real-session warning for the shared AVDs)
+
+### (pending) — ui-conformance WP4 · -Clear install and a stray-real-session warning for the shared AVDs
+
+**Scope:** `tools/ui-audit/install.ps1`, `tools/ui-audit/scenario.ps1`, `results/ui-audit/README.md`
+only — this package's own row (`tools/ui-audit/**`, `results/ui-audit/README.md`), no product code.
+`git merge --ff-only main`, fast-forwarded cleanly onto `fa0a0a4`, confirmed `HEAD` was an ancestor
+first; no rebase, no stash.
+
+**Requirements/ACs:** none new — a coordinator-reported tooling/hygiene finding (validators on the
+shared AVDs inheriting a real capture session across scenario reloads), not a register-filed row.
+
+**What changed:**
+
+- **Constitution Check.** Principle VI (never report a number without its fold/machine/provider)
+  is the reason `scenario.ps1`'s new check is explicitly labelled best-effort and untested against
+  a live device in both its own `.NOTES` and this entry — both shared AVD ports (5554, 5556) were
+  in active use by other work this round (a validator on 5554, WP2's bisect on 5556), and the
+  coordinator's own correction mid-round said not to run either script against a device; verified
+  by parsing only (`[scriptblock]::Create(...)` against each file's own raw content, twice — once
+  after the first draft, once after every subsequent edit) and by reading them, never by execution.
+  A future validator pass exercises both flags for real, per the coordinator's own plan.
+- **`install.ps1` gained a `-Clear` switch.** After a successful install, `-Clear` runs
+  `adb shell pm clear org.ort.app` (wiping the app's entire on-device state — database, files,
+  every granted permission) before the existing `RECORD_AUDIO`/`POST_NOTIFICATIONS` grant step,
+  which now runs unconditionally (a plain install still grants as before; a `-Clear` install grants
+  again because `pm clear` itself revokes them). This is the reliable fix for the root problem: a
+  real capture session an earlier mis-tap started (`Now`'s own "Start capture", pressed by accident
+  while poking around a scenario) is never touched by any scenario reload —
+  `Scenarios.clearPriorScenarioData` only ever deletes rows whose id starts with `scenario-` — so it
+  persists in the app's own database across every scenario switch on a shared AVD, and being real
+  (`endedAt = null`, possibly more recently started than whatever the current scenario just seeded)
+  it can outrank the scenario's own fixture session on `Now`.
+- **`scenario.ps1` now prints a best-effort warning** after a scenario loads, checking the device's
+  own database for exactly that stray real session via `adb shell run-as` (debug builds are
+  debuggable, so `run-as` reaches this package's private app data) piped through the device's own
+  `sqlite3` binary. Neither is guaranteed to exist on every system image, so this degrades to a
+  printed reminder pointing at `install.ps1 -Clear` and this README's own "Known gaps / hygiene"
+  section, never a script failure — the SQL text is handed to `adb shell` as one already-quoted
+  command-line string (documented inline: `adb shell` joins its own argv with spaces before the
+  device's shell ever sees it, so an unquoted multi-word argument would otherwise be split apart on
+  the far side of that join).
+- **`results/ui-audit/README.md`**: the scripts table names both the new `-Clear` switch and the new
+  warning; "Known gaps" is retitled "Known gaps / hygiene" with a new first bullet describing the
+  real-session-survives-reloads problem, the `-Clear` fix, and the best-effort warning's own
+  unverified-against-a-live-device status.
+
+**Verified:**
+- `git merge --ff-only main` — fast-forwarded cleanly onto `fa0a0a4`; confirmed `HEAD` was an
+  ancestor first; no rebase, no stash.
+- Parse-only verification (no device, per the coordinator's own correction — both shared AVD ports
+  were in use): `[scriptblock]::Create((Get-Content .\tools\ui-audit\install.ps1 -Raw))` and the
+  same for `scenario.ps1` — both **parsed with no error**, re-run after every subsequent edit to
+  either file. Also read both files in full, twice, before considering this round done.
+- `.\gradlew.bat build dependencyRules platformGuards` — **BUILD SUCCESSFUL** (no product code
+  touched; run anyway, per "same gate", to confirm nothing regressed).
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 PASS).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  **coverageMatrix: 419 requirements, 185 covered** (unchanged — no test/requirement content
+  changed this round); `coverageMatrixCheck: up to date`.
+- `.\gradlew.bat :app:assembleDebug` and `.\gradlew.bat :app:testDebugUnitTest` — both **BUILD
+  SUCCESSFUL**, no change in test count from the round before this one (no test files touched).
+
+**Left open / not done:**
+- **Neither `-Clear` nor the stray-session warning was run against a real device this round** —
+  both shared AVD ports were in use (a validator on 5554, WP2's bisect on 5556) and the coordinator
+  explicitly said not to touch either. A validator exercises both on the next pass, per the
+  coordinator's own plan; if `run-as`/`sqlite3` turn out to be unavailable on `ort_audit`'s own
+  system image, the script's own documented fallback message is what a user sees instead of a
+  crash — that fallback path is real and reachable regardless (a non-zero exit from either command
+  degrades to it), but which of the two paths actually fires in practice is unconfirmed.
+
 ## 2026-09-08 (ui-conformance WP4, round nine addendum: two real voiceprint clusters for WA7HJR (R-272))
 
 ### (pending) — ui-conformance WP4 · two real voiceprint clusters for WA7HJR (R-272); R-300 dropped
