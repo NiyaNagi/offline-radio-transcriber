@@ -216,8 +216,12 @@ class RowsTest {
         val rejectedFreqWidth = composeTestRule.onNodeWithText("146.960").fetchSemanticsNode().size.width
         assert(logTimeWidth >= 52) { "expected LogRow's time column at least 52px, got ${logTimeWidth}px" }
         assert(logFreqWidth >= 56) { "expected LogRow's freq column at least 56px, got ${logFreqWidth}px" }
-        assert(rejectedTimeWidth >= 52) { "expected RejectedRow's time column at least 52px, got ${rejectedTimeWidth}px" }
-        assert(rejectedFreqWidth >= 56) { "expected RejectedRow's freq column at least 56px, got ${rejectedFreqWidth}px" }
+        assert(rejectedTimeWidth >= 52) {
+            "expected RejectedRow's time column at least 52px, got ${rejectedTimeWidth}px"
+        }
+        assert(rejectedFreqWidth >= 56) {
+            "expected RejectedRow's freq column at least 56px, got ${rejectedFreqWidth}px"
+        }
     }
 
     @Test
@@ -237,8 +241,12 @@ class RowsTest {
 
         val headerTimeWidth = composeTestRule.onNodeWithText("TIME").fetchSemanticsNode().size.width
         val headerFreqWidth = composeTestRule.onNodeWithText("FREQ").fetchSemanticsNode().size.width
-        assert(headerTimeWidth >= 52) { "expected ColumnHeaderRow's time column at least 52px, got ${headerTimeWidth}px" }
-        assert(headerFreqWidth >= 56) { "expected ColumnHeaderRow's freq column at least 56px, got ${headerFreqWidth}px" }
+        assert(headerTimeWidth >= 52) {
+            "expected ColumnHeaderRow's time column at least 52px, got ${headerTimeWidth}px"
+        }
+        assert(headerFreqWidth >= 56) {
+            "expected ColumnHeaderRow's freq column at least 56px, got ${headerFreqWidth}px"
+        }
     }
 
     @Test

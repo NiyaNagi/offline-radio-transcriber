@@ -32,6 +32,87 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: line length)
+
+### (pending) — ui-conformance WP2 · line length
+
+**Scope:** `:app` `ui/components/ActivityPatternChart.kt` and `RowsTest.kt` only — a follow-up to
+this package's previous commit (`34385e8`, merged as `68f84bc`). `main` fast-forward merged first
+(`git merge --ff-only main`; this branch already an ancestor; no rebase, no stash) — no other
+package's files touched.
+
+**Requirements/ACs:** none new — a lint/style fix, not a behaviour change.
+
+**What changed:**
+- **Wrapped the five over-120-character lines the coordinator named**:
+  `ActivityPatternChart.kt:291` (a `Row(...)` call's argument list, now multi-line) and
+  `RowsTest.kt:219, 220, 240, 241` (four `assert(...) { "…" }` calls, each now wrapping its
+  message lambda onto its own line). No logic changed in either file — purely line-shape.
+- **Investigated why the previous commit's own full-gate run reported clean** despite these real
+  violations, since the coordinator's report ruled out (correctly) that it was these five lines
+  simply being missed by eye. It is not a line-ending or per-worktree config difference on this
+  branch: `:app:detekt` and every `:app:*ktlint*SourceSet*` task currently report **`NO-SOURCE`**
+  for this checkout — confirmed with a completely fresh Gradle daemon and `--rerun-tasks` (so
+  neither a stale daemon nor the build cache explains it), for `:app:detekt`/`:app:ktlintCheck`
+  run directly *and* when reached through the full `build` task graph.
+  `buildSrc/src/main/kotlin/ort.common.gradle.kts` (outside this package, merged from a different
+  round's "build tooling: lint/detekt ignore nested worktrees under .claude" change and
+  subsequently rewritten, per its own doc comment, from a relative glob to an absolute-path
+  predicate) excludes any file whose absolute path contains a `.claude` directory segment
+  (`isUnderClaudeDirectory`), meant to keep one worktree's build from reading or caching another,
+  sibling worktree's files nested under `.claude/worktrees/`. But every builder's *own* checkout —
+  this one included — is itself a worktree living at
+  `…/offline-radio-transcriber/.claude/worktrees/<name>/…`, so that same absolute-path check
+  matches every real source file in the checkout doing the building, not only a sibling's. The
+  result: `:app:detekt`/every `:app:*ktlint*` task sees **zero input files** for any
+  worktree-isolated builder — including this one, on every previous round's "clean" full-gate
+  report in this package's own history — and a task with no input files reports success
+  vacuously, not because there is nothing to flag. This is a real, currently-live gap outside this
+  package's boundary (`buildSrc/**`, not `ui/components/**`), so it has not been fixed here; it is
+  reported so whoever owns `buildSrc` can (the fix is presumably distinguishing "this checkout's
+  own root is under `.claude/worktrees/<name>/`" from "a *descendant* path inside this checkout
+  additionally contains a *second* `.claude/worktrees/` segment," rather than a bare substring
+  match against the whole absolute path).
+- **Verified the fix by direct inspection instead**, since detekt cannot currently do it: swept
+  every `.kt` file under `ui/components/**` (both `src/main` and `src/test`, not just the two
+  files named) for any line over 120 characters — none found, anywhere in the package, after this
+  commit's two wraps.
+
+**Verified:**
+- Direct line-length sweep (PowerShell, `Get-Content` line-by-line) of every `.kt` file under
+  `app/src/main/kotlin/org/ort/app/ui/components/` and `app/src/test/kotlin/org/ort/app/ui
+  /components/` — **zero lines over 120 characters**, package-wide.
+- `.\gradlew.bat :app:detekt :app:ktlintCheck` and `.\gradlew.bat build dependencyRules
+  platformGuards --rerun-tasks` (a fresh daemon, no caching) — **BUILD SUCCESSFUL**, but per "What
+  changed" above this does not certify detekt/ktlint actually inspected this package's files;
+  `dependencyRules`/`platformGuards`/the test suite/`coverageMatrix` are unaffected by the
+  `.claude`-exclusion bug (none of them filter by that path) and their results below are genuine.
+- `.\gradlew.bat :app:testDebugUnitTest` — **923 of 923 passing, 0 failed** (summed from every
+  `app/build/test-results/testDebugUnitTest/*.xml` report's `tests`/`failures`; the rise from 891
+  is other packages' work merged via `main`, not this commit's own — it added no tests).
+  `dependencyRules: checked 17 modules ... OK.` `platformGuards: checked 17 modules' external
+  dependencies and 17 manifests ... OK.` `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+  `python tools\spec-check\spec_check.py` — 8/8 `[PASS]`. `.\gradlew.bat coverageMatrix` — `419
+  requirements, 183 covered` (unchanged). `.\gradlew.bat coverageMatrixCheck` (separate
+  invocation) — `up to date (183 covered of 419)`.
+- **A build daemon was killed mid-build by another process during this work** (`Gradle build
+  daemon has been stopped: stop command received`, on a `:app:detekt :app:ktlintCheck
+  --rerun-tasks` invocation) — not run by this session; retried on a fresh daemon per the
+  coordinator's own instruction never to run `gradlew --stop` in a shared checkout.
+
+**Left open / not done:**
+- **The `buildSrc` self-exclusion bug is reported, not fixed** — outside this package's boundary.
+  Until it is fixed, no worktree-isolated builder's `:app:detekt`/`:app:*ktlint*` result (this
+  round's or any other package's) actually certifies anything; every "clean" report from any
+  builder since that change landed should be treated the same way this one is here — confirmed by
+  direct inspection, not trusted at face value.
+- **The register/coordinator's own tracking of this finding is outside this package** — this entry
+  records it for this package's own record; flagging it to whoever owns `buildSrc` is the
+  coordinator's call.
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP10 round 4: System validator fixes across settings, improve, sessions, digest)
 
 ### (pending) — ui-conformance WP10 · System validator fixes: single header, font-scale reflow, promise text, board copy and actions across settings, improve, sessions, digest
@@ -230,10 +311,9 @@ has a test named for its id, written against real state, in the same change.
 
 ---
 
-
 ## 2026-09-08 (ui-conformance WP2: no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation)
 
-### (pending) — ui-conformance WP2 · no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation
+### 34385e8 — ui-conformance WP2 · no-wrap time and frequency columns, scrolling chip row, day-of-week grid orientation
 
 **Scope:** `:app` `ui/components/Rows.kt`, `ui/components/Controls.kt`, `ui/components
 /ActivityPatternChart.kt` and their tests only. Register findings R-205, R-209, R-211
