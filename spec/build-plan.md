@@ -133,7 +133,11 @@ are individually green.*
   `Assume`-skipped rather than faked; filters, the query-construction logic, and the graceful
   degrade-to-filters-only behaviour are all proven for real. Thread grouping is proven against the
   real (currently always-null) `threadId` column with an honest "not yet grouped" fallback — M6
-  still owns actually populating it. See CHANGELOG.md.
+  still owns actually populating it. See CHANGELOG.md. **Update (audit F-017, 2026-09-07):** the
+  `:data` half of FR-UI-3's remaining filters — band, attribution state, rejected/accepted — is
+  now built in `SearchDao`/`Band.kt` (see CHANGELOG's audit F-017 entry). The `:app` half
+  (`SearchScreen` exposing these filters in the UI) is still open, tracked in
+  `results/audit-2026-09-07.md` F-017.
 - [x] **P16 · Correction, the inspection surface, and labelled-sample capture** *(`:app`,
   `:data`)* — done 2026-09-08. FR-UI-6 (one-tap correction, Q8's tiers), FR-UI-8 (the inspection
   surface, honestly empty until a future `:pipeline` change writes lattice/candidate rows), and
