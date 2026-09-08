@@ -32,6 +32,130 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: R-340 device diagnosis — not fixed, root cause redirected)
+
+### (pending) — ui-conformance WP2 · R-340 diagnosis
+
+**Scope:** `:app` device diagnosis only — `install.ps1`/`adb`/on-device screenshots against port
+5556 (AVD `ort_audit_2`). **No source file changed by this commit** — every experimental edit made
+during bisection (to `ui/components/Controls.kt` and `ui/setup/MicrophoneScreens.kt`) was reverted
+(`git checkout --`) before this commit; `git diff --stat` against `2b6b935` is empty for source.
+Adds four screenshots under `results/ui-audit/setup/`.
+
+**Requirements/ACs:** R-340 (design) — WP9's V1 pass-4 finding: a semi-transparent ghost copy of
+the Setup bottom bar's secondary action, reproducing on every `Setup-*` screen whose bottom bar
+carries a second action (S02b, S03, S05, S06, S09, S11), never on S12 (lone `PrimaryButton`).
+**Not fixed by this commit** — see "Left open" below.
+
+**What changed — the diagnosis, in full:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs this whole entry: five
+  rounds of on-device bisection found a real, reproducible, three-times-confirmed correlate for
+  the ghost, but no change within `ui/components/**` that both eliminates it *and* preserves the
+  board's centered secondary action. Reporting that honestly — rather than shipping a change that
+  either doesn't fix the defect or silently drops the design's centering — is what this principle
+  asks for.
+- **Repro established** (`setup/S02b-r340-before.png`, unmodified `2b6b935` build): `pm clear`,
+  reach S02, deny the mic permission twice (the second denial's button is
+  `permission_deny_and_dont_ask_again_button`, not the first denial's `permission_deny_button` —
+  Android only sets the permanently-denied flag after two consecutive denials in the same
+  install), landing on S02b. The ghost — a faint, legible second "Check again" — renders just
+  below the status bar, well above the real header row, on every visit; confirmed with
+  `window_animation_scale`/`transition_animation_scale`/`animator_duration_scale` all set to `0`.
+  **A gap in the pass-4 recipe found and worked around**: `install.ps1` grants `RECORD_AUDIO`
+  after every install (by design, so a validator's run never blocks on the OS dialog), which
+  silently un-denies the permission and routes past S02b on the next launch — a single
+  `pm revoke org.ort.app android.permission.RECORD_AUDIO` after each install (with no need to
+  repeat the double-denial dance; Android's own "should show rationale" flag persists across
+  `pm grant`/`pm revoke` at the PackageManager level) restores S02b reliably. `SetupActivity`
+  itself is not exported (`am start -n .../.ui.setup.SetupActivity` fails with a
+  `SecurityException`) — `am start -n org.ort.app/.MainActivity` alone is enough once the
+  permission state is set, since `refreshStep()` re-derives `MICROPHONE_DENIED` from the real,
+  persisted OS state on every cold start.
+- **Bisection round 1–2 — `TextAction`'s own modifier chain and identity, exonerated.**
+  `TextAction` (`Controls.kt`) was stripped to `Box(modifier.clickable(role = Role.Button,
+  onClick)) { Text(...) }` — no `heightIn`, no `background`, no `MutableInteractionSource`/
+  `collectIsPressedAsState`, no `padding`, no `semantics` — while the S02b call site's own
+  wrapping `Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { TextAction(...) }`
+  was left untouched. The ghost still rendered, unchanged. A second round replaced the call with a
+  bespoke, non-`TextAction` `Text` + `Modifier.clickable` at the same call site, still inside the
+  same wrapping `Box` — the ghost still rendered. **This directly refutes WP9's own hypothesis**
+  (the register's own text: "`TextAction` applies `heightIn` and then later modifiers in an order
+  that draws the text twice... the same defect shape `KeyValueRow`'s doc comment describes") —
+  `KeyValueRow`'s defect (an earlier entry in this file, R-265) was a *measurement* bug from
+  `heightIn` followed by more modifiers in the same chain; nothing in `TextAction`'s own chain, all
+  the way down to nothing at all, reproduces anything resembling it here, and the ghost survives
+  the composable's *complete* removal from the call.
+- **Bisection round 3 — the caller's wrapping `Box(fillMaxWidth, contentAlignment = Center)`,
+  removed.** Dropping the S02b call site's wrapping `Box` entirely, giving `TextAction` (unchanged,
+  reverted to its real modifier chain) `Modifier.fillMaxWidth()` directly — with its own, original
+  `contentAlignment = Alignment.CenterStart` — left the action **left-aligned, not centered**, and
+  the ghost was gone (`setup/S02b-r340-bisect3-nobox-confirm.png`; confirmed on a second, separate
+  build+install+relaunch cycle, identical result both times).
+- **Bisection rounds 4–5 — restoring centering, by three different mechanisms, all reproduce the
+  ghost again.** (1) `TextAction`'s own `contentAlignment` changed from `CenterStart` to `Center`.
+  (2) `contentAlignment` left at `CenterStart`, but the inner `Text` given
+  `Modifier.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally)` instead (moving the
+  centering computation from the `Box` to the `Text`'s own modifier — a different code path).
+  (3) Neither `Box` alignment nor `wrapContentWidth` touched at all — the inner `Text` instead
+  given `Modifier.fillMaxWidth()` with `style = style.copy(textAlign = TextAlign.Center)` (glyph-
+  run centering inside the paragraph layout itself, no Compose-level offset-from-remeasured-child
+  step at all). **All three reproduced the ghost, identically**
+  (`setup/S02b-r340-bisect5-textalign.png` — the `TextAlign.Center` variant, the mechanism
+  furthest removed from any `Box`/`Modifier` placement math). Since (3) does not compute a
+  placement offset from the child's measured width the way (1)/(2) do at all, "a stale
+  two-pass-layout offset" is not the mechanism either — the one thing all three failed variants
+  share, and the one thing the sole successful variant (round 3) lacks, is simply: **the action's
+  glyphs are not flush against the left edge of their own row.**
+- **What this rules in and out.** Ruled out, with direct on-device evidence: `TextAction`'s own
+  modifier chain and ordering (rounds 1–2); the `TextAction` composable's identity/call at all
+  (round 2); any specific *mechanism* of centering — `Box` alignment, `wrapContentWidth`, or
+  paragraph-internal `textAlign` (rounds 4–5, all three tried). What remains, confirmed
+  reproducibly in both directions (present with centering, absent without, five separate builds):
+  the ghost correlates with the secondary action's text being rendered anywhere other than flush
+  left. This does not point at a fixable Compose-code defect in `ui/components/**` — it reads as a
+  genuine host/compositor artifact (this AVD's software renderer, or `screencap`'s own frame
+  capture) tied to *where* a small, actively-recomposing (interaction-source-driven) text run's
+  glyphs land, not to anything this package's shared components control.
+
+**Verified:**
+- `.\gradlew.bat dependencyRules platformGuards` (isolated) — both **OK** (17 modules) — trivially,
+  since no source changed.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**; both report files confirmed
+  **0 bytes**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
+- `.\gradlew.bat :app:testDebugUnitTest` (whole suite) — run; result folded into this entry once
+  the background invocation completes (see the commit's own report for the exact count — this
+  entry is written before that run finished, since no source changed and none of this round's
+  prior, already-verified rounds are touched).
+- Five separate `assembleDebug` + `install.ps1` + on-device relaunch cycles against port 5556,
+  each screenshotted and read: `setup/S02b-r340-before.png` (the real defect, unmodified code),
+  `setup/S02b-r340-bisect2-nocall.png` (ghost persists with `TextAction` entirely bypassed, still
+  centered), `setup/S02b-r340-bisect3-nobox-confirm.png` (ghost absent, left-aligned, no wrapping
+  `Box`), `setup/S02b-r340-bisect5-textalign.png` (ghost reproduces again via `TextAlign.Center`
+  alone, the mechanism furthest from `Box`/`wrapContentWidth` placement math).
+
+**Left open / not done:**
+- **R-340 is not fixed.** Every source edit made while bisecting was reverted before this commit;
+  the register should stay `open`, not close, against this entry. The screenshots above are cited
+  as diagnostic evidence, not proof of a shipped fix — there is deliberately no `-after.png`, since
+  none of the three tested "keep the design's centering" variants worked, and shipping the one
+  variant that *did* work (left-aligned, no centering) would mean quietly dropping design intent
+  (`Setup-*`'s own board shows this action centered) rather than fixing the defect — the kind of
+  silent trade-off Principle I exists to prevent.
+- **The actual mechanism remains unidentified.** This entry rules out three specific, plausible
+  Compose-level causes with direct evidence but does not identify what *does* cause it. Candidate
+  next steps, none attempted here: bisect on a different AVD image/API level to check whether it
+  is specific to `ort_audit_2`'s software renderer; capture with `screenrecord` instead of
+  `screencap` to see whether the ghost is a capture-time artifact rather than something a real
+  viewer would see; or attach `systrace`/GPU profiling during a cold S02b open to see what actually
+  draws near the top of the frame.
+- **No register update** — leaving R-340 `open` with this diagnosis attached is the
+  validator/coordinator's own bookkeeping, same as every prior round in this package.
+
+---
+
 ## 2026-09-08 (ui-conformance data: busy timeout; processed tier per record)
 
 ### (pending) — ui-conformance data · busy timeout; processed tier per record
