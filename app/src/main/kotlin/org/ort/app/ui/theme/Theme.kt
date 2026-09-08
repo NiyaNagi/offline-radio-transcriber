@@ -1,5 +1,6 @@
 package org.ort.app.ui.theme
 
+import androidx.activity.SystemBarStyle
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -7,6 +8,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import android.graphics.Color as AndroidColor
 
 /**
  * The reader's theme (D15, build-plan P13; R-001/R-006, ui-conformance-plan WP1). Dark-first per
@@ -19,12 +21,26 @@ import androidx.compose.ui.platform.testTag
  * [OrtColors.bgScreen] — so a screen sits on the design's own ground, never on whatever the
  * platform window background happens to be. `res/values/themes.xml`'s `Theme.Ort` sets the same
  * colour as `android:windowBackground` for the brief instant before Compose takes over, and both
- * [org.ort.app.ui.ReaderActivity] and [org.ort.app.MainActivity] call `enableEdgeToEdge()` before
- * `setContent` so content draws behind a transparent system-bar strip rather than under an opaque
- * platform one — the 44dp the boards leave clear is then a `WindowInsets.statusBars` padding a
- * screen applies itself (`TopAppBar`'s default insets already do this for the nav host; the
- * bare-permission screens in `MainActivity` do it directly), never a hardcoded dp value.
+ * [org.ort.app.ui.ReaderActivity] and [org.ort.app.MainActivity] call
+ * `enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)`
+ * before `setContent` so content draws behind a transparent system-bar strip rather than under an
+ * opaque platform one — the 44dp the boards leave clear is then a `WindowInsets.statusBars`
+ * padding a screen applies itself (`TopAppBar`'s default insets already do this for the nav host;
+ * the bare-permission screens in `MainActivity` do it directly), never a hardcoded dp value.
  */
+
+/**
+ * R-008: the one status/navigation-bar style every Activity in this app must pass to
+ * `enableEdgeToEdge()`. The no-arg overload defaults to `SystemBarStyle.auto`, which picks *light*
+ * system-bar icons whenever the OS itself is not in night mode — on a device/emulator not in
+ * night mode that rendered dark icons on this app's dark ground, nearly invisible (found on
+ * `emulator-5554`, both `MainActivity`'s permission screens and `ReaderActivity`). This app has no
+ * light theme at all (guide §12), so the bars must always use the dark style (light icons)
+ * regardless of the OS's own night-mode state — never `auto`. `res/values/themes.xml`'s
+ * `windowLightStatusBar`/`windowLightNavigationBar` (both `false`) state the same thing for the
+ * pre-Compose frame `enableEdgeToEdge()` briefly runs under, before this call takes over.
+ */
+public val OrtSystemBarStyle: SystemBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT)
 private val OrtDarkColorScheme = darkColorScheme(
     background = OrtColors.bgScreen,
     surface = OrtColors.bgScreen,

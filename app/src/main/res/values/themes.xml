@@ -13,6 +13,13 @@
   is API 27+; declaring it here (rather than a `values-v27` overlay) is safe at minSdk 26 because
   an unrecognised style attribute is ignored at runtime, not a crash — `tools:targetApi` only
   silences the lint warning that would otherwise flag it.
+
+  R-008: this is the pre-Compose-frame half of the fix. `MainActivity`/`ReaderActivity`'s own
+  `enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, ...)` call (`ui/theme/Theme.kt`) is what
+  keeps the bars dark *after* Compose takes over, since `enableEdgeToEdge()`'s no-arg overload
+  would otherwise pick light icons whenever the OS itself is not in night mode — dark-on-dark on
+  this app's dark-only ground. Both halves must say the same thing, or the bars flash light before
+  Compose composes.
 -->
 <resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.Ort" parent="android:Theme.Material.NoActionBar">

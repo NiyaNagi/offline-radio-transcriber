@@ -50,6 +50,7 @@ import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
+import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.Ulid
@@ -79,7 +80,9 @@ public class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // R-008: see OrtSystemBarStyle's own doc comment — the no-arg enableEdgeToEdge() picks
+        // light-on-dark only in night mode, which rendered dark-on-dark on emulator-5554.
+        enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         sessionId = savedInstanceState?.getString(KEY_SESSION_ID) ?: Ulid.generate().value
         setContent {
