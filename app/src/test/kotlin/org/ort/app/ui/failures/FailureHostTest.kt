@@ -219,6 +219,20 @@ class FailureHostTest {
      * capping the banner (and therefore `contentTopPadding`) to a bounded fraction of the
      * viewport, never touching `CaptureStatusScreen` itself (already scrollable, Stop already at
      * its own top — WP4's half, unmodified here).
+     *
+     * Follow-up (found on `main`, under load): the original version passed `sessionId = "s1"` — a
+     * session id that does not exist — into [FailureHost], whose own poll loop
+     * (`FailureSignalsPolling.current`) then ran *real* Room queries against it before the first
+     * `presentation` update, and waited for the result with a wall-clock
+     * `composeTestRule.waitUntil(timeoutMillis = 5_000)`. Under load, real DB dispatch plus a real
+     * 5 s wall-clock budget is exactly what made this flaky (WP9 and this package's own gate both
+     * hit it). [DebugFailureOverride.show] already wins outright over every real signal
+     * (`FailureMapper.map`'s own first line), so the session id this poll loop reads was never
+     * actually load-bearing for *this* test — `sessionId = null` skips every Room query
+     * (`FailureSignalsPolling.current`'s own `if (sessionId != null)` guard), leaving the poll
+     * loop's first iteration fully synchronous. Combined with `mainClock.autoAdvance = false` and
+     * one explicit `advanceTimeByFrame()` (not a wall-clock wait at all — a single, bounded virtual
+     * frame), the banner is deterministically composed before any assertion runs.
      */
     @Test
     fun `R_300 the bounded storage banner leaves Capture-Status Stop reachable within one scroll, font scale 2_0`() {
@@ -267,10 +281,13 @@ class FailureHostTest {
             batteryExemptionReportsIgnoring = false,
         )
 
+        composeTestRule.mainClock.autoAdvance = false
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
                 OrtTheme {
-                    FailureHost(sessionId = "s1") { contentTopPadding ->
+                    // `sessionId = null` — see this test's own kdoc for exactly why the original
+                    // `"s1"` was the source of the flake, not a signal this assertion needs.
+                    FailureHost(sessionId = null) { contentTopPadding ->
                         CaptureStatusScreen(
                             state = captureStatus,
                             modifier = Modifier.padding(top = contentTopPadding),
@@ -280,10 +297,12 @@ class FailureHostTest {
                 }
             }
         }
+        // One bounded virtual frame — not a wall-clock wait — lets the `LaunchedEffect`'s first,
+        // now fully synchronous poll iteration land in the composition.
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.waitForIdle()
 
-        composeTestRule.waitUntil(timeoutMillis = 5_000) {
-            composeTestRule.onAllNodesWithTag("failure-banner-overlay").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeTestRule.onNodeWithTag("failure-banner-overlay").assertIsDisplayed()
 
         val stopNode = composeTestRule.onNodeWithTag("capture-status-stop")
         val boundsBeforeScroll = stopNode.getUnclippedBoundsInRoot()

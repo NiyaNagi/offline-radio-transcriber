@@ -278,6 +278,61 @@ pass).
 
 ## 2026-09-08 (ui-conformance WP11b: calibration chart colour split, back headers on F14/F19/F21/F22)
 
+### (pending) — ui-conformance WP11b · R_300 storage banner test made deterministic
+
+**Scope:** `:app` — `ui/failures/FailureHostTest.kt` only (test-only change; no production code
+touched). `git merge main` (main at `ad692e1`, this branch's own `3cfcfc6` already merged into it
+at `1943dd0`; fast-forwarded cleanly; no rebase, no stash, no `gradlew --stop`). Follow-up on the
+prior WP11b commit's own "left open" note, confirmed by the coordinator against a clean `main`
+under load (WP9 saw the same flake independently).
+
+**Requirements/ACs:** none new — R-300's own product behaviour (the bounded storage banner, its
+assertions unchanged) was already fixed and is not touched here; this is purely a test-reliability
+fix so `R_300` stops being a false-negative source in the gate.
+
+**What changed:** `FailureHostTest`'s `R_300` test used to drive the banner into view with a
+wall-clock `composeTestRule.waitUntil(timeoutMillis = 5_000) { ... "failure-banner-overlay" ...
+isNotEmpty() }`, racing `FailureHost`'s real async poll loop (`pollFailureSignals` /
+`FailureSignalsPolling.current`) — which, because the test passed a non-existent
+`sessionId = "s1"`, ran real Room queries (`captureGapDao().listBySession`, `sessionDao().getById`,
+`transmissionDao().listBySession`) against a session that was never created, before the first
+`presentation` update could land. Under system load that real DB dispatch plus a real 5 s
+wall-clock budget is exactly what produced the timeout (`ComposeTimeoutException`) — the flake was
+in the harness, not in the banner. Two changes, both scoped to this one test: (1) `sessionId` is
+now `null` — `FailureSignalsPolling.current`'s own `if (sessionId != null)` guard means a null
+session skips every Room query outright, and `FailureMapper.map` already returns
+`signals.debugOverride` (set via `DebugFailureOverride.show(...)`, already used by this test)
+ahead of every real signal regardless — so the session id was never actually load-bearing for what
+this test asserts. (2) `composeTestRule.mainClock.autoAdvance = false` (set before `setContent`,
+the same pattern `FailureActionBarScaffoldTest.kt`'s `R_252` already establishes in this app) plus
+one explicit `composeTestRule.mainClock.advanceTimeByFrame()` and `waitForIdle()` deterministically
+land the `LaunchedEffect`'s first, now fully synchronous poll iteration — a single bounded virtual
+frame, not a wall-clock wait at all. The banner presence check itself became a direct
+`onNodeWithTag("failure-banner-overlay").assertIsDisplayed()` (no polling loop needed once the
+frame has actually landed). The Stop-reachability assertions (non-zero bounds, then
+`performScrollTo().assertIsDisplayed()` at font scale 2.0) are unchanged.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.FailureHostTest"
+--rerun` — all 7 tests pass, `R_300` included. `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.failures.FailureHostTest.R_300*" --rerun` run 4 times in a row (fresh JVM each
+time, no incremental caching) — passed every time, demonstrating the fix is no longer
+load/timing-sensitive. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*"`
+— every test in the package passes. `.\gradlew.bat :app:detekt :app:ktlintCheck` — both BUILD
+SUCCESSFUL, zero issues. `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules,
+graph unchanged. `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (run separately — running both in one
+invocation trips a Gradle task-ordering validation error unrelated to this change) — 191 of 419
+covered, unchanged (a test-determinism fix establishes no new requirement coverage). `python
+tools/spec-check/spec_check.py` — OK, 8/8. `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+Never ran `gradlew --stop`; never rebased or stashed.
+
+**Left open / not done:** `ReaderActivityDestinationSmokeTest`'s own
+`R_350_improve_done_reflects_a_real_failure_and_offers_no_install_for_a_non_model_reason`
+(`:app:smokeTestDebugUnitTest`) remains a separate, still-unrelated pre-existing failure, noted in
+the prior WP11b entry and not touched by this change (different file, different package, out of
+this follow-up's scope).
+
 ### (pending) — ui-conformance WP11b · R-447 calibration chart colour split; R-448 back headers on F14/F19/F21/F22
 
 **Scope:** `:app` — `ui/failures/FailCalibration.kt`, `ui/failures/FailInfoCards.kt`,
