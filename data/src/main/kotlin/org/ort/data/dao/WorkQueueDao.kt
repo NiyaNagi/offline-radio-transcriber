@@ -3,6 +3,7 @@ package org.ort.data.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import org.ort.data.entity.WorkAttemptEntity
 import org.ort.data.entity.WorkQueueItemEntity
 
 /**
@@ -88,4 +89,13 @@ public interface WorkQueueDao {
 
     @Query("SELECT * FROM work_queue_item WHERE transmissionId = :transmissionId AND pass = :pass")
     public suspend fun findByTransmissionAndPass(transmissionId: String, pass: String): List<WorkQueueItemEntity>
+
+    /** Register R-426: written by [org.ort.data.WorkQueue.failPass] — see [WorkAttemptEntity]'s own doc comment. */
+    @Insert
+    public suspend fun insert(attempt: WorkAttemptEntity): Long
+
+    /** Register R-426, `Fail-Pass.dc.html`: every failed attempt at [itemId], oldest first — the
+     * order the mockup lists them in, ending with the retry-limit line the caller renders itself. */
+    @Query("SELECT * FROM work_attempt WHERE itemId = :itemId ORDER BY attemptNo")
+    public suspend fun attemptsFor(itemId: Long): List<WorkAttemptEntity>
 }
