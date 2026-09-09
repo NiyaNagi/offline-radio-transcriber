@@ -5,6 +5,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -118,8 +119,16 @@ class ReaderAccessibilityTest {
         // instead (`Menu.dc.html` never lists it as a row) — so every destination *except* Search
         // must still be reachable and displayed once scrolled to; the drawer is not allowed to
         // silently clip a destination that overflows it.
+        //
+        // R-546: each row's own testTag, not a content description of `"Open ${destination.label}"`
+        // — `DrawerRow` no longer composes that literal string (`Drawer.kt`'s own
+        // `drawerRowDescription`, register), and a description built from a real, environment-
+        // dependent trailing count (`ImproveCounts.canGetBetterCount` here, with no seeded data)
+        // is not this test's own concern — `DrawerContentTest.kt`'s `R_546_drawer_rows_own_their_
+        // description` is what pins the description's own real shape. This test's own concern
+        // (stated above) is only "reachable, not silently clipped".
         ReaderDestination.entries.filter { it != ReaderDestination.SEARCH }.forEach { destination ->
-            composeTestRule.onNodeWithContentDescription("Open ${destination.label}")
+            composeTestRule.onNodeWithTag("drawer-row-${destination.name}")
                 .performScrollTo()
                 .assertIsDisplayed()
         }

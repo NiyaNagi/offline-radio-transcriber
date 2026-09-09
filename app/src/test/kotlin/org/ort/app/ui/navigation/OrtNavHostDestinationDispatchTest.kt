@@ -83,8 +83,10 @@ class OrtNavHostDestinationDispatchTest {
     fun `LOG dispatches to WP5's real LogContent`() {
         composeTestRule.setContent { OrtTheme { OrtNavHost(sessionId = null) } }
 
-        composeTestRule.onNodeWithContentDescription("Open navigation").performClick()
-        composeTestRule.onNodeWithContentDescription("Open Log").performScrollTo().performClick()
+        // R-546: `Open <label>` is no longer `DrawerRow`'s own content description (its own
+        // `clearAndSetSemantics` now composes the label plus any real trailing count/badge, per
+        // the register) — the tag-based lookup every other case in this file already uses.
+        composeTestRule.openDrawerRow("LOG")
 
         // `LogContent` only polls (and only then computes a real "No transmissions yet" empty
         // state) once `sessionId` is real (`LogContent.kt`'s own `if (sessionId != null)` gate) —
