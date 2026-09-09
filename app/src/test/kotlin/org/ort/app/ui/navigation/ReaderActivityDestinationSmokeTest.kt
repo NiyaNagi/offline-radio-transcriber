@@ -142,7 +142,20 @@ class ReaderActivityDestinationSmokeTest {
             SessionEntity(
                 id = sessionId,
                 startedAt = 0L,
-                endedAt = null,
+                // Round 15 (WP10's own R-449 report): `endedAt = null` used to be harmless — every
+                // real reader of `startedAt`/`endedAt` here only cares about *transmission* timing
+                // (`startedAtUtc`/`endedAtUtc` below), not the session's own span. `DigestPolling
+                // .sessionCoverageBuckets` (WP10's own R-449 fix, real now) buckets by *elapsed*
+                // hour from `startedAt` to `endedAt ?: nowMillis` — with `startedAt = 0L` (epoch)
+                // and `endedAt = null`, that span became "epoch to the real wall clock at test run
+                // time," several hundred thousand hourly buckets, and a genuine `OutOfMemoryError`
+                // rendering `ActivityPatternChart`'s own `HourBar` per bucket the one time this
+                // seeded session's own detail (DG04, reached via Settings-Storage's Review link)
+                // actually composes — confirmed directly, reproduced then fixed here. A real,
+                // bounded end (1 hour after `startedAt`) is honest for a "session" fixture that was
+                // never meant to model a real multi-hour night, and keeps every other reader of
+                // `sessionId` in this class (none of which read `endedAt` today) unaffected.
+                endedAt = 3_600_000L,
                 profileId = null,
                 deviceTier = null,
                 appVersion = "test",
