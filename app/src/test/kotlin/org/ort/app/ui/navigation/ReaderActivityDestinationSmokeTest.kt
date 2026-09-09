@@ -368,6 +368,17 @@ class ReaderActivityDestinationSmokeTest {
             // the real `OnBackPressedDispatcher` every `ComponentActivity` (this one included)
             // installs, the same mechanism a device's system back gesture ultimately reaches — not
             // `Espresso.pressBack()`, which this module carries no dependency on.
+            //
+            // Round 11 (R-333, host + both sheets' own `BackHandler`s merged at a731d7a): the
+            // filter sheet opened above (line ~357) was never explicitly closed, and its own
+            // `sheetOpen` is `rememberSaveable` — `recreate()` above honestly restores it open, so
+            // it is still showing here. `LogContent`'s own `BackHandler(enabled = sheetOpen)`
+            // (WP5's Log half of R-333) now correctly claims the *first* back press to close that
+            // sheet, exactly as a real device does (back dismisses an open sheet before it leaves
+            // the screen underneath) — a second press is what actually pops Log. One press was
+            // enough before R-333 only because nothing on this screen claimed back at all yet.
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
             rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
             rule.waitForIdle()
             rule.waitUntilContentDescriptionExists("Back to $OVERS_FREQUENCY_LABEL")
