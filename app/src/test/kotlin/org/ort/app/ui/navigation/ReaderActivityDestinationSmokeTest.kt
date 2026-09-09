@@ -28,6 +28,10 @@ import org.junit.runner.Description
 import org.junit.runner.RunWith
 import org.junit.runners.model.Statement
 import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.failures.AssetSwapOption
+import org.ort.app.ui.failures.AssetSwapViewState
+import org.ort.app.ui.failures.DebugFailureOverride
+import org.ort.app.ui.failures.FailurePresentation
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.core.AttributionState
@@ -471,6 +475,44 @@ class ReaderActivityDestinationSmokeTest {
             }
         } finally {
             StorageForecast.reset()
+        }
+    }
+
+    /**
+     * WP11b follow-up (register R-448): the smoke case this class was missing for F21
+     * (`Fail-Asset-Swap`) — proof the takeover actually renders through a real, launched
+     * [ReaderActivity], the same way [R_334_a_failure_banner_never_hides_the_drawer_rows] above
+     * already proves for a real-signal banner. F21 has no real signal to drive this with
+     * ([DebugFailureOverride]'s own class kdoc, confirmed independently in
+     * `FailureMapperTest.kt`'s own `R_448_asset_swap_signal`), so [DebugFailureOverride.show] is the
+     * one path that exists — exactly what `Scenarios.kt`'s own `asset-swap` id already does for the
+     * screenshot tour and `FailureOverrideScenariosTest`'s own `F21_asset-swap` case, neither of
+     * which launches a real `Activity`. `DebugFailureOverride.clear()` runs in `finally`, matching
+     * every other process-wide holder this class resets after using (`StorageForecast.reset()`
+     * above, `ShedStatus.reset()` below).
+     */
+    @Test
+    fun `R_448_f21_route the AssetSwap takeover renders through a real ReaderActivity`() {
+        DebugFailureOverride.show(
+            FailurePresentation.AssetSwap(
+                AssetSwapViewState(
+                    activeLabel = "callsigns-2026.08 · 41,200 entries",
+                    stagedLabel = "callsigns-2026.09 · 41,600 entries",
+                    options = listOf(
+                        AssetSwapOption("Wait for the session to end", "the default · nothing else to do"),
+                    ),
+                    selectedOption = 0,
+                ),
+            ),
+        )
+        try {
+            runReaderActivity(ReaderDestination.NOW) { rule ->
+                rule.waitUntilTestTagExists("failure-asset-swap-screen")
+                rule.onNodeWithTag("failure-asset-swap-screen").assertIsDisplayed()
+                rule.onNodeWithTag("failure-asset-swap-done").assertIsDisplayed()
+            }
+        } finally {
+            DebugFailureOverride.clear()
         }
     }
 
