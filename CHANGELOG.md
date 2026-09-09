@@ -32,6 +32,189 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP2 round 2: R-380/381/543 gate-blocking finders, R-505 signal column, R-510 floors — device-verified)
+
+### (pending) — ui-conformance WP2 round 2 · R-380/381/543 semantics complete; R-505 signal-column gate; R-510 FilterChip/TextAction/PrimaryButton/SecondaryButton/DestructiveButton floors, device-verified on emulator-5554
+
+**Scope:** `:app` — `ui/components/Controls.kt`, `ui/components/LiveBar.kt`, `ui/components/Rows.kt`
+and their tests (`ControlsTest.kt`, `FeedbackTest.kt`, `LiveBarTest.kt`, `NavRowTest.kt`,
+`RowsTest.kt`, new `RejectedRowTest.kt`); minimal finder-only changes in `ui/screens/*Test.kt`
+(`LogFilterSheetTest`, `LogScreenTest`, `NowScreenTest`, `SearchScreenTest`, `ThreadScreenTest`) —
+same shape the rest of this package's finders already took. `git merge main` (main at `289a118`;
+one real conflict, `ui/screens/SearchScreenTest.kt`, resolved keeping this package's own
+`useUnmergedTree`/merged-tree finder choices and both branches' new tests; `CHANGELOG.md` and
+`results/coverage-matrix.md` merged clean, no conflict markers). Continues a previous WP2 agent's
+own uncommitted work after a machine disconnect — `git status`/`git diff` read first, see this
+entry's own "What changed" for what was inherited vs added here.
+
+**Requirements/ACs:** R-380, R-381, R-543 (register, gate-blocking); R-505, R-510 (register);
+FR-A11Y-2 (44dp target).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs this round directly: two
+  device findings below (`TextAction`'s own floor inside `Sheet`'s header, and the search
+  `TextField`'s own node) are reported as genuinely unresolved, not glossed over because a doc
+  comment elsewhere in this same file already claimed them fixed — a claim this round's own device
+  check disproved. Principle VII (module boundaries) governs what was *not* touched: `ui/navigation/
+  Drawer.kt` reproduces the identical R-380 shape and is not this package's file to fix; reported,
+  not silently worked around.
+- **Inherited (previous agent, this round completed it):** `TextAction`/`PrimaryButton`/
+  `SecondaryButton`/`DestructiveButton`/`FilterChip`/`LogRow`/`LiveBar`/`KeyValueRow` now also set
+  `this.text = AnnotatedString(...)` alongside `contentDescription` inside `clearAndSetSemantics`,
+  so a `hasText(...)`/`onNodeWithText(...)` matcher on the *default merged tree* finds the node
+  again (`clearAndSetSemantics` alone had erased the child `Text`'s own merged-in
+  `SemanticsProperties.Text`) — real-device-confirmed that `contentDescription` still wins what
+  TalkBack announces when both are present, so this does not double-announce (R-380/R-381).
+  `FilterChip`'s dismiss icon is now also exposed as a `CustomAccessibilityAction` ("Remove $label
+  filter") on the chip's own node, since `clearAndSetSemantics` genuinely removes every descendant
+  from a real device's exported tree, including the dismiss icon's own previously-independent node
+  (R-543). The search `TextField`'s label/placeholder `Text`s are marked
+  `Modifier.semantics { invisibleToUser() }` instead, since `BasicTextField` owns real
+  `SetText`/`InsertTextAtCursor`/`RequestFocus` actions `clearAndSetSemantics` cannot safely
+  redeclare. `NavRow`/`ActionBarButton`/`LogGroupHeader`/`RejectedRow`'s clickable branch — the four
+  composables flagged as "pending, do after the gate-blocking part is green" — all now carry the
+  identical `clearAndSetSemantics` shape (this round confirmed already done in the inherited diff
+  and its own `RejectedRowTest.kt`, not re-done).
+- **R-505 (this round):** `LogRow`/`ColumnHeaderRow`'s one-line/stacked gate compared the row's
+  real width against `time + freq + callsign` plus a **fixed** 24dp guess for the signal column
+  (`SIGNAL_COLUMN`), never re-measured at the real, current font scale the way
+  `rememberTimeColumnWidth`/`rememberFreqColumnWidth`/`rememberCallsignColumnWidth` already are
+  (R-205/R-373) — so at a scale where the real signal text ("S9"-shaped) needs more than 24dp, the
+  gate still picked the one-line layout, squeezing the weighted callsign column under its own floor
+  to make room: the register's own repro, "KE7QRS"/"KA7LWH" running into and clipped by the "S7"
+  figure. New `rememberSignalColumnWidth()` (`rememberMonoColumnWidth`, same pattern, `"S9"` in
+  `OrtType.signal`) replaces the fixed constant in both the gate (`oneLineWidthFor`, pulled out as
+  its own pure, directly-unit-testable function — the `logRowTranscriptStyle`/`meterColorFor`
+  pattern this file already uses for a decision no host's degenerate Robolectric font metrics can
+  verify by pixel) and `LogRowSignalText`/`ColumnHeaderSignalText`'s own floor.
+- **R-510 (this round):** the register's own repro — `FilterChip`/`FilterChipRow` on the Log
+  filter sheet's FREQUENCY row measured 24dp at 1.0 and 37.7dp at 2.0 against the 44dp floor, even
+  after R-383's own "`heightIn` last in the chain" reordering fix. `heightIn(min = 44.dp)` only
+  ever *raises* whatever floor the incoming constraints already carry — it cannot survive a tighter
+  bound a caller's own modifier fixes further out in the chain. Switched to
+  `requiredHeightIn(min = 44.dp)` in `FilterChip`, which does not coerce its own floor into
+  whatever surrounds it. Verifying this on `emulator-5554` (`wm density` 420, i.e. 2.625×; 44dp =
+  115.5px) surfaced a *second*, distinct instance of the same defect class purely from device
+  checking, not from the register: `Sheet`'s own "Clear all" (`TextAction`, no caller modifier at
+  all) measured 72px/27.4dp both before and after installing this fix — its `heightIn(min = 44.dp)`
+  was the *first* modifier in the chain with `.background()`/`.clickable()`/`.padding()` all
+  measurement-relevant and appended *after* it, the exact broken order `FilterChip`'s own R-383 doc
+  comment already named. `TextAction`/`PrimaryButton`/`SecondaryButton`/`DestructiveButton` all
+  switched to `requiredHeightIn` for the same reason. **This did not change the measured 72px/27.4dp
+  figure on device** (see "Left open" below) — kept anyway as a strictly safer, harmless floor
+  (Robolectric's own `FR_A11Y_2`/`R_510` tests pass identically before and after), while the actual
+  root cause for `TextAction` specifically stays open.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.RowsTest" --tests
+  "org.ort.app.ui.components.LogRowResponsiveTest" --tests "org.ort.app.ui.components.ControlsTest"
+  --tests "org.ort.app.ui.components.RejectedRowTest" --tests "org.ort.app.ui.components.NavRowTest"
+  --tests "org.ort.app.ui.components.FeedbackTest" --tests "org.ort.app.ui.components.LiveBarTest"`
+  — BUILD SUCCESSFUL, all green, including new `R_510_filter_chip meets the 44dp floor even when a
+  caller's own modifier tries to undercut it`, `R_505_the one-line gate sums all four columns
+  including signal, not three`, `R_505_the signal column's real width never returns less than the
+  24dp guide floor`.
+- `.\gradlew.bat :app:testDebugUnitTest` (full, exempted per the cross-cutting instruction) — BUILD
+  SUCCESSFUL, **1368 tests, 0 failures, 0 errors, 0 skipped across 152 classes** (XML summed
+  directly), run after the merge, before this entry's own `TextAction`/`PrimaryButton`/
+  `SecondaryButton`/`DestructiveButton` `requiredHeightIn` change.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` (full) — 72 tests, 1 failed: the same pre-existing
+  `ReaderActivityDestinationSmokeTest.R_350_improve_done_...` `:pipeline`/`ComposeTimeoutException`
+  failure every WP has reported and left untouched since round 12 (this file's own line 660-661,
+  679) — confirmed unrelated (re-ran it in isolation, identical `ComposeTimeoutException` at the
+  same `waitUntilTextExists` line, no `ui/components` code anywhere in its own path); every other
+  case, including `R_448_f21_route`/`R_333`/`R_276`/`R_133`/`SessionsContentTest.FR_DIG_9`/
+  `NavSeedTest.pendingLogFilter`/`LogContentBackHandlerTest.R_333_log_sheet_back`, passed.
+- `ControlsTest` alone, re-run after the `requiredHeightIn` change to `TextAction`/`PrimaryButton`/
+  `SecondaryButton`/`DestructiveButton` — BUILD SUCCESSFUL, all green (including
+  `FR_A11Y_2 every interactive component has a 44dp target and a role`). A second full
+  `:app:testDebugUnitTest` run after that same change was attempted twice more and did not
+  complete — see "Left open".
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, zero issues (run fresh, after
+  every change in this entry).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules, graph unchanged (run fresh).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL (run fresh).
+- `python tools\spec-check\spec_check.py` — OK, 8/8 (run fresh).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations,
+  run fresh) — 192 of 419, unchanged; no diff in `results/coverage-matrix.md`.
+- **Device (`emulator-5554`, `ort_audit`-class AVD, `wm density` 420 / 2.625×, API level current;
+  `overnight` scenario via `tools\ui-audit\install.ps1 -Port 5554 -Clear` +
+  `tools\ui-audit\scenario.ps1 -Port 5554 -Name overnight`, `uiautomator dump` +
+  `adb pull`/`screencap`):**
+  - `TextAction` ("Filter" on Log, "Install a model" on Now): `<node text="Install a model"
+    content-desc="Install a model" clickable="true" focusable="true" bounds="[53,1339][298,1465]"/>`
+    — 126px/48dp, both `text` and `content-desc` on the same clickable node, ≥44dp. Confirms R-380's
+    dual `text`+`contentDescription` fix on a real device.
+  - `PrimaryButton` ("Show 0 overs" on the Log filter sheet): `bounds="[53,1994][1027,2120]"` —
+    126px/48dp.
+  - `FilterChip` (Log-Filter's FREQUENCY row, the R-510 repro itself): `<node text="All"
+    content-desc="All" checkable="true" checked="true" clickable="true"
+    bounds="[38,973][164,1099]"/>` — 126px/48dp, clears the 115.5px/44dp floor. **R-510, the named
+    register row, verified fixed on device.**
+  - `LiveBar` ("Quiet"): `bounds="[0,2216][1080,2342]"` text+content-desc both "Quiet", clickable.
+  - `CheckboxRow` (ATTRIBUTION rows, Confirmed/Inferred/Ambiguous/Unknown): each 116px/44.2dp,
+    exactly at the floor — confirms `heightIn` *is* reliable when it is the last measurement-
+    relevant modifier in the chain (this file's own R-383 finding), consistent with `RadioRow`/
+    `CheckboxRow`/`ToggleRow` being left untouched this round.
+  - **Open, not fixed:** `Sheet`'s own "Clear all" (`TextAction`, `Feedback.kt`):
+    `<node text="Clear all" content-desc="Clear all" clickable="true" focusable="true"
+    bounds="[882,829][1027,901]"/>` — 72px/27.4dp, under the 115.5px/44dp floor, reproduced
+    identically before and after switching to `requiredHeightIn`. Screenshot (not committed; this
+    session's own scratchpad) shows nothing visually broken — a real, uninvestigated discrepancy
+    between the reported accessibility-node bounds and the visible control, not merely a Robolectric
+    gap this time (Robolectric's own `FR_A11Y_2`/`ControlsTest` pass throughout, both readings).
+  - **Open, not fixed:** the search `TextField` (`Search.dc.html`'s field): dumped as `<node
+    content-desc="" class="android.widget.EditText" clickable="true" focusable="true"><node
+    content-desc="Search text" bounds="[127,722][1027,838]" focusable="false"/></node>` — the
+    field's own clickable/focusable node still exports an *empty* `content-desc`, with "Search
+    text" (`contentDescriptionText`) landing on a separate, non-focusable sibling instead. This is
+    the *exact* shape `TextField`'s own R-381 doc comment (inherited from the previous agent)
+    describes as the pre-fix defect; the `invisibleToUser()` change already in place does not
+    resolve it on this device.
+
+**Left open / not done:**
+- **`Sheet`'s "Clear all" 27.4dp measurement** (see above) — `requiredHeightIn` did not move this
+  number at all, on two independent re-installs. Root cause is not `heightIn` positioning (already
+  tried and ruled out) or a caller override (none exists — `TextAction(text = "Clear all", onClick
+  = onClearAll)` passes no `modifier`). Filed as a new, unregistered finding for the lead — this
+  package does not have a confirmed fix to offer for it, and forcing one without understanding the
+  mechanism risked disguising rather than closing the gap. `PrimaryButton`/`SecondaryButton`/
+  `DestructiveButton`'s own `requiredHeightIn` change is unverified against this specific anomaly
+  (no on-device repro attempted for those three specifically — only `TextAction`, via `Sheet`, and
+  `FilterChip`, via the Log filter sheet, were reachable in this session's own scenario walk).
+- **The search `TextField`'s own `contentDescription`** (see above) — R-381's own inherited fix
+  does not close the defect its own doc comment names on this device. Not attempted further this
+  round: `BasicTextField`'s semantics interaction is exactly the kind of thing this file's own doc
+  comment already warns is unsafe to touch without care (real `SetText`/`RequestFocus` actions), and
+  there was no remaining budget this round to safely re-derive a fix and re-verify it on device.
+- **A second full `:app:testDebugUnitTest` run after the `requiredHeightIn` change to `TextAction`/
+  `PrimaryButton`/`SecondaryButton`/`DestructiveButton`** did not complete. The first attempt moved
+  to the background past a 600s timeout; over the following ~30 minutes it neither produced new XML
+  test reports nor released its own file lock on `app/build/test-results/testDebugUnitTest/binary/
+  output.bin` (two independent fresh `:app:testDebugUnitTest` invocations both failed immediately
+  with `IOException: Unable to delete directory ... binary` against that same open file — proof the
+  original process was still alive, not merely slow) — consistent with, but well beyond, the
+  documented shared-machine load (several other worktrees' `java` processes observed actively
+  consuming CPU throughout). `ktlint`/`detekt`/`assembleDebug`/`dependencyRules`/`platformGuards`/
+  `spec_check`/`coverageMatrix` all ran fresh, quickly, and green in the same window, so this reads
+  as a `testDebugUnitTest`-specific stall, not a broken build. The change itself is a same-shape
+  modifier swap (`heightIn` → `requiredHeightIn`, no logic/API change) directly exercised, green, by
+  the scoped `ControlsTest` re-run above; risk of an undetected regression elsewhere is assessed low
+  but not independently confirmed by a second full run this session. Recommend the lead's own
+  post-merge full gate catches this, or a follow-up scoped re-run once the shared machine's load
+  clears.
+- **`ui/navigation/Drawer.kt`'s own drawer row** (`fun DrawerRow` or equivalent, lines ~189-203)
+  reproduces the identical R-380 shape this package already fixed everywhere in `ui/components/`:
+  `.semantics(mergeDescendants = true) { contentDescription = "Open ${destination.label}" }` on a
+  `.selectable(...)` node — confirmed on device (`uiautomator dump`, drawer open): the clickable
+  node itself carries `content-desc=""`, while a separate, non-clickable child carries `content-desc
+  ="Open Log"`. Not this package's file to touch (`ui/navigation/`, outside `ui/components/**`) —
+  flagged for whichever package owns it.
+- Register rows not touched this round beyond R-380/381/505/510/543 — R-544 (F21 third option) and
+  every other open row stay exactly as the register already has them.
+
+---
+
 ## 2026-09-08 (ui-conformance WP11b: F21 asset-swap wired to WP10's real FR-AST-4 signal)
 
 ### (pending) — ui-conformance WP11b · F21 asset-swap wired to WP10's real FR-AST-4 `stagedActivation` signal
