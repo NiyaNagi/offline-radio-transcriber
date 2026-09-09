@@ -32,7 +32,116 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (ui-conformance data: dedicated Room query/transaction executor, Compose Flow-idle regression)
+## 2026-09-08 (ui-conformance WP12: bulk deterministic screenshot tour)
+
+### fec91e4 — ui-conformance WP12 · bulk, deterministic screenshot tour (tour.ps1, ScreenshotTourActivity, diff.py)
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/**` (new — `TourSpec.kt`, `SetupStepIds.kt`,
+`TourManifest.kt`, `TourRunner.kt`, `ScreenshotTourActivity.kt`), `app/src/test/kotlin/org/ort/app/debug/tour/**`
+(new — `TourSpecTest.kt`, `ScreenshotTourTest.kt`), `app/src/debug/AndroidManifest.xml` (registers the
+new debug-only activity), `tools/ui-audit/tour.json`, `tools/ui-audit/tour.ps1`, `tools/ui-audit/diff.py`
+(all new), `results/ui-audit/README.md` (new "Screenshot tour" section), `results/coverage-matrix.md`
+(regenerated).
+
+**Requirements/ACs:** none new — validation tooling per `spec/ui-conformance-plan.md` WP12, not
+product behaviour. Constitution II (test-backed change, behavioural fakes) and VII (structural
+guarantees) bear on how this was built; constitution IV ("capture never blocks") bears on the one
+hard rule this package had to keep — the tour never starts `RealCaptureService`.
+
+**What changed:**
+
+*Constitution Check.* II (strict TDD — every file below has a failing-first test; a `TourStepRenderer`
+fake, not a real `Activity`/window, is this package's behavioural fake, for the reason its own doc
+comment gives). IV (capture never blocks/lies — no code path in this package references
+`RealCaptureService`; every scenario is loaded read-only through the real `Scenarios.load`, never a
+tap). VII (structural guarantees — an unsupported `drillIn` key fails loudly in plain, non-composable
+suspend code before it can reach composition, never a silent wrong screenshot).
+
+- **`TourStep`/`TourSpec`** (`TourSpec.kt`) — the JSON step schema the brief specifies: `id`,
+  `scenario`, `destination` XOR `setup`, an optional `drillIn` map (carried through verbatim from a
+  validator brief's own vocabulary), `override`, `fontScale`, `waitMillis`. A step naming both or
+  neither of `destination`/`setup` fails to parse (`init` block), never silently picks one.
+- **`ScreenshotTourActivity`** — for a *destination* step, composes the real `OrtNavHost` **directly
+  inside its own `setContent`**, keyed on the step id (a fresh `rememberReaderNavigator`/
+  `NavHostNavState` per step, previous step's polling `LaunchedEffect`s cancelled the normal Compose
+  way) and wrapped in `CompositionLocalProvider(LocalDensity provides Density(density, fontScale))` —
+  this is what makes `fontScale` actually take effect, which launching `ReaderActivity` as a child
+  process never could (neither it nor `OrtNavHost` exposes a font-scale seam). For a *setup* step,
+  launches the real `SetupActivity` with its own, already-public `EXTRA_STEP` extra and captures that
+  activity's window via an `Application.ActivityLifecycleCallbacks` registered in `onCreate` — nothing
+  under `ui/setup` is touched. Both paths capture with `androidx.core.view.drawToBitmap`.
+- **The host-parameter gap, found and reported rather than worked around**: `OrtNavHost`'s public
+  surface is exactly `sessionId`, `navigator` (`rememberReaderNavigator(initialDestination,
+  initialSettingsScreen)`), `failureActions`. Every drill-in id — `NavHostNavState.openTransmissionId`/
+  `openStationId`/`openFrequencyHz`/`openThreadId`/`pendingLogFilter`/`openCaptureLevelMeter`/
+  `pendingReviewSessionId` — is `private` inside `OrtNavHost.kt` (WP3's file), populated only by a
+  callback a real tap fires. v1 therefore reaches only the ten `ReaderDestination` roots, `Settings`'s
+  nine sub-screens, and `SetupActivity`'s gated `EXTRA_STEP` steps — never a transmission/station/
+  frequency/thread drill-in, an open filter sheet, a `Search` result, or the capture level-meter. A
+  step naming any other `drillIn` key is validated in plain suspend code (never inside `setContent`,
+  so it can never crash composition) and recorded as one `error` manifest line. `results/ui-audit/README.md`'s
+  new section and this package's own report to the lead name the exact fields `ui/navigation/**` would
+  need.
+- **`TourRunner`** — orchestrates `Scenarios.load` (the real, `:data`-backed seeding
+  `ScenarioReceiver` uses) → `TourStepRenderer.render` → PNG write → one JSONL manifest line, per
+  step, catching and isolating any failure so one bad step never aborts the tour. Deletes the output
+  directory at the start of `run()` so a re-run never appends onto a stale manifest.
+- **`tour.json`** — 93 steps: every `ReaderDestination` root against a representative scenario set
+  (idle/first-session/populated/live, every reachable F-id banner/takeover, both recovery-toast
+  overrides `rig-lost→rig-reconnected` and `storage-warn→storage-fine`), all nine `Settings`
+  sub-screens, and nine setup steps (S01–S04, S07–S09, S12 — S05/S06 excluded because they are only
+  ever reached as the *live result* of a real tap-triggered check, S10/S11 because they need a real
+  USB/rig attach; both documented, not silently dropped).
+- **`tour.ps1`** — pushes the spec, launches the activity, polls the on-device
+  `<filesDir>/tour/manifest.json` (via `run-as`, app-private storage) for its trailing `{"done": true}`
+  line (15-minute cap), stages the whole `tour/` directory to a world-readable `/sdcard` path with
+  `run-as ... cp -r` and pulls it with a plain `adb pull` — never `adb exec-out` redirected to a file
+  (brief-common.md's own rule) — into `results/ui-audit/<scenario>/<screen>.png` plus
+  `results/ui-audit/tour-manifest.json`. `-Only <id-glob>` filters the pushed spec.
+- **`diff.py`** — `new`/`missing`/`changed`/`unchanged` per step, `--before` a directory or a git ref
+  (`git show <ref>:<path>`), comparing a 4×4 per-cell mean-RGB downsample (top 4% — the status bar —
+  excluded) against a mean-abs-difference threshold. Uses Pillow if present, else a small stdlib PNG
+  decoder covering the non-interlaced 8-bit RGB/RGBA case `Bitmap.compress(PNG, ...)` actually
+  produces, failing loudly (never silently wrong) outside that case. Writes `tour-diff.md`.
+
+**Verified** (worktree `wp12-tour`, main `546b3df`):
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — **BUILD SUCCESSFUL**, 12
+  tests, 12 passed: `TourSpecTest` (7 — parse, unique ids, every scenario/override/destination/
+  settingsScreen/setup-id name real, structural-error rejection) and `ScreenshotTourTest` (3 —
+  `R_TOUR_RUNNER_OK` a two-step tour against the real `overnight` fixture writes two PNGs and an ok
+  JSONL manifest with a trailing `done` line; `R_TOUR_RUNNER_ERROR_ISOLATED` an unknown destination
+  records one `error` line and the tour still finishes and captures the next step; `R_TOUR_UNSUPPORTED_DRILL_IN`
+  a `transmissionId` drillIn records an error without ever invoking the renderer).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL** (one round of `ktlintFormat`
+  applied first — a semicolon-joined lambda body reformatted to two statements; re-checked clean).
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK** (`dependencyRules: checked 17 modules
+  ... every edge is permitted`; `platformGuards: checked 17 modules ... no analytics/telemetry SDK, no
+  HTTP client outside :net`).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **spec-check: OK** (8/8 checks pass).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `coverageMatrix: 419 requirements, 191 covered`; `coverageMatrixCheck: up to date (191 covered of
+  419)`. The diff this produced in `results/coverage-matrix.md` reflects other packages' tests already
+  merged to `main` since the matrix was last regenerated (e.g. `CatalogDaoTest` against `FR-UI-4`/
+  `FR-UI-8`, `SessionsContentTest` against `R-133`) — none of it is this package's own, since neither
+  `TourSpecTest` nor `ScreenshotTourTest` cites a requirement id.
+- `diff.py` sanity-checked standalone against a small synthetic PNG fixture (not committed — scratch
+  only): correctly reported one `unchanged`, one `changed`, one `new` image.
+- Not run: an emulator pass of `tour.ps1` itself — both shared ports were busy for this whole session
+  (brief-common.md's load policy forbids booting a third); `tour.ps1`'s own `adb`/`run-as` sequencing
+  is therefore unverified against a real device this round.
+
+**Left open / not done:**
+- **The host-parameter gap is the main finding, not a footnote** — see "What changed" above and
+  `results/ui-audit/README.md`'s new section for the exact fields (`OrtNavHost`/`NavHostNavState`/
+  `ReaderNavigator`, all `ui/navigation/**`, WP3's row) a future round would need to add before v2 of
+  this tour could reach any drill-in, sheet, or `Search` result.
+- Setup steps carry no font-scale hook (`SetupActivity` has none to give them — see `ScreenshotTourActivity`'s
+  own doc comment).
+- `tour.ps1`/`ScreenshotTourActivity`'s device-side sequencing (the `run-as`/`cp`/`adb pull` staging,
+  the manifest-done poll, `EXTRA_STEP`'s gate against each of the nine setup scenarios actually used)
+  has not been run against a real emulator this round — both AVD ports were busy for the whole
+  session; a validator's next pass against `ort_audit`/`ort_audit_2` is the first real proof.
 
 ### b5a145c — ui-conformance data · dedicated query/transaction executor, fixes the post-R-204 Compose idle regression
 
