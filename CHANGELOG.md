@@ -11346,6 +11346,68 @@ the same discipline every `Saver`/regression-guard test in this package has ship
 - R-333's other three reproduction points (D01 opened from an L01 row, the rejected detail from L05,
   the open drawer on Now) are WP3's own host-level `BackHandler` — not this package's file.
 
+### (pending) — ui-conformance WP5 · fix a stale double-back assumption in WP3's R-276 smoke test
+
+**Scope:** `ui/navigation/ReaderActivityDestinationSmokeTest.kt` (WP3's file) — one assertion,
+cross-owner edit, scoped exactly as the coordinator's own message authorized.
+
+**Requirements/ACs:** R-276, R-333 (register.md — no register status change; this is a test-only fix
+for a stale expectation the R-333 landing left behind).
+
+**Constitution Check.** Principle II (Test-Backed Change): before touching anyone else's file, this
+found the *real* cause by running the failing test and reading its actual stack trace, not by
+guessing from the coordinator's own (explicitly hedged) hypothesis — the failure was not the count
+line at all, it was later, at the post-`recreate()` back-press assertion.
+
+**What was actually wrong (not the count line).** Ran
+`:app:smokeTestDebugUnitTest --tests ...R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`
+directly: it failed at `waitUntilContentDescriptionExists("Back to 446.100")`, 15s after a single
+`onBackPressedDispatcher.onBackPressed()` dispatch — three lines *after* the count-line assertion
+(`"Show 5 overs"`), which had already passed. `TONIGHT_OVER_COUNT` is 5, the fixture seeds zero
+gaps, so R-330's gap-exclusion change cannot be the cause here (nothing to exclude); R-331/R-332
+never touch this code path at all. The real cause: the test opens the filter sheet (`"Filter"` tap)
+to read the count line but never explicitly closes it before `scenario.recreate()`. `LogContent`'s
+own `sheetOpen` is `rememberSaveable`, so `recreate()` (previously merged at `a731d7a`, same commit
+as `LogContent`'s R-333 `BackHandler(enabled = sheetOpen)`) honestly restores the sheet open. The
+*first* back press after recreate now correctly closes that reopened sheet (matching real Android
+convention: back dismisses an open sheet before it leaves the screen underneath) rather than falling
+through to pop Log — a second press is what actually pops Log to `Frequency-Change`. The test's
+single-back-press assumption predates R-333's sheet-level `BackHandler`s and is exactly the kind of
+stale expectation the coordinator's message anticipated, just not the specific one (count vs.
+back-press count) they guessed.
+
+**What changed:** two back-press dispatches (each followed by `waitForIdle()`) in place of one,
+with a comment explaining why, right where the original single dispatch was.
+
+**Verified:**
+- `git merge main` (fast-forwarded cleanly to `4eb9274` — `HEAD` was already an ancestor).
+- Reproduced the failure directly first (`:app:smokeTestDebugUnitTest --tests
+  ...R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`), read the real
+  stack trace, confirmed the count-line assertion was not the failing one.
+- Applied the two-back-press fix; re-ran the same single test — `PASSED`.
+- Ran the full smoke suite — `.\gradlew.bat :app:smokeTestDebugUnitTest` — all 20 tests `PASSED`
+  (the coordinator's own "20 of 21" — this fix is the 21st).
+- Scoped gate (standing load policy):
+  - `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.LogViewDataTest" --tests
+    "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.data.ThreadViewDataTest" --tests
+    "org.ort.app.ui.screens.ThreadDetailScreenTest" --tests "org.ort.app.ui.screens.LogScreenTest"
+    --tests "org.ort.app.ui.screens.LogContentBackHandlerTest" --tests
+    "org.ort.app.ui.screens.LogAndThreadContentActivityTest"` — BUILD SUCCESSFUL, every test
+    `PASSED` (this package's own files, untouched by this commit, still green).
+  - `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean.
+  - `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+  - `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+  - `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+  - `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 191 covered ->
+    results\coverage-matrix.md`.
+  - `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (191
+    covered of 419)`.
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- This is the only assertion touched in `ReaderActivityDestinationSmokeTest.kt` — everything else in
+  that file remains WP3's, per the coordinator's own scoping of this cross-owner edit.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
