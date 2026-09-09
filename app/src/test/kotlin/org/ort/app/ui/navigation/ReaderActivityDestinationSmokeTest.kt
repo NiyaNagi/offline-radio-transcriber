@@ -43,6 +43,7 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.robolectric.RobolectricTestRunner
@@ -771,6 +772,48 @@ class ReaderActivityDestinationSmokeTest {
             // class's own later case, failed exactly this way before this reset was added).
             DebugFailureOverride.clear()
             CaptureState.idle(clearSession = true)
+        }
+    }
+
+    // Round 16, register R-541 (halt): `FailureHost.kt`'s own `BannerOverlay` positions itself
+    // `HOST_HEADER_HEIGHT` (44dp) below the top of the viewport, assuming a host `ScreenHeader`
+    // already occupies that space (`FailureHost.kt`'s own `HEADER_HEIGHT` kdoc) â€” true for every
+    // destination this host draws its own `ScreenHeader` for, but silently false for `SETTINGS`
+    // sub-screens, `SEARCH`, and every drill-in, which own their own header instead and get none
+    // from this host (`NavHostBody`'s own `isDrillIn`/`isSearch`/`isSettings` branch). Before this
+    // round's own `bannerClearance` fix (`OrtNavHost.kt`), a headerless destination's own back row
+    // sat `HOST_HEADER_HEIGHT` short of a real banner's bottom edge, clipped underneath it and
+    // unreachable â€” `results/ui-audit/rig-lost/CF06-settings-rig.png`, the coordinator's own
+    // repro (Settings-Rig, a `SETTINGS` sub-screen, under `Fail-Rig`'s real banner). `rig-lost`
+    // (F9, `RigStatus.State.Stale`) drives that same real banner directly through
+    // `FailureSignalsPolling`/`FailureMapper` â€” no `Scenarios.load`/`DebugFailureOverride` scenario
+    // fixture needed, so this sets `RigStatus` directly and resets it in `finally` (the same
+    // process-wide-singleton discipline this class's `DebugFailureOverride`/`CaptureState` resets
+    // already follow, for the same cross-test-pollution reason).
+    @Test
+    fun `R_541_settings_rig_back_row_sits_at_or_below_the_rig_lost_banners_bottom_edge`() {
+        RigStatus.stale(
+            RigStatus.State.Connected("TH-D75A", listOf(RigStatus.BandState("A", 145_230_000L, "FM", false))),
+            sinceMillis = System.currentTimeMillis() - 35 * 60_000L,
+        )
+        try {
+            runReaderActivity(ReaderDestination.SETTINGS, settingsScreen = SettingsScreenId.RIG) { rule ->
+                rule.waitUntilTestTagExists("failure-rig-banner")
+                rule.waitUntilContentDescriptionExists("Back to Settings")
+
+                val bannerBottom =
+                    rule.onNodeWithTag("failure-banner-overlay").fetchSemanticsNode().boundsInRoot.bottom
+                val backRowTop =
+                    rule.onNodeWithContentDescription("Back to Settings").fetchSemanticsNode().boundsInRoot.top
+
+                check(backRowTop >= bannerBottom) {
+                    "expected the 'Back to Settings' row (top=$backRowTop) to sit at or below the " +
+                        "rig-lost banner's own bottom edge (bottom=$bannerBottom) - it must not be " +
+                        "clipped underneath it"
+                }
+            }
+        } finally {
+            RigStatus.reset()
         }
     }
 

@@ -32,6 +32,81 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (WP3 round 16 · R-541 banner-slot clearance on headerless destinations)
+
+### 4554ba8 — WP3 round 16 · reserve the banner's full height on destinations with no host header
+
+**Scope:** `ui/navigation` (`OrtNavHost.kt` — `NavHostBody`'s own content-padding computation,
+plus the new private `bannerClearance`/`HOST_HEADER_HEIGHT`; `ReaderActivityDestinationSmokeTest
+.kt` — one new case). `git merge main` three times this round (`3dee1ee` → `5dfd02b` → `9965665`
+→ `ec206fe`, all clean fast-forwards, no conflicts, none touching either file).
+
+**Requirements/ACs:** register R-541 (halt) — tour run 3's `results/ui-audit/rig-lost
+/CF06-settings-rig.png`: Settings sub-screens (and, by the same mechanism, `SEARCH` and every
+drill-in) draw their own header instead of the host's `ScreenHeader`, so the `FailureHost` banner
+overlaid the sub-screen's own "‹ Settings" back row, clipping it under the banner's bottom edge —
+back was unreachable while a banner showed. `Log`'s own banner (`storage-warn/L01-log-banner.png`)
+was unaffected — `Log` gets the host's real `ScreenHeader`, so it was never in scope.
+
+**What changed:** root-caused to a mismatch between `FailureHost.kt`'s own `BannerOverlay`
+(positions itself a fixed 44dp — `HEADER_HEIGHT` there — below the top of the viewport,
+*assuming* a host `ScreenHeader` already occupies that space, and reports `contentTopPadding` as
+only the *extra* room a banner needs beyond it — see that file's own kdoc) and `OrtNavHost.kt`'s
+`NavHostBody`, which renders *no* header at all for a drill-in, `SEARCH`, or `SETTINGS` (all
+three own their own header instead). For those three, the banner's real bottom edge sits 44dp
+lower than `contentTopPadding` alone accounted for, so their own header/back row landed clipped
+underneath it. Fixed entirely inside `OrtNavHost.kt` (the file this row owns; the banner slot
+itself lives there — `FailureHost.kt` was read for its contract but not touched, so no WP11b
+coordination was needed): a new private `bannerClearance(hostHeaderShown, contentTopPadding)`
+adds the missing `HOST_HEADER_HEIGHT` (44dp, mirroring `FailureHost.kt`'s own `HEADER_HEIGHT`,
+cited rather than silently re-derived) whenever `hostHeaderShown` is `false` *and* a banner is
+actually showing (`contentTopPadding > 0.dp` — so a headerless destination's own header is not
+pushed down by 44dp for nothing when no banner is up). Also merged `NavHostBody`'s own
+`drillInIds`/`isDrillIn` into one line and combined the padding computation to keep the function
+under detekt's `LongMethod` limit once this change's own lines pushed it over — the same
+established "extract/simplify to fit the budget" pattern this file has used before, no behavior
+change from that half. New test: `ReaderActivityDestinationSmokeTest
+.R_541_settings_rig_back_row_sits_at_or_below_the_rig_lost_banners_bottom_edge` — seeds a real
+`rig-lost` signal directly via `RigStatus.stale(...)` (F9, no `Scenarios.load`/
+`DebugFailureOverride` fixture needed — `FailureSignalsPolling`/`FailureMapper` read `RigStatus
+.state` unconditionally), lands on `Settings-Rig`, and asserts the "Back to Settings" node's own
+`boundsInRoot.top >= ` the `failure-banner-overlay` node's own `boundsInRoot.bottom`; resets
+`RigStatus` in `finally` (a process-wide singleton, the same cross-test-pollution discipline this
+file's `DebugFailureOverride`/`CaptureState` resets already follow). Verified as a genuine
+red→green case both ways: reverting the fix alone reproduced the exact reported defect
+(`top=206.0` clipped under `bottom=232.0`, an IllegalStateException naming both), and reverting
+it again while leaving `R_133`/`R_350` (this round's other two touch points, both known-red from
+WP2) unchanged proved neither pre-existing failure is caused by this fix — both still fail
+identically with or without it, confirmed directly by isolation runs.
+
+**S12 Install / notification's Open action — confirmed still land:** both reach `ReaderActivity`
+through the exact same `EXTRA_DESTINATION`/`EXTRA_SETTINGS_SCREEN` intent-extras path this file's
+own `R_129_*` cases exercise (`ReaderActivity.kt`'s own kdoc names S12's `Install` and the
+capture notification's `Open` as this mechanism's two real callers). Every `R_129_*` case in this
+class still passes, `R_129_SETTINGS_RIG_initialScreen_...` (the closest analog to S12's own
+`SETTINGS`+`ASSETS` extras) included — this fix changes nothing about intent parsing or
+destination dispatch, only the padding above already-dispatched content.
+
+**Verified:** `:app:smokeTestDebugUnitTest --tests
+"...ReaderActivityDestinationSmokeTest.R_541*"` green; full `ReaderActivityDestinationSmokeTest`
+class run: 27 tests, 5 failed — `R_132`, `R_350`, `R_133`, `R_333`, `R_276` — every one of the
+five reproduced identically with this round's own fix reverted (isolation runs), confirming all
+five are the coordinator's own pre-flagged WP2 `586ec9b` semantics regression (WP2 fixing
+separately), not caused here; the other 22 cases, `R_541` and every `R_129_*`/`R_448_*` included,
+all pass. `:app:ktlintCheck :app:detekt` — `BUILD SUCCESSFUL` (required two follow-up trims after
+the first pass flagged `NavHostBody` `LongMethod` at 85/83/80 lines against detekt's true ≤79
+limit — comment and blank-line changes alone did not move the count, only code-line removal did;
+documented in `bannerClearance`'s own doc comment for the next agent who hits this). `dependencyRules
+platformGuards` — both `OK`. `python tools/spec-check/spec_check.py` — all 8 checks `[PASS]`.
+`:app:assembleDebug` — `BUILD SUCCESSFUL`. `coverageMatrix` then, separately, `coverageMatrixCheck`
+— both green, matrix up to date.
+
+**Left open / not done:** nothing on this file. `R_132`/`R_350`/`R_133`/`R_333`/`R_276` are
+WP2's own regression, reported as such (not fixed here, not silently left unexplained) — WP2 is
+already fixing per the coordinator's own heads-up this round.
+
+---
+
 ## 2026-09-08 (ui-conformance WP12 v5: R-460 scroll-to-end for cold Setup/Failure @2x captures)
 
 ### 2ec30ee — ui-conformance WP12 v5 · R-460
