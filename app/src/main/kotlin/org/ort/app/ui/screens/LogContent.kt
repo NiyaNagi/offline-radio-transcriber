@@ -112,6 +112,14 @@ private val LogFilterSelectionSaver: Saver<LogFilterSelection, Any> = listSaver(
  * filter, not two independent ones) — seeding only `selection` would have the frequency silently
  * overridden back out on the very first poll. Seeding the matching chip also satisfies "renders as
  * an active filter chip" directly, for free.
+ *
+ * [initialSheetOpen] (the coordinator's own seam for WP12's screenshot tour — `NavSeed.kt`'s own
+ * doc comment named this exact gap: neither this sheet nor `Search`'s own accepted an initial-open
+ * parameter) seeds [sheetOpen]'s own first `rememberSaveable` value, so a caller can capture L02
+ * open without a real tap on "Filter" — `false` (every existing caller) is exactly today's
+ * closed-by-default behaviour. Seeding only the *initial* value, not forcing it open on every
+ * recomposition, is what still lets a person (or the R-333 `BackHandler` below) close it
+ * afterwards — a `LaunchedEffect` re-forcing it back open on every change would fight both.
  */
 @Composable
 public fun LogContent(
@@ -121,6 +129,7 @@ public fun LogContent(
     modifier: Modifier = Modifier,
     onOpenThread: (String) -> Unit = {},
     initialFilter: LogFilterSelection? = null,
+    initialSheetOpen: Boolean = false,
 ) {
     // R-247: `sessionId == null` (no session has ever started) never polls below, so this initial
     // value is the screen's actual, final state for that case — a real, fully-drawn empty Log
@@ -135,7 +144,7 @@ public fun LogContent(
     var selection by rememberSaveable(stateSaver = LogFilterSelectionSaver) {
         mutableStateOf(initialFilter ?: LogFilterSelection())
     }
-    var sheetOpen by rememberSaveable { mutableStateOf(false) }
+    var sheetOpen by rememberSaveable { mutableStateOf(initialSheetOpen) }
     var sheetState by remember { mutableStateOf<LogFilterSheetViewState?>(null) }
 
     // R-333 (Log half — `OrtNavHost`'s own host `BackHandler`, WP3's, closes the drawer and pops

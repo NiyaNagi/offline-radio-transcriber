@@ -21,11 +21,17 @@ import org.robolectric.RobolectricTestRunner
  * plain composable, not a `ModalBottomSheet` that would intercept back on its own — so a system back
  * press while the sheet was open fell through to the host and popped Log itself, one level too far.
  *
- * A dedicated file, not a case added to `LogAndThreadContentActivityTest`: this test needs a real
+ * Also covers the coordinator's own screenshot-tour seam: `LogContent.initialSheetOpen` (`NavSeed.kt`
+ * named this exact gap in its own doc comment — neither this sheet nor `Search`'s own accepted an
+ * initial-open parameter before this) seeds the sheet open on first composition, for a tour step to
+ * capture L02 without a real tap on "Filter" — and the R-333 `BackHandler` above must still close a
+ * seeded-open sheet exactly as it closes a tapped-open one.
+ *
+ * A dedicated file, not cases added to `LogAndThreadContentActivityTest`: both tests here need a real
  * (non-`null`) `sessionId` so `LogContent`'s own session-tied `LaunchedEffect` polling loops actually
  * run — that file's own doc comment records why a `sessionId`-carrying case must not share a class
  * with one that keeps `sessionId = null` (an uncancelled polling loop bleeding into a later test in
- * the same Robolectric suite run).
+ * the same Robolectric suite run); two `sessionId`-carrying tests sharing this class is not that risk.
  */
 @RunWith(RobolectricTestRunner::class)
 class LogContentBackHandlerTest {
@@ -65,6 +71,31 @@ class LogContentBackHandlerTest {
         // The sheet closed on this one back press...
         composeTestRule.onNodeWithText("Filter the log").assertDoesNotExist()
         // ...and Log itself is still showing — back did not fall through and pop the destination.
+        composeTestRule.onNodeWithText("Log").assertExists()
+    }
+
+    @Test
+    fun R_TOUR_log_sheet_open() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogContent(
+                    context = composeTestRule.activity,
+                    sessionId = "S1",
+                    onOpen = {},
+                    initialSheetOpen = true,
+                )
+            }
+        }
+
+        // Seeded open on first composition — no tap on "Filter" needed.
+        composeTestRule.waitUntilTextExists("Filter the log")
+        composeTestRule.onNodeWithText("Filter the log").assertExists()
+
+        // The R-333 BackHandler still claims back for a seeded-open sheet, same as a tapped-open one.
+        composeTestRule.activity.onBackPressedDispatcher.onBackPressed()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("Filter the log").assertDoesNotExist()
         composeTestRule.onNodeWithText("Log").assertExists()
     }
 }

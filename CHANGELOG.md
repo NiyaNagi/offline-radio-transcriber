@@ -11979,6 +11979,57 @@ with a comment explaining why, right where the original single dispatch was.
 - This is the only assertion touched in `ReaderActivityDestinationSmokeTest.kt` — everything else in
   that file remains WP3's, per the coordinator's own scoping of this cross-owner edit.
 
+### (pending) — ui-conformance WP5 · LogContent.initialSheetOpen (WP12 screenshot-tour seam)
+
+**Scope:** `ui/screens/LogContent.kt`, `ui/screens/LogContentBackHandlerTest.kt` — the exact gap
+`NavSeed.kt` (WP3's file) named in its own doc comment: "neither this sheet nor `Search`'s own
+accepted an initial-open parameter today... reported here rather than worked around."
+
+**Requirements/ACs:** none new — a seam for the screenshot tour (WP12), not a register row.
+
+**Constitution Check.** Principle II (Test-Backed Change): `R_TOUR_log_sheet_open` is a genuine
+regression guard — reverted the seeding, confirmed the test fails (`ComposeTimeoutException`
+waiting for "Filter the log"), restored it, confirmed it passes — the same discipline every seam
+this package has shipped carries.
+
+**What changed:**
+- `LogContent(..., initialSheetOpen: Boolean = false)` — new, defaulted param; every existing caller
+  compiles unchanged (`OrtNavHost.kt` passes every argument by name). Seeds `sheetOpen`'s initial
+  `rememberSaveable` value from `initialSheetOpen`, the same pattern `initialFilter` already
+  established for `selection`/`quickFilter` — seeding only the *initial* value, not forcing it open
+  on every recomposition, is what still lets a person (or the R-333 `BackHandler`, unchanged) close
+  it afterwards.
+- New test `R_TOUR_log_sheet_open` in `LogContentBackHandlerTest.kt` (that file's own scope grew to
+  cover both R-333 and this seam — its class doc comment updated to say so): seeds the sheet open,
+  asserts it renders without a tap on "Filter", then confirms the existing R-333 `BackHandler` still
+  claims back for a seeded-open sheet exactly as it does a tapped-open one.
+
+**Verified:**
+- `git merge main` — fast-forwarded cleanly to `a0afc9e` (`HEAD` was already an ancestor).
+- **Reproduced first**: reverted the `sheetOpen` seeding, ran `R_TOUR_log_sheet_open` — failed with
+  `ComposeTimeoutException` (5000 ms) waiting for "Filter the log" to render. Restored the fix;
+  re-ran; passed.
+- Scoped gate (standing load policy):
+  - `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.LogViewDataTest" --tests
+    "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.data.ThreadViewDataTest" --tests
+    "org.ort.app.ui.screens.ThreadDetailScreenTest" --tests "org.ort.app.ui.screens.LogScreenTest"
+    --tests "org.ort.app.ui.screens.LogContentBackHandlerTest" --tests
+    "org.ort.app.ui.screens.LogAndThreadContentActivityTest"` — BUILD SUCCESSFUL, every test
+    `PASSED`.
+  - `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean.
+  - `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+  - `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+  - `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+  - `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 191 covered ->
+    results\coverage-matrix.md` (unchanged — no new requirement ids touched).
+  - `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (191
+    covered of 419)`.
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- WP3 threads this through `NavSeed.logSheetOpen`; WP12 adds the corresponding tour step — neither
+  is this package's file.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
