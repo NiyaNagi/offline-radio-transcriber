@@ -198,6 +198,220 @@ the session ends, or stays visibly staged.
 
 ---
 
+## 2026-09-08 (ui-conformance WP12 v5: R-460 scroll-to-end for cold Setup/Failure @2x captures)
+
+### 2ec30ee — ui-conformance WP12 v5 · R-460
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourSpec,ScreenshotTourActivity,TourAccessibilityScroll}.kt`
+(`TourAccessibilityScroll.kt` new), `app/src/test/kotlin/org/ort/app/debug/tour/{TourSpecTest,TourStepsTest}.kt`,
+`tools/ui-audit/tour.json` (138 steps: +11 `-end` variants). `git merge main` at the round's start —
+clean fast-forward onto `8dbbcf7` (the v4 commit `c9a6fa0` already present via main's own merge
+`6303aa9`), no files in this package touched by anything landed since. No rebase, no stash, no
+`gradlew --stop`.
+
+**Requirements/ACs:** none new — validation tooling. Closes register finding R-460.
+
+**What changed:**
+
+*Constitution Check.* Principle II (never claim a fix works when it hasn't been checked) governs
+this entire round: three successive designs for the scroll mechanism each *compiled* clean but
+failed for a different real reason, caught only by running the real device tour after each one, not
+by inspection or by the unit-test gate (which cannot exercise a real `AccessibilityNodeProvider` —
+Robolectric's shadow does not model one).
+
+- **`TourStep.scroll: String? = null`** (only `"end"` accepted, validated in `init`) — after a step's
+  ordinary settle/override/wait, scrolls the screen's primary vertical scroll container to its end,
+  settles again, then captures; id gets a `-end` suffix. Added to `tour.json`: the five Setup `@2x`
+  steps under `setup-verified` (S01/S03/S04/S08/S12 — not S07, not named in R-460's list), `N04`
+  Capture-Status `@2x` (`storage-warn`), `CF03`/`D02`/`L01`/`FQ03` `@2x`, and `F20` (`migration-failed`)
+  `@2x` — confirmed by grep the only other Failure-board `@2x` step in the file. 127 → **138 steps**.
+- **`TourAccessibilityScroll.scrollToEnd(rootView: View)`** (new file) — the mechanism, and the one
+  genuinely hard part of this round. `androidx.compose.ui.semantics.SemanticsOwner` (the coordinator's
+  own first-choice wording) was ruled out immediately: every way to obtain one lives in
+  `androidx.compose.ui:ui-test`, a `testImplementation`-only dependency in `app/build.gradle.kts` (not
+  this package's file to change), never shipped into the real `debug` APK `ScreenshotTourActivity`
+  runs in. Built on the production-safe alternative instead — the real, standard Android accessibility
+  tree Compose always translates its own semantics into — through three device-tested iterations:
+  1. `window.decorView.accessibilityNodeProvider` — always `null`. `AccessibilityNodeProvider` is a
+     plain per-View getter, never aggregated from descendants; the provider Compose installs lives on
+     the specific `AndroidComposeView` several levels *inside* the decor view, not on it. Fixed by a
+     BFS over the plain `View`/`ViewGroup` tree for the first descendant whose own provider is
+     non-null.
+  2. `AccessibilityNodeInfo.getChild(...)`/`.performAction(...)`, called on nodes obtained directly
+     from `provider.createAccessibilityNodeInfo(...)` — every one threw `IllegalStateException:
+     Cannot perform this action on a not sealed instance.` Root-caused (`AccessibilityNodeInfo`'s own
+     source): sealing, and the live `mConnectionId` those two methods require, is assigned only by the
+     OS-mediated `AccessibilityInteractionClient` round trip a real bound `AccessibilityService` or an
+     *instrumented* process's `UiAutomation` goes through — neither exists for a plain `am
+     start`-launched activity. Fixed by never calling either method on a node object: `getChild` is
+     unusable full stop (no public API exposes a virtual child's own id another way), and the actual
+     scroll action goes through `AccessibilityNodeProvider.performAction(virtualViewId, action,
+     arguments)` — called on the *provider*, which carries none of the sealed-node requirement.
+  3. Checking only `AccessibilityNodeProvider.HOST_VIEW_ID` (the merged root) for `isScrollable` —
+     `false` on every one of the eleven affected screens; their scroll region is a genuine descendant,
+     not the merged root, and there is still no sealed-free way to *navigate* down to it. Fixed by
+     scanning the virtual-view-id space directly (`HOST_VIEW_ID..50_000`, plain field reads —
+     `isScrollable`/`getBoundsInScreen` — never call `enforceSealed()`, confirmed empirically), keeping
+     the *tallest* scrollable match, then driving that id's own scrolling through
+     `AccessibilityNodeProvider.performAction`. Inelegant, but public API only, no reflection, no new
+     dependency, and generic — no assumption about *where* in the tree the container sits.
+- **`ScreenshotTourActivity`** — `renderDestinationStep`/`renderSetupStep` both call
+  `TourAccessibilityScroll.scrollToEnd(...)` + a new `SCROLL_SETTLE_MILLIS = 300L` delay when
+  `step.scroll == "end"`, right after the existing settle/wait, right before the capture.
+- **`TourSpecTest`** gained `R_TOUR_SCROLL_VALUE_REJECTED` (an unsupported `scroll` value fails to
+  parse) and `R_TOUR_SCROLL_END_ACCEPTED` (every `scroll` value in the real `tour.json` is `"end"`).
+  **`TourStepsTest`**'s stale doc-comment step counts (from v3, never updated by v4) corrected to the
+  real current 119/138 split while touching this file; no behavioural change needed — every
+  `-end` step still carries the same `destination`/`drillIn` as its non-scrolled sibling, so this
+  test's existing per-step screen-identity assertion already covers them, exercising `scroll` parsing
+  without exercising `TourAccessibilityScroll` itself (which needs a real window this Robolectric test
+  never opens — covered on-device only, below). `TourParityTest` needed no change — `scroll` never
+  touches the process-wide holders it snapshots.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — **BUILD SUCCESSFUL**,
+  28 tests, 28 passed (JDK 17/`ANDROID_HOME` had to be set explicitly this round — the shell's default
+  `JAVA_HOME` pointed at a JRE 8, unrelated to this package).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**. `.\gradlew.bat dependencyRules
+  platformGuards` — both **OK**. `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+  `python tools\spec-check\spec_check.py` — **OK** (8/8). `coverageMatrix` then `coverageMatrixCheck`
+  (separate invocations) — up to date, byte-identical (191/419, unchanged — these tests cite no
+  FR/AC ids).
+- **Real device, `emulator-5558` (AVD `ort_audit_3`)** — checked `adb -s emulator-5558 shell pidof
+  org.ort.app.debug` first per the coordinator's own instruction; idle, so a full run proceeded
+  rather than the unit-tests-and-build-only fallback. Fresh worktree APK, `pm clear org.ort.app` +
+  `RECORD_AUDIO`/`POST_NOTIFICATIONS` granted, `.\tools\ui-audit\tour.ps1 -Port 5558`: first run
+  **127/127 ok, 11 errors** (all eleven `-end` steps — iteration 1 of the mechanism above); second run
+  **127/127 ok, 11 errors** (the same eleven, now failing on the "not sealed" exception — iteration 2);
+  third run **127/127 ok, 11 errors** (the same eleven, now failing "no vertically-scrollable container
+  found at this screen's accessibility root" — iteration 3, proving the host-only check's own honest
+  failure path works, but is too narrow); fourth run, after the id-scan fix, **138/138 ok, 0 errors,
+  140.8s**. Two `-end` captures opened directly with the Read tool and visually confirmed as genuine
+  scrolled renders, not just "ok" in the manifest: `setup-verified/S01-welcome@2x-end.png` (header text
+  now clipped at the *top*, the `Begin` button and the "What is captured" footer link visible at the
+  bottom — the exact opposite of R-460's original clipped-mid-word first frame) and
+  `overnight/L01-log@2x-end.png` (the log list genuinely scrolled to later rows, not the initial
+  frame). `tour-v5-run{1,2,3,4}` scratch output directories were temporary, not part of this commit.
+
+**Left open / not done:**
+- The id-scan's `0..50_000` upper bound is an empirically-chosen generous cap (Compose's semantics ids
+  are a process-lifetime-monotonic counter, never reset), not a value derived from a documented
+  constant — a very long-running host process compositing far more screens before reaching a `scroll`
+  step than this tour ever does could in principle exceed it; flagged rather than assumed to generalize
+  indefinitely, the same honesty standard v4's `searchSubmit` wait-time note set.
+- The id-scan finds the *tallest* scrollable node, matching the single-scroll-region shape every
+  screen in this tour actually has; a future screen with two independent vertically-scrollable regions
+  (a scrollable sheet over a scrollable body, say) would scroll only the taller one — undocumented
+  until a real case exists to test against.
+
+## 2026-09-09 (ui-conformance WP9: R-465 follow-up — consolidated onto WP4's shared ChartGeometry)
+
+### (pending) — ui-conformance WP9 · R-465 follow-up: `referenceLineY` now calls the shared `ChartGeometry.kt`, not a private copy
+
+**Scope:** `:app` `ui/setup/LevelScreen.kt`, `ui/setup/LevelScreenTest.kt`. `git merge main` first
+(fast-forward; `main` carried WP4's `db8d92e`/`481f886`, register R-542).
+
+**Requirements/ACs:** R-465 (no behaviour change — same fix, same numbers, now sharing WP4's copy).
+
+**What changed:**
+
+*Constitution Check.* VII (boundaries are structural — WP4 lifted this fix into a shared component
+after finding the identical defect in its own file; this round retargets to that one shared copy
+rather than keeping a second private one, exactly the consolidation `LevelScreen.kt`'s own class doc
+already flagged as reasonable). II (test-backed — `R_465` re-run against the shared function,
+unchanged assertions/numbers, still green).
+
+- Deleted the private `referenceLineY`/`internal fun` copy this round had added to `LevelScreen.kt`
+  — WP4 (register R-542) found the byte-identical defect in `LevelMeterScreen.kt`'s own chart and
+  lifted the fix into `app/src/main/kotlin/org/ort/app/ui/components/ChartGeometry.kt`
+  (`org.ort.app.ui.components.referenceLineY`), confirmed byte-identical math against what this
+  package had.
+- `LevelMeter`'s own `yForReferenceLine` (`DrawScope` extension, unchanged) now calls the imported
+  shared function instead of the deleted private one — one-line change, no other call site touched.
+- `LevelScreenTest`'s three `R_465` cases now import and call
+  `org.ort.app.ui.components.referenceLineY` directly, unchanged assertions and numbers — still
+  exercised at this package's own call site, per the coordinator's own instruction, rather than only
+  relying on WP4's separate `ChartGeometryTest`.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.ui.components.ChartGeometryTest" --rerun` — `LevelScreenTest`: 12 tests, 0 failures
+  (all three `R_465` cases still pass against the shared function); `ChartGeometryTest`: 4 tests, 0
+  failures (WP4's own, unrelated to this round). **7 unrelated failures observed in the same run**,
+  reported below, not fixed — none in a file this round touched.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- `.\gradlew.bat dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, no diff this
+  time (WP4's own merge already carried a current `results/coverage-matrix.md`).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- Machine/provider: this worktree's Windows dev box, JDK 17.0.20.101-hotspot, Gradle 8.10.2, other
+  worktree agents' background builds concurrently active.
+
+**Left open / not done:**
+- **New finding, reported honestly rather than silently worked around.** The same broader run
+  surfaced 7 failing tests with no relation to `LevelScreen`/`ChartGeometry`:
+  `MicrophoneScreensTest.R_220`, `NotificationsScreenTest.R_280`, `ReadyScreenTest.R_342`/`R_361`/
+  `R_080`, `RouteMismatchScreenTest.R_280`, `VerifyScreenTest.R_280` — all "exactly one `<action
+  text>` renders, never a ghost duplicate" or "Fix/Change is its own real button" assertions, all
+  failing to find the expected button text at all. Reproduces standalone (`MicrophoneScreensTest`
+  alone: identical single failure), so not suite-ordering flake. Confirmed unrelated to this round's
+  own two files (neither touches any of these five screens or `PrimaryButton`). `PrimaryButton`
+  itself lives in `ui/components/Controls.kt` — outside this package's own files, so not touched
+  here per this file's own working agreement (report, don't edit outside ownership); three of the
+  five affected test classes (`ReadyScreenTest`, `MicrophoneScreensTest`, `NotificationsScreenTest`,
+  `RouteMismatchScreenTest`, `VerifyScreenTest`) are themselves `ui/setup` files this package does
+  own, so this may need a WP9 round of its own once diagnosed — surfacing it now rather than after
+  it is mistaken for something this round's edit caused.
+
+### 481f886 — ui-conformance WP4 · R-542: Level-Meter's own clip line, the same edge-clearance fix as WP9's R-465
+
+**Scope:** new `ui/components/ChartGeometry.kt` (shared helper), `ui/screens/LevelMeterScreen.kt`,
+matching tests. `git merge main` for WP9's `662a73c` (R-465) first.
+
+**Requirements/ACs:** register R-542 (WP9's own R-465 finding, byte-identical defect in this
+package's own chart).
+
+**What changed:** WP9 found and device-verified (`setup-level/S07-level.png`) that a fixed
+reference line whose fraction is exactly `0f`/`1f` lands exactly on the canvas's own top/bottom row
+— a full-width stroke centred there is bisected by the canvas bounds, and the enclosing `Box`'s own
+1dp border (drawn over its children) overpaints what's left, so the line never actually renders
+(their own `referenceLineY` fix in `LevelScreen.kt`, register R-465). `LevelMeterScreen.kt`'s
+`LevelHistoryChart` had the byte-identical `clipY = yFor(CHART_CEILING_DBFS)` — fraction 1.0 exactly
+— so the same red clip line at 0 dBFS never rendered there either.
+
+Per the coordinator's own instruction, lifted the fix into a new shared helper,
+`ui/components/ChartGeometry.kt` (`referenceLineY(fraction, heightPx, edgeClearancePx)`, `public`,
+byte-identical math to WP9's own private copy), since `ui/components` had no chart-geometry helper
+yet. `LevelHistoryChart` now routes the target-band top/bottom, the clip line and the noise-floor
+line through it (`LINE_EDGE_CLEARANCE_DP = 1.5f`, the same clearance WP9 used) — **bars stay on the
+plain, unclamped `yFor`**, per the coordinator's own explicit instruction (a bar's own rectangle is
+meant to reach the true edge). `LevelScreen.kt` (WP9's file) is untouched — not edited here, per the
+coordinator's own "tell WP9" instruction rather than "switch it yourself"; flagged here and in this
+report for WP9 to move their own private `referenceLineY` over to the shared one.
+
+**Verified:** `:app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.screens.LevelMeterScreenTest" --tests "org.ort.app.ui.data
+.NowViewStateMapperTest" --tests "org.ort.app.ui.data.LevelViewStateMapperTest" --tests
+"org.ort.app.ui.components.ChartGeometryTest" --rerun` — all green, including new
+`ChartGeometryTest` (four cases proving the clearance math directly, the same style WP9's own
+`LevelScreenTest`'s `R_465` cases already established) and `LevelMeterScreenTest`'s new `R_542` case
+(a clipped reading at the scale's own ceiling renders the chart without crashing — the composable
+integration check; the pure math is `ChartGeometryTest`'s own job). `:app:ktlintCheck :app:detekt`
+clean. `dependencyRules platformGuards` OK. `:app:assembleDebug` succeeds. `spec_check.py` 8/8.
+`coverageMatrix`/`coverageMatrixCheck` 191/419 up to date.
+
+**Left open / not done:** `LevelScreen.kt` (WP9's own file) still carries its own private
+`referenceLineY` copy — this round only added the shared helper and pointed this package's own
+chart at it, per the coordinator's explicit "tell WP9 so both call it" instruction; WP9 still needs
+to switch their own file over and delete their private copy. Not verified on a real device this
+round (no free port) — the fix is the identical, already device-verified math WP9's own R-465 used,
+applied through the same shared function, and the pure clearance math is directly tested.
+
+---
+
 ## 2026-09-09 (ui-conformance WP9: R-465, the Setup-Level chart's clip line was genuinely invisible)
 
 ### (pending) — ui-conformance WP9 · R-465 fixed: the clip line sat exactly on the chart's own edge, overpainted by the Box's own border
@@ -383,7 +597,6 @@ platformGuards` OK. `:app:assembleDebug` succeeds. `spec_check.py` 8/8. `coverag
 `uiautomator` device dump (both ports were validators' own for this whole round) — a validator
 should still confirm on-device on the next pass, though the test asserts the exact structural claim
 (tagged node = clickable leaf, one description) the register's own dump finding was about.
-
 ---
 
 ## 2026-09-08 (ui-conformance WP2: R-420/R-424 score-chip wrap and column-header stacking; R-380/R-381 clickable nodes carry their own description via clearAndSetSemantics; R-383 filter chip 44dp floor)
@@ -14419,6 +14632,76 @@ the `R_276` frequency-chip matcher from `hasText("145.230")` to `hasContentDescr
 - The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
 - If T02/DG03/FQ02 are ever changed to reuse `LogRow` directly, that embedding would need its own
   `showScore` decision at that time — not applicable today.
+
+### (pending) — ui-conformance WP5 · T01's leading start-time column (R-511); R-510 root-caused to WP2's `FilterChip`
+
+**Scope:** `ui/screens/ThreadScreen.kt` and its test — R-511. R-510 got no code change; WP5's own
+`ui/screens/LogFilterSheet.kt` was inspected and confirmed already correct (see below).
+
+**Requirements/ACs:** R-511 (register.md). R-510 investigated, not owned by this package.
+
+**Constitution Check.** Design canvas as source of truth: `Threads.dc.html`'s own `.t` element (52dp,
+mono grey, before the kind/title/meta block) is what R-511 restores — read before writing any code.
+Reuse over duplication: the stacking rule this needs already exists twice (`LogRow`/R-373,
+`ColumnHeaderRow`/R-420) — applied the identical "weighted column moves to its own line, fixed
+column(s) bundle beneath it" rule and the identical `BoxWithConstraints`/`rememberTimeColumnWidth`
+mechanics, rather than inventing a third, competing breakpoint. Test-Backed Change: the R-510 half
+was root-caused by reading the real call site (`LogFilterSheet.kt`) before reporting anything back.
+
+**R-511 — fixed.** `ThreadCardViewState.timeLabel` already existed and was already correct (the
+mapper uses it to sort the list) — `ThreadCard` (`ThreadScreen.kt`) simply never rendered it. Added
+a leading time column (`ThreadCardTimeText`, `OrtType.timeFreq`/`OrtColors.textTime`, the same
+`rememberTimeColumnWidth()` floor `LogRow`/`ColumnHeaderRow` already use) beside the existing kind/
+title/meta block (factored out, unchanged, into `ThreadCardBody`); a `BoxWithConstraints` picks that
+one-line layout when the row has room for time + the title block's own callsign floor
+(`rememberCallsignColumnWidth()`, since `titleText` can carry an unbreakable callsign token) + a
+chevron slot, or stacks the title block onto its own full-width line with time (and the chevron)
+beneath it when it does not — mirroring `LogRow`/`ColumnHeaderRow`'s own R-373/R-420 rule exactly,
+not a new one. `ThreadCard` changed from `private` to `internal` (doc comment explains why) so its
+own test can constrain and measure it directly, the way `LogRow` (already `public`) lets
+`LogRowResponsiveTest` do. New tests: `R_511 a grouped card renders the thread's first-over time in
+its own leading column` (default scale) and `R_511 a row too narrow for the title floor stacks the
+title block above time and chevron, at 2_0` (mirrors `LogRowResponsiveTest`'s own wide/narrow-Box,
+taller-row-implies-stacked approach).
+
+**R-510 — root-caused, not fixed here.** The round's brief asked WP5 to check whether L02's
+FREQUENCY chips are a WP5-owned composable rather than WP2's `FilterChip`, and swap if so. Read
+`ui/screens/LogFilterSheet.kt` directly: its frequency row (line 46-50) already calls WP2's real
+`FilterChip`/`FilterChipRow` — there is no WP5-owned duplicate, and nothing to swap. The 24dp/37.7dp
+fill height the register measured on L02 specifically (`FilterChip`'s own `.heightIn(min = 44.dp)`
+not reaching this exact row, despite WP2's earlier `586ec9b` fix reaching every other chip row) is
+therefore a defect in `FilterChip`/`FilterChipRow` themselves (`ui/components/Controls.kt`, WP2-
+owned) or in how they interact with the horizontally-scrolling row specifically — not in anything
+WP5 owns. Reported back per the round's own "whoever finds the cause first tells me."
+
+**Verified:**
+- Read R-511 and R-510 in `results/ui-audit/register.md` in full, `Threads.dc.html`'s `.t`/`.kind`/
+  `.ttl`/`.meta` markup, and `ui/screens/LogFilterSheet.kt`'s real frequency-row call site, before
+  writing any code.
+- `git merge main` — fast-forward to `a5738be` (Reviewer B round 3), no conflicts.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.ThreadScreenTest" --tests
+  "org.ort.app.ui.screens.LogScreenTest" --tests "org.ort.app.ui.screens.LogFilterSheetTest" --tests
+  "org.ort.app.ui.screens.ThreadDetailScreenTest" --tests "org.ort.app.ui.components.ControlsTest"
+  --tests "org.ort.app.ui.components.RowsTest" --tests "org.ort.app.ui.components.LogRowResponsiveTest"
+  --tests "org.ort.app.ui.data.ThreadViewDataTest"` — BUILD SUCCESSFUL, every test `PASSED`.
+- Found forward, unrelated to R-511/R-510: `ThreadScreenTest`'s own `R_163` test and all three
+  `LogFilterSheetTest` tests were newly broken by the same WP2 R-380/R-381 `clearAndSetSemantics`
+  change the previous WP5 round already fixed forward in `LogScreenTest.kt` — `TextAction` (the
+  ungrouped screen's "What tier N can and cannot do" link and L02's "Clear all"), `FilterChip`
+  (L02's frequency chip label) and `PrimaryButton` (L02's "Show N overs") all needed the identical
+  `useUnmergedTree = true` fix, applied here the same way.
+- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean
+  (one `MaxLineLength` detekt finding on the new stacking test's own name, fixed by shortening it);
+  `git status --short` confirmed only the 3 intended files touched.
+- `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` / `coverageMatrixCheck` — `419 requirements, 191 covered`
+  (unchanged), up to date.
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- R-510's actual fix is WP2's (`FilterChip`/`FilterChipRow`, `ui/components/Controls.kt`).
 
 ---
 

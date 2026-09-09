@@ -64,11 +64,15 @@ class LogFilterSheetTest {
             OrtTheme { noopSheet() }
         }
 
-        composeTestRule.onNodeWithText("145.230 318").assertExists()
+        // R-380/R-381: `FilterChip`'s own label is only reachable on the unmerged tree now (its
+        // outer node `clearAndSetSemantics`-es an explicit `contentDescription` instead) — see the
+        // identical fix already applied in `ui/screens/LogScreenTest.kt`.
+        composeTestRule.onNodeWithText("145.230 318", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithText("Confirmed").assertExists()
         composeTestRule.onNodeWithText("291").assertExists()
         composeTestRule.onNodeWithText("Rejected segments").assertExists()
-        composeTestRule.onNodeWithText("Show 376 overs").assertExists()
+        // R-380: `PrimaryButton`'s own label is only reachable on the unmerged tree now.
+        composeTestRule.onNodeWithText("Show 376 overs", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -90,7 +94,8 @@ class LogFilterSheetTest {
             OrtTheme { noopSheet(onClearAll = { cleared = true }) }
         }
 
-        composeTestRule.onNodeWithText("Clear all").performClick()
+        // R-380: `Sheet`'s own "Clear all" action is only reachable on the unmerged tree now.
+        composeTestRule.onNodeWithText("Clear all", useUnmergedTree = true).performClick()
 
         assert(cleared)
     }

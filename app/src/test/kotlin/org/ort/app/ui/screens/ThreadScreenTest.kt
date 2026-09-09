@@ -1,8 +1,20 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -89,7 +101,10 @@ class ThreadScreenTest {
                 "This phone is at tier 2, so every over is here individually and " +
                 "nothing has been guessed about who was talking to whom.",
         ).assertExists()
-        composeTestRule.onNodeWithText("What tier 2 can and cannot do").assertExists()
+        // R-380: `TextAction`'s own label is only reachable on the unmerged tree now (its outer
+        // node `clearAndSetSemantics`-es an explicit `contentDescription` instead) — see the
+        // identical fix already applied in `ui/screens/LogScreenTest.kt`.
+        composeTestRule.onNodeWithText("What tier 2 can and cannot do", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithText("BY FREQUENCY, MEANWHILE").assertExists()
     }
 
@@ -129,6 +144,59 @@ class ThreadScreenTest {
         composeTestRule.onNodeWithText("W7NPC and K7LWH").assertExists()
         composeTestRule.onNodeWithText("3 confirmed · 1 inferred · 02:14 – 02:16").assertExists()
         composeTestRule.onNodeWithText("NEW").assertExists()
+    }
+
+    @Test
+    fun `R_511 a grouped card renders the thread's first-over time in its own leading column`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ThreadScreen(
+                    state = ThreadListViewState.Grouped(
+                        summary = "1 conversation",
+                        cards = listOf(card()),
+                        ungroupedOvers = 0,
+                    ),
+                    onOpenThread = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("02:14").assertExists()
+    }
+
+    @Test
+    fun `R_511 a row too narrow for the title floor stacks the title block above time and chevron, at 2_0`() {
+        // Mirrors `LogRowResponsiveTest`'s own already-established approach for the identical rule
+        // (R-373/R-420): two copies of the same row, one wide enough for one line, one forced
+        // narrower than time + the title block's own callsign floor + the chevron slot — the
+        // narrower one must measure taller, the only way its title block could have moved to its
+        // own full-width line above time/chevron rather than sharing their line.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Column {
+                        Box(modifier = Modifier.width(400.dp)) {
+                            ThreadCard(card = card(), onClick = {}, modifier = Modifier.testTag("wide"))
+                        }
+                        Box(modifier = Modifier.width(90.dp)) {
+                            ThreadCard(card = card(), onClick = {}, modifier = Modifier.testTag("narrow"))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Both still show every fact — nothing dropped, only reflowed.
+        composeTestRule.onAllNodesWithText("02:14").assertCountEquals(2)
+        composeTestRule.onAllNodesWithText("W7NPC and K7LWH").assertCountEquals(2)
+
+        val wideHeight = composeTestRule.onNodeWithTag("wide").fetchSemanticsNode().size.height
+        val narrowHeight = composeTestRule.onNodeWithTag("narrow").fetchSemanticsNode().size.height
+        assert(narrowHeight > wideHeight) {
+            "expected the narrow row (too narrow for time + the title floor + the chevron) to stack " +
+                "the title block above time/chevron, measuring taller than the wide row; got " +
+                "wide=${wideHeight}px, narrow=${narrowHeight}px"
+        }
     }
 
     @Test

@@ -137,4 +137,25 @@ class TourSpecTest {
             // expected
         }
     }
+
+    @Test
+    fun `R_TOUR_SCROLL_VALUE_REJECTED a step naming an unknown scroll value fails to parse`() {
+        val json = """{"steps":[{"id":"x","scenario":"empty","destination":"NOW","scroll":"top"}]}"""
+        try {
+            TourSpec.parse(json)
+            fail("expected an IllegalArgumentException for a step naming an unsupported scroll value")
+        } catch (expected: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `R_TOUR_SCROLL_END_ACCEPTED every scroll step in tour json names only the supported end value`() {
+        val spec = loadSpec()
+        val scrollSteps = spec.steps.filter { it.scroll != null }
+        assertTrue("expected at least one scroll step (R-460)", scrollSteps.isNotEmpty())
+        for (step in scrollSteps) {
+            assertTrue("step '${step.id}' names unsupported scroll value '${step.scroll}'", step.scroll == "end")
+        }
+    }
 }
