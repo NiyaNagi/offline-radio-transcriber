@@ -7,10 +7,11 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -151,8 +152,15 @@ class SettingsStorageScreenTest {
         val verticalScroll = SemanticsMatcher("has vertical scroll axis") {
             it.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange) != null
         }
-        composeTestRule.onNode(hasScrollAction().and(verticalScroll)).performScrollToNode(hasText("Review"))
-        composeTestRule.onNodeWithText("Review").performClick()
+        // WP2's R-380/R-381 fix: `TextAction`'s own `clearAndSetSemantics` now sets a content
+        // description on the button's own node and clears its inner Text's semantics entirely —
+        // this row's own call site further overrides that description with the more specific
+        // "Review the session from …" — either way it is a content description now, never a
+        // `Text` node `hasText`/`onNodeWithText` can find; substring covers both.
+        composeTestRule
+            .onNode(hasScrollAction().and(verticalScroll))
+            .performScrollToNode(hasContentDescription("Review", substring = true))
+        composeTestRule.onNodeWithContentDescription("Review", substring = true).performClick()
 
         assert(reviewed == "S-OLDEST") { "expected Review to open the real session id, got $reviewed" }
     }
@@ -203,11 +211,13 @@ class SettingsStorageScreenTest {
             }
         }
 
-        // The "Unlimited" chip's own text node stays one intact node inside a scrollable-action
-        // ancestor — the pre-fix layout collapsed each chip's Row width instead of scrolling it,
-        // so this ancestor search is what actually distinguishes the two.
+        // The "Unlimited" chip's own node stays intact inside a scrollable-action ancestor — the
+        // pre-fix layout collapsed each chip's Row width instead of scrolling it, so this ancestor
+        // search is what actually distinguishes the two. WP2's R-380/R-381 fix (the chip's own
+        // `clearAndSetSemantics` sets `contentDescription = label` and clears its inner Text's
+        // semantics entirely) means this is now a content-description query, never `hasText`.
         composeTestRule
-            .onNode(hasText("Unlimited").and(hasAnyAncestor(hasScrollAction())))
+            .onNode(hasContentDescription("Unlimited").and(hasAnyAncestor(hasScrollAction())))
             .assertExists()
     }
 

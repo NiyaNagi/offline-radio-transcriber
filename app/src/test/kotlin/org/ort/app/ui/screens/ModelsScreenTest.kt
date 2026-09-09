@@ -216,7 +216,12 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithText("No transcription model installed").assertExists()
-        composeTestRule.onNodeWithText("Install").assertExists()
+        // WP2's R-380/R-381 fix (`PrimaryButton`/`SecondaryButton`/`TextAction`'s own
+        // `clearAndSetSemantics` now sets `contentDescription = text` on the button's own node and
+        // clears its inner Text's semantics entirely, merged or not) — the button's label is a
+        // content description now, never a `Text` node `onNodeWithText` can find. Real behaviour,
+        // not a regression here.
+        composeTestRule.onNodeWithContentDescription("Install").assertExists()
     }
 
     @Test
@@ -412,10 +417,12 @@ class ModelsScreenTest {
         )
             .assertExists()
         composeTestRule.onNodeWithText("Unable to resolve host", substring = true).assertDoesNotExist()
-        composeTestRule.onNodeWithText("Details").performClick()
+        // WP2's R-380/R-381 fix — see this file's own `F13`/`R_448` tests' comment for what
+        // changed; the button's label is a content description now, never a `Text` node.
+        composeTestRule.onNodeWithContentDescription("Details").performClick()
         composeTestRule.onNodeWithText("Unable to resolve host", substring = true).assertExists()
 
-        composeTestRule.onNodeWithText("Retry").performClick()
+        composeTestRule.onNodeWithContentDescription("Retry").performClick()
 
         assert(retried == ModelId.VAD) { "expected Retry to re-run the download for VAD, got $retried" }
     }
@@ -486,12 +493,15 @@ class ModelsScreenTest {
         composeTestRule.onNodeWithText(rejected.reason, substring = true).assertExists()
         composeTestRule.onNodeWithText("Callsign lexicon 2026.08 · 1,104,208 records").assertExists()
 
+        // WP2's R-380/R-381 fix — see this file's own `F13`/`R_448` tests' comment for what
+        // changed; `PrimaryButton`/`SecondaryButton`'s label is a content description now, never a
+        // `Text` node `hasText` can match.
         composeTestRule.onNode(androidx.compose.ui.test.hasScrollAction())
-            .performScrollToNode(androidx.compose.ui.test.hasText("Done"))
-        composeTestRule.onNodeWithText("Choose another file").performClick()
+            .performScrollToNode(androidx.compose.ui.test.hasContentDescription("Done"))
+        composeTestRule.onNodeWithContentDescription("Choose another file").performClick()
         assert(choseAnotherFile) { "expected Choose another file to call onInstall" }
 
-        composeTestRule.onNodeWithText("Done").performClick()
+        composeTestRule.onNodeWithContentDescription("Done").performClick()
         assert(done) { "expected Done to call onDismissResult" }
     }
 
