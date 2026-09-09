@@ -32,6 +32,101 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP11b: R-562 Fail-Migration closing sentence restored; R-550 investigated, not fixed from this package's row)
+
+### (pending) — ui-conformance WP11b · R-562 fixed (F20 closing paragraph verbatim); R-550 investigated and reported, no safe fix within this package's row
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailMigration.kt`; new
+`app/src/test/kotlin/org/ort/app/ui/failures/FailMigrationTest.kt`;
+`app/src/test/kotlin/org/ort/app/ui/failures/FailureActionBarScaffoldTest.kt` (assertion updated to
+match the new text, not new behaviour); `app/src/test/kotlin/org/ort/app/ui/failures/FailureHostTest.kt`
+(a note only — no test added; see R-550 below).
+
+**Requirements/ACs:** R-562 (register, fixed); R-550 (register, investigated — see "Left open").
+FR-AST-6, FR-UI-7.
+
+**What changed:**
+- **Constitution Check.** Principle II (Test-Backed Change) governs both rows: R-562 is TDD (the
+  missing sentence was verified absent from the pre-change source before the fix landed, and the
+  new `R_562` test asserts the restored text). R-550 is the principle's other edge — "a session
+  that cannot meet its exit criteria stops and says so" — a fix that does not work, or that this
+  package's file boundary cannot deliver, is not shipped as if it did; see "Left open".
+- **R-562 (fixed).** `Fail-Migration.dc.html`'s closing paragraph has a second sentence
+  (`"Station and frequency views will show `*pattern rebuilding*` until the marked overs are
+  re-derived."`) that `FailMigrationScreen`'s build never rendered — the text stopped at "ships.".
+  Restored verbatim, including the board's own italic span, via
+  `buildAnnotatedString`/`withStyle(SpanStyle(fontStyle = FontStyle.Italic))` rather than a second
+  plain `Text` (the board draws one flowing paragraph, not two). New `FailMigrationTest.kt` (split
+  out of `FailureScreensTest.kt` rather than grown there — that file was already at detekt's
+  `LargeClass` line budget; confirmed by running `detekt` both ways) asserts the full closing
+  substring is present. `FailureActionBarScaffoldTest.kt`'s own `R_292` searched for the *old*,
+  now-incomplete sentence as an exact match, which no longer matches any node once the paragraph
+  gained more text in the same `AnnotatedString` — updated to `substring = true` on the same
+  stable opening (a real regression this round's own gate caught, not a new behaviour).
+- **R-550 (investigated, not fixed — see "Left open" for the full account).**
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.failures.* --tests org.ort.app.ui.screens.CaptureStatus*`
+  — `BUILD SUCCESSFUL`, 98 tests, 0 failed (includes `FailMigrationTest.R_562` and the corrected
+  `FailureActionBarScaffoldTest.R_292`; `FailureHostTest`/`NavSeedTest`-class files are excluded
+  from this task by `app/build.gradle.kts`'s own `smokeTestDebugUnitTest` split and were re-run
+  there separately, unaffected — no assertion in that file changed).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — `BUILD SUCCESSFUL` (the `FailMigrationTest.kt`
+  split is what keeps `FailureScreensTest.kt` under `LargeClass`; confirmed the un-split version
+  fails detekt with exactly that finding, then confirmed the split passes).
+- `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `PASS`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  192 of 419 covered, matrix up to date, no diff to `results/coverage-matrix.md`.
+
+**Left open / not done:**
+- **R-550, not fixed.** The register and this round's own brief describe it as "the scroll extent
+  does not account for the [live bar]" and direct a fix of "have `CaptureStatusContent`'s scroll
+  column add [clearance] as bottom padding," with this package (WP11b) lead-approved to touch only
+  that one modifier line in `ui/screens/CaptureStatusContent.kt`. Investigated with a real,
+  Robolectric-composed `CaptureStatusScreen` (font scale 2.0, a `DEGRADED` "Low storage" live bar,
+  the real `Fail-Storage` banner clearance simulated as top padding) rather than guessed:
+  1. **The reachability claim does not reproduce.** `CaptureStatusScreen`'s own
+     `Column { Column(weight(1f).verticalScroll)...; LiveBar(...) }` is a plain weighted split, not
+     an overlay — Compose's own weight algorithm already gives the live bar its full natural height
+     and the scrollable column exactly what is left, with or without extra top padding standing in
+     for the banner. `performScrollTo("capture-status-battery")` reaches it in every configuration
+     tried, unfixed code included. The register's own screenshots most likely reflect the
+     screenshot-tour script's own scroll gesture falling short of the real `ScrollState.maxValue`,
+     not a layout defect — outside every work package's file ownership (`tools/ui-audit/**`), so
+     not something this report can fix either; flagging for the lead to re-run against a real
+     `ScrollState.scrollTo(maxValue)` or equivalent.
+  2. **There is a real, smaller defect: near-zero visual separation.** Measured gap between the
+     last row's bottom and the live bar's top, at rest, unfixed: **1.0dp** — technically
+     non-overlapping but visually flush, the same "no visible separation" class R-292 named for
+     this package's own takeover screens (`FailureActionBarScaffold.kt`'s own kdoc).
+  3. **The one lead-approved lever cannot fix even that.** `CaptureStatusContent.kt`'s own
+     `modifier` wraps the *whole* `CaptureStatusScreen`, outside its internal `Column`. Padding
+     applied there (tried: `Modifier.padding(bottom = 45.dp)`, matching `LiveBar`'s own documented
+     44dp floor + 1dp top edge) shrinks the *entire* box uniformly — it does not, and structurally
+     cannot, insert a gap specifically between the scrollable child and its `LiveBar` sibling,
+     because Compose's `Column` places consecutive children with no gap unless one is added
+     *between* them inside that `Column`'s own body. Measured with that padding applied: the gap
+     went **negative** (−12.0dp, a real overlap) in the exact same configuration, because shrinking
+     the whole box also starves the scrollable region of the height it needs for its own last row
+     before ever reaching the live bar. Reverted rather than shipped once this measured — a change
+     that regresses the very thing it claims to fix is worse than no change (`AGENTS.md`: "stop
+     rather than half-finish").
+  - **What the real fix needs:** a line *inside* `ui/screens/CaptureStatusScreen.kt`'s own
+    scrollable `Column` — e.g. its trailing `.padding(OrtSpacing.lg)` becoming asymmetric with more
+    room at the bottom, or a trailing `Spacer` after the last row — genuinely `CaptureStatusScreen`
+    generating the gap it exposes to its own last child, not something an outer wrapper can
+    inject. That file is WP4's row and outside even the one exception this package was granted;
+    re-partition to WP4, or re-approve this package for that specific line, with the measured
+    account above as the starting point rather than a guess.
+  - No test committed for R-550: shipping an assertion against unfixed, correct-as-is behaviour
+    would misrepresent the row as closed. The three probe compositions and their exact measured
+    bounds are recorded above for whoever picks this up next.
+
+---
+
+
 ## 2026-09-09 (ui-conformance WP2 round 3: R-545/560/561/565 — one root cause not found, three confirmed)
 
 ### (pending) — ui-conformance WP2 round 3 · R-565 chip pill fill, R-560 alternate/UNKNOWN wrap, R-561 prior-figure ceiling; R-545 investigated, not closed
@@ -491,7 +586,6 @@ FR-RUN-9, cf. R-195/R-470.
   A" text against the new block's top position only (not the header's, which was already first and
   unmoved) — sufficient to catch the regression the register found, not an assertion of the full
   section order end to end.---
-
 ## 2026-09-09 (ui-conformance WP2 round 2: R-380/381/543 gate-blocking finders, R-505 signal column, R-510 floors — device-verified)
 
 ### (pending) — ui-conformance WP2 round 2 · R-380/381/543 semantics complete; R-505 signal-column gate; R-510 FilterChip/TextAction/PrimaryButton/SecondaryButton/DestructiveButton floors, device-verified on emulator-5554

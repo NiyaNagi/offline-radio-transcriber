@@ -120,9 +120,14 @@ class FailureActionBarScaffoldTest {
         }
 
         val barTop = composeTestRule.onNodeWithTag("failure-migration-rebuild").getUnclippedBoundsInRoot().top
+        // Register R-562 (this package): the closing paragraph grew a second sentence, in the same
+        // `AnnotatedString` node (an italic span mid-sentence, not a separate node) — `substring =
+        // true` on its stable opening matches either way, rather than pinning the exact full text
+        // a future wording tweak would only need to update in one place (`FailMigrationTest.kt`).
         val closingParagraph = composeTestRule.onNodeWithText(
             "A migration can never destroy audio or a superseded transcript — that is tested against " +
                 "every released version before this one ships.",
+            substring = true,
         )
         val isDisplayedAtRest = try {
             closingParagraph.assertIsDisplayed()
