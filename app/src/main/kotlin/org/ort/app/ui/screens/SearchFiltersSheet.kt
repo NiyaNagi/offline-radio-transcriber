@@ -104,9 +104,12 @@ private fun CallsignSection(input: SearchFilterInput, onInputChange: (SearchFilt
  * never heard a single over on. `All`, an exact-frequency chip and a band chip are mutually
  * exclusive (picking one clears the other two) since the DAO ANDs `frequencyHz`/band-range
  * together — selecting a specific frequency plus an unrelated band would just as-constrain to
- * zero results, which is not what tapping a single chip should do. The exact-MHz field below the
- * chips stays for a frequency the corpus has *not* heard, or one to prepare a filter for in
- * advance.
+ * zero results, which is not what tapping a single chip should do.
+ *
+ * R-501: no free-text "exact MHz" field beneath the chip row — the board's own section is chips
+ * only; that field let an operator filter on a frequency the corpus never actually heard, which
+ * this board never asked for and no requirement cites. `input.frequencyMhz` is still fully
+ * settable, from the heard-frequency chips above.
  */
 @Composable
 private fun FrequencyAndBandSection(
@@ -142,14 +145,6 @@ private fun FrequencyAndBandSection(
             )
         }
     }
-    TextField(
-        value = input.frequencyMhz,
-        onValueChange = { onInputChange(input.copy(frequencyMhz = it, band = null)) },
-        mono = true,
-        placeholder = "exact MHz",
-        contentDescriptionText = "Exact frequency filter",
-        modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.xs),
-    )
 }
 
 private fun formatMhz(hz: Long): String = "%.3f".format(Locale.ROOT, hz / 1_000_000.0)

@@ -48,8 +48,15 @@ public fun AttributionState.prose(): String = when (this) {
     AttributionState.UNKNOWN -> "Unknown"
 }
 
-/** A human label for [band]: `HF_160M` -> `"160M"`, `VHF_1_25M` -> `"1.25M"`. */
-public fun Band.prose(): String = name.substringAfter('_').replace('_', '.')
+/** R-501 (`Search-Filters.dc.html`): a human label for [band] — `HF_160M` -> `"160 m"`,
+ * `VHF_1_25M` -> `"1.25 m"`, `UHF_70CM` -> `"70 cm"` — a space before a lowercase unit, matching
+ * the board's own amateur-radio convention, never the raw enum-derived "160M"/"70CM". */
+public fun Band.prose(): String {
+    val raw = name.substringAfter('_').replace('_', '.')
+    val unit = if (raw.endsWith("CM")) "cm" else "m"
+    val number = raw.removeSuffix(unit.uppercase())
+    return "$number $unit"
+}
 
 // -------------------------------------------------------------------------------------------
 // Raw screen state.
@@ -60,6 +67,22 @@ public fun Band.prose(): String = name.substringAfter('_').replace('_', '.')
  * [timeFilter], [attributionStates]) already carries a typed value chosen from a visible list —
  * never free text standing in for a selection (R-061).
  */
+/**
+ * R-500 (`Search-Filters.dc.html`): the board's own default is Confirmed and Inferred checked —
+ * the two states a real attribution actually resolved to a callsign — never Ambiguous or Unknown,
+ * both of which mean the system could not or did not decide. `SearchFilterInput.attributionStates`
+ * defaults to this set; [SearchFilterInput.hasNoActiveFilters] and every "reset to default" site in
+ * this package compares/resets against it too, so a caller can never see the filter as "cleared"
+ * while quietly still excluding Ambiguous/Unknown, nor a `Clear all` that leaves them off.
+ */
+public val DEFAULT_ATTRIBUTION_STATES: Set<AttributionState> =
+    setOf(AttributionState.CONFIRMED, AttributionState.INFERRED)
+
+/** R-503: the two states [SearchWidenSuggestions]' "Include inferred and ambiguous" widen row
+ * offers back — real signal, never Unknown. */
+private val INFERRED_AND_AMBIGUOUS: Set<AttributionState> =
+    setOf(AttributionState.INFERRED, AttributionState.AMBIGUOUS)
+
 public data class SearchFilterInput(
     val text: String = "",
     val callsign: String = "",
@@ -70,15 +93,16 @@ public data class SearchFilterInput(
     /** Free text, `yyyy-MM-dd'T'HH:mm`, read only when [timeFilter] is [SearchTimeFilter.RANGE]. */
     val rangeFromLocal: String = "",
     val rangeToLocal: String = "",
-    /** The attribution states to include. All four is "no attribution filter". */
-    val attributionStates: Set<AttributionState> = AttributionState.entries.toSet(),
+    /** The attribution states to include (R-500: [DEFAULT_ATTRIBUTION_STATES] — Confirmed and
+     * Inferred — not "every state", the board's own default). */
+    val attributionStates: Set<AttributionState> = DEFAULT_ATTRIBUTION_STATES,
     val includeRejected: Boolean = false,
     val includeCorrected: Boolean = true,
 ) {
     /** Whether every closed-set field is at its default — nothing to show as a dismissable chip. */
     public fun hasNoActiveFilters(): Boolean = band == null &&
         timeFilter == SearchTimeFilter.ALL &&
-        attributionStates == AttributionState.entries.toSet() &&
+        attributionStates == DEFAULT_ATTRIBUTION_STATES &&
         !includeRejected &&
         includeCorrected &&
         callsign.isBlank() &&
@@ -480,19 +504,25 @@ public object SearchWidenSuggestions {
             addDropOption("drop_callsign", "Any callsign", params.copy(callsign = null))
         }
 
-        val everyState = SearchFacetFilter(
-            attributionStates = AttributionState.entries.toSet(),
-            includeRejected = true,
-            includeCorrected = true,
-        )
-        val widerFacetCount = facetCounts.countMatching(everyState)
-        val currentFacetCount = facetCounts.countMatching(facetFilter)
-        if (widerFacetCount > currentFacetCount) {
-            options += SearchWidenOption(
-                id = "include_all_states",
-                label = "Include every attribution state, rejected and corrected",
-                detail = "would show $widerFacetCount ${overWord(widerFacetCount)}",
-            )
+        // R-503 (`Search-Empty.dc.html`'s own three widen categories — this is the second):
+        // "Include inferred and ambiguous", not the previous, broader "every attribution state,
+        // rejected and corrected" this replaces — the board offers back exactly the two real-signal
+        // states a narrower attribution filter (R-500's own default is Confirmed+Inferred; the
+        // board's own worked example narrows further, to "Confirmed only") might be excluding,
+        // never Unknown (no attribution information to offer) and never rejected/corrected (a
+        // different axis, not what this specific board row means).
+        val widerAttributionFilter =
+            facetFilter.copy(attributionStates = facetFilter.attributionStates + INFERRED_AND_AMBIGUOUS)
+        if (widerAttributionFilter.attributionStates != facetFilter.attributionStates) {
+            val widerCount = facetCounts.countMatching(widerAttributionFilter)
+            val currentCount = facetCounts.countMatching(facetFilter)
+            if (widerCount > currentCount) {
+                options += SearchWidenOption(
+                    id = "include_inferred_ambiguous",
+                    label = "Include inferred and ambiguous",
+                    detail = "would show $widerCount ${overWord(widerCount)}",
+                )
+            }
         }
 
         // R-372: sourced from `params.callsign`, not `input.callsign` — a callsign the free-text
@@ -553,7 +583,7 @@ public object SearchWidenSuggestions {
         if (input.band != null) narrowing += "the band filter"
         if (input.frequencyMhz.isNotBlank()) narrowing += "the frequency filter"
         if (input.timeFilter != SearchTimeFilter.ALL) narrowing += "the time filter"
-        if (input.attributionStates != AttributionState.entries.toSet()) narrowing += "the attribution filter"
+        if (input.attributionStates != DEFAULT_ATTRIBUTION_STATES) narrowing += "the attribution filter"
         return when (narrowing.size) {
             0 -> "Nothing narrowed this — there is genuinely nothing recorded yet."
             1 -> "${narrowing[0].replaceFirstChar { it.uppercase() }} is doing the narrowing."

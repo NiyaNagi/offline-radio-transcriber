@@ -37,6 +37,7 @@ import org.ort.data.dao.CorrectionDao
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.CorrectionEntity
+import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.WorkQueueItemEntity
@@ -808,12 +809,29 @@ public object Scenarios {
         return LoadResult(FIELD_TIER1_OVER_COUNT, 1, sessionId)
     }
 
-    /** `search-corpus` — enough transcripts containing "park activation" for ~14 hits across 3 nights. */
+    /**
+     * `search-corpus` — enough transcripts containing "park activation" for ~14 hits across 3
+     * nights.
+     *
+     * **R-502's own root cause, fixed here.** Every transmission below sets `stationId = callsign`
+     * (the callsign string used directly as the id — [Attribution.confirmed]'s own `stationId` is
+     * exactly this value, no separate lookup, which is why every screenshot already renders the
+     * right callsign) — but until this fix, no [StationEntity] row with that id ever existed.
+     * `SearchDao.filterOnly`/`searchText`'s callsign filter is `LEFT JOIN station ON station.id =
+     * transmission.stationId` then `UPPER(station.callsign) = UPPER(:callsign)` — a real,
+     * normalized-catalog design, correctly reflecting how `:data` models this everywhere else
+     * (`SearchPollingTest.kt`'s/`StationsFixtures.kt`'s own fixtures both insert a matching
+     * [StationEntity] alongside every transmission) — this scenario alone never had. With no
+     * `station` row, that join always produced `NULL`, so a callsign-shaped query (R-371's own
+     * `TextQueryRouter`, routed correctly) always matched zero rows: not a routing bug, not the
+     * screenshot-tour seam failing to reach the search, but this fixture's own incomplete catalog.
+     */
     private suspend fun searchCorpus(db: OrtDatabase): LoadResult {
         var transmissionCount = 0
         val nights = 3
         val perNight = listOf(5, 5, 4) // sums to 14, matching this package's brief
         var primary: String? = null
+        val stationsSeeded = mutableSetOf<String>()
         for (night in 0 until nights) {
             val sessionId = ScenarioFixtures.sessionId("search-corpus", "night$night")
             val nightStart = SystemClock.wallMillis() - (nights - night) * 24 * 3_600_000L
@@ -830,6 +848,24 @@ public object Scenarios {
                 val txId = "$sessionId-tx$i"
                 val startedAt = nightStart + i * 60_000L
                 val callsign = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size]
+                if (stationsSeeded.add(callsign)) {
+                    db.catalogDao().insert(
+                        StationEntity(
+                            id = callsign,
+                            callsign = callsign,
+                            firstHeardAt = startedAt,
+                            lastHeardAt = startedAt,
+                            notes = null,
+                            userName = null,
+                            frequenciesHeard = null,
+                            activityByHourDow = null,
+                            potaRefs = null,
+                            spokenGrids = null,
+                            ituRegionFromPrefix = null,
+                            overCountsByAttributionState = null,
+                        ),
+                    )
+                }
                 db.transmissionDao().insert(
                     ScenarioFixtures.transmission(
                         id = txId,

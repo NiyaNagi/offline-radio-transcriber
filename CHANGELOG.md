@@ -14681,6 +14681,173 @@ rendered "not measured" or omitted rather than invented) and IV (liveness from h
 
 ## 2026-09-08 (ui-conformance WP7: search)
 
+### (pending) — ui-conformance WP7 · R-500..R-504: attribution defaults, band prose, callsign-route diagnosis, real widen categories, unavailable-state redesign
+
+**Scope:** `:app` — `ui/data/SearchViewData.kt`, `ui/screens/SearchScreen.kt`,
+`ui/screens/SearchFiltersSheet.kt`, and their tests
+(`SearchFilterParserTest.kt`, `SearchPollingTest.kt`, `SearchWidenSuggestionsTest.kt`,
+`SearchScreenTest.kt`, `SearchFiltersSheetTest.kt`, `SearchContentTest.kt`). Also
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`'s own `searchCorpus` scenario — the root
+cause of R-502 lived there, not in `:app`'s query logic (see below). `git merge main` first
+(fast-forward to `090873b`). Addresses R-500, R-501, R-502, R-503, R-504 from
+`results/ui-audit/register.md` (Reviewer C round 3 @6cea753).
+
+**Requirements/ACs:** R-500 (attribution checkbox defaults), R-501 (frequency section: no
+free-text field, band label format), R-502 (an exact-callsign query returns nothing — diagnosis
+and fix), R-503 (Search-Empty's three widen categories), R-504 (Search-Unavailable redesign:
+struck-through neutral field, honest count line, no invented rebuild ETA).
+
+**What changed:**
+- **Constitution Check.** Principle VI (never report a number without its fold/machine/provider):
+  R-502's root cause and R-504's reason line both turn on this — a fabricated "about 2 minutes
+  left" was explicitly rejected in favour of an honest, already-generic reason once confirmed no
+  real rebuild-progress signal exists anywhere in `:data`/`:pipeline` (checked directly, both
+  modules, before writing anything). Principle VII (Boundaries Are Structural): `Scenarios.kt`'s
+  fixture bug is fixed here because it is specifically Search's own `search-corpus` scenario and
+  the register attributes the row to WP7 — the query logic it exposed as broken was proven correct
+  first, by isolated test, before touching the fixture.
+- **R-500.** New `DEFAULT_ATTRIBUTION_STATES = {CONFIRMED, INFERRED}` (`SearchViewData.kt`) —
+  the board's own default — replaces `AttributionState.entries.toSet()` (all four, Ambiguous and
+  Unknown included) as `SearchFilterInput.attributionStates`'s default, `hasNoActiveFilters()`'s
+  comparison, `Clear all`'s reset target, and the applied-filter chip's own dismiss target
+  (`SearchScreen.kt`). The "include everything" widen option (see R-503, its own id and meaning
+  changed) and `SearchFacetFilter`'s own generic "every state" test fixtures are unaffected —
+  those already construct `AttributionState.entries.toSet()` explicitly for their own reasons, not
+  by relying on this default.
+- **R-501.** `Band.prose()` (`SearchViewData.kt`) now reads `"160 m"`/`"1.25 m"`/`"70 cm"` — a
+  space before a lowercase unit, the board's own amateur-radio convention — never the raw
+  enum-derived `"160M"`/`"70CM"`. The free-text "exact MHz" field beneath the frequency/band chip
+  row (`SearchFiltersSheet.kt`'s `FrequencyAndBandSection`) is removed entirely — the board's own
+  section is chips only, and no requirement cites the field; `input.frequencyMhz` stays fully
+  settable from the heard-frequency chips.
+- **R-502 (halt) — diagnosed, then fixed at its real root: `Scenarios.kt`'s own fixture, not
+  `:app`'s query logic.** Read the register's own framing precisely: "decide with a test that
+  submits the same string through the same seam." Wrote that test first (`R_502_callsign_query`,
+  `SearchPollingTest.kt`) against the unmodified `search-corpus` fixture — it failed with zero
+  hits, confirmed the register's own symptom. Then read `SearchDao`'s callsign filter
+  (`data/src/main/kotlin/org/ort/data/dao/SearchDao.kt`, unmodified, read-only): `LEFT JOIN
+  station ON station.id = transmission.stationId` then `UPPER(station.callsign) =
+  UPPER(:callsign)` — a real, normalized-catalog design (`SearchPollingTest.kt`'s own
+  pre-existing fixtures, and `StationsFixtures.kt`'s, both already insert a matching
+  `StationEntity` alongside every transmission). `Scenarios.kt`'s `searchCorpus` never did —
+  every transmission sets `stationId = callsign` (the callsign string used directly as the id;
+  `Attribution.confirmed(stationId, ...)` uses that value directly too, with no separate lookup,
+  which is exactly why every screenshot already renders the right callsign) but no
+  `StationEntity` row with that id ever existed, so the join always produced `NULL` and the
+  callsign filter always matched zero rows — **not** `TextQueryRouter` dropping the hit, and
+  **not** the screenshot-tour seam failing to reach the search (R-371's own frequency-route test,
+  `R_371_frequency_query`, re-run unmodified against the same fixture as part of this diagnosis —
+  still passes, confirming the routing itself was never the problem). Fixed by inserting one
+  `StationEntity` per distinct callsign in `searchCorpus` (`stationsSeeded: MutableSet<String>`
+  guards against inserting the same id twice — the fixture reuses each of its 9 callsigns across
+  its 14 transmissions). `R_502_callsign_query` now passes unmodified.
+- **R-503.** `SearchWidenSuggestions.build`'s (`SearchViewData.kt`) previous "Include every
+  attribution state, rejected and corrected" (`id = "include_all_states"`) is replaced by
+  `"Include inferred and ambiguous"` (`id = "include_inferred_ambiguous"`) — the board's own
+  second widen category, offering back exactly the two real-signal states a narrower attribution
+  filter might exclude (never Unknown — no attribution information to offer — and never
+  rejected/corrected, a different axis this specific board row never meant). `SearchScreen.kt`'s
+  `EmptyState` `onShow` handler updated to match (adds Inferred+Ambiguous to whatever is already
+  selected, never a blanket reset). The board's third category, "Similar callsigns heard", needed
+  no code change at all — it already read `params.callsign` (this package's own R-372 fix,
+  landed earlier) — it simply couldn't find anything because of R-502's own root cause above;
+  fixing the fixture's station catalog fixes this category too, for free.
+- **R-504 — the Search-Unavailable state redesigned to match the board on all three counts.**
+  - *Struck-through query, neutral field.* New local `StruckThroughQueryField`
+    (`SearchScreen.kt`) — `TextField`'s (`Controls.kt`) own neutral (non-focused, non-error)
+    decoration copied exactly (44dp, `bgCurrent` ground, `lineStrong` border, 8dp radius, 13dp/9dp
+    padding/gap) but the query text rendered `TextDecoration.LineThrough`, read-only, instead of a
+    live `BasicTextField` — `TextField` has no strikethrough of its own, and this package does not
+    own `Controls.kt` to add one; a small, local stand-in avoids either editing a file outside this
+    package or leaving the shared component's own general-purpose contract needing to track a
+    one-off. Replaces the previous `errorText = "Not applied"`/`errorTone = FieldTone.Degraded`
+    treatment entirely for this state (still correct, unchanged, for every *other* reason a field's
+    own edit did not take).
+  - *Honest count line.* New `UnappliedTextCountLine` (`SearchScreen.kt`) replaces the ordinary
+    `CountLine` (which reads "N overs · M nights · K stations", indistinguishable from a normal,
+    fully-applied search) with "N overs [on <freq/band>] · unfiltered by text" — the "on
+    <freq/band>" clause only appears when one is actually active (this package's own tour step has
+    none set — never a frequency invented to match the board's own worked example, which does
+    have one).
+  - *Reason line — confirmed already honest, left as-is.* Checked `:data` and `:pipeline`
+    directly for any real "index rebuilding" progress/ETA signal before changing anything: none
+    exists anywhere in either module (`OrtDatabase.kt`'s own `ensureFtsIndex` runs a synchronous,
+    idempotent fts5 `'rebuild'` command on every `create()` call — not a long-running background
+    job with any kind of progress state). The existing "The full-text index could not be searched
+    right now. Your words were not applied." is already the honest generic line R-504 asks for
+    where no specific reason has a runtime signal — inventing the board's own "about 2 minutes
+    left" would have been exactly the fabrication this finding warns against. No change made here.
+- **A real, pre-existing-in-main accessibility/test-contract change surfaced by this round, not
+  caused by it: `LogRow`/`FilterChip`/`PrimaryButton`/`TextAction` (`Rows.kt`/`Controls.kt`, WP2)
+  all now use `clearAndSetSemantics` instead of `semantics(mergeDescendants = true)`** (WP2's own
+  R-373 fix, confirmed by reading `Rows.kt`'s own doc comments — the `BoxWithConstraints`
+  wrap-as-whole-unit layout this package's earlier R-373 diagnosis asked for). Consequence: a
+  chip/button/row's own label is now reachable only via `contentDescription`, never
+  `Text`/`EditableText` — `onNodeWithText(...)` against these components' merged tree now finds
+  nothing (confirmed empirically: 16 pre-existing test failures appeared the moment this round's
+  own `git merge main` landed, all with the identical "unmerged tree contains a match" signature,
+  none touching code this package's own edits this round changed). Fixed every affected assertion
+  in this package's own test files to `onNodeWithContentDescription(...)` (or, for `FilterChip`'s
+  dismiss icon specifically, `useUnmergedTree = true` — see the accessibility regression noted
+  below). **One genuine accessibility regression found in the course of this, in a file this
+  package does not own:** `FilterChip`'s dismiss (`×`) icon carries its own `contentDescription =
+  "Remove $label filter"`, but sits *inside* the chip's outer `clearAndSetSemantics` box — that
+  API does not merely relabel a descendant, it removes it from the semantics tree entirely, so the
+  dismiss icon's own click target and description are no longer reachable to TalkBack or Compose
+  test tooling by any means except `useUnmergedTree` (the icon is still visually present and still
+  responds to a raw tap at its own coordinates — this is a semantics-tree-only gap, not a visual or
+  touch-target one). Not fixed here — `Controls.kt` is WP2's file — flagged in Left open, below.
+- **Tests**, named for the row they establish: `R_500 attributionStates defaults to Confirmed and
+  Inferred, never every state` (`SearchFilterParserTest.kt`), `R_500 Confirmed and Inferred are
+  checked by default, Ambiguous and Unknown are not` (`SearchFiltersSheetTest.kt`); `R_501 a band
+  prose label reads 160 m and 1_25 m...`, `R_501 a centimetre band prose label reads 70 cm...`
+  (`SearchFilterParserTest.kt`), `R_501 a band chip reads 2 m...`, `R_501 no exact-MHz free-text
+  field renders...` (`SearchFiltersSheetTest.kt`); `R_502_callsign_query`
+  (`SearchPollingTest.kt`, through the real seam, against the real, now-fixed `search-corpus`
+  fixture); `R_503 an include-inferred-and-ambiguous widen option is offered from facetCounts
+  alone`, `R_503 no include-inferred-and-ambiguous option when neither state would add anything`
+  (`SearchWidenSuggestionsTest.kt`); `R_504 the query text renders struck through in a neutral
+  field...`, `R_504 the live editable field returns, with no strikethrough...`, `R_504 the
+  unavailable count line reads N overs unfiltered by text...`, `R_504 the unavailable count line
+  names the active frequency when one is set` (`SearchScreenTest.kt`).
+- **Pre-existing tests fixed, not broken by this round** (each for the reason named at its own
+  edit, all confirmed "test was outdated, not the code" per the codebase's own established
+  convention for this situation): `SearchWidenSuggestionsTest.kt`'s "similar callsigns are offered
+  only when a callsign filter is set" (now passes `SearchQueryParams(callsign = input.callsign)`,
+  matching what a real caller derives, R-372's own change from an earlier round); several
+  `SearchFiltersSheetTest.kt`/`SearchScreenTest.kt`/`SearchContentTest.kt` facet-count fixtures
+  that used `UNKNOWN` where the row needs to be a state the new R-500 default actually includes;
+  every `onNodeWithText`/`clearAndSetSemantics` fix above.
+
+**Verified** (scoped gate):
+- `git merge main` — fast-forward, confirmed `090873b` in `git log --oneline -1` before starting.
+- `.\gradlew.bat :app:testDebugUnitTest --tests` across all 9 Search-related classes —
+  **BUILD SUCCESSFUL, 93 tests, 0 failed** (summed from each class's own XML results; includes the
+  16 pre-existing `clearAndSetSemantics`-related failures found and fixed along the way).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — first run **FAILED** (`SearchScreen.kt`: a real
+  `MaxLineLength` finding on the new `StruckThroughQueryField`'s search icon); fixed, re-ran clean
+  against real sources; re-ran the affected test class again after the formatting-only fix to
+  confirm no behavioural change (still green).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 191 covered (unchanged — R-500..R-504 are
+  register findings, not `FR-*`/`AC-*`/`NFR-*` ids this tool tracks).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 191 of 419.
+
+**Left open / not done:**
+- **`FilterChip`'s dismiss icon is unreachable to TalkBack/semantics-tree tooling — a real
+  accessibility regression in `Controls.kt` (WP2's file), found while fixing this round's own
+  tests, not touched here.** Flagged explicitly, with the exact mechanism (a nested `clickable` +
+  `contentDescription` inside an ancestor's `clearAndSetSemantics`, which removes it from the tree
+  entirely rather than merely relabelling it) for whoever routes it.
+- R-502's real root cause (a debug-fixture gap) is fixed; the underlying `:data` design
+  (`SearchDao`'s catalog-join callsign filter) was reviewed and found correct and unchanged —
+  no `:data` file touched.
+- Every gap the earlier WP7 entries below already list (R-373 routed to and fixed by WP2, WP3's
+  still-doubled header for `SEARCH`, `RecentSearches`' single-term label, sheet drag-to-dismiss) is
+  unchanged by this addendum.
+
 ### (pending) — ui-conformance WP7 · screenshot-tour seam: initialQuery, submitOnStart, initialFiltersOpen
 
 **Scope:** `:app` only — `ui/screens/SearchContent.kt` and `ui/screens/SearchContentTest.kt`.

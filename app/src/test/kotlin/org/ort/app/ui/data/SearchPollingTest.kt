@@ -322,4 +322,30 @@ class SearchPollingTest {
         assertTrue(result.details.all { it.currentTranscriptText?.contains("K-4400") == true })
         assertFalse(result.textSearchUnavailable)
     }
+
+    // R-502: the register's own diagnosis request — "decide with a test that submits the same
+    // string through the same seam" — whether `TextQueryRouter`'s callsign route drops the hit, or
+    // the seam never reaches it. Routed through the identical real path every other test in this
+    // class uses (`SearchFilterParser.parse` into `SearchPolling.search`), against the real
+    // `search-corpus` fixture. Root cause found and fixed elsewhere (`Scenarios.kt`'s own
+    // `searchCorpus`, this package's CHANGELOG entry): the fixture never inserted a `StationEntity`
+    // row for any callsign, so `SearchDao`'s `LEFT JOIN station` always missed — not a routing bug.
+    @Test
+    fun R_502_callsign_query(): Unit = runTest {
+        Scenarios.load(context, "search-corpus")
+
+        val params = SearchFilterParser.parse(SearchFilterInput(text = "KE7QRS"), SystemClock.wallMillis())
+        val result = SearchPolling.search(context, params, SearchFacetFilter.from(includeEverythingInput))
+
+        assertTrue("expected at least one hit for KE7QRS, got none", result.details.isNotEmpty())
+        assertTrue(
+            "expected every result to actually be KE7QRS, got ${result.details.map { it.attribution.stationId }}",
+            result.details.all { it.attribution.stationId == "KE7QRS" },
+        )
+        assertTrue(
+            "expected every result's transcript to contain the literal callsign",
+            result.details.all { it.currentTranscriptText?.contains("KE7QRS") == true },
+        )
+        assertFalse(result.textSearchUnavailable)
+    }
 }
