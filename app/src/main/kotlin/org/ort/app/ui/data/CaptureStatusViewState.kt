@@ -76,7 +76,12 @@ public data class LevelViewState(
      * parse display text back into a number. */
     val noiseFloorDbfsRaw: Float?,
     val headroomLabel: String?,
-    val clippedLastSecondLabel: String?,
+    /** R-419: `Level-Meter.dc.html`'s "Clipped samples this session" row —
+     * [LevelStatus.clippedSamplesThisSession], the real session-lifetime running total WP11c
+     * republishes from [org.ort.capture.android.LevelMeter.Snapshot.clippedSamplesTotal]. Was
+     * [LevelStatus.State.Measured.clipCountLastSecond] (a rolling ~1 s window) until this fixed —
+     * the only clip signal `:pipeline` published before WP11c's own follow-up added the real total. */
+    val clippedThisSessionLabel: String?,
     /** Oldest-first, up to 60 entries — [LevelStatus.peakHistoryDbfs] carried straight through. */
     val historyDbfs: List<Float>,
     /** R-175: `null` when no over this session recorded a signal strength at all — see
@@ -102,7 +107,7 @@ public data class LevelViewState(
                 noiseFloorDbfsLabel = null,
                 noiseFloorDbfsRaw = null,
                 headroomLabel = null,
-                clippedLastSecondLabel = null,
+                clippedThisSessionLabel = null,
                 historyDbfs = emptyList(),
                 notMeasuredReason = "No level (dBFS) signal has been measured yet this session. Audio is still " +
                     "captured and kept — this is only the meter, not capture itself.",
@@ -117,13 +122,17 @@ public object LevelViewStateMapper {
      * caller (never derived here), so both always belong to the same snapshot (see that object's
      * own kdoc on why they are read together). [weakestOverLabel] is
      * [ReaderPolling.weakestOverLabel]'s own result, threaded through rather than queried here —
-     * this mapper stays pure, no `Context`.
+     * this mapper stays pure, no `Context`. [clippedSamplesThisSession] is
+     * [LevelStatus.clippedSamplesThisSession] — also read by the caller, not derived from [level]
+     * itself (it is a separate field on that object, not part of its own [LevelStatus.State] —
+     * register R-419, WP11c's own follow-up).
      */
     public fun from(
         level: LevelStatus.State,
         history: List<Float>,
         inputLabel: String,
         weakestOverLabel: String? = null,
+        clippedSamplesThisSession: Long = 0L,
     ): LevelViewState = when (level) {
         LevelStatus.State.NotMeasured -> LevelViewState.notMeasured(inputLabel)
         is LevelStatus.State.Measured -> LevelViewState(
@@ -132,7 +141,7 @@ public object LevelViewStateMapper {
             noiseFloorDbfsLabel = level.noiseFloorDbfs?.let { "%.0f dBFS".format(Locale.ROOT, it) },
             noiseFloorDbfsRaw = level.noiseFloorDbfs,
             headroomLabel = "%.0f dB".format(Locale.ROOT, LevelViewState.CHART_CEILING_DBFS - level.peakDbfs),
-            clippedLastSecondLabel = "${level.clipCountLastSecond}",
+            clippedThisSessionLabel = "$clippedSamplesThisSession",
             historyDbfs = history,
             weakestOverLabel = weakestOverLabel,
             bandStateSentence = bandStateSentence(level),

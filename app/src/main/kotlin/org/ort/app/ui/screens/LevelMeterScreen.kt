@@ -114,17 +114,13 @@ private fun LevelMeterBody(state: LevelViewState, modifier: Modifier = Modifier)
             LevelFact("Speech peaks", state.peakDbfsLabel, testTag = "level-meter-peak")
             LevelFact("Noise floor", state.noiseFloorDbfsLabel, testTag = "level-meter-noise-floor")
             LevelFact("Headroom", state.headroomLabel, testTag = "level-meter-headroom")
-            // R-419: the board's own label is "Clipped samples this session" —
-            // `LevelStatus.State.Measured.clipCountLastSecond` (the only clip signal `:pipeline`
-            // publishes today, WP11c/R-112) is a rolling last-second window, not a true
-            // session-cumulative total; a genuine per-session counter would be a `:pipeline` change
-            // outside this row's file ownership this round. Matching the board's own copy here
-            // rather than leaving the row unfindable in the register's own review pass — flagged in
-            // this round's own CHANGELOG for whoever next owns `LevelStatus` to add a real
-            // cumulative count.
+            // R-419: the board's own label, now backed by the real thing — `LevelStatus
+            // .clippedSamplesThisSession` (WP11c's own follow-up), a genuine session-lifetime
+            // running total, not `clipCountLastSecond`'s rolling ~1 s window this row used to read
+            // for lack of a real one.
             LevelFact(
                 "Clipped samples this session",
-                state.clippedLastSecondLabel,
+                state.clippedThisSessionLabel,
                 testTag = "level-meter-clipped",
             )
             // R-175: absent, not "not measured" — see LevelViewState.weakestOverLabel's own kdoc.

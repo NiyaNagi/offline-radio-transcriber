@@ -119,23 +119,27 @@ class LevelMeterScreenTest {
 
     @Test
     @Requirement("R-419")
-    fun `R_419 the clipped-samples row carries the board's own this-session label`() {
+    fun `R_419 the clipped-samples row carries the real session total, not clipCountLastSecond`() {
         val state = LevelViewStateMapper.from(
             level = LevelStatus.State.Measured(
                 peakDbfs = -14f,
                 rmsDbfs = -20f,
                 noiseFloorDbfs = -58f,
                 clipped = false,
-                clipCountLastSecond = 0,
+                // Deliberately different from clippedSamplesThisSession below, so this proves the
+                // row reads the real session total, not the per-second count.
+                clipCountLastSecond = 9,
                 sampleRateHz = 16_000,
                 updatedAtMillis = 0L,
             ),
             history = List(60) { -20f },
             inputLabel = "USB Audio Device · last 60 s",
+            clippedSamplesThisSession = 340L,
         )
         composeTestRule.setContent { OrtTheme { LevelMeterScreen(state = state) } }
 
         composeTestRule.onNodeWithText("Clipped samples this session", substring = true).assertExists()
+        composeTestRule.onNodeWithText("340", substring = true).assertExists()
         composeTestRule.onNodeWithText("Clipped samples, last second", substring = true).assertDoesNotExist()
     }
 

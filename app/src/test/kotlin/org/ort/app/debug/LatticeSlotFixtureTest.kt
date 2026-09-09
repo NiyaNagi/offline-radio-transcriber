@@ -148,4 +148,20 @@ class LatticeSlotFixtureTest {
             weakest != null,
         )
     }
+
+    @Test
+    @Requirement("R-419")
+    fun `R_419 level-clip publishes a real, non-zero session-lifetime clip total`() = runTest {
+        Scenarios.load(context, "level-clip")
+
+        assertEquals(340L, LevelStatus.clippedSamplesThisSession)
+    }
+
+    @Test
+    @Requirement("R-419")
+    fun `R_419 level-low honestly publishes zero clipped samples this session`() = runTest {
+        Scenarios.load(context, "level-low")
+
+        assertEquals(0L, LevelStatus.clippedSamplesThisSession)
+    }
 }
