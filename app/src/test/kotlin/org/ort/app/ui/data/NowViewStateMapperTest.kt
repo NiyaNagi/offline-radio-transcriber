@@ -265,4 +265,67 @@ class NowViewStateMapperTest {
         assertTrue(state is NowViewState.Active)
         assertEquals("412 overs · 19 stations", (state as NowViewState.Active).summaryLabel)
     }
+
+    @Test
+    @Requirement("R-414")
+    fun `R_414 the axis labels carry the real start-end minute, not always the top of the hour`() {
+        // 23:32:00 UTC start, 07:00:15 UTC end — a real, non-zero start minute and a near-zero (but
+        // not exactly zero-second) end, so neither end can pass by accident if the fix only ever
+        // rounds down to the hour.
+        val startedAt = 23L * 3_600_000L + 32L * 60_000L
+        val endedAt = 31L * 3_600_000L + 15_000L // next day 07:00:15 UTC, as an absolute offset
+        val view = NowViewStateMapper.active(
+            details = listOf(detail("TX1", Attribution.confirmed("W7NPC", 0.9))),
+            gaps = emptyList(),
+            sessionStartedAtUtc = startedAt,
+            sessionEndedAtUtc = endedAt,
+            nowMillis = endedAt,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertEquals("23:32", view.axisStartLabel)
+        assertEquals("07:00", view.axisEndLabel)
+    }
+
+    @Test
+    @Requirement("R-414")
+    fun `R_414 a short session's start and end genuinely differ, never both reading the same rounded hour`() {
+        // `first-session`'s own shape: three minutes old. Rounding both ends down to the hour (the
+        // pre-fix behaviour) made them read identically ("01:00"/"01:00"), as if nothing had
+        // elapsed — the register's own "elapsed duration as a clock" symptom.
+        val startedAt = 23L * 3_600_000L + 57L * 60_000L
+        val nowMillis = startedAt + 3L * 60_000L
+        val view = NowViewStateMapper.active(
+            details = emptyList(),
+            gaps = emptyList(),
+            sessionStartedAtUtc = startedAt,
+            sessionEndedAtUtc = null,
+            nowMillis = nowMillis,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertEquals("23:57", view.axisStartLabel)
+        assertEquals("00:00", view.axisEndLabel)
+    }
+
+    @Test
+    @Requirement("R-418")
+    fun `R_418 the header count is genuinely singular at one over and one station`() {
+        val view = NowViewStateMapper.active(
+            details = listOf(detail("TX1", Attribution.confirmed("W7NPC", 0.9))),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = null,
+            nowMillis = 0L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertEquals("1 over · 1 station", view.summaryLabel)
+    }
 }

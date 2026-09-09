@@ -116,4 +116,48 @@ class LevelMeterScreenTest {
 
         composeTestRule.onNodeWithTag("level-meter-weakest-over").assertDoesNotExist()
     }
+
+    @Test
+    @Requirement("R-419")
+    fun `R_419 the clipped-samples row carries the board's own this-session label`() {
+        val state = LevelViewStateMapper.from(
+            level = LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            history = List(60) { -20f },
+            inputLabel = "USB Audio Device · last 60 s",
+        )
+        composeTestRule.setContent { OrtTheme { LevelMeterScreen(state = state) } }
+
+        composeTestRule.onNodeWithText("Clipped samples this session", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Clipped samples, last second", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-419")
+    fun `R_419 the static paragraph renders beneath the band-state sentence`() {
+        val state = LevelViewStateMapper.from(
+            level = LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            history = List(60) { -20f },
+            inputLabel = "USB Audio Device · last 60 s",
+        )
+        composeTestRule.setContent { OrtTheme { LevelMeterScreen(state = state) } }
+
+        composeTestRule.onNodeWithTag("level-meter-band-state-body").assertExists()
+        composeTestRule.onNodeWithText("The level is set on the radio.", substring = true).assertExists()
+    }
 }

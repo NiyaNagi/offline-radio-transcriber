@@ -32,8 +32,149 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (ui-conformance data: R-426 per-attempt work_attempt history)
+## 2026-09-08 (ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410)
 
+### e8b7dbf — ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410
+
+**Scope:** `ui/screens` (`NowScreen.kt`, `CaptureStatusScreen.kt`, `LevelMeterScreen.kt`), `ui/data`
+(`NowViewState.kt`, `ReaderPolling.kt`), `app/src/debug` (`Scenarios.kt`, `ScenarioFixtures.kt`,
+`OvernightScenario.kt`, `StationsFixtures.kt`), matching tests, `results/ui-audit/README.md`, one
+on-device screenshot. Merged `main` forward three times as the coordinator's own message grew
+mid-round (final merge base `09b5bc2`, all `--ff-only`); never rebased, never stashed.
+
+**Requirements/ACs:** register R-412 (halt), R-414, R-415, R-416, R-417, R-418 (polish), R-419,
+R-421, R-106 (check, no fix — see below), R-382 (spec), R-440, R-411, R-410.
+
+**What changed:**
+
+*Constitution Check.* Principle I ("never fabricate") governs almost every item here: R-414's fix
+replaces a rounded-to-the-hour axis label with the real minute; R-417/R-416 only render a fact
+that has a real source (`state.axisStartLabel`, `SharedPreferencesSetupStore.selectedInputLabel`);
+R-419's "Clipped samples this session" label is flagged (not silently accepted) as still backed by
+a last-second-window count, the only real signal `:pipeline`'s `LevelStatus` publishes today.
+Principle III ("never delete quietly") is why R-421's fixture change never marks an AMBIGUOUS
+candidate `selected` — `AmbiguousCandidatesFixtureTest`'s own existing invariant stands.
+
+- **R-412 (halt).** `CaptureStatusScreen.kt`'s header `Row` gave the title `Column` no `weight`,
+  so at font scale 2.0 "Stop" was measured into whatever sliver was left after the title's own
+  full-intrinsic-width claim, wrapping one letter per line. `Modifier.weight(1f)` on the title
+  Column (not `Stop`) fixes it — the title wraps, the action keeps its own intrinsic width. Test
+  `R_412` compares `Stop`'s rendered height against a same-text unconstrained reference (Robolectric
+  cannot measure real font metrics reliably — the same technique `NowScreenTest`'s own R-260 test
+  already established). **Verified on-device**, emulator-5556 (`ort_audit_2`), font scale 2.0,
+  `overnight-live` → drawer → Capture:
+  `results/ui-audit/overnight-live/N04-capture-status-r412-after@2x.png` — "Stop" renders as one
+  normal-width word, the title wraps to two lines, no overlap.
+- **R-414.** `NowViewStateMapper.active`'s `hourLabel` always forced `:00` minutes; a short session
+  (e.g. `first-session`) had both axis ends round to the *same* hour, reading as an elapsed-duration
+  clock ("01:00"/"01:00") rather than the real start/end ("23:32"/"07:00", the register's own
+  figures). Now uses the existing `hourMinuteLabel` for both ends; `hourLabel` deleted (dead code).
+- **R-415.** `NowScreen.kt`'s populated-chart call passed `title = "ACTIVITY BY HOUR (UTC)"`
+  explicitly, undoing R-021/R-075's own no-title default. Now passes `title = null`.
+- **R-416.** `ReaderPolling.idleNowViewState` hardcoded `inputLabel = null` with a stale comment
+  ("no process-wide input-device holder... honestly omitted") — `InputStatus` genuinely resets to
+  `None` once idle (it's live session state), but the setup wizard's own durable
+  `SharedPreferencesSetupStore.selectedInputLabel` survives idle/capturing cycles and is the real
+  fact `Now-Idle.dc.html`'s meta row wants. `tierLabel` now reuses the same `MAX_TIER -
+  ShedStatus.currentLevel` formula `ThreadViewData`/`SettingsPolling`/`FailureMapper` already treat
+  as readable outside a live capture. `NowScreen.kt` also gained the unconditional divider ahead of
+  `EARLIER NIGHTS` (`now-idle-earlier-nights-divider`) — previously absent regardless of the meta row.
+- **R-417.** `Now-First.dc.html`'s "Listening since 23:32." second line, rendered under the
+  `emptyMessage` only when `state.axisStartLabel` is real (never fabricated).
+- **R-418 (polish).** `NowViewStateMapper.active`'s summary label built `"$overCount overs ·
+  $stationCount stations"` by hand — now `pluralize(overCount, "over")`/`pluralize(stationCount,
+  "station")`, the same shared plural rule (`ThreadViewData.pluralize`, R-163, same package) R-301
+  already established elsewhere.
+- **R-419.** `LevelMeterScreen.kt` gained the board's own static paragraph beneath the band-state
+  sentence (`level-meter-band-state-body`) and relabelled the clip row "Clipped samples this
+  session" (from "..., last second") to match the board's copy — **flagged, not silently accepted**:
+  the underlying value stays `LevelStatus.State.Measured.clipCountLastSecond`, the only clip signal
+  `:pipeline` publishes; a genuine session-cumulative counter is a `:pipeline` change outside this
+  round's file ownership, left for whoever next owns `LevelStatus`. `level-low`'s own fixture also
+  gained one real quiet transmission (`signalStrength = 2.0`) so "Weakest over resolved tonight"
+  — already coded, never exercised — has a real value; the row was previously absent because the
+  fixture seeded zero transmissions.
+- **R-421.** New `ScenarioFixtures.latticeSlots(...)` (found-not-guessed char spans — locates each
+  phonetic word inside the real transcript text via `indexOf`, `check()`s loudly if a copy edit ever
+  desyncs the two, rather than seeding a silently-wrong span). Applied to `overnight`'s CONFIRMED
+  opener (already `selected = true`) and its corrected INFERRED over (previously had no
+  lattice/candidate rows at all — added, `selected = true`, real KJ7ABC phonetic match already
+  present in its own text), plus `stations-14-nights`' mirrored AMBIGUOUS over's own candidate slots
+  (kept **unselected** — an AMBIGUOUS over has no winner to highlight inline;
+  `AmbiguousCandidatesFixtureTest`'s own `no candidate should be pre-selected on an AMBIGUOUS over`
+  stands unchanged, feeding only D05's `slotDetailsFor`). Every `PhoneticLatticeEntity` these slots
+  belong to is now seeded `source = TEXT_DERIVED`, not the default `ACOUSTIC` (an acoustic lattice's
+  slots carry no char span, per `LatticeSlotEntity`'s own doc comment — pairing one with real spans
+  would itself be a fixture inconsistency). **Load-bearing fixture bug found and fixed in the same
+  pass:** `Scenarios.clearScenarioRowsInOneTransaction` never cleared `lattice_slot` — a scenario
+  with deterministic (non-ULID) candidate/slot ids collided with its own prior load on reload
+  (`UNIQUE constraint failed: lattice_slot.id`), caught by this file's own "loading every scenario
+  back to back five times" test before it was ever committed; a `DELETE FROM lattice_slot WHERE
+  transmissionId IN (...)` clause added alongside every sibling per-transmission table's own clause.
+- **R-106 (check, not a fix).** `ScenariosTest`'s own existing `F15_gap-call's second gap carries
+  cause CALL` test (unchanged, still green) already proves the fixture correctly seeds
+  `CaptureGapCause.CALL` on `gap-call`'s second gap. The "interruption" text the register reported
+  is therefore either the reviewer's screenshot showing the session's *first* gap (INTERRUPTION,
+  inherited unchanged from `overnight`'s own base fixture, at minute 7) rather than the CALL gap
+  (previously at minute 45), or a genuine rendering-side issue — reported here for WP5 to confirm
+  against `LogItemsMapper`/`Rows.kt`, not touched (out of this row's file ownership).
+- **R-382 (spec).** `CaptureStatusScreen.kt`'s `KeyValueRowWithDot` applied its `heightIn(min =
+  44.dp)` floor only when the row was itself clickable (`onClick != null`) — only the Level row
+  ever had one, so Input (and every other non-clickable row) had no floor at all, relying purely on
+  content richness (a sub-line, a trailing marker) to clear 44dp — Input on the device tree had
+  neither and measured 111px (~35dp), under the floor. The floor now applies unconditionally; the
+  clickable modifier chain still applies only when `onClick` is real. Test `R_382` asserts every
+  `capture-status-*` row clears 44dp.
+- **R-440.** New `Scenarios.seedConfiguredDeviceState` — a verified input (`SharedPreferencesSetupStore
+  .selectedInputLabel = "USB Audio Device"`, `inputVerified = true`), a radio choice (`RadioChoice
+  .NONE` + 145.230 MHz manual, honest since FR-RIG is unbuilt, register R-084), a 60 GB storage
+  budget (`SharedPreferencesSettingsStore.audioBudgetGb`), and every `ModelCatalog` entry
+  "installed" on disk (new `ScenarioFixtures.installEveryModelFixture` — writes each entry's real
+  destination file plus a `.sha256` marker carrying that entry's own published checksum text, the
+  same string `ModelsController.rowFor`'s own `marker.readText() == spec.checksum.value` check
+  reads — never a database row, since the real screen reads files, not `:data`). Wired into
+  `overnight`/`overnight-live`/`stations-14-nights`'s own `load()` dispatch only (`gap-call`
+  excluded — the register named only these three). `model-missing` now explicitly
+  `uninstallEveryModelFixture` (real files, outside `:data`'s own per-scenario row-clearing) so
+  "0 of 4 assets" stays genuine even after an earlier scenario in the same process installed every
+  model — this fixture's own contract, otherwise silently broken by load order.
+- **R-411.** `setupLevel` now calls `LevelStatus.update(...)` (peak −14 dBFS, noise floor −58, not
+  clipped) — independent of `SetupStore.levelInBand` (left unset on purpose so `stepFor` still
+  resumes at S07); a clean install previously published nothing, so S07's meter had no bars.
+- **R-410 (F15 half).** `gap-call` now passes `live = true` (same primitive `overnightLive` already
+  uses) and its own extra CALL gap is anchored to real wall-clock "now" (closed 90s ago) instead of
+  the session's own start offset — `FailureMapper.isRecentCallGap` needs the session's *newest* gap
+  CALL-caused, closed within its own 5-minute window, **and** `CaptureState.Capturing`; a fixture
+  built to have already ended, with a gap timed hours before real "now" by the time anyone looked,
+  could never satisfy any of the three. The ended-session Log row (`not listening · 52 s · incoming
+  call`) is unaffected — same `CaptureGapEntity`, read regardless of session end state.
+
+**Verified:** `:app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.screens.LevelMeterScreenTest" --tests "org.ort.app.ui.data
+.NowViewStateMapperTest" --rerun` — all green (includes new `LatticeSlotFixtureTest`,
+`TourParityFixtureTest`, and every `R_412`/`R_382`/`R_415`/`R_416`/`R_417`/`R_414`/`R_418`/`R_419`
+case named above). `:app:ktlintCheck :app:detekt` — clean (a `LongMethod` in `NowScreen
+.ActiveContent` and several ktlint argument-wrapping findings caught and fixed before this run).
+`dependencyRules platformGuards` — OK, 17 modules. `:app:assembleDebug` — succeeds. `python
+tools\spec-check\spec_check.py` — 8/8 PASS. `coverageMatrix` then `coverageMatrixCheck` — 191/419,
+up to date. **R-412 also verified on a real device** (emulator-5556, `ort_audit_2`, per the
+coordinator's own port correction), screenshot committed; every other item is Robolectric-only
+this round (both other ports were validators' own).
+
+**Left open / not done:** R-419's "Clipped samples this session" label now reads correctly but
+still reports a last-second-window count, not a true session-cumulative total — flagged above for
+`:pipeline`'s `LevelStatus` owner. R-106 needs WP5 to confirm which gap the reviewer's own
+screenshot actually showed (this row's own fixture-level test already proves the fixture is
+correct). R-421 did not extend to `stations-14-nights`' ~60 generic CONFIRMED "checking in" overs —
+their text states the callsign literally, not phonetically, so the screen's own literal-substring
+fallback already highlights them with no fixture change needed.
+
+---
+
+## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
+
+## 2026-09-08 (ui-conformance data: R-426 per-attempt work_attempt history)
 ### be8dca4 — ui-conformance data · R-426 per-attempt work_attempt history
 
 **Scope:** `:data` — `entity/WorkQueueItemEntity.kt` (new `WorkAttemptEntity`,

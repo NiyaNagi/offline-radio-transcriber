@@ -1,9 +1,20 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -11,12 +22,16 @@ import org.ort.app.ui.data.CaptureStateTone
 import org.ort.app.ui.data.CaptureStatusViewState
 import org.ort.app.ui.data.KeyValueFacts
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.app.ui.theme.OrtType
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
  * `Capture-Status.dc.html` (ui-conformance-plan WP4, R-031/R-032/R-034/R-035/R-038, FR-UI-7).
  */
+/** R-382: the 44dp tap-target floor every `capture-status-*` row must clear. */
+private const val MIN_TAP_TARGET_DP = 44
+
 @RunWith(RobolectricTestRunner::class)
 class CaptureStatusScreenTest {
 
@@ -112,6 +127,65 @@ class CaptureStatusScreenTest {
 
         composeTestRule.onNodeWithTag("capture-status-level").performClick()
         assert(opened)
+    }
+
+    @Test
+    @Requirement("R-412")
+    fun `R_412 at font scale 2_0 Stop renders at roughly one line's height, never stacked one letter per line`() {
+        // R-260's own established technique (`NowScreenTest`): Robolectric cannot measure real font
+        // metrics reliably, so this compares against the *same* text rendered unconstrained on its
+        // own line, rather than asserting an absolute width/height — the one host-independent signal
+        // that distinguishes "one real line" from "collapsed into single characters, stacked".
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        CaptureStatusScreen(state = baseState)
+                    }
+                    Text(
+                        text = "Stop",
+                        style = OrtType.textAction,
+                        softWrap = false,
+                        modifier = Modifier.testTag("stop-reference"),
+                    )
+                }
+            }
+        }
+
+        val stopHeight = composeTestRule.onNodeWithTag("capture-status-stop").fetchSemanticsNode().size.height
+        val referenceHeight = composeTestRule.onNodeWithTag("stop-reference").fetchSemanticsNode().size.height
+        assertTrue(
+            "expected Stop to render at roughly one reference line's height (${referenceHeight}px); " +
+                "got ${stopHeight}px, consistent with wrapping one character per line",
+            stopHeight <= referenceHeight * 2,
+        )
+    }
+
+    @Test
+    @Requirement("R-382")
+    fun `R_382 every capture-status row is at least the 44dp tap-target floor tall`() {
+        composeTestRule.setContent { OrtTheme { CaptureStatusScreen(state = baseState) } }
+
+        val rowTags = listOf(
+            "capture-status-input",
+            "capture-status-level",
+            "capture-status-radio",
+            "capture-status-overs",
+            "capture-status-backlog",
+            "capture-status-tier",
+            "capture-status-thermal",
+            "capture-status-storage",
+            "capture-status-battery",
+        )
+        rowTags.forEach { tag ->
+            val bounds = composeTestRule.onNodeWithTag(tag).getUnclippedBoundsInRoot()
+            val height = bounds.bottom - bounds.top
+            assertTrue(
+                "expected $tag to be at least the 44dp floor tall (register R-382 found Input at " +
+                    "111px/~35dp on the device tree); got $height",
+                height >= MIN_TAP_TARGET_DP.dp,
+            )
+        }
     }
 
     @Test
