@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -148,7 +149,22 @@ public fun Toast(message: String, onUndo: (() -> Unit)?, modifier: Modifier = Mo
  * guide §6.9: `bg/raised`, 18px top radius, a drag handle, title + optional `Clear all` slot,
  * then [content]. Dismissing (drag or scrim) and dimming the screen beneath to 22% are the host
  * screen's job — this composable is the sheet surface itself, not the scaffold around it.
- */
+ *
+ * R-545 (`Log-Filter`'s own "Clear all", `overnight/L02-filter-sheet.png`-adjacent — found on
+ * `emulator-5554` after R-510's own `TextAction`/`requiredHeightIn` fix, dumped as `<node
+ * text="Clear all" content-desc="Clear all" clickable="true" focusable="true"
+ * bounds="[882,829][1027,901]"/>`, 72px/27.4dp against the 115.5px/44dp floor at this device's own
+ * `wm density` 420): `requiredHeightIn` genuinely does force [TextAction]'s own Box to measure at
+ * least 44dp regardless of incoming constraints — confirmed directly, not assumed, by giving this
+ * header [Row] the identical floor here. Before this fix the header `Row` itself carried no height
+ * floor of its own at all — only `fillMaxWidth()` — so its own reported height (and therefore the
+ * bounds anything inside it, including an already-44dp-tall `TextAction`, gets *placed and clipped
+ * against*) came from [title]'s own single-line `cardTitle` text, genuinely shorter than 44dp. A
+ * `requiredHeightIn` child can still measure itself at 44dp — [TextAction]'s own internal box
+ * really does — but a `Row` that itself measures shorter than that child still lays out (and a
+ * real device's own accessibility bridge still reports) that child's bounds relative to the row's
+ * own, shorter final extent, not the child's own larger intrinsic one. Every screen that opens a
+ * [Sheet] with [onClearAll] inherits this fix — `Log-Filter`/`Search-Filters` both do. */
 @Composable
 public fun Sheet(
     title: String,
@@ -170,7 +186,16 @@ public fun Sheet(
                 .background(OrtColors.lineHandle, RoundedCornerShape(2.dp)),
         )
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 6.dp),
+            // R-545: the header row's own 44dp floor, *after* `.padding()` — nothing measurement-
+            // relevant follows it, the same "heightIn last in the chain" order R-383/R-510 already
+            // established as the one that survives to a real device (see this composable's own doc
+            // comment). `testTag` is this composable's own — not part of a caller's `modifier` —
+            // purely so `FeedbackTest.kt`'s own `R_545` can query the row itself directly.
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp, bottom = 6.dp)
+                .heightIn(min = 44.dp)
+                .testTag("sheet-header-row"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(text = title, style = OrtType.cardTitle, color = OrtColors.textHigh, modifier = Modifier.weight(1f))

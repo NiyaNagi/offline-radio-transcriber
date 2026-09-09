@@ -200,4 +200,48 @@ class InspectionTest {
             valueTop >= labelBottom,
         )
     }
+
+    // ---- R-561: PriorBarValue's own figure never clips at a large font scale ----
+
+    @Test
+    fun `R_561_the_prior_figure_renders_its_full_string_uncut_at_a_large_font_scale`() {
+        // WP6's own repro (`overnight/D02-inferred@2x-end.png`): "+0.85"/"-0.12" rendered clipped
+        // to "+0."/"-0." — `PriorBarValue`'s own `widthIn(min = 30.dp, max = 34.dp)` gave the figure
+        // a hard *ceiling* even though it's `softWrap = false, maxLines = 1` (nowhere to wrap the
+        // overflow to) and `OrtType.signal` grows with font scale like every other row in this
+        // package.
+        //
+        // A genuine host limit, found and disclosed while writing this test, not assumed: a pixel-
+        // width comparison against the old 34dp ceiling cannot discriminate the fixed and unfixed
+        // code *on this host* — this package's own already-established finding
+        // (`RowsTest.kt`'s `assertColumnsDoNotCollide` doc comment; `LogRowResponsiveTest.kt`'s own
+        // `R_373` doc comment) that this host's Robolectric font metrics are degenerate and do not
+        // scale with `fontScale` the way a real device's do. Confirmed directly, not assumed: even a
+        // 15-character literal ("+0.850000000000") still measured exactly the 30dp *floor* here,
+        // both before and after this fix — this host simply never asks for more than that floor,
+        // with or without a `max` present, so there is nothing this host's own measurement pass can
+        // show as "no longer capped". What this test pins instead — real and checkable regardless of
+        // this host's own glyph metrics — is that the figure's full text reaches the semantics tree
+        // unclipped (`onNodeWithText` finds the *entire* string, not a truncated prefix): a
+        // regression guard against a future `TextOverflow.Ellipsis`/similar creeping back in, even
+        // though this alone would not have caught the *original* R-561 defect (a paint-level clip,
+        // not a data-level truncation, which is exactly why the register's own confirmation was a
+        // screenshot, not a semantics query — this round's own `emulator-5554` capture, in
+        // `CHANGELOG.md`, is what actually proves the pixel claim).
+        val valueLabel = "+0.850000000000"
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2.0f)) {
+                OrtTheme {
+                    val state = PriorBarViewState(
+                        name = "Heard acoustically",
+                        fillFraction = 0.84f,
+                        valueLabel = valueLabel,
+                    )
+                    PriorBar(state)
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText(valueLabel).assertIsDisplayed()
+    }
 }

@@ -331,12 +331,18 @@ public fun PriorBar(state: PriorBarViewState, modifier: Modifier = Modifier) {
         .fillMaxWidth()
         .semantics(mergeDescendants = true) { contentDescription = description }
     // R-323: below the threshold, the label/bar/value share one row exactly as before — above it,
-    // the label gets the row's full width on its own line (still never wrapping mid-word) and the
-    // bar+value reflow onto a second line beneath it, rather than a cramped label column forcing a
-    // mid-word wrap the bar then sits beside.
+    // the label gets the row's full width on its own line and the bar+value reflow onto a second
+    // line beneath it, rather than a cramped label column forcing a mid-word wrap the bar then
+    // sits beside.
+    //
+    // R-561 (WP6, `overnight/D02-inferred@2x-end.png`): with the *whole row's* own width to
+    // itself here — no narrow sibling column to protect, unlike the `else` branch below — the
+    // label can afford to genuinely wrap onto a second line rather than staying pinned to
+    // `maxLines = 1` the way R-323's own narrow-column case still must; `wraps = true` only in
+    // this branch.
     if (LocalDensity.current.fontScale >= LARGE_FONT_SCALE_THRESHOLD) {
         Column(modifier = rowModifier) {
-            PriorBarLabel(state, modifier = Modifier.fillMaxWidth())
+            PriorBarLabel(state, modifier = Modifier.fillMaxWidth(), wraps = true)
             Row(
                 modifier = Modifier.padding(top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -359,16 +365,19 @@ public fun PriorBar(state: PriorBarViewState, modifier: Modifier = Modifier) {
     }
 }
 
-/** [Text.softWrap] `false`/`maxLines = 1`: a prior's name never wraps mid-word — R-323's own fix,
- * true regardless of font scale (only the surrounding layout reflows). */
+/** [Text.softWrap] `false`/`maxLines = 1` by default: a prior's name never wraps mid-word — R-323's
+ * own fix, true regardless of font scale in the narrow-column case (only the surrounding layout
+ * reflows there). R-561: [wraps] (default `false`, every existing caller unaffected) lets
+ * [PriorBar]'s own full-width branch opt in to real, word-boundary wrapping instead — it has the
+ * whole row to itself there, not a fixed-width sibling column to protect. */
 @Composable
-private fun PriorBarLabel(state: PriorBarViewState, modifier: Modifier = Modifier) {
+private fun PriorBarLabel(state: PriorBarViewState, modifier: Modifier = Modifier, wraps: Boolean = false) {
     Text(
         text = state.name,
         style = OrtType.cardBody,
         color = if (state.arguedAgainst) OrtColors.textDim else OrtColors.textPrior,
-        softWrap = false,
-        maxLines = 1,
+        softWrap = wraps,
+        maxLines = if (wraps) Int.MAX_VALUE else 1,
         modifier = modifier,
     )
 }
@@ -391,6 +400,14 @@ private fun PriorBarMeter(state: PriorBarViewState, modifier: Modifier = Modifie
     }
 }
 
+/** R-561 (WP6, `overnight/D02-inferred@2x-end.png`): `widthIn(min = 30.dp, max = 34.dp)` — a
+ * `max` on a `softWrap = false, maxLines = 1` figure that itself grows with font scale (this
+ * package's own `OrtType.signal`) is a hard ceiling with nowhere for the overflow to go: at 2.0
+ * the real figure ("+0.85"/"-0.12") no longer fits under 34dp and the trailing digit clips
+ * silently ("+0."). `widthIn(min = …)` alone — the same "floor, never a ceiling" rule this
+ * package's own `Rows.kt` (R-152) already established — sizes this column by its own real,
+ * measured content instead; nothing to its right shares this row for it to collide with (`PriorBar`
+ * places [PriorBarValue] last). */
 @Composable
 private fun PriorBarValue(state: PriorBarViewState, modifier: Modifier = Modifier) {
     if (state.valueLabel != null) {
@@ -401,7 +418,7 @@ private fun PriorBarValue(state: PriorBarViewState, modifier: Modifier = Modifie
             textAlign = TextAlign.End,
             softWrap = false,
             maxLines = 1,
-            modifier = modifier.widthIn(min = 30.dp, max = 34.dp),
+            modifier = modifier.widthIn(min = 30.dp),
         )
     } else {
         Text(
