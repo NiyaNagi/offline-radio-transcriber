@@ -106,6 +106,99 @@ round's own smoke test update, not re-done here.
 
 ---
 
+## 2026-09-08 (ui-conformance WP11b: calibration chart colour split, back headers on F14/F19/F21/F22)
+
+### (pending) — ui-conformance WP11b · R-447 calibration chart colour split; R-448 back headers on F14/F19/F21/F22
+
+**Scope:** `:app` — `ui/failures/FailCalibration.kt`, `ui/failures/FailInfoCards.kt`,
+`ui/failures/FailReconcile.kt`, `ui/failures/FailAssetSwap.kt`, and tests (a new
+`FailCalibrationTest.kt` and a new `FailureBackHeaderTest.kt`, plus two existing
+`FailureScreensTest.kt` assertions updated to scroll first now that F14/F21 both start with a
+header). `git merge main` (main was diverged from this branch's own `d4ea9ed`/`2111abc`; fast-
+forwarded cleanly to `6c44d51` — Reviewer A/B/C/D's parallel captures/register updates against
+`e927690`, no rebase, no stash, no `gradlew --stop`). Fixes register rows R-447 and R-448
+(Reviewer D's capture review, design).
+
+**Requirements/ACs:** R-447, R-448 (both design); constitution I (never fabricate — R-447's fix
+reads the board's own real threshold from its own real example points, not a rounder guess) and
+IV (an operator must have a real way out of every screen, not just a completed-action button).
+
+**What changed:**
+
+- **R-447: F22's reliability chart now colours exactly the way `Fail-Calibration.dc.html` does.**
+  The board's own five example points are *all* numerically below the diagonal — even its two
+  green, well-calibrated low-score dots (deviations 0.08 and 0.12) — yet only the three whose
+  deviation is larger (0.18, 0.20, 0.20) draw amber; "the high-score end is where it drifted" is a
+  claim about *real* drift, not "every point sits a hair off the line." The code's own bare
+  `actuallyRight < score` check read every one of the board's own five points as amber, which is
+  exactly what the review caught (`calibration/F22-calibration-now.png`). Fixed with a real
+  threshold (`MISCALIBRATION_THRESHOLD = 0.15f`) — strictly between the board's own largest
+  still-green deviation (0.12) and its smallest amber one (0.18), not a rounder guess. The colour
+  decision (`isOverConfident`) is pulled out of `ReliabilityChart`'s `Canvas` draw scope into its
+  own `internal` function specifically so it is directly testable — a `Canvas` draws raw pixels,
+  not semantics nodes a Compose UI test can query per dot. Tests (new `FailCalibrationTest.kt`,
+  plain JUnit5 like `FailureMapperTest` — no Android dependency): the board's own two low-score
+  points stay green, its own three high-score points read amber, a point on or above the diagonal
+  is never over-confident, and the split sits exactly at the board's own threshold (0.14 still
+  green, 0.16 now amber) rather than a coincidence of round numbers.
+- **R-448: F14, F19, F21 and F22 now render the board's own "‹ &lt;parent&gt;" back header** (WP2's
+  shared `DrillInHeader`) — none rendered before this (`clock-dst/F14-clock-now.png`,
+  `reconcile/F19-reconcile-now.png`, `asset-swap/F21-asset-swap-now.png`,
+  `calibration/F22-calibration-now.png`). Each wired through the screen's own *existing* dismiss,
+  per the review's own instruction, rather than a new navigation path: F14 (`"‹ Earlier nights"`)
+  reuses `onContinue` — already a real, working dismiss (F14 is one of the two dismissable
+  takeovers, `FailureHost.kt`'s own `isTakeoverShown`/`dismiss.onDismissClock`). F19
+  (`"‹ Storage and retention"`) reuses `onLeaveAsIs`, and F21 (`"‹ Models and lexicon"`) reuses
+  `onDone` — both unchanged, still documented no-op stubs at the `FailureHost.kt` integration level
+  (same as every other action on those two screens; not a regression, matching what those screens'
+  own existing buttons already do). F22 (`"‹ Models and lexicon"`) had *no* dismiss at all before
+  this (only `onInstall`) — a new `onBack: () -> Unit = {}` parameter was added, defaulted so every
+  existing caller keeps compiling unchanged, matching the same stub pattern `FailureHost.kt` already
+  uses for `onInstall`. **No `FailureHostActions` callback maps to "Earlier nights"/"Storage and
+  retention"/"Models and lexicon" navigation specifically today** — `onOpenStorageSettings`/
+  `onOpenRetentionSettings` open Settings' root, not a screen any of these takeovers were ever
+  reached *from* — reported per the review's own "if a callback for the parent is missing, say
+  which," not fabricated. Adding the header pushed each screen's own content down slightly;
+  `FailCalibrationScreen` crossed detekt's `LongMethod` as a result — fixed by extracting the
+  chart/axis-label/caption block into its own `ReliabilitySection` composable, unrelated to the
+  header itself. Tests (new `FailureBackHeaderTest.kt`, split out of `FailureScreensTest.kt`
+  specifically to keep that file under detekt's `LargeClass` — the same reasoning
+  `FailCalibrationTest.kt` already used for R-447): one `R_448` test per screen, each asserting the
+  parent label renders and that tapping "Back to `<parent>`" (`DrillInHeader`'s own content
+  description, the same pattern `TransmissionDetailContentTest.kt` already establishes) calls the
+  screen's own reused dismiss. Two pre-existing `FailureScreensTest.kt` assertions
+  (`F21_asset-swap shows the options…`, `R_147 F14 becomes a full screen…`) needed
+  `.performScrollTo()` added — they only passed before because nothing pushed their content down;
+  the rows and their copy are unchanged.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.debug.ScenariosTest" --tests
+"org.ort.app.ui.navigation.*"` — 196 tests, 1 failed: `FailureHostTest`'s own `R_300` (this
+package's prior commit) times out waiting for the storage banner — confirmed **pre-existing**
+against the clean `6c44d51` checkout (`git stash -u` before touching anything, `git stash pop`
+after), unrelated to R-447/R-448, not fixed here. Every R-447 (4) and R-448 (4) test passed by
+name; every other test in that run passed. `.\gradlew.bat :app:detekt` and `.\gradlew.bat
+:app:ktlintCheck` — both BUILD SUCCESSFUL, zero issues (after the `ReliabilitySection`/
+`FailureBackHeaderTest.kt` extractions above). `.\gradlew.bat build dependencyRules
+platformGuards` — also surfaced `ReaderActivityDestinationSmokeTest`'s own
+`R_350_improve_done_reflects_a_real_failure_and_offers_no_install_for_a_non_model_reason`
+(`:app:smokeTestDebugUnitTest`) — confirmed **pre-existing** the same way, unrelated to
+`ui/failures`, not this package's row. `.\gradlew.bat dependencyRules platformGuards` (standalone)
+— OK. `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `.\gradlew.bat coverageMatrix`/
+`coverageMatrixCheck` — 191 of 419 covered (up from 185), up to date. `python
+tools/spec-check/spec_check.py` — OK, 8/8. `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+Never ran `gradlew --stop`; used `git merge main` (not `--ff-only`, since the coordinator's own
+instruction allowed for divergence — the branch turned out to still fast-forward cleanly).
+
+**Left open:** the two pre-existing, unrelated failures noted above (`FailureHostTest`'s `R_300`
+timeout and `ReaderActivityDestinationSmokeTest`'s `R_350` case), both confirmed present on `main`
+before this round's own changes and out of this package's row to fix; the missing
+`FailureHostActions` callbacks for "Earlier nights"/"Storage and retention"/"Models and lexicon"
+navigation, named above per the review's own instruction.
+
+---
+
 ## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
 
 ### ed7b13c — ui-conformance WP12 v2 · drill-in seeding through WP3's NavSeed, TourIds resolves symbolic ids against real fixture data

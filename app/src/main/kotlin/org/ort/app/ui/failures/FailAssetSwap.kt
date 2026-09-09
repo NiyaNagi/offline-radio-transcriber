@@ -22,6 +22,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
+import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
@@ -32,7 +33,12 @@ import org.ort.app.ui.theme.OrtType
  * activate/roll back/remove, guide §"Assets") is unbuilt; see [DebugFailureOverride]'s kdoc.
  * Register R-148: the Lexicon rows now carry their marker dot (solid for active, hollow ring for
  * staged) and every Option row its own sub-line, both dropped from the first pass; R-151: the
- * "Done" bar uses [FailureActionBarScaffold], not a plain `weight(1f)` split.
+ * "Done" bar uses [FailureActionBarScaffold], not a plain `weight(1f)` split. Register R-448: the
+ * board's own "‹ Models and lexicon" back header — [onDone] is the screen's own existing dismiss
+ * (unchanged: still a documented no-op stub at the `FailureHost.kt` integration level, same as
+ * every other action on this screen), so the header's back chevron reuses it. No
+ * `FailureHostActions` callback maps to "Models and lexicon" navigation specifically today —
+ * reported, not fabricated.
  */
 @Composable
 public fun FailAssetSwapScreen(
@@ -50,6 +56,11 @@ public fun FailAssetSwapScreen(
     ) {
         FailureActionBarScaffold(
             content = {
+                DrillInHeader(
+                    parentLabel = "Models and lexicon",
+                    onBack = onDone,
+                    modifier = Modifier.testTag("failure-asset-swap-back"),
+                )
                 Text(
                     text = "Installed, not yet active",
                     style = OrtType.screenTitle,

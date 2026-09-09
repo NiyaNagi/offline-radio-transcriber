@@ -26,6 +26,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
+import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
@@ -36,9 +37,21 @@ import org.ort.app.ui.theme.OrtType
  * pipeline is unbuilt; see [DebugFailureOverride]'s kdoc. [ReliabilityChart] is a lightweight
  * reading of the board's own scatter — a diagonal reference line plus one dot per point, never a
  * fabricated curve fit.
+ *
+ * Register R-448: the board's own "‹ Models and lexicon" back header. Unlike F19/F21, this screen
+ * had *no* existing dismiss at all before this (only [onInstall]) — [onBack] is new, defaulted to
+ * a no-op so every existing caller keeps compiling unchanged, matching the same documented-stub
+ * pattern `FailureHost.kt`'s own `TakeoverOrScreen` already uses for [onInstall]. No
+ * `FailureHostActions` callback maps to "Models and lexicon" navigation specifically today —
+ * reported, not fabricated.
  */
 @Composable
-public fun FailCalibrationScreen(state: CalibrationViewState, onInstall: () -> Unit, modifier: Modifier = Modifier) {
+public fun FailCalibrationScreen(
+    state: CalibrationViewState,
+    onInstall: () -> Unit,
+    modifier: Modifier = Modifier,
+    onBack: () -> Unit = {},
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -47,6 +60,11 @@ public fun FailCalibrationScreen(state: CalibrationViewState, onInstall: () -> U
             .verticalScroll(rememberScrollState())
             .testTag("failure-calibration-screen"),
     ) {
+        DrillInHeader(
+            parentLabel = "Models and lexicon",
+            onBack = onBack,
+            modifier = Modifier.testTag("failure-calibration-back"),
+        )
         Text(
             text = "Confidence is miscalibrated",
             style = OrtType.screenTitle,
@@ -67,24 +85,7 @@ public fun FailCalibrationScreen(state: CalibrationViewState, onInstall: () -> U
             tone = BannerTone.DEGRADED,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
         )
-        SectionLabel("Reliability · your corrections vs the score", modifier = Modifier.padding(horizontal = 20.dp))
-        ReliabilityChart(
-            points = state.points,
-            modifier = Modifier
-                .padding(horizontal = 20.dp, vertical = 12.dp)
-                .fillMaxWidth()
-                .height(110.dp)
-                .testTag("failure-calibration-chart"),
-        )
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.End) {
-            Text(text = "score →", style = OrtType.axis, color = OrtColors.textLow)
-        }
-        Text(
-            text = "Dots below the diagonal are over-confident. The high-score end is where it drifted.",
-            style = OrtType.subLine,
-            color = OrtColors.textFaint,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
-        )
+        ReliabilitySection(points = state.points)
         SectionLabel("Fix", modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
         Text(
             text = "Install calibration ${state.calibrationVersion} — takes effect next session, scores on " +
@@ -117,6 +118,49 @@ public fun FailCalibrationScreen(state: CalibrationViewState, onInstall: () -> U
     }
 }
 
+/** The chart, its "score →" axis label and its "Dots below the diagonal…" caption — pulled out of
+ * [FailCalibrationScreen] purely to keep that function under detekt's `LongMethod` (register
+ * R-448's new header pushed it over). */
+@Composable
+private fun ReliabilitySection(points: List<Pair<Float, Float>>, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        SectionLabel("Reliability · your corrections vs the score", modifier = Modifier.padding(horizontal = 20.dp))
+        ReliabilityChart(
+            points = points,
+            modifier = Modifier
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .fillMaxWidth()
+                .height(110.dp)
+                .testTag("failure-calibration-chart"),
+        )
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.End) {
+            Text(text = "score →", style = OrtType.axis, color = OrtColors.textLow)
+        }
+        Text(
+            text = "Dots below the diagonal are over-confident. The high-score end is where it drifted.",
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
+        )
+    }
+}
+
+/** Register R-447: `Fail-Calibration.dc.html`'s own five example points are *all* numerically
+ * below the diagonal (`actuallyRight < score` for every one — even its two green, well-calibrated
+ * low-score dots, by 0.08 and 0.12), yet the board colours only the three whose deviation is
+ * larger (0.18, 0.20, 0.20) amber — "the high-score end is where it drifted" is a claim about a
+ * *real* drift, not about every point sitting a hair off the line. A bare `actuallyRight < score`
+ * check coloured every one of the board's own five points amber, which is exactly what the review
+ * caught. This is the board's own real threshold, not a rounder guess: strictly between its
+ * largest "still green" deviation (0.12) and its smallest "amber" one (0.18). */
+private const val MISCALIBRATION_THRESHOLD = 0.15f
+
+/** Pulled out of [ReliabilityChart]'s `Canvas` draw scope so `R_447` can assert the colour
+ * decision directly — a `Canvas` draws raw pixels, not semantics nodes a Compose UI test can
+ * query per dot, so the decision itself is what gets tested, not the drawn colour. */
+internal fun isOverConfident(score: Float, actuallyRight: Float): Boolean =
+    (score - actuallyRight) >= MISCALIBRATION_THRESHOLD
+
 @Composable
 private fun ReliabilityChart(points: List<Pair<Float, Float>>, modifier: Modifier = Modifier) {
     val description = "Reliability chart: ${points.size} points, actually-right against score"
@@ -142,8 +186,7 @@ private fun ReliabilityChart(points: List<Pair<Float, Float>>, modifier: Modifie
                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f)),
             )
             points.forEach { (score, actuallyRight) ->
-                val overConfident = actuallyRight < score
-                val color = if (overConfident) OrtColors.accentAmber else OrtColors.accentGreen
+                val color = if (isOverConfident(score, actuallyRight)) OrtColors.accentAmber else OrtColors.accentGreen
                 drawCircle(
                     color = color,
                     radius = 4.dp.toPx(),

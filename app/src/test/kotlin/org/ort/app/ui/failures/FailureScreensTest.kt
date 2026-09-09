@@ -416,7 +416,9 @@ class FailureScreensTest {
                 )
             }
         }
-        composeTestRule.onNodeWithTag("failure-asset-swap-option-0").assertIsDisplayed()
+        // Register R-448: the new "‹ Models and lexicon" header pushes the options down a little —
+        // the fixed Done bar (R-292/R-151) still needs no scroll; the option row does now.
+        composeTestRule.onNodeWithTag("failure-asset-swap-option-0").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("failure-asset-swap-done").assertIsDisplayed()
     }
 
@@ -474,10 +476,13 @@ class FailureScreensTest {
                 )
             }
         }
+        // Register R-448: the new "‹ Earlier nights" header pushes the rest of the screen down a
+        // little, so everything after it now needs a scroll to reach — the same "content can
+        // always scroll clear" contract R-151/R-123/R-292 already establish elsewhere.
         composeTestRule.onNodeWithTag("failure-clock-screen").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Overnight, Sat 31 Oct").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Around the change", ignoreCase = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("W7NPC").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Overnight, Sat 31 Oct").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Around the change", ignoreCase = true).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("W7NPC").performScrollTo().assertIsDisplayed()
     }
 
     @Test
