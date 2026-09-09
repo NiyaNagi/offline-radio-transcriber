@@ -31,6 +31,7 @@ import org.ort.core.SystemClock
  * no-results widen suggestions) is derived here, close to the [android.content.Context] it needs,
  * so [SearchScreen] itself stays a pure function of view-state.
  */
+@Suppress("LongParameterList") // one param per SearchContent argument — see SearchScreen.kt's own suppression.
 @Composable
 public fun SearchContent(
     input: SearchFilterInput,
@@ -47,11 +48,24 @@ public fun SearchContent(
     // for `SEARCH` (see this package's CHANGELOG entry — that second half is WP3's file, outside
     // this package's ownership).
     onBack: () -> Unit = {},
+    // Screenshot-tour seam (WP12/WP3's `NavSeed`): the tour can drive the initial screen (the
+    // default, un-seeded state below) but has no real keyboard or Filters-chip tap to reach
+    // results/empty/unavailable or the open filters sheet. `initialQuery`/[submitOnStart] together
+    // pre-fill the query field and run the search exactly once, exactly as the keyboard's own
+    // search action would — through the same [onInputChange]/[onSearch] this screen already
+    // exposes, so `search-unavailable`'s override and the count line behave identically to a real
+    // typed-and-submitted query. `initialQuery` alone (without [submitOnStart]) only pre-fills the
+    // field, never runs a search; `submitOnStart` alone (without [initialQuery]) does nothing —
+    // there is no query to submit. All three params default to off, so this stays additive: every
+    // existing caller compiles and behaves unchanged.
+    initialQuery: String? = null,
+    submitOnStart: Boolean = false,
+    initialFiltersOpen: Boolean = false,
 ) {
     val context = LocalContext.current
     var recent by remember { mutableStateOf(emptyList<RecentSearchEntry>()) }
     var widenSuggestions by remember { mutableStateOf<SearchWidenViewState?>(null) }
-    var filtersSheetOpen by remember { mutableStateOf(false) }
+    var filtersSheetOpen by remember { mutableStateOf(initialFiltersOpen) }
     // R-333 (Search half): the filters sheet is a plain overlay `Box`, not a `ModalBottomSheet` —
     // WP3's host `BackHandler` (`OrtNavHost.kt`) handles the drawer and drill-ins, but knows
     // nothing about this screen's own local `filtersSheetOpen` state, so system back with the
@@ -67,6 +81,17 @@ public fun SearchContent(
         // heard, not a generic fixed band table — computed once, independent of the current
         // filters, since this is what helps *pick* a filter, not a reflection of one already set.
         heardFrequenciesHz = HeardFrequencies.list(context)
+        // Screenshot-tour seam: pre-fill and, if requested, submit exactly once on first
+        // composition — through the caller's own `onInputChange`/`onSearch`, the same two calls
+        // the query field's keyboard search action makes, so nothing about the resulting
+        // `SearchResult` (including `search-unavailable`'s debug override, or the count line) is
+        // seeded any differently than a real, typed-and-submitted query would produce.
+        if (initialQuery != null) {
+            onInputChange(input.copy(text = initialQuery))
+            if (submitOnStart) {
+                onSearch()
+            }
+        }
     }
 
     // R-202 (halt): the filter sheet's own attribution/include counts and `Show N overs` must
