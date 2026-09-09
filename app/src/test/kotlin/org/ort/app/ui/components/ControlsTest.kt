@@ -56,6 +56,12 @@ class ControlsTest {
 
     @Test
     fun `FR_A11Y_2 every interactive component has a 44dp target and a role`() {
+        // R-510-class (`Controls.kt`'s own `TextAction` doc comment): this passed in Robolectric
+        // both before and after that fix — a plain `testTag` modifier here never reproduced the
+        // real device's own finding (`Sheet`'s "Clear all", no caller modifier at all, still
+        // measured under the floor) — Robolectric's own layout pass is not the host that caught or
+        // confirmed this defect; `requiredHeightIn` is pinned by the doc comment and the device
+        // dump in this round's own CHANGELOG entry, not by a new assertion here.
         composeTestRule.setContent {
             OrtTheme {
                 Column {

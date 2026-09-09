@@ -85,7 +85,17 @@ import org.ort.app.ui.theme.OrtType
  * into a second ancestor. The fix already established for the working cases
  * (`LogRow`/`LiveBar`/`KeyValueRow`: an *explicit*, literal `contentDescription` in the same
  * `semantics` block, never left to merge alone) is what this now does too: [text] is composed
- * directly, on the same node `clickable` itself lives on. */
+ * directly, on the same node `clickable` itself lives on.
+ *
+ * R-510-class (found landing that id's own device check, `Sheet`'s "Clear all" — no caller modifier
+ * at all, yet measured 72px/27.4dp on `emulator-5554`, `wm density 420`, against a required 115.5px
+ * — the raw, unfloored content height, `OrtType.textAction`'s own line plus zero added padding):
+ * `heightIn(min = 44.dp)` here was the *first* modifier in the chain, with `.background()`/
+ * `.clickable()`/`.padding()` all measurement-relevant and all appended *after* it — precisely the
+ * shape [FilterChip]'s own R-383 doc comment already named as this package's known-broken order.
+ * `requiredHeightIn`, [FilterChip]'s own R-510 fix, closes both failure modes at once (a caller's
+ * own tighter modifier, and a measurement-relevant modifier later in the same chain) since it does
+ * not coerce its own floor into whatever surrounds it either way. */
 @Composable
 public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -93,7 +103,9 @@ public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Mo
     val color = if (!enabled) OrtColors.textDisabled else OrtColors.accentGreen
     Box(
         modifier = modifier
-            .heightIn(min = 44.dp)
+            // R-510-class: `requiredHeightIn`, not `heightIn` — see this composable's own doc
+            // comment.
+            .requiredHeightIn(min = 44.dp)
             .background(
                 if (pressed && enabled) OrtColors.bgPressed else Color.Transparent,
                 RoundedCornerShape(6.dp),
@@ -139,14 +151,17 @@ public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Mo
  * lived purely on the child `Text`, one real device confirmed a `clickable` node does not reliably
  * absorb via merge alone (see [TextAction]'s own doc comment for the full finding). [text] is now
  * composed explicitly on the same node `clickable` lives on, the pattern every fixed composable in
- * this file now shares. */
+ * this file now shares.
+ *
+ * R-510-class: `requiredHeightIn`, not `heightIn` — see [TextAction]'s own doc comment for the
+ * device finding this generalises from. */
 @Composable
 public fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val bg = if (enabled) OrtColors.accentGreen else OrtColors.bgChip
     val fg = if (enabled) OrtColors.accentOnGreen else OrtColors.textDisabled
     Box(
         modifier = modifier
-            .heightIn(min = 48.dp)
+            .requiredHeightIn(min = 48.dp)
             .background(bg, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 20.dp)
@@ -171,13 +186,14 @@ public fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier =
 }
 
 /** guide §6.7: the outlined companion to [PrimaryButton] — 44dp, `line/chip` border. R-380: see
- * [PrimaryButton]'s own doc comment — the identical fix. */
+ * [PrimaryButton]'s own doc comment — the identical fix. R-510-class: see [TextAction]'s own doc
+ * comment — the identical fix. */
 @Composable
 public fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val fg = if (enabled) OrtColors.textBody else OrtColors.textDisabled
     Box(
         modifier = modifier
-            .heightIn(min = 44.dp)
+            .requiredHeightIn(min = 44.dp)
             .border(1.dp, OrtColors.lineChip, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 20.dp)
@@ -202,7 +218,8 @@ public fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier
 }
 
 /** guide §6.7: `halt/fill`/`halt/on-fill` — the one destructive button style in the product. R-380:
- * see [PrimaryButton]'s own doc comment — the identical fix. */
+ * see [PrimaryButton]'s own doc comment — the identical fix. R-510-class: see [TextAction]'s own
+ * doc comment — the identical fix. */
 @Composable
 public fun DestructiveButton(
     text: String,
@@ -212,7 +229,7 @@ public fun DestructiveButton(
 ) {
     Box(
         modifier = modifier
-            .heightIn(min = 44.dp)
+            .requiredHeightIn(min = 44.dp)
             .background(OrtColors.haltFill, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 18.dp)
