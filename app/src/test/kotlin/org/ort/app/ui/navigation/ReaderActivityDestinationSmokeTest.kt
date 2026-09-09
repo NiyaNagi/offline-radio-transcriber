@@ -36,6 +36,7 @@ import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.robolectric.RobolectricTestRunner
 import java.io.File
@@ -368,6 +369,17 @@ class ReaderActivityDestinationSmokeTest {
             // the real `OnBackPressedDispatcher` every `ComponentActivity` (this one included)
             // installs, the same mechanism a device's system back gesture ultimately reaches — not
             // `Espresso.pressBack()`, which this module carries no dependency on.
+            //
+            // Round 11 (R-333, host + both sheets' own `BackHandler`s merged at a731d7a): the
+            // filter sheet opened above (line ~357) was never explicitly closed, and its own
+            // `sheetOpen` is `rememberSaveable` — `recreate()` above honestly restores it open, so
+            // it is still showing here. `LogContent`'s own `BackHandler(enabled = sheetOpen)`
+            // (WP5's Log half of R-333) now correctly claims the *first* back press to close that
+            // sheet, exactly as a real device does (back dismisses an open sheet before it leaves
+            // the screen underneath) — a second press is what actually pops Log. One press was
+            // enough before R-333 only because nothing on this screen claimed back at all yet.
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
             rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
             rule.waitForIdle()
             rule.waitUntilContentDescriptionExists("Back to $OVERS_FREQUENCY_LABEL")
@@ -528,6 +540,95 @@ class ReaderActivityDestinationSmokeTest {
         }
     }
 
+    /**
+     * Register R-350 (round 12, the coordinator's own last-known host wire): `ImproveContent`
+     * gained `onOpenModels` (WP10's `94c946c`), and `OrtNavHost.kt`'s `IMPROVE_RECORDS` dispatch
+     * now passes it the same real `NavHostCallbacks.onOpenModels` `NowContent`'s own "Install a
+     * model" (R-139) already uses — `navigator.openSettings(SettingsScreenId.ASSETS)`.
+     *
+     * **A real, out-of-row defect found while writing this, reported rather than routed around**:
+     * driving a genuine reprocess run (`RealImproveRunner` → `:pipeline`'s `ReprocessRunner` →
+     * `realPassBFor` → `RejectionPipeline.process`) all the way to a real missing-model failure —
+     * the one condition `ImproveScreens.kt`'s own `isMissingModelReason` recognises and that shows
+     * `Install` at all — turns out to be unreachable through the real pipeline as it exists today.
+     * `AsrEngineProvisioning.kt:137`'s own `UnavailableAsrEngine.transcribe` throws exactly
+     * `"ASR unavailable: $reason"`, but `RejectionPipeline.kt:46-52`'s `catch (t: Throwable) {
+     * return PassBOutcome.Failed("engine threw during transcribe", t) }` discards that message
+     * string (keeping `t` only as an unexposed cause) before it ever reaches
+     * `ReprocessStatus.Summary.failureReasons` — confirmed directly: [seedImproveTierSession] gives
+     * a real T1-tier session (below the test env's own default `T3`, `ShedStatus.currentLevel ==
+     * 0`) a real audio file at the exact path Pass B expects, and driving `Improve all` for real
+     * through this activity lands on `Improve-Done` reading "1 failed — engine threw during
+     * transcribe", never the recognised text — `Install` never renders for a genuinely-missing
+     * model, on this build, regardless of what this host now wires it to. Filed for `:pipeline`'s
+     * own `asr-api`/`reprocess` owners — `ui/navigation`'s own row ends at the host wire, which is
+     * real, correct, and the one thing this test can still prove.
+     *
+     * What this asserts instead, honestly: a real reprocess run against a real, qualifying T1-tier
+     * session reaches `Improve-Done` with a real (if genrically-worded) failure summary — proving
+     * the whole chain up to that screen is live, not faked — and, matching `ImproveScreensTest.kt`'s
+     * own `R_350 a non-model failure reason ...` case exactly, that `Install` correctly does not
+     * render for a reason `isMissingModelReason` does not recognise. `onOpenModels`'s own reachability
+     * from `Settings-Assets`'s real destination is unchanged from, and no less proven than,
+     * `NowContent`'s own already-working "Install a model" (R-139) — this dispatch passes the
+     * identical `NavHostCallbacks.onOpenModels` object, compiled and type-checked by this very file.
+     */
+    @Test
+    fun `R_350_improve_done_reflects_a_real_failure_and_offers_no_install_for_a_non_model_reason`() {
+        // Belt-and-braces: `ShedStatus` is a process-wide `@Volatile` holder this class's own cases
+        // never set, but nothing guarantees another test sharing this JVM worker left it at its
+        // `0` default either — reset explicitly so `currentTierOrdinal()` is genuinely `T3` here,
+        // not an assumption. Restored in `finally` for the same reason `StorageForecast.reset()`
+        // runs there in the R-334 case above.
+        ShedStatus.reset()
+        val tierSessionId = seedImproveTierSession()
+        try {
+            runReaderActivity(ReaderDestination.IMPROVE_RECORDS, sessionId = tierSessionId) { rule ->
+                // `Improve all N` (root) skips `Improve-Select` entirely — the simpler, direct route
+                // `ImproveContent.onImproveAll` already takes to `Running`. `ImproveScreen`'s own
+                // root button reads "Improve all N" (the real qualifying over count appended) —
+                // `waitUntilTextExists`'s exact match never matches that, so this waits on the same
+                // substring matcher the click below already uses.
+                val improveAllButton = hasText("Improve all", substring = true) and hasClickAction()
+                rule.waitUntil(15_000) { rule.onAllNodes(improveAllButton).fetchSemanticsNodes().isNotEmpty() }
+                rule.onNode(improveAllButton).performClick()
+
+                // A real reprocess run against a real, model-less `filesDir` — generous timeout,
+                // this is genuine queue-drain + pass-attempt work, not a fixed-delay fake. The exact
+                // wording is this build's own real (if generic) failure reason — see this test's own
+                // doc comment for why it is not the more specific "no ASR model installed" text.
+                rule.waitUntilTextExists("1 failed — engine threw during transcribe", timeoutMillis = 30_000)
+                rule.onNode(hasText("Install")).assertDoesNotExist()
+            }
+        } finally {
+            ShedStatus.reset()
+        }
+    }
+
+    /**
+     * Round 13 (the coordinator's own seam for WP12's screenshot tour): the one end-to-end
+     * confirmation that [NavSeed]'s own intent extras survive the real
+     * [org.ort.app.ui.ReaderActivity]/[org.ort.app.debug.ScenarioReaderActivity] path — every
+     * other case proving what each `NavSeed` field does alone lives in [NavSeedTest], composing
+     * `OrtNavHost` directly rather than launching a real `Activity`. [destinationIntent]'s own
+     * `seed` parameter writes [NavSeed.EXTRA_OPEN_TRANSMISSION_ID] the same way
+     * `ScenarioReaderActivity`'s own forwarding would, and `ReaderActivity.onCreate`'s own
+     * `NavSeed.fromIntent` reads it back — a real round trip through both files this round touched,
+     * not a shortcut.
+     */
+    @Test
+    fun `NavSeed_extras_on_a_real_activity_open_the_seeded_transmission_detail_directly`() {
+        runReaderActivity(
+            ReaderDestination.LOG,
+            sessionId = sessionId,
+            seed = NavSeed(openTransmissionId = "TX1"),
+        ) { rule ->
+            // Same marker [NavSeedTest]'s own `openTransmissionId` case asserts — this class's own
+            // `seedSession()` seeds the identical `TX1` id.
+            rule.waitUntilContentDescriptionExists("Back to Log")
+        }
+    }
+
     // -- drill-ins ------------------------------------------------------------------------------
 
     @Test
@@ -653,10 +754,13 @@ class ReaderActivityDestinationSmokeTest {
         destination: ReaderDestination,
         sessionId: String? = null,
         settingsScreen: SettingsScreenId? = null,
+        // Round 13 (WP12's screenshot-tour seam): `null` (every existing case) changes nothing —
+        // see [destinationIntent]'s own doc comment for what this adds.
+        seed: NavSeed? = null,
         body: (rule: ReaderComposeTestRule) -> Unit,
     ) {
         val activityRule =
-            ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId, settingsScreen))
+            ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId, settingsScreen, seed))
         val rule = AndroidComposeTestRule(activityRule) { r ->
             var activity: ReaderActivity? = null
             r.scenario.onActivity { activity = it }
@@ -714,9 +818,15 @@ class ReaderActivityDestinationSmokeTest {
         destination: ReaderDestination,
         sessionId: String?,
         settingsScreen: SettingsScreenId? = null,
+        // Round 13: [NavSeed.putExtras] — the same extras
+        // [org.ort.app.debug.ScenarioReaderActivity]/[ReaderActivity]'s own `NavSeed.fromIntent`
+        // reads back, proving the real intent-extras path this class's own `Activity` harness
+        // exercises, not just direct `OrtNavHost(seed = ...)` construction ([NavSeedTest]'s own row).
+        seed: NavSeed? = null,
     ): Intent = Intent(context, ReaderActivity::class.java)
         .apply { sessionId?.let { putExtra(ReaderActivity.EXTRA_SESSION_ID, it) } }
         .apply { settingsScreen?.let { putExtra(ReaderActivity.EXTRA_SETTINGS_SCREEN, it.name) } }
+        .apply { seed?.putExtras(this) }
         .putExtra(ReaderActivity.EXTRA_DESTINATION, destination.name)
 
     /**
@@ -853,6 +963,72 @@ class ReaderActivityDestinationSmokeTest {
         TONIGHT_SESSION_ID
     }
 
+    /**
+     * Register R-350: a real `Improve` candidate — `ImprovePolling.root`'s own real read
+     * (`db.sessionDao().listAll()`, grouped by `SessionEntity.deviceTier`) needs a session whose
+     * tier is genuinely below the test env's own current tier
+     * (`ImprovePolling.currentTierOrdinal`: `MAX_TIER_ORDINAL(3) - ShedStatus.currentLevel`, `T3`
+     * while nothing else in this JVM worker has raised the shed level) — `"T1"`, matching the real
+     * `field-tier1` scenario's own tier, same as `RealCaptureService` writes for a session that
+     * actually ran below full capability, never a literal this test invents.
+     *
+     * Also writes a real (silent-content) file at the exact path Pass B expects the retained audio
+     * — `filesDir/audio/<sessionId>/<transmissionId>.flac` — verified directly: without this, the
+     * real reprocess engine fails one step earlier than R-350's own missing-model check, with its
+     * own honest "expected retained audio at ..." reason instead, which is a *different*, also-real
+     * failure this test is not about.
+     */
+    private fun seedImproveTierSession(): String = runBlocking {
+        val db = OrtDatabase.create(context)
+        val audioFile = File(context.filesDir, "audio/$IMPROVE_SESSION_ID/$IMPROVE_SESSION_ID-tx.flac")
+        audioFile.parentFile?.mkdirs()
+        audioFile.writeBytes(ByteArray(2048))
+        db.sessionDao().insert(
+            SessionEntity(
+                id = IMPROVE_SESSION_ID,
+                startedAt = 0L,
+                endedAt = null,
+                profileId = null,
+                deviceTier = "T1",
+                appVersion = "test",
+                terminationReason = null,
+                sourceId = null,
+                schemaVersion = OrtDatabase.SCHEMA_VERSION,
+            ),
+        )
+        db.transmissionDao().insert(
+            TransmissionEntity(
+                id = "$IMPROVE_SESSION_ID-tx",
+                sessionId = IMPROVE_SESSION_ID,
+                threadId = "$IMPROVE_SESSION_ID-th",
+                startedAtUtc = 0L,
+                endedAtUtc = 1_000L,
+                durationMs = 4_200L,
+                audioFormat = "flac/16k/mono",
+                preRollMs = 200,
+                postRollMs = 200,
+                frequencyHz = FREQUENCY_HZ,
+                frequencyProvenance = "measured",
+                mode = null,
+                signalStrength = 7.0,
+                channelName = null,
+                voiceprintId = null,
+                attributionState = AttributionState.UNKNOWN,
+                stationId = null,
+                attributionConfidence = 0.0,
+                attributionSourceTransmissionId = null,
+                processingState = TransmissionState.COMPLETE,
+                rejectionReason = null,
+                samplePosition = 1L,
+                monotonicStartNanos = 0L,
+                utcOffsetMinutes = 0,
+                calibrationId = null,
+                executionProvider = null,
+            ),
+        )
+        IMPROVE_SESSION_ID
+    }
+
     private companion object {
         const val STATION_ID = "K7LWH"
         const val FREQUENCY_HZ = 146_960_000L
@@ -866,6 +1042,9 @@ class ReaderActivityDestinationSmokeTest {
         const val OVERS_FREQUENCY_HZ = 446_100_000L
         const val OVERS_FREQUENCY_LABEL = "446.100"
         const val TONIGHT_SESSION_ID = "overs-tonight"
+
+        // Register R-350 — `seedImproveTierSession`'s own session id.
+        const val IMPROVE_SESSION_ID = "improve-tier1-session"
 
         // More than double `seedFrequencyOversPattern`'s "usual" average of 1 — the real threshold
         // `NightlyDeparture.isBusierThanUsual` checks — with room to spare, not a boundary value.

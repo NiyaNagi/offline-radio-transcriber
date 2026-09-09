@@ -148,12 +148,24 @@ private val SearchFilterInputSaver: Saver<SearchFilterInput, String> = Saver(
  * *inside* this composable — see the `Scaffold` block's own doc comment for why): the recovery
  * callbacks `ReaderActivity.kt` used to build and hand straight to its own `FailureHost` call.
  * `FailureHost`'s own signature is unchanged; only where it is called from moved.
+ *
+ * [seed] (round 13, WP12's screenshot-tour seam — see [NavSeed]'s own doc comment for the full
+ * rationale and what is deliberately left out): seeds [NavHostNavState]'s own drill-in ids and
+ * companion fields exactly once, on first composition, the same `rememberSaveable`-first-read
+ * contract every one of those fields already had for a real tap. `null` (the default) changes
+ * nothing — every existing caller keeps compiling and behaving unchanged. Also flows into
+ * [navigator]'s own default construction (`rememberReaderNavigator(seed = seed)`) so a caller that
+ * hands this composable a `seed` without building its own `navigator` still gets the right
+ * destination/Settings-screen, not only the drill-in ids — a caller that builds its own
+ * `navigator` (`ReaderActivity.kt`, which never passes `seed` here at all) is unaffected either
+ * way.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 public fun OrtNavHost(
     sessionId: String?,
-    navigator: ReaderNavigator = rememberReaderNavigator(),
+    seed: NavSeed? = null,
+    navigator: ReaderNavigator = rememberReaderNavigator(seed = seed),
     failureActions: FailureHostActions = FailureHostActions(),
 ) {
     val context = LocalContext.current
@@ -162,7 +174,7 @@ public fun OrtNavHost(
     // Hoisted into `navigator` (round 3) so `ReaderActivity`'s `FailureHostActions`, mounted above
     // this composable, can also switch destinations — see `ReaderNavigator.kt`'s own doc comment.
     var current by navigator.currentState
-    val navState = rememberNavHostNavState()
+    val navState = rememberNavHostNavState(seed)
     val drawerLive = rememberDrawerLiveState(sessionId, context)
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
 
@@ -431,10 +443,12 @@ private data class NavHostNavState(
 }
 
 @Composable
-private fun rememberNavHostNavState(): NavHostNavState {
+private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
     // R-017: the destination a drill-in was opened from, so back returns there — set only when a
-    // drill-in opens, read only while one is showing.
-    val openedFrom = rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
+    // drill-in opens, read only while one is showing. Round 13: seeded from [NavSeed
+    // .openedFromDestination] for a drill-in reached by seed rather than a real tap — see that
+    // function's own doc comment (this is what makes a seeded D01's header read "Back to Log").
+    val openedFrom = rememberSaveable { mutableStateOf(seed?.openedFromDestination() ?: ReaderDestination.NOW) }
     // R-200 (round 5): the destination `Search` was opened from, so `SearchContent`'s own
     // back-chevron (`SearchScreen.kt`'s `search-back-chevron`) returns there instead of stranding
     // the operator with no way back except the drawer, now that the host no longer draws
@@ -443,13 +457,16 @@ private fun rememberNavHostNavState(): NavHostNavState {
     // wrongly imply a drill-in opened under `Search` should say "Back to <wherever Search itself
     // came from>" rather than "Back to Search".
     val searchOpenedFrom = rememberSaveable { mutableStateOf(ReaderDestination.NOW) }
-    val openTransmissionId = rememberSaveable { mutableStateOf<String?>(null) }
-    val openStationId = rememberSaveable { mutableStateOf<String?>(null) }
-    val openFrequencyHz = rememberSaveable { mutableStateOf<Long?>(null) }
+    // Round 13: each seeded from the matching `NavSeed` field exactly once, on first composition
+    // — the same `rememberSaveable`-first-read contract a real tap already had, see [NavSeed]'s
+    // own doc comment.
+    val openTransmissionId = rememberSaveable { mutableStateOf(seed?.openTransmissionId) }
+    val openStationId = rememberSaveable { mutableStateOf(seed?.openStationId) }
+    val openFrequencyHz = rememberSaveable { mutableStateOf(seed?.openFrequencyHz) }
     // R-017: WP5's `ThreadDetailScreen` (its own file's doc comment: "not yet reachable ... ready
     // for whichever package wires that route") — this is that route, ready to open once WP5/WP7
     // expose a callback into it (see this package's report on why nothing does yet).
-    val openThreadId = rememberSaveable { mutableStateOf<String?>(null) }
+    val openThreadId = rememberSaveable { mutableStateOf(seed?.openThreadId) }
     // R-017 / `Flow-Search.dc.html`: Search's input and results live here, in the host, not inside
     // WP7's `SearchContent` — that composable is skipped entirely while a drill-in is showing (see
     // `NavHostBody`), and a skipped composable's own `remember` state does not survive being
@@ -460,17 +477,19 @@ private fun rememberNavHostNavState(): NavHostNavState {
     // comment for why `SearchResult` gets no equivalent Saver.
     val searchInput = rememberSaveable(stateSaver = SearchFilterInputSaver) { mutableStateOf(SearchFilterInput()) }
     val searchResult = remember { mutableStateOf<SearchResult?>(null) }
-    val openCaptureLevelMeter = rememberSaveable { mutableStateOf(false) }
+    val openCaptureLevelMeter = rememberSaveable { mutableStateOf(seed?.openCaptureLevelMeter ?: false) }
     // Round 9, register R-276 — see `NavHostNavState.pendingLogFilter`/`logFrequencyOrigin`'s own
     // doc comments for why one is a plain `remember` and the other `rememberSaveable`.
-    val pendingLogFilter = remember { mutableStateOf<LogFilterSelection?>(null) }
+    val pendingLogFilter = remember { mutableStateOf(seed?.pendingLogFilter) }
     val logFrequencyOrigin = rememberSaveable { mutableStateOf<Long?>(null) }
     // Round 10, register R-276 — a plain two-value enum, Bundle-saveable via the default Saver the
     // same way `ReaderDestination` (above) already is, no custom Saver needed.
-    val frequencyInitialView = rememberSaveable { mutableStateOf(FrequencyDetailView.Detail) }
+    val frequencyInitialView = rememberSaveable {
+        mutableStateOf(seed?.frequencyInitialView ?: FrequencyDetailView.Detail)
+    }
     // Round 11, register R-133 — see `NavHostNavState.pendingReviewSessionId`'s own doc comment for
     // why this is `rememberSaveable`.
-    val pendingReviewSessionId = rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingReviewSessionId = rememberSaveable { mutableStateOf(seed?.pendingReviewSessionId) }
     return NavHostNavState(
         openedFrom,
         searchOpenedFrom,
@@ -951,16 +970,11 @@ private fun DestinationContent(
         )
 
         // ui-conformance-plan WP10 (register R-090/R-091/R-092/R-107): all three dispatch to
-        // WP10's own real content composables now that they are on this branch. `Earlier nights`
-        // and `Improve records` no longer fall through to `PlaceholderScreen` — see
-        // `ReaderDestination`'s own doc comment for what each one now is.
-        // Round 5 (R-090/R-139/F6/F9): `initialScreen` is real now — `navigator.openSettings`
-        // (`NavHostCallbacks.onOpenModels` above, and `ReaderActivity.kt`'s `FailureHostActions`)
-        // writes `settingsInitialScreen`, read fresh here every time `SETTINGS` becomes `current`.
-        // Round 7: `onSearch` is real now — `SettingsContent`'s own doc comment states the root
-        // draws its own `ScreenHeader` again, with a real search icon this host must wire the same
-        // way `ScreenHeader.onSearch` always was elsewhere (see `NavHostBody`'s own header-skip
-        // comment for why this host no longer draws one of its own for `SETTINGS`).
+        // WP10's own real content composables now that they are on this branch. Round 5
+        // (R-090/R-139/F6/F9): `initialScreen` is real now — `navigator.openSettings` writes
+        // `settingsInitialScreen`, read fresh here every time `SETTINGS` becomes `current`. Round
+        // 7: `onSearch` is real now — `SettingsRootScreen` draws its own header (see `NavHostBody`'s
+        // own header-skip comment for why this host draws none of its own for `SETTINGS`).
         ReaderDestination.SETTINGS ->
             org.ort.app.ui.settings.SettingsContent(
                 context = context,
@@ -997,9 +1011,29 @@ private fun DestinationContent(
                 initialSessionId = reviewSessionId,
             )
 
+        // Round 12, R-350: `onOpenModels` real now (WP10's `94c946c`) — same callback as `Now`'s
+        // above. Call itself extracted to [ImproveRecordsContent] purely to keep this function
+        // under detekt's `LongMethod` limit.
         ReaderDestination.IMPROVE_RECORDS ->
-            org.ort.app.ui.improve.ImproveContent(context = context, onDrawer = onOpenDrawer, modifier = content)
+            ImproveRecordsContent(context, onOpenDrawer, content, callbacks.onOpenModels)
     }
+}
+
+/** [DestinationContent]'s `IMPROVE_RECORDS` branch, split out purely to keep that function under
+ * detekt's length limit — the same reason [ThreadDetailContent] below was already split out. */
+@Composable
+private fun ImproveRecordsContent(
+    context: android.content.Context,
+    onDrawer: () -> Unit,
+    modifier: Modifier,
+    onOpenModels: () -> Unit,
+) {
+    org.ort.app.ui.improve.ImproveContent(
+        context = context,
+        onDrawer = onDrawer,
+        modifier = modifier,
+        onOpenModels = onOpenModels,
+    )
 }
 
 /**

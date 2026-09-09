@@ -1,6 +1,8 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,6 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.LatticeSlot
+import org.ort.app.ui.components.LatticeSlotViewState
 import org.ort.app.ui.components.PriorBar
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.data.DetailWhyViewState
@@ -23,14 +27,16 @@ import org.ort.app.ui.theme.OrtType
  * R-051, FR-UI-8, `Detail-Why.dc.html`: "everything the resolver saw, in the order it used it" —
  * the exhaustive counterpart to [TransmissionDetailScreen]'s inline "why this callsign" preview.
  *
- * **Honest gap (report this):** the artboard's step 1 is per-slot phonetic-lattice detail — each
- * unit's score and kept alternate, with an amber border below threshold. `:data`'s
- * [org.ort.data.entity.PhoneticLatticeEntity.unitsBlob] is an opaque blob with no defined per-unit
- * shape yet (that entity's own doc comment: "§9's types own the shape" — a `:lexicon` type never
- * wired to `:data`), so this screen cannot honestly render [org.ort.app.ui.components.LatticeSlot]
- * boxes with real per-letter scores without inventing a blob format no writer produces
- * (constitution I: never fabricate a number). It shows the lattice's real source and model instead,
- * and says plainly that per-slot detail is not recorded — never a fabricated slot row.
+ * **Register R-320 (schema v5), fixed.** Section 1 now renders the winning candidate's real
+ * per-slot [org.ort.app.ui.components.LatticeSlot] grid (unit, score, kept alternate, amber border
+ * below threshold) from [DetailWhyViewState.winningSlots] — `:data`'s
+ * [org.ort.data.entity.LatticeSlotEntity] (schema v5) closed the gap this screen's earlier revision
+ * reported (`PhoneticLatticeEntity.unitsBlob` is still an opaque blob; the slot table is the real,
+ * separately-written detail). A record from before schema v5 has no slot rows at all — shown as the
+ * honest "not recorded for this over" line, never a placeholder grid (constitution I). Section 2's
+ * grammar line is the winning candidate's own real `grammarValid` bit — **not** the board's own
+ * "prefix K · region 7 · suffix LWH" per-component parse, which no API this package can reach
+ * returns; shown as that bit alone, never an invented breakdown.
  */
 @Composable
 public fun DetailWhyScreen(
@@ -61,6 +67,7 @@ public fun DetailWhyScreen(
                 return@Column
             }
             LatticeSection(why)
+            GrammarSection(why)
             CandidatesSection(why)
             PriorsSection(why)
         }
@@ -77,9 +84,26 @@ private fun LatticeSection(why: DetailWhyViewState) {
             color = OrtColors.textBody,
             modifier = Modifier.padding(top = OrtSpacing.xs),
         )
-        if (why.latticeSummary != null) {
+        if (why.winningSlots.isNotEmpty()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs),
+                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
+            ) {
+                why.winningSlots.forEach { slot ->
+                    LatticeSlot(
+                        state = LatticeSlotViewState(
+                            unit = slot.unit,
+                            score = slot.score,
+                            alternate = slot.keptAlternate,
+                            belowThreshold = slot.belowThreshold,
+                        ),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        } else if (why.latticeSummary != null) {
             Text(
-                text = "Per-slot detail (each unit's score and kept alternate) is not recorded yet.",
+                text = "Per-slot detail is not recorded for this over.",
                 style = OrtType.subLine,
                 color = OrtColors.textFaint,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
@@ -88,10 +112,30 @@ private fun LatticeSection(why: DetailWhyViewState) {
     }
 }
 
+/** Register R-320: the winning candidate's own real `grammarValid` bit — see this file's class doc
+ * for why this is not the board's own per-component parse breakdown. */
+@Composable
+private fun GrammarSection(why: DetailWhyViewState) {
+    val grammarValid = why.winningGrammarValid ?: return
+    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        SectionHeader(label = "2 · Grammar")
+        Text(
+            text = if (grammarValid) {
+                "Parsed as a valid callsign grammar."
+            } else {
+                "Did not parse as a valid callsign grammar."
+            },
+            style = OrtType.control,
+            color = OrtColors.textBody,
+            modifier = Modifier.padding(top = OrtSpacing.xs),
+        )
+    }
+}
+
 @Composable
 private fun CandidatesSection(why: DetailWhyViewState) {
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
-        SectionHeader(label = "2 · Candidates that survived")
+        SectionHeader(label = "3 · Candidates that survived")
         why.candidates.forEach { candidate ->
             Column(
                 modifier = Modifier
@@ -129,7 +173,7 @@ private fun CandidatesSection(why: DetailWhyViewState) {
 private fun PriorsSection(why: DetailWhyViewState) {
     if (why.priors.isEmpty()) return
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
-        SectionHeader(label = "3 · Priors, for the chosen candidate")
+        SectionHeader(label = "4 · Priors, for the chosen candidate")
         why.priors.forEach { prior -> PriorBar(state = prior, modifier = Modifier.padding(top = OrtSpacing.sm)) }
         Text(
             text = "A prior that argued against is negative and amber. One with no data yet reads " +

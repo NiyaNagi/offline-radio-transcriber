@@ -524,6 +524,15 @@ class CorrectionPollingTest {
         assertTrue("a correction's attribution must carry the corrected lock", attribution.corrected)
     }
 
+    /**
+     * Register R-321 (fixed): before this fix, `undoAll` re-applied the correction write path
+     * (`INFERRED`/`corrected = true`), so `currentAttribution`'s own patch still had to fire after
+     * an undo to avoid `ReaderPolling` reading it back as UNKNOWN — this test used to assert
+     * exactly that patched shape. Now `undoAll` restores the transmission's real, pre-correction
+     * columns directly (`restoreAttribution`), so the row is genuinely `corrected = false` again
+     * and `currentAttribution` correctly does *not* fire its patch — it defers to whatever the real
+     * resolver fallback is, unchanged, the same as any other uncorrected row.
+     */
     @Test
     fun R_189_currentAttribution_honours_undo_alls_revert_the_same_way(): Unit = runTest {
         db.sessionDao().insert(session())
@@ -536,9 +545,15 @@ class CorrectionPollingTest {
 
         CorrectionPolling.undoAll(context, outcome, atMillis = 700L)
 
-        val attribution = CorrectionPolling.currentAttribution(context, "TX1", fallback = Attribution.unknown())
-        assertEquals("K7LWH", attribution.stationId)
-        assertTrue(attribution.corrected)
+        val realResolverFallback = Attribution.inferred("K7LWH", 0.7)
+        val attribution = CorrectionPolling.currentAttribution(context, "TX1", fallback = realResolverFallback)
+        assertEquals(realResolverFallback, attribution)
+        assertFalse("a genuinely undone correction must not still read as corrected", attribution.corrected)
+        val entity = db.transmissionDao().getById("TX1")!!
+        assertEquals(AttributionState.INFERRED, entity.attributionState)
+        assertEquals("K7LWH", entity.stationId)
+        assertEquals(0.7, entity.attributionConfidence)
+        assertFalse(entity.corrected)
     }
 
     @Test
@@ -559,6 +574,62 @@ class CorrectionPollingTest {
         val attribution = CorrectionPolling.currentAttribution(context, "does-not-exist", fallback)
 
         assertEquals(fallback, attribution)
+    }
+
+    // ---- R-321: `Undo all` restores the exact recorded prior attribution, through the real DAO ----
+
+    /**
+     * The coordinator's own repro: a Tier-A pick on an AMBIGUOUS over, then `Undo all` — before
+     * this fix, the row was left reading `INFERRED`/`corrected` forever (never returning to its
+     * chooser). Real DAO round trip: [CorrectionPolling.applyCorrection] then [CorrectionPolling.undoAll],
+     * asserted against the real [org.ort.data.entity.TransmissionEntity] columns, not the mapper.
+     */
+    @Test
+    fun R_321_undo_restores_ambiguous(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(
+            transmission("TX1", stationId = null).copy(attributionState = AttributionState.AMBIGUOUS),
+        )
+
+        val outcome = CorrectionPolling.applyCorrection(
+            context,
+            request("TX1", null, "KA7LWH"),
+            CorrectionScope.THIS_OVER_ONLY,
+        )
+        CorrectionPolling.undoAll(context, outcome, atMillis = 700L)
+
+        val entity = db.transmissionDao().getById("TX1")!!
+        assertEquals(AttributionState.AMBIGUOUS, entity.attributionState)
+        assertEquals(null, entity.stationId)
+        assertEquals(null, entity.attributionConfidence)
+        assertFalse("the CORRECTED badge must clear so the over returns to its chooser", entity.corrected)
+    }
+
+    /** The coordinator's own second repro: a typed (`FREE_TEXT`) correction on a CONFIRMED over,
+     * then `Undo all` — the real confidence and CONFIRMED state must come back exactly, not a
+     * downgrade to INFERRED. */
+    @Test
+    fun R_321_undo_restores_confirmed(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(
+            transmission("TX1", stationId = "K7LWH").copy(
+                attributionState = AttributionState.CONFIRMED,
+                attributionConfidence = 0.95,
+            ),
+        )
+
+        val outcome = CorrectionPolling.applyCorrection(
+            context,
+            request("TX1", "K7LWH", "VE7ABC", tier = CorrectionTier.FREE_TEXT),
+            CorrectionScope.THIS_OVER_ONLY,
+        )
+        CorrectionPolling.undoAll(context, outcome, atMillis = 700L)
+
+        val entity = db.transmissionDao().getById("TX1")!!
+        assertEquals(AttributionState.CONFIRMED, entity.attributionState)
+        assertEquals("K7LWH", entity.stationId)
+        assertEquals(0.95, entity.attributionConfidence)
+        assertFalse("the CORRECTED badge must clear", entity.corrected)
     }
 
     // R-153 (passFailure/retryFailedPass), R-055/R-194 (revisions/restore) and R-188
