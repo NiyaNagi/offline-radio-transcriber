@@ -127,6 +127,194 @@ the session ends, or stays visibly staged.
 
 ---
 
+## 2026-09-09 (ui-conformance WP9: R-465, the Setup-Level chart's clip line was genuinely invisible)
+
+### (pending) — ui-conformance WP9 · R-465 fixed: the clip line sat exactly on the chart's own edge, overpainted by the Box's own border
+
+**Scope:** `:app` `ui/setup/LevelScreen.kt`, `ui/setup/LevelScreenTest.kt`, `results/coverage-matrix.md`
+(regenerated — drift from other WPs' work merged in since it was last committed, not authored by
+this round; see Verified), `results/ui-audit/setup-level/S07-level-r465-after.png` (new, kept
+alongside the existing before-evidence per "never delete quietly"). `git merge main` first
+(fast-forward; `main` carried Reviewer A/B/C/D round-2 register work, `c4296a0`).
+
+**Requirements/ACs:** R-465 fixed and device-verified on `emulator-5556`.
+
+**What changed:**
+
+*Constitution Check.* I (uncertainty is content — the coordinator asked to confirm on-device
+whether the overlay "truly does not render or only fades at capture resolution" before assuming
+either; the finding below is the answer, backed by raw pixel sampling, not an eyeballed guess).
+II (test-backed — `R_465`'s three cases exercise the fix's own pure math directly). VII
+(boundaries are structural — the identical defect exists verbatim in WP4's own `LevelMeterScreen.kt`
+`LevelHistoryChart`; reported below, not touched, since that file is not this package's own).
+
+- **Confirmed on-device first, per the coordinator's own ask.** Installed to `emulator-5556`
+  (`install.ps1 -Clear`), ran `tools\ui-audit\tour.ps1 -Only "setup-level/*"` (the same `setup-level`
+  scenario Reviewer A's own capture used) and reproduced an identical `S07-level.png`. Pixel-sampled
+  the rendered PNG directly (ImageMagick `-crop 1x1+X+Y txt:-`) rather than judging by eye: the
+  target band's fill and both boundary lines are present and correctly coloured (confirmed at the
+  expected row, e.g. `(46,97,61)` — `accentGreen` at its own alpha over the dark chart background).
+  The clip line is not merely faint — every pixel at and near its expected row (`CHART_CEILING_DBFS`,
+  fraction `1.0`) was exactly the background/border colour, zero red hue anywhere, at every column
+  sampled. This is a genuine rendering defect, not a capture-resolution artefact — closing the row
+  by reporting "renders faithfully" would have been wrong.
+- **Root cause, found by measurement, not inspection.** `CHART_CEILING_DBFS` (0 dBFS) is always
+  fraction `1.0` on this chart's own `-60..0` scale, which `yForFraction` maps to canvas row `0`
+  exactly. Two things both had to be true to explain the total invisibility: (1) a stroke centred
+  exactly on row `0` is bisected by the canvas's own bounds, discarding half its width; (2) this
+  chart's own `Box.border(1.dp, ...)` draws *over* its children (so the border stays visible even
+  where a child fills the whole `Box`) — it overpainted the remaining half even after a first
+  attempt inset the line by only its own half-stroke (re-sampled after that fix: still zero red
+  pixels). A noise floor at the scale's own floor would hit the identical problem at the bottom
+  edge.
+- **Fix.** New `referenceLineY(fraction, heightPx, edgeClearancePx)` (plain function, no `DrawScope`
+  needed — same reasoning `levelBarFraction` was already kept plain for) clamps a reference line's Y
+  to stay `edgeClearancePx` clear of either canvas edge; a `DrawScope` extension `yForReferenceLine`
+  wraps it with the real canvas height. `LevelMeter`'s clip line, the two target-band boundary lines,
+  and the noise-floor line all now go through this (`lineClearPx = 1.5.dp.toPx()` — this chart's own
+  1dp border plus the line's own 0.5dp half-stroke); bars still use the original, unclamped
+  `yForFraction` — only the fixed reference lines move, never what a bar's own value renders at.
+  Re-verified on-device after the fix: the expected row now reads `(147,75,71)`, matching
+  `haltText` at its own `0.6f` alpha blended over the dark background almost exactly — the clip line
+  is genuinely visible now, not merely theoretically present.
+- **The noise-floor dashed line was checked too, and left alone.** In this scenario's own data
+  (all 14 bars well above the noise floor), the line is mostly hidden behind the taller/louder bars,
+  visible only as small flecks in the ~1.5dp inter-bar gaps — but this matches the design canvas's
+  own DOM order (`Setup-Level.dc.html`: the overlay lines are drawn *before* the bars in markup,
+  meaning bars paint over them in both the mockup and this Canvas alike), not a divergence from
+  intent. Reordering the draw calls to always show the noise line over the bars was considered and
+  rejected — it would be a real design change (the mockup itself doesn't do this), not a bug fix.
+- **WP4's own `LevelMeterScreen.kt` (`LevelHistoryChart`) has the byte-identical `clipY = yFor(
+  CHART_CEILING_DBFS)` defect** — read, not touched (outside this package's own files). Reporting
+  here, as asked, so WP4 is informed; the same `referenceLineY`/`yForReferenceLine` shape (or a
+  shared extraction, if WP2 wants to finally lift this chart into one component — `LevelScreen.kt`'s
+  own class doc already flags three near-identical Canvas implementations existing) would fix it
+  identically there.
+
+**Verified:**
+- Device: `emulator-5556`, `setup-level` scenario, before/after screenshots pixel-sampled directly
+  (not eyeballed) — evidence at `results/ui-audit/setup-level/S07-level.png` (before, matches
+  Reviewer A's own capture) and the new `S07-level-r465-after.png` (after).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --rerun` — **BUILD
+  SUCCESSFUL**; `LevelScreenTest`: 12 tests, 0 failures (confirmed from its own
+  `TEST-org.ort.app.ui.setup.LevelScreenTest.xml`), including all three new `R_465` cases.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- `.\gradlew.bat dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, "up to date
+  (191 covered of 419)". The regenerated diff (a handful of ids/test-class renames — `R-413`,
+  `R-419`'s test list, `R-441`/`R-443`/`R-444`/`R-445`/`R-449`/`R-450`/`R-451`) is drift from other
+  WPs' work landed on `main` since the committed file was last regenerated, not from this round's
+  own two files — committed here only to keep the gate green, per this file's own "Do not edit"
+  banner (it is tool-generated, never hand-edited).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- Machine/provider: this worktree's Windows dev box, JDK 17.0.20.101-hotspot, Gradle 8.10.2,
+  Android emulator-5556 (API level per this project's standing AVD), other worktree agents'
+  background builds concurrently active.
+
+**Left open / not done:**
+- WP4's `LevelMeterScreen.kt` carries the identical defect — not fixed here (not this package's
+  file); flagged above for WP4/the coordinator.
+- No shared chart component exists to route this fix through (`LevelScreen.kt`'s own class doc
+  already notes three separate near-identical Canvas implementations) — consolidating them is a
+  reasonable follow-up but a bigger, cross-package change than this row asked for.
+- The noise-floor line's mostly-hidden-behind-loud-bars appearance was investigated and left as
+  designed (matches the mockup's own paint order); not itself part of R-465's own finding.
+
+## 2026-09-08 (ui-conformance WP4 · R-494/461/462/380: configured-device seeding, honest meta row, KeyValueRow's own onClick)
+
+### 97463e4 — ui-conformance WP4 · R-494/461/462/380: configured-device seeding, honest meta row, KeyValueRow's own onClick
+
+**Scope:** `app/src/debug` (`Scenarios.kt`), `ui/screens` (`NowScreen.kt`, `CaptureStatusScreen.kt`),
+matching tests, plus one flagged out-of-row fix in `app/src/test/kotlin/org/ort/app/debug/tour/TourParityTest.kt`
+(WP12's file). Merged `main` forward twice more this round (`df75734` for R-494/461/462, then
+`41870d7`/`586ec9b` for R-380 once WP2's own `KeyValueRow` fix landed; final base `5dfd02b`).
+
+**Requirements/ACs:** register R-494, R-461, R-462, R-380.
+
+**What changed:**
+
+*Constitution Check.* Principle I again: R-494's own register text guessed `SetupStore` was the
+unread store; read `SettingsPolling.kt` before assuming that and found it reads live `InputStatus`/
+`RigStatus` instead — the actual fix follows the code, not the filed guess. R-461's own fallback
+copy ("No input · No radio") is chosen specifically so the row is never silently dropped
+(constitution III) when genuinely unconfigured, rather than picking the alternative (seed `empty`
+as if Setup had already run) that would misrepresent a scenario documented as the true first-launch
+state.
+
+- **R-494.** `SettingsPolling.kt`'s `inputSummaryLine`/`capture()` (CF01/CF02) and `rig()`/
+  `rigSummaryLine` (CF01/CF06) read `InputStatus`/`RigStatus` directly — confirmed by reading the
+  file, not the register's own guess. `Scenarios.seedConfiguredDeviceState` now also calls
+  `InputStatus.opened(...)` with the same descriptor/rate/resampler `SetupStore` already recorded
+  (matching what `SetupActivity` itself writes at S04/S05, the same values `input-verified`'s own
+  established fixture already uses). `RigStatus` deliberately stays `Absent` — `overnight`'s own
+  configuration is "no rig, 145.230 MHz by hand" and FR-RIG's module is genuinely unbuilt (register
+  R-084), so `Absent` is the *correct* state, not a gap: CF06 (`SettingsRigScreen.kt`, WP10's own
+  R-444 fix) already renders "No rig module is connected" / "No radio support in this build yet..."
+  for it, confirmed by a real test rather than assumed. Two new `TourParityFixtureTest` cases prove
+  both halves end to end through the real `SettingsPolling` functions.
+- **R-461.** `NowScreen.kt`'s idle meta row was one plain, left-aligned, dot-less `Text` built from
+  `listOfNotNull(...).joinToString(" · ")` — silently dropping any absent segment rather than
+  showing it honestly, and nothing like `Now-Idle.dc.html`'s own centred row with a leading green
+  dot on each of the input/rig items (tier gets none). New `NowIdleMetaRow`/`NowIdleMetaItem`
+  composables: centred, real items get a dot, an absent input/radio gets its own honest "No
+  input"/"No radio" text with no dot (a dot claims a real, present device), tier always shows.
+  Always rendered now, never conditionally hidden. `empty`'s own scenario builder (Scenarios.kt)
+  gained a `context` parameter so it can explicitly clear the same input fields
+  `seedConfiguredDeviceState` writes and reset `RigStatus` — `SharedPreferences` persist across
+  scenario loads (this file's own established rule elsewhere), so without this a prior `overnight`
+  load in the same process would leave `empty` rendering as if Setup had already run, contradicting
+  its own "true first-launch" doc comment.
+- **R-462.** `CaptureStatusContent.levelInputLabel()` already prepends the real device name from
+  `InputStatus` when one exists (confirmed by reading it) — `level-low`/`level-clip` never seeded
+  one, so the subtitle read only "last 60 s". Both now call the same `InputStatus.opened(...)` R-494
+  added, with the identical descriptor.
+- **R-380.** WP2's own `586ec9b` gave `KeyValueRow` (`ui/components/Rows.kt`) a real `onClick`/
+  `onClickLabel` pair that makes the row one `clearAndSetSemantics` clickable leaf. This package's
+  own `KeyValueRowWithDot` (`CaptureStatusScreen.kt`) was still wrapping `KeyValueRow` in its *own*,
+  external `.clickable(...)` + `.semantics(mergeDescendants = true) {...}` — two separate semantics
+  nodes on the same chain, which is exactly what a real device's own `uiautomator` dump showed: an
+  outer clickable wrapper with an empty description, the real "Level, ..." text on a separate child
+  node beneath it. Now passes `onClick`/`onClickLabel` straight into `KeyValueRow` and drops its own
+  wrapper entirely (including the now-redundant manual `heightIn(min = 44.dp)` — `KeyValueRow`'s own
+  Box already applies that unconditionally); `facts.trailingText` (e.g. "clipping") folds into the
+  row's own `subLine` instead of a separate trailing `Text`, so it still reaches the one merged
+  description `KeyValueRow` now builds. New `R_380_level_row` test, `useUnmergedTree = true`, asserts
+  the *tagged* node itself (not a child) carries both the `OnClick` semantics action and a
+  description starting with "Level" — verified this way rather than a live device dump (both ports
+  were validators' own this round; a Robolectric semantics-tree assertion is the more precise check
+  for this exact structural claim regardless).
+- **Flagged, out-of-row fix (WP12's `TourParityTest.kt`):** that file's own `R_TOUR_PARITY overnight`
+  test hardcoded `InputStatus.State.None`/`RigStatus.State.Absent` as `overnight`'s own baseline —
+  its own comment explicitly anticipated a future fixture change moving off `None`, which R-494 is.
+  Updated the assertion to `InputStatus.State.Opened` (keeping `RigStatus.Absent`, still correct)
+  and — a real bug this uncovered, not just the expected-value change — found that
+  `InputStatus.State.Opened.openedAtMillis` (real wall-clock time) made two back-to-back
+  `Scenarios.load("overnight")` calls genuinely produce two *different* snapshots, breaking the
+  test's own actual purpose (determinism, per its class kdoc). Fixed by normalising `openedAtMillis`
+  out of the snapshot comparison before asserting equality, not by weakening the fixture.
+
+**Verified:** `:app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.screens.LevelMeterScreenTest" --tests "org.ort.app.ui.data
+.NowViewStateMapperTest" --tests "org.ort.app.ui.data.LevelViewStateMapperTest" --rerun` — all
+green, including new `R_494`/`R_461`/`R_462`/`R_380_level_row` cases and the corrected
+`TourParityTest`. One incidental fix along the way: `NowScreenTest`'s own pre-existing `R_034` test
+started failing after this round's `main` merges brought in an unrelated shared-component
+accessibility fix (`FailedState`, not owned by this package) that folded its action label into a
+merged clickable leaf the same way R-380 does — updated that one assertion to `useUnmergedTree =
+true` rather than leaving it broken. `:app:ktlintCheck :app:detekt` clean. `dependencyRules
+platformGuards` OK. `:app:assembleDebug` succeeds. `spec_check.py` 8/8. `coverageMatrix`/
+`coverageMatrixCheck` 191/419 up to date.
+
+**Left open / not done:** R-380 verified via a Robolectric semantics-tree assertion, not a live
+`uiautomator` device dump (both ports were validators' own for this whole round) — a validator
+should still confirm on-device on the next pass, though the test asserts the exact structural claim
+(tagged node = clickable leaf, one description) the register's own dump finding was about.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: R-420/R-424 score-chip wrap and column-header stacking; R-380/R-381 clickable nodes carry their own description via clearAndSetSemantics; R-383 filter chip 44dp floor)
 
 ### (pending) — ui-conformance WP2 · R-420, R-424, R-380, R-381, R-383
@@ -400,7 +588,6 @@ WP6's `TransmissionDetailScreen.kt`, not touched here). `coverageMatrix` then, s
 **Left open / not done:** nothing on this file. Reported to the coordinator per their own
 instruction: WP10's screen and the Review action/tag were **not** dropped — this was purely a
 test-fixture timestamp-realism gap on my own side, now closed; no re-routing needed.
-
 ---
 
 ## 2026-09-08 (ui-conformance WP11b: F21 asset-swap real-signal investigation)

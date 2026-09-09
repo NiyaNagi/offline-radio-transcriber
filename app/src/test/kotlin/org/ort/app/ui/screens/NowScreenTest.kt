@@ -90,7 +90,11 @@ class NowScreenTest {
         composeTestRule.setContent { OrtTheme { NowScreen(state = activeState(missingModel = missing)) } }
 
         composeTestRule.onNodeWithTag("now-missing-model").assertExists()
-        composeTestRule.onNodeWithText("Install a model", substring = true).assertExists()
+        // A shared-component accessibility fix (`FailedState`, not this package's own file) now
+        // folds the action's own label into one clearAndSetSemantics clickable leaf — the same
+        // merged-node shape this round's own R-380 fixes for KeyValueRow — so the raw "Install a
+        // model" text only shows up in the unmerged tree now.
+        composeTestRule.onNodeWithText("Install a model", substring = true, useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -242,13 +246,15 @@ class NowScreenTest {
         )
         composeTestRule.setContent { OrtTheme { NowScreen(state = idle) } }
 
-        composeTestRule.onNodeWithText("USB Audio Device · TH-D75A · tier 3", substring = true).assertExists()
+        composeTestRule.onNodeWithText("USB Audio Device", substring = true).assertExists()
+        composeTestRule.onNodeWithText("TH-D75A", substring = true).assertExists()
+        composeTestRule.onNodeWithText("tier 3", substring = true).assertExists()
         composeTestRule.onNodeWithTag("now-idle-earlier-nights-divider").assertExists()
     }
 
     @Test
-    @Requirement("R-416")
-    fun `R_416 the meta row is honestly absent when none of the three facts are known`() {
+    @Requirement("R-461")
+    fun `R_461 the meta row is always rendered, honestly, never silently dropped when unconfigured`() {
         val idle = NowViewState.Idle(
             lastSessionSummaryLabel = null,
             inputLabel = null,
@@ -259,7 +265,9 @@ class NowScreenTest {
         )
         composeTestRule.setContent { OrtTheme { NowScreen(state = idle) } }
 
-        composeTestRule.onNodeWithText("tier", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("No input", substring = true).assertExists()
+        composeTestRule.onNodeWithText("No radio", substring = true).assertExists()
+        composeTestRule.onNodeWithText("tier", substring = true).assertExists()
         composeTestRule.onNodeWithTag("now-idle-earlier-nights-divider").assertExists()
     }
 

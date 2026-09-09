@@ -162,7 +162,7 @@ public object Scenarios {
         // completed — see `clearPriorScenarioData`'s own doc comment for the half of this that
         // *was* broken.
         return when (name) {
-            "empty" -> empty(db)
+            "empty" -> empty(context, db)
             "first-session" -> firstSession(context, db)
             // R-440 (register, WP12's own tour finding): `seedConfiguredDeviceState` — a chosen and
             // verified input, a radio choice, every model asset "installed", and a storage budget
@@ -401,7 +401,28 @@ public object Scenarios {
     // ---------------------------------------------------------------------------------------
 
     /** `empty` — no sessions at all: the true first-launch / freshly-reset state. */
-    private fun empty(db: OrtDatabase): LoadResult = LoadResult(0, 0, null)
+    /**
+     * `empty` — the true first-launch / freshly-reset state: no sessions at all. R-461 (register,
+     * Reviewer A round 2): `SharedPreferences` persist across scenario loads (unlike `:data`, this
+     * file's own established rule elsewhere) — a prior `overnight`/`overnight-live`/
+     * `stations-14-nights` load in the same process would otherwise leave its own configured input
+     * behind, making `empty` render `Now-Idle.dc.html`'s meta row as if Setup had already run,
+     * which contradicts this scenario's own name and doc. Explicitly clears the same input/radio
+     * fields [seedConfiguredDeviceState] writes, so `empty` always renders the honest, genuinely
+     * unconfigured row ("No input · No radio · tier —") regardless of load order.
+     */
+    private fun empty(context: Context, db: OrtDatabase): LoadResult {
+        val prefs = context.applicationContext.getSharedPreferences(
+            SharedPreferencesSetupStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        val store = SharedPreferencesSetupStore(prefs)
+        store.selectedInputId = null
+        store.selectedInputLabel = null
+        store.inputVerified = false
+        RigStatus.reset()
+        return LoadResult(0, 0, null)
+    }
 
     /** `first-session` — one session started "now" minus 3 minutes, no transmissions yet (`Now-First`). */
     private suspend fun firstSession(context: Context, db: OrtDatabase): LoadResult {
@@ -1053,6 +1074,18 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 90 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        // R-462 (register, Reviewer A round 2): `Level-Meter.dc.html`'s own subtitle is "USB Audio
+        // Device · last 60 s" — `CaptureStatusContent.levelInputLabel` already prepends the real
+        // device name when `InputStatus` carries one (confirmed by reading it before this fix);
+        // this scenario never seeded one, so the subtitle honestly read only "last 60 s".
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
         LevelStatus.update(
             LevelStatus.State.Measured(
                 peakDbfs = -38f,
@@ -1108,6 +1141,15 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 20 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        // R-462: same real device name `level-low` now seeds, for the same subtitle reason.
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
         LevelStatus.update(
             LevelStatus.State.Measured(
                 peakDbfs = 0f,
@@ -1301,6 +1343,30 @@ public object Scenarios {
         )
         SharedPreferencesSettingsStore(settingsPrefs).audioBudgetGb = 60
         ScenarioFixtures.installEveryModelFixture(context)
+        // R-494 (register, Reviewer D round 2): `SettingsPolling`'s own Input rows (CF01/CF02 —
+        // `inputSummaryLine`/`capture()`) never read `SetupStore` at all — confirmed by reading
+        // that file before assuming the register's own guess — they read the live `InputStatus`
+        // holder, which nothing here published, so it stayed `None` ("No input selected") despite
+        // `SetupStore`'s own fields (above) already being verified. The same descriptor/rate/
+        // resampler `verifiedInputStore` already records, opened for real — matching exactly what
+        // `SetupActivity` itself writes once S04/S05 complete (see `input-verified`'s own
+        // identical values, this file's established precedent).
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        // R-494: CF06 (`SettingsRigScreen.kt`, WP10's own file) already renders "No rig module is
+        // connected" / "No radio support in this build yet..." (R-444) for any non-Connected
+        // `RigStatus` — `RigStatus.Absent` (this object's own honest default, left untouched here)
+        // is not a bug to fix by fixture: FR-RIG's own module is genuinely unbuilt (register
+        // R-084), and `radioChoice = RadioChoice.NONE` + a manual frequency (above) is precisely
+        // the "no rig, 145.230 MHz by hand" configuration that state describes — CF06's existing
+        // copy is already the honest, correct rendering for it, confirmed by `R_494`'s own test
+        // below rather than assumed.
     }
 
     private fun verifiedInputStore(context: Context): SharedPreferencesSetupStore {

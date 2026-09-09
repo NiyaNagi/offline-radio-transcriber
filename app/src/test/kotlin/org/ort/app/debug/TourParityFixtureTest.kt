@@ -12,6 +12,8 @@ import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.failures.FailureMapper
 import org.ort.app.ui.failures.FailurePresentation
 import org.ort.app.ui.failures.FailureSignalsPolling
+import org.ort.app.ui.settings.InMemorySettingsStore
+import org.ort.app.ui.settings.SettingsPolling
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
@@ -160,5 +162,38 @@ class TourParityFixtureTest {
             "expected FailureMapper to map gap-call's own newest CALL gap to Fail-Call, got $presentation",
             presentation is FailurePresentation.Call,
         )
+    }
+
+    @Test
+    @Requirement("R-494")
+    fun `R_494 overnight's Input rows read the real verified device, through SettingsPolling end to end`() = runTest {
+        Scenarios.load(context, "overnight")
+
+        // CF01's own root-list summary line — confirmed by reading SettingsPolling.kt before this
+        // fix: it reads the live InputStatus holder, never SetupStore directly (the register's own
+        // guess), so seeding SetupStore alone (last round's own R-440 fix) could never move this.
+        val root = SettingsPolling.root(context, InMemorySettingsStore())
+        val inputRow = root.sections.flatMap { it.rows }.single { it.label == "Input and level" }
+        assertEquals("USB Audio Device · verified", inputRow.subLine)
+
+        // CF02's own Input row.
+        val capture = SettingsPolling.capture(InMemorySettingsStore())
+        assertEquals("USB Audio Device", capture.inputLabel)
+        assertTrue("expected the route to read verified", capture.inputSubLine.contains("verified"))
+    }
+
+    @Test
+    @Requirement("R-494")
+    fun `R_494 overnight's radio stays honestly Absent, the correct state for no rig chosen`() = runTest {
+        Scenarios.load(context, "overnight")
+
+        // CF06 (SettingsRigScreen.kt, WP10's own file, register R-444) already renders "No rig
+        // module is connected" / "No radio support in this build yet..." for any non-Connected
+        // RigStatus — confirmed here, not assumed, that Absent (this object's own honest default)
+        // is what overnight's own "no rig, 145.230 MHz by hand" configuration actually produces,
+        // so that existing copy is what a validator sees, not a fabricated Connected state FR-RIG's
+        // own unbuilt module could never really report.
+        val rig = SettingsPolling.rig()
+        assertTrue("expected RigStatus to stay honestly Absent/not-connected", !rig.connected)
     }
 }

@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.debug.Scenarios
@@ -74,8 +75,22 @@ class TourParityTest {
         val level: LevelStatus.State,
     )
 
-    private fun snapshot(): HolderSnapshot =
-        HolderSnapshot(InputStatus.state, RigStatus.state, StorageForecast.state, LevelStatus.state)
+    // R-494's own follow-up: `overnight` now seeds a real `InputStatus.State.Opened` whose own
+    // `openedAtMillis` is real wall-clock time (`SystemClock.wallMillis()`, the same fixture
+    // pattern `input-verified`/`level-low`/`level-clip` already use) — genuinely different between
+    // two back-to-back `Scenarios.load` calls a few milliseconds apart, which is not the kind of
+    // "determinism" this test's own class kdoc is about (a call-site difference producing two
+    // structurally different snapshots). Normalised out here rather than widening the fixture's own
+    // seam just for this test.
+    private fun normalizeOpenedAt(state: InputStatus.State): InputStatus.State =
+        if (state is InputStatus.State.Opened) state.copy(openedAtMillis = 0L) else state
+
+    private fun snapshot(): HolderSnapshot = HolderSnapshot(
+        normalizeOpenedAt(InputStatus.state),
+        RigStatus.state,
+        StorageForecast.state,
+        LevelStatus.state,
+    )
 
     @Test
     fun `R_TOUR_PARITY overnight produces the same holder snapshot every time Scenarios load runs it`() = runTest {
@@ -85,12 +100,16 @@ class TourParityTest {
         Scenarios.load(context, "overnight")
         val second = snapshot()
 
-        // The specific values the register (R-440) says a validator saw seeded under `overnight` -
-        // "No input selected"/"No radio configured" is InputStatus.State.None/RigStatus.State.Absent,
-        // both holders' own reset default (`resetProcessWideFacets`'s doc comment) - proven honestly
-        // absent here, not assumed, so a future scenario fixture change that starts seeding these
-        // would be caught by this assertion changing, not silently celebrated as "parity fixed".
-        assertEquals(InputStatus.State.None, first.input)
+        // R-494 (register, Reviewer D round 2, WP4's own follow-up fix — flagged here since this
+        // is WP12's file, not WP4's): this assertion's own comment anticipated exactly this —
+        // `overnight` now seeds a real, verified `InputStatus.State.Opened` (CF01/CF02's own real
+        // source, confirmed by reading `SettingsPolling.kt`; `SetupStore` alone, R-440's own fix,
+        // was never enough) rather than leaving it `None`. `RigStatus` stays honestly `Absent` —
+        // `overnight`'s own configuration is "no rig, 145.230 MHz by hand", and FR-RIG's module is
+        // genuinely unbuilt (register R-084), so `Absent` is not the same gap `InputStatus.None`
+        // was. Determinism (`first == second`) — this test's own actual purpose per its class kdoc
+        // — is unaffected either way.
+        assertTrue("expected a real, verified input, not None", first.input is InputStatus.State.Opened)
         assertEquals(RigStatus.State.Absent, first.rig)
         assertEquals(first, second)
     }
