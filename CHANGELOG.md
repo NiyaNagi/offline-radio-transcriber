@@ -106,7 +106,308 @@ round's own smoke test update, not re-done here.
 
 ---
 
+## 2026-09-08 (test-suite speed: :app:testDebugUnitTest 1hr+ -> 2m18s)
+
+### 5aab408 — audit test-suite-speed · :app:testDebugUnitTest regression fixed: 1hr+ -> 2m18s (1234 tests, 0 failures)
+
+**Scope:** `app/build.gradle.kts` (test-task config only), `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`
+(`create()`/`instances` cache), `app/src/test/kotlin/org/ort/app/ui/digest/SessionsScreensTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/digest/SessionsContentTest.kt`.
+
+**Requirements/ACs:** none new — test-infrastructure health, not product behaviour.
+
+**What changed:**
+
+*Constitution Check.* II (test-backed change — the exit criterion this session worked to was the
+suite itself; every fix below is validated by a full `:app:testDebugUnitTest` run, not a unit in
+isolation). VII (boundaries are structural — `queryExecutor`'s per-path cache in `OrtDatabase.kt`
+fixes the shared resource every `*Polling` call site already assumed was cheap, at the one place
+they all funnel through, rather than patching each call site).
+
+On main, `:app:testDebugUnitTest` (~1,200 Robolectric/Compose tests) had regressed from ~3 minutes
+to over an hour. `jstack` on the stuck worker consistently showed the "SDK 34 Main Thread" at ~95%
+CPU inside `androidx.compose.ui.test.RobolectricIdlingStrategy.runUntilIdle` ->
+`MainTestClock.advanceTimeByFrame`, for whatever Compose test happened to run *after* one of several
+specific earlier classes — never inside this app's own composables. Bisection (cumulative-prefix
+timing, `--tests` narrowed to individual methods, `jstack` while stuck) found three independent,
+confirmed causes, all sharing the same signature (fine alone, fine in most combinations, poisons a
+Compose test that runs later in the same JVM fork):
+
+1. **`SessionsScreensTest`'s two `R-250` tests wrapped `composeTestRule.setContent`/`waitForIdle()`
+   in `kotlinx.coroutines.withTimeout(5_000)`.** Both are plain (non-`suspend`) calls that, under
+   Robolectric, synchronously hand work to the dedicated main thread via a cross-thread
+   `FutureTask.get()` (`Sandbox.runOnMainThread`) — `withTimeout` can only react to cancellation at
+   a coroutine's own suspension points, so it cannot actually interrupt that blocking call. If it
+   were ever slow, `withTimeout` would abandon the *test's* coroutine while the `FutureTask` kept
+   running to completion in the background on that shared, JVM-fork-wide thread — an orphaned
+   background operation the test framework has no way to know about. Removed both `withTimeout`
+   wrappers; the loop the tests are proving bounded (`drawHatchRegion`) is provably finite on its
+   own (fixed positive `pitchPx`, `width`/`height` guarded `> 0f`), so nothing needs racing against a
+   timer that cannot enforce itself.
+2. **`SessionsContentTest`** (the one test in `ui.digest` that drives a tap into the embedded
+   `LogContent`, starting its real `while (true) { ...; delay(2_000) } }` polling `LaunchedEffect`)
+   reliably poisoned whichever Compose test ran right after it — reproduced repeatedly via
+   cumulative-prefix bisection down to two of its three test methods plus `ui.failures.*`. Every
+   code-level mitigation tried (closing its own `OrtDatabase`, forcing the compose clock to settle
+   before the test method returns, `ShadowLooper.shadowMainLooper().reset()` in `@After`, disabling
+   the recurring poll entirely as a diagnostic) made no difference — the same class this repo's own
+   `ReaderActivity.kt` kdoc already documents for `ReaderActivityDestinationSmokeTest`
+   ("a Robolectric-driven test never gets a chance to cleanly cancel" a `while (true) { delay }`
+   loop once started). Applied the same, already-proven fix: added `SessionsContentTest` to the
+   existing `smokeTestDebugUnitTest` task (renamed in intent, not in Gradle task name, to cover more
+   than one class) so it — and seven more test files confirmed by the same shape (each `setContent`s
+   a screen's real `*Content` composable with its own such loop: `NowContentTest`,
+   `CaptureStatusContentTest`, `LogContentBackHandlerTest`, `LogAndThreadContentActivityTest`,
+   `FailureHostTest`, `NavSeedTest`, `OrtNavHostDestinationDispatchTest`, `ReaderAccessibilityTest`)
+   — run each alone, in its own fresh JVM (`forkEvery = 1`), excluded from `testDebugUnitTest`.
+3. **`OrtDatabase.create()`** opened a brand-new Room database (its own connection, WAL files,
+   `InvalidationTracker`) on every call and never closed it — by design, every real `*Polling`
+   object in `:app` calls it fresh, several from inside a 2-second poll loop, for as long as a
+   screen stays open (`ReaderPolling.kt`'s own kdoc: "this stays a poll for now"). Added a
+   process-lifetime cache in `OrtDatabase`'s companion object, keyed by the on-disk path
+   (`Context.getDatabasePath`), so repeated non-in-memory `create()` calls against the same file
+   reuse the same live instance instead of opening a new one — a cache hit is discarded (and
+   rebuilt) if the cached instance is no longer open (`RoomDatabase.isOpen`) or the file it names no
+   longer exists, so `db.close()` (only test `@After` blocks call it) and
+   `context.deleteDatabase(...)` (three `ui.data` tests) both still behave as every existing caller
+   already expects. `inMemory` instances are never cached (each is deliberately isolated). This is
+   also a genuine device-side fix, not just a test one: a real capture session left open for hours
+   was accumulating one native SQLite connection every 2 seconds from every polling screen visited.
+
+Also added `debugUnitTest.forkEvery = 40` on `testDebugUnitTest` itself as a general safety margin
+against whatever of this shape remains undiscovered — recycling the JVM (and its accumulated
+`OrtDatabase`/`queryExecutor` state) periodically bounds the worst case regardless of which classes
+land in a given batch, without the per-class fork cost the confirmed-poisoning task above pays.
+
+**Verified:**
+
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL in 2m 18s** (was 1hr+ on main
+  449a1d0); summed test-result XML: **1234 tests, 0 failures, 0 errors**.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` — 62 tests, 2 failures, both pre-existing and
+  unrelated to this session's changes: `FailureHostTest`'s `R_300` (`ComposeTimeoutException` after
+  its own 5s bound — reproduced on the very first, unmodified run of this session, before any fix
+  landed) and `ReaderActivityDestinationSmokeTest`'s `R_350_improve_done_...`
+  (`ComposeTimeoutException` after its own 30s bound, in a file this change never touches). Both
+  reproduce deterministically even fully isolated (`forkEvery = 1`, low machine load at the time) —
+  not flaky, not the cross-test-poisoning bug this entry fixes, and outside this task's scope.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt :data:ktlintCheck :data:detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules checked.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — 191/419 requirements covered, up to
+  date, no delta.
+
+**Left open / not done:**
+
+- The exact mechanism by which a leaked `while (true) { delay }` `LaunchedEffect` survives
+  `composeTestRule`'s own disposal under Robolectric was not root-caused to a single line — this
+  entry documents it (matching `ReaderActivity.kt`'s own prior, identical finding) and works around
+  it by JVM isolation, the same fix this repo already had precedent for. A from-first-principles fix
+  (e.g. in `androidx.compose.ui.test`/Robolectric itself, or restructuring every `*Content`
+  composable's poll away from `while (true) { delay }`) is out of scope here.
+- The eight additional test files isolated into `smokeTestDebugUnitTest` alongside
+  `SessionsContentTest` were isolated by the same confirmed *shape* (a real `*Content` composable
+  with its own recurring poll), not each individually re-bisected against a full-suite run — doing
+  so was not affordable at minutes-per-attempt once the shape was established from two independent,
+  fully bisected instances (`SessionsContentTest`, `NowContentTest`).
+- `ui.failures.FailureHostTest`'s `R_300` and `ui.navigation.ReaderActivityDestinationSmokeTest`'s
+  `R_350_improve_done_...` are real, pre-existing, deterministic failures worth a separate fix —
+  flagged here, not fixed, since neither is the speed regression this session was asked to find.
+- This session's own worktree merged `main` mid-task (979addc -> e927690) at the coordinating
+  agent's direction; the coordinator's own bisection (`ui.digest.SessionsScreensTest`'s `R_250`
+  test, `SessionsScreens.drawGapHatch`) named the `withTimeout` mechanism this entry's fix #1
+  addresses — independently arrived at here from `jstack` evidence before that message, then
+  confirmed against the named test.
+
+---
+
+## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
+
+## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
+### 0df676d — ui-conformance WP12 v3 · R-440/443/446 investigated (no receiver/tour divergence found), R-410 fixes, TourParityTest + TourStepsTest, 111 → 117 steps
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt` (`EXTRA_FONT_SCALE`
+wired into setup-step launches), `app/src/test/kotlin/org/ort/app/debug/tour/{TourParityTest,TourStepsTest}.kt`
+(new), `tools/ui-audit/tour.json` (117 steps: +1 lexicon-corrupt/CF04, +6 setup `@2x`, −1 unreachable
+`S02b` step, 2 renamed to match what they actually capture). `git merge main` twice more during this
+round (7d736f9 then 71b7fb5→…→82b8b39/c6fc7f1 as WP7/WP9/WP5 seams landed) — clean fast-forwards, no
+conflicts.
+
+**Requirements/ACs:** register R-410, R-440, R-443, R-446 (tour-fixture findings, not spec
+requirements). Constitution I (Uncertainty Is Content) governs this entry's central finding.
+
+**What changed:**
+
+*Constitution Check.* I governs the whole round: the register's own diagnosis for R-440/443/446 (a
+receiver-vs-tour code divergence) was investigated empirically — fresh `pm clear`, a genuine
+broadcast through the real `ScenarioReceiver`, a genuine `ReaderActivity` launch — rather than
+assumed correct and "fixed" by a refactor that would not have changed any behaviour. II governs
+`TourParityTest`/`TourStepsTest`, both proven to fail for the right reason before the fix that made
+them pass (the `TourStepsTest` failures below were real, caught by the test as written, not tuned to
+pass).
+
+- **R-440/R-443 investigated, not refactored.** `ScenarioReceiver.onReceive`'s entire body — after
+  its `goAsync`/coroutine scaffolding — is exactly one call, `Scenarios.load(appContext, name)`, the
+  identical function `ScreenshotTourActivity` already calls; there is no second, receiver-only code
+  path. A real-device comparison (`pm clear`, a genuine broadcast, a genuine `ScenarioReaderActivity`
+  launch, force-stopped between each) reproduced the tour's own `overnight` Settings-Capture capture
+  **exactly** — "No input selected", byte-for-byte the same screen — because
+  `OvernightScenario.overnight` never touches `InputStatus`/`RigStatus`/`StorageForecast` on *either*
+  path (confirmed by reading the file: zero references). `model-missing`'s grouped-Whisper-row state
+  (R-443) reproduced identically too, already grouped, via the same real-receiver route. Neither
+  `ScenarioReceiver.kt` nor `Scenarios.kt` is this package's file (WP0's row), so no refactor was made
+  — a `Scenarios.apply` rename would have been a pure alias with no behavioural effect, which is not
+  what "fixed" should mean. `TourParityTest` (new) is the durable regression guard this investigation
+  earns instead: proves `Scenarios.load("overnight")` is deterministic (two calls, identical holder
+  snapshot) and asserts the exact honest-absent values R-440 itself named
+  (`InputStatus.State.None`, `RigStatus.State.Absent`) — a future change that made one call site
+  special would show up here as two different snapshots.
+- **R-446 (F12 on Settings-Assets) — a real, achievable gap, fixed.** Added
+  `lexicon-corrupt/F12-lexicon-assets` (`destination: SETTINGS`, `drillIn.settingsScreen: ASSETS`):
+  `DebugLexiconImportOverride` (the real `LexiconCorruptScenario.run` result, read by
+  `ModelsContent.kt`'s own poll) is a process-wide holder exactly like `InputStatus`, seeded
+  identically by both paths — landing on Settings-Assets after `lexicon-corrupt` now genuinely shows
+  "Import refused", the real checksum/record-count mismatch, and "Callsign lexicon 2026.08 · 1,104,208
+  records" still active — verified on device (screenshot below), closing R-446.
+- **R-410, the three fixable findings**: N06 unseeded (`level-low/N06-level-meter-low`,
+  `level-clip/N06-level-meter-clip`) were the *pre-v2* steps, superseded by v2's already-correctly-
+  seeded `level-low/N06-level-meter-seeded`/`level-clip/N06-level-meter-clip-seeded` (verified working
+  on device — no session required, contrary to the coordinator's own suspicion) — renamed to
+  `N04-capture-status` (what they actually, honestly capture) rather than removed, so the plain-N04
+  state under those two scenarios stays covered. `setup-verified/S02b-mic-denied` removed: confirmed
+  by reading `SetupActivity.onResume()` — `if (step == SetupStep.MICROPHONE_DENIED) refreshStep()`
+  unconditionally redirects away from S02b whenever `RECORD_AUDIO` is actually granted (true for
+  every tour run, since `install.ps1`/this script's own setup grants it) — an OS permission-state
+  requirement no in-process seed can satisfy; reported, not worked around.
+- **R-410/R-411, the two *not* fixable within this package, verified and reported rather than
+  guessed at**: `gap-call/F15-gap-call-now` genuinely lands on the idle `Now` screen on *both* the
+  receiver and tour paths — `FailureMapper.map` requires `CaptureState.State.Capturing` for F15, and
+  `gap-call` (`OvernightScenario.kt`, WP4's file) ends the session rather than marking it live; this
+  package's own README already names this gap ("Known gaps / hygiene"), unchanged by this round.
+  `setup-level/S07-level`'s empty meter reproduced identically via the real receiver + `MainActivity`
+  path too (screenshot taken) — `setupLevel()` (`Scenarios.kt`, WP0's file) seeds the store fields
+  that land the state machine on S07 but never publishes a `LevelStatus` reading for the screen's own
+  live meter to read; a `Scenarios.kt` fix, not a tour one.
+- **`TourStepsTest`** (new): composes the real `OrtNavHost` for all 111 *destination* steps (of
+  117 — the 6 *setup* `@2x` additions this round have no equivalent JVM-composable check; see the
+  class's own scope note) in one `ComposeContentTestRule`/`setContent` (calling `setContent` twice in
+  one test throws — found by actually running it), keyed per step the same way `ScreenshotTourActivity`
+  itself is, and asserts a real `testTag` or title string per destination/drill-in kind. Caught two
+  wrong assumptions in its own first draft before being fixed: drill-in headers read the bare
+  destination label ("Log"), not "Back to Log" as `NavSeed.kt`'s own prose loosely suggested, and
+  `ThreadDetailScreen`'s `thread-detail-overs` tag was not reliably present, so both were changed to
+  text checks against confirmed real captures.
+- **WP9's `SetupActivity.EXTRA_FONT_SCALE`** (landed mid-round, polled via `git log main --oneline`)
+  wired into `renderSetupStep`'s own `Intent` — every setup step now gets a real font-scale seam
+  in-process, no system `font_scale` touched. 6 new `@2x` steps: S01, S03, S04, S07, S08, S12 (S06
+  excluded — same reason `S05`/`S06` were excluded from v1: reachable only as the live result of a
+  real tap-triggered route check, `EXTRA_STEP` cannot substitute for it).
+- **Not yet actionable, polled for and confirmed still unlanded at this round's own close**: WP3's
+  `NavSeed.searchQuery`/`searchSubmit`/`searchFiltersOpen` (WP7's own `SearchContent(initialQuery,
+  submitOnStart, initialFiltersOpen)` landed, but the `NavSeed`/`OrtNavHost` wiring that would let
+  this package reach it without duplicating `OrtNavHost`'s own private `searchHostState()` state
+  management has not — confirmed by reading `OrtNavHost.kt`'s `SEARCH` dispatch site, still un-wired);
+  WP3's `NavSeed.logSheetOpen` (WP5's `LogContent.initialSheetOpen` landed, `NavSeed` wiring has not);
+  WP8's `StationDetailContent.initialSubScreen`/`NavSeed.openStationSubScreen` (confirmed genuinely
+  absent by reading `StationDetailContent.kt`: `var sub by remember(stationId) {
+  mutableStateOf(StationSubScreen.NONE) }` is purely internal, no parameter exists to seed it at
+  all — ST03/ST04 stay unreachable); WP6's `initialRevisionsOpen`/`NavSeed.openRevisions` (D07) and
+  D05's own seam. None of these are duplicated by hand in this package (its own standing rule); each
+  will be picked up in a future round once landed.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — **BUILD SUCCESSFUL**,
+  27 tests, 27 passed (24 from v1/v1.1/v2 plus `TourParityTest`'s 2 plus `TourStepsTest`'s 1, which
+  itself exercises all 111 destination steps in a single run).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL** (one `ktlintFormat` pass and one
+  `CyclomaticComplexMethod` split needed first — `expectedFor` split into `expectedForDrillIn`/
+  `expectedForDestination`; re-checked clean).
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**. `.\gradlew.bat :app:assembleDebug` —
+  **BUILD SUCCESSFUL**. `python tools\spec-check\spec_check.py` — **OK** (8/8). `coverageMatrix` then
+  `coverageMatrixCheck` (separate) — up to date (191/419), byte-identical `results/coverage-matrix.md`.
+- **Real device, `emulator-5558` (AVD `ort_audit_3`), fresh worktree APK, `pm clear` + permissions,
+  `.\tools\ui-audit\tour.ps1 -Port 5558 -Out .\tmp-tour-out`**: **117/117 steps ok, 0 errors, 106.9s
+  elapsed**. Two of the new captures opened directly with the Read tool and visually confirmed as
+  genuine renders: `lexicon-corrupt/F12-lexicon-assets.png` (the real "Import refused" screen — real
+  checksum mismatch "computed sha256 8c96… does not match", real record counts "read 2 · declared
+  1,122,410", "Callsign lexicon 2026.08 · 1,104,208 records" still active, `Choose another file`/
+  `Done`) and `setup-verified/S12-ready@2x.png` (genuinely larger text, "verified"/"in band" status
+  labels now visible at 2×, top/bottom clipped on first frame — the same known, accepted first-frame-
+  before-scroll shape R-341 already established for this exact screen). `tmp-tour-out/` and three
+  ad hoc diagnostic screenshots (`receiver-cf02.png`, `receiver-cf04b.png`, `n06-test.png`, `s07-test.png`
+  — the real-receiver-path comparisons this investigation's own findings rest on) were scratch, not
+  part of this commit.
+
+**Left open / not done:**
+- Every "not yet actionable" seam named above — this package will add the corresponding `tour.json`
+  steps the round after each one's `NavSeed`/composable wiring lands; polled `git log main --oneline`
+  three times across this round (7d736f9, 71b7fb5, c6fc7f1) rather than guessed at what had landed.
+- `gap-call`'s F15 banner and `setup-level`'s empty meter (R-410/R-411) need changes in `OvernightScenario.kt`/
+  `Scenarios.kt` (WP0's/WP4's files) — named with exact function/field citations above, not this
+  package's to fix.
+- `TourStepsTest` covers destination steps only (111 of 117) — setup-step correctness still rests on
+  the real-device tour runs this entry and the two before it report, not a JVM-side assertion; see
+  the class's own doc comment for why (`SetupActivity`'s screen rendering has no callable composable
+  to test against without a real `Activity`).
+
+---
+
 ## 2026-09-08 (ui-conformance WP11b: calibration chart colour split, back headers on F14/F19/F21/F22)
+
+### (pending) — ui-conformance WP11b · R_300 storage banner test made deterministic
+
+**Scope:** `:app` — `ui/failures/FailureHostTest.kt` only (test-only change; no production code
+touched). `git merge main` (main at `ad692e1`, this branch's own `3cfcfc6` already merged into it
+at `1943dd0`; fast-forwarded cleanly; no rebase, no stash, no `gradlew --stop`). Follow-up on the
+prior WP11b commit's own "left open" note, confirmed by the coordinator against a clean `main`
+under load (WP9 saw the same flake independently).
+
+**Requirements/ACs:** none new — R-300's own product behaviour (the bounded storage banner, its
+assertions unchanged) was already fixed and is not touched here; this is purely a test-reliability
+fix so `R_300` stops being a false-negative source in the gate.
+
+**What changed:** `FailureHostTest`'s `R_300` test used to drive the banner into view with a
+wall-clock `composeTestRule.waitUntil(timeoutMillis = 5_000) { ... "failure-banner-overlay" ...
+isNotEmpty() }`, racing `FailureHost`'s real async poll loop (`pollFailureSignals` /
+`FailureSignalsPolling.current`) — which, because the test passed a non-existent
+`sessionId = "s1"`, ran real Room queries (`captureGapDao().listBySession`, `sessionDao().getById`,
+`transmissionDao().listBySession`) against a session that was never created, before the first
+`presentation` update could land. Under system load that real DB dispatch plus a real 5 s
+wall-clock budget is exactly what produced the timeout (`ComposeTimeoutException`) — the flake was
+in the harness, not in the banner. Two changes, both scoped to this one test: (1) `sessionId` is
+now `null` — `FailureSignalsPolling.current`'s own `if (sessionId != null)` guard means a null
+session skips every Room query outright, and `FailureMapper.map` already returns
+`signals.debugOverride` (set via `DebugFailureOverride.show(...)`, already used by this test)
+ahead of every real signal regardless — so the session id was never actually load-bearing for what
+this test asserts. (2) `composeTestRule.mainClock.autoAdvance = false` (set before `setContent`,
+the same pattern `FailureActionBarScaffoldTest.kt`'s `R_252` already establishes in this app) plus
+one explicit `composeTestRule.mainClock.advanceTimeByFrame()` and `waitForIdle()` deterministically
+land the `LaunchedEffect`'s first, now fully synchronous poll iteration — a single bounded virtual
+frame, not a wall-clock wait at all. The banner presence check itself became a direct
+`onNodeWithTag("failure-banner-overlay").assertIsDisplayed()` (no polling loop needed once the
+frame has actually landed). The Stop-reachability assertions (non-zero bounds, then
+`performScrollTo().assertIsDisplayed()` at font scale 2.0) are unchanged.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.FailureHostTest"
+--rerun` — all 7 tests pass, `R_300` included. `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.failures.FailureHostTest.R_300*" --rerun` run 4 times in a row (fresh JVM each
+time, no incremental caching) — passed every time, demonstrating the fix is no longer
+load/timing-sensitive. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*"`
+— every test in the package passes. `.\gradlew.bat :app:detekt :app:ktlintCheck` — both BUILD
+SUCCESSFUL, zero issues. `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules,
+graph unchanged. `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (run separately — running both in one
+invocation trips a Gradle task-ordering validation error unrelated to this change) — 191 of 419
+covered, unchanged (a test-determinism fix establishes no new requirement coverage). `python
+tools/spec-check/spec_check.py` — OK, 8/8. `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+Never ran `gradlew --stop`; never rebased or stashed.
+
+**Left open / not done:** `ReaderActivityDestinationSmokeTest`'s own
+`R_350_improve_done_reflects_a_real_failure_and_offers_no_install_for_a_non_model_reason`
+(`:app:smokeTestDebugUnitTest`) remains a separate, still-unrelated pre-existing failure, noted in
+the prior WP11b entry and not touched by this change (different file, different package, out of
+this follow-up's scope).
 
 ### (pending) — ui-conformance WP11b · R-447 calibration chart colour split; R-448 back headers on F14/F19/F21/F22
 
@@ -200,7 +501,6 @@ navigation, named above per the review's own instruction.
 ---
 
 ## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
-
 ### ed7b13c — ui-conformance WP12 v2 · drill-in seeding through WP3's NavSeed, TourIds resolves symbolic ids against real fixture data
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourIds.kt` (new), `ScreenshotTourActivity.kt`
@@ -9977,6 +10277,126 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 ## 2026-09-08 (ui-conformance WP2: shared components)
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
+
+### (pending) — ui-conformance WP6 round 11 · R-422 first-frame clipping, R-423 inline source-over link, R-425 real chooser evidence, R-426 pass-failure header/retry line, D07 seam for WP12's tour
+
+**Scope:** `:app`, this package's own files — `ui/screens/{TransmissionDetailScreen,TransmissionDetailContent}.kt`,
+`ui/data/{DetailViewState,CorrectionPolling}.kt`, and their tests (a new
+`RejectedDetailScreenTest.kt`, split from `TransmissionDetailScreenTest.kt` for `LargeClass`;
+extensions to `TransmissionDetailScreenTest.kt`/`TransmissionDetailContentTest.kt`/
+`CorrectionPollingInspectionTest.kt`). Reviewer B's capture review at e927690; `git merge main`
+(HEAD was behind — `3baef8b`, fast-forward, no conflicts in any file this package owns). **Gate
+per the coordinator's load policy:** `:app:testDebugUnitTest --tests` scoped to touched classes,
+`:app:ktlintCheck :app:detekt`, `dependencyRules platformGuards`, `:app:assembleDebug`,
+`spec_check.py`, `coverageMatrix` then `coverageMatrixCheck` — no whole-project `build`, no
+un-scoped `:app:testDebugUnitTest`.
+
+**Requirements/ACs:** R-422 (spec, fixed), R-423 (design, fixed), R-425 (spec, fixed), R-426
+(design, partial — header/retry-limit line fixed, per-attempt list reported as a `:pipeline`/
+`:data` schema gap); D02/D03/F18, FR-UI-4; constitution I (never fabricate — the R-426 per-attempt
+list stays named as unbuilt rather than invented), II (fake ships unchanged — no new interface
+method needed), III (nothing deleted quietly).
+
+**Constitution Check.** Principle I governs every row this round: R-426's new retry-limit line
+states only what `WorkQueue.failPass`'s own real logic guarantees — a terminally FAILED item's
+stored `attemptCount` equals the value that tripped `attempts >= maxAttempts`
+(`data/src/main/kotlin/org/ort/data/WorkQueue.kt`'s `DEFAULT_MAX_ATTEMPTS = 5`, both real call
+sites use the default) — so "Retry limit reached after N attempts" is a true, disclosed structural
+fact, never a guess; the per-attempt timestamp/reason list `Fail-Pass.dc.html` also draws is
+**not** built, because `WorkQueueItemEntity` (confirmed unchanged after this merge) still stores
+only the aggregate `attemptCount`/`lastError`, not a history table — reported to the coordinator to
+route to `:pipeline`, not silently approximated from the aggregate. R-423 is principle I from the
+other direction: the removed "Confidence 0.82." sentence was never wrong, but it duplicated the
+score the chip beside the callsign already carries, so keeping it was a redundant, not an honest,
+disclosure — `Detail.dc.html` itself carries the score in exactly one place. R-425's evidence is
+built entirely from real `:data` reads (`TransmissionDao.listAll()` filtered by `stationId`,
+`CatalogDao.voiceprintsForStation`) — no candidate's heard-count, last-heard time, or voice-match
+bit is fabricated; a candidate with no evidence lookup (e.g. a pre-fetch render) still falls back
+to the old, honest `databaseHit`/`ituCountry` phrasing rather than showing nothing.
+
+**What changed:**
+
+1. **R-422 (spec), fixed.** Same first-frame-clipping class as R-360/R-292 (Robolectric cannot
+   observe it — confirmed by device screenshot only). `TransmissionDetailScreen`'s root layout
+   changed from a plain `Column(fillMaxSize) { Column(weight(1f).verticalScroll) { … }; BottomActionBar(…) }`
+   to `FailureActionBarScaffold` (`ui/failures/FailureActionBarScaffold.kt`, WP11b's file, reused
+   per the coordinator's explicit round-11 instruction — disclosed here as out-of-scope-but-directed,
+   same precedent as R-323's `PriorBar` reuse): the bar is subcomposed first, and the scrollable
+   content slot is height-constrained to `viewport − barHeight`, so content can never render behind
+   or through the pinned bar at any scroll offset, first frame included. Verified on
+   `emulator-5558`: `scenario-overnight-tx02` (the real K7LWH/INFERRED fixture row, found by
+   querying the device's own `ort.db` directly — no synthetic id), font scale 2.0, deep-linked via
+   `ScenarioReaderActivity --es nav_open_transmission_id`; screenshot at
+   `results/ui-audit/overnight/D02-inferred-r422-after@2x.png` shows content rendering continuously
+   from the header through the "Why this callsign" section down to the pinned `Not right?`/`Confirm`
+   bar, no blank gap. Font scale reset to 1.0 after.
+2. **R-423 (design), fixed.** `Detail.dc.html`'s own inline link — the source-over's real timestamp
+   is itself the tappable span ("Matched by voice to `20:02:28`, where the callsign was heard
+   clearly."), styled the board's accent green, via `ClickableText`/`buildAnnotatedString`/
+   `pushStringAnnotation`. The separate `TextAction(text = "Open the source over", …)` line and the
+   `confidenceClause` (" Confidence 0.82.") string-append are both removed — neither exists on the
+   board. New `DetailBodyViewState.Inferred.sourceOverTimeLabel: String?` carries the real label
+   (falls back to the generic phrase "the source over" only when no time is known, never a
+   fabricated one). Extracted `internal fun buildInferredExplanationText`/`sourceIdAtOffset` (the
+   same `internal`-for-direct-testability precedent `highlightedTranscript`/`scrubFraction` already
+   set) so the span/tag/colour are asserted without Compose. Confirmed together with R-422 in the
+   same device screenshot — no separate "Open the source over" line, no "Confidence 0.82." sentence.
+   Tests named `R_423`: two on `buildInferredExplanationText` (tags exactly the time-label span;
+   falls back to the generic phrase), one asserting the old line's absence and the CONFIRMED chip's
+   `Confidence` text stays chip-only (`FR_UI_4`, renamed to say so).
+3. **R-425 (spec), fixed.** D03 chooser rows now carry distinct, real per-candidate evidence — heard
+   count, last-heard time, voice match — instead of both candidates reading the same generic "a
+   known station · United States". New `CorrectionPolling.ambiguousCandidateEvidence` reads
+   `TransmissionDao.listAll()` filtered by each candidate's callsign for heard-count and the latest
+   `startedAtUtc` (via the existing `ReaderTransmissionViewStateMapper.timeLabel` for consistent
+   formatting), and cross-references the current over's own `TransmissionEntity.voiceprintId`
+   against `CatalogDao.voiceprintsForStation(callsign)` for "voice match" — the strongest honest
+   signal available (never a promotion to CONFIRMED; this is D03 evidence, not an attribution
+   write). `DetailViewStateMapper.from` gained a defaulted `ambiguousEvidence` parameter so every
+   existing call site (including `ReaderPolling.kt`) compiles unchanged;
+   `TransmissionDetailContent.pollDetail()` fetches it only when `attribution.state == AMBIGUOUS`,
+   for the top-ranked candidate callsigns. A candidate absent from the lookup (or before the fetch
+   lands) still falls back to the old `databaseHit`/`ituCountry` phrasing, never a blank row. Tests
+   named `R_425`: `CorrectionPollingInspectionTest` (real DAO round trip — heard-count and
+   last-heard from real past transmissions; voice-match true only for the over's own bound
+   voiceprint), `TransmissionDetailScreenTest` (the mapper renders "heard 4 times", "last …", "voice
+   match", "never heard before" from a hand-built evidence map, never the generic fallback when
+   evidence is present).
+4. **R-426 (design), partial.** `F18`'s header now reads `What went wrong · 3 attempts` (was
+   `3 times` — the board's own header wording, kept distinct from the prose sentence's "errored 3
+   times"). A new retry-limit line — "Retry limit reached after 3 attempts. Marked failed; the queue
+   continued without it." — follows the last-error line, using the real, stored `attemptCount` (see
+   Constitution Check above for why this is honest, not approximated). **Not built:** the
+   per-attempt list itself (each attempt's own timestamp and reason, `Fail-Pass.dc.html`'s section 1
+   body) — `WorkQueueItemEntity` (re-confirmed unchanged after this round's merge) has no history
+   table, only the aggregate `attemptCount`/`lastError`; reported to the coordinator to route to
+   `:pipeline`. Test named `R_426`: the retry-limit line's tag and exact text.
+5. **Seam, for WP12's tour.** `TransmissionDetailContent(initialRevisionsOpen: Boolean = false)` —
+   when `true`, `destination` initializes directly to `DetailDestination.Revisions` (D07), skipping
+   the real tap on the "N earlier versions" link the tour would otherwise have to simulate. No
+   equivalent seam was added for `Why` (D05) or the rejected state: `Why` is already reachable by a
+   real tap the tour performs (it is a destination toggle, not a multi-step flow), and rejected is
+   not a destination at all — `DetailViewState.rejected` is derived automatically from the real
+   `processingState`, so a tour scenario reaches it by seeding a rejected transmission, not by a
+   parameter. Test named `seam_initialRevisionsOpen_reaches_D07_directly_with_no_tap` — reuses
+   `R_194`'s own real two-transcript-version fixture and its documented wait-order (the async "2
+   versions" text must be waited on before the static closing note, or the final assertion races the
+   revisions fetch — the same race `R_194`'s own comment already names, hit and fixed once in this
+   round's own new test before the gate went green).
+
+**Verified (scoped gate, per the coordinator's load policy):** `:app:testDebugUnitTest --tests`
+covering every touched class (`TransmissionDetailScreenTest`, `RejectedDetailScreenTest`,
+`TransmissionDetailContentTest`, `CorrectionPollingInspectionTest`) — 62 tests, all clean, run
+together; `:app:ktlintCheck :app:detekt` (clean); `dependencyRules platformGuards` (clean — no new
+cross-module edge; `FailureActionBarScaffold` reuse is an intra-`:app` import, not a new module
+dependency); `python tools\spec-check\spec_check.py` (`spec-check: OK`); `coverageMatrix` then
+`coverageMatrixCheck` (separate invocations, both clean); `:app:assembleDebug` (clean, fresh
+compile confirmed — `:app:compileDebugKotlin` executed, not `UP-TO-DATE`) — the same fresh build
+installed for the R-422/R-423 device screenshot above.
+
+**Left open:** R-426's per-attempt timestamp/reason list — a `:pipeline`/`:data` schema gap
+(`WorkQueueItemEntity` needs a per-attempt history table), not something this round's `:app`-only
+scope can build honestly. No other new gaps this round.
 
 ### (pending) — ui-conformance WP6 round 10 · R-320 per-slot lattice grid, R-182 char-span highlight, R-321 undo restores the exact recorded prior
 

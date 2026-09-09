@@ -218,6 +218,46 @@ public object CorrectionPolling {
     }
 
     /**
+     * Register R-425, `Detail-Ambiguous.dc.html`: real, per-candidate evidence for the two-up
+     * chooser — before this fix, both rows read the identical "a known station · United States"
+     * whenever the two candidates shared an ITU country, which they usually do (adjacent
+     * callsigns). [heardCount]/[lastHeardLabel] are this device's own real hear history for that
+     * exact callsign ([org.ort.data.dao.TransmissionDao.listAll], the same source
+     * [searchHeardStations] already reads for an identical fact); [voiceOnFile] is real
+     * [org.ort.data.dao.CatalogDao.voiceprintsForStation] evidence, further narrowed to whether
+     * *this* over's own voiceprint — not just any voiceprint — is the one bound to that candidate,
+     * the strongest real signal this schema can offer for "this candidate is who was actually
+     * speaking" short of the phonetics themselves. Never the board's own fabricated
+     * "Tuesday net regular" narrative (this package has no day-of-week query to honestly back it —
+     * the same named gap [searchHeardStations]'s own doc comment already discloses).
+     */
+    public data class AmbiguousCandidateEvidenceViewState(
+        val heardCount: Int,
+        val lastHeardLabel: String?,
+        val voiceOnFile: Boolean,
+    )
+
+    public suspend fun ambiguousCandidateEvidence(
+        context: Context,
+        transmissionId: String,
+        callsigns: List<String>,
+    ): Map<String, AmbiguousCandidateEvidenceViewState> {
+        val db = OrtDatabase.create(context.applicationContext)
+        val all = db.transmissionDao().listAll()
+        val currentVoiceprintId = db.transmissionDao().getById(transmissionId)?.voiceprintId
+        return callsigns.associateWith { callsign ->
+            val heard = all.filter { it.stationId == callsign }
+            val lastHeard = heard.maxByOrNull { it.startedAtUtc }
+            val boundVoiceprints = db.catalogDao().voiceprintsForStation(callsign)
+            AmbiguousCandidateEvidenceViewState(
+                heardCount = heard.size,
+                lastHeardLabel = lastHeard?.let { ReaderTransmissionViewStateMapper.timeLabel(it.startedAtUtc) },
+                voiceOnFile = currentVoiceprintId != null && boundVoiceprints.any { it.id == currentVoiceprintId },
+            )
+        }
+    }
+
+    /**
      * R-183, `Detail.dc.html`: an INFERRED explanation names the source over's real time ("to
      * 02:14:07, where the callsign was heard clearly"), not the generic "to the source over" this
      * package fell back to before this fix. Real, honest, and non-throwing for a source id that

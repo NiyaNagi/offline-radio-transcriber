@@ -20,12 +20,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
 import org.ort.app.ui.data.CandidateInspectionViewState
+import org.ort.app.ui.data.CorrectionPolling
 import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.InspectionViewState
 import org.ort.app.ui.data.LatticeInspectionViewState
 import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.PriorContributionViewState
-import org.ort.app.ui.data.RejectedViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
@@ -155,8 +155,14 @@ class TransmissionDetailScreenTest {
         composeTestRule.onNodeWithContentDescription("confidence 0.94", substring = true).assertDoesNotExist()
     }
 
+    /**
+     * Register R-423 (design), narrower than the "never omitted" test above's own general rule:
+     * `Detail.dc.html` (INFERRED's own real board) carries no "Confidence 0.82." clause at all —
+     * confirmed by reading its own markup directly. The chip alone carries the number for this
+     * state; CONFIRMED (that test, above) is unaffected.
+     */
     @Test
-    fun `FR_UI_4 INFERRED carries its confidence in prose and a score chip beside the callsign`() {
+    fun `FR_UI_4 INFERRED carries its confidence only in the score chip, never duplicated in prose`() {
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
@@ -166,9 +172,7 @@ class TransmissionDetailScreenTest {
             }
         }
 
-        // "0.82" alone is ambiguous — it is both the score chip and the prose sentence; "Confidence
-        // 0.82" (the prose wording) is unique to the sentence.
-        composeTestRule.onNodeWithText("Confidence 0.82", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Confidence 0.82", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription("confidence 0.82", substring = true).assertExists()
     }
 
@@ -318,6 +322,67 @@ class TransmissionDetailScreenTest {
         assert(chosen == "KE7QRS") { "got $chosen" }
     }
 
+    /**
+     * Register R-425: with real, per-candidate evidence looked up, the two chooser rows read
+     * *distinct* facts — before this fix both rows read the identical "a known station · United
+     * States" whenever the two candidates shared an ITU country (the common case).
+     */
+    @Test
+    fun `R_425_ambiguous_candidates_carry_distinct_real_evidence_when_it_is_looked_up`() {
+        val inspection = InspectionViewState(
+            lattice = null,
+            candidates = listOf(
+                CandidateInspectionViewState(
+                    "KE7QRS",
+                    0,
+                    0.51,
+                    grammarValid = true,
+                    databaseHit = true,
+                    selected = false,
+                    priorContributions = emptyList(),
+                    ituCountry = "United States",
+                ),
+                CandidateInspectionViewState(
+                    "KE7QRF",
+                    1,
+                    0.46,
+                    grammarValid = true,
+                    databaseHit = false,
+                    selected = false,
+                    priorContributions = emptyList(),
+                    ituCountry = "United States",
+                ),
+            ),
+        )
+        val evidence = mapOf(
+            "KE7QRS" to CorrectionPolling.AmbiguousCandidateEvidenceViewState(
+                heardCount = 4,
+                lastHeardLabel = "01:12:00",
+                voiceOnFile = true,
+            ),
+            "KE7QRF" to CorrectionPolling.AmbiguousCandidateEvidenceViewState(
+                heardCount = 0,
+                lastHeardLabel = null,
+                voiceOnFile = false,
+            ),
+        )
+        val viewState = DetailViewStateMapper.from(
+            detail(attribution = Attribution.ambiguous(), inspection = inspection),
+            ambiguousEvidence = evidence,
+        )
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = viewState, player = FakeTransmissionAudioPlayer()) }
+        }
+
+        // Real, distinct evidence for each row — never the identical "a known station · United
+        // States" both rows shared before this fix.
+        composeTestRule.onNodeWithText("heard 4 times", substring = true).assertExists()
+        composeTestRule.onNodeWithText("last 01:12:00", substring = true).assertExists()
+        composeTestRule.onNodeWithText("voice match", substring = true).assertExists()
+        composeTestRule.onNodeWithText("never heard before", substring = true).assertExists()
+        composeTestRule.onNodeWithText("a known station", substring = true).assertDoesNotExist()
+    }
+
     @Test
     fun `R_055 a superseded transcript's earlier versions stay reachable, one tap away`() {
         var opened = false
@@ -412,11 +477,75 @@ class TransmissionDetailScreenTest {
         composeTestRule.onNodeWithText("not transcribed").assertExists()
         composeTestRule.onNodeWithText("Pass B errored 3 times", substring = true).assertExists()
         // SectionHeader uppercases its label — matched case-insensitively rather than assuming the exact case.
+        // R-426: the header reads "N attempts" (`Fail-Pass.dc.html`'s own exact wording), not "N times".
         composeTestRule
-            .onNodeWithText("What went wrong · 3 times", substring = true, ignoreCase = true)
+            .onNodeWithText("What went wrong · 3 attempts", substring = true, ignoreCase = true)
             .assertExists()
         composeTestRule.onNodeWithTag("pass-failure-last-error").assertExists()
         composeTestRule.onNodeWithText("Out of memory in the decoder", substring = true).assertExists()
+    }
+
+    @Test
+    fun `R_426_the_retry_limit_line_names_the_real_attempt_count`() {
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = failedState(), player = FakeTransmissionAudioPlayer()) }
+        }
+
+        composeTestRule.onNodeWithTag("pass-failure-retry-limit").assertExists()
+        composeTestRule
+            .onNodeWithText("Retry limit reached after 3 attempts. Marked failed; the queue continued without it.")
+            .assertExists()
+    }
+
+    // ---- R-423 (design): the source-over timestamp itself is the inline link ----
+
+    @Test
+    fun `R_423_buildInferredExplanationText_tags_exactly_the_time_label_span`() {
+        val annotated = buildInferredExplanationText("SRC1", "02:14:07", OrtColors.accentGreen)
+
+        assertEquals(
+            "Not heard in this over. Matched by voice to 02:14:07, where the callsign was heard clearly.",
+            annotated.text,
+        )
+        val linkStart = annotated.text.indexOf("02:14:07")
+        val linkEnd = linkStart + "02:14:07".length
+        assertEquals("SRC1", sourceIdAtOffset(annotated, linkStart))
+        assertEquals("SRC1", sourceIdAtOffset(annotated, linkEnd - 1))
+        assertEquals(null, sourceIdAtOffset(annotated, linkStart - 1))
+        assertEquals(null, sourceIdAtOffset(annotated, linkEnd))
+        val styled = annotated.spanStyles.single()
+        assertEquals(linkStart, styled.start)
+        assertEquals(linkEnd, styled.end)
+    }
+
+    @Test
+    fun `R_423_buildInferredExplanationText_falls_back_to_the_generic_phrase_when_no_time_is_known`() {
+        val annotated = buildInferredExplanationText("SRC1", null, OrtColors.accentGreen)
+
+        assertTrue(annotated.text.contains("Matched by voice to the source over,"))
+    }
+
+    @Test
+    fun `R_423_the_detail_screen_never_shows_a_separate_Open_the_source_over_line`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(
+                        detail(
+                            attribution = Attribution.inferred(
+                                "K7LWH",
+                                0.82,
+                                org.ort.core.TransmissionId.new(),
+                            ),
+                        ),
+                    ),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Open the source over").assertDoesNotExist()
+        composeTestRule.onNodeWithText("the source over", substring = true).assertExists()
     }
 
     /**
@@ -581,102 +710,10 @@ class TransmissionDetailScreenTest {
         composeTestRule.onNodeWithText("Transcript confidence", substring = true).assertDoesNotExist()
     }
 
-    // ---- R-242, F04 `Fail-Hallucination.dc.html`: the rejected detail state ----
-
-    private fun rejectedState(reason: String? = "VAD_NO_SPEECH: squelch tail, 0.4 s") = DetailViewStateMapper.from(
-        detail(attribution = Attribution.unknown(), transcriptText = "-", hasAudio = true),
-        rejected = RejectedViewState(reason),
-    )
-
-    @Test
-    fun `R_242_a_rejected_transmission_shows_the_real_reason_and_retained_audio`() {
-        composeTestRule.setContent {
-            OrtTheme { TransmissionDetailScreen(state = rejectedState(), player = FakeTransmissionAudioPlayer()) }
-        }
-
-        composeTestRule.onNodeWithTag("rejected-section").assertExists()
-        // R-331: the operator-prose mapping, not the raw record — `LogItemsMapper.whyFor` turns
-        // "VAD_NO_SPEECH: squelch tail, 0.4 s" into "No speech detected, squelch tail, 0.4 s".
-        composeTestRule.onNodeWithText("No speech detected, squelch tail, 0.4 s", substring = true).assertExists()
-        // The audio is retained (constitution III) — the waveform card still renders.
-        composeTestRule.onNodeWithTag("waveform-card").assertExists()
-    }
-
-    /**
-     * R-331: `Fail-Hallucination.dc.html`'s own title is "REJECTED" alone — the validator's own
-     * finding was the raw `"$rule: $detail"` record rendering in the title
-     * ("REJECTED · VAD_NO_SPEECH: SQUELCH TAIL, 0.4 S"). Proved two ways: the title text is exactly
-     * "REJECTED", and the raw rule token never appears anywhere on screen.
-     */
-    @Test
-    fun `R_331_detail_title`() {
-        composeTestRule.setContent {
-            OrtTheme { TransmissionDetailScreen(state = rejectedState(), player = FakeTransmissionAudioPlayer()) }
-        }
-
-        composeTestRule.onNodeWithText("REJECTED").assertExists()
-        composeTestRule.onNodeWithText("VAD_NO_SPEECH", substring = true).assertDoesNotExist()
-    }
-
-    @Test
-    fun `R_242_a_rejected_transmission_with_no_recorded_reason_reads_honestly_rather_than_fabricating_one`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                TransmissionDetailScreen(state = rejectedState(reason = null), player = FakeTransmissionAudioPlayer())
-            }
-        }
-
-        composeTestRule.onNodeWithText("No reason was recorded.", substring = true).assertExists()
-    }
-
-    @Test
-    fun `R_242_the_rejected_state_never_also_renders_the_unknown_attributions_what_was_tried_or_why_blocks`() {
-        composeTestRule.setContent {
-            OrtTheme { TransmissionDetailScreen(state = rejectedState(), player = FakeTransmissionAudioPlayer()) }
-        }
-
-        composeTestRule.onNodeWithText("What was tried", substring = true, ignoreCase = true).assertDoesNotExist()
-        composeTestRule.onNodeWithText("Why this callsign", substring = true, ignoreCase = true).assertDoesNotExist()
-    }
-
-    /**
-     * R-242: no real action exists for a rejected segment (see `RejectedHeaderSection`'s own doc
-     * comment) — the bottom bar renders none of the other states' actions rather than a disabled
-     * look-alike of one.
-     */
-    @Test
-    fun `R_242_the_rejected_state_offers_no_bottom_action_bar`() {
-        composeTestRule.setContent {
-            OrtTheme { TransmissionDetailScreen(state = rejectedState(), player = FakeTransmissionAudioPlayer()) }
-        }
-
-        composeTestRule.onNodeWithText("Confirm").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Not right?").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Retry now").assertDoesNotExist()
-        composeTestRule.onNodeWithText("I know who this is").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Leave ambiguous").assertDoesNotExist()
-    }
-
-    @Test
-    fun `R_242_what_the_model_said_shows_the_real_surviving_transcript_text`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                TransmissionDetailScreen(
-                    state = DetailViewStateMapper.from(
-                        detail(
-                            attribution = Attribution.unknown(),
-                            transcriptText = "help help mayday mayday",
-                        ),
-                        rejected = RejectedViewState("hallucination phrase match"),
-                    ),
-                    player = FakeTransmissionAudioPlayer(),
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("What the model said", ignoreCase = true, substring = true).assertExists()
-        composeTestRule.onNodeWithText("help help mayday mayday").assertExists()
-    }
+    // R-242/R-331 (F04 `Fail-Hallucination.dc.html`, the rejected detail state) moved to
+    // `RejectedDetailScreenTest.kt` — detekt's `LargeClass` finding, this file's own size after
+    // this round's R-423/R-425/R-426 tests; the same fix `RowsTest.kt`'s own `NavRowTest.kt` split
+    // already used.
 
     // ---- R-182, `highlightedTranscript`: the real char span, falling back to a literal indexOf ----
 

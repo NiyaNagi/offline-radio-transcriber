@@ -27,6 +27,7 @@
     { "id": "asset-swap/F21-asset-swap-now", "scenario": "asset-swap", "destination": "NOW" },
     { "id": "calibration/F22-calibration-now", "scenario": "calibration", "destination": "NOW" },
     { "id": "lexicon-corrupt/F12-lexicon-now", "scenario": "lexicon-corrupt", "destination": "NOW" },
+    { "id": "lexicon-corrupt/F12-lexicon-assets", "scenario": "lexicon-corrupt", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
 
     { "id": "overnight/L01-log", "scenario": "overnight", "destination": "LOG" },
     { "id": "overnight/L01-log@2x", "scenario": "overnight", "destination": "LOG", "fontScale": 2.0 },
@@ -70,8 +71,8 @@
     { "id": "thermal/N04-capture-status", "scenario": "thermal", "destination": "CAPTURE" },
     { "id": "backlog/N04-capture-status", "scenario": "backlog", "destination": "CAPTURE" },
     { "id": "rig-lost/N04-capture-status", "scenario": "rig-lost", "destination": "CAPTURE" },
-    { "id": "level-low/N06-level-meter-low", "scenario": "level-low", "destination": "CAPTURE" },
-    { "id": "level-clip/N06-level-meter-clip", "scenario": "level-clip", "destination": "CAPTURE" },
+    { "id": "level-low/N04-capture-status", "scenario": "level-low", "destination": "CAPTURE" },
+    { "id": "level-clip/N04-capture-status", "scenario": "level-clip", "destination": "CAPTURE" },
     { "id": "input-verified/N04-capture-status", "scenario": "input-verified", "destination": "CAPTURE" },
     { "id": "input-mismatch/F01-route-capture", "scenario": "input-mismatch", "destination": "CAPTURE" },
     { "id": "model-missing/N04-capture-status", "scenario": "model-missing", "destination": "CAPTURE" },
@@ -122,12 +123,18 @@
 
     { "id": "setup-verified/S01-welcome", "setup": "S01", "scenario": "setup-verified" },
     { "id": "setup-verified/S02-mic", "setup": "S02", "scenario": "setup-verified" },
-    { "id": "setup-verified/S02b-mic-denied", "setup": "S02b", "scenario": "setup-verified" },
     { "id": "setup-verified/S03-notify", "setup": "S03", "scenario": "setup-verified" },
     { "id": "setup-verified/S04-input", "setup": "S04", "scenario": "setup-verified" },
     { "id": "setup-level/S07-level", "setup": "S07", "scenario": "setup-level" },
     { "id": "setup-verified/S08-battery", "setup": "S08", "scenario": "setup-verified" },
     { "id": "setup-radio/S09-radio", "setup": "S09", "scenario": "setup-radio" },
-    { "id": "setup-verified/S12-ready", "setup": "S12", "scenario": "setup-verified" }
+    { "id": "setup-verified/S12-ready", "setup": "S12", "scenario": "setup-verified" },
+
+    { "id": "setup-verified/S01-welcome@2x", "setup": "S01", "scenario": "setup-verified", "fontScale": 2.0 },
+    { "id": "setup-verified/S03-notify@2x", "setup": "S03", "scenario": "setup-verified", "fontScale": 2.0 },
+    { "id": "setup-verified/S04-input@2x", "setup": "S04", "scenario": "setup-verified", "fontScale": 2.0 },
+    { "id": "setup-level/S07-level@2x", "setup": "S07", "scenario": "setup-level", "fontScale": 2.0 },
+    { "id": "setup-verified/S08-battery@2x", "setup": "S08", "scenario": "setup-verified", "fontScale": 2.0 },
+    { "id": "setup-verified/S12-ready@2x", "setup": "S12", "scenario": "setup-verified", "fontScale": 2.0 }
   ]
 }

@@ -57,6 +57,7 @@ class SessionsContentTest {
     @After
     fun tearDown() {
         CaptureState.idle(clearSession = true)
+        db.close()
     }
 
     private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 5_000) {
