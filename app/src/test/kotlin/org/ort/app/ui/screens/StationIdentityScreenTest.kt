@@ -1,6 +1,8 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -46,8 +48,9 @@ class StationIdentityScreenTest {
 
         // "N7XYZ" legitimately renders twice — the header and the Heard section's own callsign
         // row — so this checks the row's own sub-line rather than the ambiguous bare callsign.
-        // R-212: the shared plural helper, "heard 31 times" — never the literal "(s)" placeholder.
-        composeTestRule.onNodeWithText("heard 31 times", substring = true).assertExists()
+        // R-212/R-572: the shared plural helper, and the audio-level-resolution qualifier the
+        // board's own copy carries — never the literal "(s)" placeholder, never just the bare count.
+        composeTestRule.onNodeWithText("heard clearly in 31 overs", substring = true).assertExists()
         composeTestRule.onNodeWithText("region 7").assertExists()
         composeTestRule.onNodeWithText("One cluster, 38 overs").assertExists()
         composeTestRule.onNodeWithTag("station-identity-rename").performScrollTo()
@@ -91,6 +94,64 @@ class StationIdentityScreenTest {
         composeTestRule.onNodeWithTag("station-identity-split").performClick()
 
         assert(split)
+    }
+
+    @Test
+    fun `R_570 Split sits on the Nearest-other row, not Voiceprint`() {
+        composeTestRule.setContent { OrtTheme { StationIdentityScreen(state = fixtureState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithTag("station-identity-split").performScrollTo()
+        composeTestRule.onNode(
+            hasTestTag("station-identity-split").and(hasAnyAncestor(hasTestTag("station-identity-nearest-other-row"))),
+        ).assertExists()
+        composeTestRule.onNode(
+            hasTestTag("station-identity-split").and(hasAnyAncestor(hasTestTag("station-identity-voiceprint-row"))),
+        ).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_571 Name and Note both carry the leading state marker, filled when set and small when None`() {
+        composeTestRule.setContent {
+            OrtTheme { StationIdentityScreen(state = fixtureState(name = "Dave", note = null), onBack = {}) }
+        }
+        composeTestRule.onNodeWithTag("station-identity-rename").performScrollTo()
+
+        // Filled: Callsign, Lexicon (known), Name ("Dave"). Small: Note ("None"), Nearest other
+        // (never computed). Proves both new rows actually carry a marker (R-571's own gap), not
+        // just that the row itself renders.
+        composeTestRule.onAllNodesWithContentDescription("filled circle", substring = true).assertCountEquals(3)
+        composeTestRule.onAllNodesWithContentDescription("small dot", substring = true).assertCountEquals(2)
+    }
+
+    @Test
+    fun `R_572 the Callsign sub-line states it was parsed from audio, not just an over count`() {
+        composeTestRule.setContent { OrtTheme { StationIdentityScreen(state = fixtureState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithText("heard clearly in 31 overs · parsed from audio every time").assertExists()
+    }
+
+    @Test
+    fun `R_572 the Voiceprint sub-line states stable-since when a real first-seen date exists`() {
+        val state = fixtureState().copy(
+            voice = StationVoiceViewState(
+                clusterOverCount = 38,
+                confirmedCount = 31,
+                inferredCount = 7,
+                stableSinceLabel = "28 Aug",
+            ),
+        )
+        composeTestRule.setContent { OrtTheme { StationIdentityScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("31 with the callsign heard · 7 inferred from it · stable since 28 Aug")
+            .assertExists()
+    }
+
+    @Test
+    fun `R_572 the Voiceprint sub-line omits stable-since honestly when no such fact exists`() {
+        composeTestRule.setContent { OrtTheme { StationIdentityScreen(state = fixtureState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithText("31 with the callsign heard · 7 inferred from it").assertExists()
+        composeTestRule.onNodeWithText("stable since", substring = true).assertDoesNotExist()
     }
 
     // R-073's own screen scrolls (`Column(...).verticalScroll(...)`), so "Given by you"'s Rename/

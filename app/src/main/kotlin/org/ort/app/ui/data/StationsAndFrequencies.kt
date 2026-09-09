@@ -285,6 +285,15 @@ public data class StationVoiceViewState(
      */
     val nearestOtherStationId: String? = null,
     val nearestOtherDistance: Double? = null,
+    /**
+     * R-572 (register, polish): `Station-Identity.dc.html`'s own Voiceprint sub-line ends "…
+     * stable since <date>" — the real first-seen date of the over that is earliest in the
+     * *current* bound cluster (the same cluster [StationPolling.voiceSplitCandidates] would
+     * split), not a fabricated "since enrolment" or "since first heard at all" figure this
+     * package cannot honestly derive from one voiceprint alone. `null` — the sub-line then omits
+     * the clause entirely — when no voiceprint is bound to this station at all.
+     */
+    val stableSinceLabel: String? = null,
 )
 
 /** `Station-Identity.dc.html`'s "Given by you" section (R-073) — `StationEntity.userName`/`notes`. */
@@ -473,6 +482,13 @@ internal val LOCAL_DATETIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPatt
 
 /** The Stations/Frequencies list row's mono last-heard column (R-207) — a bare local "HH:mm". */
 internal val LOCAL_HHMM_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
+    .withZone(ZoneId.systemDefault())
+
+/** `Station-Identity.dc.html`'s own Voiceprint "stable since <date>" clause (R-572, register) —
+ * [Locale.getDefault], never [Locale.ROOT] (R-170, register: `Locale.ROOT` renders a raw numeric
+ * month, "M09", on this JVM instead of a real month name — the same fix [StationPolling]'s own
+ * `nightsSubtitle` already carries). */
+internal val STABLE_SINCE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
     .withZone(ZoneId.systemDefault())
 
 private fun dateTimeLabel(utcMillis: Long?): String? =

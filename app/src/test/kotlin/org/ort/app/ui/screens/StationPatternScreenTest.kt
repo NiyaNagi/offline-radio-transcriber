@@ -1,11 +1,16 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -49,6 +54,28 @@ class StationPatternScreenTest {
     }
 
     @Test
+    fun `R_573 the default tab on load is Hour x day, not By hour`() {
+        composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithContentDescription("Hour × day").assertIsSelected()
+        composeTestRule.onNodeWithContentDescription("By hour").assertIsNotSelected()
+        // The board's own selected-tab content: the hour x day grid, not the by-hour bar chart.
+        composeTestRule.onNodeWithContentDescription("Activity by hour and day of week", substring = true)
+            .assertExists()
+    }
+
+    @Test
+    fun `R_574 the By-hour chart carries hour-axis boundary labels and the not-listening legend, like Charts C09`() {
+        composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithContentDescription("By hour").performClick()
+
+        composeTestRule.onNodeWithText("22:00").assertExists()
+        composeTestRule.onNodeWithText("06:00").assertExists()
+        composeTestRule.onNodeWithText("not listening", substring = true).assertExists()
+    }
+
+    @Test
     fun `R_072 the three toggle modes are all present`() {
         composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
 
@@ -82,8 +109,19 @@ class StationPatternScreenTest {
     fun `R_072 What this says names the unknown day explicitly`() {
         composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
 
-        composeTestRule.onNodeWithText("Sat is unknown — this phone has never listened then.", substring = true)
-            .assertExists()
+        // R-573 made `Hour × day` (the taller grid) the default tab, not `By hour` — "What this
+        // says" no longer fits in the initial composition window below the fold, so this scrolls
+        // to it first, the same idiom `StationScreenTest`'s own detail tests already use.
+        // `hasScrollAction()` alone matches two nodes here (the chips' own horizontal scroll and
+        // this vertical `LazyColumn`) — the vertical one specifically is what needs scrolling.
+        // `performScrollToIndex` (a direct jump to `whatThisSays[1]`), not `performScrollToNode`
+        // (a frame-by-frame search) — this Robolectric JVM has run enough tests this session that
+        // the latter's own repeated recomposition frames reliably exhaust the heap here.
+        val verticalScrollable = SemanticsMatcher("has vertical scroll") { node ->
+            node.config.contains(SemanticsProperties.VerticalScrollAxisRange)
+        }
+        composeTestRule.onNode(verticalScrollable).performScrollToIndex(1)
+        composeTestRule.onNodeWithText("Sat is unknown", substring = true).assertExists()
     }
 
     @Test

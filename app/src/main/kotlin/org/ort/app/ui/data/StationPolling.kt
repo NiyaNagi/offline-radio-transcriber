@@ -238,6 +238,15 @@ public object StationPolling {
         // inconsistent counts of the same "how many overs" fact on one screen.
         val clusterOvers = confirmed + inferred
         val (name, note) = currentGivenByYou(db, stationId, station?.userName, station?.notes)
+        // R-572 (register, polish): the real first-seen date of the *current* bound cluster — the
+        // same cluster [voiceSplitCandidates] would split, found the same way (largest voiceprint
+        // bound to this station). `null` — the sub-line then omits the clause — when no voiceprint
+        // is bound, or its member overs have no timestamp this package can read (should not happen
+        // in practice, but never a fabricated date standing in for one).
+        val boundCluster = db.catalogDao().voiceprintsForStation(stationId).maxByOrNull { it.memberCount }
+        val stableSinceLabel = boundCluster?.let { cluster ->
+            entities.filter { it.voiceprintId == cluster.id }.minOfOrNull { it.startedAtUtc }
+        }?.let { earliestUtc -> STABLE_SINCE_FORMAT.format(Instant.ofEpochMilli(earliestUtc)) }
         return StationIdentityViewState(
             stationId = stationId,
             callsign = station?.callsign ?: stationId,
@@ -247,6 +256,7 @@ public object StationPolling {
                 clusterOverCount = clusterOvers,
                 confirmedCount = confirmed,
                 inferredCount = inferred,
+                stableSinceLabel = stableSinceLabel,
             ),
             givenByYou = StationGivenByYouViewState(name = name, note = note),
         )
@@ -619,14 +629,17 @@ public object FrequencyPolling {
         } else {
             "Tonight · ${pluralize(overCount, "over")} where the usual is $usualTotalLabel"
         }
-        // R-275: the board's full closing paragraph, not just its first sentence — the middle
-        // clause only when there is a real, listed cause to point at ("see below"), never the
-        // board's own fictional "an activation pulled the regulars over" this package cannot
-        // honestly assert in general.
+        // R-275/R-563: the board's full closing paragraph, not just its first sentence, and
+        // stating the real reason itself (R-563, register: "an activation pulled the regulars
+        // over" in the board's own example) rather than deflecting to "see What made it busy
+        // above" — [causes] is the exact same source that section renders, so its own primary
+        // (first) entry's label is what the sentence names; never a fabricated reason when there
+        // is none to point at.
         val explanationParagraph = buildString {
             append("A departure is a finding, not an alarm.")
-            if (causes.isNotEmpty()) {
-                append(" This one has an explanation — see What made it busy above.")
+            val primaryCause = causes.firstOrNull()
+            if (primaryCause != null) {
+                append(" This one has an explanation — ${primaryCause.label}.")
             }
             append(
                 " It will appear in tonight's digest, and will not change what \"usual\" means " +

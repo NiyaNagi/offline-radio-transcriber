@@ -53,7 +53,8 @@ import org.ort.core.Attribution
  */
 @Composable
 public fun StationPatternScreen(state: StationPatternViewState, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    var mode by remember { mutableStateOf(PatternMode.BY_HOUR) }
+    // R-573 (register, design): the board's own active tab on load is `Hour × day`, not `By hour`.
+    var mode by remember { mutableStateOf(PatternMode.HOUR_BY_DAY) }
 
     Column(modifier = modifier.fillMaxSize()) {
         DrillInHeader(parentLabel = state.label, onBack = onBack)
@@ -88,7 +89,15 @@ public fun StationPatternScreen(state: StationPatternViewState, onBack: () -> Un
                 PatternMode.BY_HOUR ->
                     // No title here — the chip above already reads "By hour", selected; a second
                     // copy of the same three words would be an ambiguous duplicate, not a label.
-                    ActivityPatternChart(pattern = state.hourPattern, title = "")
+                    // R-574 (register, design): boundary hour labels and the not-listening legend,
+                    // like the Charts board's own C09 "Hour of day" panel — this screen's earlier
+                    // build passed neither, so the 24-bar chart carried no axis at all.
+                    ActivityPatternChart(
+                        pattern = state.hourPattern,
+                        title = "",
+                        axisStart = "22:00",
+                        axisEnd = "06:00",
+                    )
 
                 PatternMode.HOUR_BY_DAY ->
                     DayOfWeekGrid(

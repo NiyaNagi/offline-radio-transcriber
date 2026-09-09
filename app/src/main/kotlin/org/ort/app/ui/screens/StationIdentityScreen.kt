@@ -160,8 +160,10 @@ private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> U
             attribution = Attribution.confirmed(state.stationId, 1.0),
             key = "Callsign",
             value = state.callsign,
-            // R-212: the shared plural helper, not a literal "(s)" placeholder.
-            subLine = "heard ${pluralize(state.heardOverCount, "time")}",
+            // R-572 (register, polish): the board's own full clause — the audio-level-resolution
+            // qualifier ("parsed from audio every time") this package's earlier build dropped, not
+            // just the bare over count. R-212: the shared plural helper, never a literal "(s)".
+            subLine = "heard clearly in ${pluralize(state.heardOverCount, "over")} · parsed from audio every time",
         )
         val lexiconKnown = state.lexiconLabel != null
         MarkedKeyValueRow(
@@ -171,16 +173,21 @@ private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> U
         )
 
         SectionHeader(label = "Voice", modifier = Modifier.padding(top = OrtSpacing.md))
+        // R-572 (register, polish): the board's own trailing "· stable since <date>" clause —
+        // present only when this package can honestly state one (see [StationPolling.stationIdentity]'s
+        // own doc comment on [StationVoiceViewState.stableSinceLabel] for why it can be absent).
         val voiceSubLine = "${state.voice.confirmedCount} with the callsign heard · " +
-            "${state.voice.inferredCount} inferred from it"
+            "${state.voice.inferredCount} inferred from it" +
+            (state.voice.stableSinceLabel?.let { " · stable since $it" } ?: "")
+        // R-570 (register, design): the board attaches `Split` to the Nearest-other row, not
+        // Voiceprint — it is a *comparison* between the two clusters that decides whether a split
+        // makes sense, so the action belongs beside the thing being compared against.
         MarkedKeyValueRow(
             attribution = Attribution.inferred(state.stationId, 1.0),
             key = "Voiceprint",
             value = "One cluster, ${pluralize(state.voice.clusterOverCount, "over")}",
             subLine = voiceSubLine,
-            trailingMarker = {
-                TextAction(text = "Split", onClick = onSplit, modifier = Modifier.testTag("station-identity-split"))
-            },
+            modifier = Modifier.testTag("station-identity-voiceprint-row"),
         )
         val nearestId = state.voice.nearestOtherStationId
         val nearestDistance = state.voice.nearestOtherDistance
@@ -189,7 +196,15 @@ private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> U
         } else {
             "not computed yet"
         }
-        MarkedKeyValueRow(attribution = Attribution.unknown(), key = "Nearest other", value = nearestValue)
+        MarkedKeyValueRow(
+            attribution = Attribution.unknown(),
+            key = "Nearest other",
+            value = nearestValue,
+            trailingMarker = {
+                TextAction(text = "Split", onClick = onSplit, modifier = Modifier.testTag("station-identity-split"))
+            },
+            modifier = Modifier.testTag("station-identity-nearest-other-row"),
+        )
     }
 }
 
@@ -242,7 +257,16 @@ private fun GivenByYouName(
             modifier = modifier,
         )
     } else {
-        KeyValueRow(
+        // R-571 (register, design): every other row on this screen carries a leading state
+        // marker; this one is user-supplied fact rather than a heard/inferred one, so it borrows
+        // the same CONFIRMED-shaped (filled, green) marker `HeardAndVoiceFacts`'s own Callsign row
+        // uses for "heard directly" once set, and UNKNOWN's small grey dot for the honest "None".
+        MarkedKeyValueRow(
+            attribution = if (state.givenByYou.name != null) {
+                Attribution.confirmed(state.stationId, 1.0)
+            } else {
+                Attribution.unknown()
+            },
             key = "Name",
             value = state.givenByYou.name ?: "None",
             modifier = modifier,
@@ -280,7 +304,13 @@ private fun GivenByYouNote(
             modifier = modifier,
         )
     } else {
-        KeyValueRow(
+        // R-571 — see [GivenByYouName]'s own doc comment for the same reasoning.
+        MarkedKeyValueRow(
+            attribution = if (state.givenByYou.note != null) {
+                Attribution.confirmed(state.stationId, 1.0)
+            } else {
+                Attribution.unknown()
+            },
             key = "Note",
             value = state.givenByYou.note ?: "None",
             modifier = modifier,
