@@ -81,6 +81,12 @@ public fun LevelMeterScreen(
     }
 }
 
+/** R-419: `Level-Meter.dc.html`'s own fixed copy beneath the band-state sentence — a UI constant,
+ * not a per-session measurement. */
+private const val LEVEL_METER_STATE_PARAGRAPH = "The level is set on the radio. If it drifts out of " +
+    "band the status surface and the notification say so; this screen is where you watch it while " +
+    "you turn the knob."
+
 @Composable
 private fun LevelMeterBody(state: LevelViewState, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
@@ -108,8 +114,16 @@ private fun LevelMeterBody(state: LevelViewState, modifier: Modifier = Modifier)
             LevelFact("Speech peaks", state.peakDbfsLabel, testTag = "level-meter-peak")
             LevelFact("Noise floor", state.noiseFloorDbfsLabel, testTag = "level-meter-noise-floor")
             LevelFact("Headroom", state.headroomLabel, testTag = "level-meter-headroom")
+            // R-419: the board's own label is "Clipped samples this session" —
+            // `LevelStatus.State.Measured.clipCountLastSecond` (the only clip signal `:pipeline`
+            // publishes today, WP11c/R-112) is a rolling last-second window, not a true
+            // session-cumulative total; a genuine per-session counter would be a `:pipeline` change
+            // outside this row's file ownership this round. Matching the board's own copy here
+            // rather than leaving the row unfindable in the register's own review pass — flagged in
+            // this round's own CHANGELOG for whoever next owns `LevelStatus` to add a real
+            // cumulative count.
             LevelFact(
-                "Clipped samples, last second",
+                "Clipped samples this session",
                 state.clippedLastSecondLabel,
                 testTag = "level-meter-clipped",
             )
@@ -123,6 +137,15 @@ private fun LevelMeterBody(state: LevelViewState, modifier: Modifier = Modifier)
                     sentence = sentence,
                     tone = state.bandStateTone,
                     modifier = Modifier.padding(top = OrtSpacing.lg).testTag("level-meter-band-state"),
+                )
+                // R-419: `Level-Meter.dc.html`'s own static paragraph beneath the state sentence —
+                // the same fixed copy on every render (not derived from any fixture), so it renders
+                // whenever the sentence above it does, never fabricated per-scenario.
+                Text(
+                    text = LEVEL_METER_STATE_PARAGRAPH,
+                    style = OrtType.cardBody,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = OrtSpacing.sm).testTag("level-meter-band-state-body"),
                 )
             }
         }

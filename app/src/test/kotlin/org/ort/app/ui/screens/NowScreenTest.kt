@@ -46,12 +46,13 @@ class NowScreenTest {
         missingModel: MissingModelFacts? = null,
         worthKnowing: List<org.ort.app.ui.data.WorthKnowingItem> = emptyList(),
         stations: NowStationsSection = NowStationsSection(0, emptyList(), null, "None yet."),
+        axisStartOverride: String? = null,
     ) = NowViewState.Active(
         sessionTitle = sessionTitle,
         summaryLabel = summaryLabel,
         overCount = overCount,
         activityPattern = emptyList(),
-        axisStartLabel = null,
+        axisStartLabel = axisStartOverride,
         axisEndLabel = null,
         notListeningLabel = null,
         missingModel = missingModel,
@@ -210,6 +211,72 @@ class NowScreenTest {
         composeTestRule.onNodeWithTag("now-activity-chart").assertDoesNotExist()
         composeTestRule.onNodeWithText("the chart fills as the night goes on", substring = true).assertExists()
         composeTestRule.onNodeWithText("0 overs · listening on 145.230", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("R-415")
+    fun `R_415 the populated Main chart carries no title, only the axis row`() {
+        val state = activeState(overCount = 412).copy(
+            activityPattern = listOf(
+                org.ort.app.ui.data.HourActivityBucket(0, org.ort.app.ui.data.HourActivityState.HEARD, 3),
+            ),
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = state) } }
+
+        composeTestRule.onNodeWithTag("now-activity-chart").assertExists()
+        composeTestRule.onNodeWithText("ACTIVITY BY HOUR", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-416")
+    fun `R_416 Now-Idle shows the real input rig tier meta row and the divider before Earlier nights`() {
+        val idle = NowViewState.Idle(
+            lastSessionSummaryLabel = null,
+            inputLabel = "USB Audio Device",
+            rigLabel = "TH-D75A",
+            tierLabel = "tier 3",
+            earlierNights = listOf(
+                EarlierNightRow("S1", "Overnight, Mon 7 Sep", "23:32 – 06:14 · 412 overs · 19 stations", null),
+            ),
+            canGetBetter = null,
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = idle) } }
+
+        composeTestRule.onNodeWithText("USB Audio Device · TH-D75A · tier 3", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("now-idle-earlier-nights-divider").assertExists()
+    }
+
+    @Test
+    @Requirement("R-416")
+    fun `R_416 the meta row is honestly absent when none of the three facts are known`() {
+        val idle = NowViewState.Idle(
+            lastSessionSummaryLabel = null,
+            inputLabel = null,
+            rigLabel = null,
+            tierLabel = null,
+            earlierNights = emptyList(),
+            canGetBetter = null,
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = idle) } }
+
+        composeTestRule.onNodeWithText("tier", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithTag("now-idle-earlier-nights-divider").assertExists()
+    }
+
+    @Test
+    @Requirement("R-417")
+    fun `R_417 an empty Stations heard carries the Listening since second line`() {
+        val stations = NowStationsSection(
+            totalCount = 0,
+            rows = emptyList(),
+            unidentifiedLabel = null,
+            emptyMessage = "None yet.",
+        )
+        val state = activeState(stations = stations, axisStartOverride = "23:32")
+        composeTestRule.setContent { OrtTheme { NowScreen(state = state) } }
+
+        composeTestRule.onNodeWithText("None yet.", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Listening since 23:32.", substring = true).assertExists()
     }
 
     @Test
