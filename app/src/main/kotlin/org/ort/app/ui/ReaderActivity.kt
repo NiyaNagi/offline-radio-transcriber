@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import org.ort.app.ui.failures.FailureHostActions
+import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.navigation.rememberReaderNavigator
@@ -40,6 +41,13 @@ import org.ort.pipeline.capture.CaptureState
  * outside this package's row this round. An unset, unrecognised, or absent value falls back to
  * `null` (the `Settings` root), the same "honest until wired" treatment [resolveInitialDestination]
  * already gives [EXTRA_DESTINATION].
+ *
+ * Round 13 (WP12's screenshot-tour seam): [org.ort.app.ui.navigation.NavSeed.fromIntent] reads
+ * this same [intent] for that class's own extras (a drill-in id, `Log`'s R-276 filter, `Capture`'s
+ * level meter, `Earlier nights`'s Review-seeded detail) — see its own doc comment for the exact
+ * extra names and what it deliberately leaves out. No caller passes any of them directly to this
+ * activity yet; `org.ort.app.debug.ScenarioReaderActivity` (WP4's file, `app/src/debug`) is the
+ * intended first one, forwarding whatever `adb shell am start` gives it.
  *
  * audit F-022: [CaptureState.sessionId] -- published by `RealCaptureService.startCapture()` the
  * moment capture actually starts -- is preferred over the intent extra whenever the two differ and
@@ -116,14 +124,20 @@ public class ReaderActivity : ComponentActivity() {
         )
         val initialDestination = resolveInitialDestination(intent?.getStringExtra(EXTRA_DESTINATION))
         val initialSettingsScreen = resolveInitialSettingsScreen(intent?.getStringExtra(EXTRA_SETTINGS_SCREEN))
+        // Round 13 (WP12's screenshot-tour seam): `null` for any intent that carries none of
+        // `NavSeed`'s own extras — see that class's own `fromIntent` doc comment — so every
+        // ordinary launch (no caller of this activity passes one yet) behaves exactly as before.
+        val seed = intent?.let { NavSeed.fromIntent(it) }
         setContent {
             OrtTheme {
                 val navigator = rememberReaderNavigator(
                     initialDestination = initialDestination,
                     initialSettingsScreen = initialSettingsScreen,
+                    seed = seed,
                 )
                 OrtNavHost(
                     sessionId = sessionId,
+                    seed = seed,
                     navigator = navigator,
                     failureActions = FailureHostActions(
                         onChooseAnotherInput = { navigator.openSetupInput() },

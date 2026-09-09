@@ -594,6 +594,30 @@ class ReaderActivityDestinationSmokeTest {
         }
     }
 
+    /**
+     * Round 13 (the coordinator's own seam for WP12's screenshot tour): the one end-to-end
+     * confirmation that [NavSeed]'s own intent extras survive the real
+     * [org.ort.app.ui.ReaderActivity]/[org.ort.app.debug.ScenarioReaderActivity] path — every
+     * other case proving what each `NavSeed` field does alone lives in [NavSeedTest], composing
+     * `OrtNavHost` directly rather than launching a real `Activity`. [destinationIntent]'s own
+     * `seed` parameter writes [NavSeed.EXTRA_OPEN_TRANSMISSION_ID] the same way
+     * `ScenarioReaderActivity`'s own forwarding would, and `ReaderActivity.onCreate`'s own
+     * `NavSeed.fromIntent` reads it back — a real round trip through both files this round touched,
+     * not a shortcut.
+     */
+    @Test
+    fun `NavSeed_extras_on_a_real_activity_open_the_seeded_transmission_detail_directly`() {
+        runReaderActivity(
+            ReaderDestination.LOG,
+            sessionId = sessionId,
+            seed = NavSeed(openTransmissionId = "TX1"),
+        ) { rule ->
+            // Same marker [NavSeedTest]'s own `openTransmissionId` case asserts — this class's own
+            // `seedSession()` seeds the identical `TX1` id.
+            rule.waitUntilContentDescriptionExists("Back to Log")
+        }
+    }
+
     // -- drill-ins ------------------------------------------------------------------------------
 
     @Test
@@ -719,10 +743,13 @@ class ReaderActivityDestinationSmokeTest {
         destination: ReaderDestination,
         sessionId: String? = null,
         settingsScreen: SettingsScreenId? = null,
+        // Round 13 (WP12's screenshot-tour seam): `null` (every existing case) changes nothing —
+        // see [destinationIntent]'s own doc comment for what this adds.
+        seed: NavSeed? = null,
         body: (rule: ReaderComposeTestRule) -> Unit,
     ) {
         val activityRule =
-            ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId, settingsScreen))
+            ActivityScenarioRule<ReaderActivity>(destinationIntent(destination, sessionId, settingsScreen, seed))
         val rule = AndroidComposeTestRule(activityRule) { r ->
             var activity: ReaderActivity? = null
             r.scenario.onActivity { activity = it }
@@ -780,9 +807,15 @@ class ReaderActivityDestinationSmokeTest {
         destination: ReaderDestination,
         sessionId: String?,
         settingsScreen: SettingsScreenId? = null,
+        // Round 13: [NavSeed.putExtras] — the same extras
+        // [org.ort.app.debug.ScenarioReaderActivity]/[ReaderActivity]'s own `NavSeed.fromIntent`
+        // reads back, proving the real intent-extras path this class's own `Activity` harness
+        // exercises, not just direct `OrtNavHost(seed = ...)` construction ([NavSeedTest]'s own row).
+        seed: NavSeed? = null,
     ): Intent = Intent(context, ReaderActivity::class.java)
         .apply { sessionId?.let { putExtra(ReaderActivity.EXTRA_SESSION_ID, it) } }
         .apply { settingsScreen?.let { putExtra(ReaderActivity.EXTRA_SETTINGS_SCREEN, it.name) } }
+        .apply { seed?.putExtras(this) }
         .putExtra(ReaderActivity.EXTRA_DESTINATION, destination.name)
 
     /**
