@@ -34,8 +34,14 @@ import java.io.File
  * package's brief), launched by `tools/ui-audit/tour.ps1`:
  *
  * ```
- * adb shell am start -n org.ort.app/.debug.tour.ScreenshotTourActivity --es tour_path /sdcard/tour.json
+ * adb shell am start -n org.ort.app/.debug.tour.ScreenshotTourActivity
  * ```
+ *
+ * The spec is read from this app's own sandbox, `filesDir/tour/spec.json` (see [readSpecJson]'s own
+ * doc comment for why — API 34 scoped storage refuses this app any read of `/sdcard` or
+ * `/data/local/tmp`, found by actually running this against a real device, not by inspection):
+ * `tour.ps1` writes it there with `run-as` before launching this activity. [EXTRA_SPEC_PATH]
+ * overrides that default path, for a caller that already has its own on-device spec file.
  *
  * For each [TourStep] (see that class's own doc comment for the schema and, importantly, for
  * exactly which `drillIn` kinds v1 can and cannot seed): loads the step's base scenario through the
@@ -44,7 +50,7 @@ import java.io.File
  *
  * - **a destination step** — composes the real [OrtNavHost] *directly inside this activity's own
  *   `setContent`* (not by launching [org.ort.app.ui.ReaderActivity] as a child — composing in place
- *   is what lets [fontScaleProvider] actually take effect via `CompositionLocalProvider(LocalDensity
+ *   is what lets each step's own font scale actually take effect via `CompositionLocalProvider(LocalDensity
  *   provides ...)`, which neither `ReaderActivity` nor `OrtNavHost` exposes an Intent extra or
  *   parameter for), keyed on the step id so each step gets a fresh [rememberReaderNavigator] /
  *   `NavHostNavState` and the previous step's polling `LaunchedEffect`s are cancelled the normal
@@ -134,8 +140,26 @@ public class ScreenshotTourActivity : ComponentActivity() {
         TourRunner(applicationContext, renderer, outputDir).run(spec)
     }
 
+    /**
+     * The tour spec's on-device home is this app's own private storage, never `/sdcard` or
+     * `/data/local/tmp` — API 34's scoped storage refuses this app read access to either (a real
+     * `FileNotFoundException ... EACCES` from `File(path).readText()`, found by actually running the
+     * first real device tour, not by inspection). Default: `filesDir/tour/spec.json`, which
+     * `tour.ps1` now writes with `adb shell run-as org.ort.app sh -c "mkdir -p files/tour && cat >
+     * files/tour/spec.json"` before this activity is launched — the same private directory
+     * [TourRunner]'s own output lands in, and the same one `pm clear` wipes, so a spec written before
+     * a clear would silently vanish; `tour.ps1` writes it *after* any `-Clear`. [EXTRA_TOUR_JSON]
+     * (inline JSON in the launch intent) stays as a convenience for a caller that is not `tour.ps1`
+     * itself; [EXTRA_SPEC_PATH] overrides the default on-device path outright.
+     */
     private fun readSpecJson(): String? {
-        intent?.getStringExtra(EXTRA_TOUR_PATH)?.let { path -> return File(path).readText() }
+        val overridePath = intent?.getStringExtra(EXTRA_SPEC_PATH)
+        val specFile = if (overridePath != null) {
+            File(overridePath)
+        } else {
+            File(File(filesDir, TOUR_OUTPUT_DIR_NAME), "spec.json")
+        }
+        if (specFile.exists()) return specFile.readText()
         return intent?.getStringExtra(EXTRA_TOUR_JSON)
     }
 
@@ -198,7 +222,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
     )
 
     public companion object {
-        public const val EXTRA_TOUR_PATH: String = "tour_path"
+        public const val EXTRA_SPEC_PATH: String = "spec_path"
         public const val EXTRA_TOUR_JSON: String = "tour_json"
         public const val TOUR_OUTPUT_DIR_NAME: String = "tour"
 
