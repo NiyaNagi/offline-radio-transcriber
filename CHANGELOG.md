@@ -32,6 +32,83 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP4/WP10 · Improve-hang diagnosis: two pre-existing gate failures fixed)
+
+### (pending) — ui-conformance WP4/WP10 · coordinator-directed diagnosis: `R_350` was a corrupted em-dash byte sequence in the test's own expected string, not an app defect; `IMPROVE_RECORDS` dispatch was the drawer-click Robolectric+Compose quirk this file's own `CAPTURE` case already documents, worked around the same way
+
+**Scope:** `:app` tests only — `ui/navigation/ReaderActivityDestinationSmokeTest.kt`,
+`ui/navigation/OrtNavHostDestinationDispatchTest.kt`. No product file changed (`ui/improve/**`,
+`ModelsController`, `:data`, `:pipeline` are all unchanged by this entry, despite being where the
+coordinator's own suspects pointed — see "What changed").
+
+**Requirements/ACs:** none new — a pre-existing test-infrastructure defect fixed, not a requirement.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs how this was investigated:
+  every hypothesis (StagedActivation guard, `work_attempt`/DB contention, a `ui/improve` logic
+  bug) was checked with direct, reproducible evidence — a `withTimeout` + `println` probe on the
+  real `RealImproveRunner`/`ReprocessRunner` collector (temporary, reverted, never shipped, the
+  same "probe and revert" discipline WP3's own round-18 diagnosis already used) and a raw-byte
+  file read — rather than accepted on suspicion or patched around blind.
+- **`R_350_improve_done_install_action_opens_settings_assets_for_a_real_missing_model_failure`**:
+  the debug probe showed the real reprocess run completing in well under a second — `done=1/
+  total=1`, `Summary(failed=1, failureReasons=[ASR unavailable: no ASR model installed at …])` —
+  and `onDone(...)` firing with that exact summary every time. The hang was never in `:pipeline` or
+  `ui/improve` at all: `ReaderActivityDestinationSmokeTest.kt`'s own awaited string, `"1 failed —
+  No transcription model installed"`, had its em dash stored as the three-character mojibake
+  sequence `â€"` (UTF-8 bytes `C3 A2 E2 82 AC E2 80 9D` — the classic "UTF-8 bytes of `—`
+  misread as Windows-1252, then re-saved as UTF-8" corruption) instead of the real `—`
+  (`E2 80 94`) `ImproveScreens.kt`'s `FailureReasonLine` actually renders. `hasText(...)`'s exact
+  match could never succeed against a real screen showing the correct character, so the wait ran
+  out every time regardless of the timeout — 30 000ms, or the coordinator's own 120 000ms retest.
+  One-character fix: the corrupted sequence replaced with a real em dash at that one call site.
+  (The same corrupted sequence appears elsewhere in this file's own comments — 129 occurrences in
+  total, confirmed by a raw byte scan — but none of those sit inside a string a test actually
+  matches against rendered text, so they are cosmetic and left alone here; worth a dedicated pass
+  if the file is touched for other reasons.)
+- **`OrtNavHostDestinationDispatchTest.kt`'s `IMPROVE_RECORDS dispatches to WP10's real
+  ImproveContent`**: a `printToString()` dump right after the drawer click (temporary, reverted)
+  showed the drawer row (`drawer-row-IMPROVE_RECORDS`) present, scrolled into view, and carrying
+  `Actions = [OnClick, RequestFocus]` — yet the root content was still `Now-Idle`
+  (`now-idle-title` and its siblings, unambiguously) forever after. `OrtNavHost.kt`'s own
+  `ReaderDestination.IMPROVE_RECORDS -> ImproveRecordsContent(...)` dispatch is unchanged and
+  correct (read directly). This is the identical shape this same test class's own doc comment
+  already documents for the `CAPTURE` row: `performClick()` reports success with no exception, yet
+  the click never actually fires `onSelect` — "a genuine, narrow Robolectric+Compose environment
+  defect specific to this one semantics node in this one test environment, not a wiring bug." Not
+  `ui/improve`'s or `ModelsController`'s to fix, and this round did not attempt to (outside this
+  package's file ownership either way — `ui/navigation/Drawer.kt`/`OrtNavHost.kt` are WP3's).
+  Worked around the exact way the `CAPTURE` case immediately below it already does: enters
+  `OrtNavHost` directly at `ReaderDestination.IMPROVE_RECORDS` via `rememberReaderNavigator`'s own
+  `initialDestination` (the same seam `R_262` in this file already uses) instead of the one click
+  this environment cannot reliably deliver — still proves the real `OrtNavHost` → `ImproveContent`
+  dispatch end to end, just not by clicking a drawer row to reach it.
+- Reported, not silently worked around: the drawer-click defect is real and now affects two rows
+  (`CAPTURE`, `IMPROVE_RECORDS`) instead of one — worth WP3's/the lead's attention if a third row
+  ever needs a real click-through test and hits the same wall.
+
+**Verified:**
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --tests org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest.R_350*`
+  — green (previously timed out at 30s/120s).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --tests org.ort.app.ui.navigation.OrtNavHostDestinationDispatchTest`
+  — 9/9 green, including the reworked `IMPROVE_RECORDS` case (previously timed out at 15s).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` (whole class + suite) — green, no regressions.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.screens.Now* --tests org.ort.app.ui.settings.*`
+  — green (this round's own R-551/R-552 work, re-confirmed after the `main` merge below).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+- `.\gradlew.bat dependencyRules platformGuards` — green.
+- `.\gradlew.bat :app:assembleDebug` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 checks pass (including its own "no mojibake"
+  check — that check scans `spec/*.md`, not `.kt` sources, so it never caught this).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  192 of 419, up to date.
+
+**Left open / not done:** the underlying Robolectric+Compose click-dispatch defect itself (not
+this round's to fix — no file ownership here); the other 128 cosmetic mojibake occurrences in
+`ReaderActivityDestinationSmokeTest.kt`'s own comments.
+
+---
+
 ## 2026-09-09 (ui-conformance WP4/WP10 round: R-552 Now-Idle meta row wrap, R-551 Settings-Storage retention-order row)
 
 ### (pending) — ui-conformance WP4/WP10 · R-552 Now-Idle meta row wraps whole segments via FlowRow; R-551 Settings-Storage retention-order row stacked, never crushed
