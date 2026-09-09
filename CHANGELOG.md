@@ -32,7 +32,66 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-09 (ui-conformance WP4 · R-542: Level-Meter's own clip line, the same edge-clearance fix as WP9's R-465)
+## 2026-09-09 (ui-conformance WP9: R-465 follow-up — consolidated onto WP4's shared ChartGeometry)
+
+### (pending) — ui-conformance WP9 · R-465 follow-up: `referenceLineY` now calls the shared `ChartGeometry.kt`, not a private copy
+
+**Scope:** `:app` `ui/setup/LevelScreen.kt`, `ui/setup/LevelScreenTest.kt`. `git merge main` first
+(fast-forward; `main` carried WP4's `db8d92e`/`481f886`, register R-542).
+
+**Requirements/ACs:** R-465 (no behaviour change — same fix, same numbers, now sharing WP4's copy).
+
+**What changed:**
+
+*Constitution Check.* VII (boundaries are structural — WP4 lifted this fix into a shared component
+after finding the identical defect in its own file; this round retargets to that one shared copy
+rather than keeping a second private one, exactly the consolidation `LevelScreen.kt`'s own class doc
+already flagged as reasonable). II (test-backed — `R_465` re-run against the shared function,
+unchanged assertions/numbers, still green).
+
+- Deleted the private `referenceLineY`/`internal fun` copy this round had added to `LevelScreen.kt`
+  — WP4 (register R-542) found the byte-identical defect in `LevelMeterScreen.kt`'s own chart and
+  lifted the fix into `app/src/main/kotlin/org/ort/app/ui/components/ChartGeometry.kt`
+  (`org.ort.app.ui.components.referenceLineY`), confirmed byte-identical math against what this
+  package had.
+- `LevelMeter`'s own `yForReferenceLine` (`DrawScope` extension, unchanged) now calls the imported
+  shared function instead of the deleted private one — one-line change, no other call site touched.
+- `LevelScreenTest`'s three `R_465` cases now import and call
+  `org.ort.app.ui.components.referenceLineY` directly, unchanged assertions and numbers — still
+  exercised at this package's own call site, per the coordinator's own instruction, rather than only
+  relying on WP4's separate `ChartGeometryTest`.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.ui.components.ChartGeometryTest" --rerun` — `LevelScreenTest`: 12 tests, 0 failures
+  (all three `R_465` cases still pass against the shared function); `ChartGeometryTest`: 4 tests, 0
+  failures (WP4's own, unrelated to this round). **7 unrelated failures observed in the same run**,
+  reported below, not fixed — none in a file this round touched.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- `.\gradlew.bat dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, no diff this
+  time (WP4's own merge already carried a current `results/coverage-matrix.md`).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- Machine/provider: this worktree's Windows dev box, JDK 17.0.20.101-hotspot, Gradle 8.10.2, other
+  worktree agents' background builds concurrently active.
+
+**Left open / not done:**
+- **New finding, reported honestly rather than silently worked around.** The same broader run
+  surfaced 7 failing tests with no relation to `LevelScreen`/`ChartGeometry`:
+  `MicrophoneScreensTest.R_220`, `NotificationsScreenTest.R_280`, `ReadyScreenTest.R_342`/`R_361`/
+  `R_080`, `RouteMismatchScreenTest.R_280`, `VerifyScreenTest.R_280` — all "exactly one `<action
+  text>` renders, never a ghost duplicate" or "Fix/Change is its own real button" assertions, all
+  failing to find the expected button text at all. Reproduces standalone (`MicrophoneScreensTest`
+  alone: identical single failure), so not suite-ordering flake. Confirmed unrelated to this round's
+  own two files (neither touches any of these five screens or `PrimaryButton`). `PrimaryButton`
+  itself lives in `ui/components/Controls.kt` — outside this package's own files, so not touched
+  here per this file's own working agreement (report, don't edit outside ownership); three of the
+  five affected test classes (`ReadyScreenTest`, `MicrophoneScreensTest`, `NotificationsScreenTest`,
+  `RouteMismatchScreenTest`, `VerifyScreenTest`) are themselves `ui/setup` files this package does
+  own, so this may need a WP9 round of its own once diagnosed — surfacing it now rather than after
+  it is mistaken for something this round's edit caused.
 
 ### 481f886 — ui-conformance WP4 · R-542: Level-Meter's own clip line, the same edge-clearance fix as WP9's R-465
 

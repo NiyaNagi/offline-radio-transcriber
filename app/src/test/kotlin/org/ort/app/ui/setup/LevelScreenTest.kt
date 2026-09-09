@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.referenceLineY
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
@@ -161,8 +162,10 @@ class LevelScreenTest {
     // --- R-465 (Reviewer A round 2): the clip line at CHART_CEILING_DBFS (fraction 1.0, canvas
     // row 0) was device-confirmed invisible -- bisected by/merged into the chart Box's own top
     // border, not merely faint at capture resolution (`setup-level/S07-level.png`, pixel-sampled:
-    // zero non-background pixels near the expected row). `referenceLineY` is the fix's own pure
-    // math, unit-tested directly with no Canvas/DrawScope needed. ------------------------------
+    // zero non-background pixels near the expected row). `referenceLineY` (WP4 lifted this fix's
+    // own pure math into the shared `org.ort.app.ui.components.ChartGeometry.kt`, register R-542 --
+    // the identical defect existed in `LevelMeterScreen.kt` too) is exercised directly here at
+    // LevelScreen's own call site, with no Canvas/DrawScope needed. ------------------------------
 
     @Test
     fun `R_465 the clip line at the scale's own ceiling no longer lands exactly on the canvas edge`() {

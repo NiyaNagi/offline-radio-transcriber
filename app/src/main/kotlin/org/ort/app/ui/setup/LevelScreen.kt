@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.PrimaryButton
+import org.ort.app.ui.components.referenceLineY
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
@@ -257,35 +258,16 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.yForFraction(fracti
 /**
  * R-465 (device-verified, `setup-level/S07-level.png`): [yForFraction] alone is correct for the
  * *scale*, but the clip line always sits at `CHART_CEILING_DBFS` — fraction `1.0`, i.e. exactly
- * canvas row `0`. Two things both had to be true at once to land on [edgeClearancePx], both found
- * by actually sampling the rendered pixels on `emulator-5556` (`setup-level` scenario), not by
- * inspection: (1) a full-width stroke centred exactly on row `0` is bisected by the canvas's own
- * bounds — half its width is clipped away — and (2) this `Box`'s own 1dp border is drawn *over*
- * its children (so the border stays visible even where a child fills the whole `Box`), which
- * overpainted the remaining half even after a first fix inset the line by only its own half-stroke
- * (confirmed: still zero non-background pixels near the expected row). [edgeClearancePx] clears
- * both at once. A noise floor at the scale's own floor would hit the identical problem at the
- * bottom edge. Every fixed reference line (target band's two edges, the clip line, the
- * noise-floor line) goes through this instead of the plain [yForFraction] so it always stays
- * fully inside the canvas *and* clear of the border — bars are unaffected, and every line that
- * already had room (the target band, in every reading seen so far) draws at the exact same
- * position either way, since [Float.coerceIn] is a no-op away from the edges.
- *
- * The actual inset math is [referenceLineY], a plain function of already-resolved pixel values —
- * split out so `R_465` (`LevelScreenTest`) can exercise it directly, with no `DrawScope`/Canvas
- * needed, the same reasoning `levelBarFraction` itself was already kept plain for.
+ * canvas row `0`, where it was device-confirmed genuinely invisible, not merely faint. The actual
+ * inset math is [org.ort.app.ui.components.referenceLineY] — WP4 (register R-542) found the
+ * byte-identical defect in its own `LevelMeterScreen.kt`, so this now calls the one shared copy
+ * (`ui/components/ChartGeometry.kt`, that file's own doc has the full account) rather than a
+ * second private one; `R_465` (`LevelScreenTest`) still exercises it directly at this call site.
  */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.yForReferenceLine(
     fraction: Float,
     edgeClearancePx: Float,
 ): Float = referenceLineY(fraction, size.height, edgeClearancePx)
-
-/** See this file's own `yForReferenceLine` doc comment above — the pure half of that math.
- * [edgeClearancePx] is the full clearance to keep from either canvas edge (already accounting for
- * both the line's own half-stroke and whatever draws over the canvas at its border), not merely a
- * stroke width to be halved. */
-internal fun referenceLineY(fraction: Float, heightPx: Float, edgeClearancePx: Float): Float =
-    (heightPx * (1f - fraction.coerceIn(0f, 1f))).coerceIn(edgeClearancePx, heightPx - edgeClearancePx)
 
 @Composable
 private fun LevelRow(label: String, value: String, testTag: String) {
