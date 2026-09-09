@@ -189,7 +189,9 @@ class FrequencyScreenTest {
 
         composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
 
-        composeTestRule.onNodeWithText("145.230 MHz").assertExists()
+        // R-433 (register, polish): the board's own mono title is the bare frequency, no " MHz"
+        // suffix — see `R_433` below for the dedicated assertion this shares its reasoning with.
+        composeTestRule.onNodeWithText("145.230").assertExists()
         composeTestRule.onNodeWithText("Repeater · 2 m · FM").assertExists()
         composeTestRule.onNodeWithText("4112 all time · 318 tonight").assertExists()
         composeTestRule.onNodeWithContentDescription("Activity by hour of day", substring = true).assertExists()
@@ -226,7 +228,10 @@ class FrequencyScreenTest {
 
         composeTestRule.onNodeWithText("14 nights of 14 · 96 h total").assertExists()
         composeTestRule.onNodeWithText("W7NPC control", substring = true).assertExists()
-        composeTestRule.onNodeWithText("More").performClick()
+        // `SectionHeader`'s trailing action is a `TextAction`, which `clearAndSetSemantics { ... }`
+        // (Controls.kt's own R-380 doc comment) — reachable by content description, not by
+        // `onNodeWithText` (see `FrequencyChangeScreenTest`'s own fix for the identical defect).
+        composeTestRule.onNodeWithContentDescription("More").performClick()
         assert(openedChange)
     }
 
@@ -262,6 +267,49 @@ class FrequencyScreenTest {
         composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
 
         composeTestRule.onNodeWithText("no hatch: always listening here", substring = true).assertExists()
+    }
+
+    @Test
+    fun `R_431 the no-hatch caption names the real night count, not a fabricated every-night claim`() {
+        // Frequency.dc.html's own caption reads "averaged over 14 nights · no hatch: always
+        // listening here" — this package's earlier build said "every night" instead, which is
+        // honest but does not match the board and, worse, cannot be checked against anything.
+        // `patternNightsCount` is the real session count `FrequencyPolling.frequencyDetail`
+        // already computes for `listenedLabel`; the caption must use exactly that number.
+        val alwaysListening = (0 until 24).map { hour ->
+            org.ort.app.ui.data.HourActivityBucket(hourOfDayUtc = hour, state = HourActivityState.HEARD, heardCount = 1)
+        }
+        val state = FrequencyDetailViewState(
+            frequencyHz = 145_230_000L,
+            label = "145.230 MHz",
+            transmissionCount = 24,
+            activityPattern = alwaysListening,
+            transmissions = emptyList(),
+            patternNightsCount = 14,
+        )
+
+        composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("averaged over 14 nights · no hatch: always listening here").assertExists()
+    }
+
+    @Test
+    fun `R_433 the detail title is the bare mono frequency, no MHz suffix`() {
+        // Frequency.dc.html's own mono title is the bare "145.230" — this package's earlier build
+        // rendered `state.label` (which carries " MHz", built for the list row and the facts
+        // table's own prose) verbatim as the title too.
+        val state = FrequencyDetailViewState(
+            frequencyHz = 145_230_000L,
+            label = "145.230 MHz",
+            transmissionCount = 1,
+            activityPattern = ActivityPatternMapper.buildPattern(emptyList(), emptyList(), 0L),
+            transmissions = emptyList(),
+        )
+
+        composeTestRule.setContent { OrtTheme { FrequencyDetailScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("145.230").assertExists()
+        composeTestRule.onNodeWithText("145.230 MHz").assertDoesNotExist()
     }
 
     @Test
@@ -325,7 +373,9 @@ class FrequencyScreenTest {
         composeTestRule.setContent {
             OrtTheme { FrequencyDetailScreen(state = state, onBack = {}, onOpenChange = { openedChange = true }) }
         }
-        composeTestRule.onNodeWithText("Busier than usual — see what changed").performClick()
+        // `TextAction` `clearAndSetSemantics { ... }` (Controls.kt's own R-380 doc comment) —
+        // reachable by content description, not by `onNodeWithText`.
+        composeTestRule.onNodeWithContentDescription("Busier than usual — see what changed").performClick()
 
         assert(openedChange)
     }

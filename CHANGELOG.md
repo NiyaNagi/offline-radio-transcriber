@@ -32,6 +32,95 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP8: station sub-screen seam finished, R-430/431/432/433 fixed)
+
+### (pending) — ui-conformance WP8 · station sub-screen seam finished; R-430/R-431/R-432/R-433 fixed
+
+**Scope:** `:app` — `ui/screens/StationsContent.kt`, `ui/screens/FrequencyScreen.kt`,
+`ui/screens/FrequencyChangeScreen.kt`, `ui/screens/FrequencyDetailContent.kt`,
+`ui/data/StationsAndFrequencies.kt`, `ui/data/StationPolling.kt`; tests
+`ui/screens/StationsContentTest.kt` (new), `ui/screens/FrequencyScreenTest.kt`,
+`ui/screens/FrequencyChangeScreenTest.kt`, `ui/screens/StationScreenTest.kt`,
+`ui/screens/StationPatternScreenTest.kt`, `ui/screens/StationIdentityScreenTest.kt`. Continued
+from a prior session's uncommitted WIP (committed as-is first, per the coordinator's brief), then
+`git merge main` (main at `63425ae`; two conflicts, `NavSeed.kt`/`OrtNavHost.kt`, both were the
+same shape — my one field/dispatch line next to WP12's own round-14 additions — resolved by
+keeping both in the order the already-merged `putExtras`/`fromIntent`/dispatch bodies used; no
+rebase, no stash, no `gradlew --stop`). `NavSeed.kt`/`OrtNavHost.kt` themselves are WP3's file —
+touched only for the `openStationSubScreen` field and its one dispatch line, per the coordinator's
+explicit approval.
+
+**Requirements/ACs:** R-430, R-431, R-432, R-433 (register); R-276 follow-on (`StationSubScreen`
+seam, register).
+
+**What changed:** Constitution Check — Principle I (uncertainty is content): R-431's fix replaces
+a vague "every night" claim with the real session count, never a fabricated one; R-432's second
+pill is wired to a real, honest no-op default rather than a fake destination. Principle VII
+(structural boundaries): the new `StationSubScreen`/`FrequencyDetailView` seams are plain enums a
+`NavSeed` extra can carry, matching the pattern already established for the frequency drill-in.
+
+1. Finished the WIP seam a prior session left uncommitted: `StationDetailContent(initialSubScreen:
+   StationSubScreen = NONE)` (`PATTERN`/`IDENTITY`/`SPLIT`), `NavSeed.openStationSubScreen`, the
+   `nav_open_station_sub_screen` extra, following `frequencyInitialView`'s exact pattern. WP12's
+   screenshot tour can now capture ST03/ST04 without a real tap through Overview.
+2. **R-430** (`Stations`): the board loads with `Tonight` active; this package hardcoded
+   `All time` regardless of data. `StationsContent` now defaults to `TONIGHT` and falls back to
+   `ALL_TIME`, honestly, once the real load shows nothing heard tonight (covers both "no session
+   ever ran" and "a session ran/is running but heard nothing yet" — both collapse to the same
+   real fact).
+3. **R-433** (`Frequency`): the board's mono title is the bare frequency; this screen rendered
+   `state.label`, which carries a " MHz" suffix built for the list row, verbatim. Stripped at the
+   title's own render site, the same way `FrequencyRow` already strips it for the list.
+4. **R-431** (`Frequency`): the no-hatch caption named a vague "every night" instead of the
+   board's own real night count. Added `FrequencyDetailViewState.patternNightsCount`, computed in
+   `FrequencyPolling.frequencyDetail` from the same session set `listenedLabel` already counts, so
+   the two can never disagree.
+5. **R-432** (`Frequency-Change`): the bottom actions were a plain green text link, and the second
+   action ("The activation thread") never rendered — `onViewThread` was accepted but never passed
+   in from `FrequencyDetailContent`. Both are now the board's real 44dp bordered pills
+   (`SecondaryButton`, WP2's shared component), always offered side by side. Added
+   `onOpenThread: () -> Unit = {}` to `FrequencyChangeScreen` and threaded it through
+   `FrequencyDetailContent` (also defaulted, `{}`) — the callback exists and is wired end to end
+   within this package; WP3 still needs to identify the real busiest thread and pass a real
+   callback from `OrtNavHost.kt` (out of this package's read path today — no thread/session-wide
+   correlation is built for a frequency departure, this package's own report on R-074 names the
+   same gap).
+6. Found and fixed, while running the scoped gate, that `FilterChip`/`TextAction`
+   (`ui/components/Controls.kt`, WP2's, R-380) both `clearAndSetSemantics { contentDescription =
+   label; ... }`, which erases the child `Text` node's own `Text`/`EditableText` semantics from
+   the merged tree — `onNodeWithText` can no longer find them, only
+   `onNodeWithContentDescription` can. This had already broken five tests on `main` before this
+   session touched anything (`FrequencyChangeScreenTest.R_276`, two in `FrequencyScreenTest`, two
+   in `StationPatternScreenTest`, one in `StationScreenTest`, one in `StationIdentityScreenTest`).
+   Fixed the matcher in each (no production code changed for these); not a register item, filed
+   here because it blocked a clean scoped gate.
+7. `FrequencyDetailContent` crossed detekt's `LongParameterList` (8→9) from `onOpenThread`; added
+   `@Suppress("LongParameterList")` matching `Controls.kt TextField`'s own established precedent
+   (every parameter is an independent, optional field/callback — bundling would only relocate the
+   same nine facts, not reduce them).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.Station*'
+--tests 'org.ort.app.ui.screens.Frequenc*' --tests 'org.ort.app.ui.data.Station*' --tests
+'org.ort.app.ui.navigation.NavSeedTest'` — BUILD SUCCESSFUL, 10 test classes, 0 failures (each
+new/changed test seen RED for the right reason before the fix, GREEN after — see this package's
+own report for exact test names). `.\gradlew.bat :app:ktlintCheck :app:detekt` — ktlint clean;
+detekt 1 remaining weighted issue (`LongMethod` on `NavHostBody`, `OrtNavHost.kt:748`, 80/80) —
+pre-existing/adjacent to the one lead-approved dispatch line added to that WP3-owned file, not
+fixed here (out of this package's ownership; restructuring `NavHostBody` is WP3's call).
+`.\gradlew.bat dependencyRules platformGuards` — BUILD SUCCESSFUL. `.\gradlew.bat
+:app:assembleDebug` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` — all 8 checks
+PASS. `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — both BUILD SUCCESSFUL, no diff
+to `results/coverage-matrix.md` (register findings are not FR/AC coverage rows).
+
+**Left open / not done:** R-432's real thread-routing (WP3, needs a real busiest-thread id this
+package's read path does not compute today — flagged, not built, per this package's own
+"honestly absent, never guessed" convention). The pre-existing `NavHostBody` `LongMethod` detekt
+finding (WP3's file). Whether other packages' own tests have the same `onNodeWithText`-vs-
+`clearAndSetSemantics` breakage on `FilterChip`/`TextAction` was not checked outside this
+package's own `Station*`/`Frequenc*` scope — worth a project-wide grep.
+
+---
+
 ## 2026-09-08 (ui-conformance WP11b: F21 asset-swap wired to WP10's real FR-AST-4 signal)
 
 ### (pending) — ui-conformance WP11b · F21 asset-swap wired to WP10's real FR-AST-4 `stagedActivation` signal

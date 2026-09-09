@@ -52,10 +52,14 @@ class StationScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Tonight").assertExists()
-        composeTestRule.onNodeWithText("All time").assertExists()
-        composeTestRule.onNodeWithText("Named").assertExists()
-        composeTestRule.onNodeWithText("Unidentified").assertExists()
+        // `FilterChip` `clearAndSetSemantics { contentDescription = label; ... }` (Controls.kt's
+        // own R-380 doc comment) — reachable by content description, not by `onNodeWithText`,
+        // which the merge erases (see `FrequencyChangeScreenTest`'s own fix for the identical
+        // defect on `TextAction`).
+        composeTestRule.onNodeWithContentDescription("Tonight").assertExists()
+        composeTestRule.onNodeWithContentDescription("All time").assertExists()
+        composeTestRule.onNodeWithContentDescription("Named").assertExists()
+        composeTestRule.onNodeWithContentDescription("Unidentified").assertExists()
     }
 
     @Test
@@ -367,7 +371,8 @@ class StationScreenTest {
         composeTestRule.setContent {
             OrtTheme { StationDetailScreen(state = state, onBack = {}, onOpenPattern = { openedPattern = true }) }
         }
-        composeTestRule.onNodeWithText("By day").performClick()
+        // `TextAction` `clearAndSetSemantics { ... }` — see the R_070 chip test above.
+        composeTestRule.onNodeWithContentDescription("By day").performClick()
 
         assert(openedPattern)
     }

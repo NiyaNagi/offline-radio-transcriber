@@ -87,6 +87,16 @@ public data class StationPatternViewState(
 // -------------------------------------------------------------------------------------------
 
 /**
+ * Which sub-screen `StationDetailContent` opens on — `Station-Pattern` (reached from "By day"),
+ * `Station-Identity` (reached from the header's kebab) and `Split` (reached from
+ * Station-Identity's own "Split" action), or `NONE` for the drill-in's own root. Exposed (not
+ * `private`) so a caller can seed `StationDetailContent`'s `initialSubScreen` directly — WP12's
+ * screenshot tour (`ScenarioReaderActivity`'s `nav_open_station_sub_screen` extra, via WP3's
+ * `NavSeed.openStationSubScreen`) captures ST03/ST04 this way, without a real user tap.
+ */
+public enum class StationSubScreen { NONE, PATTERN, IDENTITY, SPLIT }
+
+/**
  * Everything heard from one station, across every session (FR-UI-9), plus its activity pattern
  * (FR-UI-11 — see [ActivityPatternMapper] for FR-UI-12's not-heard/not-listening distinction,
  * which this view state renders rather than re-derives) and the facts-table figures R-071 asks
@@ -192,6 +202,14 @@ public data class FrequencyDetailViewState(
     val weekOverWeekSummary: List<String> = emptyList(),
     /** R-074's typical-night one-sentence summary — [PatternInsights]'s first line. */
     val patternSummarySentence: String = "",
+    /**
+     * R-431 (register, design): how many real distinct nights [activityPattern] was averaged
+     * over — the same session count `listenedLabel` already names, never the board's own literal
+     * "14" hardcoded (this frequency may honestly have more or fewer). Used only by the
+     * "no hatch: always listening here" caption, `FrequencyHeaderSection`'s own doc comment names
+     * why that caption exists at all.
+     */
+    val patternNightsCount: Int = 0,
     val regulars: List<FrequencyRegularViewState> = emptyList(),
     val transmissions: List<TransmissionListEntryViewState>,
     val nights: List<HourActivityState> = emptyList(),

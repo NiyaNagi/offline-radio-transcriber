@@ -509,6 +509,11 @@ public object FrequencyPolling {
             nights = nights.map { it.state },
             busierThanUsual = NightlyDeparture.isBusierThanUsual(nights),
             listenedLabel = listenedLabel(sessions, nowMillis, zone),
+            // R-431 (register, design): the real distinct-night count `pattern` above was
+            // averaged over — the same session set `listenedLabel`'s own "N nights of N" already
+            // counts, so the two can never disagree.
+            patternNightsCount = sessions.map { Instant.ofEpochMilli(it.startedAtUtc).atZone(zone).toLocalDate() }
+                .toSet().size,
             net = netFor(entities, zone),
         )
     }

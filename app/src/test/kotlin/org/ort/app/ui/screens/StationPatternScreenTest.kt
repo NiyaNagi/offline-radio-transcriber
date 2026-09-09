@@ -43,16 +43,18 @@ class StationPatternScreenTest {
         // a bare non-scrolling `Row`, which is what V5 @f8430b8 found clipped "Change over time"
         // at font scale 2.0 with no way to reach it.
         assert(composeTestRule.onAllNodes(hasScrollAction()).fetchSemanticsNodes().isNotEmpty())
-        composeTestRule.onNodeWithText("Change over time").assertExists()
+        // `FilterChip` `clearAndSetSemantics { contentDescription = label; ... }` (Controls.kt's
+        // own R-380 doc comment) — reachable by content description, not by `onNodeWithText`.
+        composeTestRule.onNodeWithContentDescription("Change over time").assertExists()
     }
 
     @Test
     fun `R_072 the three toggle modes are all present`() {
         composeTestRule.setContent { OrtTheme { StationPatternScreen(state = fixtureState(), onBack = {}) } }
 
-        composeTestRule.onNodeWithText("By hour").assertExists()
-        composeTestRule.onNodeWithText("Hour × day").assertExists()
-        composeTestRule.onNodeWithText("Change over time").assertExists()
+        composeTestRule.onNodeWithContentDescription("By hour").assertExists()
+        composeTestRule.onNodeWithContentDescription("Hour × day").assertExists()
+        composeTestRule.onNodeWithContentDescription("Change over time").assertExists()
     }
 
     @Test

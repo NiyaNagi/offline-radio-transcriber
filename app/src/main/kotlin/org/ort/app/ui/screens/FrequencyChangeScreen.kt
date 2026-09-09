@@ -24,8 +24,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
-import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.FrequencyChangeCause
 import org.ort.app.ui.data.FrequencyChangeViewState
 import org.ort.app.ui.data.TimeWindow
@@ -54,7 +54,11 @@ public fun FrequencyChangeScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenOvers: (Long, TimeWindow) -> Unit = { _, _ -> },
-    onViewThread: (() -> Unit)? = null,
+    // R-432 (register, spec): `Frequency-Change.dc.html`'s own second bottom pill, always offered
+    // alongside "The N overs" — opens T02 for the busiest thread in this window. Non-nullable,
+    // defaulted to a no-op, the same "always rendered, host routes later" shape [onOpenOvers]
+    // already has; WP3 routes the destination once it can identify that thread.
+    onOpenThread: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         DrillInHeader(parentLabel = state.label, onBack = onBack)
@@ -105,17 +109,23 @@ public fun FrequencyChangeScreen(
             )
         }
 
+        // R-432 (register, spec, cf. R-432): the board's own two 44dp bordered pills, side by side,
+        // equal width — not the plain text link this package's earlier build drew (indistinguishable
+        // from a hyperlink, and dropped the second pill entirely rather than always offering it).
         Row(
             modifier = Modifier.fillMaxWidth().padding(OrtSpacing.lg),
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
         ) {
-            TextAction(
+            SecondaryButton(
                 text = "The ${pluralize(state.overCount, "over")}",
                 onClick = { onOpenOvers(state.frequencyHz, state.window) },
+                modifier = Modifier.weight(1f),
             )
-            if (onViewThread != null) {
-                TextAction(text = "The activation thread", onClick = onViewThread)
-            }
+            SecondaryButton(
+                text = "The activation thread",
+                onClick = onOpenThread,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

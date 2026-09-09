@@ -82,10 +82,32 @@ class FrequencyChangeScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("The 61 overs").performClick()
+        // `SecondaryButton`/`TextAction` both `clearAndSetSemantics { contentDescription = text }`
+        // (Controls.kt's own R-380 doc comment names why: the outer clickable node's own
+        // accessible name cannot rely on merge-from-descendants alone) — the label is reachable by
+        // content description, never by `onNodeWithText`, which matches `Text`/`EditableText`
+        // semantics that `clearAndSetSemantics` deliberately erases.
+        composeTestRule.onNodeWithContentDescription("The 61 overs").performClick()
 
         assert(openedFrequency == 146_960_000L) { "openedFrequency was: $openedFrequency" }
         assert(openedWindow == TimeWindow(startMillis = 1_000L, endMillis = 2_000L))
+    }
+
+    @Test
+    fun `R_432 both bottom actions are real bordered pills, and the activation thread pill is always offered`() {
+        var openedThread = false
+        composeTestRule.setContent {
+            OrtTheme {
+                FrequencyChangeScreen(state = fixtureState(), onBack = {}, onOpenThread = { openedThread = true })
+            }
+        }
+
+        // The board's own copy — never a link-styled `TextAction`; see `FrequencyChangeScreen`'s
+        // own doc comment on the bottom `Row` for why both are now `SecondaryButton`.
+        composeTestRule.onNodeWithContentDescription("The 61 overs").assertExists()
+        composeTestRule.onNodeWithContentDescription("The activation thread").performClick()
+
+        assert(openedThread)
     }
 
     @Test

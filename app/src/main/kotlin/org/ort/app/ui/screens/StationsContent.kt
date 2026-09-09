@@ -23,13 +23,26 @@ import org.ort.app.ui.data.UnidentifiedVoicesSummary
 @Composable
 public fun StationsContent(context: Context, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
     var allStations by remember { mutableStateOf(emptyList<StationListEntryViewState>()) }
-    var filter by remember { mutableStateOf(StationsFilter.ALL_TIME) }
+    // R-430 (register, design): `Stations.dc.html` loads with `Tonight` active, not `All time` —
+    // `Tonight` here so the very first frame (before the load below resolves) already matches the
+    // board, exactly the same "board's own default until data says otherwise" shape
+    // `frequencyInitialView`/`openStationSubScreen` already establish elsewhere in this package.
+    var filter by remember { mutableStateOf(StationsFilter.TONIGHT) }
     var unidentified by remember { mutableStateOf<UnidentifiedVoicesSummary?>(null) }
     // R-207: `Most heard` sorts by real all-time overs count — a display concern like the chips
     // themselves, so it lives here rather than a second `StationPolling` query.
     var sortMostHeard by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { allStations = StationPolling.listStations(context) }
+    LaunchedEffect(Unit) {
+        val loaded = StationPolling.listStations(context)
+        allStations = loaded
+        // R-430: fall back to `All time`, honestly, rather than leaving `Tonight` selected over an
+        // empty list — covers both "no session has ever run" and "a session is running/ran but
+        // heard nothing yet" (both collapse to the same real fact here: nothing is heard tonight).
+        if (loaded.none { it.heardTonight }) {
+            filter = StationsFilter.ALL_TIME
+        }
+    }
     LaunchedEffect(filter) {
         unidentified = StationPolling.unidentifiedSummary(context, tonightOnly = filter == StationsFilter.TONIGHT)
     }
