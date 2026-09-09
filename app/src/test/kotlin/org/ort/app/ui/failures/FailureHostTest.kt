@@ -317,4 +317,13 @@ class FailureHostTest {
         // it; this package's fix does not need it to already be visible with zero scrolling.
         stopNode.performScrollTo().assertIsDisplayed()
     }
+
+    // R-550: investigated, not fixed from this package's row — see this package's own report for
+    // the full measured account (a real, if thin, ~1dp gap at rest; this package's only lead-
+    // approved lever, `ui/screens/CaptureStatusContent.kt`'s outer `modifier`, can only shrink
+    // `CaptureStatusScreen`'s whole box and cannot insert a gap between the scrollable Column and
+    // the sibling live bar inside it — confirmed to make the gap *negative* in one measured
+    // configuration rather than fix it). No test added here for the reason `AGENTS.md` names: a
+    // half-fix is not shipped, and the real fix needs a line inside `CaptureStatusScreen.kt`
+    // itself (WP4's row, outside even the one exception this package was granted).
 }

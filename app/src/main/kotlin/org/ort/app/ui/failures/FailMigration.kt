@@ -16,6 +16,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
@@ -61,8 +65,18 @@ public fun FailMigrationScreen(
                 SectionLabel("What happened", modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
                 state.steps.forEach { step -> MigrationStepRow(step) }
                 Text(
-                    text = "A migration can never destroy audio or a superseded transcript — that is tested " +
-                        "against every released version before this one ships.",
+                    // Register R-562: the board's own second sentence (`Fail-Migration.dc.html`)
+                    // was missing entirely — the build stopped at "ships.". Restored verbatim,
+                    // including the board's own italic "pattern rebuilding" span.
+                    text = buildAnnotatedString {
+                        append(
+                            "A migration can never destroy audio or a superseded transcript — that is " +
+                                "tested against every released version before this one ships. Station and " +
+                                "frequency views will show ",
+                        )
+                        withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append("pattern rebuilding") }
+                        append(" until the marked overs are re-derived.")
+                    },
                     style = OrtType.cardBody,
                     color = OrtColors.textDim,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
