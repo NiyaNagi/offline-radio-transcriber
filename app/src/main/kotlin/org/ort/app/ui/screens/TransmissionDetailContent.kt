@@ -41,6 +41,7 @@ import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
+import org.ort.core.AttributionState
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import java.io.File
@@ -66,6 +67,18 @@ import java.io.File
  * [TransmissionDetail.processingState] is `FAILED`, so [TransmissionDetailScreen] can render the
  * failed-pass state from the real queue row rather than the generic (and here misleading) UNKNOWN
  * attribution copy. `Retry this pass` calls [CorrectionPolling.retryFailedPass].
+ *
+ * **Seam, register the tour's own ask.** [initialRevisionsOpen] (default `false`, so every
+ * existing caller — `OrtNavHost.kt` included — compiles and behaves unchanged) starts this
+ * composable already on [DetailDestination.Revisions] instead of [DetailDestination.Main], so a
+ * screenshot tour can capture D07 (`Detail-Revisions.dc.html`) directly by intent extra, without
+ * simulating the real tap sequence (open the over, then its own "N earlier versions" link) a
+ * `Log-Rejected`-style deep link cannot express. `Why` and the rejected state need no equivalent
+ * seam: `Why` is [DetailDestination.Why], reachable the same real way any tour already reaches
+ * `Revisions` (a tap on "Full lattice"), and rejected is not a *destination* at all — it is
+ * [DetailViewState.rejected], derived automatically from the polled transmission's own real
+ * `processingState`, so a tour reaches F04 simply by opening a genuinely rejected transmission,
+ * the same as any other real state.
  */
 @Composable
 public fun TransmissionDetailContent(
@@ -75,6 +88,7 @@ public fun TransmissionDetailContent(
     onBack: () -> Unit,
     onOpenTransmission: (String) -> Unit,
     backLabel: String = "Log",
+    initialRevisionsOpen: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
@@ -82,11 +96,18 @@ public fun TransmissionDetailContent(
     var sourceOverTimeLabel by remember(transmissionId) { mutableStateOf<String?>(null) }
     var transcriptConfidence by remember(transmissionId) { mutableStateOf<Double?>(null) }
     var transcriptCharSpan by remember(transmissionId) { mutableStateOf<IntRange?>(null) }
-    var destination by remember(transmissionId) { mutableStateOf<DetailDestination>(DetailDestination.Main) }
+    var ambiguousEvidence by remember(transmissionId) {
+        mutableStateOf<Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState>>(emptyMap())
+    }
+    var destination by remember(transmissionId) {
+        mutableStateOf<DetailDestination>(
+            if (initialRevisionsOpen) DetailDestination.Revisions else DetailDestination.Main,
+        )
+    }
     val scope = rememberCoroutineScope()
 
-    // R-153/R-189/R-183/R-188/R-320/R-182: every real extra `:data` read a poll needs, in one
-    // place — see [pollDetail]'s own doc comment for what each field is and why.
+    // R-153/R-189/R-183/R-188/R-320/R-182/R-425: every real extra `:data` read a poll needs, in
+    // one place — see [pollDetail]'s own doc comment for what each field is and why.
     suspend fun refresh() {
         val polled = pollDetail(context, transmissionId)
         detail = polled.detail
@@ -94,6 +115,7 @@ public fun TransmissionDetailContent(
         sourceOverTimeLabel = polled.sourceOverTimeLabel
         transcriptConfidence = polled.transcriptConfidence
         transcriptCharSpan = polled.transcriptCharSpan
+        ambiguousEvidence = polled.ambiguousEvidence
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -112,6 +134,7 @@ public fun TransmissionDetailContent(
         transcriptConfidence,
         rejected = rejectedViewStateFor(current),
         transcriptCharSpan = transcriptCharSpan,
+        ambiguousEvidence = ambiguousEvidence,
     )
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
@@ -430,6 +453,7 @@ private data class DetailPollResult(
     val sourceOverTimeLabel: String?,
     val transcriptConfidence: Double?,
     val transcriptCharSpan: IntRange?,
+    val ambiguousEvidence: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState>,
 )
 
 /**
@@ -446,7 +470,9 @@ private data class DetailPollResult(
  * real recorded confidence. R-320: the winning candidate's real per-slot lattice detail, folded
  * into [fetched]'s own `inspection` — [ReaderPolling.transmissionDetail]'s base read does not carry
  * it (`ReaderPolling.kt` is WP4's file, not extended here). R-182: the winning candidate's real
- * transcript-highlight character span.
+ * transcript-highlight character span. R-425: real, per-candidate heard-count/last-heard/voice-
+ * match evidence for the AMBIGUOUS chooser's own top two candidates — only looked up when the
+ * polled attribution is genuinely AMBIGUOUS, never on every poll.
  */
 private suspend fun pollDetail(context: Context, transmissionId: String): DetailPollResult {
     var fetched = ReaderPolling.transmissionDetail(context, transmissionId)
@@ -467,7 +493,20 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
     )
     val transcriptConfidence = CorrectionPolling.currentTranscriptConfidence(context, transmissionId)
     val transcriptCharSpan = CorrectionPolling.winningCharSpan(context, transmissionId)
-    return DetailPollResult(fetched, passFailure, sourceOverTimeLabel, transcriptConfidence, transcriptCharSpan)
+    val ambiguousEvidence = if (fetched?.attribution?.state == AttributionState.AMBIGUOUS) {
+        val topTwo = fetched.inspection.candidates.sortedBy { it.rank }.take(2).map { it.callsign }
+        CorrectionPolling.ambiguousCandidateEvidence(context, transmissionId, topTwo)
+    } else {
+        emptyMap()
+    }
+    return DetailPollResult(
+        fetched,
+        passFailure,
+        sourceOverTimeLabel,
+        transcriptConfidence,
+        transcriptCharSpan,
+        ambiguousEvidence,
+    )
 }
 
 /**

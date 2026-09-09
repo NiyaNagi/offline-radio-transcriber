@@ -4,7 +4,9 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,14 +17,16 @@ import org.ort.data.entity.CallsignCandidateEntity
 import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintEntity
 import org.robolectric.RobolectricTestRunner
 
 /**
- * Register R-320/R-182 (schema v5): [CorrectionPolling.inspectionWithSlots] and
- * [CorrectionPolling.winningCharSpan] — the real DAO round trip through [org.ort.data.dao.CatalogDao.slotDetailsFor]
- * / `.winningCandidateCharSpan`, kept in its own file for the same reason the pass-failure/
- * revisions surface already has one (`CorrectionPollingPassAndRevisionsTest.kt`) — this package's
- * own `LargeClass` history.
+ * Register R-320/R-182/R-425 (schema v5): [CorrectionPolling.inspectionWithSlots],
+ * [CorrectionPolling.winningCharSpan] and [CorrectionPolling.ambiguousCandidateEvidence] — the
+ * real DAO round trip through [org.ort.data.dao.CatalogDao.slotDetailsFor]/
+ * `.winningCandidateCharSpan`/`.voiceprintsForStation`, kept in its own file for the same reason
+ * the pass-failure/revisions surface already has one (`CorrectionPollingPassAndRevisionsTest.kt`)
+ * — this package's own `LargeClass` history.
  */
 @RunWith(RobolectricTestRunner::class)
 class CorrectionPollingInspectionTest {
@@ -174,5 +178,72 @@ class CorrectionPollingInspectionTest {
         val span = CorrectionPolling.winningCharSpan(context, "TX1")
 
         assertNull(span)
+    }
+
+    // ---- R-425: real, per-candidate heard-count/last-heard/voice-match evidence ----
+
+    @Test
+    fun R_425_ambiguousCandidateEvidence_reads_the_real_heard_count_and_last_heard_time(): Unit = runTest {
+        db.sessionDao().insert(session())
+        // The transmission currently being disambiguated.
+        db.transmissionDao().insert(transmission("TX1").copy(stationId = null, voiceprintId = null))
+        // KE7QRS heard twice before, most recently at 02:00:00 UTC (7_200_000 ms).
+        db.transmissionDao().insert(
+            transmission("PAST1").copy(stationId = "KE7QRS", startedAtUtc = 3_600_000L),
+        )
+        db.transmissionDao().insert(
+            transmission("PAST2").copy(stationId = "KE7QRS", startedAtUtc = 7_200_000L),
+        )
+        // KE7QRF never heard before this over — no rows for it at all.
+
+        val evidence = CorrectionPolling.ambiguousCandidateEvidence(
+            context,
+            "TX1",
+            listOf("KE7QRS", "KE7QRF"),
+        )
+
+        val qrs = evidence.getValue("KE7QRS")
+        assertEquals(2, qrs.heardCount)
+        assertEquals(ReaderTransmissionViewStateMapper.timeLabel(7_200_000L), qrs.lastHeardLabel)
+        val qrf = evidence.getValue("KE7QRF")
+        assertEquals(0, qrf.heardCount)
+        assertNull(qrf.lastHeardLabel)
+    }
+
+    @Test
+    fun R_425_ambiguousCandidateEvidence_voiceOnFile_matches_only_this_overs_own_voiceprint(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1").copy(stationId = null, voiceprintId = "V1"))
+        db.catalogDao().insert(
+            VoiceprintEntity(
+                id = "V1",
+                embedding = ByteArray(0),
+                memberCount = 1,
+                centroidUpdatedAt = null,
+                boundStationId = "KE7QRS",
+                bindingConfidence = 0.9,
+                lastConfirmedAt = null,
+                isEnrolled = false,
+                enrolmentObservationCount = 0,
+                enrolmentSessionIds = null,
+                enrolledAt = null,
+                lastMatchedAt = null,
+                bindingSource = null,
+                embeddingModelId = null,
+                embeddingModelVersion = null,
+            ),
+        )
+
+        val evidence = CorrectionPolling.ambiguousCandidateEvidence(
+            context,
+            "TX1",
+            listOf("KE7QRS", "KE7QRF"),
+        )
+
+        assertTrue(
+            "this over's own bound voiceprint must read as a real match",
+            evidence.getValue("KE7QRS").voiceOnFile,
+        )
+        assertFalse(evidence.getValue("KE7QRF").voiceOnFile)
     }
 }
