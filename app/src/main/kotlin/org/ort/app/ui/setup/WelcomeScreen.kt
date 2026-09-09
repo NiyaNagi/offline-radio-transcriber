@@ -27,7 +27,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
@@ -53,24 +55,57 @@ import org.ort.app.ui.theme.OrtType
  * traced a static, reproducible ghost render to exactly that class of same-frame
  * state-write-back-into-a-sibling's-measurement pattern (`SetupScaffold`'s own doc comment carries
  * the fuller account — the two fixes are identical in shape and were removed together).
+ *
+ * **R-360 (validator pass 5, spec — reopens R-341, same defect a third time, `SetupScaffold`'s own
+ * class doc has the full account):** the `weight(1f)` account above is correct once *settled*, not
+ * on the *first frame* at a large font scale — confirmed clipped on a real device at 2.0 on cold
+ * launch (`setup/S01-welcome-pass5@2x.png` vs. `-afterscroll.png`). Rebuilt on `SubcomposeLayout`,
+ * structurally identical to WP11b's `FailureActionBarScaffold` (R-292) and to `SetupScaffold`'s own
+ * R-360 fix: [WelcomeFooter] measured first (loose constraints), the header + scrollable asks second
+ * with a hard `maxHeight` of `screenHeight − footerHeight`.
  */
 @Composable
 public fun WelcomeScreen(onBegin: () -> Unit, modifier: Modifier = Modifier) {
     var sheetOpen by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
-        Column(
+        SubcomposeLayout(
             modifier = Modifier
                 .fillMaxSize()
                 .background(OrtColors.bgScreen)
                 .windowInsetsPadding(WindowInsets.statusBars)
                 .testTag("setup-screen-WELCOME"),
-        ) {
-            Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                WelcomeHeader()
-                WelcomeAsks()
+        ) { constraints ->
+            val looseConstraints = Constraints(
+                minWidth = constraints.maxWidth,
+                maxWidth = constraints.maxWidth,
+                minHeight = 0,
+                maxHeight = constraints.maxHeight,
+            )
+
+            val footerPlaceables = subcompose(WelcomeScaffoldSlot.Footer) {
+                WelcomeFooter(onBegin = onBegin, onWhatIsCaptured = { sheetOpen = true })
+            }.map { it.measure(looseConstraints) }
+            val footerHeightPx = footerPlaceables.maxOfOrNull { it.height } ?: 0
+
+            val contentHeightPx = (constraints.maxHeight - footerHeightPx).coerceAtLeast(0)
+            val contentConstraints = Constraints(
+                minWidth = constraints.maxWidth,
+                maxWidth = constraints.maxWidth,
+                minHeight = contentHeightPx,
+                maxHeight = contentHeightPx,
+            )
+            val contentPlaceables = subcompose(WelcomeScaffoldSlot.Content) {
+                Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    WelcomeHeader()
+                    WelcomeAsks()
+                }
+            }.map { it.measure(contentConstraints) }
+
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                contentPlaceables.forEach { it.placeRelative(0, 0) }
+                footerPlaceables.forEach { it.placeRelative(0, constraints.maxHeight - footerHeightPx) }
             }
-            WelcomeFooter(onBegin = onBegin, onWhatIsCaptured = { sheetOpen = true })
         }
 
         if (sheetOpen) {
@@ -78,6 +113,8 @@ public fun WelcomeScreen(onBegin: () -> Unit, modifier: Modifier = Modifier) {
         }
     }
 }
+
+private enum class WelcomeScaffoldSlot { Content, Footer }
 
 @Composable
 private fun WelcomeHeader() {

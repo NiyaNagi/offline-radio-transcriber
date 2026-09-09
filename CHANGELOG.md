@@ -32,6 +32,105 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP9: pass-5 fixes)
+
+### (pending) — ui-conformance WP9 pass-5 fixes: FailureActionBarScaffold-identical scaffold, action-row focusable descriptions
+
+**Scope:** `:app` `ui/setup/SetupScaffold.kt`, `ui/setup/WelcomeScreen.kt`, `ui/setup/ReadyScreen.kt`
+and `ReadyScreenTest.kt`, `results/ui-audit/setup/*-r360-after@2x.png`. Builds on the previous three
+commits in this same worktree (`git merge main`, fast-forward, `dc70646..d39131a` already an
+ancestor).
+
+**Requirements/ACs:** R-360 fixed and verified on `emulator-5554` (fresh `pm clear`, font scale 2.0,
+cold launch, before any scroll). R-361 fixed and verified on the same device via `uiautomator dump`.
+
+**What changed:**
+- **R-360 (spec, third time for this defect).** The previous round's `SubcomposeLayout` fix — three
+  independently-measured slots (header, bar, content), content given a hard `maxHeight = screen −
+  header − bar` — passed its own Robolectric regression test and still clipped on a real device at
+  2.0 on cold launch, on every one of S01/S03/S06/S08/S12: `ComposeTestRule.setContent` drives to a
+  fully idle, settled layout before any query runs, so Robolectric cannot observe the transient
+  pre-settle frame a device's own first `screencap` catches. Read WP11b's `FailureActionBarScaffold`
+  (`ui/failures/FailureActionBarScaffold.kt`, R-292, confirmed correct on device) in full and made
+  `SetupScaffold` **structurally identical**, not merely "the same idea": exactly *two* `subcompose`
+  slots now, `Bar` measured first (loose constraints), `Content` second with a hard
+  `Constraints(minHeight = maxHeight = screen − bar)` — the header (back/counter, segment bars,
+  title/subtitle) moved *inside* the `Content` slot's own `Column`, above its own inner
+  `verticalScroll` region, rather than as a separate third slot. `WelcomeScreen` (S01, the one setup
+  screen with no `SetupScaffold` chrome, `WelcomeFooter`/asks built independently) carried the
+  identical `weight(1f)` defect in its own separate implementation — rebuilt the same way (`Footer`
+  slot first, `Content` slot second). **Verified directly on the emulator, not merely by
+  architectural analogy**: `:app:assembleDebug` installed to `emulator-5554`
+  (`.\tools\ui-audit\install.ps1 -Port 5554`), fresh `pm clear`, `settings put system font_scale
+  2.0`, cold `am start`, walked S01 → S04 → (chose Telephony, a route the AVD always mismatches) →
+  S06, screenshot before any scroll at each stop — `results/ui-audit/setup/
+  S01-welcome-r360-after@2x.png` and `S06-route-mismatch-r360-after@2x.png` both show content
+  stopping cleanly above the fixed bar with nothing bled behind it (S01's numbered list item 4 is
+  cut at the scroll boundary, not behind `Begin`; S06's mismatch-reason line is cut at the boundary,
+  not behind `Choose another input`). Font scale reset to 1.0 afterward. `SetupScaffold`'s own class
+  doc now names the register's own suggestion explicitly: if WP2 wants to lift this into
+  `ui/components` as one shared scaffold (three near-identical implementations now exist —
+  `FailureActionBarScaffold`, this one, and `WelcomeScreen`'s own), that is a reasonable
+  consolidation to make; not done here since it would touch a file this package does not own.
+- **R-361 (halt).** The three action rows (Overnight/Radio/Model) were left on
+  `KeyValueRow`'s own native R-265 merge, reasoning (from the previous round) that it already
+  produced one correct node — a real device dump proved that wrong: the *focusable* outer node
+  carried an **empty** description while a separate, non-focusable child at identical bounds carried
+  the real text, so TalkBack landing on the only reachable stop announced nothing.
+  `ReadySetupRow` (`ReadyScreen.kt`) no longer relies on `KeyValueRow`'s own merge at all, action or
+  not: every row's marker + `KeyValueRow` (carrying only `statusText`, never `actionLabel`, in its
+  `trailingMarker`) are now uniformly wrapped in `Modifier.focusable()` +
+  `Modifier.clearAndSetSemantics { contentDescription = readyRowFactsDescription(row) }`, and
+  `actionLabel`, whenever present, renders as a genuine sibling *outside* that boundary — the same
+  shape R-342 already proved correct for Input/Level, now applied unconditionally rather than only
+  when there is no action. This is a real simplification, not just a fix: the previous three-way
+  branch (neither/status-only/action-only/both) collapses to one shape for every row.
+  **Confirmed by `uiautomator dump` on `emulator-5554`** (`setup-verified` scenario, S12): three
+  quoted lines —
+  `content-desc="Overnight, Battery exemption skipped"` `focusable="true"` `bounds="[53,697][931,813]"`,
+  `content-desc="Radio, No radio · 145.230 MHz by hand"` `focusable="true"` `bounds="[53,845][890,961]"`,
+  `content-desc="Model, No transcription model yet"` `focusable="true"` `bounds="[53,993][906,1109]"` —
+  each with `Fix`/`Change`/`Install` remaining a separate `clickable="true"` `focusable="true"` child
+  node, exactly as R-361 asked. `readyRowDescription` (the function this superseded) is gone;
+  `ReadyScreenTest`'s two R-342 tests renamed `R_361` where they exercise this exact row shape.
+
+**Verified:**
+- **Scoped, as the coordinator asked for this round** — `.\gradlew.bat :app:testDebugUnitTest
+  --tests "org.ort.app.ui.setup.*"` — **BUILD SUCCESSFUL**, **141 tests, 0 failures, 0 errors**
+  across all 20 test classes in the package (aggregated from the `TEST-org.ort.app.ui.setup.*.xml`
+  files).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- `.\gradlew.bat dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 PASS**.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, 191 of 419
+  requirements covered (up from 190), matrix up to date.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- R-360 and R-361 both verified directly on `emulator-5554` — screenshots and the `uiautomator dump`
+  lines quoted above, not Robolectric alone, per this entry's own account of exactly where
+  Robolectric and the real device disagree for each.
+
+**Left open / not done:**
+- **The full, unscoped `:app:testDebugUnitTest` was attempted three times this round and not
+  completed** — a pre-existing test, `org.ort.app.ui.digest.SessionsScreensTest`'s own
+  `R_250 a session row with a gap renders at font scale 2-0 without hanging` (a test whose own name
+  is about avoiding exactly this), times out against its own internal `withTimeout` guard when run
+  as part of the full suite (never in isolation — confirmed passing standalone, three separate
+  times), and once it does, every subsequent Compose test in the same JVM fork cascades into the
+  same 60-second `AppNotIdleException` (confirmed with `--fail-fast`: only that one test fails in
+  isolation from the rest of the suite; without it, `FailureActionBarScaffoldTest`,
+  `FailureScreensTest` and others fail identically a few tests later — both pass cleanly in
+  isolation too). This reproduced with `--max-workers=2` as well as the default, so it is not purely
+  resource contention. `SessionsScreensTest` is `org.ort.app.ui.digest`, outside `ui/setup` and
+  outside anything this round's diff touches or depends on — not investigated further or fixed here
+  (outside this package's owned files), reported for whichever package owns `ui/digest` to look at.
+  The coordinator's own instruction this round was a **scoped** gate, which is what is reported
+  above; this full-suite attempt and its finding are reported in addition, honestly, rather than
+  silently omitted.
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP3 round 13: NavSeed, a public seam for WP12's screenshot tour)
 
 ### 698414c — ui-conformance WP3 round 13 · NavSeed: a public seed for every drill-in OrtNavHost owns
@@ -307,7 +406,6 @@ restructure below — both reproduced the exact "generic reason" failure), then 
   matches, so the raw path is a detection signal `:pipeline` produces internally, never rendered to
   a screen. Flagged in case a future consumer of `failureReasons` renders it more literally.
 ---
-
 ## 2026-09-08 (ui-conformance data: dedicated Room query/transaction executor, Compose Flow-idle regression)
 
 ## 2026-09-08 (ui-conformance WP12: bulk deterministic screenshot tour)
