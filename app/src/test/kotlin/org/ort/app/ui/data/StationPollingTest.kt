@@ -313,6 +313,56 @@ class StationPollingTest {
     }
 
     @Test
+    fun `R_572_stableSinceLabel_is_the_real_earliest_over_in_the_current_bound_cluster`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.catalogDao().insert(station("WA7HJR"))
+        db.catalogDao().insert(voiceprint("V1", boundStationId = "WA7HJR", memberCount = 2))
+        val earliestUtc = java.time.Instant.parse("2026-08-28T12:00:00Z").toEpochMilli()
+        val laterUtc = java.time.Instant.parse("2026-09-02T12:00:00Z").toEpochMilli()
+        db.transmissionDao().insert(
+            tx(
+                "TX_LATER",
+                "S1",
+                laterUtc,
+                attribution = FixtureAttribution("WA7HJR", AttributionState.CONFIRMED, 0.9, voiceprintId = "V1"),
+            ),
+        )
+        db.transmissionDao().insert(
+            tx(
+                "TX_EARLIEST",
+                "S1",
+                earliestUtc,
+                attribution = FixtureAttribution("WA7HJR", AttributionState.INFERRED, 0.7, voiceprintId = "V1"),
+            ),
+        )
+
+        val identity = StationPolling.stationIdentity(context, "WA7HJR")
+
+        val expected = java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.getDefault())
+            .withZone(java.time.ZoneId.systemDefault())
+            .format(java.time.Instant.ofEpochMilli(earliestUtc))
+        assertEquals(expected, identity.voice.stableSinceLabel)
+    }
+
+    @Test
+    fun `R_572_stableSinceLabel_is_honestly_null_with_no_voiceprint_bound`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.catalogDao().insert(station("WA7HJR"))
+        db.transmissionDao().insert(
+            tx(
+                "TX1",
+                "S1",
+                0L,
+                attribution = FixtureAttribution("WA7HJR", AttributionState.CONFIRMED, 0.9),
+            ),
+        )
+
+        val identity = StationPolling.stationIdentity(context, "WA7HJR")
+
+        assertNull(identity.voice.stableSinceLabel)
+    }
+
+    @Test
     fun `R_073_rename_persists_and_the_previous_name_stays_reachable`(): Unit = runTest {
         db.catalogDao().insert(station("N7XYZ"))
 
@@ -405,6 +455,23 @@ class StationPollingTest {
             assertTrue(
                 "expected an unidentified-voices cause",
                 change.causes.any { it.isUnidentified },
+            )
+        }
+
+    @Test
+    fun `R_563 the closing paragraph states the real reason, not a deflection to What made it busy above`(): Unit =
+        runTest {
+            Scenarios.load(context, "frequency-change")
+
+            val change = FrequencyPolling.frequencyChange(context, 145_230_000L)
+
+            assertTrue(
+                "expected the paragraph to name the real primary cause: ${change.explanationParagraph}",
+                change.explanationParagraph.contains(change.causes.first().label),
+            )
+            assertTrue(
+                "must not deflect to a generic pointer the board never says",
+                !change.explanationParagraph.contains("see What made it busy above"),
             )
         }
 }
