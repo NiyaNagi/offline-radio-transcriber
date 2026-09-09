@@ -44,6 +44,7 @@ import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintEntity
+import org.ort.data.entity.WorkAttemptEntity
 import org.ort.data.entity.WorkQueueItemEntity
 import java.util.concurrent.Executors
 
@@ -59,7 +60,9 @@ import java.util.concurrent.Executors
  * `Undo all` can restore a correction's exact prior attribution, not just its prior callsign,
  * and [LatticeSlotEntity] (register R-320, R-182) so each candidate's per-slot lattice detail
  * and transcript char span are queryable per candidate, not just opaque inside
- * [PhoneticLatticeEntity.unitsBlob].
+ * [PhoneticLatticeEntity.unitsBlob]; v6 adds [WorkAttemptEntity] (register R-426) so
+ * `Fail-Pass.dc.html` can list every failed attempt at a queue item with its own timestamp and
+ * reason, not just the queue item's own `attemptCount`/`lastError` (the latest attempt only).
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -87,6 +90,7 @@ import java.util.concurrent.Executors
         VoiceprintBindingHistoryEntity::class,
         PriorAdjustmentEntity::class,
         LatticeSlotEntity::class,
+        WorkAttemptEntity::class,
     ],
     version = OrtDatabase.SCHEMA_VERSION,
     exportSchema = true,
@@ -107,7 +111,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun stationIdentityDao(): StationIdentityDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 5
+        public const val SCHEMA_VERSION: Int = 6
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -225,10 +229,31 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v5 → v6 (register R-426): adds the `work_attempt` table for [WorkAttemptEntity] — one
+         * row per failed attempt at a [WorkQueueItemEntity], written by
+         * [org.ort.data.WorkQueue.failPass]. No existing table or column is touched or dropped;
+         * every v5 row survives untouched (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
+         */
+        public val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `work_attempt` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `itemId` INTEGER NOT NULL, " +
+                        "`attemptNo` INTEGER NOT NULL, `startedAtMillis` INTEGER NOT NULL, " +
+                        "`finishedAtMillis` INTEGER NOT NULL, `outcome` TEXT NOT NULL, `reason` TEXT NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_work_attempt_itemId_attemptNo` " +
+                        "ON `work_attempt` (`itemId`, `attemptNo`)",
+                )
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> =
-            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 
         private suspend fun PooledConnection.exec(sql: String) {
             usePrepared(sql) { it.step() }

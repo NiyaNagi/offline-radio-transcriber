@@ -32,6 +32,89 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance data: R-426 per-attempt work_attempt history)
+
+### be8dca4 — ui-conformance data · R-426 per-attempt work_attempt history
+
+**Scope:** `:data` — `entity/WorkQueueItemEntity.kt` (new `WorkAttemptEntity`,
+`WorkAttemptOutcome`), `dao/WorkQueueDao.kt` (new `insert(WorkAttemptEntity)`, `.attemptsFor`),
+`OrtDatabase.kt` (schema v5 → v6, `MIGRATION_5_6`), new
+`data/schemas/org.ort.data.OrtDatabase/6.json`, `WorkQueue.kt` (`failPass` now writes the row —
+`WorkQueue` lives entirely in `:data`, not `:pipeline`; no disclosed cross-module edit needed),
+`test/kotlin/org/ort/data/WorkQueueTest.kt`, `test/kotlin/org/ort/data/MigrationTest.kt`. Plus one
+`:pipeline` test proving the real drain path (`PassDrainRunnerTest.kt`) — no `:pipeline` production
+code changed.
+
+**Requirements/ACs:** R-426, FR-RUN-9, constitution III ("nothing is deleted quietly" — a failed
+attempt's own record must outlive the queue row it was attempted against).
+
+**What changed:**
+
+*Constitution Check.* Principle III is the actual gap this closes: `Fail-Pass.dc.html` lists each
+failed attempt with its own timestamp and reason, then the retry-limit line — but
+`WorkQueueItemEntity` only ever kept the *latest* attempt's `attemptCount`/`lastError`, so every
+earlier failed attempt on the road to a retry-limit or an eventual success was silently
+unreachable the moment the next attempt (or the terminal success, which deletes the row outright —
+technical design §7.1, "the queue is not a history") overwrote it.
+
+- **New `work_attempt` table** (schema v6, `MIGRATION_5_6`): `itemId` (a plain reference to
+  `WorkQueueItemEntity.id`, deliberately **not** a Room `@ForeignKey` — an `onDelete = CASCADE`
+  would erase exactly the history this table exists to keep once the item is later deleted on
+  success), `attemptNo`, `startedAtMillis`, `finishedAtMillis`, `outcome`
+  (`WorkAttemptOutcome.FAILED` or `.TIMEOUT`), `reason` (the same short, human-readable text
+  `WorkQueue.failPass`'s own `error: String` parameter already carries into
+  `WorkQueueItemEntity.lastError` — confirmed at every real call site, `ReprocessRunner.kt` and
+  `PassB.kt`, to be a message string or an exception's class name, never a stack trace).
+- **`WorkQueueDao.attemptsFor(itemId)`**: every attempt at one item, oldest first — the order
+  `Fail-Pass.dc.html` lists them in, ending with the retry-limit line the caller renders itself.
+- **`WorkQueue.failPass` writes the row**, inside its existing `db.inWriteTransaction` block,
+  before the terminal/retry decision — `startedAtMillis` from `item.startedAt` (stamped at lease
+  time, so it is this specific attempt's own start), `finishedAtMillis` from `clock.wallMillis()`
+  now, `attemptNo` from the same `attempts = item.attemptCount + 1` counter the row's own
+  `attemptCount` update already uses. This is the **only** place a row is written — every caller,
+  including `WorkQueue.runLeased`'s own deadline-timeout path (`error = "timeout"`, recorded as
+  `WorkAttemptOutcome.TIMEOUT` rather than a generic `FAILED`), funnels through `failPass`, so a
+  direct test call gets the identical audit row a real leased run would. A successful completion
+  is deliberately not logged here: `attemptCount` itself only ever increments on a failure, so
+  "attempt" in this table's sense already means "failed attempt," matching what the mockup
+  actually renders.
+
+**Verified:**
+- `.\gradlew.bat :data:testDebugUnitTest :pipeline:testDebugUnitTest` — both green. New:
+  `WorkQueueTest.R_426_failPass_writes_a_durable_attempt_row_with_the_real_reason_and_timing`,
+  `.R_426_a_deadline_timeout_is_recorded_as_its_own_outcome_not_a_generic_failure`,
+  `.R_426_attemptsFor_lists_every_retry_in_order_ending_at_the_terminal_failure`,
+  `.R_426_an_attempt_row_outlives_the_queue_item_once_a_later_retry_succeeds` (proves constitution
+  III directly: `completePass` deletes the `work_queue_item` row, the `work_attempt` row for its
+  earlier failed try is still readable afterwards), `MigrationTest.migration_from_v5_to_v6_
+  preserves_existing_rows_and_adds_the_work_attempt_table`, and `PassDrainRunnerTest.` `` `R_426 a
+  pass errored through the real drain path leaves a durable attempt row` `` (through
+  `:pipeline`'s actual `PassDrainRunner.drainBatch` → `WorkQueue.runLeased` → `.failPass` call
+  chain, the exact path the coordinator named). Every pre-existing `:data`/`:pipeline` test
+  (including R-320/R-182's, R-321's, R-204's) stayed green in the same run.
+- `.\gradlew.bat :data:ktlintCheck :data:detekt :pipeline:ktlintCheck :pipeline:detekt` — clean.
+- `.\gradlew.bat dependencyRules platformGuards` — OK, no new edges.
+- `python tools\spec-check\spec_check.py` — 8/8 checks pass.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` (separate invocations) — 191/419
+  covered, matrix up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Per the coordinator's scoped-gate load policy, the full `build`/`:app:testDebugUnitTest` was not
+  run here — out of `:data`'s own gate scope; the coordinator runs the full gate on main.
+
+**Left open / not done:**
+- No UI reads `attemptsFor` yet — `Fail-Pass.dc.html`'s rendering is WP6's own follow-up, out of
+  `:data`'s ownership. Entity/DAO names for WP6: `org.ort.data.entity.WorkAttemptEntity`
+  (`itemId`, `attemptNo`, `startedAtMillis`, `finishedAtMillis`, `outcome: WorkAttemptOutcome`,
+  `reason: String`), `org.ort.data.dao.WorkQueueDao.attemptsFor(itemId: Long):
+  List<WorkAttemptEntity>` (ordered oldest-first by `attemptNo`).
+- `WorkQueue.failPass`/`runLeased` turned out to live entirely in `:data` (`org.ort.data.WorkQueue`,
+  not `:pipeline`), so the "minimal disclosed `:pipeline` edit" the brief anticipated was
+  unnecessary — `:pipeline`'s own `PassDrainRunner` needed no change, only a new test proving the
+  row is written through its real call path.
+
+---
+
 ## 2026-09-08 (test-suite speed: :app:testDebugUnitTest 1hr+ -> 2m18s)
 
 ### 5aab408 — audit test-suite-speed · :app:testDebugUnitTest regression fixed: 1hr+ -> 2m18s (1234 tests, 0 failures)

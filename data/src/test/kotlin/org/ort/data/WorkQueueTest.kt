@@ -314,4 +314,89 @@ public class WorkQueueTest {
         }
         assertTrue("a second active row for the same (transmission, pass) must violate idx_wq_active", threw)
     }
+
+    @Test
+    @Requirement("R-426")
+    public fun R_426_failPass_writes_a_durable_attempt_row_with_the_real_reason_and_timing(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+        val queue = WorkQueue(db, clock)
+        queue.enqueue("TX1", PassId.B_OFFLINE)
+
+        val leased = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        val startedAt = clock.wallMillis() // leaseBatch stamps startedAt from the clock at this instant
+        clock.advance(1_500)
+        queue.failPass(leased, "out of memory in the decoder")
+
+        val attempt = db.workQueueDao().attemptsFor(leased.id).single()
+        assertEquals(1, attempt.attemptNo)
+        assertEquals(startedAt, attempt.startedAtMillis)
+        assertEquals(startedAt + 1_500, attempt.finishedAtMillis)
+        assertEquals(org.ort.data.entity.WorkAttemptOutcome.FAILED, attempt.outcome)
+        assertEquals("out of memory in the decoder", attempt.reason) // the same text failureReasons carries verbatim
+    }
+
+    @Test
+    @Requirement("R-426")
+    public fun R_426_a_deadline_timeout_is_recorded_as_its_own_outcome_not_a_generic_failure(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX-HANG"))
+        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        queue.enqueue("TX-HANG", PassId.B_OFFLINE)
+        val item = queue.leaseBatch("run-1", limit = 10) { 100L }.single()
+
+        queue.runLeased(item) {
+            delay(Long.MAX_VALUE / 2)
+            error("unreachable")
+        }
+
+        val attempt = db.workQueueDao().attemptsFor(item.id).single()
+        assertEquals(org.ort.data.entity.WorkAttemptOutcome.TIMEOUT, attempt.outcome)
+        assertEquals("timeout", attempt.reason)
+    }
+
+    @Test
+    @Requirement("R-426")
+    public fun R_426_attemptsFor_lists_every_retry_in_order_ending_at_the_terminal_failure(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX-BAD"))
+        val queue = WorkQueue(db, clock, maxAttempts = 3)
+        queue.enqueue("TX-BAD", PassId.B_OFFLINE)
+
+        var item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        val reasons = listOf("out of memory in the decoder", "engine crashed", "out of memory in the decoder")
+        reasons.forEachIndexed { index, reason ->
+            queue.failPass(item, reason)
+            if (index < reasons.lastIndex) item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        }
+
+        // Every id used by this item across its retries stays the same row (only the state cycles
+        // READY <-> LEASED until the terminal FAILED), so one itemId covers the whole history.
+        val attempts = db.workQueueDao().attemptsFor(item.id)
+        assertEquals(listOf(1, 2, 3), attempts.map { it.attemptNo })
+        assertEquals(reasons, attempts.map { it.reason })
+        assertEquals(WorkQueueState.FAILED, db.workQueueDao().getById(item.id)!!.state)
+    }
+
+    @Test
+    @Requirement("R-426")
+    public fun R_426_an_attempt_row_outlives_the_queue_item_once_a_later_retry_succeeds(): Unit = runTest {
+        // Constitution III, "nothing is deleted quietly": completePass deletes the work_queue_item
+        // row outright (technical design 7.1, "the queue is not a history") -- the failed attempts
+        // that came before the eventual success must still be reachable afterwards.
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+        val queue = WorkQueue(db, clock, maxAttempts = 5)
+        queue.enqueue("TX1", PassId.B_OFFLINE)
+
+        var item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        queue.failPass(item, "transient decoder error")
+        item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        queue.completePass(item, TransmissionState.COMPLETE)
+
+        assertNull(db.workQueueDao().getById(item.id)) // the queue row itself is gone
+        val attempts = db.workQueueDao().attemptsFor(item.id)
+        assertEquals(1, attempts.size) // its one failed attempt is still on record
+        assertEquals("transient decoder error", attempts.single().reason)
+    }
 }

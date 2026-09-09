@@ -67,4 +67,24 @@ public class PassDrainRunnerTest {
         val okRow = db.workQueueDao().findByTransmissionAndPass("TX-OK", "B_OFFLINE").singleOrNull()
         assertNull(okRow)
     }
+
+    @Test
+    @Requirement("R-426")
+    public fun `R_426 a pass errored through the real drain path leaves a durable attempt row`(): Unit = runTest {
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-BAD"))
+        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        queue.enqueue("TX-BAD", PassId.B_OFFLINE)
+        val runner = PassDrainRunner(queue, runId = "run-1")
+
+        val results = runner.drainBatch(limit = 10, deadlineMillis = 60_000) {
+            PassRunOutcome.Errored("out of memory in the decoder")
+        }
+
+        val badItem = results.single().first
+        val attempt = db.workQueueDao().attemptsFor(badItem.id).single()
+        assertEquals(1, attempt.attemptNo)
+        assertEquals(org.ort.data.entity.WorkAttemptOutcome.FAILED, attempt.outcome)
+        assertEquals("out of memory in the decoder", attempt.reason)
+    }
 }
