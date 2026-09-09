@@ -534,6 +534,65 @@ FR-A11Y-2 (44dp target).
 - Register rows not touched this round beyond R-380/381/505/510/543 — R-544 (F21 third option) and
   every other open row stay exactly as the register already has them.
 
+## 2026-09-09 (ui-conformance WP3 round 19: mojibake repair, ReaderActivityDestinationSmokeTest.kt)
+
+### (pending) — ui-conformance WP3 round 19 · mojibake repair in ReaderActivityDestinationSmokeTest.kt
+
+**Scope:** `:app` — `ui/navigation/ReaderActivityDestinationSmokeTest.kt` (doc-comment prose only,
+no code/assertion changes).
+
+**Requirements/ACs:** none new — hygiene fix (`spec-check`'s own "no mojibake" check, constitution
+II's test-integrity spirit: a corrupted assertion string is exactly the kind of defect that reads as
+passing until, once, it doesn't).
+
+**What changed:** Constitution Check — Principle II (test-backed change): this file's own round-16
+commit (`ba24d1d`) carried 134 lines of double-encoded UTF-8 (`â€”`/`â€œ`/`Â·` etc. — real UTF-8
+bytes for `—`/`"`/`·` re-read as Windows-1252 and re-saved as UTF-8), and one of them, inside
+`R_350`'s own assertion string, broke that test's gate until WP4's `d36a2ce` fixed the single
+character directly. `git merge main` first (main at `003118e`, carrying that WP4 fix and a batch of
+other rounds' work) — fast-forwarded cleanly.
+
+Repaired every corrupted line with the coordinator's own formula, run as a script rather than by
+hand (134 lines, not a size a manual pass could verify): for each line matching `â€|Â`,
+`[Text.Encoding]::UTF8.GetString([Text.Encoding]::GetEncoding(1252).GetBytes($line))` — reads the
+line's real (if semantically wrong) UTF-8 characters, re-encodes them through cp1252's byte table
+(recovering the original UTF-8 bytes a wrong-codepage re-save had scrambled), then decodes those
+bytes as UTF-8 again to recover the real character. Every other line was left untouched (no `-match`
+pattern, no touch). Written back via `[System.IO.File]::WriteAllText(path, content, (New-Object
+System.Text.UTF8Encoding($false)))` — UTF-8, explicitly no BOM — joined on a bare `` `n `` (LF), not
+PowerShell's default `WriteLine`/`Out-File` behavior, matching the file's own pre-existing line
+ending and BOM-less state exactly (verified byte-for-byte before and after: same trailing-newline
+byte, same absent BOM).
+
+**Which tool caused the original corruption**: not directly knowable from this session (round 16 was
+a different agent's own tool calls, not this session's), but the coordinator's own diagnosis is the
+right shape and this repair does not repeat it: `Set-Content`/`Out-File` in Windows PowerShell 5.1
+default to the *system* codepage (Windows-1252 on this box), not UTF-8, unless `-Encoding utf8` (or
+`utf8NoBOM` in later PowerShell) is passed explicitly — a plain `$content | Set-Content $path` over
+text that already contains real UTF-8 multi-byte characters re-encodes each of those characters'
+*already-correct* Unicode code points through cp1252 on the way out, which is the exact "real bytes
+re-read as cp1252, re-saved as UTF-8" shape this round repaired. This round's own write used
+`[System.IO.File]::WriteAllText` with an explicit `UTF8Encoding` instance specifically to not repeat
+that path.
+
+**Verified:** diffed the repaired file against `git show HEAD:<path>` line by line, applying the
+identical repair formula to each *old* line and asserting it equals the corresponding *new* line
+exactly (0 unexpected mismatches across all 1310 lines, 134 lines changed — matching `git diff
+--stat`'s own 134 insertions/134 deletions) — confirms only the mojibake sequences changed, nothing
+else on any touched line. `.\gradlew.bat :app:smokeTestDebugUnitTest --tests
+'org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest'` — 30 tests, all green (this run,
+unlike round 18's, includes `R_350` and the `IMPROVE_RECORDS`-adjacent cases; both were already
+fixed by WP4/WP10's `d36a2ce`, on main since before this round's merge — round 18's CHANGELOG entry
+above should be read as superseded on that point, not this round's own finding).
+`.\gradlew.bat :app:ktlintCheck` — green. `git grep -l -I -e 'â€' -- app/ design/` — no output (exit
+1, "no matches"), confirmed clean across both trees. `python tools\spec-check\spec_check.py` —
+`spec-check: OK`, including its own "no mojibake, no tab characters" check.
+
+**Left open / not done:** whether any *other* file in this repository carries the same double-encoding
+defect was not swept — this round's own scope was the one file the coordinator named. The
+`git grep` check above is scoped to `app/`/`design/` only, per the coordinator's own instruction, not
+the whole repository.
+
 ## 2026-09-09 (ui-conformance WP3 round 18: R-546 drawer-row TalkBack shape; Improve pipeline hang diagnosed, not fixed)
 
 ### (pending) — ui-conformance WP3 round 18 · R-546 drawer rows own their description; two pre-existing Improve failures diagnosed
