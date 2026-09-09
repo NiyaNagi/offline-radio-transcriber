@@ -1,7 +1,9 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -17,8 +20,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -532,7 +538,11 @@ private fun FailLexiconScreen(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        DrillInHeader(parentLabel = "Settings", onBack = onDone)
+        // R-493 (register, Reviewer D): the parent this drill-in is actually beneath is
+        // "Models and lexicon" (Settings-Assets), not "Settings" itself — `onDone` already returns
+        // there (`ModelsContent.onDismissResult` clears the import result in place, no navigation
+        // change needed), this was only ever the header's own label being wrong.
+        DrillInHeader(parentLabel = "Models and lexicon", onBack = onDone)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Text(text = "Import refused", style = OrtType.screenTitle, color = OrtColors.textHigh)
             Text(
@@ -544,7 +554,7 @@ private fun FailLexiconScreen(
 
             FailedState(
                 title = "The file is not what its manifest says it is",
-                body = result.reason,
+                body = failLexiconBannerBody(result),
                 modifier = Modifier.padding(top = OrtSpacing.md),
             )
 
@@ -552,16 +562,11 @@ private fun FailLexiconScreen(
             result.checks.forEach { check -> LexiconCheckRow(check = check) }
 
             SectionHeader(label = "Still active", modifier = Modifier.padding(top = OrtSpacing.lg))
-            Text(
-                text = result.stillActiveLabel ?: "nothing — no lexicon was active before this import attempt",
-                style = OrtType.control,
-                color = OrtColors.textBody,
-                modifier = Modifier.padding(top = OrtSpacing.xs),
-            )
+            StillActiveLexiconRow(result = result)
 
             Text(
                 text = "Re-download the file and try again. An import only ever replaces the current " +
-                    "lexicon after every check passes.",
+                    "lexicon after every check passes, and even then only at the next session.",
                 style = OrtType.cardBody,
                 color = OrtColors.textFaint,
                 modifier = Modifier.padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
@@ -578,6 +583,56 @@ private fun FailLexiconScreen(
                 )
                 PrimaryButton(text = "Done", onClick = onDone, modifier = Modifier.weight(1f))
             }
+        }
+    }
+}
+
+/** R-491 (register, Reviewer D): the board's banner names the real consequence of a rejection that
+ * the validator's own [LexiconImportViewState.Rejected.reason] alone does not — which lexicon stayed
+ * active, and that capture kept running on it the whole time, unaware. [result.stillActiveLabel] is
+ * the exact same real fact [StillActiveLexiconRow] below draws — never a second, invented claim
+ * about it. */
+private fun failLexiconBannerBody(result: LexiconImportViewState.Rejected): String {
+    val stillActive = result.stillActiveLabel
+    return if (stillActive != null) {
+        "${result.reason} $stillActive is still active and capture never noticed."
+    } else {
+        result.reason
+    }
+}
+
+/** R-492 (register, Reviewer D): the board's own STILL ACTIVE row — a green state dot (this
+ * lexicon is genuinely in force, not merely on record) and two real lines, the name then
+ * "N records · verified · in use by the running session". "Verified" and "in use by the running
+ * session" are never separately-sourced fields: see [LexiconImportViewState.Rejected]'s own doc
+ * comment for why both are structurally true of *any* [stillActiveLabel] this screen ever draws. */
+@Composable
+private fun StillActiveLexiconRow(result: LexiconImportViewState.Rejected, modifier: Modifier = Modifier) {
+    val name = result.stillActiveLabel
+    val recordCount = result.stillActiveRecordCount
+    if (name == null || recordCount == null) {
+        Text(
+            text = "nothing — no lexicon was active before this import attempt",
+            style = OrtType.control,
+            color = OrtColors.textBody,
+            modifier = modifier.padding(top = OrtSpacing.xs),
+        )
+        return
+    }
+    Row(
+        modifier = modifier.padding(top = OrtSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        Canvas(modifier = Modifier.padding(top = 5.dp).size(9.dp)) { drawCircle(color = OrtColors.accentGreen) }
+        Column {
+            Text(text = name, style = OrtType.control, color = OrtColors.textBody)
+            Text(
+                text = "${"%,d".format(java.util.Locale.ROOT, recordCount)} records · verified · " +
+                    "in use by the running session",
+                style = OrtType.subLine,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = 2.dp),
+            )
         }
     }
 }
@@ -608,28 +663,42 @@ private fun LexiconCheckRow(check: LexiconCheckViewRow, modifier: Modifier = Mod
     }
 }
 
+/** R-490 (register, Reviewer D): the board draws each check's own outcome as a filled, 20dp
+ * circular badge (green + a check mark, or halt-red + a cross) — not a bare tinted glyph on
+ * transparent background. [CheckStatus.NOT_REACHED] keeps the existing hollow ring: the board's
+ * own row for it (`lexicon-corrupt/F12-lexicon-assets.png`) draws no fill at all there either. */
 @Composable
 private fun LexiconCheckMarker(status: CheckStatus, modifier: Modifier = Modifier) {
     when (status) {
-        CheckStatus.PASSED -> Icon(
-            imageVector = OrtIcons.check,
-            contentDescription = null,
-            tint = OrtColors.accentGreen,
-            modifier = modifier.padding(top = 2.dp).size(18.dp),
+        CheckStatus.PASSED -> FilledCheckBadge(
+            background = OrtColors.accentGreen,
+            icon = OrtIcons.check,
+            iconTint = OrtColors.accentOnGreen,
+            modifier = modifier,
         )
-        CheckStatus.FAILED -> Icon(
-            imageVector = OrtIcons.dismiss,
-            contentDescription = null,
-            tint = OrtColors.haltFill,
-            modifier = modifier.padding(top = 2.dp).size(18.dp),
+        CheckStatus.FAILED -> FilledCheckBadge(
+            background = OrtColors.haltFill,
+            icon = OrtIcons.dismiss,
+            iconTint = OrtColors.haltOnFill,
+            modifier = modifier,
         )
-        CheckStatus.NOT_REACHED -> Canvas(modifier = modifier.padding(top = 6.dp).size(9.dp)) {
+        CheckStatus.NOT_REACHED -> Canvas(modifier = modifier.size(20.dp)) {
             drawCircle(
                 color = OrtColors.lineControl,
                 radius = size.minDimension / 2 - 0.75.dp.toPx(),
                 style = Stroke(1.5.dp.toPx()),
             )
         }
+    }
+}
+
+@Composable
+private fun FilledCheckBadge(background: Color, icon: ImageVector, iconTint: Color, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.size(20.dp).background(background, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(12.dp))
     }
 }
 

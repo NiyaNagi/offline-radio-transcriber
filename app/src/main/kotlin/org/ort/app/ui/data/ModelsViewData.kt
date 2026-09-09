@@ -17,8 +17,10 @@ import org.ort.data.entity.LexiconVersionEntity
 import org.ort.lexicon.import.ActiveLexiconRecord
 import org.ort.lexicon.import.ActiveLexiconStore
 import org.ort.lexicon.import.CheckStatus
+import org.ort.lexicon.import.LexiconCheck
 import org.ort.lexicon.import.LexiconImportInstaller
 import org.ort.lexicon.import.LexiconImportResult
+import org.ort.lexicon.import.LexiconImportValidator
 import org.ort.net.AcquiredModel
 import org.ort.net.Checksum
 import org.ort.net.HttpRangeClient
@@ -300,15 +302,25 @@ public sealed interface LexiconImportViewState {
     ) : LexiconImportViewState
 
     /**
-     * At least one check failed; nothing was replaced. [stillActiveLabel] is `null` only when there
-     * was genuinely no lexicon active before this import attempt (a first-ever install) — never
-     * omitted for any other reason.
+     * At least one check failed; nothing was replaced. [stillActiveLabel]/[stillActiveRecordCount]
+     * are `null` only when there was genuinely no lexicon active before this import attempt (a
+     * first-ever install) — never omitted for any other reason, and always both null or both real
+     * together (both come from the same [org.ort.lexicon.import.ActiveLexiconRecord]).
+     *
+     * R-492 (register, Reviewer D): the board's own STILL ACTIVE row is two real lines — the
+     * lexicon's name, then "N records · verified · in use by the running session" — [stillActiveLabel]
+     * carries the name alone now (was the whole combined string) so the screen can draw both without
+     * re-parsing it. "verified" and "in use by the running session" are both structurally true for
+     * *any* currently active lexicon, never fields to source separately: [RoomActiveLexiconStore.activate]
+     * is the only writer of "the active lexicon" and only ever runs after [LexiconImportValidator.validate]
+     * returns [Accepted], and this exact record is read from that same store.
      */
     public data class Rejected(
         override val fileName: String,
         override val checks: List<LexiconCheckViewRow>,
         val reason: String,
         val stillActiveLabel: String?,
+        val stillActiveRecordCount: Int? = null,
     ) : LexiconImportViewState
 }
 
@@ -771,7 +783,7 @@ public object ModelsController {
      * [ActiveLexiconRecord] into the one-line label the board shows.
      */
     private fun toViewState(result: LexiconImportResult): LexiconImportViewState {
-        val checks = result.checks.map { LexiconCheckViewRow(it.name, it.status, it.detail) }
+        val checks = foldChecksToBoardRows(result.checks)
         return when (result) {
             is LexiconImportResult.Accepted ->
                 LexiconImportViewState.Accepted(result.fileName, checks, result.version, result.recordCount)
@@ -780,9 +792,68 @@ public object ModelsController {
                     result.fileName,
                     checks,
                     result.reason,
-                    result.stillActive?.let(::activeLexiconLabel),
+                    result.stillActive?.let { "Callsign lexicon ${it.version}" },
+                    result.stillActive?.recordCount,
                 )
         }
+    }
+
+    /**
+     * R-490 (register, Reviewer D, `Fail-Lexicon.dc.html`'s own WHAT WAS CHECKED list): the board
+     * names four checks — "Manifest readable", "Checksum", "Record count", "Prefix table
+     * consistency" — but [LexiconImportValidator.validate] (real, correctly) runs five
+     * ([LexiconImportValidator.CHECK_MANIFEST]/[CHECK_CHECKSUM]/[CHECK_RECORD_SHAPE]/
+     * [CHECK_GRAMMAR_SAMPLE]/[CHECK_DUPLICATE_KEYS]) — a genuinely finer-grained validator than the
+     * board's four-row sketch, not a defect to shrink. Per this round's own instruction ("the
+     * validator may run more checks; fold them under the board's four rows"), this folds — never
+     * drops a real result: [CHECK_RECORD_SHAPE] and [CHECK_DUPLICATE_KEYS] (both concern the
+     * record set's own structural integrity) fold into one "Record count" row, and
+     * [CHECK_GRAMMAR_SAMPLE] (validates each sampled callsign's shape against
+     * [org.ort.lexicon.ItuPrefixTable]'s own allocation table) displays as "Prefix table
+     * consistency" — the real fact it already checks, under the board's own name for it. A folded
+     * row's status is the worse of its parts (`FAILED` over `NOT_REACHED` over `PASSED`) and its
+     * detail carries both real facts, never only one.
+     */
+    private fun foldChecksToBoardRows(checks: List<LexiconCheck>): List<LexiconCheckViewRow> {
+        fun find(name: String) = checks.firstOrNull { it.name == name }
+        val rows = mutableListOf<LexiconCheckViewRow>()
+        find(LexiconImportValidator.CHECK_MANIFEST)?.let { rows += LexiconCheckViewRow(it.name, it.status, it.detail) }
+        find(LexiconImportValidator.CHECK_CHECKSUM)?.let { rows += LexiconCheckViewRow(it.name, it.status, it.detail) }
+        val shape = find(LexiconImportValidator.CHECK_RECORD_SHAPE)
+        val duplicates = find(LexiconImportValidator.CHECK_DUPLICATE_KEYS)
+        foldPair("Record count", shape, duplicates)?.let { rows += it }
+        find(LexiconImportValidator.CHECK_GRAMMAR_SAMPLE)?.let {
+            rows += LexiconCheckViewRow("Prefix table consistency", it.status, it.detail)
+        }
+        return rows
+    }
+
+    /**
+     * Combines two real [LexiconCheck]s that only exist as one row on the board — `null` only when
+     * neither ran at all (never expected from [LexiconImportValidator.validate], which always runs
+     * both, but this stays honestly absent rather than fabricating a row with nothing behind it).
+     * When one part is genuinely worse than the other, that part's own real detail carries the row
+     * alone — the board's own `Fail-Lexicon.dc.html` example shows exactly this: a record-shape
+     * failure's own text verbatim, with no "not reached" from the duplicate-keys check it
+     * short-circuited appended alongside it (real, but not what an operator needs when there is
+     * already a concrete reason). Two parts at the *same* severity (both passed, or both genuinely
+     * failed) both carry real, independent facts, so both join the row's own detail.
+     */
+    private fun foldPair(displayName: String, a: LexiconCheck?, b: LexiconCheck?): LexiconCheckViewRow? {
+        val parts = listOfNotNull(a, b)
+        if (parts.isEmpty()) return null
+        val worstSeverity = parts.minOf { checkSeverity(it.status) }
+        val atWorst = parts.filter { checkSeverity(it.status) == worstSeverity }
+        val detail = atWorst.joinToString("; ") { it.detail }
+        return LexiconCheckViewRow(displayName, atWorst.first().status, detail)
+    }
+
+    /** Lower sorts worse — [CheckStatus.FAILED] first, [CheckStatus.PASSED] last — so
+     * [foldPair]'s `minByOrNull` picks the real worst outcome among the folded parts. */
+    private fun checkSeverity(status: CheckStatus): Int = when (status) {
+        CheckStatus.FAILED -> 0
+        CheckStatus.NOT_REACHED -> 1
+        CheckStatus.PASSED -> 2
     }
 
     private fun activeLexiconLabel(record: ActiveLexiconRecord): String =

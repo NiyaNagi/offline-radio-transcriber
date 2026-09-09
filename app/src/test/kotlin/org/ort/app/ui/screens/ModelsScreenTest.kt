@@ -6,7 +6,6 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
@@ -425,116 +424,6 @@ class ModelsScreenTest {
         composeTestRule.onNodeWithContentDescription("Retry").performClick()
 
         assert(retried == ModelId.VAD) { "expected Retry to re-run the download for VAD, got $retried" }
-    }
-
-    @Test
-    @Requirement("R-154")
-    fun `R_154_a_rejected_import_renders_every_check_and_what_stays_active`() {
-        var choseAnotherFile = false
-        var done = false
-        val rejected = org.ort.app.ui.data.LexiconImportViewState.Rejected(
-            fileName = "lexicon-2026.09.tsv.zst",
-            checks = listOf(
-                org.ort.app.ui.data.LexiconCheckViewRow(
-                    "Manifest readable",
-                    org.ort.lexicon.import.CheckStatus.PASSED,
-                    "version 2026.09 · declares 1,122,410 records",
-                ),
-                org.ort.app.ui.data.LexiconCheckViewRow(
-                    "Checksum",
-                    org.ort.lexicon.import.CheckStatus.FAILED,
-                    "computed sha256 e07c… · does not match",
-                ),
-                org.ort.app.ui.data.LexiconCheckViewRow(
-                    "Record count and shape",
-                    org.ort.lexicon.import.CheckStatus.FAILED,
-                    "read 1,004,392 · declared 1,122,410 · file ends mid-record",
-                ),
-                org.ort.app.ui.data.LexiconCheckViewRow(
-                    "Callsign grammar sample",
-                    org.ort.lexicon.import.CheckStatus.NOT_REACHED,
-                    "not reached",
-                ),
-            ),
-            reason = "Checksum mismatched and the record count did not match the manifest — a partial " +
-                "or corrupted download, most likely. Nothing was replaced.",
-            stillActiveLabel = "Callsign lexicon 2026.08 · 1,104,208 records",
-        )
-
-        composeTestRule.setContent {
-            OrtTheme {
-                ModelsScreen(
-                    state = ModelsViewState(rows = emptyList()),
-                    onDownload = {},
-                    onSideload = {},
-                    lexicon = org.ort.app.ui.data.LexiconAssetActions(
-                        row = org.ort.app.ui.data.LexiconAssetRowViewState(installed = true, label = "x"),
-                        importResult = rejected,
-                        onInstall = { choseAnotherFile = true },
-                        onDismissResult = { done = true },
-                    ),
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("Import refused").assertExists()
-        composeTestRule.onNodeWithText("lexicon-2026.09.tsv.zst", substring = true).assertExists()
-
-        // Every check, in order, with its real status word represented (not colour-only) via detail.
-        composeTestRule.onNodeWithText("Manifest readable").assertExists()
-        composeTestRule.onNodeWithText("version 2026.09 · declares 1,122,410 records").assertExists()
-        composeTestRule.onNodeWithText("Checksum").assertExists()
-        composeTestRule.onNodeWithText("computed sha256 e07c… · does not match").assertExists()
-        composeTestRule.onNodeWithText("Record count and shape").assertExists()
-        composeTestRule.onNodeWithText("Callsign grammar sample").assertExists()
-        composeTestRule.onNodeWithText("not reached").assertExists()
-
-        // The reason and what stays active.
-        composeTestRule.onNodeWithText(rejected.reason, substring = true).assertExists()
-        composeTestRule.onNodeWithText("Callsign lexicon 2026.08 · 1,104,208 records").assertExists()
-
-        // WP2's R-380/R-381 fix — see this file's own `F13`/`R_448` tests' comment for what
-        // changed; `PrimaryButton`/`SecondaryButton`'s label is a content description now, never a
-        // `Text` node `hasText` can match.
-        composeTestRule.onNode(androidx.compose.ui.test.hasScrollAction())
-            .performScrollToNode(androidx.compose.ui.test.hasContentDescription("Done"))
-        composeTestRule.onNodeWithContentDescription("Choose another file").performClick()
-        assert(choseAnotherFile) { "expected Choose another file to call onInstall" }
-
-        composeTestRule.onNodeWithContentDescription("Done").performClick()
-        assert(done) { "expected Done to call onDismissResult" }
-    }
-
-    @Test
-    @Requirement("R-154")
-    fun `R_154 an accepted lexicon import folds back into the assets list, no full-screen takeover`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                ModelsScreen(
-                    state = ModelsViewState(rows = emptyList()),
-                    onDownload = {},
-                    onSideload = {},
-                    lexicon = org.ort.app.ui.data.LexiconAssetActions(
-                        row = org.ort.app.ui.data.LexiconAssetRowViewState(
-                            installed = true,
-                            label = "Callsign lexicon 2026.09 · 1,122,410 records",
-                        ),
-                        importResult = org.ort.app.ui.data.LexiconImportViewState.Accepted(
-                            fileName = "lexicon-2026.09.tsv.zst",
-                            checks = emptyList(),
-                            version = "2026.09",
-                            recordCount = 1_122_410,
-                        ),
-                        onInstall = {},
-                        onDismissResult = {},
-                    ),
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("Import refused").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Models and lexicon").assertExists()
-        composeTestRule.onNodeWithText("Callsign lexicon 2026.09 · 1,122,410 records").assertExists()
     }
 
     @Test

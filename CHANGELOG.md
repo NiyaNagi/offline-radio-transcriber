@@ -32,6 +32,77 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10: R-490..R-493, Fail-Lexicon content gaps closed against the real board)
+
+### <HASH> — ui-conformance WP10 · R-490..R-493: Fail-Lexicon's checklist, banner, still-active row and header match the real board
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`, `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`;
+tests beside each, plus `app/src/test/kotlin/org/ort/app/debug/LexiconCorruptScenarioTest.kt` and
+`app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerLexiconTest.kt` (both already asserted on
+the exact fields this round changed) and a new `app/src/test/kotlin/org/ort/app/ui/screens/FailLexiconScreenTest.kt`
+(split from `ModelsScreenTest.kt` — detekt's `LargeClass`, this codebase's established pattern for it).
+
+**Requirements/ACs:** R-490, R-491, R-492, R-493 (register, Reviewer D's second review at 85996ce,
+`Fail-Lexicon.dc.html`).
+
+**What changed:**
+
+*Constitution Check.* I governs the whole round — every one of these four gaps was operator-facing
+copy or structure reading *less* true than the real validator/store already knew (five real checks
+narrated as generic glyphs instead of the board's four named ones, a banner silent about a real
+consequence, a collapsed fact that hid two real ones, a wrong parent label). Nothing here invents a
+new fact; every fix surfaces one `LexiconImportValidator`/`ActiveLexiconRecord` already computes.
+
+- **R-490 (checklist):** the board names four checks; `LexiconImportValidator` genuinely runs five
+  (`Manifest readable`/`Checksum`/`Record count and shape`/`Callsign grammar sample`/`No duplicate
+  keys`) — a finer-grained validator, not a defect. New `ModelsViewData.kt`'s `foldChecksToBoardRows`
+  folds `Record count and shape` + `No duplicate keys` under "Record count" and displays
+  `Callsign grammar sample` (validates each sampled callsign against `ItuPrefixTable`'s own
+  allocation table) as "Prefix table consistency" — the real fact it already checks, under the
+  board's own name. A folded row's status is the worse of its parts; when severities differ the
+  worse part's own detail carries the row alone (matches the board's own example exactly — no
+  "not reached" noise appended beside a real failure reason); same-severity parts both contribute.
+  `ModelsScreen.kt`'s `LexiconCheckMarker` now draws the board's own filled 20dp circular badge
+  (green+check or halt-red+cross, dark-on-fill icon tint) instead of a bare tinted glyph;
+  `NOT_REACHED` keeps its existing hollow ring, matching the board's own row for it.
+- **R-491 (banner/closing paragraph):** the banner now appends the real still-active lexicon's name
+  ("… is still active and capture never noticed") when one exists, silent when there genuinely was
+  none (a first-ever import — never fabricated). The closing paragraph now ends "…and even then only
+  at the next session" — a direct, true consequence of this same round's own FR-AST-4 work (a swap
+  now stages rather than activating immediately).
+- **R-492 (STILL ACTIVE row):** was one collapsed line; `LexiconImportViewState.Rejected` now carries
+  the lexicon's name and record count as two real, separate fields (was one pre-joined string) so the
+  screen draws the board's own two lines — name, then "N records · verified · in use by the running
+  session" — behind a green state dot. "Verified" and "in use by the running session" are never
+  separately-sourced fields: both are structurally true of *any* value this screen ever draws here,
+  since `RoomActiveLexiconStore.activate` (the only writer of "the active lexicon") only ever runs
+  after `LexiconImportValidator.validate` returns `Accepted`, and this is that same record.
+- **R-493 (header):** `FailLexiconScreen`'s `DrillInHeader` read "‹ Settings"; the real parent is
+  "Models and lexicon" (Settings-Assets) — a one-line label fix, `onDone` already returns there.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD SUCCESSFUL (JDK 17).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreenTest" --tests
+  "org.ort.app.ui.screens.FailLexiconScreenTest" --tests "org.ort.app.ui.data.ModelsControllerLexiconTest"
+  --tests "org.ort.app.debug.LexiconCorruptScenarioTest"` — **BUILD SUCCESSFUL**, all 35 tests
+  PASSED, including `R_490`'s real, un-mocked pipeline test (a genuinely corrupt file through
+  `ModelsController.installLexicon` → `RoomActiveLexiconStore`, asserting the real fold's output)
+  and updated pre-existing tests that already asserted on the exact fields this round changed
+  (`LexiconCorruptScenarioTest`, `ModelsControllerLexiconTest`).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL** (one `LargeClass` on
+  `ModelsScreenTest.kt`, fixed by the `FailLexiconScreenTest.kt` split above, the same established
+  pattern `RowsTest.kt`/`ScenariosTest.kt`/`CorrectionPollingTest.kt` already used for it).
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8 checks).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (192 covered of 419); `R-490`/`R-491`/`R-492`/`R-493` each now cite `FailLexiconScreenTest`.
+
+**Left open / not done:** none for this round — all four register rows are closed against the real
+board (`design/canvas/Fail-Lexicon.dc.html`), read line by line as the source of truth.
+
+---
+
 ## 2026-09-08 (ui-conformance WP10: FR-AST-4 staged activation, F21 Fail-Asset-Swap runtime signal)
 
 ### <HASH> — ui-conformance WP10 · FR-AST-4: a mid-session lexicon swap or model install stages, never activates immediately

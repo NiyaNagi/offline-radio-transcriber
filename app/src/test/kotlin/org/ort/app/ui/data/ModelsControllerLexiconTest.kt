@@ -102,7 +102,8 @@ class ModelsControllerLexiconTest {
 
         assertTrue("expected Rejected, got $result", result is LexiconImportViewState.Rejected)
         result as LexiconImportViewState.Rejected
-        assertEquals("Callsign lexicon 2026.09 · 2 records", result.stillActiveLabel)
+        assertEquals("Callsign lexicon 2026.09", result.stillActiveLabel)
+        assertEquals(2, result.stillActiveRecordCount)
 
         // The store still reports only the one, original, accepted version.
         val versions = db.catalogDao().versionsFor(ModelsController.CALLSIGN_LEXICON_ASSET_ID)
@@ -121,7 +122,9 @@ class ModelsControllerLexiconTest {
         result as LexiconImportViewState.Rejected
         assertTrue(result.checks.isNotEmpty())
         result.checks.forEach { check -> assertTrue("${check.name} had a blank detail", check.detail.isNotBlank()) }
-        assertEquals(CheckStatus.FAILED, result.checks.first { it.name == "Callsign grammar sample" }.status)
+        // R-490: displays under the board's own name for this exact check — see
+        // `ModelsViewData.kt`'s `foldChecksToBoardRows`'s own doc comment.
+        assertEquals(CheckStatus.FAILED, result.checks.first { it.name == "Prefix table consistency" }.status)
     }
 
     @Test
