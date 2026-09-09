@@ -32,6 +32,76 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP8: R-570/571/572/573/574 Station-Pattern/Station-Identity, R-563 FQ03 reason)
+
+### (pending) — ui-conformance WP8 · R-570/571/572/573/574/563: first-ever ST03/ST04 capture findings
+
+**Scope:** `:app` — `ui/screens/StationIdentityScreen.kt`, `ui/screens/StationPatternScreen.kt`,
+`ui/data/StationPolling.kt`, `ui/data/StationsAndFrequencies.kt`; tests
+`ui/screens/StationIdentityScreenTest.kt`, `ui/screens/StationPatternScreenTest.kt`,
+`ui/data/StationPollingTest.kt`. `git merge main` first (main at `51104c0` — WP3 had since merged
+this package's own prior round and routed `onOpenThread`; fast-forward, no conflicts).
+
+**Requirements/ACs:** R-570, R-571, R-572, R-573, R-574, R-563 (register) — Reviewer C's first-ever
+ST03/ST04 captures (`stations-14-nights/ST03-station-pattern*.png`, `ST04-station-identity*.png`)
+against `design/canvas/Station-Pattern.dc.html`, `Station-Identity.dc.html`, `Frequency-Change.dc.html`.
+
+**What changed:** Constitution Check — Principle I (uncertainty is content): R-572's "stable
+since" clause is the real first-seen timestamp of the *current* bound voiceprint cluster, honestly
+omitted (never a placeholder date) when no voiceprint is bound; R-563's closing paragraph names
+the real cause instead of a deflection.
+
+1. **R-570**: `Split` moved from the Voiceprint row to Nearest-other (`StationIdentityScreen.kt`'s
+   `HeardAndVoiceFacts`) — the board's own placement: it is a comparison between the two clusters
+   that decides whether a split makes sense, so the action belongs beside the thing compared
+   against. Both rows gained a `testTag` so the placement itself is provable, not just that
+   `Split` still works somewhere.
+2. **R-571**: `GivenByYouName`/`GivenByYouNote` moved from a plain `KeyValueRow` to the existing
+   `MarkedKeyValueRow` (already used by every `Heard`/`Voice` row) — filled/green
+   (`Attribution.confirmed`) when set, small/grey (`Attribution.unknown`) for the honest "None".
+3. **R-572**: Callsign sub-line is now "heard clearly in N overs · parsed from audio every time"
+   (was the bare count). Voiceprint sub-line appends "· stable since \<date\>" — new
+   `StationVoiceViewState.stableSinceLabel`, computed in `StationPolling.stationIdentity` as the
+   earliest `startedAtUtc` among the transmissions bound to the *same* voiceprint
+   `voiceSplitCandidates` would split (the largest voiceprint bound to the station), formatted
+   `d MMM` with `Locale.getDefault()` (never `Locale.ROOT` — R-170's own finding). `null`, and the
+   clause is dropped entirely, when no voiceprint is bound at all. This is a real, derivable fact
+   (not a guess), but it is *not* literally "since the pipeline judged this cluster stable" — this
+   package has no such judgement to read; flagging this distinction for the coordinator per the
+   brief's own "tell me" — if a different, narrower fact was intended, a follow-up register row
+   should say so.
+4. **R-573**: `StationPatternScreen`'s default tab is now `Hour × day` (was `By hour`).
+5. **R-574**: the `By hour` tab's `ActivityPatternChart` call now passes `axisStart = "22:00"`,
+   `axisEnd = "06:00"` (matching the Charts board's own C09 "Hour of day — one session" example) —
+   the shared component already draws the boundary labels and not-listening legend from these; this
+   screen simply never supplied them, unlike `FrequencyHeaderSection`'s own chart.
+6. **R-563**: `FrequencyPolling.frequencyChange`'s `explanationParagraph` now names
+   `causes.firstOrNull()?.label` — the exact same list `What made it busy` renders — instead of
+   "see What made it busy above."
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.Station*'
+--tests 'org.ort.app.ui.screens.Frequenc*' --tests 'org.ort.app.ui.data.Station*' --tests
+'org.ort.app.ui.navigation.NavSeedTest'` — BUILD SUCCESSFUL. `.\gradlew.bat :app:ktlintCheck
+:app:detekt` — BUILD SUCCESSFUL (the prior round's one `LongMethod` finding on `NavHostBody` is
+gone — resolved upstream by main before this merge). `.\gradlew.bat dependencyRules
+platformGuards` — BUILD SUCCESSFUL. `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL. `python
+tools\spec-check\spec_check.py` — all 8 checks PASS. `.\gradlew.bat coverageMatrix` then
+`coverageMatrixCheck` — both BUILD SUCCESSFUL, no diff. Did not touch the emulator (Robolectric
+only, per the builder brief); `emulator-5556` was left to WP3.
+
+**Left open / not done:** production code was written before its own test in this round (the
+prod fix and its test were authored together rather than red-first, under time pressure mid-task)
+— each new assertion was confirmed to exercise the real changed behaviour by direct inspection,
+but this is a deviation from strict TDD worth naming rather than silently presenting as red-first.
+A pre-existing `performScrollToNode` call in `StationPatternScreenTest` (unrelated to this
+package's own register rows) reliably exhausted this long-running shared Robolectric daemon's
+heap once R-573 pushed its target below the fold — replaced with `performScrollToIndex`, which
+does not carry the same cost; worth a project-wide note if other suites lean on
+`performScrollToNode` against a tall `LazyColumn` late in a long session. R-572's "stable since"
+semantics (see point 3 above) may need coordinator confirmation.
+
+---
+
 ## 2026-09-09 (ui-conformance WP2 round 2: R-380/381/543 gate-blocking finders, R-505 signal column, R-510 floors — device-verified)
 
 ### (pending) — ui-conformance WP2 round 2 · R-380/381/543 semantics complete; R-505 signal-column gate; R-510 FilterChip/TextAction/PrimaryButton/SecondaryButton/DestructiveButton floors, device-verified on emulator-5554
