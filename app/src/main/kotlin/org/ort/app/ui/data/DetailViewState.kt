@@ -126,6 +126,11 @@ public data class PassAttemptViewState(val timeLabel: String, val reasonLabel: S
  * `FAILED` item whose own attempts predate this table (no `work_attempt` rows exist for it, so
  * [attemptLog] is honestly empty and [org.ort.app.ui.screens.TransmissionDetailScreen] falls back
  * to [lastError] alone, never a fabricated per-attempt list for a record that has none).
+ *
+ * **R-470 (design, round 13):** [sessionFailedCount] is the board's own closing "Counted in
+ * tonight's health: N failed." paragraph — the real count of `FAILED` transmissions in this over's
+ * own session, the same fact [org.ort.app.ui.data.ReaderPolling.captureStatus]'s own `failedCount`
+ * already counts for `Capture-Status.dc.html`, never a fabricated "since install" or global total.
  */
 public data class PassFailureViewState(
     val passId: PassId,
@@ -133,6 +138,7 @@ public data class PassFailureViewState(
     val lastError: String,
     val attempts: Int,
     val attemptLog: List<PassAttemptViewState> = emptyList(),
+    val sessionFailedCount: Int = 0,
 )
 
 /**

@@ -130,6 +130,22 @@ public interface CatalogDao {
             "WHERE ls.transmissionId = :transmissionId AND cc.selected = 1",
     )
     public suspend fun winningCandidateCharSpan(transmissionId: String): WinningCandidateCharSpan
+
+    /**
+     * Register R-471 (D03's `Detail-Ambiguous.dc.html`, FR-UI-4): the same real span as
+     * [winningCandidateCharSpan], for the top-ranked ([CallsignCandidateEntity.rank] `= 0`)
+     * candidate instead of the *selected* one — an AMBIGUOUS over has no [CallsignCandidateEntity.selected]
+     * row at all (nothing is chosen yet), so [winningCandidateCharSpan] always comes back
+     * `null`/`null` for one, leaving D03's transcript with no highlight even when Pass B's own
+     * lattice was text-anchored. A resolved over's rank-0 candidate is its selected one by
+     * construction, so this is a strict widening, not a behaviour change, for CONFIRMED/INFERRED.
+     */
+    @Query(
+        "SELECT MIN(ls.charStart) AS spanStart, MAX(ls.charEnd) AS spanEnd FROM lattice_slot ls " +
+            "JOIN callsign_candidate cc ON cc.id = ls.candidateId " +
+            "WHERE ls.transmissionId = :transmissionId AND cc.`rank` = 0",
+    )
+    public suspend fun topRankedCandidateCharSpan(transmissionId: String): WinningCandidateCharSpan
 }
 
 /** [CatalogDao.winningCandidateCharSpan]'s projection — a half-open `[spanStart, spanEnd)` range, or both `null`. */

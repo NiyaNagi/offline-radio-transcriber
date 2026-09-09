@@ -389,6 +389,16 @@ private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFai
             color = OrtColors.textFaint,
             modifier = Modifier.padding(top = OrtSpacing.xs),
         )
+        // R-470 (design): `Fail-Pass.dc.html`'s own closing paragraph — the real count of `FAILED`
+        // transmissions in this over's own session ([passFailure.sessionFailedCount], the same fact
+        // `Capture-Status.dc.html`'s own "N failed" already counts), worded exactly.
+        Text(
+            text = "Counted in tonight's health: ${passFailure.sessionFailedCount} failed. A failed " +
+                "pass never blocks the queue and never loses the audio — it just waits for you.",
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = OrtSpacing.md).testTag("pass-failure-session-health"),
+        )
     }
 }
 

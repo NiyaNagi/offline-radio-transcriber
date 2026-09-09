@@ -64,6 +64,7 @@ class PassFailureDetailScreenTest {
         attempts: Int = 3,
         lastError: String = "out of memory in the decoder",
         attemptLog: List<PassAttemptViewState> = emptyList(),
+        sessionFailedCount: Int = 1,
     ) = DetailViewStateMapper.from(
         detail(attribution = Attribution.unknown(), transcriptText = "okay so for the net tonight"),
         PassFailureViewState(
@@ -72,6 +73,7 @@ class PassFailureDetailScreenTest {
             lastError = lastError,
             attempts = attempts,
             attemptLog = attemptLog,
+            sessionFailedCount = sessionFailedCount,
         ),
     )
 
@@ -291,5 +293,38 @@ class PassFailureDetailScreenTest {
                     "and the over stays exactly as it is.",
             )
             .assertExists()
+    }
+
+    // ---- R-470 (design, round 13): `Fail-Pass.dc.html`'s own closing "Counted in tonight's health" line ----
+
+    @Test
+    fun `R_470_the_boards_closing_paragraph_names_the_real_session_failed_count`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = failedState(sessionFailedCount = 1),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("pass-failure-session-health").assertTextEquals(
+            "Counted in tonight's health: 1 failed. A failed pass never blocks the queue and never " +
+                "loses the audio — it just waits for you.",
+        )
+    }
+
+    @Test
+    fun `R_470_the_count_is_the_real_number_never_hardcoded_to_one`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = failedState(sessionFailedCount = 4),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Counted in tonight's health: 4 failed.", substring = true).assertExists()
     }
 }
