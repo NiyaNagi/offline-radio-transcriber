@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-09 (ui-conformance WP4 · R-542: Level-Meter's own clip line, the same edge-clearance fix as WP9's R-465)
 
-### (pending) — ui-conformance WP4 · R-542: Level-Meter's own clip line, the same edge-clearance fix as WP9's R-465
+### 481f886 — ui-conformance WP4 · R-542: Level-Meter's own clip line, the same edge-clearance fix as WP9's R-465
 
 **Scope:** new `ui/components/ChartGeometry.kt` (shared helper), `ui/screens/LevelMeterScreen.kt`,
 matching tests. `git merge main` for WP9's `662a73c` (R-465) first.
