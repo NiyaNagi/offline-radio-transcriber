@@ -951,16 +951,11 @@ private fun DestinationContent(
         )
 
         // ui-conformance-plan WP10 (register R-090/R-091/R-092/R-107): all three dispatch to
-        // WP10's own real content composables now that they are on this branch. `Earlier nights`
-        // and `Improve records` no longer fall through to `PlaceholderScreen` — see
-        // `ReaderDestination`'s own doc comment for what each one now is.
-        // Round 5 (R-090/R-139/F6/F9): `initialScreen` is real now — `navigator.openSettings`
-        // (`NavHostCallbacks.onOpenModels` above, and `ReaderActivity.kt`'s `FailureHostActions`)
-        // writes `settingsInitialScreen`, read fresh here every time `SETTINGS` becomes `current`.
-        // Round 7: `onSearch` is real now — `SettingsContent`'s own doc comment states the root
-        // draws its own `ScreenHeader` again, with a real search icon this host must wire the same
-        // way `ScreenHeader.onSearch` always was elsewhere (see `NavHostBody`'s own header-skip
-        // comment for why this host no longer draws one of its own for `SETTINGS`).
+        // WP10's own real content composables now that they are on this branch. Round 5
+        // (R-090/R-139/F6/F9): `initialScreen` is real now — `navigator.openSettings` writes
+        // `settingsInitialScreen`, read fresh here every time `SETTINGS` becomes `current`. Round
+        // 7: `onSearch` is real now — `SettingsRootScreen` draws its own header (see `NavHostBody`'s
+        // own header-skip comment for why this host draws none of its own for `SETTINGS`).
         ReaderDestination.SETTINGS ->
             org.ort.app.ui.settings.SettingsContent(
                 context = context,
@@ -997,9 +992,29 @@ private fun DestinationContent(
                 initialSessionId = reviewSessionId,
             )
 
+        // Round 12, R-350: `onOpenModels` real now (WP10's `94c946c`) — same callback as `Now`'s
+        // above. Call itself extracted to [ImproveRecordsContent] purely to keep this function
+        // under detekt's `LongMethod` limit.
         ReaderDestination.IMPROVE_RECORDS ->
-            org.ort.app.ui.improve.ImproveContent(context = context, onDrawer = onOpenDrawer, modifier = content)
+            ImproveRecordsContent(context, onOpenDrawer, content, callbacks.onOpenModels)
     }
+}
+
+/** [DestinationContent]'s `IMPROVE_RECORDS` branch, split out purely to keep that function under
+ * detekt's length limit — the same reason [ThreadDetailContent] below was already split out. */
+@Composable
+private fun ImproveRecordsContent(
+    context: android.content.Context,
+    onDrawer: () -> Unit,
+    modifier: Modifier,
+    onOpenModels: () -> Unit,
+) {
+    org.ort.app.ui.improve.ImproveContent(
+        context = context,
+        onDrawer = onDrawer,
+        modifier = modifier,
+        onOpenModels = onOpenModels,
+    )
 }
 
 /**

@@ -32,6 +32,88 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP3 round 12: Improve-Done's Install action wired to Settings-Assets (R-350))
+
+### 55f2ba8 — ui-conformance WP3 round 12 · ImproveContent.onOpenModels wired to Settings-Assets (R-350)
+
+**Scope:** `ui/navigation/OrtNavHost.kt` and `ReaderActivityDestinationSmokeTest.kt` only. `main`
+fast-forward merged first (`git merge main`, this branch already an ancestor of `main`'s prior
+tip, itself including round 11's own R-333/R-334/R-133 work) — no other package's files touched.
+
+**Requirements/ACs:** R-350 (the host-wire half; WP10's own `ImproveContent`/`ImproveDoneScreen`
+changes landed in `94c946c`, not this row's to touch).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs the one real finding this
+  round surfaced (below): reporting a defect that blocks genuine coverage, rather than quietly
+  writing a test that only *looks* like it proves the thing.
+- `ImproveContent` gained `onOpenModels: () -> Unit = {}` (WP10's `94c946c`) for `Improve-Done`'s
+  `Install` action. Wired it in `OrtNavHost.kt`'s `IMPROVE_RECORDS` dispatch to the same, already-
+  real `NavHostCallbacks.onOpenModels` (`navigator.openSettings(SettingsScreenId.ASSETS)`)
+  `NowContent`'s own "Install a model" (R-139) already uses — the exact shape the coordinator
+  asked for. The call itself is extracted into a new private `ImproveRecordsContent` composable,
+  purely to keep `DestinationContent` under detekt's `LongMethod` limit (the same reason
+  `ThreadDetailContent`/`OrtNavHostBackHandler`/`navHostCallbacks` were themselves extracted).
+- **A real, out-of-row defect found while writing this round's smoke test, reported rather than
+  routed around**: driving a genuine reprocess run (seeding a real T1-tier session — below the
+  test env's own default current tier — with a real audio file at the exact path Pass B expects,
+  then tapping `Improve all` for real) to a real *missing-model* failure — the one condition
+  `ImproveScreens.kt`'s own `isMissingModelReason` recognises, the only one that ever shows
+  `Install` at all — turns out to be unreachable through the real pipeline as it exists today.
+  `AsrEngineProvisioning.kt:137`'s `UnavailableAsrEngine.transcribe` throws exactly `"ASR
+  unavailable: $reason"`, but `RejectionPipeline.kt:46-52`'s `catch (t: Throwable) { return
+  PassBOutcome.Failed("engine threw during transcribe", t) }` discards that message string before
+  it ever reaches `ReprocessStatus.Summary.failureReasons` — confirmed directly, by driving the
+  real activity end to end and reading the real `Improve-Done` screen, which shows "1 failed —
+  engine threw during transcribe", never the recognised text. `Install` cannot render for a
+  genuinely-missing model on this build, regardless of what this host wires it to. This is
+  `:pipeline`'s own `asr-api`/`reprocess` finding, not `ui/navigation`'s to fix — reported here and
+  left for those owners.
+
+**Verified:**
+- `:app:smokeTestDebugUnitTest --tests` scoped to the four navigation cases this round and last
+  touch (R-333, R-334, R-133, R-350) — all four green. The new R-350 case
+  (`R_350_improve_done_reflects_a_real_failure_and_offers_no_install_for_a_non_model_reason`)
+  proves what a real run in this environment can honestly prove: a real T1-tier session reaches
+  `Improve-Done` with a real failure summary (the whole chain — `ImprovePolling.root` →
+  `RealImproveRunner` → `:pipeline`'s `ReprocessRunner` → the real, model-less `AsrEngineProvisioning`
+  path — is live, not faked), and, matching `ImproveScreensTest.kt`'s own `R_350 a non-model
+  failure reason ...` case exactly, that `Install` correctly does not render for a reason
+  `isMissingModelReason` does not recognise. `onOpenModels`'s own reachability from `Settings-
+  Assets` rests on the identical, already-proven `NavHostCallbacks.onOpenModels` object R-139's
+  own `NowContent` case already exercises, compiled and type-checked by this change.
+- `:app:smokeTestDebugUnitTest` run in full: **20 of 21 pass; 1 pre-existing failure found,
+  unrelated to this round's own changes** —
+  `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window` (round 9's own
+  case, untouched this round) fails consistently, including run completely alone with
+  `--tests` scoped to only that one case (twice, same result both times) — proving it is not
+  caused by, or interacting with, anything this commit touches. Between this round's own last
+  clean full-suite run (round 11's own report: 20/20 green) and now, `main` absorbed a large,
+  unrelated merge (WP2/WP4/WP5/WP7/WP10/`:data` schema v5, `git merge main`'s own diff:
+  `ui/screens/LogContent.kt`, `ui/data/LogViewData.kt`, `ui/data/ThreadViewData.kt`,
+  `ui/components/Rows.kt`, `ui/components/AttributionMarker.kt` among them) — the most likely
+  origin of a regression in a test that reads `LogContent`'s own real `FREQUENCIES`→`Log` filtered
+  route, none of it this row's own file ownership. Reported to the coordinator directly, not
+  fixed here.
+- `:app:ktlintCheck :app:detekt` — green (after extracting `ImproveRecordsContent`; `DestinationContent`
+  crossed detekt's `LongMethod` limit at 81/82 lines before that split). `dependencyRules
+  platformGuards` — green. `:app:assembleDebug` — green. `python tools/spec-check/spec_check.py` —
+  8/8 checks pass. `coverageMatrix` (regenerated) then `coverageMatrixCheck`, run as separate
+  invocations (same unrelated Gradle task-validation ordering gap round 11's own entry named) —
+  both green.
+- Per the coordinator's own load-policy note this round (a full gate running in the main
+  checkout; builds here may wait on shared cache locks) — no `:app:testDebugUnitTest` run
+  unscoped and no `build`/`check` run in this commit.
+
+**Left open / not done:**
+- `R_276`'s own real, reproducible failure (see "Verified" above) — flagged to the coordinator,
+  not fixed here; out of `ui/navigation`'s own file ownership this round.
+- The `RejectionPipeline`/`AsrEngineProvisioning` message-swallowing defect that keeps R-350's own
+  `Install` action unreachable via a genuine engine failure — named above with exact file:line
+  citations, `:pipeline`'s own `asr-api`/`reprocess` owners' finding to act on.
+
+---
+
 ## 2026-09-08 (ui-conformance WP3 round 11: one back handler for the whole app (R-333), the drawer above the banner (R-334), Settings-Storage's Review link (R-133))
 
 ### e7d5dca — ui-conformance WP3 round 11 · one BackHandler (R-333), FailureHost under the drawer (R-334), Settings-Storage Review → Earlier nights (R-133)
