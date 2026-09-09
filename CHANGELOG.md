@@ -32,6 +32,103 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP9: R-465, the Setup-Level chart's clip line was genuinely invisible)
+
+### (pending) — ui-conformance WP9 · R-465 fixed: the clip line sat exactly on the chart's own edge, overpainted by the Box's own border
+
+**Scope:** `:app` `ui/setup/LevelScreen.kt`, `ui/setup/LevelScreenTest.kt`, `results/coverage-matrix.md`
+(regenerated — drift from other WPs' work merged in since it was last committed, not authored by
+this round; see Verified), `results/ui-audit/setup-level/S07-level-r465-after.png` (new, kept
+alongside the existing before-evidence per "never delete quietly"). `git merge main` first
+(fast-forward; `main` carried Reviewer A/B/C/D round-2 register work, `c4296a0`).
+
+**Requirements/ACs:** R-465 fixed and device-verified on `emulator-5556`.
+
+**What changed:**
+
+*Constitution Check.* I (uncertainty is content — the coordinator asked to confirm on-device
+whether the overlay "truly does not render or only fades at capture resolution" before assuming
+either; the finding below is the answer, backed by raw pixel sampling, not an eyeballed guess).
+II (test-backed — `R_465`'s three cases exercise the fix's own pure math directly). VII
+(boundaries are structural — the identical defect exists verbatim in WP4's own `LevelMeterScreen.kt`
+`LevelHistoryChart`; reported below, not touched, since that file is not this package's own).
+
+- **Confirmed on-device first, per the coordinator's own ask.** Installed to `emulator-5556`
+  (`install.ps1 -Clear`), ran `tools\ui-audit\tour.ps1 -Only "setup-level/*"` (the same `setup-level`
+  scenario Reviewer A's own capture used) and reproduced an identical `S07-level.png`. Pixel-sampled
+  the rendered PNG directly (ImageMagick `-crop 1x1+X+Y txt:-`) rather than judging by eye: the
+  target band's fill and both boundary lines are present and correctly coloured (confirmed at the
+  expected row, e.g. `(46,97,61)` — `accentGreen` at its own alpha over the dark chart background).
+  The clip line is not merely faint — every pixel at and near its expected row (`CHART_CEILING_DBFS`,
+  fraction `1.0`) was exactly the background/border colour, zero red hue anywhere, at every column
+  sampled. This is a genuine rendering defect, not a capture-resolution artefact — closing the row
+  by reporting "renders faithfully" would have been wrong.
+- **Root cause, found by measurement, not inspection.** `CHART_CEILING_DBFS` (0 dBFS) is always
+  fraction `1.0` on this chart's own `-60..0` scale, which `yForFraction` maps to canvas row `0`
+  exactly. Two things both had to be true to explain the total invisibility: (1) a stroke centred
+  exactly on row `0` is bisected by the canvas's own bounds, discarding half its width; (2) this
+  chart's own `Box.border(1.dp, ...)` draws *over* its children (so the border stays visible even
+  where a child fills the whole `Box`) — it overpainted the remaining half even after a first
+  attempt inset the line by only its own half-stroke (re-sampled after that fix: still zero red
+  pixels). A noise floor at the scale's own floor would hit the identical problem at the bottom
+  edge.
+- **Fix.** New `referenceLineY(fraction, heightPx, edgeClearancePx)` (plain function, no `DrawScope`
+  needed — same reasoning `levelBarFraction` was already kept plain for) clamps a reference line's Y
+  to stay `edgeClearancePx` clear of either canvas edge; a `DrawScope` extension `yForReferenceLine`
+  wraps it with the real canvas height. `LevelMeter`'s clip line, the two target-band boundary lines,
+  and the noise-floor line all now go through this (`lineClearPx = 1.5.dp.toPx()` — this chart's own
+  1dp border plus the line's own 0.5dp half-stroke); bars still use the original, unclamped
+  `yForFraction` — only the fixed reference lines move, never what a bar's own value renders at.
+  Re-verified on-device after the fix: the expected row now reads `(147,75,71)`, matching
+  `haltText` at its own `0.6f` alpha blended over the dark background almost exactly — the clip line
+  is genuinely visible now, not merely theoretically present.
+- **The noise-floor dashed line was checked too, and left alone.** In this scenario's own data
+  (all 14 bars well above the noise floor), the line is mostly hidden behind the taller/louder bars,
+  visible only as small flecks in the ~1.5dp inter-bar gaps — but this matches the design canvas's
+  own DOM order (`Setup-Level.dc.html`: the overlay lines are drawn *before* the bars in markup,
+  meaning bars paint over them in both the mockup and this Canvas alike), not a divergence from
+  intent. Reordering the draw calls to always show the noise line over the bars was considered and
+  rejected — it would be a real design change (the mockup itself doesn't do this), not a bug fix.
+- **WP4's own `LevelMeterScreen.kt` (`LevelHistoryChart`) has the byte-identical `clipY = yFor(
+  CHART_CEILING_DBFS)` defect** — read, not touched (outside this package's own files). Reporting
+  here, as asked, so WP4 is informed; the same `referenceLineY`/`yForReferenceLine` shape (or a
+  shared extraction, if WP2 wants to finally lift this chart into one component — `LevelScreen.kt`'s
+  own class doc already flags three near-identical Canvas implementations existing) would fix it
+  identically there.
+
+**Verified:**
+- Device: `emulator-5556`, `setup-level` scenario, before/after screenshots pixel-sampled directly
+  (not eyeballed) — evidence at `results/ui-audit/setup-level/S07-level.png` (before, matches
+  Reviewer A's own capture) and the new `S07-level-r465-after.png` (after).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --rerun` — **BUILD
+  SUCCESSFUL**; `LevelScreenTest`: 12 tests, 0 failures (confirmed from its own
+  `TEST-org.ort.app.ui.setup.LevelScreenTest.xml`), including all three new `R_465` cases.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- `.\gradlew.bat dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, "up to date
+  (191 covered of 419)". The regenerated diff (a handful of ids/test-class renames — `R-413`,
+  `R-419`'s test list, `R-441`/`R-443`/`R-444`/`R-445`/`R-449`/`R-450`/`R-451`) is drift from other
+  WPs' work landed on `main` since the committed file was last regenerated, not from this round's
+  own two files — committed here only to keep the gate green, per this file's own "Do not edit"
+  banner (it is tool-generated, never hand-edited).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- Machine/provider: this worktree's Windows dev box, JDK 17.0.20.101-hotspot, Gradle 8.10.2,
+  Android emulator-5556 (API level per this project's standing AVD), other worktree agents'
+  background builds concurrently active.
+
+**Left open / not done:**
+- WP4's `LevelMeterScreen.kt` carries the identical defect — not fixed here (not this package's
+  file); flagged above for WP4/the coordinator.
+- No shared chart component exists to route this fix through (`LevelScreen.kt`'s own class doc
+  already notes three separate near-identical Canvas implementations) — consolidating them is a
+  reasonable follow-up but a bigger, cross-package change than this row asked for.
+- The noise-floor line's mostly-hidden-behind-loud-bars appearance was investigated and left as
+  designed (matches the mockup's own paint order); not itself part of R-465's own finding.
+
+---
+
 ## 2026-09-08 (ui-conformance WP11b: F21 asset-swap real-signal investigation)
 
 ### (pending) — ui-conformance WP11b · F21 asset-swap has no real signal to map — investigated, reported, smoke case added
