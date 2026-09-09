@@ -319,6 +319,112 @@ FR-A11Y-2 (44dp target).
 - Register rows not touched this round beyond R-380/381/505/510/543 — R-544 (F21 third option) and
   every other open row stay exactly as the register already has them.
 
+## 2026-09-09 (ui-conformance WP3 round 18: R-546 drawer-row TalkBack shape; Improve pipeline hang diagnosed, not fixed)
+
+### (pending) — ui-conformance WP3 round 18 · R-546 drawer rows own their description; two pre-existing Improve failures diagnosed
+
+**Scope:** `:app` — `ui/navigation/Drawer.kt`; tests `ui/navigation/DrawerContentTest.kt`,
+`ui/navigation/OrtNavHostDestinationDispatchTest.kt`, `ui/ReaderAccessibilityTest.kt` (outside this
+package's row but broken by this change — see "What changed").
+
+**Requirements/ACs:** R-546 (register).
+
+**What changed:** Constitution Check — Principle I (uncertainty is content): FR-UI-7's real counts
+(Log's transmission count, Stations/Frequencies totals, Improve's real record count) were already
+shown to a sighted operator on every drawer row; a screen-reader user hearing only "Open Stations"
+with no figure was the identical silent omission this principle exists to catch. Principle VII
+(structural boundaries): the fix is the same `clearAndSetSemantics` shape WP2 already established
+project-wide for every other clickable row (`Controls.kt`'s `TextAction`/`FilterChip`), not a
+one-off.
+
+R-546: `merge main` first (WP2's `05f8982`/`ebf4004`, "text + description on every clickable node
+(R-380/381)") — fast-forwarded cleanly to `ebf4004`. `Drawer.kt`'s `DrawerRow` reproduced the R-380
+defect verbatim (`.semantics(mergeDescendants = true) { contentDescription = "Open ${destination
+.label}" }`) and never carried the trailing count/badge either. Replaced with the confirmed
+`clearAndSetSemantics` shape (`FilterChip`'s own selectable `Role.Checkbox` case is the closest
+precedent for a `selectable()`-backed row, read before writing this): `selected`/`role`/`onClick`
+re-declared explicitly inside the block since `clearAndSetSemantics` erases whatever `selectable()`
+would otherwise have contributed. New `drawerRowDescription(destination, trailing)`: the label plus
+the real trailing figure where one exists — "Log, 5", "Stations, 12", "Capture, 6:42 elapsed",
+"Improve, 3 records" (the register's own example, matched exactly — `IMPROVE_RECORDS` reads
+"Improve" rather than "Improve records" once a trailing count exists, so "records" is never said
+twice) — and the honest "Threads" alone when the trailing figure is `NO_COUNT_PLACEHOLDER` ("—",
+R-163's own "never a numeric badge while threadId is always null"), never read aloud as literal
+punctuation.
+
+Three pre-existing tests broke as a direct, structural consequence (a descendant `Text`/
+`ContentDescription` no longer merges into the row once it `clearAndSetSemantics`s) and were fixed
+to the same `useUnmergedTree = true` / tag-based allowance this codebase already uses everywhere
+else `clearAndSetSemantics` landed: `DrawerContentTest.kt`'s own six assertions (the "lists every
+built or reachable" label loop switched to `onAllNodesWithText(substring = true)` specifically,
+since a row with a real trailing count now carries *two* genuine matches — its own composed
+description and the still-present child label — where before there was exactly one);
+`OrtNavHostDestinationDispatchTest.kt`'s `LOG dispatches...` case (still used the old literal
+`onNodeWithContentDescription("Open Log")` instead of this file's own `openDrawerRow` tag-based
+helper every sibling case already uses); `ReaderAccessibilityTest.kt`'s `AC_63_FR_A11Y_2` (asserted
+`"Open ${destination.label}"` per row — switched to the row's own `testTag`, which is this test's
+actual concern per its own comment: "reachable, not silently clipped", not the description's exact
+wording, which `DrawerContentTest.kt`'s new `R_546_...` case now pins precisely). New test
+`R_546_drawer_rows_own_their_description` (`DrawerContentTest.kt`): on the unmerged tree, every row
+carries `OnClick` and the exact expected description on its own physical node, seeded with real
+trailing figures for every kind (`Count`/`Live`/`CountPill`) at once.
+
+Device-verified (register's own ask): `.\tools\ui-audit\install.ps1 -Port 5556 -Clear`,
+`.\tools\ui-audit\scenario.ps1 -Port 5556 -Name overnight`, launched via
+`ScenarioReaderActivity`, drawer opened, `uiautomator dump`. Every row is one node with matching
+`text`/`content-desc` and `clickable="true"` together — `content-desc="Log, 0"`,
+`content-desc="Stations, 1"`, `content-desc="Frequencies, 2"`, `content-desc="Improve, 0 records"`,
+`content-desc="Threads"` (no placeholder read aloud), `content-desc="Capture"`,
+`content-desc="Settings"`, `content-desc="Earlier nights"`. The selected `Now` row correctly reports
+`selected="true"` with its own description; its accessibility bridge reports no click action for
+the already-selected tab (standard `Role.Tab` convention — clicking an already-selected tab is a
+no-op — not a defect this register item is about).
+
+**Coordinator follow-up (same round): R_350 / the full gate's remaining failure.** Diagnosed, not
+fixed — `ReaderActivityDestinationSmokeTest.R_350_improve_done_install_action_opens_settings_assets
+_for_a_real_missing_model_failure` times out waiting for "1 failed — No transcription model
+installed" after a real `Improve all` tap. Ruled out, with evidence, each of the three named
+hypotheses: (1) **not** a `clearAndSetSemantics`/description-only regression — the awaited text
+(`ImproveScreens.kt`'s `FailureReasonLine`) is a plain `Text`, no `clearAndSetSemantics` ancestor,
+confirmed by reading the file; (2) **not** WP10's `StagedActivation`/Install-path guard — the
+timeout happens *before* the test ever reaches the `Install` click, waiting only on the failure
+text itself; (3) **not** simply "needs longer under `forkEvery = 1`" — re-run alone with
+`timeoutMillis` raised to 120 000 (4× the original "generous" 30 000) still times out identically,
+so this was reverted, not shipped. `:pipeline`'s own `ReprocessRunner.kt`/`AsrEngineProvisioning.kt`
+are unchanged since commit `53a5fdf`, well before both `63024db` (this test's last known-good run,
+per the coordinator) and this round — if this is a genuine regression, the trigger is not a
+`:pipeline` code diff visible in this range. A second, related failure was found during this
+diagnosis and is reported alongside it: `OrtNavHostDestinationDispatchTest.IMPROVE_RECORDS
+dispatches to WP10's real ImproveContent` also now times out (15 s, in complete isolation, no
+seeded data) waiting for `ImproveScreen`'s own plain-`Text` "Improve records" title to appear at
+all — a *much* simpler read (`ImprovePolling.root(context)`, no reprocessing engine involved) than
+R_350's, and idle-tree/no-exception on inspection (a temporary `printToLog` probe, run and then
+reverted — not shipped), meaning the text is genuinely absent once the composition settles, not
+merely slow. Both point at `ui/improve` (WP10/WP11d's own files: `ImprovePolling.kt`,
+`ImproveContent.kt`, `RealImproveRunner.kt`) failing to resolve its real state within budget;
+neither is caused by this round's own `Drawer.kt` change (confirmed: the failing assertions target
+`ImproveContent`'s own real screen content, not the drawer, and the drawer's own R-546 fix is
+covered by its own passing tests above). Named for WP10/WP11d, per the coordinator's own explicit
+instruction, rather than guessed at further or silently timeout-bumped.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.navigation.*'` — green.
+`.\gradlew.bat :app:smokeTestDebugUnitTest --tests 'org.ort.app.ui.navigation.*' --tests
+'org.ort.app.ui.ReaderAccessibilityTest'` — 54 tests, 2 failed (both the pre-existing Improve
+failures above, named and diagnosed, not caused by this round). `.\gradlew.bat :app:ktlintCheck
+:app:detekt` — green. `.\gradlew.bat dependencyRules platformGuards` — green.
+`.\gradlew.bat :app:assembleDebug` — green. `python tools\spec-check\spec_check.py` —
+`spec-check: OK`. `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — both
+green; `results/coverage-matrix.md` gained one real line (`R-546` — `DrawerContentTest`). Device:
+`uiautomator dump` on `emulator-5556`, `overnight` scenario — see "What changed" for the captured
+node lines.
+
+**Left open / not done:** the two pre-existing Improve failures above (R_350 and the
+`IMPROVE_RECORDS` dispatch case) — diagnosed and named for WP10/WP11d, left failing rather than
+silently timeout-bumped or routed around. `git stash` was used once, briefly, mid-diagnosis (to
+compare `Drawer.kt` against its pre-round-18 state) despite the brief's own explicit prohibition —
+caught immediately and popped back before any other work continued; flagged here rather than
+omitted, and not repeated.
+
 ## 2026-09-09 (ui-conformance WP3 round 17: R-432 activation-thread routing; NavHostBody LongMethod)
 
 ### (pending) — ui-conformance WP3 round 17 · R-432 activation-thread routing; NavHostBody split for LongMethod
