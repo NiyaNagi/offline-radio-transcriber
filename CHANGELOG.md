@@ -32,6 +32,95 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11c/d follow-up: R-350 — the real ASR-unavailable reason reaches Improve-Done)
+
+### (pending) — ui-conformance WP11c/d · a missing-model failure keeps its real reason through RejectionPipeline, so R04's Install action can fire
+
+**Scope:** `asr-api/src/main/kotlin/org/ort/asrapi/AsrEngine.kt` (new `AsrUnavailableException`),
+`asr-api/src/main/kotlin/org/ort/asrapi/RejectionPipeline.kt` — disclosed as an exception to this
+package's usual file-ownership discipline (P10-authored, not previously WP11c/d's, named explicitly
+by the coordinator's own message down to the line numbers), `pipeline/src/main/kotlin/org/ort/pipeline/passb/AsrEngineProvisioning.kt`
+(`UnavailableAsrEngine.transcribe` now throws the typed exception instead of a plain `error(...)`),
+`pipeline/src/test/kotlin/org/ort/pipeline/reprocess/ReprocessRunnerTest.kt` (new test). No
+`:data`/`:app` change — WP10's `ImproveScreens.kt` already greps `failureReasons` for exactly the
+substrings this fix restores (`isMissingModelReason`, confirmed by reading it), so no UI-side
+change was needed once the real text reaches that list again.
+
+**Requirements/ACs:** R-350; cf. R-143, R-290.
+
+**Constitution check.** Principle I (uncertainty is content, never fabricate): this closes the gap
+where a real, computed reason ("no ASR model installed at …") was silently replaced by a fixed,
+uninformative string before it ever reached a screen — the opposite failure from fabrication, but
+the same family of dishonesty (discarding a real fact in favour of a generic one). Principle V
+(nothing that shouldn't leave the device does): the fix is deliberately narrow — only
+`AsrUnavailableException`'s own, author-controlled message is ever passed through verbatim; every
+other exception, whatever its own `.message` might carry (a stack-trace fragment, an unrelated
+filesystem path), still gets the fixed generic text it always did. Principle II (test-backed
+change): `R_350_reason_reaches_summary` was verified to fail for the right reason before the fix
+(temporary revert of the new `catch` branch, twice — once before and once after the detekt-driven
+restructure below — both reproduced the exact "generic reason" failure), then to pass after.
+
+**What changed:**
+- **`AsrUnavailableException`** (new, `:asr-api`): `class AsrUnavailableException(val reason:
+  String) : Exception("ASR unavailable: $reason")` — a closed, distinct type rather than
+  pattern-matching on `IllegalStateException`/`Throwable.message`, so any other exception a real
+  engine throws (a decode failure, an OOM, a native crash) still falls through to the generic,
+  path/stack-trace-free bucket, never mistaken for "no model installed."
+- **`UnavailableAsrEngine.transcribe`** (`AsrEngineProvisioning.kt`): throws
+  `AsrUnavailableException(reason)` instead of `error("ASR unavailable: $reason")` (a plain
+  `IllegalStateException`, indistinguishable from any other bug at the catch site).
+- **`RejectionPipeline.process`**: the engine-call try/catch was extracted into a private `decode`
+  helper (a `DecodeOutcome` sealed result) so `process` itself keeps one `return` per logical
+  branch (detekt's `ReturnCount`, which the naive three-`catch`-with-three-`return`s version
+  exceeded) while `decode` still uses a distinct `catch (e: AsrUnavailableException)` block rather
+  than an `instanceof` check inside one generic `catch` (detekt's `InstanceOfCheckForException`,
+  which a first, combined-catch attempt tripped). The net behaviour: `AsrUnavailableException`'s
+  own message reaches `PassBOutcome.Failed` verbatim; `TimeoutCancellationException` keeps its own
+  message; every other `Throwable` still gets the fixed `"engine threw during transcribe"` text,
+  unchanged from before this round.
+- **`UnavailableAsrEngine`'s own kdoc corrected** — it previously (and incorrectly) claimed
+  `RejectionPipeline` already preserved `reason` intact; that claim is what the coordinator's
+  message showed was false, reading the two files' actual line numbers.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.ReprocessRunnerTest"` —
+  9 tests, all green, including `R_350_reason_reaches_summary the real ASR-unavailable reason
+  reaches failureReasons, not a generic one` (asserts `summary.failureReasons` contains a string
+  naming both "ASR unavailable" and "no ASR model", and that the old generic "engine threw during
+  transcribe" text is absent).
+- TDD genuineness, by temporary revert, twice: once against the initial three-`catch` version
+  (removing the `AsrUnavailableException` branch reproduced the generic-reason failure), and again
+  against the final `decode`-extracted version after the detekt-driven restructure (same
+  reproduction) — both restored and reconfirmed green.
+- `.\gradlew.bat :asr-api:test :pipeline:testDebugUnitTest --rerun` — every test in both modules
+  green (176 total across the two, including the pre-existing `RejectionPipelineTest`'s own "an
+  engine that throws produces Failed with the cause preserved" case, confirming the generic branch
+  is unchanged for ordinary exceptions).
+- `.\gradlew.bat :asr-api:ktlintCheck :asr-api:detekt :pipeline:ktlintCheck :pipeline:detekt` —
+  clean (two detekt findings during development — `ReturnCount`, then
+  `InstanceOfCheckForException` — both resolved by the `decode`-extraction above, not suppressed).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — 419 requirements, 191
+  covered; check reports up to date (unchanged from the previous round — R-350 is already accounted
+  for as an existing register row, not a new spec requirement id).
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- No UI change — `ImproveScreens.kt`'s `isMissingModelReason`/`humanizeFailureReason`/`Install`
+  wiring (WP10) and `ImproveContent.kt`'s `onOpenModels` host-wiring (WP3) already existed and were
+  read, not touched; this round only restores the real text those functions were always written to
+  expect.
+- `RealAsrEngineProvider.provide()`'s own `Unavailable.reason` string still embeds a literal
+  filesystem path (`${AsrModelLocator.modelsDir(filesDir).path}`) for the "no model installed" case
+  — left as is, since `ImproveScreens.kt`'s `humanizeFailureReason` already replaces the whole
+  string with a clean, board-worded phrase ("No transcription model installed") whenever it
+  matches, so the raw path is a detection signal `:pipeline` produces internally, never rendered to
+  a screen. Flagged in case a future consumer of `failureReasons` renders it more literally.
+
+---
+
 ## 2026-09-08 (ui-conformance data: dedicated Room query/transaction executor, Compose Flow-idle regression)
 
 ### b5a145c — ui-conformance data · dedicated query/transaction executor, fixes the post-R-204 Compose idle regression

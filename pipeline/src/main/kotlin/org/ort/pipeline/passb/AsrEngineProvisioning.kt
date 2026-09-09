@@ -2,6 +2,7 @@ package org.ort.pipeline.passb
 
 import org.ort.asrapi.AsrEngine
 import org.ort.asrapi.AsrResult
+import org.ort.asrapi.AsrUnavailableException
 import org.ort.asrapi.DecodeOptions
 import org.ort.asrsherpa.SherpaAsrEngine
 import org.ort.asrsherpa.real.RealSherpaDecoder
@@ -129,10 +130,12 @@ internal class SherpaOnnxSession(assetRef: AssetRef, private val decoder: RealSh
  * The honest failure [RealAsrEngineProvider]'s doc comment promises: a clearly-labelled [AsrEngine]
  * that never silently returns text, wired in exactly when [RealAsrEngineProvider] reports
  * [AsrEngineAvailability.Unavailable]. [org.ort.asrapi.RejectionPipeline] catches the thrown
- * [IllegalStateException] and reports [org.ort.asrapi.PassBOutcome.Failed] with [reason] intact —
- * an honest, retryable failure, never a fabricated transcript.
+ * [AsrUnavailableException] explicitly (register R-350 — a plain `error(...)`/
+ * [IllegalStateException] used to reach that pipeline's generic catch-all instead, which replaced
+ * [reason] with a fixed, uninformative message) and reports [org.ort.asrapi.PassBOutcome.Failed]
+ * with [reason] intact — an honest, retryable failure, never a fabricated transcript.
  */
 public class UnavailableAsrEngine(private val reason: String) : AsrEngine {
     override suspend fun transcribe(audio: FloatArray, opts: DecodeOptions): AsrResult =
-        error("ASR unavailable: $reason")
+        throw AsrUnavailableException(reason)
 }

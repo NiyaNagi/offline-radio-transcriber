@@ -25,6 +25,7 @@ import org.ort.pipeline.PipelineTestFixtures
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.passb.PassBFactory
+import org.ort.pipeline.passb.UnavailableAsrEngine
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import java.io.File
@@ -247,6 +248,48 @@ class ReprocessRunnerTest {
         )
         assertEquals("new transcript text", db.transcriptDao().getCurrent(okId)?.text)
     }
+
+    /**
+     * register R-350: `AsrEngineProvisioning.kt`'s `UnavailableAsrEngine.transcribe` throws the
+     * typed `AsrUnavailableException` naming exactly why (a real "no ASR model installed at …"
+     * reason) — before this fix, `RejectionPipeline`'s own generic `catch (t: Throwable)` replaced
+     * that message with the fixed "engine threw during transcribe" before it ever reached
+     * `ReprocessStatus.Summary.failureReasons`, so R04's "Install" action (which greps
+     * `failureReasons` for exactly this fact) could never fire for a genuinely missing model.
+     */
+    @Test
+    @Requirement("R-350")
+    fun `R_350_reason_reaches_summary the real ASR-unavailable reason reaches failureReasons, not a generic one`() =
+        runBlocking {
+            val txId = "TX-NO-MODEL"
+            seedTransmission(txId, text = "old text")
+            writeAudioFixture(txId)
+
+            val reason = "no ASR model installed at /fake/models/whisper-tiny-en-int8 (expected " +
+                "tiny.en-encoder.int8.onnx, tiny.en-decoder.int8.onnx, tiny.en-tokens.txt)"
+            val engine = UnavailableAsrEngine(reason)
+            val runner = ReprocessRunner(
+                db = db,
+                filesDir = filesDir,
+                currentTier = { Tier.T0 },
+                passFor = { tier ->
+                    PassBFactory.create(filesDir, db, engine, AssetRef("asr-unavailable", "0"), "none", tier = tier)
+                },
+            )
+
+            runner.run(listOf(txId)).toList()
+
+            val summary = (ReprocessStatus.state as ReprocessStatus.State.Done).summary
+            assertEquals(1, summary.failed)
+            assertTrue(
+                "the real ASR-unavailable reason must reach failureReasons verbatim, for R04's Install to fire",
+                summary.failureReasons.any { it.contains("ASR unavailable") && it.contains("no ASR model") },
+            )
+            assertTrue(
+                "the generic catch-all message must never appear once the real reason is known",
+                summary.failureReasons.none { it == "engine threw during transcribe" },
+            )
+        }
 
     @Test
     @Requirement("FR-REP-6", "R-091")
