@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-08 (ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410)
 
-### (pending) — ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410
+### e8b7dbf — ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410
 
 **Scope:** `ui/screens` (`NowScreen.kt`, `CaptureStatusScreen.kt`, `LevelMeterScreen.kt`), `ui/data`
 (`NowViewState.kt`, `ReaderPolling.kt`), `app/src/debug` (`Scenarios.kt`, `ScenarioFixtures.kt`,
