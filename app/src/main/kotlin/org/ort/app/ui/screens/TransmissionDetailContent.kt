@@ -81,17 +81,19 @@ public fun TransmissionDetailContent(
     var passFailure by remember(transmissionId) { mutableStateOf<PassFailureViewState?>(null) }
     var sourceOverTimeLabel by remember(transmissionId) { mutableStateOf<String?>(null) }
     var transcriptConfidence by remember(transmissionId) { mutableStateOf<Double?>(null) }
+    var transcriptCharSpan by remember(transmissionId) { mutableStateOf<IntRange?>(null) }
     var destination by remember(transmissionId) { mutableStateOf<DetailDestination>(DetailDestination.Main) }
     val scope = rememberCoroutineScope()
 
-    // R-153/R-189/R-183/R-188: every real extra `:data` read a poll needs, in one place — see
-    // [pollDetail]'s own doc comment for what each field is and why.
+    // R-153/R-189/R-183/R-188/R-320/R-182: every real extra `:data` read a poll needs, in one
+    // place — see [pollDetail]'s own doc comment for what each field is and why.
     suspend fun refresh() {
         val polled = pollDetail(context, transmissionId)
         detail = polled.detail
         passFailure = polled.passFailure
         sourceOverTimeLabel = polled.sourceOverTimeLabel
         transcriptConfidence = polled.transcriptConfidence
+        transcriptCharSpan = polled.transcriptCharSpan
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -109,15 +111,54 @@ public fun TransmissionDetailContent(
         sourceOverTimeLabel,
         transcriptConfidence,
         rejected = rejectedViewStateFor(current),
+        transcriptCharSpan = transcriptCharSpan,
     )
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
     val dest = destination
 
-    // `Detail-Correct-A/B/C.dc.html`: the sheet sits over the *dimmed detail screen*, not a second
-    // full screen — Correcting renders `Main` underneath (so the callsign stays visible through
-    // the scrim, matching the artboard) plus the scrim+sheet overlay on top, inside one `Box` so
-    // the two genuinely stack rather than one replacing the other.
+    DetailDestinationContent(
+        context = context,
+        transmissionId = transmissionId,
+        current = current,
+        viewState = viewState,
+        player = player,
+        onBack = onBack,
+        onOpenTransmission = onOpenTransmission,
+        backLabel = backLabel,
+        whyParentLabel = whyParentLabel,
+        dest = dest,
+        onDestinationChange = { destination = it },
+        refresh = ::refresh,
+        modifier = modifier,
+    )
+}
+
+/**
+ * The destination `Box`/`when`, pulled out of [TransmissionDetailContent] to keep that composable
+ * under detekt's `LongMethod` threshold — a plain data move, not a behaviour change.
+ * `Detail-Correct-A/B/C.dc.html`: the sheet sits over the *dimmed detail screen*, not a second full
+ * screen — Correcting renders `Main` underneath (so the callsign stays visible through the scrim,
+ * matching the artboard) plus the scrim+sheet overlay on top, inside one `Box` so the two genuinely
+ * stack rather than one replacing the other.
+ */
+@Suppress("LongParameterList") // one seam per independent I/O effect this destination wires up.
+@Composable
+private fun DetailDestinationContent(
+    context: Context,
+    transmissionId: String,
+    current: TransmissionDetail,
+    viewState: DetailViewState,
+    player: TransmissionAudioPlayer,
+    onBack: () -> Unit,
+    onOpenTransmission: (String) -> Unit,
+    backLabel: String,
+    whyParentLabel: String,
+    dest: DetailDestination,
+    onDestinationChange: (DetailDestination) -> Unit,
+    refresh: suspend () -> Unit,
+    modifier: Modifier,
+) {
     Box(modifier = modifier.fillMaxSize()) {
         when (dest) {
             DetailDestination.Main, DetailDestination.Correcting -> MainDestination(
@@ -128,8 +169,8 @@ public fun TransmissionDetailContent(
                 player = player,
                 onBack = onBack,
                 onOpenTransmission = onOpenTransmission,
-                onDestinationChange = { destination = it },
-                refresh = ::refresh,
+                onDestinationChange = onDestinationChange,
+                refresh = refresh,
                 backLabel = backLabel,
                 // R-261: while the correction sheet is open, the dimmed detail beneath it — its
                 // own `DrillInHeader`'s `Back to Log` included — must not be focusable or reachable
@@ -140,7 +181,7 @@ public fun TransmissionDetailContent(
             DetailDestination.Why -> DetailWhyScreen(
                 callsignLabel = whyParentLabel,
                 why = viewState.why,
-                onBack = { destination = DetailDestination.Main },
+                onBack = { onDestinationChange(DetailDestination.Main) },
                 modifier = Modifier.fillMaxSize(),
             )
 
@@ -149,8 +190,8 @@ public fun TransmissionDetailContent(
                 transmissionId = transmissionId,
                 dest = dest,
                 parentLabel = whyParentLabel,
-                onBack = { destination = DetailDestination.Main },
-                refresh = ::refresh,
+                onBack = { onDestinationChange(DetailDestination.Main) },
+                refresh = refresh,
                 modifier = Modifier.fillMaxSize(),
             )
 
@@ -158,8 +199,8 @@ public fun TransmissionDetailContent(
                 context = context,
                 outcome = dest.outcome,
                 onBack = onBack,
-                onDestinationChange = { destination = it },
-                refresh = ::refresh,
+                onDestinationChange = onDestinationChange,
+                refresh = refresh,
                 backLabel = backLabel,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -172,7 +213,7 @@ public fun TransmissionDetailContent(
                 current = current,
                 viewState = viewState,
                 dest = dest,
-                onDestinationChange = { destination = it },
+                onDestinationChange = onDestinationChange,
             )
         }
     }
@@ -388,6 +429,7 @@ private data class DetailPollResult(
     val passFailure: PassFailureViewState?,
     val sourceOverTimeLabel: String?,
     val transcriptConfidence: Double?,
+    val transcriptCharSpan: IntRange?,
 )
 
 /**
@@ -401,13 +443,17 @@ private data class DetailPollResult(
  * confidence is null (see [CorrectionPolling.currentAttribution]'s own doc comment for the full
  * diagnosis) — patched here, on every poll, not only after Undo. R-183: the source over's real
  * time, for the INFERRED explanation's "to HH:MM:SS" clause. R-188: the current transcript's own
- * real recorded confidence.
+ * real recorded confidence. R-320: the winning candidate's real per-slot lattice detail, folded
+ * into [fetched]'s own `inspection` — [ReaderPolling.transmissionDetail]'s base read does not carry
+ * it (`ReaderPolling.kt` is WP4's file, not extended here). R-182: the winning candidate's real
+ * transcript-highlight character span.
  */
 private suspend fun pollDetail(context: Context, transmissionId: String): DetailPollResult {
     var fetched = ReaderPolling.transmissionDetail(context, transmissionId)
     if (fetched != null) {
         fetched = fetched.copy(
             attribution = CorrectionPolling.currentAttribution(context, transmissionId, fetched.attribution),
+            inspection = CorrectionPolling.inspectionWithSlots(context, transmissionId),
         )
     }
     val passFailure = if (fetched?.processingState == TransmissionState.FAILED) {
@@ -420,7 +466,8 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
         fetched?.attribution?.sourceTransmissionId?.toString(),
     )
     val transcriptConfidence = CorrectionPolling.currentTranscriptConfidence(context, transmissionId)
-    return DetailPollResult(fetched, passFailure, sourceOverTimeLabel, transcriptConfidence)
+    val transcriptCharSpan = CorrectionPolling.winningCharSpan(context, transmissionId)
+    return DetailPollResult(fetched, passFailure, sourceOverTimeLabel, transcriptConfidence, transcriptCharSpan)
 }
 
 /**

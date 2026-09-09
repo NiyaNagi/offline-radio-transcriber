@@ -8931,6 +8931,129 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 10 · R-320 per-slot lattice grid, R-182 char-span highlight, R-321 undo restores the exact recorded prior
+
+**Scope:** `:app`, this package's own files — `ui/data/InspectionSurface.kt`,
+`ui/data/DetailViewState.kt`, `ui/data/CorrectionPolling.kt`,
+`ui/screens/{DetailWhyScreen,TransmissionDetailScreen,TransmissionDetailContent}.kt`, and their
+tests (two new files, `InspectionSurfaceTest.kt`/`CorrectionPollingInspectionTest.kt`, plus a new
+`DetailWhyScreenTest.kt` and extensions to `CorrectionPollingTest.kt`/
+`TransmissionDetailScreenTest.kt`/`TransmissionDetailContentTest.kt`). `git merge main` (diverged —
+`git merge --ff-only` refused, so `git merge main` per the round's own instruction; waited for
+`:data`'s schema v5 — `data/schemas/org.ort.data.OrtDatabase/5.json` — to land on `main` first, no
+stash, no rebase, no `gradlew --stop`). **Gate per the coordinator's load policy** (issued mid-round
+after `main`'s own gate stalled under concurrent whole-project builds): `:app:testDebugUnitTest
+--tests` scoped to touched classes, `:app:ktlintCheck :app:detekt`, `dependencyRules
+platformGuards`, `:app:assembleDebug`, `spec_check.py`, `coverageMatrix` then
+`coverageMatrixCheck` — no whole-project `build`, no un-scoped `:app:testDebugUnitTest`.
+
+**Requirements/ACs:** R-320 (halt, fixed), R-182 (fixed), R-321 (halt, fixed); F04/D01/D03/D05,
+FR-UI-4, FR-UI-8; constitution I (never fabricate), II (fake ships with a new interface method),
+III (nothing deleted quietly), VII (no look-alike of a component that exists).
+
+**Constitution Check.** Principle I is why R-320's grammar line shows only the real `grammarValid`
+bit, never the board's own fabricated "prefix K · region 7 · suffix LWH" per-component parse (no
+API returns that breakdown); why a pre-schema-v5 record's empty slot list reads "not recorded for
+this over", never a placeholder grid; and why R-182's span highlight validates its own bounds
+before trusting them, falling back to the literal substring check rather than risking a
+`StringIndexOutOfBoundsException` standing in for an honest "could not highlight". Principle III
+governs R-321 completely: `undoAll` still writes its own audit `CorrectionEntity` (constitution's
+own "undo is itself a further, kept correction," established at R-052) wherever the schema can
+represent it, and unconditionally restores the real prior attribution either way — never silently
+dropping either. Principle II is why `FakeTransmissionAudioPlayer` was not touched this round (no
+new interface method here) but `InspectionViewStateMapper.from`'s new `slots` parameter is
+defaulted so every pre-existing call site (including `ReaderPolling.kt`, WP4's file) compiles
+unchanged.
+
+**What changed:**
+
+1. **R-321 (halt), fixed.** Root cause, confirmed by reading `:data`'s new code directly:
+   `CorrectionDao.recordCorrection` now stamps a transmission's real `attributionState`/
+   `attributionConfidence`/`attributionSourceTransmissionId`/`corrected` — read *before* the
+   correction it is about to apply — onto the very `CorrectionEntity` row it inserts
+   (`previousAttributionState` etc., captured server-side in one transaction, so it cannot go stale
+   or be forgotten by a caller). `CorrectionPolling.undoAll` now looks that snapshot back up (the
+   correction matching `outcome.correctedAtMillis`/`newValue`) and hands it to the new,
+   unconditional `CorrectionDao.restoreAttribution(transmissionId, state, stationId, confidence,
+   sourceTransmissionId, corrected)` — which, unlike `applyCorrectedAttribution`, accepts an
+   arbitrary state and a `null` stationId, closing the "no station before the correction" gap this
+   function's own doc used to name as unrepresentable. Still writes its own audit-trail
+   `CorrectionEntity` (via a plain `insert`, not `recordCorrection` — that would call
+   `applyCorrectedAttribution` and immediately re-break the attribution `restoreAttribution` just
+   wrote) whenever `AffectedOverViewState.oldCallsign` is non-null; the one honest edge case with no
+   audit row is a restore back to *no* station at all, since `CorrectionEntity.newValue` is a
+   non-null column with no shape to fit that in. `CorrectionPolling.currentAttribution`'s own
+   INFERRED-with-correction patch (R-189) is **confirmed still live, not deleted** — a freshly
+   applied (not-yet-undone) correction still goes through `applyCorrectedAttribution`'s own
+   unconditional write, unchanged by this fix, and a correction-on-top-of-a-standing-correction,
+   undone back to that still-corrected earlier state, can and does write that exact shape back too
+   (documented in the function's own doc comment, addressing the round's "delete if dead" ask by
+   showing it is not). One pre-existing test (`R_189_currentAttribution_honours_undo_alls_revert_the_same_way`)
+   asserted the *old*, buggy shape (an undone row still reading `corrected = true`) — updated to
+   assert the real, fixed one. Tests, named `R_321` per the round's own ask, driving the real DAO
+   round trip (`applyCorrection` → `undoAll`, asserted against the real `TransmissionEntity`
+   columns, not the mapper): `R_321_undo_restores_ambiguous` (a Tier-A pick on an AMBIGUOUS over,
+   undone — the over returns to its chooser: `AMBIGUOUS`, no station, no confidence, uncorrected)
+   and `R_321_undo_restores_confirmed` (a typed correction on a CONFIRMED over, undone — the real
+   confidence comes back exactly, no downgrade to INFERRED).
+2. **R-320 (halt), fixed.** `Detail-Why.dc.html` section 1 now renders the winning candidate's real
+   per-slot `LatticeSlot` grid (unit, score, kept alternate, amber border below a disclosed `0.7`
+   policy threshold — no corpus-fitted per-unit cut exists anywhere in this codebase, the same
+   honest-constant pattern `CorrectionPolling`'s own `PRIOR_ADJUSTMENT_INCREMENT` already uses) —
+   `:data`'s new `LatticeSlotEntity` (schema v5) closes the gap this screen's earlier revision
+   reported (`PhoneticLatticeEntity.unitsBlob` is still an opaque blob; the slot table is real,
+   separately-written detail this screen can finally read). `InspectionViewStateMapper.from` gained
+   a defaulted `slots` parameter, grouped by the real `LatticeSlotEntity.candidateId` onto each
+   `CandidateInspectionViewState.slots` (never guessed from rank or position); new
+   `CorrectionPolling.inspectionWithSlots` re-derives the same `InspectionViewState`
+   `ReaderPolling.transmissionDetail` already computed, with real slots attached, for
+   `TransmissionDetailContent` to overwrite the base poll's own `inspection` with (the same
+   "extra `:data` read, since `ReaderPolling.kt` is WP4's file" pattern this package has used
+   throughout — see `currentAttribution`'s own precedent). A record with no slot rows at all (older
+   than schema v5) reads the honest "Per-slot detail is not recorded for this over." line, never a
+   placeholder grid. Also added: a real, honest "2 · Grammar" line (renumbering "Candidates that
+   survived"/"Priors" to 3/4) from the winning candidate's own `grammarValid` bit — **not** the
+   board's own "prefix K · region 7 · suffix LWH" breakdown, which no API this package can reach
+   returns (named, not built against a guess). Tests named `R_320`: `InspectionSurfaceTest`
+   (pure mapper — slot grouping by real `candidateId`, lattice-index ordering, the threshold cut, an
+   empty slot list for a candidate with none), `CorrectionPollingInspectionTest` (the real DAO round
+   trip through `CatalogDao.slotDetailsFor`), `DetailWhyScreenTest` (the grid renders unit/score/
+   kept-alternate; the honest fallback line when `winningSlots` is empty; the grammar line shows the
+   real bit, and explicitly never the fabricated "region"/"suffix" breakdown).
+3. **R-182, fixed.** `TranscriptSection`'s highlight now prefers the winning candidate's real
+   `[start, end)` character span (`CatalogDao.winningCandidateCharSpan`, via new
+   `CorrectionPolling.winningCharSpan`) — precise even for a phonetically spelled callsign ("kilo
+   seven lima whiskey hotel"), which the old literal `indexOf(stationId)` check could never match.
+   Extracted into `internal fun highlightedTranscript` (the same `internal`-for-direct-testability
+   precedent `scrubFraction` already set in `Inspection.kt`) so it is unit-tested without Compose: a
+   real span highlights exactly that range; an absent span (an acoustic lattice, or a pre-schema-v5
+   record) falls back to the literal substring check, unchanged; an out-of-bounds span (defensive —
+   never expected in practice) also falls back rather than throwing; no highlight at all when
+   neither the span nor the literal match exists. Tests named `R_182`, four in
+   `TransmissionDetailScreenTest`, plus `CorrectionPollingInspectionTest`'s own DAO-level pair
+   (a real anchored span; `null` for an unanchored acoustic lattice, and for no winning candidate at
+   all).
+4. **Mechanical follow-ups.** `TransmissionDetailContent`'s main composable regrew past detekt's
+   `LongMethod` threshold once `transcriptCharSpan` state landed — its `Box`/`when` destination
+   dispatch moved to a new private `DetailDestinationContent`, a plain data move, no behaviour
+   change. `TransmissionDetailContentTest`'s own R-180 assertion ("2 · Candidates that survived")
+   updated to "3 ·" for the new section-1 grammar line's renumbering.
+
+**Verified (scoped gate, per the coordinator's load policy):** `:app:testDebugUnitTest --tests`
+covering every touched class (`InspectionSurfaceTest`, `CorrectionPollingInspectionTest`,
+`CorrectionPollingTest`, `CorrectionPollingPassAndRevisionsTest`, `DetailWhyScreenTest`,
+`TransmissionDetailScreenTest`, `TransmissionDetailContentTest`) — all clean, run together and
+individually; `:app:ktlintCheck :app:detekt` (clean after two small fixes — a line-length wrap in
+`DetailWhyScreen.kt`, the `LongMethod` extraction above); `dependencyRules platformGuards` (clean —
+no new `:lexicon`/`:pipeline` dependency edge; the new `:data` entities/DAOs are reached exactly
+the way every other `:data` read in this package already is); `python
+tools\spec-check\spec_check.py` (`spec-check: OK`); `coverageMatrix` then `coverageMatrixCheck`
+(separate invocations, both clean); `:app:assembleDebug` (clean).
+
+**Left open:** none new this round. Round 6's R-182 gap is now closed (superseded by this round's
+own fix); round 8's now-resolved R-321 is closed; R-320 (round 8's halt) is closed. No further WP6
+halts remain open as of this round.
+
 ### (pending) — ui-conformance WP6 round 9 · R-331: the rejected detail's title reads REJECTED, never the raw rule record
 
 **Scope:** `:app`, this package's own files — `ui/screens/TransmissionDetailScreen.kt` and its
