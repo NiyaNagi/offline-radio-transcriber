@@ -12123,6 +12123,90 @@ rendered "not measured" or omitted rather than invented) and IV (liveness from h
 
 ## 2026-09-08 (ui-conformance WP7: search)
 
+### (pending) — ui-conformance WP7 · screenshot-tour seam: initialQuery, submitOnStart, initialFiltersOpen
+
+**Scope:** `:app` only — `ui/screens/SearchContent.kt` and `ui/screens/SearchContentTest.kt`.
+`git merge main` first (fast-forward to `a0afc9e`, "Reviewer C at e927690: R-215/270/273/274/275/
+277/311/312 closed; R-430..R-433 filed" — no conflicts).
+
+**Requirements/ACs:** none new (tooling seam for the screenshot tour, not a register row) — the
+work it unblocks is the tour's own coverage of `Search-Results`/`Search-Empty`/
+`Search-Unavailable.dc.html`/the open filters sheet, currently unreachable without a real
+keyboard/tap sequence.
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural): this is purely additive to
+  `SearchContent`'s own public surface — every parameter defaults to off, so every existing caller
+  (today, `OrtNavHost.kt`'s inline copy; soon, WP3's `NavSeed`) compiles and behaves unchanged.
+  Principle I (an unmet part of a query is content, never silently dropped) is why the seeded
+  search runs through the caller's own real `onInputChange`/`onSearch`, not a shortcut that
+  fabricates a `SearchResult` directly — the tour must see exactly what a real typed-and-submitted
+  query produces, `search-unavailable`'s `DebugSearchOverride` and the count line included.
+- **Three new `SearchContent` parameters, all defaulting to off:**
+  - `initialQuery: String? = null` — pre-fills the query field on first composition via the
+    caller's own `onInputChange(input.copy(text = initialQuery))`.
+  - `submitOnStart: Boolean = false` — when [initialQuery] is also set, calls the caller's own
+    `onSearch()` once, immediately after the pre-fill, in the same `LaunchedEffect(Unit)` this
+    screen already runs its first-composition `recent`/`heardFrequenciesHz` loads in. `initialQuery`
+    alone (without `submitOnStart`) only pre-fills the field; `submitOnStart` alone (without
+    `initialQuery`) does nothing — there is no query to submit.
+  - `initialFiltersOpen: Boolean = false` — seeds `filtersSheetOpen`'s own `remember { mutableStateOf(...) }`
+    directly (no effect needed), opening the filters sheet on first composition — the one state on
+    the design boards the tour previously had no way to reach at all (no real Filters-chip tap).
+  - The composable gained `@Suppress("LongParameterList")` (matching `SearchScreen`'s own existing
+    suppression) — real detekt finding caught by the gate: 10 parameters now exceeds the default
+    threshold of 9.
+- **Why this reaches real results, not a fake.** `onInputChange`/`onSearch` are plain, synchronous
+  calls into whatever the caller wired — `OrtNavHost.kt`'s own `searchHostState` writes
+  `navState.searchInput.value` synchronously in `onInputChange` and reads that same
+  `MutableState` inside `onSearch`'s `scope.launch { … SearchPolling.search(…) }` — a Compose
+  Snapshot write is visible to any later read of the same state object, so by the time that
+  coroutine body runs, it already sees the pre-filled query. The real search path
+  (`SearchFilterParser.parse` → `SearchPolling.search`) is exercised exactly as a keyboard-driven
+  search would, so `search-unavailable`'s `DebugSearchOverride` (see below) and the count line
+  behave identically to a real search.
+- **`DebugSearchOverride`/`SearchPolling.search()`'s `search-unavailable`-scenario guard (WP4,
+  commit `bdcb168`) — reviewed in passing, kept, no issues found.** Now present in this worktree
+  (main's fast-forward carried it). Read the whole class: a one-shot, `BuildConfig.DEBUG`-gated
+  flag (`DebugSearchOverride.consumeForcedUnavailable()`), consulted in `SearchPolling.search()`
+  only when there is real free text to degrade (a filters-only search never touches
+  `transcript_fts` either way), reusing the exact same debug-override-receiver pattern
+  `DebugFailureOverride`/`DebugLexiconImportOverride` already established elsewhere in this
+  codebase. Its own kdoc explains why a flag rather than real schema corruption (a corrupted
+  `transcript_fts` would break *every* later `OrtDatabase.create()` call in the app, not just this
+  one scenario, confirmed against real `BundledSQLiteDriver` SQLite before the object existed) and
+  why one-shot rather than sticky (so `Retry` genuinely recovers on its second call, matching
+  `Search-Unavailable.dc.html`'s own story). Correct, well-scoped, does not touch anything this
+  package owns — kept as-is.
+- **Tests**, named for the seam they establish, added to `SearchContentTest.kt`:
+  `R_TOUR_search_initial_query` — seeds the real `search-corpus` debug fixture (`Scenarios.load`,
+  the same one `SearchPollingTest.kt`'s `R_371_*` tests use), renders `SearchContent` behind a
+  small in-test stand-in for `OrtNavHost`'s own `searchHostState` (real `onInputChange`/`onSearch`
+  wiring, not a stub), passes `initialQuery = "park"`/`submitOnStart = true`, and asserts the real
+  count line ("14 overs" — every fixture transcript reads "…doing a park activation…") renders,
+  polled the same way this file's other real-Room-I/O tests already do. `R_TOUR_search_filters_open`
+  — `initialFiltersOpen = true` and asserts the sheet and its scrim exist immediately, no tap.
+
+**Verified** (scoped gate):
+- `git merge main` — fast-forward, confirmed `a0afc9e` in `git log --oneline -1` before starting.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchContentTest" --tests
+  "org.ort.app.ui.screens.SearchContentBackHandlerTest"` — **BUILD SUCCESSFUL, 8 tests, 0 failed**.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — first run **FAILED** (`SearchContent.kt`: real
+  `LongParameterList` finding, 10 params over the threshold of 9); fixed with
+  `@Suppress("LongParameterList")` (matching `SearchScreen.kt`'s own), re-ran clean, then re-ran
+  the affected tests again to confirm the annotation-only change was behaviour-neutral (still 8/8).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 191 covered (unchanged — this is tooling, no
+  new `FR-*`/`AC-*`/`NFR-*` id).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 191 of 419.
+
+**Left open / not done:**
+- WP3 threads `initialQuery`/`submitOnStart`/`initialFiltersOpen` through `NavSeed` and WP12 adds
+  the tour steps — both outside this package's ownership, per the coordinator's own routing.
+- Every gap the earlier WP7 entries below already list is unchanged by this addendum.
+
 ### (pending) — ui-conformance WP7 · filters sheet traps system back
 
 **Scope:** `:app` only — `ui/screens/SearchContent.kt` (new `BackHandler`) and a new test file,
