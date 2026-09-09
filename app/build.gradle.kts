@@ -122,11 +122,27 @@ dependencies {
 // fresh worker process, never one shared with `testDebugUnitTest`'s own run, regardless of either
 // task's own fork settings — `forkEvery = 1` below is an extra guard for if this task ever grows a
 // second class, not what does the isolating.
-val smokeTestDebugUnitTest = tasks.register<Test>("smokeTestDebugUnitTest") {
+//
+// Test-suite regression, 2026-09-08 (CHANGELOG's own entry has the full bisection): confirmed the
+// same failure mode — bisected to `SessionsContentTest` alone reliably poisoning `ui.failures`'s
+// own Compose tests when the two run in one JVM fork after it (`FailureScreensTest`/`FailureHostTest`
+// then take tens of seconds to tens of *minutes* per test instead of milliseconds, all inside
+// `RobolectricIdlingStrategy.runUntilIdle`/`MainTestClock.advanceTimeByFrame`, never inside this
+// app's own code). Bisection ruled out every mechanism that looked like a leaked resource this class
+// could plausibly own — closing its own `OrtDatabase`, caching `OrtDatabase.create()` process-wide
+// (kept anyway: `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`'s own report, a genuine unrelated
+// leak worth fixing), even disabling the one recurring polling `LaunchedEffect` its tests reach
+// (`LogContent.kt`'s embedded poll) made no difference — so this is the same class of Robolectric/
+// Compose-testing JVM-sharing failure `ReaderActivityDestinationSmokeTest` already named above, not
+// a leak in this package's own code, and the same fix applies: a JVM this class's tests never share
+// with anything that runs after them.
+val composeIdlePoisoningSmokeTestDebugUnitTest = tasks.register<Test>("smokeTestDebugUnitTest") {
     group = "verification"
-    description = "Runs ReaderActivityDestinationSmokeTest alone, in its own JVM never shared " +
-        "with testDebugUnitTest's — see that class's own KDoc for why."
+    description = "Runs the test classes already confirmed to poison later Compose tests' idle " +
+        "checking when they share a JVM with testDebugUnitTest's ~1200 others — each alone, in " +
+        "its own fresh JVM — see this task's own KDoc for the two confirmed so far."
     include("**/ReaderActivityDestinationSmokeTest*")
+    include("**/SessionsContentTest*")
     forkEvery = 1
 }
 
@@ -144,7 +160,8 @@ val smokeTestDebugUnitTest = tasks.register<Test>("smokeTestDebugUnitTest") {
 afterEvaluate {
     val debugUnitTest = tasks.withType<Test>().named("testDebugUnitTest").get()
     debugUnitTest.exclude("**/ReaderActivityDestinationSmokeTest*")
-    smokeTestDebugUnitTest.configure {
+    debugUnitTest.exclude("**/SessionsContentTest*")
+    composeIdlePoisoningSmokeTestDebugUnitTest.configure {
         testClassesDirs = debugUnitTest.testClassesDirs
         classpath = debugUnitTest.classpath
         jvmArgumentProviders.addAll(debugUnitTest.jvmArgumentProviders)
@@ -152,5 +169,5 @@ afterEvaluate {
     }
 }
 
-tasks.named("check") { dependsOn(smokeTestDebugUnitTest) }
-tasks.named("build") { dependsOn(smokeTestDebugUnitTest) }
+tasks.named("check") { dependsOn(composeIdlePoisoningSmokeTestDebugUnitTest) }
+tasks.named("build") { dependsOn(composeIdlePoisoningSmokeTestDebugUnitTest) }
