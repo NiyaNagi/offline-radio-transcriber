@@ -245,6 +245,28 @@ class AttributionMarkerTest {
     }
 
     @Test
+    fun `R_424_showScore false suppresses the chip but the merged description still states the confidence`() {
+        // T02's own repro ("How these were attributed"): the score rendered twice — once as this
+        // composable's own chip, once again in WP5's own reasoning line ("· 0.85"), since
+        // `AttributionRow` always drew its chip with no way for a caller to opt out. `showScore =
+        // false` suppresses only the visible chip; FR-UI-4's "state is never omitted" still holds,
+        // since [attributionStateDescription] composes the confidence value in prose regardless.
+        composeTestRule.setContent {
+            OrtTheme {
+                AttributionRow(
+                    attribution = Attribution.inferred("K7LWH", 0.82),
+                    showScore = false,
+                    modifier = Modifier.testTag("row"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("K7LWH").assertExists()
+        composeTestRule.onNodeWithText("0.82").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("row").assert(hasContentDescription("0.82", substring = true))
+    }
+
+    @Test
     fun `R_020 ambiguous shows the or QRF alternate only when one is supplied`() {
         composeTestRule.setContent {
             OrtTheme {
