@@ -20,10 +20,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.ort.app.debug.Scenarios
+import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.navigation.rememberReaderNavigator
-import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.theme.OrtTheme
 import java.io.File
@@ -44,9 +44,11 @@ import java.io.File
  * overrides that default path, for a caller that already has its own on-device spec file.
  *
  * For each [TourStep] (see that class's own doc comment for the schema and, importantly, for
- * exactly which `drillIn` kinds v1 can and cannot seed): loads the step's base scenario through the
- * real [Scenarios.load] (the same seeding [org.ort.app.debug.ScenarioReceiver] and
- * `ScenarioReaderActivity` use), then either
+ * exactly which `drillIn` kinds are seedable at all — v2, [TourIds]): loads the step's base scenario
+ * through the real [Scenarios.load] (the same seeding [org.ort.app.debug.ScenarioReceiver] and
+ * `ScenarioReaderActivity` use), resolves any `drillIn` map into a real
+ * [org.ort.app.ui.navigation.NavSeed] against that just-loaded data ([TourIds.resolveSeed]), then
+ * either
  *
  * - **a destination step** — composes the real [OrtNavHost] *directly inside this activity's own
  *   `setContent`* (not by launching [org.ort.app.ui.ReaderActivity] as a child — composing in place
@@ -109,9 +111,10 @@ public class ScreenshotTourActivity : ComponentActivity() {
                         ) {
                             val navigator = rememberReaderNavigator(
                                 initialDestination = resolved.destination,
-                                initialSettingsScreen = resolved.settingsScreen,
+                                initialSettingsScreen = resolved.navSeed?.settingsScreen,
+                                seed = resolved.navSeed,
                             )
-                            OrtNavHost(sessionId = resolved.sessionId, navigator = navigator)
+                            OrtNavHost(sessionId = resolved.sessionId, seed = resolved.navSeed, navigator = navigator)
                         }
                     }
                 }
@@ -164,20 +167,17 @@ public class ScreenshotTourActivity : ComponentActivity() {
     }
 
     /**
-     * [org.ort.app.debug.tour.TourStep.destination]/`settingsScreen` are resolved to real enum
-     * values here — plain suspend code, not composition — so an unrecognised name throws in a place
-     * [TourRunner] already catches, never inside `setContent` where an exception would crash the
-     * whole activity instead of failing one step (see this class's own doc comment).
+     * [org.ort.app.debug.tour.TourStep.destination] and every [TourStep.drillIn] key are resolved
+     * to real values here — plain suspend code, not composition — so an unrecognised name, or a
+     * symbolic drill-in value [TourIds] cannot find in this step's own just-loaded data, throws in a
+     * place [TourRunner] already catches, never inside `setContent` where an exception would crash
+     * the whole activity instead of failing one step (see this class's own doc comment).
      */
     private suspend fun renderDestinationStep(step: TourStep, sessionId: String?): TourCapture {
         val destination = ReaderDestination.entries.firstOrNull { it.name == step.destination }
             ?: error("tour step '${step.id}' names unknown destination '${step.destination}'")
-        val settingsScreen = step.settingsScreen?.let { name ->
-            SettingsScreenId.entries.firstOrNull { it.name == name }
-                ?: error("tour step '${step.id}' names unknown settingsScreen '$name'")
-        }
-        currentDestinationStep =
-            ResolvedDestinationStep(step.id, destination, settingsScreen, step.fontScale, sessionId)
+        val navSeed = TourIds.resolveSeed(applicationContext, sessionId, step.drillIn)
+        currentDestinationStep = ResolvedDestinationStep(step.id, destination, navSeed, step.fontScale, sessionId)
         // Composition + the first poll tick: `OrtNavHost`'s own `LaunchedEffect(sessionId)` polling
         // loops run their body once, synchronously, before their first `delay(2_000)` (confirmed by
         // reading `OrtNavHost.kt`'s `rememberDrawerLiveState` before writing this), so the initial
@@ -216,7 +216,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
     private data class ResolvedDestinationStep(
         val id: String,
         val destination: ReaderDestination,
-        val settingsScreen: SettingsScreenId?,
+        val navSeed: NavSeed?,
         val fontScale: Float,
         val sessionId: String?,
     )

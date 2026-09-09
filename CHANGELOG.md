@@ -32,7 +32,95 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (ui-conformance WP12 v1.1: first real-device tour run, two transport bugs fixed)
+## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
+
+### ed7b13c — ui-conformance WP12 v2 · drill-in seeding through WP3's NavSeed, TourIds resolves symbolic ids against real fixture data
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourIds.kt` (new), `ScreenshotTourActivity.kt`
+(composes `OrtNavHost`/`rememberReaderNavigator` with a real `NavSeed` now), `TourSpec.kt` (the
+supported `drillIn` key set expanded from one key to eleven), `app/src/test/kotlin/org/ort/app/debug/tour/TourIdsTest.kt`
+(new), `TourSpecTest.kt` (one accessor rename, two new assertions), `tools/ui-audit/tour.json` (18
+new steps, 93 → 111). `git merge main` first (5163388, carrying WP3 round 13's `NavSeed`) — one real
+`CHANGELOG.md` conflict against three concurrent entries (WP3 rounds 12/13, WP11c/d's R-350 fix),
+resolved by keeping every section, no other file conflicted.
+
+**Requirements/ACs:** none new — validation tooling, unchanged from WP12's earlier rounds.
+
+**What changed:**
+
+*Constitution Check.* II (test-backed change — `TourIdsTest`'s 11 new cases run every resolution
+path against a *real*, just-loaded fixture, not a hand-built stand-in, including the failure path:
+asking for an attribution state that does not exist throws, proven, not assumed). I (uncertainty is
+content — `ST03`/`ST04` were checked against `StationDetailContent.kt`'s actual source, found
+genuinely unseedable, and reported as such below rather than silently left out of the step list with
+no explanation).
+
+- **`TourIds.resolveSeed`** (new): turns a `drillIn` map's *symbolic* values — `transmission:
+  "ambiguous"`, `station: "WA7HJR"`, `thread: "any"`, `reviewSession: "self"` — into a real
+  `org.ort.app.ui.navigation.NavSeed` by querying the step's own just-loaded scenario
+  (`TransmissionDao.listBySession`/`ActivityDao.listStations`, both already-public `:data` reads, no
+  new DAO query added). This is the coordinator's own point, verbatim: a fixture's ULIDs can change
+  on every reseed; `"ambiguous"`/`"WA7HJR"` do not. A symbol this table does not recognise, or a
+  literal id/Hz value that resolves to nothing in the loaded data, throws — caught by `TourRunner`
+  the same as any other per-step failure.
+- **`ScreenshotTourActivity`** now builds `rememberReaderNavigator(..., seed = navSeed)` and passes
+  the identical `seed` to `OrtNavHost(seed = navSeed, ...)` — `NavSeed`'s own `initialDestination()`
+  takes priority over the step's explicit `destination` whenever a drill-in id implies one (e.g. a
+  `transmission` drill-in always lands on `Log`'s own detail regardless of what `destination` says),
+  matching how a real tap would behave.
+- **`TourStep`'s supported `drillIn` keys**: `transmission`, `station`, `frequency`, `thread`,
+  `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`, `captureLevelMeter`,
+  `reviewSession`, `frequencyInitialView`, `settingsScreen` (unchanged from v1, now routed through
+  `NavSeed` instead of a separate parameter).
+- **18 new `tour.json` steps** (93 → 111): D01–D04 (confirmed/inferred/ambiguous/unknown, `overnight`,
+  D02 also `@2x`), D06 (`no-audio`), D07 (`revisions`), F18 (`pass-failed`), T02 (`overnight`, any
+  thread), ST02 (`stations-14-nights`, `WA7HJR`, plus `@2x`), FQ02/FQ03 (`frequency-change`,
+  145.230 MHz, `Detail`/`Change`, FQ03 also `@2x`), N06 seeded directly (`level-low`/`level-clip`),
+  the R-276 Log-filtered-by-frequency route, and `Earlier nights`'s Settings-Storage review seed
+  (`stations-14-nights`, `reviewSession: self`).
+- **A genuine finding, not a workaround**: `ST03`/`ST04` (Station-Pattern, Station-Identity) are
+  **not** seedable even with `NavSeed` — confirmed by reading `StationDetailContent.kt`'s own source:
+  which of Overview/Pattern/Identity shows is `var sub by remember(stationId) {
+  mutableStateOf(StationSubScreen.NONE) }`, a purely internal, un-exported Compose state with no
+  parameter `NavSeed` or any other caller could set. Left out of `tour.json` and named here rather
+  than silently absent.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — **BUILD SUCCESSFUL**,
+  24 tests, 24 passed (12 from v1/v1.1 plus `TourIdsTest`'s 11 new cases plus
+  `TourSpecTest`'s new `R_TOUR_DRILL_IN_KEYS`) — including
+  `R_TOUR_IDS_TRANSMISSION_STATES` (each of confirmed/inferred/ambiguous/unknown resolves, against
+  the real `overnight` fixture, to a real row of that exact `AttributionState`),
+  `R_TOUR_IDS_STATION_CALLSIGN` (`WA7HJR` resolves to that station's real database id in
+  `stations-14-nights`), `R_TOUR_IDS_THREAD_ANY`, `R_TOUR_IDS_LOG_FILTER`,
+  `R_TOUR_IDS_REVIEW_SESSION_SELF`, `R_TOUR_IDS_UNRESOLVABLE_STATE` (throws when nothing matches).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (191 covered of 419); no drift attributable to this package (still no requirement ids cited).
+- **Real device, `emulator-5558` (AVD `ort_audit_3`), fresh worktree APK (`adb install -r`), `pm
+  clear` + permissions granted, `.\tools\ui-audit\tour.ps1 -Port 5558 -Out .\tmp-tour-out`**:
+  **111/111 steps ok, 0 errors, 100.7s elapsed** (every one of the 18 new drill-in steps succeeded on
+  the first real run — every symbolic-id guess about the fixtures' own shape, made from reading
+  `results/ui-audit/README.md` alone, turned out correct). Three of the new captures opened directly
+  with the Read tool and visually confirmed as genuine, non-blank renders:
+  `overnight/D01-confirmed.png` (the real Transmission-Detail screen — header "Back to Log", callsign
+  `W7NPC`, transcript, waveform, the real "WHY THIS CALLSIGN" lattice/prior panel with actual scored
+  rows, both action buttons), `stations-14-nights/ST02-station.png` (`WA7HJR`'s real Station detail —
+  facts, the real activity pattern chart with its not-listening hatch, ten real "RECENT OVERS" rows),
+  and `overnight/L01-log-filtered-frequency.png` (the real Log screen with the `145.230` filter chip
+  already pressed/selected, rows genuinely filtered to that frequency — R-276's own seeded shape).
+  `tmp-tour-out/` was scratch, not part of this commit.
+
+**Left open / not done:**
+- `ST03`/`ST04` remain unseedable — named above with the exact internal state blocking them; a fix
+  would need `StationDetailContent.kt` (WP8's file, not WP12's row) to accept an initial-sub-screen
+  parameter the way `FrequencyDetailContent.initialView` already does.
+- `Log`'s and `Search`'s own filter sheets remain unseedable, per `NavSeed`'s own doc comment
+  (unchanged from v1's finding, now confirmed still true after WP3's round 13).
+- Setup steps still carry no font-scale hook (unchanged from v1.1).
 
 ### 6c137a4 — ui-conformance WP12 v1.1 · fix spec transport and manifest poll, verify tour.ps1 end to end on a real device
 

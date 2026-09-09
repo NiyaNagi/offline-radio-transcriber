@@ -88,9 +88,20 @@ class TourSpecTest {
         val spec = loadSpec()
         val names = org.ort.app.ui.settings.SettingsScreenId.entries.map { it.name }.toSet()
         for (step in spec.steps) {
-            step.settingsScreen?.let { name ->
+            step.drillIn["settingsScreen"]?.let { name ->
                 assertTrue("step '${step.id}' names unknown settingsScreen '$name'", name in names)
             }
+        }
+    }
+
+    @Test
+    fun `R_TOUR_DRILL_IN_KEYS every drillIn key in tour json is one TourIds can resolve`() {
+        val spec = loadSpec()
+        for (step in spec.steps) {
+            assertTrue(
+                "step '${step.id}' names unsupported drillIn key(s) ${step.unsupportedDrillInKeys}",
+                step.unsupportedDrillInKeys.isEmpty(),
+            )
         }
     }
 
