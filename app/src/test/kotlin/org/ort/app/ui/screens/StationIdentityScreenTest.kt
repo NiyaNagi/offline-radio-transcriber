@@ -165,8 +165,12 @@ class StationIdentityScreenTest {
 
         composeTestRule.onNodeWithTag("station-identity-rename").performScrollTo()
         composeTestRule.onNodeWithTag("station-identity-rename").performClick()
-        composeTestRule.onNodeWithText("Cancel").performScrollTo()
-        composeTestRule.onNodeWithText("Cancel").performClick()
+        // The rename field's own `Cancel`/`Save` are `TextAction`s, which
+        // `clearAndSetSemantics { contentDescription = text; ... }` (Controls.kt's own R-380 doc
+        // comment) — reachable by content description, not by `onNodeWithText` (the split
+        // chooser's own `Cancel` below is `ActionBar`'s plain `clickable` + `Text`, unaffected).
+        composeTestRule.onNodeWithContentDescription("Cancel").performScrollTo()
+        composeTestRule.onNodeWithContentDescription("Cancel").performClick()
 
         assert(!renamed)
         composeTestRule.onNodeWithTag("station-identity-rename").assertExists()
