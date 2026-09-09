@@ -212,7 +212,15 @@ private fun FrequencyHeaderSection(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.padding(horizontal = OrtSpacing.lg)) {
-        Text(text = state.label, style = OrtType.callsignTitle, modifier = Modifier.semantics { heading() })
+        // R-433 (register, polish): `Frequency.dc.html`'s own mono title is the bare frequency —
+        // `state.label` carries " MHz" (built once for the list row and this screen's own prose
+        // elsewhere, e.g. the facts table), so it is stripped here the same way `FrequencyRow`
+        // already strips it for the list screen's own title column.
+        Text(
+            text = state.label.removeSuffix(" MHz"),
+            style = OrtType.callsignTitle,
+            modifier = Modifier.semantics { heading() },
+        )
         if (state.whatItIs.isNotBlank()) {
             Text(
                 text = state.whatItIs,
@@ -262,8 +270,13 @@ private fun FrequencyHeaderSection(
             // (WP2's shared component) only ever draws the hatch legend, never this alternative, so
             // it is drawn here instead of asking WP2 to add a caller-supplied caption slot.
             if (!hasNotListeningHours) {
+                // R-431 (register, design): the board's own fixed caption names a real night
+                // count ("averaged over 14 nights"), not the vaguer "every night" this package's
+                // earlier build used — `state.patternNightsCount` is the real session count
+                // `FrequencyPolling.frequencyDetail` already computes for `Listened` above.
                 Text(
-                    text = "averaged over every night · no hatch: always listening here",
+                    text = "averaged over ${pluralize(state.patternNightsCount, "night")} · " +
+                        "no hatch: always listening here",
                     style = OrtType.subLine,
                     color = OrtColors.textFaint,
                     modifier = Modifier.padding(top = OrtSpacing.xs).fillMaxWidth(),

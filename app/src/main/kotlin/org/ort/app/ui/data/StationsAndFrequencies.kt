@@ -202,6 +202,14 @@ public data class FrequencyDetailViewState(
     val weekOverWeekSummary: List<String> = emptyList(),
     /** R-074's typical-night one-sentence summary — [PatternInsights]'s first line. */
     val patternSummarySentence: String = "",
+    /**
+     * R-431 (register, design): how many real distinct nights [activityPattern] was averaged
+     * over — the same session count `listenedLabel` already names, never the board's own literal
+     * "14" hardcoded (this frequency may honestly have more or fewer). Used only by the
+     * "no hatch: always listening here" caption, `FrequencyHeaderSection`'s own doc comment names
+     * why that caption exists at all.
+     */
+    val patternNightsCount: Int = 0,
     val regulars: List<FrequencyRegularViewState> = emptyList(),
     val transmissions: List<TransmissionListEntryViewState>,
     val nights: List<HourActivityState> = emptyList(),

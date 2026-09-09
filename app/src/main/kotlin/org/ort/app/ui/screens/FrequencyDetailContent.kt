@@ -38,6 +38,10 @@ public fun FrequencyDetailContent(
     // unchanged until WP3 wires it, the same pattern `onOpenTransmission`/`onOpenStation` already
     // established elsewhere in this package.
     onOpenOvers: (Long, TimeWindow) -> Unit = { _, _ -> },
+    // R-432 (register, spec): `Frequency-Change`'s own second bottom pill — see
+    // `FrequencyChangeScreen.onOpenThread`'s own doc comment. Defaulted to a no-op so
+    // `OrtNavHost.kt` compiles unchanged until WP3 can identify the busiest thread to route to.
+    onOpenThread: () -> Unit = {},
     // R-276 (register, spec, coordinator round 2026-09-08): which sub-screen this drill-in opens
     // on. Defaulted to `Detail` so every existing caller (`OrtNavHost.kt`) still compiles
     // unchanged; WP3 passes `Change` when reopening after "The N overs" round-trips through the
@@ -69,6 +73,7 @@ public fun FrequencyDetailContent(
                     onBack = { sub = FrequencyDetailView.Detail },
                     modifier = modifier,
                     onOpenOvers = onOpenOvers,
+                    onOpenThread = onOpenThread,
                 )
             } else {
                 LoadingLine(modifier)
