@@ -163,9 +163,23 @@ private fun LevelMeter(reading: LevelReading?, modifier: Modifier = Modifier) {
             .border(1.dp, OrtColors.lineSection, RoundedCornerShape(8.dp)),
     ) {
         Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+            val lineStrokePx = 1.dp.toPx()
+            // R-465: half the line's own stroke alone was still not enough clearance -- this
+            // Box's own 1dp border is drawn *over* the Canvas's content (so it stays visible even
+            // where a child fills the whole Box), and it overpainted a line inset by only half its
+            // own stroke width. 1.5dp clears both: this chart's 1dp border plus the reference
+            // line's own half-stroke. Confirmed on-device after raising it from 0.5dp to this.
+            val lineClearPx = 1.5.dp.toPx()
+
             // Target band — the artboard's fixed green zone (a policy line, not a measurement).
-            val bandTopY = yForFraction(levelBarFraction(LevelViewState.TARGET_BAND_TOP_DBFS.toDouble()))
-            val bandBottomY = yForFraction(levelBarFraction(LevelViewState.TARGET_BAND_BOTTOM_DBFS.toDouble()))
+            val bandTopY = yForReferenceLine(
+                levelBarFraction(LevelViewState.TARGET_BAND_TOP_DBFS.toDouble()),
+                lineClearPx,
+            )
+            val bandBottomY = yForReferenceLine(
+                levelBarFraction(LevelViewState.TARGET_BAND_BOTTOM_DBFS.toDouble()),
+                lineClearPx,
+            )
             drawRect(
                 color = OrtColors.accentGreen.copy(alpha = 0.10f),
                 topLeft = Offset(0f, bandTopY),
@@ -186,22 +200,29 @@ private fun LevelMeter(reading: LevelReading?, modifier: Modifier = Modifier) {
 
             // Clip line — 0 dBFS. Halt-coloured always (WP4's own rule: never amber, the one
             // thing on this chart that stays red even though the live status dot below is amber).
-            val clipY = yForFraction(levelBarFraction(LevelViewState.CHART_CEILING_DBFS.toDouble()))
+            // R-465: CHART_CEILING_DBFS is the scale's own top, so this always lands at fraction
+            // 1.0 — [yForReferenceLine] (not the unclamped [yForFraction] bars use) keeps its full
+            // stroke inside the canvas rather than exactly on row 0, bisected by/merged into this
+            // Box's own top border. See that function's own doc for the on-device evidence.
+            val clipY = yForReferenceLine(
+                levelBarFraction(LevelViewState.CHART_CEILING_DBFS.toDouble()),
+                lineClearPx,
+            )
             drawLine(
                 color = OrtColors.haltText.copy(alpha = 0.6f),
                 start = Offset(0f, clipY),
                 end = Offset(size.width, clipY),
-                strokeWidth = 1.dp.toPx(),
+                strokeWidth = lineStrokePx,
             )
 
             // The real noise floor, dashed, only once one has actually been tracked.
             reading?.noiseFloorDbfs?.let { noiseFloorDbfs ->
-                val noiseY = yForFraction(levelBarFraction(noiseFloorDbfs))
+                val noiseY = yForReferenceLine(levelBarFraction(noiseFloorDbfs), lineClearPx)
                 drawLine(
                     color = OrtColors.accentGapDim,
                     start = Offset(0f, noiseY),
                     end = Offset(size.width, noiseY),
-                    strokeWidth = 1.dp.toPx(),
+                    strokeWidth = lineStrokePx,
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())),
                 )
             }
@@ -228,9 +249,43 @@ private fun LevelMeter(reading: LevelReading?, modifier: Modifier = Modifier) {
     }
 }
 
-/** `0f..1f` (floor..ceiling, [levelBarFraction]'s own direction) to a top-down canvas Y. */
+/** `0f..1f` (floor..ceiling, [levelBarFraction]'s own direction) to a top-down canvas Y. Bars use
+ * this directly — a bar's own rectangle is meant to reach the true edge, unclamped. */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.yForFraction(fraction: Float): Float =
     size.height * (1f - fraction.coerceIn(0f, 1f))
+
+/**
+ * R-465 (device-verified, `setup-level/S07-level.png`): [yForFraction] alone is correct for the
+ * *scale*, but the clip line always sits at `CHART_CEILING_DBFS` — fraction `1.0`, i.e. exactly
+ * canvas row `0`. Two things both had to be true at once to land on [edgeClearancePx], both found
+ * by actually sampling the rendered pixels on `emulator-5556` (`setup-level` scenario), not by
+ * inspection: (1) a full-width stroke centred exactly on row `0` is bisected by the canvas's own
+ * bounds — half its width is clipped away — and (2) this `Box`'s own 1dp border is drawn *over*
+ * its children (so the border stays visible even where a child fills the whole `Box`), which
+ * overpainted the remaining half even after a first fix inset the line by only its own half-stroke
+ * (confirmed: still zero non-background pixels near the expected row). [edgeClearancePx] clears
+ * both at once. A noise floor at the scale's own floor would hit the identical problem at the
+ * bottom edge. Every fixed reference line (target band's two edges, the clip line, the
+ * noise-floor line) goes through this instead of the plain [yForFraction] so it always stays
+ * fully inside the canvas *and* clear of the border — bars are unaffected, and every line that
+ * already had room (the target band, in every reading seen so far) draws at the exact same
+ * position either way, since [Float.coerceIn] is a no-op away from the edges.
+ *
+ * The actual inset math is [referenceLineY], a plain function of already-resolved pixel values —
+ * split out so `R_465` (`LevelScreenTest`) can exercise it directly, with no `DrawScope`/Canvas
+ * needed, the same reasoning `levelBarFraction` itself was already kept plain for.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.yForReferenceLine(
+    fraction: Float,
+    edgeClearancePx: Float,
+): Float = referenceLineY(fraction, size.height, edgeClearancePx)
+
+/** See this file's own `yForReferenceLine` doc comment above — the pure half of that math.
+ * [edgeClearancePx] is the full clearance to keep from either canvas edge (already accounting for
+ * both the line's own half-stroke and whatever draws over the canvas at its border), not merely a
+ * stroke width to be halved. */
+internal fun referenceLineY(fraction: Float, heightPx: Float, edgeClearancePx: Float): Float =
+    (heightPx * (1f - fraction.coerceIn(0f, 1f))).coerceIn(edgeClearancePx, heightPx - edgeClearancePx)
 
 @Composable
 private fun LevelRow(label: String, value: String, testTag: String) {
