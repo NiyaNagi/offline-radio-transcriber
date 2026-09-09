@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-08 (ui-conformance WP4 · R-419 follow-up: real clip total)
 
-### (pending) — ui-conformance WP4 · R-419 follow-up: switch to LevelStatus.clippedSamplesThisSession
+### 165449f — ui-conformance WP4 · R-419 follow-up: switch to LevelStatus.clippedSamplesThisSession
 
 **Scope:** `ui/data` (`CaptureStatusViewState.kt`), `ui/screens` (`LevelMeterScreen.kt`,
 `CaptureStatusContent.kt`), `app/src/debug` (`Scenarios.kt`), matching tests. `git merge --ff-only
