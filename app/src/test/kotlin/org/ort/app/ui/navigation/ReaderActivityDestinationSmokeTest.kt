@@ -710,7 +710,7 @@ class ReaderActivityDestinationSmokeTest {
                 // this is genuine queue-drain + pass-attempt work, not a fixed-delay fake. The real
                 // reworded text `ImproveScreens.kt`'s own `humanizeFailureReason` now produces,
                 // real end to end since `:pipeline`'s own fix landed.
-                rule.waitUntilTextExists("1 failed â€” No transcription model installed", timeoutMillis = 30_000)
+                rule.waitUntilTextExists("1 failed — No transcription model installed", timeoutMillis = 30_000)
                 rule.onNode(hasText("Install") and hasClickAction()).performClick()
 
                 rule.waitUntilContentDescriptionExists("Back to Settings")

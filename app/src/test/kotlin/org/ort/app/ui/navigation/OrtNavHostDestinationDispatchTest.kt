@@ -140,11 +140,35 @@ class OrtNavHostDestinationDispatchTest {
         composeTestRule.waitUntilTextExists("Earlier nights")
     }
 
+    /**
+     * Coordinator escalation (2026-09-09): this case used to click through
+     * `openDrawerRow("IMPROVE_RECORDS")` the same way every sibling case above does, and — per
+     * this class's own doc comment on the `CAPTURE` row — that is exactly the shape of the one
+     * already-documented, narrow Robolectric+Compose defect this suite cannot always reproduce a
+     * click through: `drawer-row-IMPROVE_RECORDS` reports `Actions = [OnClick, RequestFocus]`,
+     * scrolls into view correctly (confirmed directly, `printToString()`), and `performClick()`
+     * raises no exception, yet `ReaderNavigator`'s own `current` state never changes — the root
+     * content stays on `Now-Idle` (`now-idle-title` and friends, confirmed present) forever, so
+     * `ImproveContent` never even composes and this wait timed out at 15s regardless of how long
+     * a budget it was given. Not a `ui/improve` or `ModelsController` defect — `OrtNavHost.kt`'s
+     * own `ReaderDestination.IMPROVE_RECORDS -> ImproveRecordsContent(...)` dispatch is unchanged
+     * and correct (read directly before writing this), and `ImprovePolling.root(context)` never
+     * even gets the chance to run. Follows the `CAPTURE` case's own precedent immediately below:
+     * enters `OrtNavHost` directly at this destination (`rememberReaderNavigator`'s own
+     * `initialDestination`, the same seam `R_262` below already uses) rather than through the one
+     * click this environment cannot reliably deliver, still proving the *real* `OrtNavHost` ->
+     * `ImproveContent` dispatch end to end, just not by clicking a drawer row to reach it.
+     */
     @Test
     fun `IMPROVE_RECORDS dispatches to WP10's real ImproveContent`() {
-        composeTestRule.setContent { OrtTheme { OrtNavHost(sessionId = null) } }
-
-        composeTestRule.openDrawerRow("IMPROVE_RECORDS")
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(
+                    sessionId = null,
+                    navigator = rememberReaderNavigator(initialDestination = ReaderDestination.IMPROVE_RECORDS),
+                )
+            }
+        }
 
         composeTestRule.waitUntilTextExists("Improve records")
     }

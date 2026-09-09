@@ -32,6 +32,155 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP4/WP10 · Improve-hang diagnosis: two pre-existing gate failures fixed)
+
+### (pending) — ui-conformance WP4/WP10 · coordinator-directed diagnosis: `R_350` was a corrupted em-dash byte sequence in the test's own expected string, not an app defect; `IMPROVE_RECORDS` dispatch was the drawer-click Robolectric+Compose quirk this file's own `CAPTURE` case already documents, worked around the same way
+
+**Scope:** `:app` tests only — `ui/navigation/ReaderActivityDestinationSmokeTest.kt`,
+`ui/navigation/OrtNavHostDestinationDispatchTest.kt`. No product file changed (`ui/improve/**`,
+`ModelsController`, `:data`, `:pipeline` are all unchanged by this entry, despite being where the
+coordinator's own suspects pointed — see "What changed").
+
+**Requirements/ACs:** none new — a pre-existing test-infrastructure defect fixed, not a requirement.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs how this was investigated:
+  every hypothesis (StagedActivation guard, `work_attempt`/DB contention, a `ui/improve` logic
+  bug) was checked with direct, reproducible evidence — a `withTimeout` + `println` probe on the
+  real `RealImproveRunner`/`ReprocessRunner` collector (temporary, reverted, never shipped, the
+  same "probe and revert" discipline WP3's own round-18 diagnosis already used) and a raw-byte
+  file read — rather than accepted on suspicion or patched around blind.
+- **`R_350_improve_done_install_action_opens_settings_assets_for_a_real_missing_model_failure`**:
+  the debug probe showed the real reprocess run completing in well under a second — `done=1/
+  total=1`, `Summary(failed=1, failureReasons=[ASR unavailable: no ASR model installed at …])` —
+  and `onDone(...)` firing with that exact summary every time. The hang was never in `:pipeline` or
+  `ui/improve` at all: `ReaderActivityDestinationSmokeTest.kt`'s own awaited string, `"1 failed —
+  No transcription model installed"`, had its em dash stored as the three-character mojibake
+  sequence `â€"` (UTF-8 bytes `C3 A2 E2 82 AC E2 80 9D` — the classic "UTF-8 bytes of `—`
+  misread as Windows-1252, then re-saved as UTF-8" corruption) instead of the real `—`
+  (`E2 80 94`) `ImproveScreens.kt`'s `FailureReasonLine` actually renders. `hasText(...)`'s exact
+  match could never succeed against a real screen showing the correct character, so the wait ran
+  out every time regardless of the timeout — 30 000ms, or the coordinator's own 120 000ms retest.
+  One-character fix: the corrupted sequence replaced with a real em dash at that one call site.
+  (The same corrupted sequence appears elsewhere in this file's own comments — 129 occurrences in
+  total, confirmed by a raw byte scan — but none of those sit inside a string a test actually
+  matches against rendered text, so they are cosmetic and left alone here; worth a dedicated pass
+  if the file is touched for other reasons.)
+- **`OrtNavHostDestinationDispatchTest.kt`'s `IMPROVE_RECORDS dispatches to WP10's real
+  ImproveContent`**: a `printToString()` dump right after the drawer click (temporary, reverted)
+  showed the drawer row (`drawer-row-IMPROVE_RECORDS`) present, scrolled into view, and carrying
+  `Actions = [OnClick, RequestFocus]` — yet the root content was still `Now-Idle`
+  (`now-idle-title` and its siblings, unambiguously) forever after. `OrtNavHost.kt`'s own
+  `ReaderDestination.IMPROVE_RECORDS -> ImproveRecordsContent(...)` dispatch is unchanged and
+  correct (read directly). This is the identical shape this same test class's own doc comment
+  already documents for the `CAPTURE` row: `performClick()` reports success with no exception, yet
+  the click never actually fires `onSelect` — "a genuine, narrow Robolectric+Compose environment
+  defect specific to this one semantics node in this one test environment, not a wiring bug." Not
+  `ui/improve`'s or `ModelsController`'s to fix, and this round did not attempt to (outside this
+  package's file ownership either way — `ui/navigation/Drawer.kt`/`OrtNavHost.kt` are WP3's).
+  Worked around the exact way the `CAPTURE` case immediately below it already does: enters
+  `OrtNavHost` directly at `ReaderDestination.IMPROVE_RECORDS` via `rememberReaderNavigator`'s own
+  `initialDestination` (the same seam `R_262` in this file already uses) instead of the one click
+  this environment cannot reliably deliver — still proves the real `OrtNavHost` → `ImproveContent`
+  dispatch end to end, just not by clicking a drawer row to reach it.
+- Reported, not silently worked around: the drawer-click defect is real and now affects two rows
+  (`CAPTURE`, `IMPROVE_RECORDS`) instead of one — worth WP3's/the lead's attention if a third row
+  ever needs a real click-through test and hits the same wall.
+
+**Verified:**
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --tests org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest.R_350*`
+  — green (previously timed out at 30s/120s).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --tests org.ort.app.ui.navigation.OrtNavHostDestinationDispatchTest`
+  — 9/9 green, including the reworked `IMPROVE_RECORDS` case (previously timed out at 15s).
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` (whole class + suite) — green, no regressions.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.screens.Now* --tests org.ort.app.ui.settings.*`
+  — green (this round's own R-551/R-552 work, re-confirmed after the `main` merge below).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+- `.\gradlew.bat dependencyRules platformGuards` — green.
+- `.\gradlew.bat :app:assembleDebug` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 checks pass (including its own "no mojibake"
+  check — that check scans `spec/*.md`, not `.kt` sources, so it never caught this).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  192 of 419, up to date.
+
+**Left open / not done:** the underlying Robolectric+Compose click-dispatch defect itself (not
+this round's to fix — no file ownership here); the other 128 cosmetic mojibake occurrences in
+`ReaderActivityDestinationSmokeTest.kt`'s own comments.
+
+---
+
+## 2026-09-09 (ui-conformance WP4/WP10 round: R-552 Now-Idle meta row wrap, R-551 Settings-Storage retention-order row)
+
+### (pending) — ui-conformance WP4/WP10 · R-552 Now-Idle meta row wraps whole segments via FlowRow; R-551 Settings-Storage retention-order row stacked, never crushed
+
+**Scope:** `:app` — `ui/screens/NowScreen.kt` (WP4) and `ui/settings/SettingsStorageScreen.kt`
+(WP10), plus their tests `ui/screens/NowScreenTest.kt` and `ui/settings/SettingsStorageScreenTest.kt`.
+
+**Requirements/ACs:** R-552 (register, `Now-Idle.dc.html`, cf. R-461); R-551 (register, `Settings-
+Storage.dc.html`, FR-STO-1..8, R-152 class).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content): the operator must never be shown a
+  column of single characters standing in for a real value it could not fit — both fixes exist so a
+  real fact renders honestly wrapped, never silently mangled by a layout that ran out of room.
+- **R-552 — `NowIdleMetaRow`** (`Now-Idle.dc.html`'s meta row beneath "Start capture"): the plain
+  (non-wrapping) `Row` measured its five segments against one shared width budget consumed in
+  declaration order — at font scale 2.0 the first two segments ("USB Audio Device" · "TH-D75A")
+  could consume the whole budget before the last segment ("tier 3") was even measured, leaving it
+  ~0dp wide and forcing it to wrap one character per line, pinned at the row's right edge. Replaced
+  with a `FlowRow` (the same fix already established in this codebase for exactly this class of
+  defect — `EarlierNightMetaLine`'s R-260, `LogRowMarkerLine`'s R-373/R-420 in `ui/components/
+  Rows.kt`): every segment is measured as a whole, atomic unit and, when one does not fit the
+  remaining width on the current line, wraps *whole* onto a new line instead of shrinking.
+  `horizontalArrangement`/`verticalArrangement` keep each line centred, matching the single-line
+  row's look whenever one line is all that's needed. Added `testTag`s (`now-idle-meta-input`,
+  `now-idle-meta-rig`, `now-idle-meta-tier`) for the fix's own proof and for a future validator.
+- **R-551 — `SettingsStorageScreen`'s "Then stop retaining audio, keep capturing text" row**:
+  `KeyValueRow`'s key column has no upper bound (R-152's own fix: `widthIn(min = 96.dp)`, a floor,
+  never a ceiling) — this is the one row where the *key* itself is the long text, not the value, so
+  at font scale 2.0 the key alone consumed the row's whole shared width budget before `KeyValueRow`'s
+  own `weight(1f)` value column was ever reached, crushing it and forcing the sub-line to wrap one
+  character per line. Two alternative fixes were tried and rejected, both disproved with this row's
+  own real, on-host measurements rather than assumed: reassigning `.weight(1f)` to the label side
+  alone reproduces the identical crush with the roles swapped (Compose's non-weighted/weighted
+  budget split is order-sensitive, not "non-weighted always measured first"); a `BoxWithConstraints`
+  real-width gate in the `rememberTimeColumnWidth`/`ColumnHeaderRow` style chooses correctly only if
+  `rememberTextMeasurer` reports trustworthy widths, and on this project's own Robolectric host it
+  does not (confirmed measuring "always" at 6dp regardless of its real rendered size — the same "a
+  rendered pixel isn't reliably verifiable on this host" limit `logRowTranscriptStyle`'s own doc
+  comment already named). Replaced with a new private `RetentionOrderRow` that stacks key, value and
+  sub-line unconditionally, each on its own full-width line — no two of them ever share a `Row`, so
+  none can ever be measured against a shared budget a sibling might claim first, on any host, at any
+  font scale. A deliberate departure from `Settings-Storage.dc.html`'s own side-by-side row for this
+  one row alone, in exchange for a fix that is correct by construction. Added `testTag`s
+  (`settings-storage-retention-order-value`, `settings-storage-retention-order-subline`, both
+  `internal const val`s) for the fix's own proof.
+- Checked every other hand-laid row on `Settings-Storage.dc.html` for the same class of defect:
+  `NextDeletionRow` and WP2's `ToggleRow` already put the growing label+sub-line block on the
+  `weight(1f)` side with the short fixed element (icon/`TextAction`/toggle knob) non-weighted — the
+  correct-for-this-codebase shape — so neither needed a change; the storage-category legend already
+  uses `FlowRow` (R-150/R-251).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.screens.Now* --tests org.ort.app.ui.settings.*`
+  — 80 tests, all green, including new `R_552 the meta row wraps whole segments onto a second
+  centred line, never one char per line, fontscale-2_0` and `R_551 the retention-order row never
+  crushes its value or sub-line to one char per line at fontscale-2_0`.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+- `.\gradlew.bat dependencyRules platformGuards` — green (17 modules, no forbidden edges, no HTTP
+  client outside `:net`).
+- `.\gradlew.bat :app:assembleDebug` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 checks pass.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  192 of 419 requirements covered, up to date.
+
+**Left open / not done:** neither fix was verified on a real device or emulator (builder policy —
+validators do that after merge); R-551's fix is a deliberate visual departure from the board at font
+scale 1.0 (value stacks below the label instead of beside it) rather than a pixel match, for the
+reasons above — worth a design review if `Settings-Storage.dc.html` itself is revisited for this row.
+
+---
+
 ## 2026-09-09 (ui-conformance WP8: R-570/571/572/573/574 Station-Pattern/Station-Identity, R-563 FQ03 reason)
 
 ### (pending) — ui-conformance WP8 · R-570/571/572/573/574/563: first-ever ST03/ST04 capture findings
@@ -99,7 +248,6 @@ heap once R-573 pushed its target below the fold — replaced with `performScrol
 does not carry the same cost; worth a project-wide note if other suites lean on
 `performScrollToNode` against a tall `LazyColumn` late in a long session. R-572's "stable since"
 semantics (see point 3 above) may need coordinator confirmation.
-
 ## 2026-09-09 (ui-conformance WP6 round 14: R-564 Fail-Pass attempts/order fixed; R-426 reopened test strengthened; R-561 reported, not fixed)
 
 ### (pending) — ui-conformance WP6 round 14 · R-564 `Fail-Pass.dc.html` — real per-attempt timestamps (fixture gap, not a mapper bug) and the What-went-wrong block reordered after the waveform/Live-partial sections; R-561 stopped and reported (fix lives in WP2's `ui/components/Inspection.kt`)

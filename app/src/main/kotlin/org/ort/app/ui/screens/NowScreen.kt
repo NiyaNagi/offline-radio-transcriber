@@ -197,27 +197,60 @@ private fun IdleContent(state: NowViewState.Idle, onStartCapture: () -> Unit) {
     }
 }
 
-/** R-461 (`Now-Idle.dc.html`'s own meta row beneath "Start capture"): centred, a leading dot on
+/**
+ * R-461 (`Now-Idle.dc.html`'s own meta row beneath "Start capture"): centred, a leading dot on
  * each of [inputLabel]/[rigLabel] when they are real (never on the honest "No input"/"No radio"
- * fallback — a dot claims a real, present device), no dot on [tierLabel]. */
+ * fallback — a dot claims a real, present device), no dot on [tierLabel].
+ *
+ * R-552 (`overnight/N01-now@2x.png`): a plain (non-wrapping) `Row` measures its non-weighted
+ * children against one shared width budget, consumed in order — with three real segments
+ * ("USB Audio Device" · "TH-D75A" · "tier 3") at font scale 2.0, the first two segments alone
+ * can consume the whole budget before the last child is even measured, leaving it ~0dp of real
+ * width and forcing it to wrap one character per line, pinned at the row's right edge (the
+ * register's own report). `FlowRow` (the same fix already established for exactly this class of
+ * defect — [EarlierNightMetaLine]'s R-260, [LogRowMarkerLine]'s R-373/R-420 in `ui/components/
+ * Rows.kt`) gives every segment room to be measured as a whole, atomic unit and, when a segment
+ * does not fit the remaining width on the current line, wraps that *whole* segment onto a new
+ * line rather than shrinking it — [horizontalArrangement] keeps each line's segments spaced and
+ * centred exactly as the single-line `Row` did before, at whatever font scale the line count
+ * turns out to be one or two.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NowIdleMetaRow(inputLabel: String?, rigLabel: String?, tierLabel: String, modifier: Modifier = Modifier) {
-    Row(
+    FlowRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        NowIdleMetaItem(label = inputLabel ?: "No input", real = inputLabel != null)
+        NowIdleMetaItem(
+            label = inputLabel ?: "No input",
+            real = inputLabel != null,
+            modifier = Modifier.testTag("now-idle-meta-input"),
+        )
         Text(text = "·", style = OrtType.subLine, color = OrtColors.textFaint)
-        NowIdleMetaItem(label = rigLabel ?: "No radio", real = rigLabel != null)
+        NowIdleMetaItem(
+            label = rigLabel ?: "No radio",
+            real = rigLabel != null,
+            modifier = Modifier.testTag("now-idle-meta-rig"),
+        )
         Text(text = "·", style = OrtType.subLine, color = OrtColors.textFaint)
-        Text(text = tierLabel, style = OrtType.subLine, color = OrtColors.textDim)
+        Text(
+            text = tierLabel,
+            style = OrtType.subLine,
+            color = OrtColors.textDim,
+            modifier = Modifier.testTag("now-idle-meta-tier"),
+        )
     }
 }
 
 @Composable
-private fun NowIdleMetaItem(label: String, real: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+private fun NowIdleMetaItem(label: String, real: Boolean, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         if (real) {
             Box(modifier = Modifier.size(6.dp).background(OrtColors.accentGreen, CircleShape))
         }

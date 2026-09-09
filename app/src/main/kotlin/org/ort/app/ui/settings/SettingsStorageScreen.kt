@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -152,7 +153,7 @@ private fun LowSpaceRows(warnAtNightsLeft: Int, hardFloorLabel: String, modifier
             value = "$warnAtNightsLeft nights left",
             subLine = "notification and status surface",
         )
-        KeyValueRow(
+        RetentionOrderRow(
             key = "Then stop retaining audio, keep capturing text",
             value = "always",
             subLine = "the order is fixed: audio goes before transcripts, and capture never stops silently",
@@ -164,6 +165,64 @@ private fun LowSpaceRows(warnAtNightsLeft: Int, hardFloorLabel: String, modifier
         )
     }
 }
+
+/**
+ * R-551 (`overnight/CF03-settings-storage@2x-end.png`): `KeyValueRow`'s key column has no upper
+ * bound — R-152's own fix, `widthIn(min = 96.dp)`, is deliberately a floor, never a ceiling, so a
+ * short key never collides with a long value — but this is the one row where the *key* itself is
+ * the long text ("Then stop retaining audio, keep capturing text"), not the value: at font scale
+ * 2.0 the key alone can consume the row's whole shared width budget before `KeyValueRow`'s own
+ * `weight(1f)` value column is ever reached, leaving it ~0dp wide and forcing [subLine] to wrap
+ * one character per line — the register's own report, R-152's exact defect class, just triggered
+ * from the opposite column this time.
+ *
+ * Two other layouts were tried and rejected here, both confirmed broken with this row's own real,
+ * on-host measurements, not assumed: a `.weight(1f)` reassigned to the label side alone reproduces
+ * the identical crush with the roles swapped (Compose's own weighted-vs-non-weighted budget split
+ * is order-sensitive, not "non-weighted always measured first"); a `BoxWithConstraints` real-width
+ * gate in the `rememberTimeColumnWidth`/`ColumnHeaderRow` style (`ui/components/Rows.kt`) chooses
+ * correctly only if `rememberTextMeasurer` reports trustworthy widths, and on this project's own
+ * Robolectric host it does not — confirmed measuring this exact row's own "always" at a few dp
+ * regardless of its real rendered size, the same "a rendered pixel isn't reliably verifiable on
+ * this host" limit this package's `logRowTranscriptStyle` doc comment already named elsewhere.
+ * [key], [value] and [subLine] are stacked unconditionally instead — no two of them ever share a
+ * `Row`, so none can ever be measured against a shared budget a sibling might claim first, on any
+ * host, at any font scale, real font metrics or not. This is a deliberate departure from
+ * `Settings-Storage.dc.html`'s own side-by-side row for this one row alone, in exchange for a fix
+ * that is correct by construction rather than by a measurement this host cannot be trusted to make.
+ */
+@Composable
+private fun RetentionOrderRow(key: String, value: String, subLine: String, modifier: Modifier = Modifier) {
+    val description = "$key, $value, $subLine"
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .semantics(mergeDescendants = true) { contentDescription = description },
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs)) {
+            Text(text = key, style = OrtType.control, color = OrtColors.textDim)
+            Text(
+                text = value,
+                style = OrtType.control,
+                color = OrtColors.textHigh,
+                modifier = Modifier.padding(top = 2.dp).testTag(RETENTION_ORDER_VALUE_TEST_TAG),
+            )
+            Text(
+                text = subLine,
+                style = OrtType.subLine,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = 2.dp).testTag(RETENTION_ORDER_SUBLINE_TEST_TAG),
+            )
+        }
+    }
+}
+
+/** R-551 (register): stable handles so a test can measure the sub-line's and value's real,
+ * rendered heights — the direct proof this row's value is never crushed to a sliver that wraps
+ * one character per line. */
+internal const val RETENTION_ORDER_SUBLINE_TEST_TAG: String = "settings-storage-retention-order-subline"
+internal const val RETENTION_ORDER_VALUE_TEST_TAG: String = "settings-storage-retention-order-value"
 
 /**
  * `Settings-Storage.dc.html`'s "Next deletion" row (R-133, round 8): the half-filled amber marker,
