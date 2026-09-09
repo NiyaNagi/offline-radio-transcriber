@@ -148,6 +148,12 @@ public class ReaderActivity : ComponentActivity() {
                         onOpenRetentionSettings = { navigator.openSettings(SettingsScreenId.STORAGE) },
                         onSetFrequencyByHand = { navigator.openSettings(SettingsScreenId.CAPTURE) },
                         onReconnectRig = { navigator.openSettings(SettingsScreenId.RIG) },
+                        // Round 14 (R-448's own report): F14's "‹ Earlier nights" and F21/F22's
+                        // own "‹ Models and lexicon" headers now have a real target — the same
+                        // `navigator.open`/`openSettings` calls every other real recovery action
+                        // above already uses.
+                        onOpenEarlierNights = { navigator.open(ReaderDestination.EARLIER_NIGHTS) },
+                        onOpenModels = { navigator.openSettings(SettingsScreenId.ASSETS) },
                     ),
                 )
             }

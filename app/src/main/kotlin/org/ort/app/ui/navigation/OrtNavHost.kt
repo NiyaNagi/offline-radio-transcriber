@@ -232,6 +232,7 @@ public fun OrtNavHost(
                             seed?.logSheetOpen ?: false,
                         ),
                         navState.frequencyInitialView.value,
+                        seed?.openTransmissionRevisions ?: false,
                     ),
                     callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
                     sessionId = sessionId,
@@ -644,6 +645,10 @@ private data class NavHostIds(
     // Round 10, register R-276: which sub-screen a freshly-opened frequency drill-in lands on —
     // see `NavHostNavState.frequencyInitialView`'s own doc comment.
     val frequencyInitialView: FrequencyDetailView,
+    // Round 14 (WP12's screenshot-tour seam) — see `NavSeed.openTransmissionRevisions`'s own doc
+    // comment. Only meaningful alongside `transmissionId`, the same companion relationship
+    // `frequencyInitialView` already has to `frequencyHz`.
+    val transmissionInitialRevisionsOpen: Boolean,
 )
 
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
@@ -766,6 +771,7 @@ private fun NavHostBody(
                     onBack = callbacks.onCloseDrillIns,
                     onOpenTransmission = callbacks.onOpenTransmission,
                     backLabel = ids.openedFrom.label,
+                    initialRevisionsOpen = ids.transmissionInitialRevisionsOpen,
                 )
 
                 ids.stationId != null -> StationDetailContent(

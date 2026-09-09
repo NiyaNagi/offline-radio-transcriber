@@ -54,6 +54,11 @@ public data class NavSeed(
     // Round 14 (after WP5 merged `LogContent(initialSheetOpen)` — confirmed by reading
     // `ui/screens/LogContent.kt` before wiring this): the L02 half of round 13's own reported gap.
     val logSheetOpen: Boolean? = null,
+    // Round 14 (after WP6 merged `TransmissionDetailContent(initialRevisionsOpen)` — confirmed by
+    // reading `ui/screens/TransmissionDetailContent.kt` before wiring this, which shipped only
+    // this one seam, no sibling why/lattice flag). Only meaningful alongside [openTransmissionId],
+    // the same companion relationship [frequencyInitialView] already has to [openFrequencyHz].
+    val openTransmissionRevisions: Boolean? = null,
 ) {
     /**
      * The [ReaderDestination] this seed's own state is actually read under. The four drill-in ids
@@ -112,6 +117,7 @@ public data class NavSeed(
         searchSubmit?.let { intent.putExtra(EXTRA_SEARCH_SUBMIT, it) }
         searchFiltersOpen?.let { intent.putExtra(EXTRA_SEARCH_FILTERS_OPEN, it) }
         logSheetOpen?.let { intent.putExtra(EXTRA_LOG_SHEET_OPEN, it) }
+        openTransmissionRevisions?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_REVISIONS, it) }
     }
 
     public companion object {
@@ -146,6 +152,9 @@ public data class NavSeed(
 
         // Round 14 — see [logSheetOpen]'s own doc comment.
         public const val EXTRA_LOG_SHEET_OPEN: String = "nav_log_sheet_open"
+
+        // Round 14 — see [openTransmissionRevisions]'s own doc comment.
+        public const val EXTRA_OPEN_TRANSMISSION_REVISIONS: String = "nav_open_transmission_revisions"
 
         /**
          * Parses [intent]'s own seed extras (any subset, including none) into a [NavSeed] — `null`
@@ -186,6 +195,7 @@ public data class NavSeed(
                 searchSubmit = intent.getBooleanExtraOrNull(EXTRA_SEARCH_SUBMIT),
                 searchFiltersOpen = intent.getBooleanExtraOrNull(EXTRA_SEARCH_FILTERS_OPEN),
                 logSheetOpen = intent.getBooleanExtraOrNull(EXTRA_LOG_SHEET_OPEN),
+                openTransmissionRevisions = intent.getBooleanExtraOrNull(EXTRA_OPEN_TRANSMISSION_REVISIONS),
             )
             return if (seed == NavSeed()) null else seed
         }

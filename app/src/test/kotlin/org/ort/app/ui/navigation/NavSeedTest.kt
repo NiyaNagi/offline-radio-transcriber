@@ -144,6 +144,21 @@ class NavSeedTest {
     }
 
     @Test
+    fun `openTransmissionId with openTransmissionRevisions lands directly on Earlier versions`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(
+                    sessionId = SESSION_ID,
+                    seed = NavSeed(openTransmissionId = TRANSMISSION_ID, openTransmissionRevisions = true),
+                )
+            }
+        }
+        // `DetailRevisionsScreen`'s own title — the fact that distinguishes landing directly on
+        // `Revisions` from the plain detail root (both share the same `DrillInHeader` parent label).
+        composeTestRule.waitUntilTextExists("Earlier versions")
+    }
+
+    @Test
     fun `openStationId lands on the station detail drill-in`() {
         composeTestRule.setContent {
             OrtTheme { OrtNavHost(sessionId = SESSION_ID, seed = NavSeed(openStationId = STATION_ID)) }

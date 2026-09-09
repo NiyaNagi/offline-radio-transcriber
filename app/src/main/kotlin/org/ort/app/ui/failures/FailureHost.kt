@@ -46,6 +46,14 @@ public data class FailureHostActions(
     public val onRequestUsbPermission: () -> Unit = {},
     public val onSetFrequencyByHand: () -> Unit = {},
     public val onReconnectRig: () -> Unit = {},
+    // Round 14 (ui-conformance-plan WP3, coordinator-directed cross-package addendum — R-448's own
+    // own report named these missing: no callback here navigated to the parent its own new "‹
+    // <parent>" header now names). `onOpenEarlierNights` is new; `onOpenStorageSettings` (F19) and
+    // this new `onOpenModels` (F21/F22 — the same real `SettingsScreenId.ASSETS` route R-139's
+    // "Install a model" and round 12's `Improve-Done` `Install` both already use) are the two
+    // "reuse existing" halves of that report.
+    public val onOpenEarlierNights: () -> Unit = {},
+    public val onOpenModels: () -> Unit = {},
 )
 
 /**
@@ -406,15 +414,30 @@ private fun TakeoverOrScreen(
             onContinueWithoutRadio = actions.onSetFrequencyByHand,
         )
         is FailurePresentation.Reconcile ->
-            FailReconcileScreen(state = presentation.state, onImport = {}, onLeaveAsIs = {})
+            // R-448 (round 14): the board's own "‹ Storage and retention" header reuses this same
+            // dismiss — its real target is `actions.onOpenStorageSettings`, the same real
+            // `Settings-Storage` route `FailStorageHaltScreen`'s own `onFreeUpSpace` above uses.
+            FailReconcileScreen(state = presentation.state, onImport = {}, onLeaveAsIs = actions.onOpenStorageSettings)
         is FailurePresentation.Migration ->
             FailMigrationScreen(state = presentation.state, onRebuildNow = {}, onSaveDiagnosticBundle = {})
         is FailurePresentation.AssetSwap ->
-            FailAssetSwapScreen(state = presentation.state, onSelectOption = {}, onDone = {})
-        is FailurePresentation.Calibration -> FailCalibrationScreen(state = presentation.state, onInstall = {})
+            // R-448: the board's own "‹ Models and lexicon" header reuses this same dismiss.
+            FailAssetSwapScreen(state = presentation.state, onSelectOption = {}, onDone = actions.onOpenModels)
+        is FailurePresentation.Calibration -> FailCalibrationScreen(
+            state = presentation.state,
+            onInstall = {},
+            // R-448: F22's own new `onBack` — the board's own "‹ Models and lexicon" header.
+            onBack = actions.onOpenModels,
+        )
         is FailurePresentation.Clock -> FailClockScreen(
             state = presentation.state,
-            onContinue = { dismiss.onDismissClock(presentation.state.windowLabel) },
+            // R-448: the board's own "‹ Earlier nights" header reuses this same dismiss — real
+            // navigation added alongside the existing dismiss, not in place of it, since dismissing
+            // the takeover is still correct regardless of where `onOpenEarlierNights` then lands.
+            onContinue = {
+                dismiss.onDismissClock(presentation.state.windowLabel)
+                actions.onOpenEarlierNights()
+            },
         )
         is FailurePresentation.Interrupted -> FailInterruptedScreen(
             state = presentation.state,

@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -27,7 +28,9 @@ import org.junit.Test
 import org.junit.runner.Description
 import org.junit.runner.RunWith
 import org.junit.runners.model.Statement
+import org.ort.app.debug.Scenarios
 import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.core.AttributionState
@@ -36,6 +39,7 @@ import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.robolectric.RobolectricTestRunner
@@ -618,6 +622,101 @@ class ReaderActivityDestinationSmokeTest {
             // Same marker [NavSeedTest]'s own `openTransmissionId` case asserts — this class's own
             // `seedSession()` seeds the identical `TX1` id.
             rule.waitUntilContentDescriptionExists("Back to Log")
+        }
+    }
+
+    /**
+     * Register R-448 (round 14, coordinator-directed cross-package addendum): WP11b's own "‹
+     * &lt;parent&gt;" back headers on F14/F19/F21/F22 (its own `FailureBackHeaderTest.kt` proves each
+     * header calls the screen's own dismiss) had nothing real behind that dismiss for navigation —
+     * `FailureHostActions.onOpenEarlierNights`/`onOpenModels` (new) and `onOpenStorageSettings`
+     * (reused) now do. One real `DebugFailureOverride`, set by `Scenarios.load` the same way
+     * `FailureOverrideScenariosTest.kt` (WP11b's) already proves for each of these four scenarios,
+     * driven through a real `ReaderActivity` and a real tap on the header — not the direct
+     * composable construction `FailureBackHeaderTest.kt` itself uses, so this is the one place the
+     * whole chain (`FailureHost` → `FailureHostActions` → `ReaderActivity` → `ReaderNavigator`) is
+     * proven together.
+     */
+    @Test
+    fun `R_448_F14_clock_back_header_opens_Earlier_nights`() {
+        runBlocking { Scenarios.load(context, "clock-dst") }
+        try {
+            runReaderActivity(ReaderDestination.NOW) { rule ->
+                rule.waitUntilContentDescriptionExists("Back to Earlier nights")
+                rule.onNodeWithContentDescription("Back to Earlier nights").performClick()
+                // The host's own `ScreenHeader` — `Earlier nights` is a plain destination (not a
+                // drill-in, not `SETTINGS`/`SEARCH`'s own special-cased headers), so landing there
+                // for real shows this, not the takeover's own header.
+                rule.waitUntilContentDescriptionExists("Open navigation")
+                rule.onNodeWithContentDescription("Open navigation").performClick()
+                rule.waitForIdle()
+                rule.onNodeWithTag("drawer-row-EARLIER_NIGHTS")
+                    .assert(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true))
+            }
+        } finally {
+            // `Scenarios.load`'s own scenario also calls `ScenarioFixtures.markCapturing` (a real,
+            // process-wide `CaptureState.capturing(...)`, unrelated to `DebugFailureOverride`) —
+            // left set, a later case in this same JVM worker with no `sessionId` of its own would
+            // have `ReaderActivity.resolveSessionId` prefer this stale "live" session instead
+            // (found directly: `R_129_thread_drill_in_composes_and_survives_recreation`, this
+            // class's own later case, failed exactly this way before this reset was added).
+            DebugFailureOverride.clear()
+            CaptureState.idle(clearSession = true)
+        }
+    }
+
+    @Test
+    fun `R_448_F19_reconcile_back_header_opens_Settings_Storage`() {
+        runBlocking { Scenarios.load(context, "reconcile") }
+        try {
+            runReaderActivity(ReaderDestination.NOW) { rule ->
+                rule.waitUntilContentDescriptionExists("Back to Storage and retention")
+                rule.onNodeWithContentDescription("Back to Storage and retention").performClick()
+                rule.waitUntilContentDescriptionExists("Back to Settings")
+                rule.waitUntilTextExists("Storage and retention")
+            }
+        } finally {
+            // `Scenarios.load`'s own scenario also calls `ScenarioFixtures.markCapturing` (a real,
+            // process-wide `CaptureState.capturing(...)`, unrelated to `DebugFailureOverride`) —
+            // left set, a later case in this same JVM worker with no `sessionId` of its own would
+            // have `ReaderActivity.resolveSessionId` prefer this stale "live" session instead
+            // (found directly: `R_129_thread_drill_in_composes_and_survives_recreation`, this
+            // class's own later case, failed exactly this way before this reset was added).
+            DebugFailureOverride.clear()
+            CaptureState.idle(clearSession = true)
+        }
+    }
+
+    // F21 (asset-swap) has no case here: investigated directly (see this round's own report/
+    // CHANGELOG) — `DebugFailureOverride.current` reads `FailurePresentation.AssetSwap` correctly
+    // both immediately after `Scenarios.load` and again once the real `Activity` is `RESUMED`
+    // (checked explicitly), yet `FailureHost`'s own overlay never renders the takeover through a
+    // real polling cycle — `NowContent`'s own content keeps showing underneath instead, for the
+    // full 30 s this was given. `FailureBackHeaderTest.kt`'s own direct construction of
+    // `FailAssetSwapScreen` already proves this round's own `onDone = actions.onOpenModels` wiring
+    // is correct in shape (identical to F19/F22's, both proven below); this reads as a pre-existing
+    // gap in the real, polled path specific to the `asset-swap` scenario fixture, not this round's
+    // own change — reported rather than routed around, not silently dropped from this suite.
+
+    @Test
+    fun `R_448_F22_calibration_back_header_opens_Settings_Assets`() {
+        runBlocking { Scenarios.load(context, "calibration") }
+        try {
+            runReaderActivity(ReaderDestination.NOW) { rule ->
+                rule.waitUntilContentDescriptionExists("Back to Models and lexicon")
+                rule.onNodeWithContentDescription("Back to Models and lexicon").performClick()
+                rule.waitUntilContentDescriptionExists("Back to Settings")
+                rule.waitUntilTextExists("Models and lexicon")
+            }
+        } finally {
+            // `Scenarios.load`'s own scenario also calls `ScenarioFixtures.markCapturing` (a real,
+            // process-wide `CaptureState.capturing(...)`, unrelated to `DebugFailureOverride`) —
+            // left set, a later case in this same JVM worker with no `sessionId` of its own would
+            // have `ReaderActivity.resolveSessionId` prefer this stale "live" session instead
+            // (found directly: `R_129_thread_drill_in_composes_and_survives_recreation`, this
+            // class's own later case, failed exactly this way before this reset was added).
+            DebugFailureOverride.clear()
+            CaptureState.idle(clearSession = true)
         }
     }
 

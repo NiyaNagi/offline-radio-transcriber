@@ -32,6 +32,97 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP3 round 14 addendum: R-448 recovery-action navigation; NavSeed's transmission-revisions field)
+
+### 863cb60 — ui-conformance WP3 round 14 addendum · R-448 FailureHostActions navigation; NavSeed.openTransmissionRevisions
+
+**Scope:** `ui/navigation/NavSeed.kt`, `ui/navigation/OrtNavHost.kt`,
+`ReaderActivityDestinationSmokeTest.kt` (this row) plus two coordinator-directed cross-package
+edits this round: `ui/failures/FailureHost.kt` (WP11b's file — `FailureHostActions` itself is
+defined there) and `ui/ReaderActivity.kt` (already this row's own standing file since round 11).
+`main` merged three more times as prerequisite/parallel commits landed (WP6's
+`TransmissionDetailContent.initialRevisionsOpen`, WP11b's own R_300 test-determinism fix, WP4's
+Reviewer-A batch, `:data`'s work-attempt history) — one real `CHANGELOG.md` conflict each time,
+resolved by keeping every section; no rebase, no stash.
+
+**Requirements/ACs:** R-448 (design — the coordinator's own cross-package addendum: WP11b's new
+"‹ &lt;parent&gt;" back headers on F14/F19/F21/F22 had no real navigation behind them). No new
+requirement for the `NavSeed` field — continuing round 13's own infrastructure seam.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs the one finding reported
+  below rather than silently worked around (F21's own real-polling gap). Principle IV (an operator
+  must have a real way out, never a dead end) is what R-448 itself is about — a back header that
+  calls a dismiss with nothing behind it is functionally the same silent dead end a missing header
+  was.
+- **`FailureHostActions` gained `onOpenEarlierNights: () -> Unit = {}` and `onOpenModels: () ->
+  Unit = {}`** (in `FailureHost.kt`, WP11b's file — this round's own coordinator-directed,
+  disclosed cross-package edit). Wired in `TakeoverOrScreen`'s own dispatch: F14's `onContinue` now
+  also calls `actions.onOpenEarlierNights()` alongside its existing dismiss (both fire — dismissing
+  is still correct regardless of where the navigation then lands); F19's `onLeaveAsIs` reuses the
+  existing `actions.onOpenStorageSettings`; F21's `onDone` and F22's new `onBack` both reuse the
+  new `onOpenModels`. `ReaderActivity.kt` wires both to the same real `navigator.open`/
+  `navigator.openSettings` calls every other recovery action already uses —
+  `navigator.open(ReaderDestination.EARLIER_NIGHTS)` and
+  `navigator.openSettings(SettingsScreenId.ASSETS)` respectively.
+- **`NavSeed` gained `openTransmissionRevisions: Boolean?`** (after WP6 merged
+  `TransmissionDetailContent(initialRevisionsOpen)` — confirmed by reading that file before wiring
+  this; WP6 shipped only this one seam, no sibling why/lattice flag the coordinator's own brief
+  anticipated) — extra `nav_open_transmission_revisions`. Only meaningful alongside
+  `openTransmissionId`, the same companion relationship `frequencyInitialView` already has to
+  `openFrequencyHz`; threaded through a new `NavHostIds.transmissionInitialRevisionsOpen` field.
+
+**Verified:**
+- Three of the four R-448 routes proven end to end through a real `ReaderActivity`, a real
+  `DebugFailureOverride` scenario (`Scenarios.load`, the same fixtures WP11b's own
+  `FailureOverrideScenariosTest.kt` already proves set the right presentation) and a real tap on
+  the header: `R_448_F14_clock_back_header_opens_Earlier_nights` (lands on `Earlier nights`,
+  confirmed by the drawer's own row reporting `Selected`), `R_448_F19_reconcile_back_header_opens_
+  Settings_Storage`, `R_448_F22_calibration_back_header_opens_Settings_Assets` (both land on the
+  real Settings sub-screen, confirmed by its own title text). All green.
+- **F21 (asset-swap) does not have a case, and the reason is named rather than hidden**:
+  `DebugFailureOverride.current` reads `FailurePresentation.AssetSwap` correctly both immediately
+  after `Scenarios.load` and again once the real `Activity` is `RESUMED` (checked explicitly with
+  a direct assertion before removing it) — yet `FailureHost`'s own overlay never renders the
+  takeover through a real polling cycle in this environment; `NowContent`'s own content keeps
+  showing underneath instead, for a full 30 s. `FailureBackHeaderTest.kt`'s own direct construction
+  of `FailAssetSwapScreen` already proves this round's own `onDone = actions.onOpenModels` wiring
+  is correct in shape — identical to F19's/F22's, both proven above — so this reads as a
+  pre-existing gap specific to the real, polled path for the `asset-swap` scenario fixture, not
+  this round's own change. Not this row's file to chase further (`FailureSignalsPolling.kt`/
+  `FailureMapper.kt`, WP11b's own).
+- **A real cross-test pollution bug found and fixed while writing the three passing cases above**:
+  `Scenarios.load`'s own scenario builders also call `ScenarioFixtures.markCapturing` (a real,
+  process-wide `CaptureState.capturing(...)`, unrelated to `DebugFailureOverride`) — left set, a
+  *later*, unrelated case in the same JVM worker with no `sessionId` of its own had
+  `ReaderActivity.resolveSessionId` prefer this stale "live" session instead
+  (`R_129_thread_drill_in_composes_and_survives_recreation` failed exactly this way before the fix
+  — reproduced directly, then fixed by resetting `CaptureState.idle(clearSession = true)`
+  alongside `DebugFailureOverride.clear()` in each of the three cases' own `finally`).
+- `NavSeedTest` gained `openTransmissionId with openTransmissionRevisions lands directly on Earlier
+  versions` (`DetailRevisionsScreen`'s own title is what distinguishes landing directly on
+  `Revisions` from the plain detail root, since both share the same `DrillInHeader` parent label)
+  — green, 15 cases total now.
+- `:app:smokeTestDebugUnitTest` — full suite (now the larger, reorganised task a concurrent
+  test-suite-speed fix moved several classes, including `NavSeedTest`, into) — all green.
+  `:app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*" --tests
+  "org.ort.app.ui.failures.*"` — all green, including `FailureHostTest`'s own `R_300` (WP11b's
+  separate fix for that pre-existing failure landed in the same merge chain this round).
+- `:app:ktlintCheck :app:detekt` — green. `dependencyRules platformGuards` — green.
+  `:app:assembleDebug` — green. `python tools/spec-check/spec_check.py` — 8/8 checks pass.
+  `coverageMatrix` then `coverageMatrixCheck`, run as separate invocations (the same unrelated
+  Gradle task-validation ordering gap prior rounds' own entries named) — both green.
+- Per the coordinator's own scoped-gate instruction — no `:app:testDebugUnitTest`/`build` run
+  unscoped in this commit.
+
+**Left open / not done:**
+- F21's own real-polling gap, named above with the exact evidence this round gathered — filed for
+  `FailureSignalsPolling.kt`/`FailureMapper.kt`'s own owners (WP11b), not fixed here.
+- The R-432 thread route (`FrequencyDetailContent.onOpenThread`) — WP8's own prerequisite commit
+  had still not landed on `main` as of this commit; picked up in a follow-up once it does.
+
+---
+
 ## 2026-09-08 (ui-conformance WP3 round 14: NavSeed's Search and Log-sheet fields; R-350's pipeline fix reflected)
 
 ### (pending) — ui-conformance WP3 round 14 · NavSeed search/log-sheet fields; R-350 now real end to end
