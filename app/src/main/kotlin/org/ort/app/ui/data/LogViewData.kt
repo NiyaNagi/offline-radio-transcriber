@@ -259,10 +259,15 @@ public object LogItemsMapper {
         return "not listening · $duration · ${gapCauseProse(gap.cause)}"
     }
 
+    // R-106 (V3 pass 4, Review @e927690): read verbatim from the real boards, not paraphrased —
+    // `Fail-Killed.dc.html`/`Fail-Interrupted.dc.html` both write "app stopped by the OS" for
+    // OS_STOPPED (this used to read the shorter, non-matching "app stopped"); `Fail-Disconnect.dc.html`
+    // confirms "input lost" for INPUT_LOST, already correct; `Fail-Call.dc.html`/`Log.dc.html`/
+    // `Rows.dc.html` confirm the log row's own short "incoming call" for CALL, already correct.
     private fun gapCauseProse(cause: CaptureGapCause): String = when (cause) {
         CaptureGapCause.CALL -> "incoming call"
         CaptureGapCause.INPUT_LOST -> "input lost"
-        CaptureGapCause.OS_STOPPED -> "app stopped"
+        CaptureGapCause.OS_STOPPED -> "app stopped by the OS"
         CaptureGapCause.ROUTE_LOST -> "route lost"
         CaptureGapCause.INTERRUPTION -> "interruption"
         CaptureGapCause.ROUTE_CHANGE -> "route changed"

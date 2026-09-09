@@ -233,6 +233,32 @@ class LogViewDataTest {
         assertTrue(LogItemsMapper.gapLabel(g).startsWith("not listening · ongoing"))
     }
 
+    @Test
+    fun `R_106_gap_causes every real CaptureGapCause reads the board's own prose, not a raw enum name`() {
+        // Every phrase read verbatim from a real board before this test was written: CALL from
+        // `Fail-Call.dc.html`/`Log.dc.html`/`Rows.dc.html` (the log row's own short form),
+        // INPUT_LOST from `Fail-Disconnect.dc.html`, OS_STOPPED from `Fail-Killed.dc.html`/
+        // `Fail-Interrupted.dc.html` ("app stopped by the OS", not the shorter "app stopped" this
+        // used to read) — ROUTE_LOST/ROUTE_CHANGE/DEVICE_LOST/STORAGE/UNKNOWN/INTERRUPTION have no
+        // gap-row example on any board; their existing short, jargon-free phrases are unchanged.
+        val expected = mapOf(
+            CaptureGapCause.CALL to "incoming call",
+            CaptureGapCause.INPUT_LOST to "input lost",
+            CaptureGapCause.OS_STOPPED to "app stopped by the OS",
+            CaptureGapCause.ROUTE_LOST to "route lost",
+            CaptureGapCause.INTERRUPTION to "interruption",
+            CaptureGapCause.ROUTE_CHANGE to "route changed",
+            CaptureGapCause.DEVICE_LOST to "device lost",
+            CaptureGapCause.STORAGE to "storage full",
+            CaptureGapCause.UNKNOWN to "reason unknown",
+        )
+
+        expected.forEach { (cause, prose) ->
+            val g = gap(endedAt = 38_000L, cause = cause)
+            assertEquals("not listening · 38 s · $prose", LogItemsMapper.gapLabel(g))
+        }
+    }
+
     // -- R-040 grouping ------------------------------------------------------------------------
 
     @Test
