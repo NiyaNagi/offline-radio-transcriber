@@ -32,6 +32,112 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP12 v5: R-460 scroll-to-end for cold Setup/Failure @2x captures)
+
+### 2ec30ee — ui-conformance WP12 v5 · R-460
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourSpec,ScreenshotTourActivity,TourAccessibilityScroll}.kt`
+(`TourAccessibilityScroll.kt` new), `app/src/test/kotlin/org/ort/app/debug/tour/{TourSpecTest,TourStepsTest}.kt`,
+`tools/ui-audit/tour.json` (138 steps: +11 `-end` variants). `git merge main` at the round's start —
+clean fast-forward onto `8dbbcf7` (the v4 commit `c9a6fa0` already present via main's own merge
+`6303aa9`), no files in this package touched by anything landed since. No rebase, no stash, no
+`gradlew --stop`.
+
+**Requirements/ACs:** none new — validation tooling. Closes register finding R-460.
+
+**What changed:**
+
+*Constitution Check.* Principle II (never claim a fix works when it hasn't been checked) governs
+this entire round: three successive designs for the scroll mechanism each *compiled* clean but
+failed for a different real reason, caught only by running the real device tour after each one, not
+by inspection or by the unit-test gate (which cannot exercise a real `AccessibilityNodeProvider` —
+Robolectric's shadow does not model one).
+
+- **`TourStep.scroll: String? = null`** (only `"end"` accepted, validated in `init`) — after a step's
+  ordinary settle/override/wait, scrolls the screen's primary vertical scroll container to its end,
+  settles again, then captures; id gets a `-end` suffix. Added to `tour.json`: the five Setup `@2x`
+  steps under `setup-verified` (S01/S03/S04/S08/S12 — not S07, not named in R-460's list), `N04`
+  Capture-Status `@2x` (`storage-warn`), `CF03`/`D02`/`L01`/`FQ03` `@2x`, and `F20` (`migration-failed`)
+  `@2x` — confirmed by grep the only other Failure-board `@2x` step in the file. 127 → **138 steps**.
+- **`TourAccessibilityScroll.scrollToEnd(rootView: View)`** (new file) — the mechanism, and the one
+  genuinely hard part of this round. `androidx.compose.ui.semantics.SemanticsOwner` (the coordinator's
+  own first-choice wording) was ruled out immediately: every way to obtain one lives in
+  `androidx.compose.ui:ui-test`, a `testImplementation`-only dependency in `app/build.gradle.kts` (not
+  this package's file to change), never shipped into the real `debug` APK `ScreenshotTourActivity`
+  runs in. Built on the production-safe alternative instead — the real, standard Android accessibility
+  tree Compose always translates its own semantics into — through three device-tested iterations:
+  1. `window.decorView.accessibilityNodeProvider` — always `null`. `AccessibilityNodeProvider` is a
+     plain per-View getter, never aggregated from descendants; the provider Compose installs lives on
+     the specific `AndroidComposeView` several levels *inside* the decor view, not on it. Fixed by a
+     BFS over the plain `View`/`ViewGroup` tree for the first descendant whose own provider is
+     non-null.
+  2. `AccessibilityNodeInfo.getChild(...)`/`.performAction(...)`, called on nodes obtained directly
+     from `provider.createAccessibilityNodeInfo(...)` — every one threw `IllegalStateException:
+     Cannot perform this action on a not sealed instance.` Root-caused (`AccessibilityNodeInfo`'s own
+     source): sealing, and the live `mConnectionId` those two methods require, is assigned only by the
+     OS-mediated `AccessibilityInteractionClient` round trip a real bound `AccessibilityService` or an
+     *instrumented* process's `UiAutomation` goes through — neither exists for a plain `am
+     start`-launched activity. Fixed by never calling either method on a node object: `getChild` is
+     unusable full stop (no public API exposes a virtual child's own id another way), and the actual
+     scroll action goes through `AccessibilityNodeProvider.performAction(virtualViewId, action,
+     arguments)` — called on the *provider*, which carries none of the sealed-node requirement.
+  3. Checking only `AccessibilityNodeProvider.HOST_VIEW_ID` (the merged root) for `isScrollable` —
+     `false` on every one of the eleven affected screens; their scroll region is a genuine descendant,
+     not the merged root, and there is still no sealed-free way to *navigate* down to it. Fixed by
+     scanning the virtual-view-id space directly (`HOST_VIEW_ID..50_000`, plain field reads —
+     `isScrollable`/`getBoundsInScreen` — never call `enforceSealed()`, confirmed empirically), keeping
+     the *tallest* scrollable match, then driving that id's own scrolling through
+     `AccessibilityNodeProvider.performAction`. Inelegant, but public API only, no reflection, no new
+     dependency, and generic — no assumption about *where* in the tree the container sits.
+- **`ScreenshotTourActivity`** — `renderDestinationStep`/`renderSetupStep` both call
+  `TourAccessibilityScroll.scrollToEnd(...)` + a new `SCROLL_SETTLE_MILLIS = 300L` delay when
+  `step.scroll == "end"`, right after the existing settle/wait, right before the capture.
+- **`TourSpecTest`** gained `R_TOUR_SCROLL_VALUE_REJECTED` (an unsupported `scroll` value fails to
+  parse) and `R_TOUR_SCROLL_END_ACCEPTED` (every `scroll` value in the real `tour.json` is `"end"`).
+  **`TourStepsTest`**'s stale doc-comment step counts (from v3, never updated by v4) corrected to the
+  real current 119/138 split while touching this file; no behavioural change needed — every
+  `-end` step still carries the same `destination`/`drillIn` as its non-scrolled sibling, so this
+  test's existing per-step screen-identity assertion already covers them, exercising `scroll` parsing
+  without exercising `TourAccessibilityScroll` itself (which needs a real window this Robolectric test
+  never opens — covered on-device only, below). `TourParityTest` needed no change — `scroll` never
+  touches the process-wide holders it snapshots.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — **BUILD SUCCESSFUL**,
+  28 tests, 28 passed (JDK 17/`ANDROID_HOME` had to be set explicitly this round — the shell's default
+  `JAVA_HOME` pointed at a JRE 8, unrelated to this package).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**. `.\gradlew.bat dependencyRules
+  platformGuards` — both **OK**. `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+  `python tools\spec-check\spec_check.py` — **OK** (8/8). `coverageMatrix` then `coverageMatrixCheck`
+  (separate invocations) — up to date, byte-identical (191/419, unchanged — these tests cite no
+  FR/AC ids).
+- **Real device, `emulator-5558` (AVD `ort_audit_3`)** — checked `adb -s emulator-5558 shell pidof
+  org.ort.app.debug` first per the coordinator's own instruction; idle, so a full run proceeded
+  rather than the unit-tests-and-build-only fallback. Fresh worktree APK, `pm clear org.ort.app` +
+  `RECORD_AUDIO`/`POST_NOTIFICATIONS` granted, `.\tools\ui-audit\tour.ps1 -Port 5558`: first run
+  **127/127 ok, 11 errors** (all eleven `-end` steps — iteration 1 of the mechanism above); second run
+  **127/127 ok, 11 errors** (the same eleven, now failing on the "not sealed" exception — iteration 2);
+  third run **127/127 ok, 11 errors** (the same eleven, now failing "no vertically-scrollable container
+  found at this screen's accessibility root" — iteration 3, proving the host-only check's own honest
+  failure path works, but is too narrow); fourth run, after the id-scan fix, **138/138 ok, 0 errors,
+  140.8s**. Two `-end` captures opened directly with the Read tool and visually confirmed as genuine
+  scrolled renders, not just "ok" in the manifest: `setup-verified/S01-welcome@2x-end.png` (header text
+  now clipped at the *top*, the `Begin` button and the "What is captured" footer link visible at the
+  bottom — the exact opposite of R-460's original clipped-mid-word first frame) and
+  `overnight/L01-log@2x-end.png` (the log list genuinely scrolled to later rows, not the initial
+  frame). `tour-v5-run{1,2,3,4}` scratch output directories were temporary, not part of this commit.
+
+**Left open / not done:**
+- The id-scan's `0..50_000` upper bound is an empirically-chosen generous cap (Compose's semantics ids
+  are a process-lifetime-monotonic counter, never reset), not a value derived from a documented
+  constant — a very long-running host process compositing far more screens before reaching a `scroll`
+  step than this tour ever does could in principle exceed it; flagged rather than assumed to generalize
+  indefinitely, the same honesty standard v4's `searchSubmit` wait-time note set.
+- The id-scan finds the *tallest* scrollable node, matching the single-scroll-region shape every
+  screen in this tour actually has; a future screen with two independent vertically-scrollable regions
+  (a scrollable sheet over a scrollable body, say) would scroll only the taller one — undocumented
+  until a real case exists to test against.
+
 ## 2026-09-09 (ui-conformance WP9: R-465 follow-up — consolidated onto WP4's shared ChartGeometry)
 
 ### (pending) — ui-conformance WP9 · R-465 follow-up: `referenceLineY` now calls the shared `ChartGeometry.kt`, not a private copy
@@ -325,7 +431,6 @@ platformGuards` OK. `:app:assembleDebug` succeeds. `spec_check.py` 8/8. `coverag
 `uiautomator` device dump (both ports were validators' own for this whole round) — a validator
 should still confirm on-device on the next pass, though the test asserts the exact structural claim
 (tagged node = clickable leaf, one description) the register's own dump finding was about.
-
 ---
 
 ## 2026-09-08 (ui-conformance WP2: R-420/R-424 score-chip wrap and column-header stacking; R-380/R-381 clickable nodes carry their own description via clearAndSetSemantics; R-383 filter chip 44dp floor)

@@ -24,6 +24,7 @@
     { "id": "reconcile/F19-reconcile-now", "scenario": "reconcile", "destination": "NOW" },
     { "id": "migration-failed/F20-migration-now", "scenario": "migration-failed", "destination": "NOW" },
     { "id": "migration-failed/F20-migration-now@2x", "scenario": "migration-failed", "destination": "NOW", "fontScale": 2.0 },
+    { "id": "migration-failed/F20-migration-now@2x-end", "scenario": "migration-failed", "destination": "NOW", "fontScale": 2.0, "scroll": "end" },
     { "id": "asset-swap/F21-asset-swap-now", "scenario": "asset-swap", "destination": "NOW" },
     { "id": "calibration/F22-calibration-now", "scenario": "calibration", "destination": "NOW" },
     { "id": "lexicon-corrupt/F12-lexicon-now", "scenario": "lexicon-corrupt", "destination": "NOW" },
@@ -31,6 +32,7 @@
 
     { "id": "overnight/L01-log", "scenario": "overnight", "destination": "LOG" },
     { "id": "overnight/L01-log@2x", "scenario": "overnight", "destination": "LOG", "fontScale": 2.0 },
+    { "id": "overnight/L01-log@2x-end", "scenario": "overnight", "destination": "LOG", "fontScale": 2.0, "scroll": "end" },
     { "id": "pass-a-partial/L03-log-partial", "scenario": "pass-a-partial", "destination": "LOG" },
     { "id": "empty/L04-log-empty", "scenario": "empty", "destination": "LOG" },
     { "id": "first-session/L04-log-first-session", "scenario": "first-session", "destination": "LOG" },
@@ -77,6 +79,7 @@
     { "id": "overnight-live/N04-capture-status@2x", "scenario": "overnight-live", "destination": "CAPTURE", "fontScale": 2.0 },
     { "id": "storage-warn/N04-capture-status", "scenario": "storage-warn", "destination": "CAPTURE" },
     { "id": "storage-warn/N04-capture-status@2x", "scenario": "storage-warn", "destination": "CAPTURE", "fontScale": 2.0 },
+    { "id": "storage-warn/N04-capture-status@2x-end", "scenario": "storage-warn", "destination": "CAPTURE", "fontScale": 2.0, "scroll": "end" },
     { "id": "thermal/N04-capture-status", "scenario": "thermal", "destination": "CAPTURE" },
     { "id": "backlog/N04-capture-status", "scenario": "backlog", "destination": "CAPTURE" },
     { "id": "rig-lost/N04-capture-status", "scenario": "rig-lost", "destination": "CAPTURE" },
@@ -96,6 +99,7 @@
     { "id": "overnight/CF02-settings-capture", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" } },
     { "id": "overnight/CF03-settings-storage", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "STORAGE" } },
     { "id": "overnight/CF03-settings-storage@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "STORAGE" }, "fontScale": 2.0 },
+    { "id": "overnight/CF03-settings-storage@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "STORAGE" }, "fontScale": 2.0, "scroll": "end" },
     { "id": "model-missing/CF04-settings-assets", "scenario": "model-missing", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
     { "id": "overnight/CF05-settings-tier", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "TIER" } },
     { "id": "overnight/CF06-settings-rig", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
@@ -108,6 +112,7 @@
     { "id": "overnight/D01-confirmed", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
     { "id": "overnight/D02-inferred", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "inferred" } },
     { "id": "overnight/D02-inferred@2x", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "inferred" }, "fontScale": 2.0 },
+    { "id": "overnight/D02-inferred@2x-end", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "inferred" }, "fontScale": 2.0, "scroll": "end" },
     { "id": "overnight/D03-ambiguous", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "ambiguous" } },
     { "id": "overnight/D04-unknown", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "unknown" } },
     { "id": "no-audio/D06-no-audio", "scenario": "no-audio", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
@@ -123,6 +128,7 @@
     { "id": "frequency-change/FQ02-frequency-detail", "scenario": "frequency-change", "destination": "FREQUENCIES", "drillIn": { "frequency": "145230000", "frequencyInitialView": "Detail" } },
     { "id": "frequency-change/FQ03-frequency-change", "scenario": "frequency-change", "destination": "FREQUENCIES", "drillIn": { "frequency": "145230000", "frequencyInitialView": "Change" } },
     { "id": "frequency-change/FQ03-frequency-change@2x", "scenario": "frequency-change", "destination": "FREQUENCIES", "drillIn": { "frequency": "145230000", "frequencyInitialView": "Change" }, "fontScale": 2.0 },
+    { "id": "frequency-change/FQ03-frequency-change@2x-end", "scenario": "frequency-change", "destination": "FREQUENCIES", "drillIn": { "frequency": "145230000", "frequencyInitialView": "Change" }, "fontScale": 2.0, "scroll": "end" },
 
     { "id": "level-low/N06-level-meter-seeded", "scenario": "level-low", "destination": "CAPTURE", "drillIn": { "captureLevelMeter": "true" } },
     { "id": "level-clip/N06-level-meter-clip-seeded", "scenario": "level-clip", "destination": "CAPTURE", "drillIn": { "captureLevelMeter": "true" } },
@@ -145,6 +151,12 @@
     { "id": "setup-verified/S04-input@2x", "setup": "S04", "scenario": "setup-verified", "fontScale": 2.0 },
     { "id": "setup-level/S07-level@2x", "setup": "S07", "scenario": "setup-level", "fontScale": 2.0 },
     { "id": "setup-verified/S08-battery@2x", "setup": "S08", "scenario": "setup-verified", "fontScale": 2.0 },
-    { "id": "setup-verified/S12-ready@2x", "setup": "S12", "scenario": "setup-verified", "fontScale": 2.0 }
+    { "id": "setup-verified/S12-ready@2x", "setup": "S12", "scenario": "setup-verified", "fontScale": 2.0 },
+
+    { "id": "setup-verified/S01-welcome@2x-end", "setup": "S01", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
+    { "id": "setup-verified/S03-notify@2x-end", "setup": "S03", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
+    { "id": "setup-verified/S04-input@2x-end", "setup": "S04", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
+    { "id": "setup-verified/S08-battery@2x-end", "setup": "S08", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
+    { "id": "setup-verified/S12-ready@2x-end", "setup": "S12", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" }
   ]
 }
