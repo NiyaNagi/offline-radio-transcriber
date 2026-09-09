@@ -19,10 +19,12 @@ import org.json.JSONObject
  * `thread` (`any` or a literal id), `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`,
  * `captureLevelMeter` (`true`), `reviewSession` (`self` or a literal session id),
  * `frequencyInitialView` (`Detail`|`Change`), `settingsScreen` (a `SettingsScreenId` name — carried
- * through `NavSeed` now, same key as before). **Not seedable at all, in v2 either**: `Log`'s own
- * filter sheet and `Search`'s own — see [org.ort.app.ui.navigation.NavSeed]'s own doc comment for
- * exactly why (neither `LogContent.kt` nor `SearchContent.kt` accepts an initial-open parameter).
- * A step naming a
+ * through `NavSeed` now, same key as before). **v4** (WP3 round 14's `NavSeed` fields, after WP5/WP7/
+ * WP6 each shipped the composable parameter it needed): `searchQuery`/`searchSubmit`/
+ * `searchFiltersOpen`, `logSheetOpen`, `revisionsOpen` (a companion to `transmission`, the same
+ * relationship `frequencyInitialView` has to `frequency`). **Still not seedable**: `Station`'s own
+ * Pattern/Identity sub-screen (ST03/ST04) — no `NavSeed`/composable seam exists for it yet at the
+ * time of writing (see this package's own report for what was polled and not found). A step naming a
  * [drillIn] key outside this set fails loudly (recorded as one `error` line in the manifest, per
  * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
  * aborted tour) rather than being silently ignored.
@@ -69,6 +71,11 @@ public data class TourStep(
             "reviewSession",
             "frequencyInitialView",
             "settingsScreen",
+            "searchQuery",
+            "searchSubmit",
+            "searchFiltersOpen",
+            "logSheetOpen",
+            "revisionsOpen",
         )
     }
 }

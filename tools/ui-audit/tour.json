@@ -40,11 +40,20 @@
     { "id": "no-audio/L01-log-no-audio", "scenario": "no-audio", "destination": "LOG" },
     { "id": "storage-warn/L01-log-banner", "scenario": "storage-warn", "destination": "LOG" },
     { "id": "storage-warn/L01-log-banner@2x", "scenario": "storage-warn", "destination": "LOG", "fontScale": 2.0 },
+    { "id": "overnight/L02-filter-sheet", "scenario": "overnight", "destination": "LOG", "drillIn": { "logSheetOpen": "true" } },
+    { "id": "overnight/L02-filter-sheet@2x", "scenario": "overnight", "destination": "LOG", "drillIn": { "logSheetOpen": "true" }, "fontScale": 2.0 },
 
     { "id": "search-corpus/Q01-search", "scenario": "search-corpus", "destination": "SEARCH" },
     { "id": "search-corpus/Q01-search@2x", "scenario": "search-corpus", "destination": "SEARCH", "fontScale": 2.0 },
     { "id": "search-unavailable/Q01-search", "scenario": "search-unavailable", "destination": "SEARCH" },
     { "id": "empty/Q01-search-empty", "scenario": "empty", "destination": "SEARCH" },
+    { "id": "search-corpus/Q03-results-park", "scenario": "search-corpus", "destination": "SEARCH", "drillIn": { "searchQuery": "park", "searchSubmit": "true" }, "waitMillis": 2000 },
+    { "id": "search-corpus/Q03-results-park@2x", "scenario": "search-corpus", "destination": "SEARCH", "drillIn": { "searchQuery": "park", "searchSubmit": "true" }, "fontScale": 2.0, "waitMillis": 2000 },
+    { "id": "search-corpus/Q03-callsign-ke7qrs", "scenario": "search-corpus", "destination": "SEARCH", "drillIn": { "searchQuery": "KE7QRS", "searchSubmit": "true" }, "waitMillis": 2000 },
+    { "id": "search-corpus/Q04-empty-ke7qrt", "scenario": "search-corpus", "destination": "SEARCH", "drillIn": { "searchQuery": "KE7QRT", "searchSubmit": "true" }, "waitMillis": 2000 },
+    { "id": "search-unavailable/Q05-unavailable-park", "scenario": "search-unavailable", "destination": "SEARCH", "drillIn": { "searchQuery": "park", "searchSubmit": "true" }, "waitMillis": 2000 },
+    { "id": "search-corpus/Q02-filters-sheet", "scenario": "search-corpus", "destination": "SEARCH", "drillIn": { "searchFiltersOpen": "true" } },
+    { "id": "search-corpus/Q02-filters-sheet@2x", "scenario": "search-corpus", "destination": "SEARCH", "drillIn": { "searchFiltersOpen": "true" }, "fontScale": 2.0 },
 
     { "id": "overnight/T01-threads", "scenario": "overnight", "destination": "THREADS" },
     { "id": "overnight/T01-threads@2x", "scenario": "overnight", "destination": "THREADS", "fontScale": 2.0 },
@@ -103,6 +112,7 @@
     { "id": "overnight/D04-unknown", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "unknown" } },
     { "id": "no-audio/D06-no-audio", "scenario": "no-audio", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
     { "id": "revisions/D07-revisions", "scenario": "revisions", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
+    { "id": "revisions/D07-revisions-open", "scenario": "revisions", "destination": "LOG", "drillIn": { "transmission": "confirmed", "revisionsOpen": "true" } },
     { "id": "pass-failed/F18-pass-failed", "scenario": "pass-failed", "destination": "LOG", "drillIn": { "transmission": "unknown" } },
 
     { "id": "overnight/T02-thread-detail", "scenario": "overnight", "destination": "THREADS", "drillIn": { "thread": "any" } },
