@@ -32,6 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11c follow-up: R-419 — a real session-lifetime clipped-sample count)
+
+### (pending) — ui-conformance WP11c · LevelStatus.clippedSamplesThisSession: a real running total, never the rolling per-second window
+
+**Scope:** `capture-android/src/main/kotlin/org/ort/capture/android/LevelMeter.kt` (new
+`Snapshot.clippedSamplesTotal`), `capture-android/src/test/kotlin/org/ort/capture/android/LevelMeterTest.kt`
+(new test), `pipeline/src/main/kotlin/org/ort/pipeline/capture/LevelStatus.kt` (new
+`clippedSamplesThisSession` field + `recordClippedSamplesThisSession`), `pipeline/src/test/kotlin/org/ort/pipeline/capture/LevelStatusTest.kt`
+(new test), `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`
+(`publishLevelStatus` republishes the new field). No `:data`/`:app` change — WP4 reads the new
+field directly once this lands. `results/coverage-matrix.md` regenerated (191 of 419 covered,
+unchanged — R-419 is an existing register row, not a new spec requirement id).
+
+**Requirements/ACs:** R-419.
+
+**Constitution check.** Principle I (uncertainty is content, never fabricate) is the whole point:
+the coordinator's own suggested implementation — "accumulated in `RealCaptureService`'s level tick
+from the per-second count" (i.e. summing `LevelStatus.State.Measured.clipCountLastSecond` tick
+over tick) — was checked against `LevelMeter`'s real semantics before being built, and found to
+overcount by roughly an order of magnitude: `clipCountLastSecond` is documented as "a trailing ~1 s
+sum, evicting entries as audio time advances" (`LevelMeter`'s own kdoc), recomputed on every
+`onFrame` call (~10 Hz) — summing it every tick would count the same clipped sample roughly once
+per tick for as long as it stays inside that rolling window. Building the literal instruction would
+have shipped a second dishonest number in place of the first (a session count that isn't really a
+session count, just a bigger wrong number) — disclosed here and fixed at the real source instead:
+`LevelMeter` (which this package already owns, from the original WP11c grant — see `git log` on the
+file) now keeps its own true monotonic running total, incremented directly from each frame's own
+newly-detected clip count, never evicted.
+
+**What changed:**
+- **`LevelMeter.Snapshot.clippedSamplesTotal: Long`** (new field): a private `clippedSamplesTotal`
+  running total on `LevelMeter` itself, incremented by each frame's own `clipCount` (the raw,
+  already-computed per-frame value `onFrame` uses internally to build the rolling window) —
+  unconditionally, unlike `clipEvents`, which still evicts for `clipCountLastSecond`'s own,
+  unchanged rolling-window purpose. One `LevelMeter` instance's lifetime is exactly one capture
+  session's (a fresh instance per `AudioRecordSource`), so the running total is naturally
+  session-scoped with no separate reset needed inside this class.
+- **`LevelStatus.clippedSamplesThisSession: Long`** (new field, default `0L`) + **`recordClippedSamplesThisSession(total:
+  Long)`** (new mutator, kept separate from `update()` so every existing caller of `update()` —
+  including `LevelStatusTest`'s own direct calls — keeps compiling unchanged): republishes
+  `LevelMeter.Snapshot.clippedSamplesTotal` verbatim, on the same tick `update()` already runs on.
+  `reset()` now also zeroes it — the same call site R-302 already resets `LevelStatus`/`InputStatus`
+  on, every session-ending path.
+- **`RealCaptureService.publishLevelStatus`**: one new line, `LevelStatus.recordClippedSamplesThisSession(snapshot.clippedSamplesTotal)`,
+  alongside the existing `LevelStatus.update(...)` call.
+- **The existing `clipCountLastSecond` field is unchanged** — same rolling ~1 s value it always
+  was, for whatever else reads it (the live "currently clipping" signal); this round only adds the
+  new field beside it, per the coordinator's own "keep the existing field" instruction.
+
+**Verified:**
+- `.\gradlew.bat :capture-android:testDebugUnitTest --tests "org.ort.capture.android.LevelMeterTest"` —
+  7 tests, all green, including `R_419_session_clip_count keeps growing across seconds, never
+  evicted like the rolling window` (feeds one clipped second, confirms `clippedSamplesTotal == 1`
+  and `clipCountLastSecond == 1`; feeds two further quiet seconds, confirms `clipCountLastSecond`
+  has fallen back to `0` — the rolling window genuinely evicted it — while `clippedSamplesTotal`
+  still reads `1`; feeds a second clipped second, confirms the total reaches `2`, not reset to `1`).
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.capture.LevelStatusTest"` —
+  4 tests, all green, including the new holder-plumbing test (`0L` before any frame,
+  `recordClippedSamplesThisSession` republishes verbatim, `reset()` zeroes it).
+- TDD genuineness, by temporary revert: removing the `clippedSamplesTotal += clipCount`
+  accumulation line reproduced the exact failure (`expected: <1> but was: <0>`) the fix closes —
+  confirmed, then restored and reconfirmed green.
+- `.\gradlew.bat :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest --rerun` — both
+  whole modules green, no regression.
+- `.\gradlew.bat :capture-android:ktlintCheck :capture-android:detekt :pipeline:ktlintCheck :pipeline:detekt` —
+  clean (one test-name shortening for detekt's `MaxLineLength`).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — 419 requirements, 191
+  covered (unchanged); check reports up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+
+**Left open / not done:**
+- No UI change — `Level-Meter.dc.html`'s "Clipped samples this session" row (WP4's file) is left
+  reading whichever field it currently reads; the coordinator's message says WP4 switches it to
+  `LevelStatus.clippedSamplesThisSession` once this lands, which is the field name to report back:
+  **`clippedSamplesThisSession`** (on `org.ort.pipeline.capture.LevelStatus`, `Long`, `0L` default).
+
 ## 2026-09-08 (ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410)
 
 ### e8b7dbf — ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410
@@ -253,7 +332,6 @@ technical design §7.1, "the queue is not a history") overwrote it.
   not `:pipeline`), so the "minimal disclosed `:pipeline` edit" the brief anticipated was
   unnecessary — `:pipeline`'s own `PassDrainRunner` needed no change, only a new test proving the
   row is written through its real call path.
-
 ---
 
 ## 2026-09-08 (test-suite speed: :app:testDebugUnitTest 1hr+ -> 2m18s)
