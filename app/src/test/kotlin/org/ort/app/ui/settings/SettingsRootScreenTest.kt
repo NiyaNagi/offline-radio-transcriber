@@ -8,7 +8,9 @@ import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -94,6 +96,20 @@ class SettingsRootScreenTest {
         }
         assert(distinctExcludingFallbacks.values.toSet().size == distinctExcludingFallbacks.size) {
             "expected every non-fallback row to carry its own distinct icon, got $icons"
+        }
+    }
+
+    @Test
+    @Requirement("R-451")
+    fun `R_451 the Input and level row draws the board's own recorder glyph, never OrtIcons capture`() {
+        // `OrtIcons.capture` is the board's 8-ray sunburst for a different concept (see this file's
+        // own R-451 note on `iconFor`'s kdoc) — the CAPTURE row must draw the locally-built
+        // recorder-glyph icon instead, never fall back to that unrelated shared one.
+        assert(iconFor(SettingsScreenId.CAPTURE) === SettingsInputAndLevelIcon) {
+            "expected the CAPTURE row's icon to be SettingsInputAndLevelIcon"
+        }
+        assert(iconFor(SettingsScreenId.CAPTURE) !== OrtIcons.capture) {
+            "CAPTURE must no longer draw OrtIcons.capture, the wrong (sunburst) glyph"
         }
     }
 }

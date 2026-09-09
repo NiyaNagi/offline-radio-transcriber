@@ -57,7 +57,10 @@ public object ImprovePolling {
         return ImproveRootViewState(
             totalOverCount = allQualifyingIds.size,
             allTransmissionIds = allQualifyingIds,
-            currentTierLabel = "T$currentTierOrdinal",
+            // R-445 (register, Reviewer D): was "T$currentTierOrdinal" — a raw token ("tier T3"
+            // once prefixed at either call site below), not the shared "tier N" label this exact
+            // file's own `headline` above ("Captured at tier ${tier.ordinal}") already uses.
+            currentTierLabel = "$currentTierOrdinal",
             groups = groups,
             everythingElseCount = (everyOver - allQualifyingIds.size).coerceAtLeast(0),
         )

@@ -32,6 +32,139 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10: register at e927690, R-441/444/445/449/450/451/413/443)
+
+### <HASH> — ui-conformance WP10 · register at e927690: R-441/444/445/449/450/451/413/443 closed
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsStorageScreen.kt`,
+`SettingsRigScreen.kt`, `SettingsRootScreen.kt`; `app/src/main/kotlin/org/ort/app/ui/improve/ImprovePolling.kt`;
+`app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt`; tests beside each, plus
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenTest.kt` (a WP10-owned test file for a
+WP10-owned production file, `ui/screens/ModelsScreen.kt`, that R-443 turned out not to need to edit
+— see below).
+
+**Requirements/ACs:** R-441, R-444, R-445, R-449, R-450, R-451, R-413 (register, Reviewer D's
+capture review at e927690), R-443 (register, same review, reassigned to WP10 at main 3baef8b).
+
+**What changed:**
+
+*Constitution Check.* I (an attribution/fact without its real source is a bug) governs R-450 and
+R-449 directly — both replace a placeholder with a real, computed fact rather than a differently
+worded guess, and R-443's own investigation stops short of inventing a code fix once the real
+evidence pointed elsewhere (see below). No capture-path, segmenter, or `:capture-*`/`:asr-*` file is
+touched — the other constitution rules do not bear on this round.
+
+- **R-441 (halt):** `StorageCategoryBreakdown` rendered a genuinely empty store's four `0`-byte
+  categories as an equal-weight (`coerceAtLeast(1L)`) fallback, filling the bar almost entirely with
+  the first category's colour. It now renders **zero** segment children when the real total is `0`
+  — only the track's own background shows, honestly empty. Test: `R_441_zero_total_draws_empty_track`.
+- **R-444:** `Settings-Rig`'s disconnected-state body quoted `FR-RIG`'s spec id and design prose
+  verbatim. Reworded to the exact phrase `Settings-Capture`'s own `CaptureStatusViewState.radioFacts`
+  (R-263) already established for the identical fact — "no radio support in this build yet" — never
+  a second, differently worded claim about the same thing. Test: `R_444 the disconnected state never
+  leaks the FR-RIG spec id into operator copy`.
+- **R-445:** `Improve`'s empty state built its tier label as `"T$currentTierOrdinal"` ("tier T3" once
+  prefixed) instead of the shared `"tier N"` shape the same file's own `headline` already uses. Now
+  `"$currentTierOrdinal"`. Test: `R_445 the empty state names the shared tier label, tier 3, never
+  the raw T3 token`.
+- **R-449 (spec):** `Session`'s coverage chart reused `ActivityPatternMapper.buildPattern`, which
+  folds onto 24 fixed *hour-of-day* buckets — correct for `Station`/`Frequencies`' multi-night
+  patterns, a category error for a single session's own few-hour timeline: every hour-of-day the
+  session never touched (most of the clock) read `NOT_LISTENING`, hatching nearly every bar even for
+  a continuously run session. New `sessionCoverageBuckets` buckets by *elapsed* hour within the
+  session's own real span instead — exactly as many bars as the session ran, hatched only when a
+  real, recorded `CaptureGap` covers at least half that bucket's own duration. This was a genuine
+  architectural fix, not a fixture-data gap — no WP4 routing needed. The half-bucket-coverage
+  heuristic is itself an honest, hour-granularity approximation, documented in the function's own doc
+  comment. Tests: `R_449 a continuously run session with only a real recorded gap is not hatched
+  not-listening`, `R_449 an hour a real recorded gap covers at least half of is hatched not-listening`.
+- **R-450:** `Session`'s facts row read `SessionEntity.deviceTier ?: "current"` for Tier — confirmed
+  via `RealCaptureService.kt` that `deviceTier` is written `null` on every real capture insert, so
+  "current" was a permanent placeholder for every real session, never a fact. Tier now reads the real,
+  per-transmission `TransmissionEntity.processedTier` (schema v4): `"tier N"` when every transmission
+  agrees, `"mixed · up to tier N"` when they don't, `"not yet reprocessed"` when none has been.
+  **Input is an accepted deviation, reported, not silently dropped:** the register asked for "the
+  session's recorded route", but grepping the whole `:data` schema found no per-session input-device/
+  route column anywhere — `SessionEntity` carries none, and `RealCaptureService` never writes one.
+  This cannot be honestly sourced without a new `:data` schema column, outside WP10's file ownership
+  and this round's scope. Left as the same honest, no-real-source wording the `Models` row already
+  used: `"not tracked per session in this build"`. Tests: `R_450 tier reads the real processedTier,
+  never the always-null deviceTier`, `R_450 nothing reprocessed yet honestly reads not yet
+  reprocessed, never a fabricated tier`, `R_450 mixed processedTier names the mix, never picks one
+  tier arbitrarily`, `R_450 Input honestly names no per-session route is tracked, never the old
+  Settings redirect`.
+- **R-451 (polish):** `Settings`'s "Input and level" row drew `OrtIcons.capture` — the board's own
+  8-ray sunburst glyph for a *different* concept — instead of `Settings.dc.html`'s rounded-rectangle
+  recorder-and-stand glyph for this exact row. `ui/components/OrtIcons.kt` has no such glyph and is
+  outside WP10's file ownership to add one to, so `SettingsInputAndLevelIcon` draws it locally in
+  `SettingsRootScreen.kt`, converted by hand from the board's own SVG (`<rect x="6" y="3" width="12"
+  height="9" rx="2">` to its path equivalent, plus the stand path verbatim) using the same
+  `ImageVector.Builder`/`addPath` technique `OrtIcons.kt` itself uses. Test: `R_451 the Input and
+  level row draws the board's own recorder glyph, never OrtIcons capture`.
+- **R-413 (halt):** on `rig-lost`, `Settings-Rig`'s Band B tile rendered its mono frequency one
+  character per line down the whole screen at font scale 1.0 — every `Tile` in the row asked for its
+  own `Modifier.fillMaxWidth()` inside a plain, unweighted `Row`, so the first tile claimed the
+  entire row. `ui/components/Rows.kt`'s shared `Tile` has no `maxLines`/`softWrap` override hook and
+  is outside WP10's file ownership, so `SettingsRigScreen.kt` now draws its own `BandTile`/
+  `BandTilesRow`: a `FlowRow` (so two tiles wrap onto their own lines when the row is too narrow for
+  both) plus a real, measured minimum width (`rememberTextMeasurer`, the same idiom
+  `rememberTimeColumnWidth`/`rememberFreqColumnWidth` already use) sized to this screen's own
+  worst-case sample `"146.960?"`, with `softWrap = false`/`maxLines = 1` on the value text itself.
+  Tests: `R_413 both band tiles' frequency values render as one line at font scale 1-0`, `…2-0`
+  (asserted via `SemanticsActions.GetTextLayoutResult`'s real rendered `lineCount`, the established
+  idiom from `LogRowResponsiveTest.kt` — this host's font metrics cannot support a pixel-width guess).
+- **R-443 (design, investigated, no production fix):** the register's own text already diagnosed this
+  as a tour-fixture parity issue (`model-missing` lacking the tour's receiver-side asset state, see
+  R-440) before WP12 re-investigated and reported back "not a tour artefact… WP10 to reconcile" —
+  without a definitive root cause of their own. Reading `ModelsScreen.kt`/`ModelsViewData.kt` end to
+  end on this round's own merged HEAD confirms the presentation and data layers are already correct
+  and disk-state-independent: `groupAssetRows`/`familyOf` group purely by `ModelId` (a fixed,
+  exhaustively-matched enum, never by `ModelRowViewState.status` or any on-disk fact), and
+  `ModelsController.currentState` already returns all `ModelId.entries.size` rows regardless of what
+  is installed (each half already individually covered — `ModelsScreenTest`'s pre-existing `R_140 the
+  three Whisper files render as one grouped row…` and `ModelsControllerTest`'s `FR_ASR_1 the models
+  screen renders not installed honestly when nothing is on disk`). No code change was made at either
+  layer — none was needed. Added one new **end-to-end** regression test chaining the real, un-mocked
+  `ModelsController.currentState` on a genuinely fresh Robolectric context (no file this process ever
+  wrote to `filesDir`) straight into a real `ModelsScreen` composition, closing the gap between those
+  two already-passing halves and proving the whole real path together. Test:
+  `R_443_clean_install_groups`. If the tour capture itself still shows three loose rows after this,
+  the remaining candidates are a stale/pre-fix APK on the tour's emulator or genuine tour-runtime
+  behaviour this Robolectric path cannot reach — both WP12/tour-infrastructure territory, not
+  `ModelsScreen`/`ModelsViewData`.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD SUCCESSFUL (JDK 17,
+  host).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.settings.*" --tests
+  "org.ort.app.ui.improve.*" --tests "org.ort.app.ui.digest.*" --tests
+  "org.ort.app.ui.screens.ModelsScreenTest" --tests "org.ort.app.ui.data.ModelsControllerTest"` —
+  **BUILD SUCCESSFUL**, every test PASSED (Robolectric, host JVM); scoped per the coordinator's
+  standing load policy — no full unfiltered `:app:testDebugUnitTest`, no `build`.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK** (17 modules checked, every edge
+  permitted; no analytics/telemetry SDK, `android.permission.INTERNET` only in `:net`).
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8 checks).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (191 covered of 419); `R-413`/`R-441`/`R-443`/`R-444`/`R-445`/`R-449`/`R-450`/`R-451` each now list
+  their real test class.
+- `git status --porcelain` after the full gate: only this round's own files plus
+  `results/coverage-matrix.md`'s regenerated 8-line addition — no foreign-file pollution from
+  `ktlintCheck`.
+
+**Left open / not done:**
+- R-450's Input fact cannot be honestly sourced from "the session's recorded route" without a new
+  `:data` schema column (no such column exists anywhere in the schema today) — reported to the
+  coordinator as an accepted deviation, same honest pattern as the pre-existing Models line.
+- R-449's hour-granularity gap-coverage heuristic (≥50% of a bucket's own span) is itself an honest
+  approximation, not an exact per-minute chart — documented in `sessionCoverageBuckets`'s own doc
+  comment.
+- R-443: no production code changed (none was needed — see above); flagged back to the coordinator
+  that if the tour capture itself still needs to change, the remaining candidates are WP12/tour
+  infrastructure territory (a stale build on the tour's emulator, or the tour's own runtime), not
+  `ModelsScreen`/`ModelsViewData`.
+
 ## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
 
 ### 0df676d — ui-conformance WP12 v3 · R-440/443/446 investigated (no receiver/tour divergence found), R-410 fixes, TourParityTest + TourStepsTest, 111 → 117 steps

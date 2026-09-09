@@ -1,16 +1,20 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
+import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.ModelsViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
@@ -290,6 +294,44 @@ class ModelsScreenTest {
         composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — tokens from a file").assertExists()
         // R-093/FR-AST-1: the checksum-unknown tokens file never offers Download, grouped or not.
         composeTestRule.onNodeWithContentDescription("Download Whisper tiny.en — tokens").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-443")
+    fun `R_443_clean_install_groups`() {
+        // R-443 (register, Reviewer D): the tour's `model-missing` capture on a clean install showed
+        // three loose Whisper rows instead of one grouped row, unlike a V6 pass 4 device that had
+        // been used (and so already had leftover model files) before. `groupAssetRows`/`familyOf`
+        // (this file's own R-140 test, `the three Whisper files render as one grouped row…`) are
+        // already a pure function of [ModelId] alone, never of [ModelRowViewState.status] or any
+        // on-disk fact — but that test only proved the *presentation* half. This proves the whole
+        // real path a clean install actually takes: a genuinely fresh Robolectric context (no file
+        // this test — or any prior one sharing this process — ever wrote to `filesDir`, the same
+        // "nothing on disk" state `ModelsControllerTest`'s own
+        // `FR_ASR_1 the models screen renders not installed honestly when nothing is on disk` already
+        // establishes for [ModelsController.currentState] alone) fed straight into [ModelsScreen],
+        // with no synthetic row list standing in for either half.
+        val freshContext = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val cleanInstallState = ModelsController.currentState(freshContext)
+
+        composeTestRule.setContent {
+            OrtTheme { ModelsScreen(state = cleanInstallState, onDownload = {}, onSideload = {}) }
+        }
+
+        // One family row for the three Whisper parts — never three loose per-file rows. A loose,
+        // ungrouped row would carry its own top-level "<label> not installed. not installed" merged
+        // description per part (exactly [row]'s `description` above); the grouped row instead merges
+        // all three parts under the one family description below, so counting *that* shape directly
+        // — rather than re-deriving it from `onNodeWithText` alone — is the precise, structural check.
+        composeTestRule.onNodeWithText("Whisper tiny.en (speech to text)").assertExists()
+        composeTestRule
+            .onNodeWithContentDescription(
+                "Whisper tiny.en (speech to text) not installed. not installed · 3 of 3 parts missing",
+            )
+            .assertExists()
+        composeTestRule
+            .onAllNodesWithContentDescription("Whisper tiny.en — encoder not installed. not installed")
+            .assertCountEquals(0)
     }
 
     @Test

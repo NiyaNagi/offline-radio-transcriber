@@ -92,6 +92,31 @@ class SettingsStorageScreenTest {
     }
 
     @Test
+    @Requirement("R-441")
+    fun `R_441_zero_total_draws_empty_track`() {
+        val emptyStore = state().copy(
+            categories = listOf(
+                SettingsStorageCategoryViewState("Audio", 0L),
+                SettingsStorageCategoryViewState("Models", 0L),
+                SettingsStorageCategoryViewState("Records", 0L),
+                SettingsStorageCategoryViewState("Lexicon", 0L),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsStorageScreen(state = emptyStore, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+            }
+        }
+
+        // R-441 (register, halt, Reviewer D): a fresh store used to render almost full-width solid
+        // colour instead of an empty track — the direct proof of the fix is the bar's own real,
+        // non-zero (R-351) track still there, but zero coloured segment nodes inside it.
+        val barHeight = composeTestRule.onNodeWithTag(STORAGE_BAR_TEST_TAG).fetchSemanticsNode().size.height
+        assert(barHeight > 0) { "expected the empty track itself to still render, got ${barHeight}px" }
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(0)
+    }
+
+    @Test
     @Requirement("R-133")
     fun `R_133_next_deletion_row names the real session, over count and size, and Review opens it`() {
         var reviewed: String? = null

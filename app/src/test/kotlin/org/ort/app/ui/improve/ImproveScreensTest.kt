@@ -112,6 +112,30 @@ class ImproveScreensTest {
     }
 
     @Test
+    @Requirement("R-445")
+    fun `R_445 the empty state names the shared tier label, tier 3, never the raw T3 token`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveScreen(
+                    state = ImproveRootViewState(
+                        totalOverCount = 0,
+                        allTransmissionIds = emptyList(),
+                        currentTierLabel = "3",
+                        groups = emptyList(),
+                        everythingElseCount = 0,
+                    ),
+                    onDrawer = {},
+                    onImproveAll = {},
+                    onOpenGroup = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Every recorded session is at tier 3", substring = true).assertExists()
+        composeTestRule.onNodeWithText("T3", substring = true).assertDoesNotExist()
+    }
+
+    @Test
     @Requirement("R-350")
     fun `R_350 every item failed names the real reason and offers Install for a missing model`() {
         var installTapped = false
