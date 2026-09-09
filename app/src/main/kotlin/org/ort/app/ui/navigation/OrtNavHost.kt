@@ -50,6 +50,7 @@ import org.ort.app.ui.data.SearchFilterParser
 import org.ort.app.ui.data.SearchPolling
 import org.ort.app.ui.data.SearchResult
 import org.ort.app.ui.data.SearchTimeFilter
+import org.ort.app.ui.data.StationSubScreen
 import org.ort.app.ui.data.ThreadDetailViewState
 import org.ort.app.ui.data.ThreadPolling
 import org.ort.app.ui.data.TimeWindow
@@ -231,6 +232,7 @@ public fun OrtNavHost(
                             navState.pendingReviewSessionId.value,
                         ),
                         navState.frequencyInitialView.value,
+                        navState.openStationSubScreen.value,
                     ),
                     callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
                     sessionId = sessionId,
@@ -364,6 +366,12 @@ private data class NavHostNavState(
     // `BackHandler` above is what reopened it, so system back from the filtered `Log` lands the
     // operator on `Frequency-Change` again, not the drill-in's plain root.
     val frequencyInitialView: MutableState<FrequencyDetailView>,
+    // Round 14, register R-276 follow-on (WP12 screenshot tour, coordinator round 2026-09-08,
+    // WP8 shipped `StationDetailContent.initialSubScreen`): which sub-screen a freshly-opened
+    // station drill-in lands on — `NONE` for every ordinary open, seeded only by [NavSeed
+    // .openStationSubScreen] so the tour can capture ST03/ST04 without a real tap through
+    // Overview. `rememberSaveable`, the same reasoning [frequencyInitialView] rests on.
+    val openStationSubScreen: MutableState<StationSubScreen>,
     // Round 11, register R-133: the session `Earlier nights` should seed
     // `SessionsContent.initialSessionId` with, set by [openReviewSession] and read back by
     // [OrtNavHostBackHandler]'s own `canReturnToSettingsStorage` — non-null doubles as that flag
@@ -391,6 +399,9 @@ private data class NavHostNavState(
         // Round 10: same reasoning again — an ordinary drill-in close must not leave a stale
         // `Change` behind for whatever frequency is opened next.
         frequencyInitialView.value = FrequencyDetailView.Detail
+        // Round 14: same reasoning again — an ordinary way of opening a station must not leave a
+        // stale seeded sub-screen behind for whatever station is opened next.
+        openStationSubScreen.value = StationSubScreen.NONE
         // Round 11, register R-133: same reasoning again — an ordinary way of reaching `Earlier
         // nights` (the drawer row) must not silently reseed a stale session or resurrect a "back
         // goes to Settings-Storage" promise a normal navigation never made.
@@ -487,6 +498,11 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
     val frequencyInitialView = rememberSaveable {
         mutableStateOf(seed?.frequencyInitialView ?: FrequencyDetailView.Detail)
     }
+    // Round 14, register R-276 follow-on — a plain four-value enum, Bundle-saveable via the
+    // default Saver the same way `frequencyInitialView` above already is.
+    val openStationSubScreen = rememberSaveable {
+        mutableStateOf(seed?.openStationSubScreen ?: StationSubScreen.NONE)
+    }
     // Round 11, register R-133 — see `NavHostNavState.pendingReviewSessionId`'s own doc comment for
     // why this is `rememberSaveable`.
     val pendingReviewSessionId = rememberSaveable { mutableStateOf(seed?.pendingReviewSessionId) }
@@ -503,6 +519,7 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
         pendingLogFilter,
         logFrequencyOrigin,
         frequencyInitialView,
+        openStationSubScreen,
         pendingReviewSessionId,
     )
 }
@@ -632,6 +649,10 @@ private data class NavHostIds(
     // Round 10, register R-276: which sub-screen a freshly-opened frequency drill-in lands on —
     // see `NavHostNavState.frequencyInitialView`'s own doc comment.
     val frequencyInitialView: FrequencyDetailView,
+    // Round 14, register R-276 follow-on (WP12 screenshot tour, coordinator round 2026-09-08):
+    // which sub-screen a freshly-opened station drill-in lands on — see
+    // `NavHostNavState.openStationSubScreen`'s own doc comment.
+    val stationInitialSubScreen: StationSubScreen,
 )
 
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
@@ -758,6 +779,10 @@ private fun NavHostBody(
                     onBack = callbacks.onCloseDrillIns,
                     onOpenTransmission = callbacks.onOpenTransmission,
                     backLabel = ids.openedFrom.label,
+                    // Round 14, register R-276 follow-on: `NONE` for every ordinary open; only the
+                    // WP12 tour's own `NavSeed.openStationSubScreen` ever sets this to `PATTERN`/
+                    // `IDENTITY`/`SPLIT`.
+                    initialSubScreen = ids.stationInitialSubScreen,
                 )
 
                 ids.frequencyHz != null -> FrequencyDetailContent(

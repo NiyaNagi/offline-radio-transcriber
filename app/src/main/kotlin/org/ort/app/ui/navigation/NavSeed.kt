@@ -3,6 +3,7 @@ package org.ort.app.ui.navigation
 import android.content.Intent
 import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.LogFilterSelection
+import org.ort.app.ui.data.StationSubScreen
 import org.ort.app.ui.settings.SettingsScreenId
 
 /**
@@ -14,8 +15,9 @@ import org.ort.app.ui.settings.SettingsScreenId
  * and reachable only by tapping a real row: the four drill-in ids (`openTransmissionId`,
  * `openStationId`, `openFrequencyHz`, `openThreadId`), `Log`'s own R-276 filter
  * (`pendingLogFilter`), `Capture`'s level meter (`openCaptureLevelMeter`), `Earlier nights`'s
- * Review-seeded detail (`pendingReviewSessionId`) and which sub-screen a seeded frequency drill-in
- * lands on (`frequencyInitialView`). This is the public seam: every field defaults `null` (or
+ * Review-seeded detail (`pendingReviewSessionId`), which sub-screen a seeded frequency drill-in
+ * lands on (`frequencyInitialView`) and, round 14, which sub-screen a seeded station drill-in
+ * lands on (`openStationSubScreen`, ST03/ST04 for the tour). This is the public seam: every field defaults `null` (or
  * `false`/`Detail` — same shape those fields' own `NavHostNavState` defaults already use), so a
  * caller that never builds one at all (`seed = null`, the default on both
  * [rememberReaderNavigator] and [OrtNavHost]) sees exactly today's unseeded behaviour, and every
@@ -44,6 +46,11 @@ public data class NavSeed(
     val pendingReviewSessionId: String? = null,
     val frequencyInitialView: FrequencyDetailView? = null,
     val settingsScreen: SettingsScreenId? = null,
+    // Round 14, register R-276 follow-on (WP12 screenshot tour, coordinator round 2026-09-08,
+    // WP8 shipped `StationDetailContent.initialSubScreen`): which sub-screen a seeded station
+    // drill-in opens on — `null`/`NONE` for every ordinary seed, `PATTERN`/`IDENTITY`/`SPLIT` only
+    // for the tour's own ST03/ST04 steps.
+    val openStationSubScreen: StationSubScreen? = null,
 ) {
     /**
      * The [ReaderDestination] this seed's own state is actually read under. The four drill-in ids
@@ -95,6 +102,7 @@ public data class NavSeed(
         openCaptureLevelMeter?.let { intent.putExtra(EXTRA_OPEN_CAPTURE_LEVEL_METER, it) }
         pendingReviewSessionId?.let { intent.putExtra(EXTRA_PENDING_REVIEW_SESSION_ID, it) }
         frequencyInitialView?.let { intent.putExtra(EXTRA_FREQUENCY_INITIAL_VIEW, it.name) }
+        openStationSubScreen?.let { intent.putExtra(EXTRA_OPEN_STATION_SUB_SCREEN, it.name) }
         settingsScreen?.let { intent.putExtra(EXTRA_SETTINGS_SCREEN, it.name) }
     }
 
@@ -117,6 +125,7 @@ public data class NavSeed(
         public const val EXTRA_OPEN_CAPTURE_LEVEL_METER: String = "nav_open_capture_level_meter"
         public const val EXTRA_PENDING_REVIEW_SESSION_ID: String = "nav_pending_review_session_id"
         public const val EXTRA_FREQUENCY_INITIAL_VIEW: String = "nav_frequency_initial_view"
+        public const val EXTRA_OPEN_STATION_SUB_SCREEN: String = "nav_open_station_sub_screen"
 
         // Deliberately the same key `ReaderActivity.EXTRA_SETTINGS_SCREEN` already uses (not a
         // new, second name for the same fact) — a caller seeding `Settings` reaches it exactly
@@ -160,6 +169,8 @@ public data class NavSeed(
                 pendingReviewSessionId = intent.getStringExtra(EXTRA_PENDING_REVIEW_SESSION_ID),
                 frequencyInitialView = intent.getStringExtra(EXTRA_FREQUENCY_INITIAL_VIEW)
                     ?.let { name -> FrequencyDetailView.entries.firstOrNull { it.name == name } },
+                openStationSubScreen = intent.getStringExtra(EXTRA_OPEN_STATION_SUB_SCREEN)
+                    ?.let { name -> StationSubScreen.entries.firstOrNull { it.name == name } },
                 settingsScreen = intent.getStringExtra(EXTRA_SETTINGS_SCREEN)
                     ?.let { name -> SettingsScreenId.entries.firstOrNull { it.name == name } },
             )

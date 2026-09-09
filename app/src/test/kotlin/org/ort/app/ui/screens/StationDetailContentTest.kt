@@ -12,6 +12,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.data.StationSubScreen
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -130,5 +131,29 @@ class StationDetailContentTest {
         // (not a crash, not a second "Loading…"), is exactly what R-272 requires.
         composeTestRule.waitUntilTextExists("One cluster, nothing to split")
         composeTestRule.onNodeWithText("One cluster, nothing to split").assertExists()
+    }
+
+    @Test
+    fun `R_TOUR_station_sub_screen initialSubScreen PATTERN opens directly on Station-Pattern (ST03)`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.catalogDao().insert(station())
+            db.transmissionDao().insert(transmission())
+        }
+
+        composeTestRule.setContent {
+            StationDetailContent(
+                context = context,
+                stationId = "WA7HJR",
+                onBack = {},
+                initialSubScreen = StationSubScreen.PATTERN,
+            )
+        }
+
+        // `Station-Pattern.dc.html`'s own screen title — it has no equivalent on the drill-in's
+        // root (`StationDetailScreen` never renders this sentence), so its presence proves `sub`
+        // was seeded from `initialSubScreen`, never defaulted back to `NONE` — the WP12 tour's own
+        // ST03 capture depends on exactly this, without a real tap through Overview first.
+        composeTestRule.waitUntilTextExists("When they are around")
     }
 }

@@ -19,11 +19,10 @@ import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationIdentityViewState
 import org.ort.app.ui.data.StationPatternViewState
 import org.ort.app.ui.data.StationPolling
+import org.ort.app.ui.data.StationSubScreen
 import org.ort.app.ui.data.StationVoiceSplitViewState
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.SystemClock
-
-private enum class StationSubScreen { NONE, PATTERN, IDENTITY, SPLIT }
 
 /**
  * The station drill-in's polling wrapper (R-071/R-072/R-073, ui-conformance-plan WP8) — the
@@ -47,9 +46,13 @@ public fun StationDetailContent(
     // composable's doc comment. Defaulted so `OrtNavHost.kt` compiles unchanged; WP3 wires the
     // real navigation origin afterwards.
     backLabel: String = "Stations",
+    // WP12 screenshot tour (register, coordinator round 2026-09-08): seeds the sub-screen state
+    // below once, so ST03/ST04 can be captured without a real user tap through Overview. Defaulted
+    // to `NONE` so every existing caller (`OrtNavHost.kt`) compiles unchanged.
+    initialSubScreen: StationSubScreen = StationSubScreen.NONE,
 ) {
     val scope = rememberCoroutineScope()
-    var sub by remember(stationId) { mutableStateOf(StationSubScreen.NONE) }
+    var sub by remember(stationId) { mutableStateOf(initialSubScreen) }
     var detail by remember(stationId) { mutableStateOf<StationDetailViewState?>(null) }
     var pattern by remember(stationId) { mutableStateOf<StationPatternViewState?>(null) }
     var identity by remember(stationId) { mutableStateOf<StationIdentityViewState?>(null) }
