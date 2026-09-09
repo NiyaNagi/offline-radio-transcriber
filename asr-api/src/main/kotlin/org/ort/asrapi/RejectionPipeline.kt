@@ -43,13 +43,9 @@ public class RejectionPipeline(
             }
         }
 
-        val result = try {
-            withTimeout(timeoutMs) { engine.transcribe(audio, opts) }
-        } catch (e: TimeoutCancellationException) {
-            return PassBOutcome.Failed("engine timed out after ${timeoutMs}ms", e)
-        } catch (t: Throwable) {
-            return PassBOutcome.Failed("engine threw during transcribe", t)
-        }
+        val decoded = decode(audio, opts)
+        if (decoded is DecodeOutcome.Failed) return decoded.outcome
+        val result = (decoded as DecodeOutcome.Success).result
 
         for (rule in postRules) {
             when (val verdict = rule.evaluate(result)) {
@@ -59,6 +55,33 @@ public class RejectionPipeline(
         }
 
         return PassBOutcome.Accepted(result)
+    }
+
+    private sealed interface DecodeOutcome {
+        data class Success(val result: AsrResult) : DecodeOutcome
+        data class Failed(val outcome: PassBOutcome.Failed) : DecodeOutcome
+    }
+
+    /**
+     * The engine call, timeout-guarded (F13). Extracted so [process] itself keeps a single return
+     * point per branch (detekt's `ReturnCount`) while still using a distinct `catch` per exception
+     * type rather than an `instanceof` check inside one generic `catch` (detekt's
+     * `InstanceOfCheckForException`) — [AsrUnavailableException] (register R-350) is the one real,
+     * controlled reason this pipeline ever passes through verbatim (its `message` is always exactly
+     * "ASR unavailable: ${reason}", a fixed string this file's own author wrote, never raw exception
+     * internals); every other exception's own message MUST NOT reach a failure reason a screen
+     * renders — it can carry a stack-trace fragment or a filesystem path from wherever the real
+     * failure happened (constitution V) — so only this one type is special-cased, and every other
+     * exception stays the fixed, generic message it always was.
+     */
+    private suspend fun decode(audio: FloatArray, opts: DecodeOptions): DecodeOutcome = try {
+        DecodeOutcome.Success(withTimeout(timeoutMs) { engine.transcribe(audio, opts) })
+    } catch (e: TimeoutCancellationException) {
+        DecodeOutcome.Failed(PassBOutcome.Failed("engine timed out after ${timeoutMs}ms", e))
+    } catch (e: AsrUnavailableException) {
+        DecodeOutcome.Failed(PassBOutcome.Failed(e.message ?: "ASR unavailable", e))
+    } catch (t: Throwable) {
+        DecodeOutcome.Failed(PassBOutcome.Failed("engine threw during transcribe", t))
     }
 
     public companion object {
