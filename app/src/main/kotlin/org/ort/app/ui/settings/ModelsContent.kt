@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +37,10 @@ import java.io.IOException
  * already hop to [kotlinx.coroutines.Dispatchers.IO] internally), refreshing
  * [ModelsController.currentState] after either finishes so the row's installed/not-installed fact
  * always reflects what `ModelAcquisition` itself verified, not an optimistic guess.
+ *
+ * The real work each tap/pick starts is in [onLexiconFilePicked]/[onModelFilePicked]/[runDownload]
+ * (private, top-level, below) — split out purely to keep this function itself under detekt's length
+ * limit; each takes this composable's own mutable state back only as narrow setter lambdas.
  */
 @Composable
 public fun ModelsContent(context: android.content.Context, modifier: Modifier, onBack: (() -> Unit)? = null) {
@@ -43,23 +48,14 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
     var state by remember { mutableStateOf(ModelsController.currentState(context)) }
     var busy by remember { mutableStateOf(emptySet<ModelId>()) }
     var lastMessage by remember { mutableStateOf<String?>(null) }
-    // R-140 (round 4, System validator): a failed download used to fall into the same plain-text
-    // `lastMessage` a success did, showing `:net`'s raw exception text ("Unable to resolve
-    // host…") with no retry — split out so `ModelsScreen` can render it as the amber `FailedState`
-    // guide §9 gives every other operator-facing failure, with a real `Retry` that re-runs the
-    // exact same download.
     var lastDownloadFailure by remember { mutableStateOf<ModelDownloadFailureViewState?>(null) }
     var pendingSideloadId by remember { mutableStateOf<ModelId?>(null) }
-
-    // R-154 (round 5): the lexicon row's own state — real (`ModelsController.lexiconRow`) and,
-    // once "Install a lexicon from a file" runs, the real [LexiconImportViewState] this screen
-    // renders as `Fail-Lexicon.dc.html` on a [LexiconImportViewState.Rejected]. See
-    // `DebugLexiconImportOverride`'s own doc comment for why the poll below also reads it.
     var lexiconRow by remember { mutableStateOf<LexiconAssetRowViewState?>(null) }
     var lexiconImportResult by remember { mutableStateOf<LexiconImportViewState?>(null) }
     var lexiconRefreshToken by remember { mutableStateOf(0) }
 
     LaunchedEffect(lexiconRefreshToken) { lexiconRow = ModelsController.lexiconRow(context) }
+    // R-154 (round 5): see `DebugLexiconImportOverride`'s own doc comment for why this also polls it.
     LaunchedEffect(Unit) {
         while (true) {
             if (lexiconImportResult == null) {
@@ -71,67 +67,66 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
             delay(LEXICON_OVERRIDE_POLL_INTERVAL_MILLIS)
         }
     }
+    // FR-AST-4: opening this screen is the concrete, in-ownership trigger this round implements
+    // for "activate a staged swap once its session has ended" — see [activateStagedOnOpen]'s own
+    // doc comment.
+    LaunchedEffect(Unit) {
+        activateStagedOnOpen(context) {
+            state = ModelsController.currentState(context)
+            lexiconRefreshToken++
+        }
+    }
+    val stagedActivation by ModelsController.stagedActivation.collectAsState()
 
     val lexiconFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val source = copyPickedFileToCache(context, uri, LEXICON_CACHE_FILE_NAME)
-            lexiconImportResult = if (source != null) {
-                ModelsController.installLexicon(context, source)
-            } else {
-                LexiconImportViewState.Rejected(
-                    fileName = "picked file",
-                    checks = emptyList(),
-                    reason = "could not read the picked file",
-                    stillActiveLabel = null,
-                )
+            onLexiconFilePicked(context, uri) { result ->
+                lexiconImportResult = result
+                lexiconRefreshToken++
             }
-            lexiconRefreshToken++
         }
     }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val id = pendingSideloadId
         pendingSideloadId = null
-        if (uri == null || id == null) return@rememberLauncherForActivityResult
-        busy = busy + id
+        if (id == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val source = copyPickedFileToCache(context, uri, id.name)
-            val result = if (source != null) {
-                ModelsController.sideload(context, id, source)
-            } else {
-                ModelActionResult.Failure("could not read the picked file")
+            onModelFilePicked(context, id, uri, onBusy = { b -> busy = if (b) busy + id else busy - id }) { result ->
+                lastMessage = messageFor(id, result)
+                state = ModelsController.currentState(context)
             }
-            busy = busy - id
-            lastMessage = messageFor(id, result)
-            state = ModelsController.currentState(context)
         }
     }
 
-    fun runDownload(id: ModelId) {
-        busy = busy + id
+    fun startDownload(id: ModelId) {
         scope.launch {
-            val result = ModelsController.download(context, id)
-            busy = busy - id
-            when (result) {
-                is ModelActionResult.Success -> {
+            runDownload(
+                context,
+                id,
+                onBusy = { b -> busy = if (b) busy + id else busy - id },
+                onSuccess = { message ->
                     lastDownloadFailure = null
-                    lastMessage = messageFor(id, result)
-                }
-                is ModelActionResult.Failure -> {
+                    lastMessage = message
+                },
+                onFailure = { failure ->
                     lastMessage = null
-                    lastDownloadFailure = ModelDownloadFailureViewState(id, result.reason)
-                }
-            }
-            state = ModelsController.currentState(context)
+                    lastDownloadFailure = failure
+                },
+                onStateRefresh = { state = ModelsController.currentState(context) },
+            )
         }
     }
 
     ModelsScreen(
         state = state,
         busy = busy,
-        status = ModelsScreenStatus(lastMessage = lastMessage, downloadFailure = lastDownloadFailure),
-        onDownload = ::runDownload,
+        status = ModelsScreenStatus(
+            lastMessage = lastMessage,
+            downloadFailure = lastDownloadFailure,
+            stagedActivation = stagedActivation,
+        ),
+        onDownload = ::startDownload,
         onSideload = { id ->
             pendingSideloadId = id
             filePicker.launch(arrayOf("*/*"))
@@ -149,6 +144,84 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
 
 private const val LEXICON_CACHE_FILE_NAME = "lexicon-sideload"
 private const val LEXICON_OVERRIDE_POLL_INTERVAL_MILLIS = 1_000L
+
+/**
+ * FR-AST-4 (register, WP11b's F21 audit finding): [ModelsController.activateStaged] is itself a
+ * safe no-op whenever a session is still live, so calling it every time this screen opens is never
+ * wrong — this is the concrete, in-ownership trigger this round implements for "activate a staged
+ * swap once the session that staged it has ended". It does not replace a real capture-lifecycle
+ * hook (an `Activity` launch, `ReaderActivity`'s own start path) — those live outside this
+ * package's own ownership; see this round's own report for that gap. [onActivated] refreshes this
+ * screen's own state only when something really did activate, never unconditionally.
+ */
+private suspend fun activateStagedOnOpen(context: android.content.Context, onActivated: () -> Unit) {
+    if (ModelsController.activateStaged(context) != null) onActivated()
+}
+
+/** [ModelsContent]'s "Install a lexicon from a file" picker callback, split out purely to keep
+ * that composable itself under detekt's length limit — R-154's own real validate-then-activate
+ * call site ([ModelsController.installLexicon]) is unchanged, only moved. */
+private suspend fun onLexiconFilePicked(
+    context: android.content.Context,
+    uri: android.net.Uri?,
+    onResult: (LexiconImportViewState) -> Unit,
+) {
+    if (uri == null) return
+    val source = copyPickedFileToCache(context, uri, LEXICON_CACHE_FILE_NAME)
+    val result = if (source != null) {
+        ModelsController.installLexicon(context, source)
+    } else {
+        LexiconImportViewState.Rejected(
+            fileName = "picked file",
+            checks = emptyList(),
+            reason = "could not read the picked file",
+            stillActiveLabel = null,
+        )
+    }
+    onResult(result)
+}
+
+/** [ModelsContent]'s "Install from a file" (sideload) picker callback, split out purely to keep
+ * that composable itself under detekt's length limit — [ModelsController.sideload] is unchanged,
+ * only moved. */
+private suspend fun onModelFilePicked(
+    context: android.content.Context,
+    id: ModelId,
+    uri: android.net.Uri?,
+    onBusy: (Boolean) -> Unit,
+    onResult: (ModelActionResult) -> Unit,
+) {
+    if (uri == null) return
+    onBusy(true)
+    val source = copyPickedFileToCache(context, uri, id.name)
+    val result = if (source != null) {
+        ModelsController.sideload(context, id, source)
+    } else {
+        ModelActionResult.Failure("could not read the picked file")
+    }
+    onBusy(false)
+    onResult(result)
+}
+
+/** [ModelsContent]'s "Download" action, split out purely to keep that composable itself under
+ * detekt's length limit — [ModelsController.download] is unchanged, only moved. */
+private suspend fun runDownload(
+    context: android.content.Context,
+    id: ModelId,
+    onBusy: (Boolean) -> Unit,
+    onSuccess: (String) -> Unit,
+    onFailure: (ModelDownloadFailureViewState) -> Unit,
+    onStateRefresh: () -> Unit,
+) {
+    onBusy(true)
+    val result = ModelsController.download(context, id)
+    onBusy(false)
+    when (result) {
+        is ModelActionResult.Success -> onSuccess(messageFor(id, result))
+        is ModelActionResult.Failure -> onFailure(ModelDownloadFailureViewState(id, result.reason))
+    }
+    onStateRefresh()
+}
 
 private fun messageFor(id: ModelId, result: ModelActionResult): String = when (result) {
     is ModelActionResult.Success ->

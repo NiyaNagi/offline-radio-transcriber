@@ -39,6 +39,7 @@ import org.ort.app.ui.data.ModelDownloadFailureViewState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
+import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.ModelsScreenStatus
 import org.ort.app.ui.data.ModelsViewState
 import org.ort.app.ui.theme.OrtColors
@@ -82,6 +83,11 @@ public fun ModelsScreen(
     // draws no lexicon row at all — see [LexiconAssetActions]'s own doc comment.
     lexicon: LexiconAssetActions? = null,
 ) {
+    // FR-AST-4 (WP11b's F21 audit finding): folded into status (ModelsScreenStatus's own
+    // stagedActivation field), the same detekt-threshold reason status itself already carries
+    // lastMessage/downloadFailure instead of two more bare parameters — see StagedActivation's own
+    // doc comment for what this real, trimmed fact carries and where it comes from.
+    val stagedActivation = status.stagedActivation
     val rejectedImport = lexicon?.importResult as? LexiconImportViewState.Rejected
     if (rejectedImport != null) {
         FailLexiconScreen(
@@ -122,43 +128,25 @@ public fun ModelsScreen(
             ModelsNotices(requeuedMessage = state.requeuedMessage, status = status, onRetryDownload = onDownload)
 
             SectionHeader(label = "Assets", modifier = Modifier.padding(top = OrtSpacing.lg))
-            // R-140 (round 4, System validator): grouped by real model family — was one flat row
-            // per [ModelId], so the Whisper encoder/decoder/tokens files (three real, independently
-            // downloadable/sideloadable parts of *one* model — `ModelsController`'s own unit of
-            // action) read as three unrelated assets. Grouping states the split honestly (a family
-            // caption, each part still its own row with its own real actions) rather than either
-            // hiding the split or leaving it unexplained.
-            groupAssetRows(state.rows).forEach { group ->
-                // R-140 (register, round 7 System validator pass 3): a multi-file family (today,
-                // only the Whisper tiny.en encoder/decoder/tokens split) is one row — the board's
-                // own `whisper-small-int8`/`whisper-tiny-en-int8` shape — not one full `AssetRow`
-                // per file. A single-file family (VAD) keeps the pre-existing caption + row.
-                if (group.parts.size > 1) {
-                    GroupedAssetRow(
-                        familyLabel = group.familyLabel,
-                        parts = group.parts,
-                        busy = busy,
-                        onDownload = onDownload,
-                        onSideload = onSideload,
-                    )
-                } else {
-                    Text(
-                        text = group.familyLabel,
-                        style = OrtType.subLine,
-                        color = OrtColors.textFaint,
-                        modifier = Modifier.padding(top = OrtSpacing.sm),
-                    )
-                    group.parts.forEach { row ->
-                        AssetRow(row = row, isBusy = row.id in busy, onDownload = onDownload, onSideload = onSideload)
-                    }
-                }
-            }
+            AssetGroupsList(
+                rows = state.rows,
+                busy = busy,
+                onDownload = onDownload,
+                onSideload = onSideload,
+                stagedAssetId = stagedActivation?.assetId,
+            )
             // R-154 (round 5): the callsign lexicon is a real asset ([org.ort.data.entity.LexiconVersionEntity],
             // via [org.ort.app.ui.data.ModelsController.lexiconRow]) with no [ModelId] of its own —
             // it gets its own family caption and row rather than joining `groupAssetRows` above,
             // since its install path (`installLexicon`, real validation + activation) is genuinely
             // different from a plain checksum-and-copy model download.
-            lexicon?.row?.let { row -> LexiconAssetRow(row = row, onInstall = lexicon.onInstall) }
+            lexicon?.row?.let { row ->
+                LexiconAssetRow(
+                    row = row,
+                    onInstall = lexicon.onInstall,
+                    staged = stagedActivation?.assetId == ModelsController.CALLSIGN_LEXICON_ASSET_ID,
+                )
+            }
 
             Text(
                 text = "Checksum and record count are verified before anything replaces the current " +
@@ -167,6 +155,57 @@ public fun ModelsScreen(
                 color = OrtColors.textFaint,
                 modifier = Modifier.padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
             )
+        }
+    }
+}
+
+/** R-140 (round 4, System validator): grouped by real model family — was one flat row per
+ * [ModelId], so the Whisper encoder/decoder/tokens files (three real, independently downloadable/
+ * sideloadable parts of *one* model — `ModelsController`'s own unit of action) read as three
+ * unrelated assets. Grouping states the split honestly (a family caption, each part still its own
+ * row with its own real actions) rather than either hiding the split or leaving it unexplained.
+ * Split out of [ModelsScreen] itself purely to keep that function under detekt's length limit. */
+@Composable
+private fun AssetGroupsList(
+    rows: List<ModelRowViewState>,
+    busy: Set<ModelId>,
+    onDownload: (ModelId) -> Unit,
+    onSideload: (ModelId) -> Unit,
+    stagedAssetId: String?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        groupAssetRows(rows).forEach { group ->
+            // R-140 (register, round 7 System validator pass 3): a multi-file family (today, only
+            // the Whisper tiny.en encoder/decoder/tokens split) is one row — the board's own
+            // `whisper-small-int8`/`whisper-tiny-en-int8` shape — not one full `AssetRow` per file.
+            // A single-file family (VAD) keeps the pre-existing caption + row.
+            if (group.parts.size > 1) {
+                GroupedAssetRow(
+                    familyLabel = group.familyLabel,
+                    parts = group.parts,
+                    busy = busy,
+                    onDownload = onDownload,
+                    onSideload = onSideload,
+                    stagedAssetId = stagedAssetId,
+                )
+            } else {
+                Text(
+                    text = group.familyLabel,
+                    style = OrtType.subLine,
+                    color = OrtColors.textFaint,
+                    modifier = Modifier.padding(top = OrtSpacing.sm),
+                )
+                group.parts.forEach { row ->
+                    AssetRow(
+                        row = row,
+                        isBusy = row.id in busy,
+                        onDownload = onDownload,
+                        onSideload = onSideload,
+                        staged = stagedAssetId == row.id.name,
+                    )
+                }
+            }
         }
     }
 }
@@ -260,6 +299,9 @@ private fun AssetRow(
     onDownload: (ModelId) -> Unit,
     onSideload: (ModelId) -> Unit,
     modifier: Modifier = Modifier,
+    // FR-AST-4: real only when `stagedActivation.assetId == row.id.name` (this screen's own call
+    // site) — never a guess, and never true while [row]'s own real `status` hasn't changed at all.
+    staged: Boolean = false,
 ) {
     val statusWord = when {
         isBusy -> "downloading"
@@ -282,7 +324,7 @@ private fun AssetRow(
             }
         }
     }
-    val description = "${row.label} $statusWord. $subLine"
+    val description = describeStaged("${row.label} $statusWord. $subLine", staged)
 
     Column(modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.sm)) {
         // Marker + name + sub-line are one merged, non-interactive semantics node (the row's
@@ -307,6 +349,7 @@ private fun AssetRow(
                     color = OrtColors.textDim,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+                StagedBadgeText(staged)
             }
         }
         Row(
@@ -345,11 +388,15 @@ private fun GroupedAssetRow(
     onDownload: (ModelId) -> Unit,
     onSideload: (ModelId) -> Unit,
     modifier: Modifier = Modifier,
+    // FR-AST-4: real only when the staged asset id names one of [parts] — see [AssetRow]'s own
+    // matching parameter.
+    stagedAssetId: String? = null,
 ) {
     val missing = parts.filter { it.status == ModelRowStatus.NOT_INSTALLED }
     val fullyInstalled = missing.isEmpty()
     val fullyVerified = fullyInstalled && parts.all { it.status == ModelRowStatus.INSTALLED }
     val anyBusy = parts.any { it.id in busy }
+    val staged = stagedAssetId != null && parts.any { it.id.name == stagedAssetId }
     val aggregateStatus = when {
         !fullyInstalled -> ModelRowStatus.NOT_INSTALLED
         fullyVerified -> ModelRowStatus.INSTALLED
@@ -367,7 +414,8 @@ private fun GroupedAssetRow(
         }
         else -> "not installed · ${missing.size} of ${parts.size} parts missing"
     }
-    val description = "$familyLabel ${if (fullyInstalled) "installed" else "not installed"}. $subLine"
+    val description =
+        describeStaged("$familyLabel ${if (fullyInstalled) "installed" else "not installed"}. $subLine", staged)
 
     Column(modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.sm)) {
         Row(
@@ -386,6 +434,7 @@ private fun GroupedAssetRow(
                     color = OrtColors.textDim,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+                StagedBadgeText(staged)
             }
         }
         missing.forEach { part ->
@@ -418,14 +467,25 @@ private fun GroupedAssetRow(
  * this row's one action regardless of [LexiconAssetRowViewState.installed] — there is no download
  * path for the lexicon (FR-LEX-30/constitution V's own "sideload only" for this asset). */
 @Composable
-private fun LexiconAssetRow(row: LexiconAssetRowViewState, onInstall: () -> Unit, modifier: Modifier = Modifier) {
+private fun LexiconAssetRow(
+    row: LexiconAssetRowViewState,
+    onInstall: () -> Unit,
+    modifier: Modifier = Modifier,
+    // FR-AST-4: real only when the staged asset id is
+    // [org.ort.app.ui.data.ModelsController.CALLSIGN_LEXICON_ASSET_ID] — see [AssetRow]'s own
+    // matching parameter.
+    staged: Boolean = false,
+) {
     Text(
         text = "Callsign lexicon",
         style = OrtType.subLine,
         color = OrtColors.textFaint,
         modifier = Modifier.padding(top = OrtSpacing.sm),
     )
-    val description = "Callsign lexicon ${if (row.installed) "installed" else "not installed"}. ${row.label}"
+    val description = describeStaged(
+        "Callsign lexicon ${if (row.installed) "installed" else "not installed"}. ${row.label}",
+        staged,
+    )
     Column(modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.sm)) {
         Row(
             modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = description },
@@ -446,6 +506,7 @@ private fun LexiconAssetRow(row: LexiconAssetRowViewState, onInstall: () -> Unit
                     color = OrtColors.textDim,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+                StagedBadgeText(staged)
             }
         }
         Row(modifier = Modifier.padding(top = OrtSpacing.xs, start = MARKER_COLUMN_WIDTH)) {
@@ -593,6 +654,31 @@ private fun groupAssetRows(rows: List<ModelRowViewState>): List<AssetGroup> {
 }
 
 private val MARKER_COLUMN_WIDTH = 17.dp
+
+/** FR-AST-4 (register, WP11b's F21 audit finding): the coordinator's own brief, verbatim — the one
+ * wording every staged row uses, real and honest (a session really is live, and this really is
+ * exactly when it will really activate — never "soon" or "later"). */
+private const val STAGED_BADGE_TEXT = "staged · activates when this session ends"
+
+/** Shared by [AssetRow]/[GroupedAssetRow]/[LexiconAssetRow] — appends [STAGED_BADGE_TEXT]'s own
+ * fact to an already-built merged-semantics description, exactly once, in exactly one place. */
+private fun describeStaged(description: String, staged: Boolean): String =
+    if (staged) "$description. staged, activates when this session ends" else description
+
+/** The visible staged badge every asset row draws underneath its own sub-line, or nothing at all
+ * when [staged] is false — split out purely so three call sites don't each repeat the same branch
+ * and the same [Text] block (each call site's own cyclomatic complexity stays lower this way,
+ * under detekt's threshold). */
+@Composable
+private fun StagedBadgeText(staged: Boolean, modifier: Modifier = Modifier) {
+    if (!staged) return
+    Text(
+        text = STAGED_BADGE_TEXT,
+        style = OrtType.subLine,
+        color = OrtColors.accentAmber,
+        modifier = modifier.padding(top = 2.dp),
+    )
+}
 
 /** guide's marker vocabulary applied to an asset rather than an attribution — verified (solid
  * green), installed-unverified (half-filled amber, echoing AMBIGUOUS's "not fully trusted" shape

@@ -32,6 +32,101 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10: FR-AST-4 staged activation, F21 Fail-Asset-Swap runtime signal)
+
+### <HASH> — ui-conformance WP10 · FR-AST-4: a mid-session lexicon swap or model install stages, never activates immediately
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (`ModelsController`,
+`RoomActiveLexiconStore`, the model install path), `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`,
+`app/src/main/kotlin/org/ort/app/ui/settings/ModelsContent.kt`; tests beside each.
+
+**Requirements/ACs:** FR-AST-4 (functional spec §9, `Fail-Asset-Swap.dc.html`/F21), R-448 (register,
+WP11b's audit finding that `LexiconImportInstaller.installValidated` activated unconditionally with
+no runtime signal at all).
+
+**What changed:**
+
+*Constitution Check.* I (an attribution/fact without its real source is a bug, applied here to
+asset state: a session must never read a fact as "usual" that changed mid-session without saying
+so) governs this whole round — FR-AST-4 exists because a swap mid-session silently changes what
+"usual" means, which is exactly the silent-failure shape the constitution forbids elsewhere.
+III (nothing deleted quietly) — a staged swap is never lost: it is either applied for real once
+the session ends, or stays visibly staged.
+
+- **`StagedActivation(assetId, version, stagedAtMillis, reason)`** (new, `ModelsViewData.kt`): the
+  one live fact a staged swap or install carries — `assetId` is either
+  `ModelsController.CALLSIGN_LEXICON_ASSET_ID` or a `ModelId.name`, `version` the lexicon's real
+  version string or a model's real checksum prefix, never a placeholder. Persisted app-level via
+  `SharedPreferencesStagedActivationStore` (new `SharedPreferences` file, no `:data` schema change
+  — this round's own brief, verbatim), following `SettingsStore.kt`'s established
+  interface+real-impl+`InMemory*`-fake shape. `ModelsController.stagedActivation: StateFlow<StagedActivation?>`
+  is the one live, in-process source — **this is the exact type WP11b's `FailureSignals`/`AssetSwap`
+  mapper should read directly.**
+- **`RoomActiveLexiconStore.activate`** is now the one real gate: while `CaptureState.isCapturing`,
+  it defers to the new `ModelsController.stageLexiconActivation` (persists the trimmed
+  `StagedActivation` plus the full `ActiveLexiconRecord` a real activation needs later) instead of
+  writing to `:data`'s `lexicon_version` table — the previous lexicon stays active/"usual" for the
+  rest of the session. `LexiconImportInstaller.installValidated` (`:lexicon`) is untouched — every
+  validation check still runs unconditionally; only the write it triggers on `Accepted` is gated.
+- **The model install path** (`ModelsController.download`/`sideload`, both funnel through `finish`):
+  the file itself is still downloaded/side-loaded, verified and written to disk immediately either
+  way — real bytes on disk are not FR-AST-4's risk. Only the `requeueFailed` retrigger (previously
+  failed overs reprocessing mid-session, the actually user-visible change) is staged when
+  `CaptureState.isCapturing`; `ModelActionResult.Success(requeuedCount = 0)` is the honest, literal
+  count when staged, never a placeholder.
+- **`ModelsController.activateStaged(context)`**: the one real activation call — refuses, with no
+  effect, while `CaptureState.isCapturing` is still true (never force-activates mid-session even if
+  called incorrectly), otherwise applies the staged lexicon write or model requeue for real and
+  clears the staged state. Safe to call unconditionally from anywhere.
+- **The concrete, in-ownership trigger this round implements**: `ModelsContent.kt` calls
+  `activateStaged` once whenever Settings-Assets opens (`ModelsController.activateStaged` is itself
+  a no-op while still capturing, so this is never wrong to attempt) — the next time an operator
+  checks Models after a session ends, a staged swap activates. **This does not replace a real
+  capture-lifecycle hook** (an `Activity` launch, `ReaderActivity`'s own start path, or F21's own
+  `Reprocess`/`Install` action calling `activateStaged` directly) — those live outside `ui/settings/`'s
+  ownership (`ReaderActivity`/`MainActivity`, and `ui/failures/FailAssetSwap.kt`, WP11b's own file)
+  and are reported here as the remaining integration points, not built in this round.
+- **Settings-Assets shows the staged state on the asset row**: `ModelsScreen.kt`'s `AssetRow`/
+  `GroupedAssetRow`/`LexiconAssetRow` each draw `"staged · activates when this session ends"`
+  (the coordinator's own wording, verbatim) underneath their real sub-line whenever
+  `ModelsScreenStatus.stagedActivation.assetId` names that row — folded into the existing
+  `ModelsScreenStatus` bundle (not a new bare parameter) for the same detekt-threshold reason that
+  bundle already exists.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD SUCCESSFUL (JDK 17).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.ModelsControllerTest" --tests
+  "org.ort.app.ui.data.ModelsControllerLexiconTest" --tests "org.ort.app.ui.screens.ModelsScreenTest"
+  --tests "org.ort.app.ui.settings.*"` — **BUILD SUCCESSFUL**, every test PASSED (Robolectric, host
+  JVM), including 8 new `FR_AST_4_*` tests (real `RoomActiveLexiconStore` + `OrtDatabase` +
+  `CaptureState.capturing`/`idle`, and real `WorkQueue`/`FakeHttpRangeClient` for the model path) and
+  4 new `R_448_asset_swap_*` presentation tests.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL** (two `LongMethod`/one
+  `LongParameterList`/one `CyclomaticComplexMethod` violation surfaced by this round's own additions,
+  each fixed by extraction — `AssetGroupsList`/`StagedBadgeText`/`describeStaged` split out of
+  `ModelsScreen.kt`, `activateStagedOnOpen`/`onLexiconFilePicked`/`onModelFilePicked`/`runDownload`
+  split out of `ModelsContent.kt`, `stagedActivation` folded into the existing `ModelsScreenStatus`
+  bundle rather than a bare ninth parameter).
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8 checks).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (192 covered of 419).
+
+**Left open / not done:**
+- The real capture-lifecycle activation hook (an `Activity` launch when no session is live) is not
+  wired — `ModelsContent.kt`'s "activate on Settings-Assets open" is the concrete trigger this round
+  implements within `ui/settings/` ownership; a real `ReaderActivity`/`MainActivity` hook is a
+  separate WP's file.
+- F21 `Fail-Asset-Swap.dc.html`'s own `Reprocess`/`Install` action (call `activateStaged` and start
+  `RealImproveRunner` for the affected span) is WP11b's own screen (`ui/failures/FailAssetSwap.kt`),
+  not built here — `ModelsController.activateStaged(context): StagedActivation?` is the exact public
+  API for them to call.
+- WP11b's `FailureSignals`/`AssetSwap` mapper: reads `ModelsController.stagedActivation:
+  StateFlow<StagedActivation?>` directly — reported per this round's own instruction, not built here.
+
+---
+
 ## 2026-09-08 (ui-conformance WP10: register at e927690, R-441/444/445/449/450/451/413/443)
 
 ### <HASH> — ui-conformance WP10 · register at e927690: R-441/444/445/449/450/451/413/443 closed

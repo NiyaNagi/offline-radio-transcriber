@@ -16,6 +16,7 @@ import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.ModelsViewState
+import org.ort.app.ui.data.StagedActivation
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -524,5 +525,106 @@ class ModelsScreenTest {
         composeTestRule.onNodeWithText("Import refused").assertDoesNotExist()
         composeTestRule.onNodeWithText("Models and lexicon").assertExists()
         composeTestRule.onNodeWithText("Callsign lexicon 2026.09 · 1,122,410 records").assertExists()
+    }
+
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_a_staged_model_row_shows_the_staged_badge`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 1L, checksumPrefix = "aa"),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                    status = org.ort.app.ui.data.ModelsScreenStatus(
+                        stagedActivation = StagedActivation(ModelId.VAD.name, "aa", 0L, "a session is live"),
+                    ),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("staged · activates when this session ends").assertExists()
+    }
+
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_a_staged_lexicon_row_shows_the_staged_badge, the old lexicon still reads active`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(rows = emptyList()),
+                    onDownload = {},
+                    onSideload = {},
+                    lexicon = org.ort.app.ui.data.LexiconAssetActions(
+                        row = org.ort.app.ui.data.LexiconAssetRowViewState(
+                            installed = true,
+                            label = "Callsign lexicon 2026.08 · 1,104,208 records",
+                        ),
+                        importResult = null,
+                        onInstall = {},
+                        onDismissResult = {},
+                    ),
+                    status = org.ort.app.ui.data.ModelsScreenStatus(
+                        stagedActivation = StagedActivation(
+                            ModelsController.CALLSIGN_LEXICON_ASSET_ID,
+                            "2026.09",
+                            0L,
+                            "a session is live",
+                        ),
+                    ),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("staged · activates when this session ends").assertExists()
+        // FR-AST-4's own point: the previous version stays "usual" until the staged swap is real.
+        composeTestRule.onNodeWithText("Callsign lexicon 2026.08 · 1,104,208 records").assertExists()
+    }
+
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_no_staged_activation_shows_no_badge_at_all`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 1L, checksumPrefix = "aa"),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("staged · activates when this session ends").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_a_staged_id_for_a_different_asset_never_leaks_onto_this_row`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 1L, checksumPrefix = "aa"),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                    status = org.ort.app.ui.data.ModelsScreenStatus(
+                        stagedActivation = StagedActivation(ModelId.ASR_ENCODER.name, "bb", 0L, "a session is live"),
+                    ),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("staged · activates when this session ends").assertDoesNotExist()
     }
 }
