@@ -15,6 +15,8 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintBindingSource
 import org.ort.data.entity.VoiceprintEntity
+import org.ort.data.entity.WorkAttemptEntity
+import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueState
 import org.ort.data.inWriteTransaction
 import org.ort.data.requireLegalTransition
@@ -617,11 +619,23 @@ public object CorrectionPolling {
                     passLabel = passLabel(pass),
                     lastError = item.lastError?.takeIf { it.isNotBlank() } ?: "no error text recorded",
                     attempts = item.attemptCount,
+                    attemptLog = db.workQueueDao().attemptsFor(item.id).map(::attemptViewState),
                 )
             }
         }
         return null
     }
+
+    /** Register R-426: the real per-attempt row, humanized — see [PassAttemptViewState]'s own doc
+     * comment for why a `TIMEOUT` outcome reads "Timed out" rather than its raw stored `"timeout"`
+     * reason. */
+    private fun attemptViewState(attempt: WorkAttemptEntity): PassAttemptViewState = PassAttemptViewState(
+        timeLabel = ReaderTransmissionViewStateMapper.timeLabel(attempt.finishedAtMillis),
+        reasonLabel = when (attempt.outcome) {
+            WorkAttemptOutcome.TIMEOUT -> "Timed out"
+            WorkAttemptOutcome.FAILED -> attempt.reason.replaceFirstChar { it.titlecase() }
+        },
+    )
 
     /** Guide §9's "pass" vocabulary, sentence case, never the raw [PassId] enum name. */
     private fun passLabel(pass: PassId): String = when (pass) {

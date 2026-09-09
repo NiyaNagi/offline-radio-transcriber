@@ -18,6 +18,17 @@ import org.ort.core.TransmissionId
  * confidence number is prose in the explanation sentence for every state that carries one — never
  * omitted — and the [org.ort.app.ui.components.ScoreChip] stays reserved for INFERRED alone (that
  * part is [org.ort.app.ui.components.AttributionRow]'s job, not this mapper's).
+ *
+ * **Register R-423 (design), narrower than the paragraph above.** `Detail.dc.html` — INFERRED's own
+ * real board — carries no confidence figure in its explanation sentence at all (re-confirmed by
+ * reading the board's own markup directly, twice: once implementing R-423, again reconciling this
+ * file's own then-stale [R_050 INFERRED test][DetailViewStateMapperTest] against it): "Not heard in
+ * this over. Matched by voice to `02:14:07`, where the callsign was heard clearly." — no number.
+ * The confidence is not omitted overall (FR-UI-4's rule holds): it renders in the
+ * [org.ort.app.ui.components.ScoreChip] beside the callsign, from `detail.attribution.confidence`
+ * directly, never through this sentence. `Detail-Confirmed.dc.html`/`Fail-Wrong.dc.html` (CONFIRMED)
+ * do carry the number in prose ("Resolved from the phonetics at 0.94.") — unchanged, and the
+ * paragraph above still governs that state.
  */
 class DetailViewStateMapperTest {
 
@@ -46,13 +57,16 @@ class DetailViewStateMapperTest {
     }
 
     @Test
-    fun `R_050 INFERRED explains itself, states the confidence in prose, and carries the source over`() {
+    fun `R_050 R_423 INFERRED explains itself without a duplicated confidence clause, and carries the source over`() {
         val source = TransmissionId.parse("01ARZ3NDEKTSV4RRFFQ69G5FAV")
         val body = DetailViewStateMapper.from(
             detail(Attribution.inferred("K7LWH", 0.82, source)),
         ).body
         check(body is DetailBodyViewState.Inferred)
-        assertTrue(body.explanation.contains("0.82"), body.explanation)
+        // R-423: `Detail.dc.html` carries no "Confidence 0.82." clause in this sentence — the chip
+        // beside the callsign (built from `detail.attribution.confidence`, not this string) is
+        // where FR-UI-4's confidence-never-omitted rule is satisfied for INFERRED.
+        assertFalse(body.explanation.contains("0.82"), body.explanation)
         assertTrue(body.explanation.contains("Not heard in this over"), body.explanation)
         assertEquals(source.toString(), body.sourceTransmissionId)
     }

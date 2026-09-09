@@ -10425,6 +10425,108 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 12 · R-426's per-attempt history (schema v6), R-423/`DetailViewStateMapperTest` reconciliation
+
+**Scope:** `:app`, this package's own files — `ui/data/{DetailViewState,CorrectionPolling}.kt`,
+`ui/screens/TransmissionDetailScreen.kt`, and their tests (a new
+`PassFailureDetailScreenTest.kt`, split from `TransmissionDetailScreenTest.kt` for `LargeClass`;
+extensions to `CorrectionPollingPassAndRevisionsTest.kt`; a correction to
+`DetailViewStateMapperTest.kt`, folded in per the coordinator's own instruction — disclosed here as
+touching a file this round's own brief did not otherwise name). `git merge main` twice this round:
+once for `:data` commit `9926075` (schema v6 — `data/schemas/org.ort.data.OrtDatabase/6.json`,
+polled for and waited on), once already merged for main's own full-gate failure report. No stash,
+no rebase, no `gradlew --stop`. **Gate per the coordinator's load policy:**
+`:app:testDebugUnitTest --tests` scoped to touched classes **plus `org.ort.app.ui.data.*`** (per
+the coordinator's explicit round-12 instruction, closing the gap that let the `R_050`/R-423
+conflict reach main's own full gate undetected last round), `:app:ktlintCheck :app:detekt`,
+`dependencyRules platformGuards`, `:app:assembleDebug`, `spec_check.py`, `coverageMatrix` then
+`coverageMatrixCheck`.
+
+**Requirements/ACs:** R-426 (design, fixed — the per-attempt list this package reported as a
+schema gap in round 11 is now built); R-423 (design, reconciled — no code change, a stale test
+fixed); F18, FR-UI-4; constitution I (never fabricate — both halves of this round are the same
+principle from opposite directions: building real history now that the schema carries it, and
+refusing to add a fabricated sentence back to the mapper just to satisfy a test that itself never
+matched the board).
+
+**Constitution Check.** Principle I governs the reconciliation directly. The coordinator's
+round-12 message asked this package to make the mapper produce a "Confidence 0.82." clause in
+INFERRED's explanation and update `R_050` to match — but `Detail.dc.html`'s own markup, read
+directly a second time before touching anything (the same board R-423 was built against last
+round), still carries no such clause: "Not heard in this over. Matched by voice to `02:14:07`,
+where the callsign was heard clearly." — no number, the time itself the only styled span. Making
+the mapper say otherwise would be fabricating prose the board does not draw, to satisfy a test that
+was itself never checked against the board when it was written (`R_050`'s INFERRED case predates
+R-423). The honest fix is the one this round makes: keep the mapper as R-423 left it, and correct
+`R_050`'s stale expectation — FR-UI-4's "confidence never omitted" rule still holds, satisfied by
+the `ScoreChip` reading `detail.attribution.confidence` directly, never through this sentence
+(`Detail-Confirmed.dc.html`/`Fail-Wrong.dc.html` confirm CONFIRMED's own prose-confidence sentence
+is unaffected — a different state, a different board, not touched). This is also why the gate
+itself is at fault, not just the test: `DetailViewStateMapperTest` tests `DetailViewStateMapper`,
+a class this package owns and modified last round, but the round-11 gate's `--tests` scope named
+only the classes touched by *that* round's edits and missed it — round 12's gate widens to
+`org.ort.app.ui.data.*` so a mapper-level regression like this is caught locally next time, not on
+main's own full run. R-426's own build is principle I from the schema side: every attempt line now
+rendered is a real `WorkAttemptEntity` row (`:data` schema v6), oldest first by the real
+`attemptNo`; a `TIMEOUT` outcome's stored `reason` is always the literal `"timeout"` (the only
+value `WorkQueue.runLeased`'s timeout path ever passes, confirmed by reading `WorkQueue.kt`
+directly) — humanized to "Timed out" rather than repeating the raw token, never inventing a richer
+message the schema does not carry. The one case still not built — a `FAILED` item whose own
+attempts predate schema v6, so no `work_attempt` rows exist for it — keeps round 11's honest
+single-line fallback rather than a fabricated per-attempt list for a record that genuinely has none.
+
+**What changed:**
+
+1. **R-426, fixed.** `:data` schema v6 added `WorkAttemptEntity(itemId, attemptNo, startedAtMillis,
+   finishedAtMillis, outcome: WorkAttemptOutcome [FAILED|TIMEOUT], reason)` and
+   `WorkQueueDao.attemptsFor(itemId): List<WorkAttemptEntity>` (oldest first, by `attemptNo`).
+   `CorrectionPolling.passFailure` now reads it alongside the existing `WorkQueueItemEntity` lookup
+   and maps each row to a new `PassAttemptViewState(timeLabel, reasonLabel)` — `timeLabel` from the
+   attempt's own real `finishedAtMillis` (when the error/timeout was recorded, via the existing
+   `ReaderTransmissionViewStateMapper.timeLabel`), `reasonLabel` the real `reason`, title-cased for
+   `FAILED` the same way this package's other error text already is, or "Timed out" for `TIMEOUT`
+   (never the raw stored `"timeout"` token). `PassFailureViewState` gained
+   `attemptLog: List<PassAttemptViewState> = emptyList()` (defaulted, so every existing call site
+   compiles unchanged). `TransmissionDetailScreen`'s `FailedPassHeaderSection` now renders one line
+   per real attempt ("`HH:MM:SS` · reason", `Fail-Pass.dc.html`'s own separator and shape) when
+   `attemptLog` is non-empty, each tagged `pass-failure-attempt-N`; falls back to round 11's single
+   `pass-failure-last-error` line only when it is empty (a pre-schema-v6 record — honestly, never a
+   fabricated three-row list for one that has no real rows). The retry-limit line below is
+   unchanged, still built from the real `attemptCount` regardless of which path rendered above it.
+   Tests named `R_426`: `CorrectionPollingPassAndRevisionsTest` (three real rows seeded out of
+   chronological order — asserts `attemptsFor`'s own `ORDER BY attemptNo` is what sorts them, not
+   insertion order; the real timeout-reason humanization), `PassFailureDetailScreenTest` (renders
+   three real lines exactly worded and ordered, retry-limit line unaffected, the round-11 fallback
+   does not also render; the fallback path itself, unchanged, for an empty `attemptLog`).
+2. **R-423, reconciled — `DetailViewStateMapperTest` corrected, not the mapper.** See Constitution
+   Check above for the full reasoning. `R_050`'s INFERRED test (predating R-423, asserting the old
+   "0.82 in prose" behaviour the board never actually had) renamed and rewritten to assert the real,
+   board-verified behaviour — no confidence in the sentence, the source-over link still carried
+   through. The class's own doc comment gained a paragraph naming the board file read (twice, now)
+   and the `ScoreChip`/`detail.attribution.confidence` path that actually satisfies FR-UI-4 for
+   INFERRED. No production code changed.
+3. **Mechanical follow-up.** `TransmissionDetailScreenTest.kt` regrew past detekt's `LargeClass`
+   threshold once round 12's tests landed on top of round 11's own growth — the whole failed-pass
+   family (R-153/R-195/R-196/R-426) plus R-423's tests (which had lived beside it) moved to a new
+   `PassFailureDetailScreenTest.kt`, the same split precedent `RejectedDetailScreenTest.kt` already
+   set; a locally-duplicated minimal `detail()`/`state()`/`failedState()` helper trio, no behaviour
+   change.
+
+**Verified (scoped gate, per the coordinator's load policy, widened per its own round-12
+instruction):** `:app:testDebugUnitTest --tests "org.ort.app.ui.data.*"` plus
+`TransmissionDetailScreenTest`, `PassFailureDetailScreenTest`, `RejectedDetailScreenTest`,
+`TransmissionDetailContentTest` — all clean, run together; `:app:ktlintCheck :app:detekt` (clean
+after one mechanical auto-format — `PassAttemptViewState`'s two-field constructor collapsed to one
+line by `ktlintMainSourceSetFormat`, no semantic change); `dependencyRules platformGuards` (clean —
+no new cross-module edge); `python tools\spec-check\spec_check.py` (`spec-check: OK`);
+`coverageMatrix` then `coverageMatrixCheck` (separate invocations, both clean); `:app:assembleDebug`
+(clean).
+
+**Left open:** none new this round — R-426's schema gap (named in round 11) is closed. The
+`DetailViewStateMapperTest` gap this round closes (a modified-class test file the round-11 gate
+scope missed) is itself the reason this round's own gate widens to `org.ort.app.ui.data.*`, not
+just the touched classes, going forward.
+
 ### (pending) — ui-conformance WP6 round 11 · R-422 first-frame clipping, R-423 inline source-over link, R-425 real chooser evidence, R-426 pass-failure header/retry line, D07 seam for WP12's tour
 
 **Scope:** `:app`, this package's own files — `ui/screens/{TransmissionDetailScreen,TransmissionDetailContent}.kt`,

@@ -17,6 +17,8 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.WorkAttemptEntity
+import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
 import org.robolectric.RobolectricTestRunner
@@ -124,6 +126,63 @@ class CorrectionPollingPassAndRevisionsTest {
         assertEquals("Pass B", failure?.passLabel)
         assertEquals(3, failure?.attempts)
         assertEquals("out of memory in the decoder", failure?.lastError)
+        // No `work_attempt` rows seeded for this item — round 11's honest single-line fallback.
+        assertTrue(failure?.attemptLog.isNullOrEmpty())
+    }
+
+    @Test
+    fun R_426_attempts_reads_the_real_per_attempt_rows_oldest_first_and_words_a_timeout_honestly(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1").copy(processingState = TransmissionState.FAILED))
+        val itemId = db.workQueueDao().insert(workQueueItem("TX1"))
+        // Seeded out of chronological order — `attemptsFor`'s own `ORDER BY attemptNo` is what
+        // guarantees oldest-first, not insertion order.
+        db.workQueueDao().insert(
+            WorkAttemptEntity(
+                itemId = itemId,
+                attemptNo = 3,
+                startedAtMillis = 5_015_000L,
+                finishedAtMillis = 5_015_000L,
+                outcome = WorkAttemptOutcome.TIMEOUT,
+                reason = "timeout",
+            ),
+        )
+        db.workQueueDao().insert(
+            WorkAttemptEntity(
+                itemId = itemId,
+                attemptNo = 1,
+                startedAtMillis = 5_000_000L,
+                finishedAtMillis = 5_000_000L,
+                outcome = WorkAttemptOutcome.FAILED,
+                reason = "out of memory in the decoder",
+            ),
+        )
+        db.workQueueDao().insert(
+            WorkAttemptEntity(
+                itemId = itemId,
+                attemptNo = 2,
+                startedAtMillis = 5_005_000L,
+                finishedAtMillis = 5_005_000L,
+                outcome = WorkAttemptOutcome.FAILED,
+                reason = "out of memory in the decoder",
+            ),
+        )
+
+        val failure = CorrectionPolling.passFailure(context, "TX1")
+
+        assertEquals(3, failure?.attemptLog?.size)
+        assertEquals("Out of memory in the decoder", failure?.attemptLog?.get(0)?.reasonLabel)
+        assertEquals("Out of memory in the decoder", failure?.attemptLog?.get(1)?.reasonLabel)
+        // The real, only-ever-stored `"timeout"` reason humanized — never the raw token.
+        assertEquals("Timed out", failure?.attemptLog?.get(2)?.reasonLabel)
+        assertEquals(
+            ReaderTransmissionViewStateMapper.timeLabel(5_000_000L),
+            failure?.attemptLog?.get(0)?.timeLabel,
+        )
+        assertEquals(
+            ReaderTransmissionViewStateMapper.timeLabel(5_015_000L),
+            failure?.attemptLog?.get(2)?.timeLabel,
+        )
     }
 
     @Test
