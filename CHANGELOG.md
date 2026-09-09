@@ -32,6 +32,83 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11b: F21 asset-swap real-signal investigation)
+
+### (pending) — ui-conformance WP11b · F21 asset-swap has no real signal to map — investigated, reported, smoke case added
+
+**Scope:** `:app` — `ui/failures/FailureMapperTest.kt` (new `R_448_asset_swap_signal`),
+`ui/navigation/ReaderActivityDestinationSmokeTest.kt` (new `R_448_f21_route`). No production code
+touched — see "What changed" for why. `git merge main` (main at `85996ce`+, fast-forwarded
+cleanly to `7f105ea` — WP4's R-412/414-419/421/382/440/411/410 batch and the data v6/work-queue
+merge; no rebase, no stash, no `gradlew --stop`). Follow-up on a gap WP3 found while proving the
+R-448 routes end to end.
+
+**Requirements/ACs:** R-448 (the smoke case); none new for the mapper/polling half — see below for
+why this is a reported gap, not a fix.
+
+**What changed:** The coordinator's ask was "find why the real signal is dropped or never mapped
+(an asset checksum/version change should raise it), fix the mapper/polling." Investigated first,
+per constitution I (never fabricate) — the premise does not hold. There is no dropped signal:
+**F21 has never had a real signal to map, and this package already said so, independently, in four
+places it had already committed before this round** — [`DebugFailureOverride.kt`](app/src/main/kotlin/org/ort/app/ui/failures/DebugFailureOverride.kt)'s
+own class kdoc ("F21/F22 asset swap and calibration — the asset lifecycle (install/verify/
+activate/roll back/remove...) ... unbuilt"), `Scenarios.kt`'s own `load` doc comment ("the seven
+ids with no runtime signal today"), `FailAssetSwapScreen`'s own kdoc ("No runtime signal today"),
+and `FailureViewState.kt`'s own F21 section header ("no runtime signal — DebugFailureOverride
+only"). Confirmed by reading the real activation path, not just trusting the comments:
+`LexiconImportInstaller.installValidated` (`:lexicon`) calls `store.activate(...)`
+unconditionally on every accepted import, with no check anywhere for a live session; no "staged,
+waiting for the session to end" record is ever persisted (`ActiveLexiconStore` exposes exactly one
+record, "current"; `ModelsController`/`ModelCatalog` carry no such concept either). The functional
+spec's own F21 row (`spec/functional-spec.md` §9, Fail-Safety Matrix) names exactly the missing
+piece: "Asset activation guard — Defer activation to next session or reprocess (FR-AST-4)" — a
+guard that exists nowhere in this codebase today, in `:lexicon`, `:data`, or `:app`. Building one
+is real, scoped work — a live-session check at the `RoomActiveLexiconStore`/`ModelsController`
+call site (`app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`, not a file this WP's row
+owns), plus a new persisted "staged" record, plus a new `FailureSignals` field and
+`FailureSignalsPolling` read to carry it — not a mapper/polling wiring bug this package can fix by
+itself, and not something to fabricate a fake signal for just to make a test pass. **What this
+round does instead**: `FailureMapperTest.kt`'s new `R_448_asset_swap_signal` locks in today's real,
+honest behaviour — every real `FailureSignals` field the built app can actually populate, no
+`debugOverride`, maps to `None`, never `AssetSwap` — so a future change that finally builds the
+guard has a failing test here as its own prompt to update this file, rather than this gap going
+unnoticed again. `ReaderActivityDestinationSmokeTest.kt`'s new `R_448_f21_route` is the smoke case
+WP3 left out: a real `ReaderActivity`, launched via `ActivityScenarioRule` exactly like
+`R_334_a_failure_banner_never_hides_the_drawer_rows` above it, with `DebugFailureOverride.show(...)`
+set first (the one path that reaches F21 at all today) — proves the takeover itself genuinely
+renders (`failure-asset-swap-screen`, `failure-asset-swap-done`) through a real activity, not just
+through `Scenarios.load` in isolation (`FailureOverrideScenariosTest`'s existing `F21_asset-swap`
+case) or the screenshot tour. `DebugFailureOverride.clear()` runs in `finally`, matching this
+file's own established pattern for every process-wide holder it sets.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.FailureMapperTest"
+--rerun` — all tests pass, `R_448_asset_swap_signal` included. `.\gradlew.bat
+:app:smokeTestDebugUnitTest --tests "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest.R_448*"
+--rerun` — `R_448_f21_route` passes. `.\gradlew.bat :app:smokeTestDebugUnitTest --rerun` (the full
+class) — 64 tests, 1 failed: the same pre-existing `R_350_improve_done_...` this package has
+reported every round since round 12 (confirmed pre-existing again, unrelated, `:pipeline`'s own
+row) — every other case, `R_448_f21_route` included, passed. `.\gradlew.bat :app:testDebugUnitTest
+--tests "org.ort.app.ui.failures.*" --tests "org.ort.app.debug.*"` — BUILD SUCCESSFUL.
+`.\gradlew.bat :app:detekt :app:ktlintCheck` — both BUILD SUCCESSFUL, zero issues. `.\gradlew.bat
+dependencyRules platformGuards` — both OK, 17 modules, graph unchanged. `.\gradlew.bat -p buildSrc
+test` — BUILD SUCCESSFUL. `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck`
+(run separately) — 191 of 419, unchanged (two new tests documenting an existing, already-fixed
+register row establish no new requirement). `python tools/spec-check/spec_check.py` — OK, 8/8.
+`.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL. Never ran `gradlew --stop`; never rebased or
+stashed.
+
+**Left open / not done:** The real fix — an asset activation guard (FR-AST-4) that defers
+`ActiveLexiconStore.activate` while a session is live, persists a "staged" record, and gives
+`FailureSignalsPolling` something real to read — is genuinely not built, spans modules this WP's
+`ui/failures` row does not own, and is not attempted here rather than fabricated. Recommend it be
+tracked as its own register/build-plan row for whichever WP owns `:lexicon`/model activation
+(`app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`'s `RoomActiveLexiconStore`/
+`ModelsController`), not silently built inside this package. `ReaderActivityDestinationSmokeTest`'s
+own pre-existing `R_350` failure remains open, unrelated, not touched.
+
+## 2026-09-08 (ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410)
+
 ## 2026-09-08 (ui-conformance WP4 · R-419 follow-up: real clip total)
 
 ### 165449f — ui-conformance WP4 · R-419 follow-up: switch to LevelStatus.clippedSamplesThisSession
@@ -448,7 +525,6 @@ newly-detected clip count, never evicted.
   reading whichever field it currently reads; the coordinator's message says WP4 switches it to
   `LevelStatus.clippedSamplesThisSession` once this lands, which is the field name to report back:
   **`clippedSamplesThisSession`** (on `org.ort.pipeline.capture.LevelStatus`, `Long`, `0L` default).## 2026-09-08 (ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410)
-
 ### e8b7dbf — ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410
 
 **Scope:** `ui/screens` (`NowScreen.kt`, `CaptureStatusScreen.kt`, `LevelMeterScreen.kt`), `ui/data`
