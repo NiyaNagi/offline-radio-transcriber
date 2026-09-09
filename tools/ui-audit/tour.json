@@ -124,6 +124,10 @@
 
     { "id": "stations-14-nights/ST02-station", "scenario": "stations-14-nights", "destination": "STATIONS", "drillIn": { "station": "WA7HJR" } },
     { "id": "stations-14-nights/ST02-station@2x", "scenario": "stations-14-nights", "destination": "STATIONS", "drillIn": { "station": "WA7HJR" }, "fontScale": 2.0 },
+    { "id": "stations-14-nights/ST03-station-pattern", "scenario": "stations-14-nights", "destination": "STATIONS", "drillIn": { "station": "WA7HJR", "stationSubScreen": "PATTERN" } },
+    { "id": "stations-14-nights/ST03-station-pattern@2x", "scenario": "stations-14-nights", "destination": "STATIONS", "drillIn": { "station": "WA7HJR", "stationSubScreen": "PATTERN" }, "fontScale": 2.0 },
+    { "id": "stations-14-nights/ST04-station-identity", "scenario": "stations-14-nights", "destination": "STATIONS", "drillIn": { "station": "WA7HJR", "stationSubScreen": "IDENTITY" } },
+    { "id": "stations-14-nights/ST04-station-identity@2x", "scenario": "stations-14-nights", "destination": "STATIONS", "drillIn": { "station": "WA7HJR", "stationSubScreen": "IDENTITY" }, "fontScale": 2.0 },
 
     { "id": "frequency-change/FQ02-frequency-detail", "scenario": "frequency-change", "destination": "FREQUENCIES", "drillIn": { "frequency": "145230000", "frequencyInitialView": "Detail" } },
     { "id": "frequency-change/FQ03-frequency-change", "scenario": "frequency-change", "destination": "FREQUENCIES", "drillIn": { "frequency": "145230000", "frequencyInitialView": "Change" } },

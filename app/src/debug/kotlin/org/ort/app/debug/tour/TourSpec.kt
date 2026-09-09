@@ -22,10 +22,17 @@ import org.json.JSONObject
  * through `NavSeed` now, same key as before). **v4** (WP3 round 14's `NavSeed` fields, after WP5/WP7/
  * WP6 each shipped the composable parameter it needed): `searchQuery`/`searchSubmit`/
  * `searchFiltersOpen`, `logSheetOpen`, `revisionsOpen` (a companion to `transmission`, the same
- * relationship `frequencyInitialView` has to `frequency`). **Still not seedable**: `Station`'s own
- * Pattern/Identity sub-screen (ST03/ST04) — no `NavSeed`/composable seam exists for it yet at the
- * time of writing (see this package's own report for what was polled and not found). A step naming a
- * [drillIn] key outside this set fails loudly (recorded as one `error` line in the manifest, per
+ * relationship `frequencyInitialView` has to `frequency`). **v6** (WP8 shipped
+ * `StationDetailContent.initialSubScreen`, coordinator round 2026-09-08): `stationSubScreen` — a
+ * companion to `station` the same way `frequencyInitialView` companions `frequency` — `PATTERN`
+ * (ST03, `Station-Pattern.dc.html`) or `IDENTITY` (ST04, `Station-Identity.dc.html`); see
+ * [TourIds.resolveSeed]'s own doc comment for why it does nothing without a `station` key in the
+ * same step. `Station`'s own Split sub-screen has no `tour.json` step: `design/design-intent.md`
+ * lists no `Station-Split.dc.html` board — its "Split cluster" action reached from ST04 opens
+ * `F10`/`Fail-Cluster.dc.html` instead, a different, already-independent screen id, not a Station
+ * sub-screen this key's own three-value [org.ort.app.ui.data.StationSubScreen] enum needs a fourth
+ * tour step for. A step naming a [drillIn] key outside this set fails loudly (recorded as one
+ * `error` line in the manifest, per
  * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
  * aborted tour) rather than being silently ignored.
  *
@@ -82,6 +89,7 @@ public data class TourStep(
             "captureLevelMeter",
             "reviewSession",
             "frequencyInitialView",
+            "stationSubScreen",
             "settingsScreen",
             "searchQuery",
             "searchSubmit",
