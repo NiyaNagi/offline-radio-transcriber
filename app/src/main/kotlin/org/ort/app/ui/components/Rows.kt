@@ -161,11 +161,40 @@ public fun rememberFreqColumnWidth(): Dp = rememberMonoColumnWidth(FREQ_COLUMN_S
  * callsign, so the column stays aligned down the whole log the way time/freq already do. */
 private const val CALLSIGN_COLUMN_SAMPLE = "KE7QRS"
 
-/** R-373: [CALLSIGN_COLUMN_SAMPLE] measured in [OrtType.callsignRow] — see that constant's own
- * doc. [LogRow] applies this as the station/transcript column's own `widthIn(min = …)` floor. */
+/** R-560 (`overnight/L01-log@2x-end.png`): the widest realistic combined shape an AMBIGUOUS row's
+ * marker line takes — [CALLSIGN_COLUMN_SAMPLE] beside its own AMBIGUOUS "or <alternate>" — measured
+ * as its own separate string (`OrtType.subLine`, [AttributionRow]'s own style for it) rather than
+ * folded into [CALLSIGN_COLUMN_SAMPLE]'s single mono measurement, since the two run in different
+ * text styles in the real row. [rememberCallsignColumnWidth] sums both plus the real gap
+ * ([AttributionRow]'s own `Spacer(OrtSpacing.xs)`) so the one-line gate reserves genuine room for
+ * an alternate, not just the primary callsign alone — R-505's own fix for the signal column, same
+ * reasoning. */
+private const val ALTERNATE_COLUMN_SAMPLE = "or $CALLSIGN_COLUMN_SAMPLE"
+
+/** R-560: the UNKNOWN state's own "unknown station" (`AttributionRow`'s own [OrtType.textAction],
+ * italic) is prose, not a callsign — it has real word-break opportunities, unlike every other
+ * branch this file's own R-373 fix already forbids wrapping for — so it is deliberately left
+ * wrappable (`softWrap` stays this package's own default `true`, never set `false`). What still
+ * broke it at a large font scale: nothing ever floored the column at the width its own *longest
+ * single word* ("station") needs, so a column narrower than that forced a mid-word break as
+ * Compose's own last resort ("unkno"/"wn station") — the same root cause R-373 already named for a
+ * callsign, just without a word boundary to fall back to. Flooring the column at this word's own
+ * width is what actually guarantees "wraps at a word boundary or not at all", never mid-word. */
+private const val UNKNOWN_STATION_WIDEST_WORD = "station"
+
+/** R-373/R-560: [CALLSIGN_COLUMN_SAMPLE] measured in [OrtType.callsignRow], [ALTERNATE_COLUMN_SAMPLE]
+ * in [OrtType.subLine] (plus the real `Spacer(OrtSpacing.xs)` gap between them), and
+ * [UNKNOWN_STATION_WIDEST_WORD] in [OrtType.textAction] — the widest of the three is what
+ * [LogRow] applies as the station/transcript column's own `widthIn(min = …)` floor. */
 @Composable
-public fun rememberCallsignColumnWidth(): Dp =
-    rememberMonoColumnWidth(CALLSIGN_COLUMN_SAMPLE, floor = 0.dp, style = OrtType.callsignRow)
+public fun rememberCallsignColumnWidth(): Dp {
+    val callsignWidth = rememberMonoColumnWidth(CALLSIGN_COLUMN_SAMPLE, floor = 0.dp, style = OrtType.callsignRow)
+    val alternateWidth = rememberMonoColumnWidth(ALTERNATE_COLUMN_SAMPLE, floor = 0.dp, style = OrtType.subLine)
+    val unknownWordWidth =
+        rememberMonoColumnWidth(UNKNOWN_STATION_WIDEST_WORD, floor = 0.dp, style = OrtType.textAction)
+    val combinedAmbiguousWidth = callsignWidth + OrtSpacing.xs + alternateWidth
+    return maxOf(callsignWidth, combinedAmbiguousWidth, unknownWordWidth)
+}
 
 @Composable
 private fun rememberMonoColumnWidth(sample: String, floor: Dp, style: TextStyle = OrtType.timeFreq): Dp {

@@ -440,6 +440,48 @@ class ControlsTest {
     }
 
     @Test
+    fun `R_565_filter_chip's fill and border are drawn on the same node the 44dp floor is measured on`() {
+        // Reviewer B's own re-measurement of `overnight/L02-filter-sheet.png`/`@2x`: R-510's
+        // `requiredHeightIn` grew the chip's own *touch target* to 48dp, but `.background()`/
+        // `.border()` still lived on the *inner* `Row`, which only ever wrapped its own, much
+        // shorter content — the *painted* pill stayed ~24dp at 1.0/~32dp at 2.0, invisible padding
+        // around a genuinely undersized visible chip. `.background()`/`.border()` are draw-only
+        // modifiers — neither creates its own semantics node, with or without this fix — so there
+        // is no separate "pill" node this host's own layout pass could ever measure independently
+        // of the touch target, before or after: this fact is real only in the rendered pixels, and
+        // this file's own `OrtThemeTest.kt` already found `captureToImage()` unusable in this
+        // sandbox (hangs resolving native graphics with no network egress). What this test pins
+        // instead, host-independently: moving the fill/border onto the same outer node
+        // `requiredHeightIn` already lives on does not reintroduce the floor's own regression (a
+        // draw-only modifier's presence must never coerce the node's own measured size) — checked
+        // for both the `selected` (fill) and unselected (border) branches, since they take
+        // different paths through `.then(...)`. The *painted* pill itself now filling 44dp is
+        // confirmed by this round's own device screenshot (`emulator-5554`, this entry's own
+        // `CHANGELOG.md`), not by this test.
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    FilterChip(
+                        label = "Selected",
+                        selected = true,
+                        onClick = {},
+                        modifier = Modifier.testTag("selected-chip"),
+                    )
+                    FilterChip(
+                        label = "Unselected",
+                        selected = false,
+                        onClick = {},
+                        modifier = Modifier.testTag("unselected-chip"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("selected-chip").assertHeightIsAtLeast(44.dp)
+        composeTestRule.onNodeWithTag("unselected-chip").assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
     fun `a text field shows its label, placeholder, error text and reports edits`() {
         var value = ""
         composeTestRule.setContent {

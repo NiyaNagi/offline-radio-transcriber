@@ -16,12 +16,14 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.app.ui.theme.OrtType
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
 
@@ -239,6 +241,61 @@ class LogRowResponsiveTest {
         assert(narrowHeight > wideHeight) {
             "expected the narrow header row to stack TIME/FREQ/SIG beneath STATION, measuring " +
                 "taller than the wide row; got wide=${wideHeight}px, narrow=${narrowHeight}px"
+        }
+    }
+
+    @Test
+    fun `R_560_the AMBIGUOUS alternate renders as one line, never split character by character, at font scale 2_0`() {
+        // The register's own repro (`overnight/L01-log@2x-end.png`): "or QRF" rendered one
+        // character per line, overlapping the row beneath it — `AttributionRow`'s own alternate
+        // `Text` carried no `maxLines`/`softWrap` of its own, unlike every callsign `Text` in that
+        // same composable (R-373's own established fix) — pins `maxLines = 1, softWrap = false` on
+        // it too, the identical technique, not a new one.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    LogRow(
+                        state = row(attribution = Attribution.ambiguous()).copy(
+                            callsign = "KE7QRS",
+                            alternate = "QRF",
+                        ),
+                        onClick = {},
+                        modifier = Modifier.testTag("row"),
+                    )
+                }
+            }
+        }
+
+        val lines = lineCountOf("or QRF")
+        assert(lines == 1) {
+            "expected the alternate 'or QRF' to render as one line, rendered across $lines lines"
+        }
+    }
+
+    @Test
+    fun `R_560_the callsign column floor grows to fit an AMBIGUOUS row's own alternate, and the UNKNOWN word`() {
+        // R-560's own structural half — the pixel-level "does it actually wrap mid-word" claim is
+        // exactly the class of thing this host's own degenerate glyph metrics cannot verify
+        // (`R_373_a callsign renders...`'s own doc comment, this file's own established finding);
+        // what a real `TextMeasurer` output *can* verify, host-independently, is that the shared
+        // floor `LogRow`'s one-line gate uses now actually reserves more room than the bare
+        // callsign alone, once an alternate or the UNKNOWN prose is possible — the fix `R-560`
+        // actually made, not merely a symptom of it.
+        var callsignOnly = 0.dp
+        var combined = 0.dp
+        composeTestRule.setContent {
+            OrtTheme {
+                val measurer = rememberTextMeasurer()
+                val density = LocalDensity.current
+                val measured = measurer.measure(text = "KE7QRS", style = OrtType.callsignRow)
+                callsignOnly = with(density) { measured.size.width.toDp() }
+                combined = rememberCallsignColumnWidth()
+            }
+        }
+        assert(combined > callsignOnly) {
+            "expected the shared callsign column floor ($combined) to exceed the bare callsign's " +
+                "own width ($callsignOnly) now that it also reserves room for an alternate/the " +
+                "UNKNOWN word"
         }
     }
 

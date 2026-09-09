@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
@@ -126,6 +127,31 @@ class FeedbackTest {
         // either now resolves to the one real target, this just keeps the two checks distinct.
         composeTestRule.onNodeWithText("Clear all").assertIsDisplayed()
         composeTestRule.onNodeWithContentDescription("Clear all", useUnmergedTree = true).assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `R_545_the sheet header row itself meets the 44dp floor, not just Clear all's own internal one`() {
+        // The register's own repro (`emulator-5554`, `wm density` 420 — 44dp = 115.5px): `Sheet`'s
+        // "Clear all" measured 72px/27.4dp on device even after R-510's own `TextAction` fix
+        // (`requiredHeightIn`, verified in `ControlsTest.kt` to hold on its own). The neighbour test
+        // above already asserts `TextAction`'s own 44dp floor and has passed throughout — this
+        // host's own layout pass does not reproduce the device finding (this package's own
+        // established Robolectric-vs-device gap, `LogRowResponsiveTest.kt`'s own doc comments name
+        // the same limit). What *is* checkable here, host-independent: the header `Row` itself
+        // (`Sheet`'s own internal `testTag("sheet-header-row")`, not a caller-supplied one) now
+        // carries its own `heightIn(min = 44.dp)` floor — a short [title] alone (this test's own
+        // "X", far shorter than any real title) can no longer leave the row measuring less than
+        // 44dp, which is the structural half of the fix regardless of what any single host's font
+        // metrics report for `TextAction`'s own box inside it.
+        composeTestRule.setContent {
+            OrtTheme {
+                Sheet(title = "X", onClearAll = {}) {
+                    androidx.compose.material3.Text("content")
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("sheet-header-row").assertHeightIsAtLeast(44.dp)
     }
 
     @Test

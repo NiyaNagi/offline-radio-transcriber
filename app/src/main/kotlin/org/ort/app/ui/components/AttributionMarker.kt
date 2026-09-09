@@ -175,7 +175,23 @@ public fun AttributionRow(
                     // guide §6.1: "or QRF" alternate at 11sp — OrtType has no exact 11sp non-mono
                     // token (R-020 report: closest named row is `subLine` at 11.5sp); using that
                     // rather than a literal .sp per this package's no-raw-style rule.
-                    Text(text = "or $alternate", style = OrtType.subLine, color = OrtColors.accentAmber)
+                    //
+                    // R-560 (`overnight/L01-log@2x-end.png`): at font scale 2.0 this `Text` — no
+                    // `maxLines`/`softWrap` of its own, unlike every callsign `Text` in this same
+                    // composable — wrapped inside this composable's own plain, non-reflowing `Row`
+                    // (R-420's own doc comment: deliberately non-wrapping, a callsign's own shared
+                    // contract) to one character per line ("or QRF" → "o"/"r"/" "/"Q"/...),
+                    // overlapping whatever sits beneath it. `alternate` is a callsign — no word-
+                    // break opportunity of its own — so `maxLines = 1, softWrap = false` is the
+                    // identical, already-established fix every other callsign `Text` here already
+                    // carries (R-373's own doc comment), not a new technique.
+                    Text(
+                        text = "or $alternate",
+                        style = OrtType.subLine,
+                        color = OrtColors.accentAmber,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
             }
 

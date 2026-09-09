@@ -32,6 +32,147 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP2 round 3: R-545/560/561/565 — one root cause not found, three confirmed)
+
+### (pending) — ui-conformance WP2 round 3 · R-565 chip pill fill, R-560 alternate/UNKNOWN wrap, R-561 prior-figure ceiling; R-545 investigated, not closed
+
+**Scope:** `:app` — `ui/components/{Feedback.kt,Controls.kt,AttributionMarker.kt,Rows.kt,
+Inspection.kt}` and their tests (`FeedbackTest.kt`, `ControlsTest.kt`, `LogRowResponsiveTest.kt`,
+`InspectionTest.kt`). `git merge main` first (main at `ebf4004`, this package's own prior round
+merged; fast-forward, no conflicts, no files this package owns touched). Continues the same day's
+own prior WP2 round (R-380/381/543/505/510).
+
+**Requirements/ACs:** R-545, R-560, R-561, R-565 (register, all filed this round by Reviewer B/WP6
+against `overnight/L02-filter-sheet.png`, `overnight/L01-log@2x-end.png`,
+`overnight/D02-inferred@2x-end.png`).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-545 directly: two
+  independent, principled fix attempts are reported honestly as *not* having moved the on-device
+  measurement at all, rather than either one being written up as a fix. Principle II (test-backed
+  change): every code change below has a red-then-green test except where a genuine, disclosed
+  host limit made red-then-green impossible to demonstrate (R-561's own case, documented in its own
+  test's doc comment).
+- **R-565 (`FilterChip`, `Controls.kt`) — fixed, device-confirmed.** R-510's own `requiredHeightIn`
+  grew the chip's *touch target* to 48dp, but `.background()`/`.border()` stayed on the *inner*
+  `Row`, which only ever wrapped its own, much shorter content — the painted pill stayed ~24dp at
+  1.0/~32dp at 2.0, invisible padding around a genuinely undersized visible chip. Moved
+  `.background()`/`.border()` onto the same outer `Box` the 44dp floor is measured on; the inner
+  `Row` now carries only content padding. `ControlsTest.kt`'s new `R_565` test pins the structural
+  half (the floor survives being drawn on, for both the selected/fill and unselected/border
+  branches — draw-only modifiers create no semantics node either way, so this is what Robolectric
+  *can* verify); the pill actually filling 44dp is confirmed by this round's own device screenshot
+  (`emulator-5554`, below).
+- **R-560 (`AttributionMarker.kt`, `Rows.kt`) — fixed, Robolectric-confirmed, not device-checked
+  this round.** Two related defects in `overnight/L01-log@2x-end.png`: (1) `AttributionRow`'s own
+  AMBIGUOUS `"or $alternate"` `Text` carried no `maxLines`/`softWrap` of its own, unlike every
+  callsign `Text` in that same composable (R-373's own established fix) — at font scale 2.0 it
+  wrapped to one character per line inside the composable's own plain, non-reflowing `Row`,
+  overlapping the row beneath it; fixed with the identical `maxLines = 1, softWrap = false` R-373
+  already uses. (2) `AttributionRow`'s UNKNOWN branch ("unknown station", real prose, deliberately
+  left wrappable) broke *mid-word* because nothing floored the shared callsign column at even its
+  own longest single word's width — `rememberCallsignColumnWidth()` now takes the max of the bare
+  callsign sample, a combined "callsign + real gap + `or <alternate>`" sample (extending `LogRow`'s
+  one-line gate to the alternate, as asked), and "station" (the wider of "unknown station"'s two
+  words) — the same `rememberMonoColumnWidth`/`maxOf(floor, measured)` pattern R-373/R-505 already
+  established, not a new technique. New tests: `R_560_the AMBIGUOUS alternate renders as one line,
+  never split character by character, at font scale 2_0` (the same `lineCountOf` structural
+  guarantee R-373's own neighbour test uses) and `R_560_the callsign column floor grows to fit an
+  AMBIGUOUS row's own alternate, and the UNKNOWN word` (a real `TextMeasurer` comparison, not a
+  pixel guess — host-independent).
+- **R-561 (`Inspection.kt`) — fixed, Robolectric-confirmed (with a disclosed host limit).**
+  `PriorBarValue`'s `widthIn(min = 30.dp, max = 34.dp)` gave the prior figure a hard *ceiling* even
+  though it is `softWrap = false, maxLines = 1` (nowhere for real 2.0-scale overflow to go) —
+  `overnight/D02-inferred@2x-end.png`'s own repro, "+0.85"/"-0.12" clipped to "+0."/"-0.". Dropped
+  the `max` — `widthIn(min = …)` alone, the "floor never a ceiling" rule `Rows.kt`'s own R-152
+  already established for exactly this reason. Also, per the ask: `PriorBarLabel` gained a `wraps`
+  parameter (default `false`, every existing caller unaffected) — `true` only in `PriorBar`'s own
+  full-row-width branch (font scale ≥ 1.3), which has the whole row to itself and no longer needs
+  the narrow-column non-wrap R-323 still requires in the shared-row branch. **Disclosed limit,
+  found and confirmed while writing the test, not assumed:** this host's own Robolectric font
+  metrics are degenerate and do not scale with `fontScale` (this package's own already-established
+  finding, `RowsTest.kt`/`LogRowResponsiveTest.kt`'s own doc comments) — even a 15-character literal
+  measured exactly the 30dp floor, both before and after this fix, so no pixel-width comparison
+  against the old 34dp ceiling can discriminate the two on this host. `InspectionTest.kt`'s new
+  `R_561` test instead pins what is real and host-independent (the figure's full string reaches the
+  semantics tree unclipped — a regression guard, not the original defect's own proof) and states
+  this limit in its own doc comment rather than asserting something the host cannot actually show.
+- **R-545 (`Sheet`, `Feedback.kt`) — investigated, not closed.** The hypothesis handed to this
+  package (the header `Row` constrains its own children's height) was checked directly: `Sheet`'s
+  header `Row` carried **no** `Modifier.height(...)`/`heightIn(max = …)` of its own at all before
+  this round — only `.fillMaxWidth()`. Two independent, principled fixes were tried in sequence,
+  each verified against a freshly rebuilt, non-stale APK (`:app:assembleDebug --rerun`, confirmed
+  the jar's own timestamp moved past both edits before each install): (1) `TextAction`/
+  `PrimaryButton`/`SecondaryButton`/`DestructiveButton` switched `heightIn` → `requiredHeightIn`
+  (this round's own prior entry) — no change. (2) `Sheet`'s own header `Row` given
+  `.padding(...).heightIn(min = 44.dp)` — `heightIn` positioned *last* in the chain, the one order
+  this package's own R-383/R-510 findings already established as the one that survives to a real
+  device — no change either. **Both attempts measured 72px/27.4dp for "Clear all", bit-for-bit
+  identical, on two separate fresh installs.** `FeedbackTest.kt`'s new `R_545` test pins the one
+  thing that *is* now structurally true and Robolectric-verifiable — the header `Row` itself
+  (`Sheet`'s own internal `testTag("sheet-header-row")`) measures ≥44dp even for a one-character
+  title — and stays in the code as a harmless, directionally-correct hardening, but this package
+  is not claiming R-545 fixed. See "Left open" for what is now known and what still is not.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.FeedbackTest" --tests
+  "org.ort.app.ui.components.ControlsTest" --tests "org.ort.app.ui.components.LogRowResponsiveTest"
+  --tests "org.ort.app.ui.components.RowsTest" --tests "org.ort.app.ui.components.InspectionTest"`
+  — BUILD SUCCESSFUL, all green, including the four new tests named above.
+  `:app:testDebugUnitTest` (full, exempted per the cross-cutting instruction): the prior round's own
+  full run (1368 tests, 0 failures, before this round's own edits) already covers every file this
+  round touched at the class level; a fresh full re-run was attempted three times this round and did
+  not complete within a reasonable window each time (the same shared-machine load this file's own
+  prior entry documented, confirmed again via `Get-CimInstance Win32_Process` showing several other
+  worktrees' `java` processes actively consuming CPU throughout) — stopped via `TaskStop` each time
+  (the harness's own tracked-task mechanism, not a raw process kill and not a Gradle daemon stop) to
+  free the file locks it left on `app/build`, never left running unacknowledged. Risk is assessed
+  low (every changed file's own scoped tests are green) but a second full run is not independently
+  confirmed this round — recommend the lead's own post-merge gate.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, zero issues (fresh, after every
+  change).
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules, graph unchanged (fresh).
+- `.\gradlew.bat :app:assembleDebug` (and `--rerun`, to rule out staleness for the R-545
+  investigation specifically) — BUILD SUCCESSFUL both times (fresh).
+- `python tools\spec-check\spec_check.py` — OK, 8/8 (fresh).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations,
+  fresh) — 192 of 419, unchanged; no diff in `results/coverage-matrix.md`.
+- **Device (`emulator-5554`, `wm density` 420 / 2.625×; `overnight` scenario, Log → Filter sheet,
+  `uiautomator dump` + `screencap` via the pull pattern):**
+  - **R-565 confirmed fixed** — screenshot (this session's own scratchpad) shows the FREQUENCY
+    row's "All" chip as a visibly full, rounded pill now spanning the whole touch target, not a
+    small pill centred inside invisible padding (compare against the prior round's own screenshot
+    of the same sheet). `uiautomator dump`: `<node text="All" ... bounds="[38,973][164,1099]"/>` —
+    126px/48dp, consistent before and after (this specific chip's *touch target* was already
+    correct from R-510; R-565 is a paint-only fix this dump's own bounds cannot show, which is why
+    the screenshot, not the dump, is this claim's own evidence).
+  - **R-545 not confirmed** — `<node text="Clear all" content-desc="Clear all" clickable="true"
+    focusable="true" bounds="[882,829][1027,901]"/>` — 72px/27.4dp, identical to both the prior
+    round's own reading and this round's first fix attempt. See "Left open".
+  - R-560/R-561 were not reached on device this round — the `overnight` scenario's own current
+    fixture has no AMBIGUOUS row with a real alternate, and the Inspection panel needs a drill-in
+    this round's own time budget did not reach; both rest on the Robolectric evidence above only.
+
+**Left open / not done:**
+- **R-545 remains open.** What is now known, precisely, for whoever picks this up: the defect is
+  real (confirmed twice), it is not the header row's own `heightIn`/`max` (none existed), it is not
+  `TextAction`'s own floor technique (`requiredHeightIn`, independently verified working for
+  `FilterChip` in the very same sheet), and it is not a stale-build artifact (ruled out directly,
+  `--rerun` + jar timestamp check). What was not tried this round, for lack of time: (a) whether
+  `uiautomator`'s own reported bounds for a Compose semantics node are an *ancestor-clip
+  intersection* rather than the raw `LayoutNode` size — standard Android `AccessibilityNodeInfo`
+  behaviour for a real `View` tree, unconfirmed either way for Compose's own bridge in this
+  build — which would mean the real floor to fix sits higher than `Sheet`'s own header `Row`,
+  possibly in whatever hosts `LogFilterSheet` itself; (b) reproducing the same repro shape
+  (`Row` + `weight(1f)` sibling + `CenterVertically` + a non-weighted `TextAction`) in total
+  isolation, outside `Sheet` entirely, to confirm whether `Sheet` itself is implicated at all or
+  whether this is general to that shape anywhere in the package.
+- R-560/R-561's own device-pixel confirmation (as opposed to the Robolectric structural evidence
+  already in hand) was not reached this round — flagged above, not silently assumed equivalent.
+- Register rows outside R-545/560/561/565 not touched this round.
+
+---
+
 ## 2026-09-09 (ui-conformance WP2 round 2: R-380/381/543 gate-blocking finders, R-505 signal column, R-510 floors — device-verified)
 
 ### (pending) — ui-conformance WP2 round 2 · R-380/381/543 semantics complete; R-505 signal-column gate; R-510 FilterChip/TextAction/PrimaryButton/SecondaryButton/DestructiveButton floors, device-verified on emulator-5554

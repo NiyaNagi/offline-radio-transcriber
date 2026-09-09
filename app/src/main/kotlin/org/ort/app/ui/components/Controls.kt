@@ -258,8 +258,9 @@ public fun DestructiveButton(
 // ---------------------------------------------------------------------------------------------
 
 /** guide §6.3: pill, 14px radius, `5px 11px` padding. Selected is `bg/chip` fill/`text/high`/500;
- * unselected is a `line/chip` outline/`text/muted`/400. The visible pill is small, so the tap
- * target is padded out to 44dp around it (guide §5's rule, not the pill's own bounds).
+ * unselected is a `line/chip` outline/`text/muted`/400. R-565: the pill itself now fills the 44dp
+ * floor (guide §5) — the fill/border are drawn on the same node the floor is measured on, not a
+ * smaller inner wrapper centred inside it (see this composable's own R-565 doc comment below).
  *
  * R-383 (`L02` `Log-Filter`'s frequency chip row, `[38,418][164,516]` — 98–103px, under the 116px
  * floor, while the attribution chip row on the same sheet measures 126px): `heightIn(min = 44.dp)`
@@ -301,7 +302,17 @@ public fun DestructiveButton(
  * undercut it" names. `requiredHeightIn(min = 44.dp)` is this package's fix: unlike `heightIn`, it
  * does not coerce its own floor into the incoming constraints — it is enforced regardless of them,
  * the standard defensive-minimum-touch-target technique for a component that must guarantee its
- * own floor independent of its caller (`ControlsTest.kt`'s own `R_510` test pins this directly). */
+ * own floor independent of its caller (`ControlsTest.kt`'s own `R_510` test pins this directly).
+ *
+ * R-565 (Reviewer B, `overnight/L02-filter-sheet.png`/`@2x`): `requiredHeightIn` grew the *touch
+ * target* — this node's own semantics/measured bounds — to 48dp, exactly as R-510 intended, but the
+ * *painted* pill (`.background()`/`.border()`) stayed on the inner `Row`, which only ever wrapped
+ * its own, much shorter content (5dp padding + one line of `OrtType.chip`) — so the visible chip
+ * itself stayed ~24dp at 1.0/~32dp at 2.0, an invisible, larger touch box centred around a
+ * genuinely undersized pill. The guide's own floor is for the *control*, not only its hit-testing
+ * — `.background()`/`.border()` moved onto this outer `Box`, the one node `requiredHeightIn`
+ * already carries, so the pill drawn is the same box that's guaranteed 44dp; the inner `Row` now
+ * carries only content padding/arrangement, never the fill. */
 @Composable
 public fun FilterChip(
     label: String,
@@ -318,6 +329,16 @@ public fun FilterChip(
             .selectable(selected = selected, onClick = onClick, role = Role.Checkbox)
             // R-510: `requiredHeightIn`, not `heightIn` — see this composable's own doc comment.
             .requiredHeightIn(min = 44.dp)
+            // R-565: the pill's own fill/border, drawn on the same box the 44dp floor lives on —
+            // see this composable's own doc comment.
+            .background(if (selected) OrtColors.bgChip else Color.Transparent, RoundedCornerShape(14.dp))
+            .then(
+                if (selected) {
+                    Modifier
+                } else {
+                    Modifier.border(1.dp, OrtColors.lineChip, RoundedCornerShape(14.dp))
+                },
+            )
             .clearAndSetSemantics {
                 contentDescription = label
                 // R-380 correction (WP2, gate-blocking) — see [TextAction]'s own doc comment.
@@ -343,14 +364,6 @@ public fun FilterChip(
     ) {
         Row(
             modifier = Modifier
-                .background(if (selected) OrtColors.bgChip else Color.Transparent, RoundedCornerShape(14.dp))
-                .then(
-                    if (selected) {
-                        Modifier
-                    } else {
-                        Modifier.border(1.dp, OrtColors.lineChip, RoundedCornerShape(14.dp))
-                    },
-                )
                 .padding(
                     start = 11.dp,
                     end = if (onDismiss != null) 9.dp else 11.dp,
