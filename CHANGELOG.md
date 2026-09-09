@@ -32,6 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP3 round 17: R-432 activation-thread routing; NavHostBody LongMethod)
+
+### (pending) — ui-conformance WP3 round 17 · R-432 activation-thread routing; NavHostBody split for LongMethod
+
+**Scope:** `:app` — `ui/navigation/OrtNavHost.kt`, new `ui/navigation/ActivationThreadRouting.kt`;
+test `ui/navigation/ReaderActivityDestinationSmokeTest.kt`.
+
+**Requirements/ACs:** R-432 (register).
+
+**What changed:** Constitution Check — Principle I (uncertainty is content): "The activation
+thread" pill now opens a real thread or, honestly, falls through to the filtered Log when none
+exists yet — never a no-op masquerading as a dead end. Principle VII (structural boundaries): the
+lookup this needed (`ActivationThreadRouting.resolveActivationThread`) lives in a new file under
+this package's own `ui/navigation` row rather than reaching into `ui/data/ThreadViewData.kt`
+(WP5's) or `ui/data/StationPolling.kt` (WP8's `SharedDatabase` is `private` to that file besides).
+
+R-432: WP8 shipped `FrequencyChangeScreen.onOpenThread`/`FrequencyDetailContent.onOpenThread` as a
+zero-argument callback with no way to carry a resolved thread id (register: "WP3 routes the
+destination once it can identify that thread"). Added `ActivationThreadRouting` (new file):
+`resolveActivationThread(context, frequencyHz)` mirrors `FrequencyPolling.frequencyChange`'s own
+`tonightWindow` (the most recent session's start/end), finds the earliest transmission on that
+frequency within it, and returns that transmission's own `threadId` (`null` when it has not been
+grouped into a thread yet) alongside the window either way. `OrtNavHost.kt`: `NavHostCallbacks`
+gained `onOpenActivationThread: (String) -> Unit`, built in `navHostCallbacks()` — it closes the
+live frequency drill-in first (unlike the existing `onOpenThread`, built for LOG/THREADS rows where
+no other drill-in id is ever already open) so the thread branch is what `NavHostDispatch`'s `when`
+actually matches next, then records the true origin (`Frequencies`, in every real case) as the
+back label. The frequency drill-in's `onOpenThread` lambda (in the newly-extracted
+`NavHostDispatch`, see below) launches the lookup and dispatches to `onOpenActivationThread` on a
+real thread id or to the existing `onOpenOvers` (R-276's filtered-Log route) otherwise.
+
+detekt `LongMethod` on `NavHostBody` (80/80 after WP8's `onOpenThread` default parameter pushed it
+to the limit): extracted the drill-in-id `when` dispatch into a new private `NavHostDispatch`
+composable (same reasoning `DestinationContent`/`ThreadDetailContent` were already split out for)
+— behaviour unchanged, `NavHostBody` now well under the limit.
+
+Also `@Suppress("LargeClass")` on `ReaderActivityDestinationSmokeTest` (detekt): the new
+`R_432_activation_thread_route` case pushed this already-large, deliberately-single-file smoke
+class over detekt's default `LargeClass` threshold; splitting that established class is out of
+scope for this round.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.navigation.*'` — green
+(`DrawerContentTest`/`StorageFooterViewStateTest`/`DrawerSessionHeaderViewStateTest`/
+`AssetSwapRealSignalSmokeTest`; `ReaderActivityDestinationSmokeTest`/`NavSeedTest`/
+`OrtNavHostDestinationDispatchTest` run only under the smoke task, see below).
+`.\gradlew.bat :app:smokeTestDebugUnitTest --tests 'org.ort.app.ui.navigation.*'` — 51 tests, 6
+failed; `R_432_activation_thread_route` **PASSED**. The 6 failures are all pre-existing and outside
+this round's own files: `R_132_settings_capture_meter_opens_the_level_meter`,
+`R_350_improve_done_install_action_opens_settings_assets_for_a_real_missing_model_failure`,
+`R_133_settings_storage_review_link_opens_the_session_and_back_returns_to_settings_storage`,
+`R_333_system_back_pops_the_drill_in_then_the_drawer_before_ever_finishing_the_activity`,
+`R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window` — the five the
+coordinator's brief named as already broken on main by a WP2 semantics change (`Controls.kt`'s
+R-380: `TextAction`/`SecondaryButton`/`PrimaryButton` now `clearAndSetSemantics { contentDescription
+= text; ... }`, so `hasText(...) and hasClickAction()` — every one of these five tests' own click
+matcher — no longer finds the node; confirmed by reading `Controls.kt` and by the identical failure
+signature, "Failed to inject touch input" against the same "Busier than usual" click `R_432` itself
+was first written against, before being rewritten to match on `hasContentDescription(...)` instead)
+— plus one not named in the brief, `NavSeedTest > pendingLogFilter lands on Log with the frequency
+quick filter selected` (a `ComposeTimeoutException` waiting on `LogContent`'s own quick-filter chip,
+`ui/screens/LogContent.kt`, WP5's file, untouched by this round). None of the six touch a file this
+round changed. `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+`.\gradlew.bat dependencyRules platformGuards` — green. `.\gradlew.bat :app:assembleDebug` — green.
+`python tools\spec-check\spec_check.py` — `spec-check: OK` (all 8 checks pass).
+`.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — both green, no
+`results/coverage-matrix.md` diff.
+
+**Left open / not done:** the six pre-existing smoke failures above (five already tracked by the
+coordinator as WP2's to fix; the sixth, `NavSeedTest > pendingLogFilter`, reported here as the same
+family — a `LogContent` quick-filter chip timeout — for whoever owns that file next). R-432's other
+half (the "no thread exists yet" fallback to the filtered Log) is exercised by
+`ActivationThreadRouting`'s own second branch and by the already-passing
+`R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`'s identical
+`onOpenOvers` route once WP2's fix lands; not re-proven with its own seeded "no threadId" case in
+this round, since `seedFrequencyOversPattern`'s only alternative would be `FrequencyChangeFixtures`
+(`app/src/debug/.../FrequencyChangeFixtures.kt`, outside this package's row), whose own
+`"frequency-change"` scenario never sets a `threadId` on any transmission either — a same-shaped
+case, not a materially different one.
+
 ## 2026-09-09 (ui-conformance WP12c: screenshot tour — ST03/ST04 station sub-screens now seedable)
 
 ### (pending) — ui-conformance WP12c · tour.json ST03/ST04 (Station-Pattern/Station-Identity), TourIds `stationSubScreen`
@@ -122,7 +201,6 @@ search-result drill-ins it still lists as unreachable are, in fact, already in `
 — flagged, not fully rewritten here, to stay inside this package's ST03/ST04 mandate.
 
 ---
-
 ## 2026-09-09 (ui-conformance WP8: station sub-screen seam finished, R-430/431/432/433 fixed)
 
 ### (pending) — ui-conformance WP8 · station sub-screen seam finished; R-430/R-431/R-432/R-433 fixed
