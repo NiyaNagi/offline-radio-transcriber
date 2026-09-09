@@ -32,6 +32,246 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10: R-540, Session coverage chart hatches a real gap under real overs)
+
+### eee36cf — ui-conformance WP10 · R-540: a real recorded gap now hatches its own hour even when the hour also had real overs
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt` (`sessionCoverageBuckets`);
+test beside it, `app/src/test/kotlin/org/ort/app/ui/digest/DigestPollingTest.kt`.
+
+**Requirements/ACs:** R-540 (register, Reviewer D, tour run 3,
+`results/ui-audit/stations-14-nights/DG04-session-review.png`); revises the two R-449 tests this
+round's own bug shares a function with, without reopening R-449 itself.
+
+**What changed:**
+
+*Constitution Check.* I and the segmenter/gap principles bear here: a real, recorded `CaptureGap`
+row is exactly the kind of fact this product must never silently drop from a view that claims to
+summarize it. `sessionCoverageBuckets` already read real `SessionWindow.gaps` — nothing was
+fabricated or invented — but the state it chose per hour-bucket buried that real row under
+`heardCount > 0`, so an hour with any real over anywhere in it always read solid HEARD even when a
+real, recorded gap also fell inside the same hour.
+
+The coordinator's own diagnostic question ("does the chart derive gaps from the session's
+`CaptureGap` rows, or from transmission density") has a clear answer: it always read the real
+`CaptureGap` rows — the GAPS list and the coverage chart share the same source. The bug was never
+about the data source; it was about priority. Two things stacked to hide a real 22-minute gap:
+
+1. `heardCount > 0` was checked before any gap check, so a bucket with a real over anywhere in it
+   never even looked at `window.gaps`.
+2. The old gap check itself required `gapMillis * 2 >= bucketMillis` (the gap covering at least
+   half the hour) before hatching — a real 22-minute gap in a 60-minute bucket (37%) would have
+   failed that floor too, independent of bug 1.
+
+Fixed by reordering the `when` so a real, non-zero overlap with any `window.gaps` entry always wins
+first, regardless of `heardCount`, and by changing the overlap test from "covers half the bucket"
+to "overlaps the bucket at all" (`overlapEnd > overlapStart`) — matching the board's own literal
+rule (`design/canvas/Session.dc.html` lines 43/49: every real gap inside an hour hatches that
+hour, unconditionally). `ActivityPatternChart` (`ui/components/`, shared and out of WP10's
+ownership) still renders exactly one of three discrete states per bucket — no sub-bar proportional
+split was added or is possible without touching that shared renderer; "one hatched span at the
+right fraction" is satisfied at hour-bucket granularity: the bucket whose real gap actually falls
+in it is the one that hatches, the others read on their own real heard/silent state.
+
+`DigestPollingTest.kt`: kept `R_449 a continuously run session with no real gap at all is never
+hatched not-listening` (now genuinely gap-free, a 3-hour session with a real over in every bucket
+and no `CaptureGapEntity` row at all, asserting all three read HEARD); added
+`R_540 a real recorded gap hatches its own hour, one span, even with real overs elsewhere in it`
+(3-hour session, real overs in every bucket, one real 22-minute `ROUTE_CHANGE` gap inside the first
+hour, asserting `coverage.map{it.state} == [NOT_LISTENING, HEARD, HEARD]` — the exact scenario the
+register row named); renamed and shrank the old ≥50%-threshold R-449 test to
+`R_449 any real recorded gap overlap, however small, hatches its own hour` (gap shrunk from 40 of
+60 minutes to 1 of 60, still hatches, now testing the real "any overlap" rule rather than a
+half-covered one).
+
+**Verified:**
+
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.digest.DigestPollingTest` — **16
+  tests, 16 passed**, including `R_540` and both revised `R_449` tests.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.digest.*` — **18 tests, 18 passed**
+  (adds `SessionsScreensTest`'s two R-250 tests; `SessionsContentTest` contributed no matches under
+  this filter but the module still built and the run stayed green).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8 checks).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (192 covered of 419).
+- `git status --porcelain` after the gate — only the two touched source files and
+  `results/coverage-matrix.md`, no foreign-file pollution.
+
+**Left open / not done:** the coverage chart's granularity is still one discrete state per elapsed
+hour bucket (`ActivityPatternChart`, shared/out-of-ownership) — a gap that only partially overlaps
+a bucket still hatches the *whole* bucket, same honest limitation as before this fix, just no
+longer one a real over elsewhere in the same hour can hide.
+
+---
+
+## 2026-09-08 (ui-conformance WP10: R-490..R-493, Fail-Lexicon content gaps closed against the real board)
+
+### ee3a812 — ui-conformance WP10 · R-490..R-493: Fail-Lexicon's checklist, banner, still-active row and header match the real board
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`, `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`;
+tests beside each, plus `app/src/test/kotlin/org/ort/app/debug/LexiconCorruptScenarioTest.kt` and
+`app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerLexiconTest.kt` (both already asserted on
+the exact fields this round changed) and a new `app/src/test/kotlin/org/ort/app/ui/screens/FailLexiconScreenTest.kt`
+(split from `ModelsScreenTest.kt` — detekt's `LargeClass`, this codebase's established pattern for it).
+
+**Requirements/ACs:** R-490, R-491, R-492, R-493 (register, Reviewer D's second review at 85996ce,
+`Fail-Lexicon.dc.html`).
+
+**What changed:**
+
+*Constitution Check.* I governs the whole round — every one of these four gaps was operator-facing
+copy or structure reading *less* true than the real validator/store already knew (five real checks
+narrated as generic glyphs instead of the board's four named ones, a banner silent about a real
+consequence, a collapsed fact that hid two real ones, a wrong parent label). Nothing here invents a
+new fact; every fix surfaces one `LexiconImportValidator`/`ActiveLexiconRecord` already computes.
+
+- **R-490 (checklist):** the board names four checks; `LexiconImportValidator` genuinely runs five
+  (`Manifest readable`/`Checksum`/`Record count and shape`/`Callsign grammar sample`/`No duplicate
+  keys`) — a finer-grained validator, not a defect. New `ModelsViewData.kt`'s `foldChecksToBoardRows`
+  folds `Record count and shape` + `No duplicate keys` under "Record count" and displays
+  `Callsign grammar sample` (validates each sampled callsign against `ItuPrefixTable`'s own
+  allocation table) as "Prefix table consistency" — the real fact it already checks, under the
+  board's own name. A folded row's status is the worse of its parts; when severities differ the
+  worse part's own detail carries the row alone (matches the board's own example exactly — no
+  "not reached" noise appended beside a real failure reason); same-severity parts both contribute.
+  `ModelsScreen.kt`'s `LexiconCheckMarker` now draws the board's own filled 20dp circular badge
+  (green+check or halt-red+cross, dark-on-fill icon tint) instead of a bare tinted glyph;
+  `NOT_REACHED` keeps its existing hollow ring, matching the board's own row for it.
+- **R-491 (banner/closing paragraph):** the banner now appends the real still-active lexicon's name
+  ("… is still active and capture never noticed") when one exists, silent when there genuinely was
+  none (a first-ever import — never fabricated). The closing paragraph now ends "…and even then only
+  at the next session" — a direct, true consequence of this same round's own FR-AST-4 work (a swap
+  now stages rather than activating immediately).
+- **R-492 (STILL ACTIVE row):** was one collapsed line; `LexiconImportViewState.Rejected` now carries
+  the lexicon's name and record count as two real, separate fields (was one pre-joined string) so the
+  screen draws the board's own two lines — name, then "N records · verified · in use by the running
+  session" — behind a green state dot. "Verified" and "in use by the running session" are never
+  separately-sourced fields: both are structurally true of *any* value this screen ever draws here,
+  since `RoomActiveLexiconStore.activate` (the only writer of "the active lexicon") only ever runs
+  after `LexiconImportValidator.validate` returns `Accepted`, and this is that same record.
+- **R-493 (header):** `FailLexiconScreen`'s `DrillInHeader` read "‹ Settings"; the real parent is
+  "Models and lexicon" (Settings-Assets) — a one-line label fix, `onDone` already returns there.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD SUCCESSFUL (JDK 17).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreenTest" --tests
+  "org.ort.app.ui.screens.FailLexiconScreenTest" --tests "org.ort.app.ui.data.ModelsControllerLexiconTest"
+  --tests "org.ort.app.debug.LexiconCorruptScenarioTest"` — **BUILD SUCCESSFUL**, all 35 tests
+  PASSED, including `R_490`'s real, un-mocked pipeline test (a genuinely corrupt file through
+  `ModelsController.installLexicon` → `RoomActiveLexiconStore`, asserting the real fold's output)
+  and updated pre-existing tests that already asserted on the exact fields this round changed
+  (`LexiconCorruptScenarioTest`, `ModelsControllerLexiconTest`).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL** (one `LargeClass` on
+  `ModelsScreenTest.kt`, fixed by the `FailLexiconScreenTest.kt` split above, the same established
+  pattern `RowsTest.kt`/`ScenariosTest.kt`/`CorrectionPollingTest.kt` already used for it).
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8 checks).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (192 covered of 419); `R-490`/`R-491`/`R-492`/`R-493` each now cite `FailLexiconScreenTest`.
+
+**Left open / not done:** none for this round — all four register rows are closed against the real
+board (`design/canvas/Fail-Lexicon.dc.html`), read line by line as the source of truth.
+
+---
+
+## 2026-09-08 (ui-conformance WP10: FR-AST-4 staged activation, F21 Fail-Asset-Swap runtime signal)
+
+### 5f49b49 — ui-conformance WP10 · FR-AST-4: a mid-session lexicon swap or model install stages, never activates immediately
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (`ModelsController`,
+`RoomActiveLexiconStore`, the model install path), `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`,
+`app/src/main/kotlin/org/ort/app/ui/settings/ModelsContent.kt`; tests beside each.
+
+**Requirements/ACs:** FR-AST-4 (functional spec §9, `Fail-Asset-Swap.dc.html`/F21), R-448 (register,
+WP11b's audit finding that `LexiconImportInstaller.installValidated` activated unconditionally with
+no runtime signal at all).
+
+**What changed:**
+
+*Constitution Check.* I (an attribution/fact without its real source is a bug, applied here to
+asset state: a session must never read a fact as "usual" that changed mid-session without saying
+so) governs this whole round — FR-AST-4 exists because a swap mid-session silently changes what
+"usual" means, which is exactly the silent-failure shape the constitution forbids elsewhere.
+III (nothing deleted quietly) — a staged swap is never lost: it is either applied for real once
+the session ends, or stays visibly staged.
+
+- **`StagedActivation(assetId, version, stagedAtMillis, reason)`** (new, `ModelsViewData.kt`): the
+  one live fact a staged swap or install carries — `assetId` is either
+  `ModelsController.CALLSIGN_LEXICON_ASSET_ID` or a `ModelId.name`, `version` the lexicon's real
+  version string or a model's real checksum prefix, never a placeholder. Persisted app-level via
+  `SharedPreferencesStagedActivationStore` (new `SharedPreferences` file, no `:data` schema change
+  — this round's own brief, verbatim), following `SettingsStore.kt`'s established
+  interface+real-impl+`InMemory*`-fake shape. `ModelsController.stagedActivation: StateFlow<StagedActivation?>`
+  is the one live, in-process source — **this is the exact type WP11b's `FailureSignals`/`AssetSwap`
+  mapper should read directly.**
+- **`RoomActiveLexiconStore.activate`** is now the one real gate: while `CaptureState.isCapturing`,
+  it defers to the new `ModelsController.stageLexiconActivation` (persists the trimmed
+  `StagedActivation` plus the full `ActiveLexiconRecord` a real activation needs later) instead of
+  writing to `:data`'s `lexicon_version` table — the previous lexicon stays active/"usual" for the
+  rest of the session. `LexiconImportInstaller.installValidated` (`:lexicon`) is untouched — every
+  validation check still runs unconditionally; only the write it triggers on `Accepted` is gated.
+- **The model install path** (`ModelsController.download`/`sideload`, both funnel through `finish`):
+  the file itself is still downloaded/side-loaded, verified and written to disk immediately either
+  way — real bytes on disk are not FR-AST-4's risk. Only the `requeueFailed` retrigger (previously
+  failed overs reprocessing mid-session, the actually user-visible change) is staged when
+  `CaptureState.isCapturing`; `ModelActionResult.Success(requeuedCount = 0)` is the honest, literal
+  count when staged, never a placeholder.
+- **`ModelsController.activateStaged(context)`**: the one real activation call — refuses, with no
+  effect, while `CaptureState.isCapturing` is still true (never force-activates mid-session even if
+  called incorrectly), otherwise applies the staged lexicon write or model requeue for real and
+  clears the staged state. Safe to call unconditionally from anywhere.
+- **The concrete, in-ownership trigger this round implements**: `ModelsContent.kt` calls
+  `activateStaged` once whenever Settings-Assets opens (`ModelsController.activateStaged` is itself
+  a no-op while still capturing, so this is never wrong to attempt) — the next time an operator
+  checks Models after a session ends, a staged swap activates. **This does not replace a real
+  capture-lifecycle hook** (an `Activity` launch, `ReaderActivity`'s own start path, or F21's own
+  `Reprocess`/`Install` action calling `activateStaged` directly) — those live outside `ui/settings/`'s
+  ownership (`ReaderActivity`/`MainActivity`, and `ui/failures/FailAssetSwap.kt`, WP11b's own file)
+  and are reported here as the remaining integration points, not built in this round.
+- **Settings-Assets shows the staged state on the asset row**: `ModelsScreen.kt`'s `AssetRow`/
+  `GroupedAssetRow`/`LexiconAssetRow` each draw `"staged · activates when this session ends"`
+  (the coordinator's own wording, verbatim) underneath their real sub-line whenever
+  `ModelsScreenStatus.stagedActivation.assetId` names that row — folded into the existing
+  `ModelsScreenStatus` bundle (not a new bare parameter) for the same detekt-threshold reason that
+  bundle already exists.
+
+**Verified:**
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD SUCCESSFUL (JDK 17).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.ModelsControllerTest" --tests
+  "org.ort.app.ui.data.ModelsControllerLexiconTest" --tests "org.ort.app.ui.screens.ModelsScreenTest"
+  --tests "org.ort.app.ui.settings.*"` — **BUILD SUCCESSFUL**, every test PASSED (Robolectric, host
+  JVM), including 8 new `FR_AST_4_*` tests (real `RoomActiveLexiconStore` + `OrtDatabase` +
+  `CaptureState.capturing`/`idle`, and real `WorkQueue`/`FakeHttpRangeClient` for the model path) and
+  4 new `R_448_asset_swap_*` presentation tests.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL** (two `LongMethod`/one
+  `LongParameterList`/one `CyclomaticComplexMethod` violation surfaced by this round's own additions,
+  each fixed by extraction — `AssetGroupsList`/`StagedBadgeText`/`describeStaged` split out of
+  `ModelsScreen.kt`, `activateStagedOnOpen`/`onLexiconFilePicked`/`onModelFilePicked`/`runDownload`
+  split out of `ModelsContent.kt`, `stagedActivation` folded into the existing `ModelsScreenStatus`
+  bundle rather than a bare ninth parameter).
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8 checks).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (192 covered of 419).
+
+**Left open / not done:**
+- The real capture-lifecycle activation hook (an `Activity` launch when no session is live) is not
+  wired — `ModelsContent.kt`'s "activate on Settings-Assets open" is the concrete trigger this round
+  implements within `ui/settings/` ownership; a real `ReaderActivity`/`MainActivity` hook is a
+  separate WP's file.
+- F21 `Fail-Asset-Swap.dc.html`'s own `Reprocess`/`Install` action (call `activateStaged` and start
+  `RealImproveRunner` for the affected span) is WP11b's own screen (`ui/failures/FailAssetSwap.kt`),
+  not built here — `ModelsController.activateStaged(context): StagedActivation?` is the exact public
+  API for them to call.
+- WP11b's `FailureSignals`/`AssetSwap` mapper: reads `ModelsController.stagedActivation:
+  StateFlow<StagedActivation?>` directly — reported per this round's own instruction, not built here.
+
 ## 2026-09-08 (WP3 round 16 · R-541 banner-slot clearance on headerless destinations)
 
 ### 4554ba8 — WP3 round 16 · reserve the banner's full height on destinations with no host header
@@ -104,7 +344,6 @@ platformGuards` — both `OK`. `python tools/spec-check/spec_check.py` — all 8
 **Left open / not done:** nothing on this file. `R_132`/`R_350`/`R_133`/`R_333`/`R_276` are
 WP2's own regression, reported as such (not fixed here, not silently left unexplained) — WP2 is
 already fixing per the coordinator's own heads-up this round.
-
 ---
 
 ## 2026-09-08 (ui-conformance WP12 v5: R-460 scroll-to-end for cold Setup/Failure @2x captures)
@@ -900,7 +1139,7 @@ CHANGELOG entry flagged is now closed.
 
 ## 2026-09-08 (ui-conformance WP10: register at e927690, R-441/444/445/449/450/451/413/443)
 
-### <HASH> — ui-conformance WP10 · register at e927690: R-441/444/445/449/450/451/413/443 closed
+### da92a24 — ui-conformance WP10 · register at e927690: R-441/444/445/449/450/451/413/443 closed
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsStorageScreen.kt`,
 `SettingsRigScreen.kt`, `SettingsRootScreen.kt`; `app/src/main/kotlin/org/ort/app/ui/improve/ImprovePolling.kt`;

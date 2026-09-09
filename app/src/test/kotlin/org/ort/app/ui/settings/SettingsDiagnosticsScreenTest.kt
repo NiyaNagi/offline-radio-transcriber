@@ -1,8 +1,9 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -82,8 +83,12 @@ class SettingsDiagnosticsScreenTest {
             }
         }
 
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Preview"))
-        composeTestRule.onNodeWithText("Preview").performClick()
+        // WP2's R-380/R-381 fix: `PrimaryButton`/`SecondaryButton`/`TextAction`'s own
+        // `clearAndSetSemantics` now sets `contentDescription = text` on the button's own node and
+        // clears its inner Text's semantics entirely — its label is a content description now,
+        // never a `Text` node `hasText`/`onNodeWithText` can find.
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription("Preview"))
+        composeTestRule.onNodeWithContentDescription("Preview").performClick()
         assert(previewTapped) { "expected onPreview to fire" }
     }
 
@@ -104,8 +109,8 @@ class SettingsDiagnosticsScreenTest {
         }
 
         composeTestRule.onNodeWithText("Saved diagnostics-2026-09-08.zip").assertExists()
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Save bundle"))
-        composeTestRule.onNodeWithText("Save bundle").performClick()
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription("Save bundle"))
+        composeTestRule.onNodeWithContentDescription("Save bundle").performClick()
         assert(saveTapped) { "expected onSaveBundle to fire" }
     }
 }

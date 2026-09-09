@@ -1,7 +1,9 @@
 package org.ort.app.ui.data
 
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -10,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.data.OrtDatabase
 import org.ort.lexicon.import.CheckStatus
+import org.ort.pipeline.capture.CaptureState
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import java.io.File
@@ -37,6 +40,16 @@ class ModelsControllerLexiconTest {
         dir = Files.createTempDirectory("lexicon-controller-test").toFile()
     }
 
+    @After
+    fun tearDown() {
+        // [CaptureState] and [ModelsController] are both process-wide singletons (Robolectric does
+        // not reset them between `@Test` methods in this class) — never leave a live session or a
+        // staged fact bleeding into the next test. `activateStaged` is the real API, not a test-only
+        // reset hook: draining whatever this test left staged is itself a legitimate call.
+        CaptureState.idle(clearSession = true)
+        runBlocking { ModelsController.activateStaged(context) }
+    }
+
     private fun sha256Hex(text: String): String =
         MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") {
             "%02x".format(it)
@@ -46,12 +59,13 @@ class ModelsControllerLexiconTest {
         rows: List<String>,
         declaredChecksum: String? = null,
         declaredRecords: Int? = null,
+        version: String = "2026.09",
     ): File {
         val data = rows.joinToString("\n")
         val checksum = declaredChecksum ?: sha256Hex(data)
         val records = declaredRecords ?: rows.size
         val file = File(dir, "import.tsv")
-        file.writeText("# version 2026.09\n# records $records\n# sha256 $checksum\n$data\n")
+        file.writeText("# version $version\n# records $records\n# sha256 $checksum\n$data\n")
         return file
     }
 
@@ -88,7 +102,8 @@ class ModelsControllerLexiconTest {
 
         assertTrue("expected Rejected, got $result", result is LexiconImportViewState.Rejected)
         result as LexiconImportViewState.Rejected
-        assertEquals("Callsign lexicon 2026.09 · 2 records", result.stillActiveLabel)
+        assertEquals("Callsign lexicon 2026.09", result.stillActiveLabel)
+        assertEquals(2, result.stillActiveRecordCount)
 
         // The store still reports only the one, original, accepted version.
         val versions = db.catalogDao().versionsFor(ModelsController.CALLSIGN_LEXICON_ASSET_ID)
@@ -107,7 +122,9 @@ class ModelsControllerLexiconTest {
         result as LexiconImportViewState.Rejected
         assertTrue(result.checks.isNotEmpty())
         result.checks.forEach { check -> assertTrue("${check.name} had a blank detail", check.detail.isNotBlank()) }
-        assertEquals(CheckStatus.FAILED, result.checks.first { it.name == "Callsign grammar sample" }.status)
+        // R-490: displays under the board's own name for this exact check — see
+        // `ModelsViewData.kt`'s `foldChecksToBoardRows`'s own doc comment.
+        assertEquals(CheckStatus.FAILED, result.checks.first { it.name == "Prefix table consistency" }.status)
     }
 
     @Test
@@ -119,5 +136,87 @@ class ModelsControllerLexiconTest {
 
         assertTrue(result is LexiconImportViewState.Rejected)
         assertNull((result as LexiconImportViewState.Rejected).stillActiveLabel)
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `FR_AST_4 a lexicon import during a live session stages, never writes to the DB immediately`() = runTest {
+        val store = RoomActiveLexiconStore(context)
+        val firstFile = writeLexiconFile(listOf("K7ABC\tOperator\tWA"))
+        assertTrue(ModelsController.installLexicon(context, firstFile, store) is LexiconImportViewState.Accepted)
+
+        CaptureState.capturing("S-live")
+        val secondFile = writeLexiconFile(listOf("K7ABC\tOperator\tWA", "W7NPC\tOperator\tWA"), version = "2026.10")
+        val result = ModelsController.installLexicon(context, secondFile, store)
+
+        assertTrue(
+            "every check still passed, expected Accepted, got $result",
+            result is LexiconImportViewState.Accepted,
+        )
+        val versions = db.catalogDao().versionsFor(ModelsController.CALLSIGN_LEXICON_ASSET_ID)
+        assertEquals("the write must be deferred while a session is live (FR-AST-4)", 1, versions.size)
+        assertEquals(1, versions.single().recordCount)
+
+        val staged = ModelsController.stagedActivation.value
+        assertTrue("expected a staged activation, got null", staged != null)
+        assertEquals(ModelsController.CALLSIGN_LEXICON_ASSET_ID, staged!!.assetId)
+        assertTrue("reason must cite the real requirement, got: ${staged.reason}", staged.reason.contains("FR-AST-4"))
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `FR_AST_4 activateStaged does nothing at all while a session is still live`() = runTest {
+        val store = RoomActiveLexiconStore(context)
+        ModelsController.installLexicon(context, writeLexiconFile(listOf("K7ABC\tOperator\tWA")), store)
+        CaptureState.capturing("S-live")
+        ModelsController.installLexicon(
+            context,
+            writeLexiconFile(listOf("K7ABC\tOperator\tWA", "W7NPC\tOperator\tWA"), version = "2026.10"),
+            store,
+        )
+
+        val activated = ModelsController.activateStaged(context)
+
+        assertNull("must never force-activate mid-session, even when called directly", activated)
+        assertEquals(1, db.catalogDao().versionsFor(ModelsController.CALLSIGN_LEXICON_ASSET_ID).size)
+        assertTrue(ModelsController.stagedActivation.value != null)
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `FR_AST_4 activateStaged applies a staged lexicon for real once the session has ended`() = runTest {
+        val store = RoomActiveLexiconStore(context)
+        ModelsController.installLexicon(context, writeLexiconFile(listOf("K7ABC\tOperator\tWA")), store)
+        CaptureState.capturing("S-live")
+        ModelsController.installLexicon(
+            context,
+            writeLexiconFile(listOf("K7ABC\tOperator\tWA", "W7NPC\tOperator\tWA"), version = "2026.10"),
+            store,
+        )
+        CaptureState.idle(clearSession = true)
+
+        val activated = ModelsController.activateStaged(context)
+
+        assertTrue("expected the staged activation to apply, got null", activated != null)
+        val versions = db.catalogDao().versionsFor(ModelsController.CALLSIGN_LEXICON_ASSET_ID)
+        assertEquals(2, versions.size)
+        assertEquals(
+            "ORDER BY importedAt DESC — the newest, just-activated version reads first",
+            2,
+            versions.first().recordCount,
+        )
+        assertNull(ModelsController.stagedActivation.value)
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `FR_AST_4 with no session ever live, installLexicon activates immediately exactly as before`() = runTest {
+        val store = RoomActiveLexiconStore(context)
+
+        val result = ModelsController.installLexicon(context, writeLexiconFile(listOf("K7ABC\tOperator\tWA")), store)
+
+        assertTrue(result is LexiconImportViewState.Accepted)
+        assertEquals(1, db.catalogDao().versionsFor(ModelsController.CALLSIGN_LEXICON_ASSET_ID).size)
+        assertNull(ModelsController.stagedActivation.value)
     }
 }

@@ -47,18 +47,22 @@ class LexiconCorruptScenarioTest {
         assertTrue("expected a real LexiconImportViewState, got $result", result is LexiconImportViewState.Rejected)
         result as LexiconImportViewState.Rejected
 
-        // "What was checked" — every check present, none silently dropped.
-        assertTrue(result.checks.isNotEmpty())
+        // "What was checked" — R-490 (register, Reviewer D): the board's own four named rows, real
+        // validator checks folded under them (never dropped) — see `ModelsViewData.kt`'s
+        // `foldChecksToBoardRows`'s own doc comment for exactly which real checks fold where.
+        assertEquals(4, result.checks.size)
         val byName = result.checks.associateBy { it.name }
         assertEquals(CheckStatus.PASSED, byName.getValue("Manifest readable").status)
         assertEquals(CheckStatus.FAILED, byName.getValue("Checksum").status)
-        assertEquals(CheckStatus.FAILED, byName.getValue("Record count and shape").status)
-        assertEquals(CheckStatus.NOT_REACHED, byName.getValue("Callsign grammar sample").status)
+        assertEquals(CheckStatus.FAILED, byName.getValue("Record count").status)
+        assertEquals(CheckStatus.NOT_REACHED, byName.getValue("Prefix table consistency").status)
         result.checks.forEach { assertTrue("${it.name} had a blank detail", it.detail.isNotBlank()) }
 
-        // "Still active" — the board's promise that the previous lexicon is untouched.
+        // "Still active" — the board's promise that the previous lexicon is untouched. R-492: the
+        // name and the real record count are now two separate real fields, not one pre-joined string.
         assertTrue(result.reason.isNotBlank())
-        assertEquals("Callsign lexicon 2026.08 · 1,104,208 records", result.stillActiveLabel)
+        assertEquals("Callsign lexicon 2026.08", result.stillActiveLabel)
+        assertEquals(1_104_208, result.stillActiveRecordCount)
     }
 
     @Test
