@@ -99,6 +99,19 @@ public data class DetailWhyViewState(
 )
 
 /**
+ * R-426: one real attempt at a failed pass — `:data` schema v6's
+ * [org.ort.data.entity.WorkAttemptEntity], oldest first, exactly the order `Fail-Pass.dc.html`
+ * lists them in. [timeLabel] is the attempt's own real `finishedAtMillis` (when the error or
+ * timeout was recorded, not when the attempt started); [reasonLabel] is the real
+ * `WorkAttemptEntity.reason`, humanized ([org.ort.data.entity.WorkAttemptOutcome.TIMEOUT]'s own
+ * stored reason is always the literal `"timeout"` — the only value
+ * [org.ort.data.WorkQueue.runLeased]'s timeout path ever passes — so this reads "Timed out"
+ * rather than repeating the raw token; a `FAILED` outcome's real message is title-cased the same
+ * way this package's other error text already is).
+ */
+public data class PassAttemptViewState(val timeLabel: String, val reasonLabel: String)
+
+/**
  * R-153, F18 `Fail-Pass.dc.html`, FR-RUN-9: a pass that errored repeatedly and stopped retrying
  * automatically — real per-transmission facts read from `:data`'s
  * [org.ort.data.entity.WorkQueueItemEntity] (`state = FAILED`) by
@@ -106,19 +119,26 @@ public data class DetailWhyViewState(
  * which pass failed in operator terms (guide §9's "pass" vocabulary — "Pass B", not `B_OFFLINE`);
  * [attempts] and [lastError] are the real `attemptCount`/`lastError` columns.
  *
- * **Named schema gap** (this package's brief asked for it to be reported, not invented):
- * `Fail-Pass.dc.html` shows three separately-timestamped attempts, each with its own message and
- * backoff — `WorkQueueItemEntity` keeps only the aggregate [attempts] count and the single most
- * recent [lastError]; every earlier attempt's own timestamp and message is not retained anywhere
- * in `:data` today. [org.ort.app.ui.screens.TransmissionDetailScreen] renders exactly what this
- * class carries — one "what went wrong" line, not a fabricated three-row list — and this package's
- * CHANGELOG names the gap explicitly.
+ * **R-426, schema gap closed (round 12):** `:data` schema v6 added
+ * [org.ort.data.entity.WorkAttemptEntity], one durable row per failed attempt, so [attemptLog]
+ * now carries the real per-attempt timestamp/reason history `Fail-Pass.dc.html` draws — round 11's
+ * single fallback line is kept only for the one case schema v6 cannot retroactively back: a
+ * `FAILED` item whose own attempts predate this table (no `work_attempt` rows exist for it, so
+ * [attemptLog] is honestly empty and [org.ort.app.ui.screens.TransmissionDetailScreen] falls back
+ * to [lastError] alone, never a fabricated per-attempt list for a record that has none).
+ *
+ * **R-470 (design, round 13):** [sessionFailedCount] is the board's own closing "Counted in
+ * tonight's health: N failed." paragraph — the real count of `FAILED` transmissions in this over's
+ * own session, the same fact [org.ort.app.ui.data.ReaderPolling.captureStatus]'s own `failedCount`
+ * already counts for `Capture-Status.dc.html`, never a fabricated "since install" or global total.
  */
 public data class PassFailureViewState(
     val passId: PassId,
     val passLabel: String,
     val lastError: String,
     val attempts: Int,
+    val attemptLog: List<PassAttemptViewState> = emptyList(),
+    val sessionFailedCount: Int = 0,
 )
 
 /**

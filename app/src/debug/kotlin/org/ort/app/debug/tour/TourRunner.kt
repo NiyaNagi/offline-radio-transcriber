@@ -42,6 +42,11 @@ public class TourRunner(
     private val context: Context,
     private val renderer: TourStepRenderer,
     private val outputDir: File,
+    /** v4, reviewers' own ask: which build produced this run's screenshots, carried on every
+     * manifest line (`org.ort.app.BuildConfig.GIT_SHORT_COMMIT` in the real renderer's own caller —
+     * see `ScreenshotTourActivity`'s construction site). `"unknown"` default so existing callers
+     * (this class's own tests) need not pass one. */
+    private val apkHash: String = "unknown",
 ) {
     public suspend fun run(spec: TourSpec): List<TourManifestEntry> {
         // A fresh run must not append onto a previous invocation's manifest.json (tour.ps1 can be
@@ -73,9 +78,9 @@ public class TourRunner(
         val loadResult = Scenarios.load(context, step.scenario)
         val capture = renderer.render(step, loadResult.primarySessionId)
         writePng(capture.bitmap, File(outputDir, "${step.id}.png"))
-        TourManifestEntry.success(step.id, step.scenario, step.fontScale, capture.width, capture.height)
+        TourManifestEntry.success(step.id, step.scenario, step.fontScale, capture.width, capture.height, apkHash)
     } catch (e: Exception) {
-        TourManifestEntry.failure(step.id, step.scenario, step.fontScale, e.message ?: e.toString())
+        TourManifestEntry.failure(step.id, step.scenario, step.fontScale, e.message ?: e.toString(), apkHash)
     }
 
     private fun writePng(bitmap: Bitmap, file: File) {

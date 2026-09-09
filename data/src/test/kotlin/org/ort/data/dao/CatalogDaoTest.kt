@@ -283,4 +283,62 @@ public class CatalogDaoTest {
             assertEquals(null, span.spanStart)
             assertEquals(null, span.spanEnd)
         }
+
+    @Test
+    @Requirement("R-471", "FR-UI-4")
+    public fun R_471_topRankedCandidateCharSpan_covers_the_rank_zero_candidate_even_with_no_selection(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+            val dao = db.catalogDao()
+            // AMBIGUOUS: neither candidate is `selected`, so `winningCandidateCharSpan` alone
+            // would come back null/null -- the real bug R-471 reports.
+            dao.insert(candidate("C-TOP", "TX1", rank = 0, selected = false))
+            dao.insert(candidate("C-SECOND", "TX1", rank = 1, selected = false))
+            dao.insert(
+                LatticeSlotEntity(
+                    id = "S-T0",
+                    transmissionId = "TX1",
+                    candidateId = "C-TOP",
+                    index = 0,
+                    unit = "W",
+                    score = 0.9,
+                    keptAlternate = null,
+                    charStart = 5,
+                    charEnd = 6,
+                ),
+            )
+            dao.insert(
+                LatticeSlotEntity(
+                    id = "S-T1",
+                    transmissionId = "TX1",
+                    candidateId = "C-TOP",
+                    index = 1,
+                    unit = "7",
+                    score = 0.9,
+                    keptAlternate = null,
+                    charStart = 7,
+                    charEnd = 8,
+                ),
+            )
+            // The second-ranked candidate's own span must not leak in.
+            dao.insert(
+                LatticeSlotEntity(
+                    id = "S-S0",
+                    transmissionId = "TX1",
+                    candidateId = "C-SECOND",
+                    index = 0,
+                    unit = "W",
+                    score = 0.5,
+                    keptAlternate = null,
+                    charStart = 0,
+                    charEnd = 1,
+                ),
+            )
+
+            assertEquals(null, dao.winningCandidateCharSpan("TX1").spanStart)
+            val span = dao.topRankedCandidateCharSpan("TX1")
+            assertEquals(5, span.spanStart)
+            assertEquals(8, span.spanEnd)
+        }
 }

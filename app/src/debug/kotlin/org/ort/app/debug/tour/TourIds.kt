@@ -37,6 +37,13 @@ import org.ort.data.OrtDatabase
  * - `frequencyInitialView`: `Detail` | `Change`.
  * - `settingsScreen`: a [SettingsScreenId] name — unchanged from v1, carried through [NavSeed] now
  *   instead of a separate parameter.
+ * - `searchQuery` / `searchSubmit` / `searchFiltersOpen` (v4, round 14's `NavSeed` fields): a literal
+ *   query string, whether to run it (`SearchContent.submitOnStart`, the same two calls the query
+ *   field's own keyboard search action makes — real results, a real empty state, `search-unavailable`'s
+ *   own real override, never faked), and whether the filters sheet starts open.
+ * - `logSheetOpen` (v4): `true` opens `Log`'s own filter sheet (L02) on first composition.
+ * - `revisionsOpen` (v4): a companion to `transmission` (the same relationship `frequencyInitialView`
+ *   has to `frequency`) — `true` opens the revisions list (D07) on the resolved transmission.
  *
  * A key naming a symbolic value this table does not recognise, and that also does not resolve as a
  * literal id/number, throws — caught by [TourRunner] the same as any other per-step failure, never
@@ -63,6 +70,11 @@ public object TourIds {
                 SettingsScreenId.entries.firstOrNull { it.name == name }
                     ?: error("unknown settingsScreen '$name'")
             },
+            searchQuery = drillIn["searchQuery"],
+            searchSubmit = drillIn["searchSubmit"]?.let { it.equals("true", ignoreCase = true) },
+            searchFiltersOpen = drillIn["searchFiltersOpen"]?.let { it.equals("true", ignoreCase = true) },
+            logSheetOpen = drillIn["logSheetOpen"]?.let { it.equals("true", ignoreCase = true) },
+            openTransmissionRevisions = drillIn["revisionsOpen"]?.let { it.equals("true", ignoreCase = true) },
         )
     }
 

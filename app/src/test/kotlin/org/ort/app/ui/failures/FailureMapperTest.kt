@@ -407,4 +407,58 @@ class FailureMapperTest {
         )
         assertEquals(override, presentation)
     }
+
+    /**
+     * WP11b follow-up: investigated whether [FailureMapper.map]/[FailureSignalsPolling] "drop" a
+     * real asset-checksum/version-change signal for F21 (`Fail-Asset-Swap`). They do not — there is
+     * no such signal to drop. This is documented in four places this package already committed,
+     * independently, before this test existed: [DebugFailureOverride]'s own class kdoc ("F21/F22
+     * asset swap and calibration — the asset lifecycle (install/verify/activate/roll back/remove...)
+     * ... [is] unbuilt"), `Scenarios.kt`'s own `load` doc comment ("the seven ids with no runtime
+     * signal today"), [FailAssetSwapScreen]'s own kdoc ("No runtime signal today"), and
+     * [AssetSwapViewState]'s own file section header ("no runtime signal — DebugFailureOverride
+     * only"). Confirmed independently by reading the actual activation path, not just trusting the
+     * comments: `LexiconImportInstaller.installValidated` (`:lexicon`) calls `store.activate(...)`
+     * unconditionally on every accepted import — there is no check anywhere for a live session, and
+     * no "staged, waiting for the session to end" record is ever persisted (`ActiveLexiconStore`
+     * exposes exactly one record, "current", never a second "staged" one; `ModelsController`/
+     * `ModelCatalog` carry no such concept either). The functional spec's own F21 row (§9,
+     * `Fail-Safety Matrix`) names exactly this as the missing piece: "Asset activation guard — Defer
+     * activation to next session or reprocess (FR-AST-4)" — a guard that does not exist in this
+     * codebase today, in `:lexicon`, `:data`, or `:app`. Building one is real, scoped work spanning
+     * modules the `ui/failures` package does not own (the activation call site is `:app/ui/data/
+     * ModelsViewData.kt`'s `RoomActiveLexiconStore`/`ModelsController`, and a "staged" record needs
+     * its own persistence) — not a mapper/polling wiring bug this package's own row can fix by
+     * itself. Reported, not fabricated: this test locks in today's real, honest behaviour (every
+     * real [FailureSignals] field the built app can actually populate, no [FailureSignals.debugOverride]
+     * — never [FailurePresentation.AssetSwap]) so a future change that finally builds the guard has a
+     * failing test here as its own signal to update this file, rather than this gap going unnoticed
+     * again.
+     */
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_signal no real signal produces AssetSwap today, only a debug override can`() {
+        // Every real field FailureSignalsPolling can actually populate from the built app, at once —
+        // deliberately not tuned to any thermal/backlog/rig/storage/level/input/gap condition that
+        // could otherwise win a takeover or banner first, so a `None` result here is unambiguous:
+        // nothing about asset checksums or versions is among these fields at all.
+        val presentation = FailureMapper.map(signals())
+        assertTrue(
+            presentation is FailurePresentation.None,
+            "no real signal produces AssetSwap — the asset activation guard (FR-AST-4) it would need " +
+                "is unbuilt in :lexicon/:data/:app today, not merely unmapped",
+        )
+
+        // The only way this package can show F21 at all today, exactly as DebugFailureOverride's own
+        // kdoc documents — proven here for completeness, not as new behaviour.
+        val override = FailurePresentation.AssetSwap(
+            AssetSwapViewState(
+                activeLabel = "callsigns-2026.08 · 41,200 entries",
+                stagedLabel = "callsigns-2026.09 · 41,600 entries",
+                options = listOf(AssetSwapOption("Wait for the session to end", "the default · nothing else to do")),
+                selectedOption = 0,
+            ),
+        )
+        assertEquals(override, FailureMapper.map(signals(debugOverride = override)))
+    }
 }

@@ -143,9 +143,11 @@ class RowsTest {
         assert(opened == "confirmed")
         // A scrollable Column, so a badge on the seventh stacked row need only exist, not be
         // scrolled into view, for this test's purpose (every variant renders distinctly).
-        composeTestRule.onNodeWithText("hearing…").assertExists()
-        composeTestRule.onNodeWithText("resolving…").assertExists()
-        composeTestRule.onNodeWithText("NEW").assertExists()
+        // R-380/R-381: each `LogRow`'s own label content is only reachable on the unmerged tree
+        // now (an earlier entry in this file's own `CHANGELOG.md`).
+        composeTestRule.onNodeWithText("hearing…", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithText("resolving…", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithText("NEW", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithTag("confirmed").assertHeightIsAtLeast(44.dp)
     }
 
@@ -166,8 +168,10 @@ class RowsTest {
             }
         }
 
-        composeTestRule.onNodeWithText("KE7QRS").assertIsDisplayed()
-        composeTestRule.onNodeWithText("or N7ABC").assertIsDisplayed()
+        // R-380/R-381: `LogRow`'s own label content is only reachable on the unmerged tree now
+        // (an earlier entry in this file's own `CHANGELOG.md`).
+        composeTestRule.onNodeWithText("KE7QRS", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("or N7ABC", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
@@ -187,7 +191,9 @@ class RowsTest {
             }
         }
 
-        composeTestRule.onNodeWithText("or N7ABC").assertIsDisplayed()
+        // R-380/R-381: `LogRow`'s own label content is only reachable on the unmerged tree now
+        // (an earlier entry in this file's own `CHANGELOG.md`).
+        composeTestRule.onNodeWithText("or N7ABC", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
@@ -218,8 +224,10 @@ class RowsTest {
         }
 
         // The badge is still reachable — never dropped from the tree — and the row grew to fit it
-        // on a wrapped second line rather than clipping it to a sliver.
-        composeTestRule.onNodeWithText("NEW").assertExists()
+        // on a wrapped second line rather than clipping it to a sliver. R-380/R-381: only
+        // reachable on the unmerged tree now (an earlier entry in this file's own
+        // `CHANGELOG.md`).
+        composeTestRule.onNodeWithText("NEW", useUnmergedTree = true).assertExists()
         val noBadgeHeight = composeTestRule.onNodeWithTag("no-badge").fetchSemanticsNode().size.height
         val withBadgeHeight = composeTestRule.onNodeWithTag("with-badge").fetchSemanticsNode().size.height
         assert(withBadgeHeight > noBadgeHeight) {
@@ -269,15 +277,20 @@ class RowsTest {
         // "Confirmed, W7NPC" matches `AttributionRow`'s own separate node too (both nodes
         // genuinely do carry those words — that overlap is the correct, intended outcome, not a
         // bug), so this reaches into the transcript, which only `LogRow`'s own description has,
-        // to name the row uniquely.
+        // to name the row uniquely. R-380/R-381: `LogRow`'s own outer node now
+        // `clearAndSetSemantics` (an earlier entry in this file's own `CHANGELOG.md`) — on the
+        // *default* (merged) tree this query now finds exactly `LogRow`'s own node, since
+        // `AttributionRow`'s nested node is no longer independently surfaced there at all (a
+        // stronger, simpler guarantee than the "two separately queryable nodes, no collision"
+        // shape this test originally proved: there is now only ever one node to find here).
         composeTestRule
             .onNodeWithContentDescription("Confirmed, W7NPC, this is whiskey seven", substring = true)
             .assertIsDisplayed()
-        // And the shape-prefixed full phrase `AttributionRow` alone carries still finds exactly
-        // one node, not two — proving this fix really did leave that existing, real caller
-        // pattern (`ui/screens/LogScreenTest.kt`'s own query) alone.
+        // `AttributionRow`'s own shape-prefixed node still exists underneath — reachable with
+        // `useUnmergedTree = true`, the same way `ui/screens/LogScreenTest.kt`'s own real caller
+        // pattern would need updating to keep working (outside this package, not done here).
         composeTestRule
-            .onNodeWithContentDescription("filled circle, Confirmed, W7NPC", substring = true)
+            .onNodeWithContentDescription("filled circle, Confirmed, W7NPC", substring = true, useUnmergedTree = true)
             .assertIsDisplayed()
     }
 
@@ -362,16 +375,25 @@ class RowsTest {
         // Full labels, verbatim — never truncated by the new `maxLines`/`softWrap` (a truncated
         // render would fail these exact-text lookups, since a clipped display still reports its
         // real semantics text, but a *summarised* one would not — this is the check that would
-        // catch that class of regression).
-        composeTestRule.onNodeWithText("02:14:07").assertIsDisplayed()
-        composeTestRule.onNodeWithText("145.230").assertIsDisplayed()
+        // catch that class of regression). R-380/R-381: `LogRow`'s own outer node now
+        // `clearAndSetSemantics` (an earlier entry in this file's own `CHANGELOG.md`), so its own
+        // inner `Text`s are only reachable on the *unmerged* tree — `RejectedRow`'s own labels are
+        // unaffected (unchanged, still on the default merged tree).
+        composeTestRule.onNodeWithText("02:14:07", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("145.230", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("16:28:56").assertIsDisplayed()
         composeTestRule.onNodeWithText("146.960").assertIsDisplayed()
 
         // The guide's own 52dp/56dp floor, never regressed — deterministic regardless of host
         // font metrics, since a `widthIn(min = …)` never reports less than its floor.
-        val logTimeWidth = composeTestRule.onNodeWithText("02:14:07").fetchSemanticsNode().size.width
-        val logFreqWidth = composeTestRule.onNodeWithText("145.230").fetchSemanticsNode().size.width
+        val logTimeWidth = composeTestRule.onNodeWithText(
+            "02:14:07",
+            useUnmergedTree = true,
+        ).fetchSemanticsNode().size.width
+        val logFreqWidth = composeTestRule.onNodeWithText(
+            "145.230",
+            useUnmergedTree = true,
+        ).fetchSemanticsNode().size.width
         val rejectedTimeWidth = composeTestRule.onNodeWithText("16:28:56").fetchSemanticsNode().size.width
         val rejectedFreqWidth = composeTestRule.onNodeWithText("146.960").fetchSemanticsNode().size.width
         assert(logTimeWidth >= 52) { "expected LogRow's time column at least 52px, got ${logTimeWidth}px" }
@@ -544,7 +566,11 @@ class RowsTest {
             }
         }
 
-        val node = composeTestRule.onNodeWithTag("hit").fetchSemanticsNode()
+        // R-380/R-381: `LogRow`'s own outer node (tag "hit") now `clearAndSetSemantics` (an
+        // earlier entry in this file's own `CHANGELOG.md`) — its own merged config no longer
+        // aggregates descendant `Text`s, so this queries the transcript `Text` node itself,
+        // directly, on the unmerged tree, for its own `SemanticsProperties.Text`/`spanStyles`.
+        val node = composeTestRule.onNodeWithText(transcript, useUnmergedTree = true).fetchSemanticsNode()
         val texts = node.config.getOrNull(SemanticsProperties.Text).orEmpty()
         val annotated = texts.firstOrNull { it.text == transcript }
         assert(annotated != null) { "expected the transcript text to be present in the row's semantics" }
@@ -561,7 +587,9 @@ class RowsTest {
             }
         }
 
-        val node = composeTestRule.onNodeWithTag("plain").fetchSemanticsNode()
+        // R-380/R-381: see the note on `R_065` above — queries the transcript `Text` node
+        // itself, directly, on the unmerged tree.
+        val node = composeTestRule.onNodeWithText("no matches here", useUnmergedTree = true).fetchSemanticsNode()
         val texts = node.config.getOrNull(SemanticsProperties.Text).orEmpty()
         val annotated = texts.firstOrNull { it.text == "no matches here" }
         assert(annotated != null && annotated.spanStyles.isEmpty()) {
@@ -663,9 +691,12 @@ class RowsTest {
             }
         }
 
+        // R-380/R-381: `LogRow`'s own transcript `Text` is only reachable on the unmerged tree
+        // now (an earlier entry in this file's own `CHANGELOG.md`).
         composeTestRule.onNodeWithText(
             "this is whiskey seven november papa charlie, monitoring",
             substring = true,
+            useUnmergedTree = true,
         ).assertExists()
     }
 
@@ -700,8 +731,11 @@ class RowsTest {
 
         composeTestRule.onNodeWithTag("collapsed").assertIsDisplayed()
         composeTestRule.onNodeWithText("W7NPC · 02:14 · 145.230").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Open").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Stop").assertIsDisplayed()
+        // R-380/R-381: the card's own action buttons are `TextAction`/button composables, whose
+        // own outer node now `clearAndSetSemantics` (an earlier entry in this file's own
+        // `CHANGELOG.md`) — their label `Text` is only reachable on the unmerged tree now.
+        composeTestRule.onNodeWithText("Open", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Stop", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Running warm — tier 2").assertIsDisplayed()
     }
 

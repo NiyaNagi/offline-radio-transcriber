@@ -14,6 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
@@ -94,6 +97,81 @@ class ControlsTest {
     }
 
     @Test
+    fun `R_380_the same node that carries OnClick also carries a real, non-empty description`() {
+        // The register's own real-device finding (S12's `Fix`, dumped as `<node text="" content-
+        // desc="" clickable="true" focusable="true"><node text="Fix" focusable="false"/></node>`):
+        // an *empty* `semantics(mergeDescendants = true) {}` (or no `semantics` at all) depending on
+        // merge-from-descendants to carry a child `Text`'s label up onto the clickable node itself
+        // is unreliable on a real device, even though Robolectric's own merged-tree test model
+        // let every one of these pass before this fix (Robolectric's own merge simulation is not
+        // what a real device's AccessibilityNodeInfo tree actually does here). Every one of these
+        // composables now composes its own description *explicitly*, on the same node `OnClick`
+        // lives on — checked here on the *unmerged* tree specifically, so this assertion is about
+        // that one physical node's own semantics config, not whatever the merged-tree view of a
+        // descendant would report. `useUnmergedTree = true` also matters for `KeyValueRow`'s own
+        // inner `Row`'s children never independently carrying `OnClick` themselves — only the row's
+        // one outer node should.
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    TextAction(text = "Filter", onClick = {}, modifier = Modifier.testTag("text-action"))
+                    PrimaryButton(text = "Start capture", onClick = {}, modifier = Modifier.testTag("primary"))
+                    SecondaryButton(text = "Not now", onClick = {}, modifier = Modifier.testTag("secondary"))
+                    DestructiveButton(text = "Delete audio", onClick = {}, modifier = Modifier.testTag("destructive"))
+                    FilterChip(label = "All", selected = true, onClick = {}, modifier = Modifier.testTag("chip"))
+                    KeyValueRow(
+                        key = "Level",
+                        value = "Not measured",
+                        onClick = {},
+                        onClickLabel = "Open level meter",
+                        modifier = Modifier.testTag("kv"),
+                    )
+                }
+            }
+        }
+
+        fun descriptionOf(tag: String) = composeTestRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsProperties.ContentDescription)
+            ?.joinToString()
+
+        fun hasOnClick(tag: String) = composeTestRule.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .config
+            .getOrNull(SemanticsActions.OnClick) != null
+
+        listOf(
+            "text-action" to "Filter",
+            "primary" to "Start capture",
+            "secondary" to "Not now",
+        ).forEach { (tag, label) ->
+            assert(hasOnClick(tag)) { "expected node '$tag' to carry OnClick" }
+            assert(descriptionOf(tag)?.contains(label) == true) {
+                "expected node '$tag' (carrying OnClick) to also carry a description containing " +
+                    "'$label', got ${descriptionOf(tag)}"
+            }
+        }
+
+        assert(descriptionOf("destructive")?.contains("Delete audio") == true) {
+            "expected 'destructive' to carry a description containing 'Delete audio', got " +
+                descriptionOf("destructive")
+        }
+
+        assert(descriptionOf("chip")?.contains("All") == true) {
+            "expected the filter chip's own clickable node to carry a description containing 'All', " +
+                "got ${descriptionOf("chip")}"
+        }
+
+        assert(hasOnClick("kv")) { "expected KeyValueRow to carry OnClick" }
+        val kvDescription = descriptionOf("kv")
+        assert(kvDescription?.contains("Level") == true && kvDescription.contains("Open level meter")) {
+            "expected KeyValueRow's own clickable node to carry both the fact ('Level, Not " +
+                "measured') and the action hint ('Open level meter'), got $kvDescription"
+        }
+    }
+
+    @Test
     fun `a disabled text action carries text_disabled and does not fire its click`() {
         var clicked = false
         composeTestRule.setContent {
@@ -158,7 +236,7 @@ class ControlsTest {
         // Reachable only by scrolling the row — if the row clipped instead of scrolling,
         // `performScrollTo` would find no scrollable ancestor able to bring it into view and this
         // would fail, exactly the defect the register caught on a real device.
-        composeTestRule.onNodeWithText("Change over time").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Change over time", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -255,8 +333,33 @@ class ControlsTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Filters").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Filters", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("filters-chip").assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `R_383_a filter chip in a real FilterChipRow still meets the 44dp floor, no leading icon`() {
+        // L02 `Log-Filter`'s own repro: the frequency row's chips (plain text, no leading icon,
+        // several siblings in one `FilterChipRow`) measured 98-103px on the register's own device
+        // dump, under the 116px/44dp floor, while a differently-built chip row on the same sheet
+        // met it — the shape this test renders is the frequency row's own, not the single, icon-
+        // carrying chip `R_211`'s neighbour test above already covers.
+        composeTestRule.setContent {
+            OrtTheme {
+                FilterChipRow {
+                    FilterChip(
+                        label = "All",
+                        selected = true,
+                        onClick = {},
+                        modifier = Modifier.testTag("all"),
+                    )
+                    FilterChip(label = "145.230", selected = false, onClick = {})
+                    FilterChip(label = "146.960", selected = false, onClick = {})
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("all").assertHeightIsAtLeast(44.dp)
     }
 
     @Test

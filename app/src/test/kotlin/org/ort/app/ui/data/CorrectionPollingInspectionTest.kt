@@ -180,6 +180,54 @@ class CorrectionPollingInspectionTest {
         assertNull(span)
     }
 
+    // ---- R-471 (D03, `Detail-Ambiguous.dc.html`): the top-ranked candidate's span, when nothing is selected ----
+
+    @Test
+    fun R_471_winningCharSpan_falls_back_to_the_top_ranked_candidates_span_when_ambiguous(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(
+            transmission("TX1").copy(attributionState = AttributionState.AMBIGUOUS, stationId = null),
+        )
+        // AMBIGUOUS: neither candidate is `selected` -- the real over R-471 reports.
+        db.catalogDao().insert(
+            CallsignCandidateEntity(
+                id = "c-top",
+                transmissionId = "TX1",
+                callsign = "K7LWH",
+                rank = 0,
+                score = 8.6,
+                grammarValid = true,
+                ituPrefix = "K",
+                ituCountry = "United States",
+                priorBreakdown = null,
+                databaseHit = true,
+                selected = false,
+            ),
+        )
+        db.catalogDao().insert(candidate("c-second", "TX1", selected = false))
+        db.catalogDao().insert(slot("c-top", "TX1", 0, "K", charStart = 5, charEnd = 6))
+        db.catalogDao().insert(slot("c-top", "TX1", 1, "7", charStart = 6, charEnd = 7))
+        db.catalogDao().insert(slot("c-second", "TX1", 0, "K", charStart = 0, charEnd = 1))
+
+        val span = CorrectionPolling.winningCharSpan(context, "TX1")
+
+        assertEquals(5 until 7, span)
+    }
+
+    @Test
+    fun R_471_winningCharSpan_still_prefers_the_selected_candidates_span_when_one_exists(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1"))
+        db.catalogDao().insert(candidate("c1", "TX1", selected = true))
+        db.catalogDao().insert(slot("c1", "TX1", 0, "K", charStart = 8, charEnd = 9))
+
+        val span = CorrectionPolling.winningCharSpan(context, "TX1")
+
+        // Unchanged from R-182's own behaviour -- the fallback only ever fires when the
+        // selected-candidate query is genuinely empty.
+        assertEquals(8 until 9, span)
+    }
+
     // ---- R-425: real, per-candidate heard-count/last-heard/voice-match evidence ----
 
     @Test

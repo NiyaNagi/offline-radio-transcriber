@@ -110,6 +110,41 @@ class LevelMeterTest {
         assertEquals(LevelMeter.HISTORY_SECONDS, requireNotNull(meter.snapshot).peakHistoryDbfs.size)
     }
 
+    /**
+     * register R-419: `Level-Meter.dc.html`'s board row is "Clipped samples this session", but
+     * WP4 had wired it to [LevelMeter.Snapshot.clipCountLastSecond] for lack of a real session
+     * total — that field is only ever a rolling ~1 s window, so it must fall back toward 0 once a
+     * clip event ages out, even while more clipping happened earlier in the same session.
+     * [LevelMeter.Snapshot.clippedSamplesTotal] must keep the earlier count, then keep growing.
+     */
+    @Test
+    @Requirement("R-419")
+    fun `R_419_session_clip_count keeps growing across seconds, never evicted like the rolling window`() {
+        val sampleRateHz = 16_000
+        val oneClipPerSecond = ShortArray(sampleRateHz) { if (it == 0) Short.MAX_VALUE else 1_000 }
+        val quiet = ShortArray(sampleRateHz) { 1_000 }
+        val meter = LevelMeter(TestClock())
+
+        meter.onFrame(oneClipPerSecond, oneClipPerSecond.size, sampleRateHz)
+        val afterFirstClip = requireNotNull(meter.snapshot)
+        assertEquals(1, afterFirstClip.clipCountLastSecond)
+        assertEquals(1L, afterFirstClip.clippedSamplesTotal)
+
+        // Two further quiet seconds age the clip event out of the rolling ~1s window.
+        repeat(2) { meter.onFrame(quiet, quiet.size, sampleRateHz) }
+        val afterEviction = requireNotNull(meter.snapshot)
+        assertEquals(0, afterEviction.clipCountLastSecond, "the rolling window has evicted the old clip")
+        assertEquals(
+            1L,
+            afterEviction.clippedSamplesTotal,
+            "the session total must still remember it -- never evicted, unlike the rolling window",
+        )
+
+        // A second clipping second later in the session adds to the running total, not replaces it.
+        meter.onFrame(oneClipPerSecond, oneClipPerSecond.size, sampleRateHz)
+        assertEquals(2L, requireNotNull(meter.snapshot).clippedSamplesTotal)
+    }
+
     @Test
     @Requirement("R-112")
     fun `R_112_a_slow_consumer_never_blocks_the_frame_path`() {

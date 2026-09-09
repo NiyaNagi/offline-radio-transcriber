@@ -159,7 +159,7 @@ P2: every machine conclusion inspectable in one tap.
 | DG01 | `Digest.dc.html` | The night's digest: what was notable and why | FR-DIG-1..6 | Item → its subject. `Full log` → L01 | drawn |
 | DG02 | `Digest-Item.dc.html` | One digest finding expanded, with its evidence | FR-DIG-2a, P2 | `Why this is notable`. `The 6 overs` → L01 | drawn |
 | DG03 | `Sessions.dc.html` | Earlier nights, each with span, counts, gaps | FR-UI-1, FR-RUN-12 | Session → DG04 | drawn |
-| DG04 | `Session.dc.html` | One past session: span, coverage, gaps, unclean end if any | FR-RUN-12, FR-RUN-16 | `Log` → L01 for that session. Gap → explains | drawn |
+| DG04 | `Session.dc.html` | One past session: span, coverage, gaps, unclean end if any | FR-RUN-12, FR-RUN-16 | `Log` → L01 for that session. Gap → explains | drawn — **accepted deviation**: the Input and Models fact rows read an honest "not tracked per session" line — no per-session input route or model set is recorded in the schema (R-450); Tier comes from the transmissions' recorded `processedTier` |
 
 ---
 

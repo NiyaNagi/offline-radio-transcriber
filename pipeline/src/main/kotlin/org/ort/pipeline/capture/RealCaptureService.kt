@@ -674,6 +674,10 @@ public class RealCaptureService : Service() {
             ),
             peakHistoryDbfs = snapshot.peakHistoryDbfs,
         )
+        // R-419: the real session-lifetime running total LevelMeter itself accumulates -- see
+        // LevelStatus.recordClippedSamplesThisSession's own kdoc for why this is a separate call,
+        // not folded into the State.Measured above.
+        LevelStatus.recordClippedSamplesThisSession(snapshot.clippedSamplesTotal)
         // FR-OBS-1: only the clipped frames, never every ~10Hz tick -- capture.log would otherwise
         // rotate constantly on ordinary healthy sessions, drowning out the events worth keeping.
         if (snapshot.clipped) {

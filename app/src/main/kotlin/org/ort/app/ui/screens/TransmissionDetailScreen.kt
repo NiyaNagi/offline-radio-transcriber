@@ -343,18 +343,29 @@ private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFai
             label = "What went wrong · $attemptsCountWord",
             modifier = Modifier.padding(top = OrtSpacing.sm),
         )
-        // Register R-426 (halt, reported not built): `Fail-Pass.dc.html` lists each attempt with
-        // its own real timestamp and reason ("01:23:20 · out of memory in the decoder", "01:24:05 ·
-        // same, after a 45 s backoff", …) — `:data`'s `WorkQueueItemEntity` still keeps only the
-        // aggregate `attemptCount` and the single most recent `lastError`, confirmed unchanged in
-        // this merge; no table records a per-attempt timestamp/reason history. This is one honest
-        // line (the real last error alone), never the artboard's fabricated three-row list.
-        Text(
-            text = passFailure.lastError.replaceFirstChar { it.titlecase() },
-            style = OrtType.cardBody,
-            color = OrtColors.textFaint,
-            modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-last-error"),
-        )
+        // R-426 (round 12): the real per-attempt history from `:data` schema v6's
+        // `WorkAttemptEntity`, oldest first, one line per attempt — `Fail-Pass.dc.html`'s own
+        // "HH:MM:SS · reason" shape. A `FAILED` item whose attempts predate schema v6 has no
+        // `work_attempt` rows at all (`attemptLog` is honestly empty), so it falls back to the one
+        // real fact still available — the aggregate `lastError` — never a fabricated per-attempt
+        // list for a record that has none.
+        if (passFailure.attemptLog.isNotEmpty()) {
+            passFailure.attemptLog.forEachIndexed { index, attempt ->
+                Text(
+                    text = "${attempt.timeLabel} · ${attempt.reasonLabel}",
+                    style = OrtType.cardBody,
+                    color = OrtColors.textFaint,
+                    modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-attempt-$index"),
+                )
+            }
+        } else {
+            Text(
+                text = passFailure.lastError.replaceFirstChar { it.titlecase() },
+                style = OrtType.cardBody,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-last-error"),
+            )
+        }
         // R-426: the board's own closing "retry limit reached" line — real, not fabricated: every
         // terminally-FAILED `WorkQueueItemEntity` reached this state *because*
         // `WorkQueue.failPass`'s own `attempts >= maxAttempts` check tripped (`WorkQueue.kt`,
@@ -377,6 +388,16 @@ private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFai
             style = OrtType.cardBody,
             color = OrtColors.textFaint,
             modifier = Modifier.padding(top = OrtSpacing.xs),
+        )
+        // R-470 (design): `Fail-Pass.dc.html`'s own closing paragraph — the real count of `FAILED`
+        // transmissions in this over's own session ([passFailure.sessionFailedCount], the same fact
+        // `Capture-Status.dc.html`'s own "N failed" already counts), worded exactly.
+        Text(
+            text = "Counted in tonight's health: ${passFailure.sessionFailedCount} failed. A failed " +
+                "pass never blocks the queue and never loses the audio — it just waits for you.",
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = OrtSpacing.md).testTag("pass-failure-session-health"),
         )
     }
 }

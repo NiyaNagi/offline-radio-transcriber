@@ -103,6 +103,23 @@ public fun AttributionMarker(
  * ([rememberCallsignColumnWidth]) is the floor this needs, applied at the one call site the
  * register's own repro reached, but the guarantee here is general and safe for every caller of
  * this widely-shared composable, not scoped to that one row family.
+ *
+ * R-420 (`overnight/L01-log@2x.png`): [showScore] (default `true`, every caller before this
+ * existed unaffected) lets a caller suppress the built-in INFERRED score chip and render its own
+ * instead — [LogRow] does exactly that ([LogRowMarkerLine]), so the chip becomes a `FlowRow` item
+ * of its own, free to wrap onto its own line below the callsign the same way [state]'s trailing
+ * `Badge` already does (R-244), rather than staying welded to the callsign inside this composable's
+ * own plain, deliberately non-wrapping `Row` (still the right default for every other caller —
+ * `AttributionRow` stays shared far too widely to change its own internal wrap behaviour, the same
+ * reasoning R-244's own doc comment already gives for the badge).
+ *
+ * R-424 (`T02` "How these were attributed"): the same [showScore] also fixes a second caller's
+ * problem — WP5's own reasoning line already states the score inline ("· 0.85"), so this
+ * composable's own chip was a second, redundant copy of the identical number. Either way,
+ * suppressing the chip never drops the fact it carries: [attributionStateDescription] already
+ * states the confidence value in prose regardless of whether this composable's own chip renders,
+ * so FR-UI-4's "state is never omitted" holds for the merged description even with `showScore =
+ * false`.
  */
 @Composable
 public fun AttributionRow(
@@ -111,6 +128,7 @@ public fun AttributionRow(
     alternate: String? = null,
     modifier: Modifier = Modifier,
     size: Dp = MARKER_ROW_SIZE,
+    showScore: Boolean = true,
 ) {
     val state = attribution.state
     val description = attributionRowDescription(attribution, callsign, alternate)
@@ -136,9 +154,11 @@ public fun AttributionRow(
                     maxLines = 1,
                     softWrap = false,
                 )
-                attribution.confidence?.let { confidence ->
-                    Spacer(modifier = Modifier.width(OrtSpacing.xs))
-                    ScoreChip(confidence = confidence)
+                if (showScore) {
+                    attribution.confidence?.let { confidence ->
+                        Spacer(modifier = Modifier.width(OrtSpacing.xs))
+                        ScoreChip(confidence = confidence)
+                    }
                 }
             }
 
@@ -215,7 +235,13 @@ public fun TitleAttributionRow(
 }
 
 /** guide §6.2: mono 10.5px on `bg/score`, 3px radius, `1px 5px` padding — only ever beside an
- * INFERRED callsign or a candidate, never on CONFIRMED. */
+ * INFERRED callsign or a candidate, never on CONFIRMED.
+ *
+ * R-420 (`overnight/L01-log@2x.png`): the value `Text` carries `maxLines = 1, softWrap = false` —
+ * "0.82" is as unbreakable a token as a callsign, so a container narrow enough to force a wrap
+ * previously collapsed it into a one-character-per-line stack rather than staying whole (the same
+ * defect class R-373 already fixed for the callsign itself, in `AttributionRow`'s own callsign
+ * `Text`). */
 @Composable
 public fun ScoreChip(confidence: Double, modifier: Modifier = Modifier) {
     Box(
@@ -223,7 +249,13 @@ public fun ScoreChip(confidence: Double, modifier: Modifier = Modifier) {
             .background(OrtColors.bgScore, RoundedCornerShape(3.dp))
             .padding(horizontal = 5.dp, vertical = 1.dp),
     ) {
-        Text(text = "%.2f".format(confidence), style = OrtType.scoreChip, color = OrtColors.textFaint)
+        Text(
+            text = "%.2f".format(confidence),
+            style = OrtType.scoreChip,
+            color = OrtColors.textFaint,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 

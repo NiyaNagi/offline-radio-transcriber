@@ -2,6 +2,9 @@ package org.ort.app.ui.components
 
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
@@ -60,10 +63,13 @@ class LiveBarTest {
         }
 
         // Different labels/copy per tone, not merely a colour swap (constitution: "colour is
-        // reinforcement, never signal").
-        composeTestRule.onNodeWithText("Live").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Tier 2").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Halted — no route").assertIsDisplayed()
+        // reinforcement, never signal"). R-380/R-381: `LiveBar`'s own outer node now
+        // `clearAndSetSemantics` (an earlier entry in this file's own `CHANGELOG.md`), so these
+        // inner `Text`s are only reachable on the *unmerged* tree — the row's own merged
+        // description (asserted below) is what a real accessibility service reads instead.
+        composeTestRule.onNodeWithText("Live", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Tier 2", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Halted — no route", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
@@ -86,6 +92,36 @@ class LiveBarTest {
         node.assert(hasContentDescription("seven three", substring = true))
         node.performClick()
         assert(clicked)
+    }
+
+    @Test
+    fun `R_381_the live bar's own unmerged node carries both OnClick and the composed description`() {
+        // R-381's own attribution list names "the live bar" — checked here, not merely asserted:
+        // `LiveBar` already composes its description explicitly (`contentDescription = description`
+        // in the same `semantics(mergeDescendants = true)` block `clickable` lives in, not an empty
+        // block depending on merge-from-descendants alone), so this is confirmation, not a fix.
+        // `useUnmergedTree = true` matters here specifically — the assertion is about this one
+        // physical node's own semantics config, not whatever the merged-tree view would report.
+        val state = LiveBarViewState(
+            level = listOf(0.2f, 0.6f, 0.3f, 0.8f),
+            partialText = "seven three",
+            label = "Live",
+            tone = LiveBarTone.NOMINAL,
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { LiveBar(state = state, onClick = {}, modifier = Modifier.testTag("bar")) }
+        }
+
+        val node = composeTestRule.onNodeWithTag("bar", useUnmergedTree = true).fetchSemanticsNode()
+        assert(node.config.getOrNull(SemanticsActions.OnClick) != null) {
+            "expected the live bar's own node to carry OnClick"
+        }
+        val description = node.config.getOrNull(SemanticsProperties.ContentDescription)?.joinToString()
+        assert(description?.contains("Live") == true && description.contains("seven three")) {
+            "expected the live bar's own node (carrying OnClick) to also carry a description with " +
+                "both the label and the partial text, got $description"
+        }
     }
 
     @Test
@@ -152,7 +188,7 @@ class LiveBarTest {
             OrtTheme { LiveBar(state = state, onClick = {}, modifier = Modifier.testTag("act-bar")) }
         }
 
-        composeTestRule.onNodeWithText("Act").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Act", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("act-bar").assert(hasContentDescription("Act", substring = true))
     }
 
@@ -167,6 +203,6 @@ class LiveBarTest {
 
         composeTestRule.setContent { OrtTheme { LiveBar(state = state, onClick = {}) } }
 
-        composeTestRule.onNodeWithText("and we're clear on the repeater").assertIsDisplayed()
+        composeTestRule.onNodeWithText("and we're clear on the repeater", useUnmergedTree = true).assertIsDisplayed()
     }
 }

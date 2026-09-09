@@ -6,12 +6,14 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.debug.Scenarios
 import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.settings.SettingsScreenId
@@ -127,6 +129,10 @@ class NavSeedTest {
         }
     }
 
+    private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 15_000) {
+        waitUntil(timeoutMillis) { onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
+    }
+
     @Test
     fun `openTransmissionId lands on the transmission detail drill-in`() {
         composeTestRule.setContent {
@@ -135,6 +141,21 @@ class NavSeedTest {
         // `NavSeed.openedFromDestination`: a transmission detail reached by seed reads "Back to
         // Log" — the same origin R-333's own real-tap case establishes.
         composeTestRule.waitUntilContentDescriptionExists("Back to Log")
+    }
+
+    @Test
+    fun `openTransmissionId with openTransmissionRevisions lands directly on Earlier versions`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(
+                    sessionId = SESSION_ID,
+                    seed = NavSeed(openTransmissionId = TRANSMISSION_ID, openTransmissionRevisions = true),
+                )
+            }
+        }
+        // `DetailRevisionsScreen`'s own title — the fact that distinguishes landing directly on
+        // `Revisions` from the plain detail root (both share the same `DrillInHeader` parent label).
+        composeTestRule.waitUntilTextExists("Earlier versions")
     }
 
     @Test
@@ -225,6 +246,42 @@ class NavSeedTest {
         composeTestRule.waitUntil(15_000) {
             composeTestRule.onAllNodes(hasText("Storage and retention")).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    @Test
+    fun `logSheetOpen lands on Log with the filter sheet already open`() {
+        composeTestRule.setContent {
+            OrtTheme { OrtNavHost(sessionId = SESSION_ID, seed = NavSeed(logSheetOpen = true)) }
+        }
+        // `LogFilterSheet`'s own title — the same marker `LogContentBackHandlerTest.kt`'s own
+        // `R_TOUR_log_sheet_open` case (WP5's) already established.
+        composeTestRule.waitUntilTextExists("Filter the log")
+    }
+
+    @Test
+    fun `searchQuery with searchSubmit lands on Search with a real, submitted result`() {
+        // The same `search-corpus` debug fixture WP7's own `SearchContentTest.kt` uses — 14 overs
+        // across 3 nights, every transcript reading "...doing a park activation...", so "park"
+        // matches all 14 — real background-thread Room I/O this test waits for directly below,
+        // not tracked by `waitForIdle()`.
+        runBlocking { Scenarios.load(context, "search-corpus") }
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(sessionId = null, seed = NavSeed(searchQuery = "park", searchSubmit = true))
+            }
+        }
+        composeTestRule.waitUntil(timeoutMillis = 15_000) {
+            composeTestRule.onAllNodes(hasText("14 overs", substring = true)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("search-count-line").assertExists()
+    }
+
+    @Test
+    fun `searchFiltersOpen lands on Search with the filters sheet already open`() {
+        composeTestRule.setContent {
+            OrtTheme { OrtNavHost(sessionId = null, seed = NavSeed(searchFiltersOpen = true)) }
+        }
+        composeTestRule.onNodeWithTag("search-filters-sheet").assertExists()
     }
 
     @Test
