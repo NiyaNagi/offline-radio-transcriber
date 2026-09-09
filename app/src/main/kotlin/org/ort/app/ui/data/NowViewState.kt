@@ -123,10 +123,12 @@ public object NowViewStateMapper {
         // Deliberately no "· N bands" segment: a frequency-to-band table does not exist yet
         // (NowSummaryMapper's own long-standing rule, unchanged here) — omitted rather than
         // guessed (constitution I).
+        // R-418: "1 overs · 0 stations" — the shared plural rule (ThreadViewData.pluralize,
+        // same package, R-163) was never applied here.
         val summaryLabel = if (overCount == 0) {
             "0 overs" + (listeningOnLabel?.let { " · $it" } ?: "")
         } else {
-            "$overCount overs · $stationCount stations"
+            "${pluralize(overCount, "over")} · ${pluralize(stationCount, "station")}"
         }
 
         val pattern = ActivityPatternMapper.buildPattern(
@@ -141,8 +143,13 @@ public object NowViewStateMapper {
             summaryLabel = summaryLabel,
             overCount = overCount,
             activityPattern = pattern,
-            axisStartLabel = hourLabel(sessionStartedAtUtc),
-            axisEndLabel = (sessionEndedAtUtc ?: nowMillis).let { hourLabel(it) },
+            // R-414: the real start/end minute, not always ":00" — see hourMinuteLabel's own use
+            // elsewhere in this file. A short session (e.g. `first-session`, only minutes old) used
+            // to have both ends floor to the same wall-clock hour once the minute was dropped,
+            // reading as an elapsed-duration clock ("01:00"/"01:00") rather than the session's real
+            // start/end hours ("23:32"/"07:00" — the register's own expected figures).
+            axisStartLabel = hourMinuteLabel(sessionStartedAtUtc),
+            axisEndLabel = (sessionEndedAtUtc ?: nowMillis).let { hourMinuteLabel(it) },
             notListeningLabel = notListeningLabel(gaps),
             missingModel = if (asrAvailable) null else missingModel,
             worthKnowing = worthKnowing(details, gaps, firstHeardStationIds),
@@ -294,12 +301,6 @@ public object NowViewStateMapper {
 
     private fun durationLabel(totalSeconds: Long): String =
         if (totalSeconds < 60) "${totalSeconds}s" else "${totalSeconds / 60}m ${totalSeconds % 60}s"
-
-    private fun hourLabel(utcMillis: Long): String {
-        val totalMinutes = Math.floorDiv(utcMillis, 60_000L)
-        val hour = Math.floorMod(totalMinutes / 60, 24L)
-        return "%02d:00".format(Locale.ROOT, hour)
-    }
 
     private fun hourMinuteLabel(utcMillis: Long): String {
         val totalMinutes = Math.floorDiv(utcMillis, 60_000L)

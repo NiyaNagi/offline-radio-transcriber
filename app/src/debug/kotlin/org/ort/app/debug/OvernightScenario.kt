@@ -10,6 +10,7 @@ import org.ort.data.dao.CorrectionDao
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.CorrectionEntity
+import org.ort.data.entity.LatticeSource
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.ThreadEntity
 import org.ort.data.entity.ThreadKind
@@ -36,9 +37,23 @@ internal object OvernightScenario {
     suspend fun overnight(context: Context, db: OrtDatabase): Scenarios.LoadResult =
         build(context, db, scenarioName = "overnight", extraGap = false)
 
-    /** `gap-call` — `overnight` plus a second gap (this package's report notes the "incoming call" caveat). */
+    /**
+     * `gap-call` — `overnight` plus a second gap. R-410 (register, WP12's own tour finding): F15
+     * (`Fail-Call.dc.html`)'s banner ([org.ort.app.ui.failures.FailureMapper.isRecentCallGap])
+     * needs the session's own *newest* gap to be CALL-caused, closed within the last
+     * [org.ort.app.ui.failures.FailureMapper.RECENT_GAP_WINDOW_MILLIS] (5 minutes) of real
+     * wall-clock time, **and** the session still genuinely capturing — three real facts a scenario
+     * built to have already *ended* (this fixture's own base shape, `overnight`) can never satisfy
+     * at once, no matter how the extra gap is timed. `live = true` now, same primitive
+     * [overnightLive] already established; the extra gap itself is anchored to real "now" instead
+     * of the session's own start offset (every other over/gap in this fixture is), specifically so
+     * it is still inside that 5-minute window whenever a validator or the tour actually loads this
+     * scenario and looks. The Log row itself (`not listening · 52 s · incoming call`) renders from
+     * this same [org.ort.data.entity.CaptureGapEntity] regardless of the session's own end state —
+     * unaffected by this change (register: "the ended-session gap row is fine").
+     */
     suspend fun gapCall(context: Context, db: OrtDatabase): Scenarios.LoadResult =
-        build(context, db, scenarioName = "gap-call", extraGap = true)
+        build(context, db, scenarioName = "gap-call", extraGap = true, live = true)
 
     /**
      * `overnight-live` (R-171) — the same populated ~40-over overnight fixture, but
@@ -96,7 +111,13 @@ internal object OvernightScenario {
             text = "this is whiskey seven november papa charlie, monitoring",
             writeAudio = true,
         )
-        db.catalogDao().insert(ScenarioFixtures.lattice("$tx1-lat", tx1, createdAt = t1 + 500L))
+        // R-421: TEXT_DERIVED, not the default ACOUSTIC — this lattice's own slots below carry a
+        // real char span into the transcript (LatticeSlotEntity's own doc comment: an acoustic
+        // lattice's slots never do), so D01's transcript highlight has a real span to render
+        // instead of falling back to the literal-substring check the phonetic spelling defeats.
+        db.catalogDao().insert(
+            ScenarioFixtures.lattice("$tx1-lat", tx1, source = LatticeSource.TEXT_DERIVED, createdAt = t1 + 500L),
+        )
         db.catalogDao().insert(
             ScenarioFixtures.candidate(
                 "$tx1-c1",
@@ -108,6 +129,18 @@ internal object OvernightScenario {
                 priorBreakdown = mapOf("callsign-history" to 1.2, "database" to 0.8),
             ),
         )
+        ScenarioFixtures.latticeSlots(
+            transmissionId = tx1,
+            candidateId = "$tx1-c1",
+            transcriptText = "this is whiskey seven november papa charlie, monitoring",
+            unitsAndWords = listOf(
+                "W" to "whiskey",
+                "7" to "seven",
+                "N" to "november",
+                "P" to "papa",
+                "C" to "charlie",
+            ),
+        ).forEach { db.catalogDao().insert(it) }
 
         // -- 2. INFERRED, linked back to tx1's confirming over; carries a cold-start prior and a --
         //       negative ("argued against") prior side by side (FR-LEX-31, register R-051). --------
@@ -157,7 +190,16 @@ internal object OvernightScenario {
             text = "kilo echo seven quebec romeo sierra, portable",
             writeAudio = true,
         )
-        db.catalogDao().insert(ScenarioFixtures.lattice("$tx3-lat", tx3, createdAt = t3 + 500L))
+        // R-421: TEXT_DERIVED — see tx1's own comment above for why. `selected` stays `false` on
+        // every AMBIGUOUS candidate (unchanged — `AmbiguousCandidatesFixtureTest`'s own
+        // `no candidate should be pre-selected on an AMBIGUOUS over` already establishes why): these
+        // slots still give D05's `slotDetailsFor` (rank-then-index over *every* candidate,
+        // register R-320) a real per-slot breakdown for c1, even though
+        // `winningCandidateCharSpan`'s `cc.selected = 1` join honestly stays empty here — an
+        // AMBIGUOUS over has no winner to highlight inline, which is the correct, not a fixture gap.
+        db.catalogDao().insert(
+            ScenarioFixtures.lattice("$tx3-lat", tx3, source = LatticeSource.TEXT_DERIVED, createdAt = t3 + 500L),
+        )
         db.catalogDao().insert(
             ScenarioFixtures.candidate("$tx3-c1", tx3, "KE7QRS", rank = 0, score = 8.20, selected = false),
         )
@@ -172,6 +214,21 @@ internal object OvernightScenario {
         db.catalogDao().insert(
             ScenarioFixtures.candidate("$tx3-c3", tx3, "KE7QRZ", rank = 2, score = 7.90, selected = false),
         )
+        // R-421: D03's transcript highlight (CorrectionPolling.winningCharSpan) reads the
+        // `selected` candidate's own slots — see c1's own comment above.
+        ScenarioFixtures.latticeSlots(
+            transmissionId = tx3,
+            candidateId = "$tx3-c1",
+            transcriptText = "kilo echo seven quebec romeo sierra, portable",
+            unitsAndWords = listOf(
+                "K" to "kilo",
+                "E" to "echo",
+                "7" to "seven",
+                "Q" to "quebec",
+                "R" to "romeo",
+                "S" to "sierra",
+            ),
+        ).forEach { db.catalogDao().insert(it) }
 
         // -- 4. UNKNOWN: nothing claimed. ----------------------------------------------------------
         val tx4 = "$sessionId-tx04"
@@ -242,6 +299,29 @@ internal object OvernightScenario {
                 propagatedToCount = 1,
             ),
         )
+        // R-421: tx6's own text ("kilo juliet seven alpha bravo charlie, back to you") already
+        // phonetically self-identifies as KJ7ABC — the real INFERRED case D01/D03's highlight needs
+        // (this over's own lattice+candidate rows never existed before this; every other field
+        // above stays untouched, so the over is still INFERRED/corrected exactly as before).
+        db.catalogDao().insert(
+            ScenarioFixtures.lattice("$tx6-lat", tx6, source = LatticeSource.TEXT_DERIVED, createdAt = t6 + 500L),
+        )
+        db.catalogDao().insert(
+            ScenarioFixtures.candidate("$tx6-c1", tx6, "KJ7ABC", rank = 0, score = 7.6, selected = true),
+        )
+        ScenarioFixtures.latticeSlots(
+            transmissionId = tx6,
+            candidateId = "$tx6-c1",
+            transcriptText = "kilo juliet seven alpha bravo charlie, back to you",
+            unitsAndWords = listOf(
+                "K" to "kilo",
+                "J" to "juliet",
+                "7" to "seven",
+                "A" to "alpha",
+                "B" to "bravo",
+                "C" to "charlie",
+            ),
+        ).forEach { db.catalogDao().insert(it) }
 
         // -- 7. Revised: Pass A partial superseded by Pass B's final. ------------------------------
         val tx7 = "$sessionId-tx07"
@@ -309,13 +389,17 @@ internal object OvernightScenario {
         )
         if (extraGap) {
             // `gap-call` — WP11a (register R-106) added CaptureGapCause.CALL for exactly this:
-            // "not listening · 38 s · incoming call" (Fail-Call.dc.html's own wording).
+            // "not listening · 52 s · incoming call" (Fail-Call.dc.html's own wording). R-410: this
+            // is now the session's own *newest* gap, anchored to real "now" (not the session's own
+            // start offset — see this scenario's own kdoc), closed 90 s ago, comfortably inside
+            // FailureMapper's own 5-minute recency window for the F15 banner.
+            val recentCallGapEndedAt = SystemClock.wallMillis() - 90_000L
             db.captureGapDao().insert(
                 CaptureGapEntity(
                     id = "$sessionId-gap2",
                     sessionId = sessionId,
-                    startedAt = offset(45.0),
-                    endedAt = offset(45.0) + 52_000L,
+                    startedAt = recentCallGapEndedAt - 52_000L,
+                    endedAt = recentCallGapEndedAt,
                     cause = CaptureGapCause.CALL,
                     recoveredAutomatically = true,
                 ),
