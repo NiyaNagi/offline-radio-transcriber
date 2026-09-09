@@ -293,12 +293,10 @@ class SearchScreenTest {
         )
         screen(input = SearchFilterInput(text = "mayday"), result = result)
 
-        // WP2's R-373 fix (`Rows.kt`) moved `LogRow`'s own semantics from a merged
-        // `contentDescription` to `clearAndSetSemantics` — the transcript is still part of the
-        // row's one merged description (`logRowDescription`'s own doc comment: "keeps the
-        // transcript itself reachable"), just no longer separately as a `Text`/`EditableText`
-        // node in the default merged tree.
-        composeTestRule.onNodeWithContentDescription("mayday mayday", substring = true).assertExists()
+        // R-380/R-381 (WP2, `ui/components/CHANGELOG.md`): `LogRow`'s own outer node
+        // `clearAndSetSemantics`-es its composed description — its transcript `Text` is only
+        // reachable on the unmerged tree now.
+        composeTestRule.onNodeWithText("mayday mayday", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithTag("search-count-line").assertExists()
         composeTestRule.onNodeWithText("Newest first").assertExists()
     }
@@ -329,13 +327,13 @@ class SearchScreenTest {
         )
         screen(input = current, result = result, onInputChange = { current = it }, onSearch = { searchCount++ })
 
-        // `FilterChip`'s own `clearAndSetSemantics` (`Controls.kt`) now hides its dismiss icon's
-        // separate "Remove ... filter" description from the default merged tree entirely — a real
-        // accessibility regression this package does not own the file to fix (flagged in this
-        // round's CHANGELOG for WP2) — `useUnmergedTree` is the closest available proxy for what a
-        // real tap still reaches (the icon is still visually present and still clickable; it is
-        // TalkBack that can no longer discover it as its own stop).
-        composeTestRule.onNodeWithContentDescription("Remove W7NPC filter", useUnmergedTree = true)
+        // R-380/R-381/R-543 (WP2, `ui/components/CHANGELOG.md`): the dismiss icon is a descendant
+        // of `FilterChip`'s own outer `clearAndSetSemantics` node, so it is only reachable on the
+        // unmerged tree in Robolectric's own model now — on a real device the icon is also exposed
+        // as a `CustomAccessibilityAction` on the chip's own node (`Controls.kt`'s own doc
+        // comment), so this stays reachable for TalkBack too, not only for a raw tap.
+        composeTestRule
+            .onNodeWithContentDescription("Remove W7NPC filter", useUnmergedTree = true)
             .performScrollTo()
             .performClick()
 
@@ -398,8 +396,8 @@ class SearchScreenTest {
 
         composeTestRule.onNodeWithTag("search-unavailable-banner").assertExists()
         composeTestRule.onNodeWithText("Text search is unavailable right now").assertExists()
-        // `LogRow`'s own `clearAndSetSemantics` (R-373, WP2) — see the R-065 test above.
-        composeTestRule.onNodeWithContentDescription("irrelevant transcript", substring = true).assertExists()
+        // R-380/R-381 (WP2, `ui/components/CHANGELOG.md`): see the note on the `R_065` test above.
+        composeTestRule.onNodeWithText("irrelevant transcript", useUnmergedTree = true).assertExists()
     }
 
     @Test

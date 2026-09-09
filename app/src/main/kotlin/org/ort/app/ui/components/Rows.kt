@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -90,7 +91,42 @@ public val LOG_TIME_COLUMN: Dp = 52.dp
  * [rememberFreqColumnWidth] instead, which never returns less than this constant. */
 public val LOG_FREQ_COLUMN: Dp = 56.dp
 
+/** Signal column floor — 24dp at the guide's own scale. R-505: callers render at
+ * [rememberSignalColumnWidth] instead, which never returns less than this constant — see that
+ * function's own doc for why the constant alone is not enough past the guide's own scale. */
 private val SIGNAL_COLUMN = 24.dp
+
+/** R-505 (`search-corpus/Q03-results-park@2x.png`): the widest real shape a [LogRowViewState.
+ * signalLabel]/[ColumnHeaderRow] signal label takes — `"S" + one digit`, [ReaderTransmissionViewStateMapper.
+ * signalLabel]'s own `"S%.0f"` format applied to an S-meter reading (S0-S9). */
+private const val SIGNAL_COLUMN_SAMPLE = "S9"
+
+/** R-505: [LOG_TIME_COLUMN]/[LOG_FREQ_COLUMN]/[rememberCallsignColumnWidth] already measured their
+ * own column's real, current width in [rememberMonoColumnWidth] rather than trusting a guessed
+ * constant (R-205/R-373) — [SIGNAL_COLUMN] alone never got the same treatment, so [LogRow]'s own
+ * one-line/stacked gate ([oneLineWidthFor]) kept comparing the row's real width against an
+ * estimate that stayed fixed at 24dp regardless of font scale, while the signal `Text` beside it
+ * (["S9"][SIGNAL_COLUMN_SAMPLE] in [OrtType.signal]) genuinely grew past 24dp at a larger scale.
+ * The gate then wrongly kept choosing the one-line layout past the point the row actually had room
+ * for it, squeezing the weighted callsign column under its own floor to make space — the callsign
+ * (`maxLines = 1, softWrap = false`, no wrap opportunity) then overflowed its allocated width and
+ * ran into the signal text beside it ("KE7QRS"/"KA7LWH" clipped by the "S7" figure, the register's
+ * own repro). Measuring this column the same [rememberMonoColumnWidth] way the others already do
+ * is the fix — the gate and the signal `Text`'s own width now agree, on whatever host renders
+ * them, the way time/freq/callsign already did. */
+@Composable
+public fun rememberSignalColumnWidth(): Dp =
+    rememberMonoColumnWidth(SIGNAL_COLUMN_SAMPLE, SIGNAL_COLUMN, style = OrtType.signal)
+
+/** R-505: [LogRow]/[ColumnHeaderRow]'s shared one-line/stacked gate, pulled out as a plain function
+ * — not inlined into either composable — so the decision itself (rather than a rendered pixel,
+ * which this package's own [logRowTranscriptStyle]/`meterColorFor` doc comments already found this
+ * host's Robolectric setup cannot reliably verify) is directly unit-testable: given the same four
+ * column widths and gap, this always returns the same total, with no font metrics or composition
+ * involved. Both callers must include [signalWidth] in the sum whenever a signal column is
+ * possible for them, or the R-505 gap comes back for whichever column they forgot it for. */
+internal fun oneLineWidthFor(timeWidth: Dp, freqWidth: Dp, callsignWidth: Dp, signalWidth: Dp, gap: Dp): Dp =
+    timeWidth + gap + freqWidth + gap + callsignWidth + gap + signalWidth
 
 /** R-205: HH:MM:SS, the widest real shape [LogRowViewState.timeLabel]/`GapRow`/`RejectedRow`'s
  * `timeLabel` ever take — every caller in this codebase uses this exact format, so measuring this
@@ -284,17 +320,20 @@ public fun ColumnHeaderRow(
     val timeWidth = rememberTimeColumnWidth()
     val freqWidth = rememberFreqColumnWidth()
     val callsignWidth = rememberCallsignColumnWidth()
+    val signalColumnWidth = rememberSignalColumnWidth()
     val gap = 10.dp
     BoxWithConstraints(
         modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = OrtSpacing.xs),
     ) {
-        val oneLineWidth = timeWidth + gap + freqWidth + gap + callsignWidth + gap + SIGNAL_COLUMN
+        // R-505: the same shared gate [LogRow] uses, and the same real-measurement-not-a-fixed-
+        // constant signal width — see [oneLineWidthFor]/[rememberSignalColumnWidth]'s own doc.
+        val oneLineWidth = oneLineWidthFor(timeWidth, freqWidth, callsignWidth, signalColumnWidth, gap)
         if (maxWidth >= oneLineWidth) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
                 ColumnHeaderTimeText(Modifier.widthIn(min = timeWidth))
                 ColumnHeaderFreqText(Modifier.widthIn(min = freqWidth))
                 ColumnHeaderStationText(stationLabel, Modifier.weight(1f).widthIn(min = callsignWidth))
-                ColumnHeaderSignalText(signalLabel)
+                ColumnHeaderSignalText(signalLabel, Modifier.widthIn(min = signalColumnWidth))
             }
         } else {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -305,7 +344,7 @@ public fun ColumnHeaderRow(
                 ) {
                     ColumnHeaderTimeText(Modifier.widthIn(min = timeWidth))
                     ColumnHeaderFreqText(Modifier.widthIn(min = freqWidth))
-                    ColumnHeaderSignalText(signalLabel)
+                    ColumnHeaderSignalText(signalLabel, Modifier.widthIn(min = signalColumnWidth))
                 }
             }
         }
@@ -348,6 +387,8 @@ private fun ColumnHeaderStationText(stationLabel: String, modifier: Modifier = M
     )
 }
 
+/** R-505: its own floor now comes entirely from [modifier] (the caller's
+ * [rememberSignalColumnWidth]) — see [LogRowSignalText]'s own doc for why. */
 @Composable
 private fun ColumnHeaderSignalText(signalLabel: String, modifier: Modifier = Modifier) {
     Text(
@@ -356,7 +397,7 @@ private fun ColumnHeaderSignalText(signalLabel: String, modifier: Modifier = Mod
         color = OrtColors.textDisabled,
         maxLines = 1,
         softWrap = false,
-        modifier = modifier.widthIn(min = SIGNAL_COLUMN),
+        modifier = modifier,
     )
 }
 
@@ -438,6 +479,9 @@ public fun KeyValueRow(
                         .clickable(role = Role.Button, onClickLabel = onClickLabel, onClick = onClick)
                         .clearAndSetSemantics {
                             contentDescription = description
+                            // R-380 correction (WP2, gate-blocking) — see `LogRow`'s own doc
+                            // comment above.
+                            text = AnnotatedString(description)
                             role = Role.Button
                             onClick(label = onClickLabel) {
                                 onClick()
@@ -521,7 +565,22 @@ public fun NavRow(
                 onClick = onClick,
             )
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) { contentDescription = description },
+            // R-380 (WP2 next round): the same shape this file's own `LogRow`/`TextAction` were
+            // already confirmed broken for and fixed on a real device — a plain, trailing
+            // `semantics(mergeDescendants = true) { contentDescription = ... }` does not reliably
+            // keep the description on the *clickable* node itself once real child content (this
+            // row's own `Text`s) sits beneath it. `clearAndSetSemantics` is this package's own
+            // confirmed-working fix.
+            .clearAndSetSemantics {
+                contentDescription = description
+                // R-380 correction (WP2, gate-blocking) — see `LogRow`'s own doc comment above.
+                text = AnnotatedString(description)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
@@ -594,7 +653,21 @@ private fun ActionBarButton(
         modifier = modifier
             .heightIn(min = 44.dp)
             .background(bg, RoundedCornerShape(9.dp))
-            .clickable(role = Role.Button, onClick = onClick),
+            // R-380 (WP2 next round): carried no `semantics` of its own at all — the
+            // `PrimaryButton`-before-fix shape (`Controls.kt`'s own doc comment) — the label lived
+            // purely on the child `Text`, which a real device confirmed a `clickable` node does
+            // not reliably absorb via merge alone. `clearAndSetSemantics` is the confirmed fix.
+            .clickable(role = Role.Button, onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = text
+                // R-380 correction (WP2, gate-blocking) — see `LogRow`'s own doc comment above.
+                this.text = AnnotatedString(text)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(text = text, style = OrtType.control.copy(fontWeight = weight), color = fg)
@@ -694,7 +767,15 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .clearAndSetSemantics {
-                contentDescription = logRowDescription(state)
+                val description = logRowDescription(state)
+                contentDescription = description
+                // R-380 correction (WP2, gate-blocking): `clearAndSetSemantics` alone erases the
+                // merged-in child `Text`s' own `SemanticsProperties.Text`, so a `hasText(...)`
+                // matcher on the default merged tree can no longer find this node even though
+                // `contentDescription` does carry it — see `Controls.kt`'s `TextAction` doc for the
+                // full finding. Declaring `text` here too (the same composed string) keeps both
+                // routes working.
+                text = AnnotatedString(description)
                 role = Role.Button
                 onClick(label = null) {
                     onClick()
@@ -705,12 +786,17 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
         val timeWidth = rememberTimeColumnWidth()
         val freqWidth = rememberFreqColumnWidth()
         val callsignWidth = rememberCallsignColumnWidth()
+        val signalColumnWidth = rememberSignalColumnWidth()
         val gap = 10.dp
         BoxWithConstraints(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 9.dp),
         ) {
-            val signalWidth = if (state.signalLabel != null) gap + SIGNAL_COLUMN else 0.dp
-            val oneLineWidth = timeWidth + gap + freqWidth + gap + callsignWidth + signalWidth
+            // R-505: the real, measured signal width whenever a signal column is possible for this
+            // row at all — not just when this particular row happens to carry one — so the gate
+            // reserves the same room every row in a list might need, the same reason the guide's
+            // own column widths are shared floors rather than each row's own (possibly shorter)
+            // content (this file's own R-205 doc comment).
+            val oneLineWidth = oneLineWidthFor(timeWidth, freqWidth, callsignWidth, signalColumnWidth, gap)
             if (maxWidth >= oneLineWidth) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
                     LogRowTimeText(state, Modifier.widthIn(min = timeWidth))
@@ -719,7 +805,7 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
                         LogRowMarkerLine(state = state)
                         LogRowTranscriptText(state, Modifier.padding(top = 3.dp))
                     }
-                    state.signalLabel?.let { LogRowSignalText(it) }
+                    state.signalLabel?.let { LogRowSignalText(it, Modifier.widthIn(min = signalColumnWidth)) }
                 }
             } else {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -731,7 +817,7 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
                     ) {
                         LogRowTimeText(state, Modifier.widthIn(min = timeWidth))
                         LogRowFreqText(state, Modifier.widthIn(min = freqWidth))
-                        state.signalLabel?.let { LogRowSignalText(it) }
+                        state.signalLabel?.let { LogRowSignalText(it, Modifier.widthIn(min = signalColumnWidth)) }
                     }
                 }
             }
@@ -767,14 +853,17 @@ private fun LogRowFreqText(state: LogRowViewState, modifier: Modifier = Modifier
     )
 }
 
-/** R-373: [LogRow]'s signal column — see [LogRowTimeText]. */
+/** R-373/R-505: [LogRow]'s signal column — see [LogRowTimeText]. Its own floor now comes entirely
+ * from [modifier] (the caller's [rememberSignalColumnWidth], the same real-measurement-not-a-
+ * guessed-constant fix [rememberCallsignColumnWidth] already applies) rather than a fixed constant
+ * of its own — two different floors on the same column is exactly how the R-505 gap opened. */
 @Composable
 private fun LogRowSignalText(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = OrtType.signal,
         color = OrtColors.textLow,
-        modifier = modifier.widthIn(min = SIGNAL_COLUMN),
+        modifier = modifier,
     )
 }
 
@@ -975,7 +1064,23 @@ public fun LogGroupHeader(label: String, modifier: Modifier = Modifier, onClick:
             .background(OrtColors.bgGroup)
             .then(
                 if (onClick != null) {
-                    Modifier.heightIn(min = 44.dp).clickable(role = Role.Button, onClick = onClick)
+                    // R-380 (WP2 next round): carried no `semantics` of its own at all when
+                    // clickable — the `PrimaryButton`-before-fix shape (`Controls.kt`'s own doc
+                    // comment); `clearAndSetSemantics` is the confirmed fix.
+                    Modifier
+                        .heightIn(min = 44.dp)
+                        .clickable(role = Role.Button, onClick = onClick)
+                        .clearAndSetSemantics {
+                            contentDescription = label
+                            // R-380 correction (WP2, gate-blocking) — see `LogRow`'s own doc
+                            // comment above.
+                            text = AnnotatedString(label)
+                            role = Role.Button
+                            onClick(label = null) {
+                                onClick()
+                                true
+                            }
+                        }
                 } else {
                     Modifier
                 },
@@ -1052,31 +1157,12 @@ public fun RejectedRow(
     why: String? = null,
     durationLabel: String? = null,
 ) {
+    val description = rejectedRowDescription(timeLabel, frequencyLabel, reason, why, durationLabel)
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
-            .then(
-                if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier,
-            )
-            .alpha(0.45f)
-            .semantics(mergeDescendants = true) {
-                contentDescription = buildString {
-                    append(timeLabel)
-                    append(", ")
-                    append(frequencyLabel)
-                    append(", rejected, ")
-                    append(reason)
-                    why?.let {
-                        append(", ")
-                        append(it)
-                    }
-                    durationLabel?.let {
-                        append(", ")
-                        append(it)
-                    }
-                }
-            },
+            .then(rejectedRowInteractionModifier(onClick, description)),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 9.dp),
@@ -1129,6 +1215,55 @@ public fun RejectedRow(
         }
     }
 }
+
+private fun rejectedRowDescription(
+    timeLabel: String,
+    frequencyLabel: String,
+    reason: String,
+    why: String?,
+    durationLabel: String?,
+): String = buildString {
+    append(timeLabel)
+    append(", ")
+    append(frequencyLabel)
+    append(", rejected, ")
+    append(reason)
+    why?.let {
+        append(", ")
+        append(it)
+    }
+    durationLabel?.let {
+        append(", ")
+        append(it)
+    }
+}
+
+/** [RejectedRow]'s interaction/dim modifier, split out of the composable itself only to keep it
+ * under detekt's `LongMethod` — R-381 (WP2 next round): a `.clickable(...)` node followed by a
+ * *separate* `semantics(mergeDescendants = true) { contentDescription = ... }` is the exact
+ * two-stage shape this package's own R-380/R-381 finding proved does not survive to a real device
+ * even with an explicit description — `clearAndSetSemantics` on the same node `clickable` lives on
+ * is the confirmed fix, used here when [onClick] is given; the non-clickable branch is unchanged. */
+private fun rejectedRowInteractionModifier(onClick: (() -> Unit)?, description: String): Modifier =
+    if (onClick != null) {
+        Modifier
+            .clickable(role = Role.Button, onClick = onClick)
+            .alpha(0.45f)
+            .clearAndSetSemantics {
+                contentDescription = description
+                // R-380 correction (WP2, gate-blocking) — see `LogRow`'s own doc comment.
+                text = AnnotatedString(description)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            }
+    } else {
+        Modifier
+            .alpha(0.45f)
+            .semantics(mergeDescendants = true) { contentDescription = description }
+    }
 
 // ---------------------------------------------------------------------------------------------
 // NotificationCard — Capture-Notification.dc.html's collapsed/expanded persistent notification.

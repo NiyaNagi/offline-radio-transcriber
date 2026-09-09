@@ -23,6 +23,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +74,8 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
                 .clickable(onClickLabel = state.label, role = Role.Button, onClick = onClick)
                 .clearAndSetSemantics {
                     contentDescription = description
+                    // R-380 correction (WP2, gate-blocking) — see `Rows.kt`'s `LogRow` doc comment.
+                    text = AnnotatedString(description)
                     role = Role.Button
                     onClick(label = state.label) {
                         onClick()

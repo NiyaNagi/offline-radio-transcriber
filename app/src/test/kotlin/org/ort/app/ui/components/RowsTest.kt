@@ -315,46 +315,11 @@ class RowsTest {
         composeTestRule.onNodeWithText("STATION").assertIsDisplayed()
     }
 
-    @Test
-    fun `a gap row and a rejected row stay reachable rather than disappearing`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                Column {
-                    GapRow(
-                        timeLabel = "02:15:0",
-                        label = "not listening · 38 s · incoming call",
-                        modifier = Modifier.testTag("gap"),
-                    )
-                    RejectedRow(
-                        timeLabel = "02:16:40",
-                        frequencyLabel = "146.960",
-                        reason = "squelch tail",
-                        modifier = Modifier.testTag("rejected"),
-                    )
-                }
-            }
-        }
-
-        composeTestRule.onNodeWithText("not listening · 38 s · incoming call").assertIsDisplayed()
-        composeTestRule.onNodeWithText("REJECTED · SQUELCH TAIL").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("gap").assertHeightIsAtLeast(44.dp)
-    }
-
-    @Test
-    fun `a log group header names the thread and a column header row names every column`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                Column {
-                    LogGroupHeader(label = "QSO · 4 overs · 2 stations")
-                    ColumnHeaderRow()
-                }
-            }
-        }
-
-        composeTestRule.onNodeWithText("QSO · 4 overs · 2 stations").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TIME").assertIsDisplayed()
-        composeTestRule.onNodeWithText("FREQ").assertIsDisplayed()
-    }
+    // `GapRow`/`LogGroupHeader`/`ActionBar`/`RejectedRow`'s own tests moved to
+    // `RejectedRowTest.kt` (detekt's own `LargeClass` finding, once this file grew past a
+    // reasonable size across every row family it covers) — that cluster was already
+    // self-contained here, not entangled with `LogRow`/`KeyValueRow`/the rest this file still
+    // owns.
 
     @Test
     fun `R_205_log_row and rejected_row time and freq columns meet the guide's floor and render in full`() {
@@ -403,31 +368,6 @@ class RowsTest {
         }
         assert(rejectedFreqWidth >= 56) {
             "expected RejectedRow's freq column at least 56px, got ${rejectedFreqWidth}px"
-        }
-    }
-
-    @Test
-    fun `R_205_gap_row and column_header_row time and freq columns meet the guide's floor and render in full`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                Column {
-                    GapRow(timeLabel = "16:28:56", label = "not listening", modifier = Modifier.testTag("gap"))
-                    ColumnHeaderRow()
-                }
-            }
-        }
-
-        composeTestRule.onNodeWithText("16:28:56").assertIsDisplayed()
-        val gapTimeWidth = composeTestRule.onNodeWithText("16:28:56").fetchSemanticsNode().size.width
-        assert(gapTimeWidth >= 52) { "expected GapRow's time column at least 52px, got ${gapTimeWidth}px" }
-
-        val headerTimeWidth = composeTestRule.onNodeWithText("TIME").fetchSemanticsNode().size.width
-        val headerFreqWidth = composeTestRule.onNodeWithText("FREQ").fetchSemanticsNode().size.width
-        assert(headerTimeWidth >= 52) {
-            "expected ColumnHeaderRow's time column at least 52px, got ${headerTimeWidth}px"
-        }
-        assert(headerFreqWidth >= 56) {
-            "expected ColumnHeaderRow's freq column at least 56px, got ${headerFreqWidth}px"
         }
     }
 
@@ -496,22 +436,6 @@ class RowsTest {
         composeTestRule.onNodeWithTag("station-kebab").performClick()
         assert(kebabTapped)
         composeTestRule.onNode(hasContentDescription("More")).assertIsDisplayed()
-    }
-
-    @Test
-    fun `a key value row and an action bar render at a 44dp target`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                Column {
-                    KeyValueRow(key = "Route", value = "USB audio · verified", modifier = Modifier.testTag("kv"))
-                    ActionBar(secondaryLabel = "Not right?", onSecondary = {}, primaryLabel = "Confirm", onPrimary = {})
-                }
-            }
-        }
-
-        composeTestRule.onNodeWithTag("kv").assertHeightIsAtLeast(44.dp)
-        composeTestRule.onNodeWithText("Confirm").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Not right?").assertIsDisplayed()
     }
 
     @Test
@@ -597,71 +521,8 @@ class RowsTest {
         }
     }
 
-    @Test
-    fun `R_043_a rejected row's optional why line explains the reason in prose`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                RejectedRow(
-                    timeLabel = "02:16:40",
-                    frequencyLabel = "146.960",
-                    reason = "squelch tail",
-                    why = "0.4 s of noise after the carrier dropped. No speech energy.",
-                    modifier = Modifier.testTag("rejected-why"),
-                )
-            }
-        }
-
-        composeTestRule
-            .onNodeWithText("0.4 s of noise after the carrier dropped. No speech energy.")
-            .assertIsDisplayed()
-    }
-
-    @Test
-    fun `a rejected row with no why still renders exactly as before`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                RejectedRow(
-                    timeLabel = "02:16:40",
-                    frequencyLabel = "146.960",
-                    reason = "squelch tail",
-                    modifier = Modifier.testTag("rejected-no-why"),
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("REJECTED · SQUELCH TAIL").assertIsDisplayed()
-    }
-
-    @Test
-    fun `R_242_a rejected row's optional duration renders in the DUR column and reaches the description`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                Column {
-                    RejectedRow(
-                        timeLabel = "02:16:40",
-                        frequencyLabel = "146.960",
-                        reason = "squelch tail",
-                        durationLabel = "0.4s",
-                        modifier = Modifier.testTag("with-duration"),
-                    )
-                    // Additive — a caller that supplies no duration renders exactly as before,
-                    // no empty DUR column.
-                    RejectedRow(
-                        timeLabel = "01:52:07",
-                        frequencyLabel = "145.230",
-                        reason = "hallucination",
-                        modifier = Modifier.testTag("no-duration"),
-                    )
-                }
-            }
-        }
-
-        composeTestRule.onNodeWithText("0.4s").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("with-duration").assert(hasContentDescription("0.4s", substring = true))
-        composeTestRule.onNodeWithTag("no-duration").assert(
-            hasContentDescription("01:52:07, 145.230, rejected, hallucination"),
-        )
-    }
+    // `RejectedRow`'s own R-043/R-242/no-why tests moved to `RejectedRowTest.kt` (see the note
+    // above this file's own `R_205_log_row and rejected_row...` test).
 
     @Test
     fun `R_246_a provisional log row's transcript style is italic, a resolved row's is not`() {
@@ -680,6 +541,45 @@ class RowsTest {
     }
 
     @Test
+    fun `R_505_the one-line gate sums all four columns including signal, not three`() {
+        // The register's own repro (`search-corpus/Q03-results-park@2x.png`): the gate compared
+        // the row's real width against `time + freq + callsign` plus a *fixed* 24dp guess for
+        // signal, so it kept picking the one-line layout past the point the row actually had room
+        // once the real signal text grew past 24dp — this pins the gate's own arithmetic directly
+        // (no composition, no font metrics — plain `Dp` addition), the same way
+        // `R_246`'s neighbour test above pins `logRowTranscriptStyle` rather than a rendered pixel.
+        val gate = oneLineWidthFor(
+            timeWidth = 52.dp,
+            freqWidth = 56.dp,
+            callsignWidth = 90.dp,
+            signalWidth = 40.dp,
+            gap = 10.dp,
+        )
+        assert(gate == 52.dp + 10.dp + 56.dp + 10.dp + 90.dp + 10.dp + 40.dp) {
+            "expected the gate to sum time + freq + callsign + signal with a gap between each, got $gate"
+        }
+        // A larger signal width alone moves the gate — the exact fact a *fixed* 24dp constant
+        // could never satisfy, which is the whole defect this id fixes.
+        val widerSignal = oneLineWidthFor(52.dp, 56.dp, 90.dp, 60.dp, 10.dp)
+        assert(widerSignal > gate) {
+            "expected a wider signal column alone to raise the gate's own required width"
+        }
+    }
+
+    @Test
+    fun `R_505_the signal column's real width never returns less than the 24dp guide floor`() {
+        // `rememberSignalColumnWidth` is `rememberMonoColumnWidth`'s own `maxOf(floor, measured)`
+        // pattern (the same one `rememberCallsignColumnWidth`/`rememberTimeColumnWidth` already
+        // use) — this host's own font metrics may or may not exceed 24dp for "S9", but the floor
+        // itself is a structural guarantee this test can pin regardless of that.
+        var width = 0.dp
+        composeTestRule.setContent {
+            OrtTheme { width = rememberSignalColumnWidth() }
+        }
+        assert(width >= 24.dp) { "expected the signal column's own floor to hold, got $width" }
+    }
+
+    @Test
     fun `R_246_a provisional log row still renders its real transcript text, unchanged by the italic style`() {
         composeTestRule.setContent {
             OrtTheme {
@@ -691,12 +591,13 @@ class RowsTest {
             }
         }
 
-        // R-380/R-381: `LogRow`'s own transcript `Text` is only reachable on the unmerged tree
-        // now (an earlier entry in this file's own `CHANGELOG.md`).
+        // R-380 correction (WP2, gate-blocking): `LogRow`'s own outer node now also carries this
+        // transcript as part of its own composed `text` (not just `contentDescription`), so the
+        // *default* merged tree finds it directly, uniquely — `useUnmergedTree = true` would find
+        // this AND the still-present inner `Text` node, two matches instead of one.
         composeTestRule.onNodeWithText(
             "this is whiskey seven november papa charlie, monitoring",
             substring = true,
-            useUnmergedTree = true,
         ).assertExists()
     }
 
@@ -731,11 +632,11 @@ class RowsTest {
 
         composeTestRule.onNodeWithTag("collapsed").assertIsDisplayed()
         composeTestRule.onNodeWithText("W7NPC · 02:14 · 145.230").assertIsDisplayed()
-        // R-380/R-381: the card's own action buttons are `TextAction`/button composables, whose
-        // own outer node now `clearAndSetSemantics` (an earlier entry in this file's own
-        // `CHANGELOG.md`) — their label `Text` is only reachable on the unmerged tree now.
-        composeTestRule.onNodeWithText("Open", useUnmergedTree = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Stop", useUnmergedTree = true).assertIsDisplayed()
+        // R-380 correction (WP2, gate-blocking): the card's own action buttons carry their label
+        // as both `contentDescription` and `text` now, so the default merged tree finds them
+        // directly and uniquely (see `Controls.kt`'s `TextAction` doc comment).
+        composeTestRule.onNodeWithText("Open").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Stop").assertIsDisplayed()
         composeTestRule.onNodeWithText("Running warm — tier 2").assertIsDisplayed()
     }
 
@@ -782,18 +683,8 @@ class RowsTest {
         assertColumnsDoNotCollide("02:14:07", "145.230", minGapDp = 10)
     }
 
-    @Test
-    fun `R_152_a rejected row keeps a real enforced gap between its time and freq columns at font scale 2`() {
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
-                OrtTheme {
-                    RejectedRow(timeLabel = "02:14:07", frequencyLabel = "145.230", reason = "squelch tail")
-                }
-            }
-        }
-
-        assertColumnsDoNotCollide("02:14:07", "145.230", minGapDp = 10)
-    }
+    // `R_152_a rejected row...` moved to `RejectedRowTest.kt` (see the note above this file's own
+    // `R_205_log_row and rejected_row...` test).
 
     @Test
     fun `R_152_a notification card's expanded key-value row keeps a real enforced gap at font scale 2`() {
