@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-08 (ui-conformance WP10: R-540, Session coverage chart hatches a real gap under real overs)
 
-### (pending) — ui-conformance WP10 · R-540: a real recorded gap now hatches its own hour even when the hour also had real overs
+### eee36cf — ui-conformance WP10 · R-540: a real recorded gap now hatches its own hour even when the hour also had real overs
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt` (`sessionCoverageBuckets`);
 test beside it, `app/src/test/kotlin/org/ort/app/ui/digest/DigestPollingTest.kt`.
