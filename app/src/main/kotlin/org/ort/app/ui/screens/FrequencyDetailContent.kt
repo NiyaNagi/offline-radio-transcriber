@@ -26,6 +26,9 @@ import org.ort.core.SystemClock
  * sub-screen" state for `Frequency-Change`, reached from the detail screen's "Busier than usual"
  * action when [FrequencyDetailViewState.busierThanUsual] holds.
  */
+@Suppress("LongParameterList") // every parameter is an independent, optional field concern (Controls.kt's
+// `TextField` sets this project's own precedent) — R-432 pushed this composable's own count from 8 to 9;
+// bundling would only relocate the same nine independent facts, not reduce them.
 @Composable
 public fun FrequencyDetailContent(
     context: Context,
