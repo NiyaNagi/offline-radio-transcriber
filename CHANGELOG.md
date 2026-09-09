@@ -11979,6 +11979,137 @@ with a comment explaining why, right where the original single dispatch was.
 - This is the only assertion touched in `ReaderActivityDestinationSmokeTest.kt` — everything else in
   that file remains WP3's, per the coordinator's own scoping of this cross-owner edit.
 
+### (pending) — ui-conformance WP5 · LogContent.initialSheetOpen (WP12 screenshot-tour seam)
+
+**Scope:** `ui/screens/LogContent.kt`, `ui/screens/LogContentBackHandlerTest.kt` — the exact gap
+`NavSeed.kt` (WP3's file) named in its own doc comment: "neither this sheet nor `Search`'s own
+accepted an initial-open parameter today... reported here rather than worked around."
+
+**Requirements/ACs:** none new — a seam for the screenshot tour (WP12), not a register row.
+
+**Constitution Check.** Principle II (Test-Backed Change): `R_TOUR_log_sheet_open` is a genuine
+regression guard — reverted the seeding, confirmed the test fails (`ComposeTimeoutException`
+waiting for "Filter the log"), restored it, confirmed it passes — the same discipline every seam
+this package has shipped carries.
+
+**What changed:**
+- `LogContent(..., initialSheetOpen: Boolean = false)` — new, defaulted param; every existing caller
+  compiles unchanged (`OrtNavHost.kt` passes every argument by name). Seeds `sheetOpen`'s initial
+  `rememberSaveable` value from `initialSheetOpen`, the same pattern `initialFilter` already
+  established for `selection`/`quickFilter` — seeding only the *initial* value, not forcing it open
+  on every recomposition, is what still lets a person (or the R-333 `BackHandler`, unchanged) close
+  it afterwards.
+- New test `R_TOUR_log_sheet_open` in `LogContentBackHandlerTest.kt` (that file's own scope grew to
+  cover both R-333 and this seam — its class doc comment updated to say so): seeds the sheet open,
+  asserts it renders without a tap on "Filter", then confirms the existing R-333 `BackHandler` still
+  claims back for a seeded-open sheet exactly as it does a tapped-open one.
+
+**Verified:**
+- `git merge main` — fast-forwarded cleanly to `a0afc9e` (`HEAD` was already an ancestor).
+- **Reproduced first**: reverted the `sheetOpen` seeding, ran `R_TOUR_log_sheet_open` — failed with
+  `ComposeTimeoutException` (5000 ms) waiting for "Filter the log" to render. Restored the fix;
+  re-ran; passed.
+- Scoped gate (standing load policy):
+  - `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.LogViewDataTest" --tests
+    "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.data.ThreadViewDataTest" --tests
+    "org.ort.app.ui.screens.ThreadDetailScreenTest" --tests "org.ort.app.ui.screens.LogScreenTest"
+    --tests "org.ort.app.ui.screens.LogContentBackHandlerTest" --tests
+    "org.ort.app.ui.screens.LogAndThreadContentActivityTest"` — BUILD SUCCESSFUL, every test
+    `PASSED`.
+  - `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean.
+  - `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+  - `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+  - `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+  - `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 191 covered ->
+    results\coverage-matrix.md` (unchanged — no new requirement ids touched).
+  - `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (191
+    covered of 419)`.
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- WP3 threads this through `NavSeed.logSheetOpen`; WP12 adds the corresponding tour step — neither
+  is this package's file.
+
+### (pending) — ui-conformance WP5 · gap-cause prose corrected (R-106); R-424 investigated and blocked on WP2
+
+**Scope:** `ui/data/LogViewData.kt` and its tests (`LogViewDataTest`, `LogPollingTest`) — R-106.
+R-424 got no code change; see "What was investigated" below for why.
+
+**Requirements/ACs:** R-106, R-424 (register.md).
+
+**Constitution Check.** Principle I (Uncertainty Is Content): every gap-cause phrase in
+`gapCauseProse` is now read verbatim from a real board, not paraphrased or guessed — confirmed by
+grepping every `.dc.html` artboard for each of the nine real `CaptureGapCause` values before
+changing anything. Principle: never duplicate a shared component's rendering logic in a package
+that doesn't own it — R-424's real blocker (see below) is exactly that boundary, reported rather
+than worked around with a look-alike copy of `AttributionShape`'s Canvas code.
+
+**R-106 — fixed.** Audited all nine `CaptureGapCause` values against the real design canvas before
+touching anything: `Fail-Killed.dc.html`/`Fail-Interrupted.dc.html` both write "app stopped by the
+OS" for `OS_STOPPED` — `gapCauseProse` read the shorter, non-matching "app stopped". Fixed to the
+board's own wording. `CALL` ("incoming call"), `INPUT_LOST` ("input lost") — confirmed already
+correct against `Fail-Call.dc.html`/`Log.dc.html`/`Rows.dc.html` and `Fail-Disconnect.dc.html`
+respectively, unchanged. The register's own repro concern — "WP4 is checking whether the fixture
+seeds `CaptureGapCause.CALL`" — is **not a code bug**: `OvernightScenario.kt`'s `gap-call` scenario
+already writes a real `CaptureGapCause.CALL` gap (confirmed by `ScenariosTest`'s own existing
+`F15_gap-call's second gap carries cause CALL`, unaffected by this change, still `PASSED`), and my
+own `gapCauseProse` already read `CALL` correctly before this round. The most likely explanation for
+"gap-call still reads 'interruption'" in the register's own screenshot: `gap-call` writes *two* real
+gaps — the shared `INTERRUPTION` one every overnight-family scenario carries, chronologically first,
+plus the `CALL`-only one further down the list — and the screenshot most likely captured the first
+without scrolling to the second. New `LogPollingTest` case seeds both at once (mirroring the real
+fixture's own shape) and proves both render correctly and distinctly in the same poll.
+
+**R-424 — investigated, blocked on WP2, no code change here.** The register: each `Thread-Detail`
+inferred line shows its score twice — a chip beside the marker (from `AttributionRow`'s own
+unconditional `ScoreChip` on INFERRED) and again inline in the sentence text ("· 0.85", from
+`ThreadListMapper.howAttributedLines`' own `confidenceSuffix`, already correct and unchanged since
+the board wants it kept — `Thread-Detail.dc.html`'s own three "how attributed" rows read verbatim: a
+bare shape (filled/hollow ring, no callsign, no chip) beside a full sentence, confidence appearing
+only in that sentence). `AttributionRow` (`ui/components/Rows.kt`... — no, `AttributionMarker.kt`,
+WP2's package) has no parameter to suppress its own `ScoreChip` independent of `callsign` (already
+`null` here, from R-162); `AttributionMarker`'s `showConfidence = false` shim is not a substitute —
+its `legacyMarkerDescription` still appends a confidence figure to CONFIRMED lines regardless of the
+flag, exactly R-162's original bug, which would reopen here (this card mixes CONFIRMED and INFERRED
+lines). The one honest shape-only alternative — a local composable re-implementing
+`AttributionShape`'s own (`private`, unexported) Canvas drawing — would be a look-alike duplicate of
+WP2's own component, not a genuinely different one (unlike `ThreadDetailColumnHeader`, justified
+earlier by a real structural difference — column count — not a copy of another component's marker
+drawing). Needs a WP2 change: `AttributionRow(..., showScore: Boolean = true)`, `false` suppressing
+only the `ScoreChip` render on the INFERRED branch, independent of `callsign`.
+
+**Verified:**
+- Read R-424 and R-106 in `results/ui-audit/register.md` in full, `Thread-Detail.dc.html`'s exact
+  markup for the "how these were attributed" rows, and grepped every `.dc.html` artboard for each of
+  the nine real `CaptureGapCause` gap-row wordings, before starting.
+- `git merge main` — one real merge (`HEAD` had diverged; `results/ui-audit/register.md` auto-merged
+  cleanly, no conflicts) to `6c44d51`.
+- Scoped gate (standing load policy):
+  - `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.LogViewDataTest" --tests
+    "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.data.ThreadViewDataTest" --tests
+    "org.ort.app.ui.screens.ThreadDetailScreenTest" --tests "org.ort.app.ui.screens.LogScreenTest"
+    --tests "org.ort.app.ui.screens.LogContentBackHandlerTest" --tests
+    "org.ort.app.ui.screens.LogAndThreadContentActivityTest" --tests
+    "org.ort.app.debug.ScenariosTest"` — BUILD SUCCESSFUL, every test `PASSED` (`ScenariosTest`'s own
+    `F15_gap-call's second gap carries cause CALL` included, confirming the fixture side).
+  - `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean.
+  - `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+  - `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+  - `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`, `spec-check: OK`.
+  - `.\gradlew.bat coverageMatrix` — `coverageMatrix: 419 requirements, 191 covered ->
+    results\coverage-matrix.md` (unchanged).
+  - `.\gradlew.bat coverageMatrixCheck` (separate invocation) — `coverageMatrixCheck: up to date (191
+    covered of 419)`.
+- New tests, all `PASSED`: `LogViewDataTest` (+1: `R_106_gap_causes` — all nine real
+  `CaptureGapCause` values, each asserted against the board's own verbatim prose) · `LogPollingTest`
+  (+1: `R_106_gap_causes` — the real `gap-call` scenario's own two-gap shape, seeded and polled
+  through the real DB, both rows correct and distinct in one result).
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- **R-424** needs `AttributionRow(..., showScore: Boolean = true)` (or equivalent) from WP2 before
+  this package can wire the "how these were attributed" card to render shape-only, no-chip lines.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)

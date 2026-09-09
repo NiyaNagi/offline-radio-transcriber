@@ -138,6 +138,45 @@ class LogPollingTest {
     }
 
     @Test
+    fun `R_106_gap_causes the real gap-call scenario shape (two distinct-cause gaps) renders both correctly`(): Unit =
+        runTest {
+            // Mirrors `OvernightScenario.kt`'s own `gap-call` shape exactly: the shared, always-
+            // present INTERRUPTION gap every overnight-family scenario writes, plus the second,
+            // `extraGap`-only CALL gap `gap-call` alone adds — register R-106's own repro was a
+            // reviewer reading only the first (INTERRUPTION) row on screen and not scrolling to the
+            // second (CALL) row further down the chronological list; this proves both are real,
+            // distinct, and correctly worded at once, not just one gap in isolation.
+            db.sessionDao().insert(session("S1"))
+            db.captureGapDao().insert(
+                CaptureGapEntity(
+                    id = "G1",
+                    sessionId = "S1",
+                    startedAt = 0L,
+                    endedAt = 38_000L,
+                    cause = CaptureGapCause.INTERRUPTION,
+                    recoveredAutomatically = true,
+                ),
+            )
+            db.captureGapDao().insert(
+                CaptureGapEntity(
+                    id = "G2",
+                    sessionId = "S1",
+                    startedAt = 60_000L,
+                    endedAt = 60_000L + 52_000L,
+                    cause = CaptureGapCause.CALL,
+                    recoveredAutomatically = true,
+                ),
+            )
+
+            val state = LogPolling.screenState(context, "S1", LogFilterSelection(), LogQuickFilterId.All)
+
+            val gaps = state.items.filterIsInstance<LogListItem.Gap>()
+            assertEquals(2, gaps.size)
+            assertEquals("not listening · 38 s · interruption", gaps[0].label)
+            assertEquals("not listening · 52 s · incoming call", gaps[1].label)
+        }
+
+    @Test
     fun `R_040 a corrected transmission's CORRECTED flag is real, from the correction dao`(): Unit = runTest {
         db.sessionDao().insert(session("S1"))
         db.transmissionDao().insert(transmission("TX1", sessionId = "S1", samplePosition = 1L, stationId = "W7NPC"))
