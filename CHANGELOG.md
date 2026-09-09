@@ -14160,6 +14160,76 @@ the `R_276` frequency-chip matcher from `hasText("145.230")` to `hasContentDescr
 - If T02/DG03/FQ02 are ever changed to reuse `LogRow` directly, that embedding would need its own
   `showScore` decision at that time — not applicable today.
 
+### (pending) — ui-conformance WP5 · T01's leading start-time column (R-511); R-510 root-caused to WP2's `FilterChip`
+
+**Scope:** `ui/screens/ThreadScreen.kt` and its test — R-511. R-510 got no code change; WP5's own
+`ui/screens/LogFilterSheet.kt` was inspected and confirmed already correct (see below).
+
+**Requirements/ACs:** R-511 (register.md). R-510 investigated, not owned by this package.
+
+**Constitution Check.** Design canvas as source of truth: `Threads.dc.html`'s own `.t` element (52dp,
+mono grey, before the kind/title/meta block) is what R-511 restores — read before writing any code.
+Reuse over duplication: the stacking rule this needs already exists twice (`LogRow`/R-373,
+`ColumnHeaderRow`/R-420) — applied the identical "weighted column moves to its own line, fixed
+column(s) bundle beneath it" rule and the identical `BoxWithConstraints`/`rememberTimeColumnWidth`
+mechanics, rather than inventing a third, competing breakpoint. Test-Backed Change: the R-510 half
+was root-caused by reading the real call site (`LogFilterSheet.kt`) before reporting anything back.
+
+**R-511 — fixed.** `ThreadCardViewState.timeLabel` already existed and was already correct (the
+mapper uses it to sort the list) — `ThreadCard` (`ThreadScreen.kt`) simply never rendered it. Added
+a leading time column (`ThreadCardTimeText`, `OrtType.timeFreq`/`OrtColors.textTime`, the same
+`rememberTimeColumnWidth()` floor `LogRow`/`ColumnHeaderRow` already use) beside the existing kind/
+title/meta block (factored out, unchanged, into `ThreadCardBody`); a `BoxWithConstraints` picks that
+one-line layout when the row has room for time + the title block's own callsign floor
+(`rememberCallsignColumnWidth()`, since `titleText` can carry an unbreakable callsign token) + a
+chevron slot, or stacks the title block onto its own full-width line with time (and the chevron)
+beneath it when it does not — mirroring `LogRow`/`ColumnHeaderRow`'s own R-373/R-420 rule exactly,
+not a new one. `ThreadCard` changed from `private` to `internal` (doc comment explains why) so its
+own test can constrain and measure it directly, the way `LogRow` (already `public`) lets
+`LogRowResponsiveTest` do. New tests: `R_511 a grouped card renders the thread's first-over time in
+its own leading column` (default scale) and `R_511 a row too narrow for the title floor stacks the
+title block above time and chevron, at 2_0` (mirrors `LogRowResponsiveTest`'s own wide/narrow-Box,
+taller-row-implies-stacked approach).
+
+**R-510 — root-caused, not fixed here.** The round's brief asked WP5 to check whether L02's
+FREQUENCY chips are a WP5-owned composable rather than WP2's `FilterChip`, and swap if so. Read
+`ui/screens/LogFilterSheet.kt` directly: its frequency row (line 46-50) already calls WP2's real
+`FilterChip`/`FilterChipRow` — there is no WP5-owned duplicate, and nothing to swap. The 24dp/37.7dp
+fill height the register measured on L02 specifically (`FilterChip`'s own `.heightIn(min = 44.dp)`
+not reaching this exact row, despite WP2's earlier `586ec9b` fix reaching every other chip row) is
+therefore a defect in `FilterChip`/`FilterChipRow` themselves (`ui/components/Controls.kt`, WP2-
+owned) or in how they interact with the horizontally-scrolling row specifically — not in anything
+WP5 owns. Reported back per the round's own "whoever finds the cause first tells me."
+
+**Verified:**
+- Read R-511 and R-510 in `results/ui-audit/register.md` in full, `Threads.dc.html`'s `.t`/`.kind`/
+  `.ttl`/`.meta` markup, and `ui/screens/LogFilterSheet.kt`'s real frequency-row call site, before
+  writing any code.
+- `git merge main` — fast-forward to `a5738be` (Reviewer B round 3), no conflicts.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.ThreadScreenTest" --tests
+  "org.ort.app.ui.screens.LogScreenTest" --tests "org.ort.app.ui.screens.LogFilterSheetTest" --tests
+  "org.ort.app.ui.screens.ThreadDetailScreenTest" --tests "org.ort.app.ui.components.ControlsTest"
+  --tests "org.ort.app.ui.components.RowsTest" --tests "org.ort.app.ui.components.LogRowResponsiveTest"
+  --tests "org.ort.app.ui.data.ThreadViewDataTest"` — BUILD SUCCESSFUL, every test `PASSED`.
+- Found forward, unrelated to R-511/R-510: `ThreadScreenTest`'s own `R_163` test and all three
+  `LogFilterSheetTest` tests were newly broken by the same WP2 R-380/R-381 `clearAndSetSemantics`
+  change the previous WP5 round already fixed forward in `LogScreenTest.kt` — `TextAction` (the
+  ungrouped screen's "What tier N can and cannot do" link and L02's "Clear all"), `FilterChip`
+  (L02's frequency chip label) and `PrimaryButton` (L02's "Show N overs") all needed the identical
+  `useUnmergedTree = true` fix, applied here the same way.
+- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean
+  (one `MaxLineLength` detekt finding on the new stacking test's own name, fixed by shortening it);
+  `git status --short` confirmed only the 3 intended files touched.
+- `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` / `coverageMatrixCheck` — `419 requirements, 191 covered`
+  (unchanged), up to date.
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- R-510's actual fix is WP2's (`FilterChip`/`FilterChipRow`, `ui/components/Controls.kt`).
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)
