@@ -74,8 +74,21 @@ public fun CaptureStatusScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(OrtSpacing.lg),
         ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
+            // R-412 (halt): a plain unweighted Column here let the title claim its own full
+            // intrinsic width before TextAction was ever measured — at font scale 2.0 that left
+            // "Stop" a one-character-remaining sliver, wrapping one letter per line down the right
+            // edge and overlapping the title, with or without a banner above. `weight(1f)` gives the
+            // title column only the space left after the action's own intrinsic width is honoured,
+            // so the title wraps onto a second line instead — the same shape the coordinator's own
+            // instruction names, and the same class of fix `EarlierNightMetaLine`/`LogRowMarkerLine`
+            // already established for "the last item has nowhere to go" (R-244/R-260) elsewhere in
+            // this package's row family.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = OrtSpacing.sm)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(9.dp),
@@ -175,12 +188,17 @@ private fun KeyValueRowWithDot(
         key = key,
         value = facts.value,
         subLine = facts.subLine,
+        // R-382 (spec): the 44dp tap-target floor used to apply only when the row was itself
+        // clickable, so a row with a short, single-line value and no status marker/sub-line
+        // (Input, on the device tree) could render under it while every other row cleared the
+        // floor only by having a taller sub-line/trailing marker to fall back on. Every row now
+        // gets the same floor unconditionally, tappable or not — the clickable modifier chain
+        // (Role.Button included) still applies only when [onClick] is real.
         modifier = modifier
+            .heightIn(min = 44.dp)
             .then(
                 if (onClick != null) {
-                    Modifier
-                        .heightIn(min = 44.dp)
-                        .clickable(role = Role.Button, onClickLabel = onClickDescription, onClick = onClick)
+                    Modifier.clickable(role = Role.Button, onClickLabel = onClickDescription, onClick = onClick)
                 } else {
                     Modifier
                 },

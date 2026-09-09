@@ -4,6 +4,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.ort.core.Clock
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
+import org.ort.data.entity.WorkAttemptEntity
+import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
 
@@ -109,9 +111,29 @@ public class WorkQueue(
      * transmission follows it to `FAILED`, unless a sibling pass for the same transmission
      * already committed a different final state first (see [completePass]'s note on concurrent
      * passes) — in which case that state stands.
+     *
+     * Register R-426 (`Fail-Pass.dc.html`): before the terminal/retry decision, this also writes a
+     * durable [org.ort.data.entity.WorkAttemptEntity] row for the attempt that just failed —
+     * [error] verbatim as [org.ort.data.entity.WorkAttemptEntity.reason], `item.startedAt` (set at
+     * lease time, so it is this specific attempt's own start, not an earlier one) as
+     * `startedAtMillis`, now as `finishedAtMillis`. This is the **only** place such a row is
+     * written — every caller, [runLeased]'s own timeout path (`error = "timeout"`, recorded as
+     * [org.ort.data.entity.WorkAttemptOutcome.TIMEOUT]) included, funnels through here, so a
+     * direct test call to [failPass] gets exactly the same audit row a real leased run would.
      */
     public suspend fun failPass(item: WorkQueueItemEntity, error: String): Unit = db.inWriteTransaction {
         val attempts = item.attemptCount + 1
+        val finishedAt = clock.wallMillis()
+        queueDao.insert(
+            WorkAttemptEntity(
+                itemId = item.id,
+                attemptNo = attempts,
+                startedAtMillis = item.startedAt ?: finishedAt,
+                finishedAtMillis = finishedAt,
+                outcome = if (error == "timeout") WorkAttemptOutcome.TIMEOUT else WorkAttemptOutcome.FAILED,
+                reason = error,
+            ),
+        )
         if (attempts >= maxAttempts) {
             queueDao.markFailed(item.id, attempts, error)
             if (transmissionDao.canTransition(item.transmissionId, TransmissionState.FAILED)) {

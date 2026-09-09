@@ -1,6 +1,8 @@
 package org.ort.app.debug
 
 import android.content.Context
+import org.ort.app.ui.data.ChecksumState
+import org.ort.app.ui.data.ModelCatalog
 import org.ort.capture.android.codec.DeflatePredictiveCodec
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.capture.android.heartbeat.HeartbeatRecord
@@ -8,6 +10,7 @@ import org.ort.core.AttributionState
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.entity.CallsignCandidateEntity
+import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.LatticeSource
 import org.ort.data.entity.PhoneticLatticeEntity
 import org.ort.data.entity.SessionEntity
@@ -176,6 +179,91 @@ internal object ScenarioFixtures {
         databaseHit = databaseHit,
         selected = selected,
     )
+
+    /**
+     * R-421 (schema v5, register): the ordered [LatticeSlotEntity] rows for one **text-anchored**
+     * candidate lattice (its own [lattice] row must be seeded with `source =
+     * `[org.ort.data.entity.LatticeSource.TEXT_DERIVED]` — an acoustic lattice's slots carry no char
+     * span at all, per [LatticeSlotEntity]'s own doc comment, so pairing these with an ACOUSTIC
+     * lattice would itself be a fixture inconsistency). One row per (unit, spoken word) in
+     * [unitsAndWords], in order — [org.ort.app.ui.screens.TransmissionDetailScreen]'s D01/D03
+     * transcript highlight ([org.ort.app.ui.data.CorrectionPolling.winningCharSpan]) had nothing to
+     * exercise before this: every scenario's transmissions spelled their callsign phonetically
+     * ("kilo echo seven quebec romeo sierra"), which the screen's own literal-substring fallback can
+     * never match, and no scenario wrote a single [LatticeSlotEntity] row.
+     *
+     * Each [charStart]/[charEnd][LatticeSlotEntity] pair is *found*, never hand-computed: this
+     * locates [word] inside [transcriptText] starting just past the previous slot's own end, so a
+     * transcript copy edited later can never silently desync from the char spans seeded for it — the
+     * `check` below fails the fixture load loudly (constitution I) rather than seeding a wrong span.
+     */
+    fun latticeSlots(
+        transmissionId: String,
+        candidateId: String,
+        transcriptText: String,
+        unitsAndWords: List<Pair<String, String>>,
+    ): List<LatticeSlotEntity> {
+        var searchFrom = 0
+        return unitsAndWords.mapIndexed { index, (unit, word) ->
+            val start = transcriptText.indexOf(word, startIndex = searchFrom, ignoreCase = true)
+            check(start >= 0) {
+                "R-421 fixture bug: '$word' not found in \"$transcriptText\" from index $searchFrom"
+            }
+            val end = start + word.length
+            searchFrom = end
+            LatticeSlotEntity(
+                id = "$candidateId-slot$index",
+                transmissionId = transmissionId,
+                candidateId = candidateId,
+                index = index,
+                unit = unit,
+                score = (0.98 - index * 0.02).coerceAtLeast(0.5),
+                keptAlternate = null,
+                charStart = start,
+                charEnd = end,
+            )
+        }
+    }
+
+    /**
+     * R-440 (register, WP12's own tour finding): every [ModelCatalog] entry "installed" — the real
+     * signal `Settings-Assets.dc.html`'s rows read
+     * ([org.ort.app.ui.data.ModelsController.rowFor], `:app`'s own file, not read here) is a
+     * destination file plus a `.sha256` marker on disk, never a database row (no scenario wrote
+     * either before this — a clean install genuinely had nothing, matching the tour's own finding).
+     * A [ChecksumState.Known] entry's marker carries that entry's own real, published checksum text
+     * verbatim (`rowFor`'s own `marker.readText() == spec.checksum.value` check — a string compare
+     * against [ModelCatalog]'s own constant, not a real digest of [destination]'s placeholder bytes,
+     * so a plain constant marker string is honestly what "installed" already means here); an
+     * [ChecksumState.UnknownSideloadOnly] entry (`tiny.en-tokens.txt`) only needs both files to
+     * exist for its own `INSTALLED_UNVERIFIED` status.
+     */
+    fun installEveryModelFixture(context: Context) {
+        val filesDir = context.filesDir
+        ModelCatalog.entries.forEach { entry ->
+            val destination = entry.destination(filesDir)
+            destination.parentFile?.mkdirs()
+            destination.writeBytes(ByteArray(64))
+            val markerText = when (val state = entry.checksumState) {
+                is ChecksumState.Known -> state.checksum.value
+                is ChecksumState.UnknownSideloadOnly -> "sideloaded"
+            }
+            File(destination.parentFile, destination.name + ".sha256").writeText(markerText)
+        }
+    }
+
+    /** The other half of [installEveryModelFixture] — `model-missing`'s own contract ("keeps
+     * nothing installed") depends on this running even when an earlier scenario in the same
+     * process installed every model, since [installEveryModelFixture] writes real files on disk,
+     * outside `:data`'s own per-scenario row-clearing (`Scenarios.clearPriorScenarioData`). */
+    fun uninstallEveryModelFixture(context: Context) {
+        val filesDir = context.filesDir
+        ModelCatalog.entries.forEach { entry ->
+            val destination = entry.destination(filesDir)
+            File(destination.parentFile, destination.name + ".sha256").delete()
+            destination.delete()
+        }
+    }
 
     /**
      * Writes a small, genuinely decodable "retained audio" fixture at the exact path

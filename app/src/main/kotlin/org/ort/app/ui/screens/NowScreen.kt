@@ -157,6 +157,17 @@ private fun IdleContent(state: NowViewState.Idle, onStartCapture: () -> Unit) {
         )
     }
 
+    // R-416: `Now-Idle.dc.html`'s own divider ahead of EARLIER NIGHTS — unconditional, the same
+    // hairline `Drawer.kt`'s own Divider draws (OrtColors.lineDefault), independent of whether the
+    // meta row above it has anything to show.
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = OrtSpacing.lg)
+            .height(1.dp)
+            .background(OrtColors.lineDefault)
+            .testTag("now-idle-earlier-nights-divider"),
+    )
     SectionHeader(label = "Earlier nights", modifier = Modifier.padding(top = OrtSpacing.lg))
     if (state.earlierNights.isEmpty()) {
         EmptyState(message = "No earlier nights yet.")
@@ -264,10 +275,15 @@ private fun ActiveContent(
             modifier = Modifier.padding(top = OrtSpacing.lg).testTag("now-first-session-chart"),
         )
     } else if (state.activityPattern.isNotEmpty()) {
+        // R-415: `Main.dc.html`'s populated hour chart has no title at all (a regression of
+        // R-021/R-075, which already established this) — passing one here put "ACTIVITY BY HOUR
+        // (UTC)" back above the chart. `title = null` is `ActivityPatternChart`'s own honest
+        // no-title default; not passed at all, so a future default change is never silently undone
+        // here again.
         ActivityPatternChart(
             pattern = state.activityPattern,
             modifier = Modifier.padding(top = OrtSpacing.lg).testTag("now-activity-chart"),
-            title = "ACTIVITY BY HOUR (UTC)",
+            title = null,
             axisStart = state.axisStartLabel,
             axisEnd = state.axisEndLabel,
             notListeningLabel = state.notListeningLabel,
@@ -294,6 +310,20 @@ private fun ActiveContent(
         state.worthKnowing.forEach { item -> WorthKnowingRow(item) }
     }
 
+    StationsHeardSection(state = state, onOpenStation = onOpenStation, onOpenStations = onOpenStations)
+}
+
+/** `Main.dc.html`/`Now-First.dc.html`'s "Stations heard" section — split out of [ActiveContent]
+ * itself (detekt's `LongMethod`, the same split this package's row family already reaches for
+ * rather than suppressing). R-417 (`Now-First.dc.html`): the empty-state second line "Listening
+ * since 23:32." — the session's own real start time (`state.axisStartLabel`, the same fact the
+ * hour chart's own left axis label uses), never fabricated when it is genuinely unknown. */
+@Composable
+private fun StationsHeardSection(
+    state: NowViewState.Active,
+    onOpenStation: (String) -> Unit,
+    onOpenStations: () -> Unit,
+) {
     SectionHeader(
         label = "Stations heard",
         modifier = Modifier.padding(top = OrtSpacing.lg),
@@ -306,6 +336,14 @@ private fun ActiveContent(
             style = OrtType.bodyProse,
             color = OrtColors.textMuted,
         )
+        state.axisStartLabel?.let { started ->
+            Text(
+                text = "Listening since $started.",
+                style = OrtType.subLine,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
     } else {
         state.stations.rows.forEach { row -> StationRowContent(row, onClick = { onOpenStation(row.stationId) }) }
         state.stations.unidentifiedLabel?.let { label ->

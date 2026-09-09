@@ -21,6 +21,7 @@ import org.ort.app.ui.failures.ReconcileFile
 import org.ort.app.ui.failures.ReconcileRecord
 import org.ort.app.ui.failures.ReconcileViewState
 import org.ort.app.ui.failures.UsbViewState
+import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.AudioDeviceDescriptor
@@ -163,8 +164,15 @@ public object Scenarios {
         return when (name) {
             "empty" -> empty(db)
             "first-session" -> firstSession(context, db)
-            "overnight" -> OvernightScenario.overnight(context, db)
-            "overnight-live" -> OvernightScenario.overnightLive(context, db)
+            // R-440 (register, WP12's own tour finding): `seedConfiguredDeviceState` — a chosen and
+            // verified input, a radio choice, every model asset "installed", and a storage budget
+            // — so `overnight`/`overnight-live`/`stations-14-nights`' own Settings boards
+            // (CF01/CF02/CF03/CF06) render as configured on a clean install, not the unconfigured
+            // defaults the tour's own receiver-parity check found. `gap-call` deliberately excluded
+            // — the register names only these three.
+            "overnight" -> OvernightScenario.overnight(context, db).also { seedConfiguredDeviceState(context) }
+            "overnight-live" ->
+                OvernightScenario.overnightLive(context, db).also { seedConfiguredDeviceState(context) }
             "gap-call" -> OvernightScenario.gapCall(context, db)
             "unclean-end" -> uncleanEnd(context, db)
             "os-stopped" -> osStopped(context, db)
@@ -173,7 +181,8 @@ public object Scenarios {
             "corrected" -> corrected(db)
             "no-audio" -> noAudio(db)
             "revisions" -> revisions(context, db)
-            "stations-14-nights" -> StationsFixtures.stations14Nights(db)
+            "stations-14-nights" ->
+                StationsFixtures.stations14Nights(db).also { seedConfiguredDeviceState(context) }
             "frequency-change" -> FrequencyChangeFixtures.frequencyChange(db)
             "field-tier1" -> fieldTier1(context, db)
             "search-corpus" -> searchCorpus(db)
@@ -295,6 +304,17 @@ public object Scenarios {
             )
             db.execRaw(
                 "DELETE FROM phonetic_lattice WHERE transmissionId IN " +
+                    "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
+                likeScenario,
+            )
+            // R-421 (schema v5): `lattice_slot` was never cleared here — a scenario whose
+            // candidate/slot ids are deterministic (not a fresh ULID per load, e.g. `overnight`'s
+            // own `$sessionId-tx03-c1-slot0`) collided with its own prior load's rows on a second
+            // reload (`UNIQUE constraint failed: lattice_slot.id`), caught by this file's own
+            // `loading every scenario back to back five times never hits a database-locked error`
+            // test before this fix.
+            db.execRaw(
+                "DELETE FROM lattice_slot WHERE transmissionId IN " +
                     "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
                 likeScenario,
             )
@@ -879,6 +899,10 @@ public object Scenarios {
         )
         ScenarioFixtures.markCapturing(context, sessionId)
         AsrAvailability.unavailable("no ASR model installed — see Settings › Models")
+        // R-440 (register): "model-missing keeps nothing installed" — real files on disk, outside
+        // this file's own DB-row clearing, so a prior overnight/overnight-live/stations-14-nights
+        // load's own seeded models must be removed here explicitly.
+        ScenarioFixtures.uninstallEveryModelFixture(context)
         val startedAt = SystemClock.wallMillis() - 60_000L
         db.transmissionDao().insert(
             ScenarioFixtures.transmission(
@@ -1041,7 +1065,34 @@ public object Scenarios {
             ),
             peakHistoryDbfs = List(60) { -40f + (it % 5) },
         )
-        return LoadResult(0, 1, sessionId)
+        // R-419: `ReaderPolling.weakestOverLabel` reads this session's own transmissions' real
+        // `signalStrength` (the weakest one) — this scenario used to seed none at all, so
+        // `Level-Meter.dc.html`'s own "Weakest over resolved tonight" row was honestly absent, not
+        // exercised. One quiet over, genuinely weak, gives the row a real minimum to report.
+        val txId = "$sessionId-tx1"
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = SystemClock.wallMillis() - 5 * 60_000L,
+                samplePosition = 1L,
+                frequencyHz = 146_960_000L,
+                signalStrength = 2.0,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "W7NPC",
+                attributionConfidence = 0.7,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txId-t1",
+                transmissionId = txId,
+                text = "this is whiskey seven november papa charlie, weak signal",
+                isCurrent = true,
+                createdAt = SystemClock.wallMillis() - 5 * 60_000L + 500L,
+            ),
+        )
+        return LoadResult(1, 1, sessionId)
     }
 
     /**
@@ -1164,6 +1215,25 @@ public object Scenarios {
      */
     private fun setupLevel(context: Context): LoadResult {
         verifiedInputStore(context)
+        // R-411 (register, WP12's own tour finding): S07's meter (`Setup-Level.dc.html`) reads the
+        // same live `LevelStatus` holder `Level-Meter.dc.html`/`level-low`/`level-clip` already do
+        // — this scenario never published one, so a clean install (no prior real capture in this
+        // process) left the meter genuinely empty (no bars, "noise —", Continue disabled). This is
+        // independent of `SetupStore.levelInBand` (left unset above, on purpose, so `stepFor` still
+        // resumes at S07 rather than skipping past it) — a real reading the operator has not yet
+        // confirmed is exactly the state this step exists to show.
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = List(60) { -20f + (it % 5) },
+        )
         return LoadResult(0, 0, null)
     }
 
@@ -1200,6 +1270,32 @@ public object Scenarios {
      * selection, welcome already seen, notifications skipped (diagnostic-only — constitution: R-002
      * never gates capture on it). Neither level, overnight, radio nor `setupComplete` is touched
      * here; each caller decides those for itself. */
+    /**
+     * R-440 (register, WP12's own tour finding): `ScreenshotTourActivity` and the receiver both run
+     * only [Scenarios.load] — the manual review passes that showed a configured `Settings*` board
+     * on `overnight`/`overnight-live`/`stations-14-nights` were seeing state an *earlier Setup run*
+     * had left on those AVDs, not anything this fixture itself wrote. On a clean install (the
+     * tour's own environment) the same scenarios rendered "No input selected"/"No radio
+     * configured"/"0.0 GB · no budget set"/"0 of 4 assets" — this is the real fix: every fact
+     * CF01/CF02/CF03/CF06 read, seeded here exactly once, by the same real stores/files those
+     * screens themselves read (never a shortcut UI-only flag). Radio stays [RadioChoice.NONE] +
+     * a manual frequency (145.230 MHz) — honest, since FR-RIG's own module is unbuilt (register
+     * R-084) and there is no real radio choice to seed instead.
+     */
+    private fun seedConfiguredDeviceState(context: Context) {
+        val store = verifiedInputStore(context)
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.manualFrequencyHz = 145_230_000L
+        store.setupComplete = true
+        val settingsPrefs = context.applicationContext.getSharedPreferences(
+            SharedPreferencesSettingsStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        SharedPreferencesSettingsStore(settingsPrefs).audioBudgetGb = 60
+        ScenarioFixtures.installEveryModelFixture(context)
+    }
+
     private fun verifiedInputStore(context: Context): SharedPreferencesSetupStore {
         val prefs = context.applicationContext.getSharedPreferences(
             SharedPreferencesSetupStore.PREFS_NAME,

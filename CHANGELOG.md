@@ -165,8 +165,348 @@ touched — the other constitution rules do not bear on this round.
   infrastructure territory (a stale build on the tour's emulator, or the tour's own runtime), not
   `ModelsScreen`/`ModelsViewData`.
 
+## 2026-09-08 (ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410)
+
+### e8b7dbf — ui-conformance WP4 · Reviewer A batch: R-412/414/415/416/417/418/419/421/106/382/440/411/410
+
+**Scope:** `ui/screens` (`NowScreen.kt`, `CaptureStatusScreen.kt`, `LevelMeterScreen.kt`), `ui/data`
+(`NowViewState.kt`, `ReaderPolling.kt`), `app/src/debug` (`Scenarios.kt`, `ScenarioFixtures.kt`,
+`OvernightScenario.kt`, `StationsFixtures.kt`), matching tests, `results/ui-audit/README.md`, one
+on-device screenshot. Merged `main` forward three times as the coordinator's own message grew
+mid-round (final merge base `09b5bc2`, all `--ff-only`); never rebased, never stashed.
+
+**Requirements/ACs:** register R-412 (halt), R-414, R-415, R-416, R-417, R-418 (polish), R-419,
+R-421, R-106 (check, no fix — see below), R-382 (spec), R-440, R-411, R-410.
+
+**What changed:**
+
+*Constitution Check.* Principle I ("never fabricate") governs almost every item here: R-414's fix
+replaces a rounded-to-the-hour axis label with the real minute; R-417/R-416 only render a fact
+that has a real source (`state.axisStartLabel`, `SharedPreferencesSetupStore.selectedInputLabel`);
+R-419's "Clipped samples this session" label is flagged (not silently accepted) as still backed by
+a last-second-window count, the only real signal `:pipeline`'s `LevelStatus` publishes today.
+Principle III ("never delete quietly") is why R-421's fixture change never marks an AMBIGUOUS
+candidate `selected` — `AmbiguousCandidatesFixtureTest`'s own existing invariant stands.
+
+- **R-412 (halt).** `CaptureStatusScreen.kt`'s header `Row` gave the title `Column` no `weight`,
+  so at font scale 2.0 "Stop" was measured into whatever sliver was left after the title's own
+  full-intrinsic-width claim, wrapping one letter per line. `Modifier.weight(1f)` on the title
+  Column (not `Stop`) fixes it — the title wraps, the action keeps its own intrinsic width. Test
+  `R_412` compares `Stop`'s rendered height against a same-text unconstrained reference (Robolectric
+  cannot measure real font metrics reliably — the same technique `NowScreenTest`'s own R-260 test
+  already established). **Verified on-device**, emulator-5556 (`ort_audit_2`), font scale 2.0,
+  `overnight-live` → drawer → Capture:
+  `results/ui-audit/overnight-live/N04-capture-status-r412-after@2x.png` — "Stop" renders as one
+  normal-width word, the title wraps to two lines, no overlap.
+- **R-414.** `NowViewStateMapper.active`'s `hourLabel` always forced `:00` minutes; a short session
+  (e.g. `first-session`) had both axis ends round to the *same* hour, reading as an elapsed-duration
+  clock ("01:00"/"01:00") rather than the real start/end ("23:32"/"07:00", the register's own
+  figures). Now uses the existing `hourMinuteLabel` for both ends; `hourLabel` deleted (dead code).
+- **R-415.** `NowScreen.kt`'s populated-chart call passed `title = "ACTIVITY BY HOUR (UTC)"`
+  explicitly, undoing R-021/R-075's own no-title default. Now passes `title = null`.
+- **R-416.** `ReaderPolling.idleNowViewState` hardcoded `inputLabel = null` with a stale comment
+  ("no process-wide input-device holder... honestly omitted") — `InputStatus` genuinely resets to
+  `None` once idle (it's live session state), but the setup wizard's own durable
+  `SharedPreferencesSetupStore.selectedInputLabel` survives idle/capturing cycles and is the real
+  fact `Now-Idle.dc.html`'s meta row wants. `tierLabel` now reuses the same `MAX_TIER -
+  ShedStatus.currentLevel` formula `ThreadViewData`/`SettingsPolling`/`FailureMapper` already treat
+  as readable outside a live capture. `NowScreen.kt` also gained the unconditional divider ahead of
+  `EARLIER NIGHTS` (`now-idle-earlier-nights-divider`) — previously absent regardless of the meta row.
+- **R-417.** `Now-First.dc.html`'s "Listening since 23:32." second line, rendered under the
+  `emptyMessage` only when `state.axisStartLabel` is real (never fabricated).
+- **R-418 (polish).** `NowViewStateMapper.active`'s summary label built `"$overCount overs ·
+  $stationCount stations"` by hand — now `pluralize(overCount, "over")`/`pluralize(stationCount,
+  "station")`, the same shared plural rule (`ThreadViewData.pluralize`, R-163, same package) R-301
+  already established elsewhere.
+- **R-419.** `LevelMeterScreen.kt` gained the board's own static paragraph beneath the band-state
+  sentence (`level-meter-band-state-body`) and relabelled the clip row "Clipped samples this
+  session" (from "..., last second") to match the board's copy — **flagged, not silently accepted**:
+  the underlying value stays `LevelStatus.State.Measured.clipCountLastSecond`, the only clip signal
+  `:pipeline` publishes; a genuine session-cumulative counter is a `:pipeline` change outside this
+  round's file ownership, left for whoever next owns `LevelStatus`. `level-low`'s own fixture also
+  gained one real quiet transmission (`signalStrength = 2.0`) so "Weakest over resolved tonight"
+  — already coded, never exercised — has a real value; the row was previously absent because the
+  fixture seeded zero transmissions.
+- **R-421.** New `ScenarioFixtures.latticeSlots(...)` (found-not-guessed char spans — locates each
+  phonetic word inside the real transcript text via `indexOf`, `check()`s loudly if a copy edit ever
+  desyncs the two, rather than seeding a silently-wrong span). Applied to `overnight`'s CONFIRMED
+  opener (already `selected = true`) and its corrected INFERRED over (previously had no
+  lattice/candidate rows at all — added, `selected = true`, real KJ7ABC phonetic match already
+  present in its own text), plus `stations-14-nights`' mirrored AMBIGUOUS over's own candidate slots
+  (kept **unselected** — an AMBIGUOUS over has no winner to highlight inline;
+  `AmbiguousCandidatesFixtureTest`'s own `no candidate should be pre-selected on an AMBIGUOUS over`
+  stands unchanged, feeding only D05's `slotDetailsFor`). Every `PhoneticLatticeEntity` these slots
+  belong to is now seeded `source = TEXT_DERIVED`, not the default `ACOUSTIC` (an acoustic lattice's
+  slots carry no char span, per `LatticeSlotEntity`'s own doc comment — pairing one with real spans
+  would itself be a fixture inconsistency). **Load-bearing fixture bug found and fixed in the same
+  pass:** `Scenarios.clearScenarioRowsInOneTransaction` never cleared `lattice_slot` — a scenario
+  with deterministic (non-ULID) candidate/slot ids collided with its own prior load on reload
+  (`UNIQUE constraint failed: lattice_slot.id`), caught by this file's own "loading every scenario
+  back to back five times" test before it was ever committed; a `DELETE FROM lattice_slot WHERE
+  transmissionId IN (...)` clause added alongside every sibling per-transmission table's own clause.
+- **R-106 (check, not a fix).** `ScenariosTest`'s own existing `F15_gap-call's second gap carries
+  cause CALL` test (unchanged, still green) already proves the fixture correctly seeds
+  `CaptureGapCause.CALL` on `gap-call`'s second gap. The "interruption" text the register reported
+  is therefore either the reviewer's screenshot showing the session's *first* gap (INTERRUPTION,
+  inherited unchanged from `overnight`'s own base fixture, at minute 7) rather than the CALL gap
+  (previously at minute 45), or a genuine rendering-side issue — reported here for WP5 to confirm
+  against `LogItemsMapper`/`Rows.kt`, not touched (out of this row's file ownership).
+- **R-382 (spec).** `CaptureStatusScreen.kt`'s `KeyValueRowWithDot` applied its `heightIn(min =
+  44.dp)` floor only when the row was itself clickable (`onClick != null`) — only the Level row
+  ever had one, so Input (and every other non-clickable row) had no floor at all, relying purely on
+  content richness (a sub-line, a trailing marker) to clear 44dp — Input on the device tree had
+  neither and measured 111px (~35dp), under the floor. The floor now applies unconditionally; the
+  clickable modifier chain still applies only when `onClick` is real. Test `R_382` asserts every
+  `capture-status-*` row clears 44dp.
+- **R-440.** New `Scenarios.seedConfiguredDeviceState` — a verified input (`SharedPreferencesSetupStore
+  .selectedInputLabel = "USB Audio Device"`, `inputVerified = true`), a radio choice (`RadioChoice
+  .NONE` + 145.230 MHz manual, honest since FR-RIG is unbuilt, register R-084), a 60 GB storage
+  budget (`SharedPreferencesSettingsStore.audioBudgetGb`), and every `ModelCatalog` entry
+  "installed" on disk (new `ScenarioFixtures.installEveryModelFixture` — writes each entry's real
+  destination file plus a `.sha256` marker carrying that entry's own published checksum text, the
+  same string `ModelsController.rowFor`'s own `marker.readText() == spec.checksum.value` check
+  reads — never a database row, since the real screen reads files, not `:data`). Wired into
+  `overnight`/`overnight-live`/`stations-14-nights`'s own `load()` dispatch only (`gap-call`
+  excluded — the register named only these three). `model-missing` now explicitly
+  `uninstallEveryModelFixture` (real files, outside `:data`'s own per-scenario row-clearing) so
+  "0 of 4 assets" stays genuine even after an earlier scenario in the same process installed every
+  model — this fixture's own contract, otherwise silently broken by load order.
+- **R-411.** `setupLevel` now calls `LevelStatus.update(...)` (peak −14 dBFS, noise floor −58, not
+  clipped) — independent of `SetupStore.levelInBand` (left unset on purpose so `stepFor` still
+  resumes at S07); a clean install previously published nothing, so S07's meter had no bars.
+- **R-410 (F15 half).** `gap-call` now passes `live = true` (same primitive `overnightLive` already
+  uses) and its own extra CALL gap is anchored to real wall-clock "now" (closed 90s ago) instead of
+  the session's own start offset — `FailureMapper.isRecentCallGap` needs the session's *newest* gap
+  CALL-caused, closed within its own 5-minute window, **and** `CaptureState.Capturing`; a fixture
+  built to have already ended, with a gap timed hours before real "now" by the time anyone looked,
+  could never satisfy any of the three. The ended-session Log row (`not listening · 52 s · incoming
+  call`) is unaffected — same `CaptureGapEntity`, read regardless of session end state.
+
+**Verified:** `:app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.screens.LevelMeterScreenTest" --tests "org.ort.app.ui.data
+.NowViewStateMapperTest" --rerun` — all green (includes new `LatticeSlotFixtureTest`,
+`TourParityFixtureTest`, and every `R_412`/`R_382`/`R_415`/`R_416`/`R_417`/`R_414`/`R_418`/`R_419`
+case named above). `:app:ktlintCheck :app:detekt` — clean (a `LongMethod` in `NowScreen
+.ActiveContent` and several ktlint argument-wrapping findings caught and fixed before this run).
+`dependencyRules platformGuards` — OK, 17 modules. `:app:assembleDebug` — succeeds. `python
+tools\spec-check\spec_check.py` — 8/8 PASS. `coverageMatrix` then `coverageMatrixCheck` — 191/419,
+up to date. **R-412 also verified on a real device** (emulator-5556, `ort_audit_2`, per the
+coordinator's own port correction), screenshot committed; every other item is Robolectric-only
+this round (both other ports were validators' own).
+
+**Left open / not done:** R-419's "Clipped samples this session" label now reads correctly but
+still reports a last-second-window count, not a true session-cumulative total — flagged above for
+`:pipeline`'s `LevelStatus` owner. R-106 needs WP5 to confirm which gap the reviewer's own
+screenshot actually showed (this row's own fixture-level test already proves the fixture is
+correct). R-421 did not extend to `stations-14-nights`' ~60 generic CONFIRMED "checking in" overs —
+their text states the callsign literally, not phonetically, so the screen's own literal-substring
+fallback already highlights them with no fixture change needed.
+
+---
+
 ## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
 
+## 2026-09-08 (ui-conformance data: R-426 per-attempt work_attempt history)
+### be8dca4 — ui-conformance data · R-426 per-attempt work_attempt history
+
+**Scope:** `:data` — `entity/WorkQueueItemEntity.kt` (new `WorkAttemptEntity`,
+`WorkAttemptOutcome`), `dao/WorkQueueDao.kt` (new `insert(WorkAttemptEntity)`, `.attemptsFor`),
+`OrtDatabase.kt` (schema v5 → v6, `MIGRATION_5_6`), new
+`data/schemas/org.ort.data.OrtDatabase/6.json`, `WorkQueue.kt` (`failPass` now writes the row —
+`WorkQueue` lives entirely in `:data`, not `:pipeline`; no disclosed cross-module edit needed),
+`test/kotlin/org/ort/data/WorkQueueTest.kt`, `test/kotlin/org/ort/data/MigrationTest.kt`. Plus one
+`:pipeline` test proving the real drain path (`PassDrainRunnerTest.kt`) — no `:pipeline` production
+code changed.
+
+**Requirements/ACs:** R-426, FR-RUN-9, constitution III ("nothing is deleted quietly" — a failed
+attempt's own record must outlive the queue row it was attempted against).
+
+**What changed:**
+
+*Constitution Check.* Principle III is the actual gap this closes: `Fail-Pass.dc.html` lists each
+failed attempt with its own timestamp and reason, then the retry-limit line — but
+`WorkQueueItemEntity` only ever kept the *latest* attempt's `attemptCount`/`lastError`, so every
+earlier failed attempt on the road to a retry-limit or an eventual success was silently
+unreachable the moment the next attempt (or the terminal success, which deletes the row outright —
+technical design §7.1, "the queue is not a history") overwrote it.
+
+- **New `work_attempt` table** (schema v6, `MIGRATION_5_6`): `itemId` (a plain reference to
+  `WorkQueueItemEntity.id`, deliberately **not** a Room `@ForeignKey` — an `onDelete = CASCADE`
+  would erase exactly the history this table exists to keep once the item is later deleted on
+  success), `attemptNo`, `startedAtMillis`, `finishedAtMillis`, `outcome`
+  (`WorkAttemptOutcome.FAILED` or `.TIMEOUT`), `reason` (the same short, human-readable text
+  `WorkQueue.failPass`'s own `error: String` parameter already carries into
+  `WorkQueueItemEntity.lastError` — confirmed at every real call site, `ReprocessRunner.kt` and
+  `PassB.kt`, to be a message string or an exception's class name, never a stack trace).
+- **`WorkQueueDao.attemptsFor(itemId)`**: every attempt at one item, oldest first — the order
+  `Fail-Pass.dc.html` lists them in, ending with the retry-limit line the caller renders itself.
+- **`WorkQueue.failPass` writes the row**, inside its existing `db.inWriteTransaction` block,
+  before the terminal/retry decision — `startedAtMillis` from `item.startedAt` (stamped at lease
+  time, so it is this specific attempt's own start), `finishedAtMillis` from `clock.wallMillis()`
+  now, `attemptNo` from the same `attempts = item.attemptCount + 1` counter the row's own
+  `attemptCount` update already uses. This is the **only** place a row is written — every caller,
+  including `WorkQueue.runLeased`'s own deadline-timeout path (`error = "timeout"`, recorded as
+  `WorkAttemptOutcome.TIMEOUT` rather than a generic `FAILED`), funnels through `failPass`, so a
+  direct test call gets the identical audit row a real leased run would. A successful completion
+  is deliberately not logged here: `attemptCount` itself only ever increments on a failure, so
+  "attempt" in this table's sense already means "failed attempt," matching what the mockup
+  actually renders.
+
+**Verified:**
+- `.\gradlew.bat :data:testDebugUnitTest :pipeline:testDebugUnitTest` — both green. New:
+  `WorkQueueTest.R_426_failPass_writes_a_durable_attempt_row_with_the_real_reason_and_timing`,
+  `.R_426_a_deadline_timeout_is_recorded_as_its_own_outcome_not_a_generic_failure`,
+  `.R_426_attemptsFor_lists_every_retry_in_order_ending_at_the_terminal_failure`,
+  `.R_426_an_attempt_row_outlives_the_queue_item_once_a_later_retry_succeeds` (proves constitution
+  III directly: `completePass` deletes the `work_queue_item` row, the `work_attempt` row for its
+  earlier failed try is still readable afterwards), `MigrationTest.migration_from_v5_to_v6_
+  preserves_existing_rows_and_adds_the_work_attempt_table`, and `PassDrainRunnerTest.` `` `R_426 a
+  pass errored through the real drain path leaves a durable attempt row` `` (through
+  `:pipeline`'s actual `PassDrainRunner.drainBatch` → `WorkQueue.runLeased` → `.failPass` call
+  chain, the exact path the coordinator named). Every pre-existing `:data`/`:pipeline` test
+  (including R-320/R-182's, R-321's, R-204's) stayed green in the same run.
+- `.\gradlew.bat :data:ktlintCheck :data:detekt :pipeline:ktlintCheck :pipeline:detekt` — clean.
+- `.\gradlew.bat dependencyRules platformGuards` — OK, no new edges.
+- `python tools\spec-check\spec_check.py` — 8/8 checks pass.
+- `.\gradlew.bat -p buildSrc test` — green.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` (separate invocations) — 191/419
+  covered, matrix up to date.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Per the coordinator's scoped-gate load policy, the full `build`/`:app:testDebugUnitTest` was not
+  run here — out of `:data`'s own gate scope; the coordinator runs the full gate on main.
+
+**Left open / not done:**
+- No UI reads `attemptsFor` yet — `Fail-Pass.dc.html`'s rendering is WP6's own follow-up, out of
+  `:data`'s ownership. Entity/DAO names for WP6: `org.ort.data.entity.WorkAttemptEntity`
+  (`itemId`, `attemptNo`, `startedAtMillis`, `finishedAtMillis`, `outcome: WorkAttemptOutcome`,
+  `reason: String`), `org.ort.data.dao.WorkQueueDao.attemptsFor(itemId: Long):
+  List<WorkAttemptEntity>` (ordered oldest-first by `attemptNo`).
+- `WorkQueue.failPass`/`runLeased` turned out to live entirely in `:data` (`org.ort.data.WorkQueue`,
+  not `:pipeline`), so the "minimal disclosed `:pipeline` edit" the brief anticipated was
+  unnecessary — `:pipeline`'s own `PassDrainRunner` needed no change, only a new test proving the
+  row is written through its real call path.
+
+---
+
+## 2026-09-08 (test-suite speed: :app:testDebugUnitTest 1hr+ -> 2m18s)
+
+### 5aab408 — audit test-suite-speed · :app:testDebugUnitTest regression fixed: 1hr+ -> 2m18s (1234 tests, 0 failures)
+
+**Scope:** `app/build.gradle.kts` (test-task config only), `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`
+(`create()`/`instances` cache), `app/src/test/kotlin/org/ort/app/ui/digest/SessionsScreensTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/digest/SessionsContentTest.kt`.
+
+**Requirements/ACs:** none new — test-infrastructure health, not product behaviour.
+
+**What changed:**
+
+*Constitution Check.* II (test-backed change — the exit criterion this session worked to was the
+suite itself; every fix below is validated by a full `:app:testDebugUnitTest` run, not a unit in
+isolation). VII (boundaries are structural — `queryExecutor`'s per-path cache in `OrtDatabase.kt`
+fixes the shared resource every `*Polling` call site already assumed was cheap, at the one place
+they all funnel through, rather than patching each call site).
+
+On main, `:app:testDebugUnitTest` (~1,200 Robolectric/Compose tests) had regressed from ~3 minutes
+to over an hour. `jstack` on the stuck worker consistently showed the "SDK 34 Main Thread" at ~95%
+CPU inside `androidx.compose.ui.test.RobolectricIdlingStrategy.runUntilIdle` ->
+`MainTestClock.advanceTimeByFrame`, for whatever Compose test happened to run *after* one of several
+specific earlier classes — never inside this app's own composables. Bisection (cumulative-prefix
+timing, `--tests` narrowed to individual methods, `jstack` while stuck) found three independent,
+confirmed causes, all sharing the same signature (fine alone, fine in most combinations, poisons a
+Compose test that runs later in the same JVM fork):
+
+1. **`SessionsScreensTest`'s two `R-250` tests wrapped `composeTestRule.setContent`/`waitForIdle()`
+   in `kotlinx.coroutines.withTimeout(5_000)`.** Both are plain (non-`suspend`) calls that, under
+   Robolectric, synchronously hand work to the dedicated main thread via a cross-thread
+   `FutureTask.get()` (`Sandbox.runOnMainThread`) — `withTimeout` can only react to cancellation at
+   a coroutine's own suspension points, so it cannot actually interrupt that blocking call. If it
+   were ever slow, `withTimeout` would abandon the *test's* coroutine while the `FutureTask` kept
+   running to completion in the background on that shared, JVM-fork-wide thread — an orphaned
+   background operation the test framework has no way to know about. Removed both `withTimeout`
+   wrappers; the loop the tests are proving bounded (`drawHatchRegion`) is provably finite on its
+   own (fixed positive `pitchPx`, `width`/`height` guarded `> 0f`), so nothing needs racing against a
+   timer that cannot enforce itself.
+2. **`SessionsContentTest`** (the one test in `ui.digest` that drives a tap into the embedded
+   `LogContent`, starting its real `while (true) { ...; delay(2_000) } }` polling `LaunchedEffect`)
+   reliably poisoned whichever Compose test ran right after it — reproduced repeatedly via
+   cumulative-prefix bisection down to two of its three test methods plus `ui.failures.*`. Every
+   code-level mitigation tried (closing its own `OrtDatabase`, forcing the compose clock to settle
+   before the test method returns, `ShadowLooper.shadowMainLooper().reset()` in `@After`, disabling
+   the recurring poll entirely as a diagnostic) made no difference — the same class this repo's own
+   `ReaderActivity.kt` kdoc already documents for `ReaderActivityDestinationSmokeTest`
+   ("a Robolectric-driven test never gets a chance to cleanly cancel" a `while (true) { delay }`
+   loop once started). Applied the same, already-proven fix: added `SessionsContentTest` to the
+   existing `smokeTestDebugUnitTest` task (renamed in intent, not in Gradle task name, to cover more
+   than one class) so it — and seven more test files confirmed by the same shape (each `setContent`s
+   a screen's real `*Content` composable with its own such loop: `NowContentTest`,
+   `CaptureStatusContentTest`, `LogContentBackHandlerTest`, `LogAndThreadContentActivityTest`,
+   `FailureHostTest`, `NavSeedTest`, `OrtNavHostDestinationDispatchTest`, `ReaderAccessibilityTest`)
+   — run each alone, in its own fresh JVM (`forkEvery = 1`), excluded from `testDebugUnitTest`.
+3. **`OrtDatabase.create()`** opened a brand-new Room database (its own connection, WAL files,
+   `InvalidationTracker`) on every call and never closed it — by design, every real `*Polling`
+   object in `:app` calls it fresh, several from inside a 2-second poll loop, for as long as a
+   screen stays open (`ReaderPolling.kt`'s own kdoc: "this stays a poll for now"). Added a
+   process-lifetime cache in `OrtDatabase`'s companion object, keyed by the on-disk path
+   (`Context.getDatabasePath`), so repeated non-in-memory `create()` calls against the same file
+   reuse the same live instance instead of opening a new one — a cache hit is discarded (and
+   rebuilt) if the cached instance is no longer open (`RoomDatabase.isOpen`) or the file it names no
+   longer exists, so `db.close()` (only test `@After` blocks call it) and
+   `context.deleteDatabase(...)` (three `ui.data` tests) both still behave as every existing caller
+   already expects. `inMemory` instances are never cached (each is deliberately isolated). This is
+   also a genuine device-side fix, not just a test one: a real capture session left open for hours
+   was accumulating one native SQLite connection every 2 seconds from every polling screen visited.
+
+Also added `debugUnitTest.forkEvery = 40` on `testDebugUnitTest` itself as a general safety margin
+against whatever of this shape remains undiscovered — recycling the JVM (and its accumulated
+`OrtDatabase`/`queryExecutor` state) periodically bounds the worst case regardless of which classes
+land in a given batch, without the per-class fork cost the confirmed-poisoning task above pays.
+
+**Verified:**
+
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL in 2m 18s** (was 1hr+ on main
+  449a1d0); summed test-result XML: **1234 tests, 0 failures, 0 errors**.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` — 62 tests, 2 failures, both pre-existing and
+  unrelated to this session's changes: `FailureHostTest`'s `R_300` (`ComposeTimeoutException` after
+  its own 5s bound — reproduced on the very first, unmodified run of this session, before any fix
+  landed) and `ReaderActivityDestinationSmokeTest`'s `R_350_improve_done_...`
+  (`ComposeTimeoutException` after its own 30s bound, in a file this change never touches). Both
+  reproduce deterministically even fully isolated (`forkEvery = 1`, low machine load at the time) —
+  not flaky, not the cross-test-poisoning bug this entry fixes, and outside this task's scope.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt :data:ktlintCheck :data:detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules checked.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — 191/419 requirements covered, up to
+  date, no delta.
+
+**Left open / not done:**
+
+- The exact mechanism by which a leaked `while (true) { delay }` `LaunchedEffect` survives
+  `composeTestRule`'s own disposal under Robolectric was not root-caused to a single line — this
+  entry documents it (matching `ReaderActivity.kt`'s own prior, identical finding) and works around
+  it by JVM isolation, the same fix this repo already had precedent for. A from-first-principles fix
+  (e.g. in `androidx.compose.ui.test`/Robolectric itself, or restructuring every `*Content`
+  composable's poll away from `while (true) { delay }`) is out of scope here.
+- The eight additional test files isolated into `smokeTestDebugUnitTest` alongside
+  `SessionsContentTest` were isolated by the same confirmed *shape* (a real `*Content` composable
+  with its own recurring poll), not each individually re-bisected against a full-suite run — doing
+  so was not affordable at minutes-per-attempt once the shape was established from two independent,
+  fully bisected instances (`SessionsContentTest`, `NowContentTest`).
+- `ui.failures.FailureHostTest`'s `R_300` and `ui.navigation.ReaderActivityDestinationSmokeTest`'s
+  `R_350_improve_done_...` are real, pre-existing, deterministic failures worth a separate fix —
+  flagged here, not fixed, since neither is the speed regression this session was asked to find.
+- This session's own worktree merged `main` mid-task (979addc -> e927690) at the coordinating
+  agent's direction; the coordinator's own bisection (`ui.digest.SessionsScreensTest`'s `R_250`
+  test, `SessionsScreens.drawGapHatch`) named the `withTimeout` mechanism this entry's fix #1
+  addresses — independently arrived at here from `jstack` evidence before that message, then
+  confirmed against the named test.
+
+---
+
+## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
+
+## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
 ### 0df676d — ui-conformance WP12 v3 · R-440/443/446 investigated (no receiver/tour divergence found), R-410 fixes, TourParityTest + TourStepsTest, 111 → 117 steps
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt` (`EXTRA_FONT_SCALE`
@@ -294,6 +634,61 @@ pass).
   to test against without a real `Activity`).
 
 ## 2026-09-08 (ui-conformance WP11b: calibration chart colour split, back headers on F14/F19/F21/F22)
+
+### (pending) — ui-conformance WP11b · R_300 storage banner test made deterministic
+
+**Scope:** `:app` — `ui/failures/FailureHostTest.kt` only (test-only change; no production code
+touched). `git merge main` (main at `ad692e1`, this branch's own `3cfcfc6` already merged into it
+at `1943dd0`; fast-forwarded cleanly; no rebase, no stash, no `gradlew --stop`). Follow-up on the
+prior WP11b commit's own "left open" note, confirmed by the coordinator against a clean `main`
+under load (WP9 saw the same flake independently).
+
+**Requirements/ACs:** none new — R-300's own product behaviour (the bounded storage banner, its
+assertions unchanged) was already fixed and is not touched here; this is purely a test-reliability
+fix so `R_300` stops being a false-negative source in the gate.
+
+**What changed:** `FailureHostTest`'s `R_300` test used to drive the banner into view with a
+wall-clock `composeTestRule.waitUntil(timeoutMillis = 5_000) { ... "failure-banner-overlay" ...
+isNotEmpty() }`, racing `FailureHost`'s real async poll loop (`pollFailureSignals` /
+`FailureSignalsPolling.current`) — which, because the test passed a non-existent
+`sessionId = "s1"`, ran real Room queries (`captureGapDao().listBySession`, `sessionDao().getById`,
+`transmissionDao().listBySession`) against a session that was never created, before the first
+`presentation` update could land. Under system load that real DB dispatch plus a real 5 s
+wall-clock budget is exactly what produced the timeout (`ComposeTimeoutException`) — the flake was
+in the harness, not in the banner. Two changes, both scoped to this one test: (1) `sessionId` is
+now `null` — `FailureSignalsPolling.current`'s own `if (sessionId != null)` guard means a null
+session skips every Room query outright, and `FailureMapper.map` already returns
+`signals.debugOverride` (set via `DebugFailureOverride.show(...)`, already used by this test)
+ahead of every real signal regardless — so the session id was never actually load-bearing for what
+this test asserts. (2) `composeTestRule.mainClock.autoAdvance = false` (set before `setContent`,
+the same pattern `FailureActionBarScaffoldTest.kt`'s `R_252` already establishes in this app) plus
+one explicit `composeTestRule.mainClock.advanceTimeByFrame()` and `waitForIdle()` deterministically
+land the `LaunchedEffect`'s first, now fully synchronous poll iteration — a single bounded virtual
+frame, not a wall-clock wait at all. The banner presence check itself became a direct
+`onNodeWithTag("failure-banner-overlay").assertIsDisplayed()` (no polling loop needed once the
+frame has actually landed). The Stop-reachability assertions (non-zero bounds, then
+`performScrollTo().assertIsDisplayed()` at font scale 2.0) are unchanged.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.FailureHostTest"
+--rerun` — all 7 tests pass, `R_300` included. `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.failures.FailureHostTest.R_300*" --rerun` run 4 times in a row (fresh JVM each
+time, no incremental caching) — passed every time, demonstrating the fix is no longer
+load/timing-sensitive. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*"`
+— every test in the package passes. `.\gradlew.bat :app:detekt :app:ktlintCheck` — both BUILD
+SUCCESSFUL, zero issues. `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules,
+graph unchanged. `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `.\gradlew.bat
+coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (run separately — running both in one
+invocation trips a Gradle task-ordering validation error unrelated to this change) — 191 of 419
+covered, unchanged (a test-determinism fix establishes no new requirement coverage). `python
+tools/spec-check/spec_check.py` — OK, 8/8. `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+Never ran `gradlew --stop`; never rebased or stashed.
+
+**Left open / not done:** `ReaderActivityDestinationSmokeTest`'s own
+`R_350_improve_done_reflects_a_real_failure_and_offers_no_install_for_a_non_model_reason`
+(`:app:smokeTestDebugUnitTest`) remains a separate, still-unrelated pre-existing failure, noted in
+the prior WP11b entry and not touched by this change (different file, different package, out of
+this follow-up's scope).
 
 ### (pending) — ui-conformance WP11b · R-447 calibration chart colour split; R-448 back headers on F14/F19/F21/F22
 
@@ -10162,6 +10557,126 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 ## 2026-09-08 (ui-conformance WP2: shared components)
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
+
+### (pending) — ui-conformance WP6 round 11 · R-422 first-frame clipping, R-423 inline source-over link, R-425 real chooser evidence, R-426 pass-failure header/retry line, D07 seam for WP12's tour
+
+**Scope:** `:app`, this package's own files — `ui/screens/{TransmissionDetailScreen,TransmissionDetailContent}.kt`,
+`ui/data/{DetailViewState,CorrectionPolling}.kt`, and their tests (a new
+`RejectedDetailScreenTest.kt`, split from `TransmissionDetailScreenTest.kt` for `LargeClass`;
+extensions to `TransmissionDetailScreenTest.kt`/`TransmissionDetailContentTest.kt`/
+`CorrectionPollingInspectionTest.kt`). Reviewer B's capture review at e927690; `git merge main`
+(HEAD was behind — `3baef8b`, fast-forward, no conflicts in any file this package owns). **Gate
+per the coordinator's load policy:** `:app:testDebugUnitTest --tests` scoped to touched classes,
+`:app:ktlintCheck :app:detekt`, `dependencyRules platformGuards`, `:app:assembleDebug`,
+`spec_check.py`, `coverageMatrix` then `coverageMatrixCheck` — no whole-project `build`, no
+un-scoped `:app:testDebugUnitTest`.
+
+**Requirements/ACs:** R-422 (spec, fixed), R-423 (design, fixed), R-425 (spec, fixed), R-426
+(design, partial — header/retry-limit line fixed, per-attempt list reported as a `:pipeline`/
+`:data` schema gap); D02/D03/F18, FR-UI-4; constitution I (never fabricate — the R-426 per-attempt
+list stays named as unbuilt rather than invented), II (fake ships unchanged — no new interface
+method needed), III (nothing deleted quietly).
+
+**Constitution Check.** Principle I governs every row this round: R-426's new retry-limit line
+states only what `WorkQueue.failPass`'s own real logic guarantees — a terminally FAILED item's
+stored `attemptCount` equals the value that tripped `attempts >= maxAttempts`
+(`data/src/main/kotlin/org/ort/data/WorkQueue.kt`'s `DEFAULT_MAX_ATTEMPTS = 5`, both real call
+sites use the default) — so "Retry limit reached after N attempts" is a true, disclosed structural
+fact, never a guess; the per-attempt timestamp/reason list `Fail-Pass.dc.html` also draws is
+**not** built, because `WorkQueueItemEntity` (confirmed unchanged after this merge) still stores
+only the aggregate `attemptCount`/`lastError`, not a history table — reported to the coordinator to
+route to `:pipeline`, not silently approximated from the aggregate. R-423 is principle I from the
+other direction: the removed "Confidence 0.82." sentence was never wrong, but it duplicated the
+score the chip beside the callsign already carries, so keeping it was a redundant, not an honest,
+disclosure — `Detail.dc.html` itself carries the score in exactly one place. R-425's evidence is
+built entirely from real `:data` reads (`TransmissionDao.listAll()` filtered by `stationId`,
+`CatalogDao.voiceprintsForStation`) — no candidate's heard-count, last-heard time, or voice-match
+bit is fabricated; a candidate with no evidence lookup (e.g. a pre-fetch render) still falls back
+to the old, honest `databaseHit`/`ituCountry` phrasing rather than showing nothing.
+
+**What changed:**
+
+1. **R-422 (spec), fixed.** Same first-frame-clipping class as R-360/R-292 (Robolectric cannot
+   observe it — confirmed by device screenshot only). `TransmissionDetailScreen`'s root layout
+   changed from a plain `Column(fillMaxSize) { Column(weight(1f).verticalScroll) { … }; BottomActionBar(…) }`
+   to `FailureActionBarScaffold` (`ui/failures/FailureActionBarScaffold.kt`, WP11b's file, reused
+   per the coordinator's explicit round-11 instruction — disclosed here as out-of-scope-but-directed,
+   same precedent as R-323's `PriorBar` reuse): the bar is subcomposed first, and the scrollable
+   content slot is height-constrained to `viewport − barHeight`, so content can never render behind
+   or through the pinned bar at any scroll offset, first frame included. Verified on
+   `emulator-5558`: `scenario-overnight-tx02` (the real K7LWH/INFERRED fixture row, found by
+   querying the device's own `ort.db` directly — no synthetic id), font scale 2.0, deep-linked via
+   `ScenarioReaderActivity --es nav_open_transmission_id`; screenshot at
+   `results/ui-audit/overnight/D02-inferred-r422-after@2x.png` shows content rendering continuously
+   from the header through the "Why this callsign" section down to the pinned `Not right?`/`Confirm`
+   bar, no blank gap. Font scale reset to 1.0 after.
+2. **R-423 (design), fixed.** `Detail.dc.html`'s own inline link — the source-over's real timestamp
+   is itself the tappable span ("Matched by voice to `20:02:28`, where the callsign was heard
+   clearly."), styled the board's accent green, via `ClickableText`/`buildAnnotatedString`/
+   `pushStringAnnotation`. The separate `TextAction(text = "Open the source over", …)` line and the
+   `confidenceClause` (" Confidence 0.82.") string-append are both removed — neither exists on the
+   board. New `DetailBodyViewState.Inferred.sourceOverTimeLabel: String?` carries the real label
+   (falls back to the generic phrase "the source over" only when no time is known, never a
+   fabricated one). Extracted `internal fun buildInferredExplanationText`/`sourceIdAtOffset` (the
+   same `internal`-for-direct-testability precedent `highlightedTranscript`/`scrubFraction` already
+   set) so the span/tag/colour are asserted without Compose. Confirmed together with R-422 in the
+   same device screenshot — no separate "Open the source over" line, no "Confidence 0.82." sentence.
+   Tests named `R_423`: two on `buildInferredExplanationText` (tags exactly the time-label span;
+   falls back to the generic phrase), one asserting the old line's absence and the CONFIRMED chip's
+   `Confidence` text stays chip-only (`FR_UI_4`, renamed to say so).
+3. **R-425 (spec), fixed.** D03 chooser rows now carry distinct, real per-candidate evidence — heard
+   count, last-heard time, voice match — instead of both candidates reading the same generic "a
+   known station · United States". New `CorrectionPolling.ambiguousCandidateEvidence` reads
+   `TransmissionDao.listAll()` filtered by each candidate's callsign for heard-count and the latest
+   `startedAtUtc` (via the existing `ReaderTransmissionViewStateMapper.timeLabel` for consistent
+   formatting), and cross-references the current over's own `TransmissionEntity.voiceprintId`
+   against `CatalogDao.voiceprintsForStation(callsign)` for "voice match" — the strongest honest
+   signal available (never a promotion to CONFIRMED; this is D03 evidence, not an attribution
+   write). `DetailViewStateMapper.from` gained a defaulted `ambiguousEvidence` parameter so every
+   existing call site (including `ReaderPolling.kt`) compiles unchanged;
+   `TransmissionDetailContent.pollDetail()` fetches it only when `attribution.state == AMBIGUOUS`,
+   for the top-ranked candidate callsigns. A candidate absent from the lookup (or before the fetch
+   lands) still falls back to the old `databaseHit`/`ituCountry` phrasing, never a blank row. Tests
+   named `R_425`: `CorrectionPollingInspectionTest` (real DAO round trip — heard-count and
+   last-heard from real past transmissions; voice-match true only for the over's own bound
+   voiceprint), `TransmissionDetailScreenTest` (the mapper renders "heard 4 times", "last …", "voice
+   match", "never heard before" from a hand-built evidence map, never the generic fallback when
+   evidence is present).
+4. **R-426 (design), partial.** `F18`'s header now reads `What went wrong · 3 attempts` (was
+   `3 times` — the board's own header wording, kept distinct from the prose sentence's "errored 3
+   times"). A new retry-limit line — "Retry limit reached after 3 attempts. Marked failed; the queue
+   continued without it." — follows the last-error line, using the real, stored `attemptCount` (see
+   Constitution Check above for why this is honest, not approximated). **Not built:** the
+   per-attempt list itself (each attempt's own timestamp and reason, `Fail-Pass.dc.html`'s section 1
+   body) — `WorkQueueItemEntity` (re-confirmed unchanged after this round's merge) has no history
+   table, only the aggregate `attemptCount`/`lastError`; reported to the coordinator to route to
+   `:pipeline`. Test named `R_426`: the retry-limit line's tag and exact text.
+5. **Seam, for WP12's tour.** `TransmissionDetailContent(initialRevisionsOpen: Boolean = false)` —
+   when `true`, `destination` initializes directly to `DetailDestination.Revisions` (D07), skipping
+   the real tap on the "N earlier versions" link the tour would otherwise have to simulate. No
+   equivalent seam was added for `Why` (D05) or the rejected state: `Why` is already reachable by a
+   real tap the tour performs (it is a destination toggle, not a multi-step flow), and rejected is
+   not a destination at all — `DetailViewState.rejected` is derived automatically from the real
+   `processingState`, so a tour scenario reaches it by seeding a rejected transmission, not by a
+   parameter. Test named `seam_initialRevisionsOpen_reaches_D07_directly_with_no_tap` — reuses
+   `R_194`'s own real two-transcript-version fixture and its documented wait-order (the async "2
+   versions" text must be waited on before the static closing note, or the final assertion races the
+   revisions fetch — the same race `R_194`'s own comment already names, hit and fixed once in this
+   round's own new test before the gate went green).
+
+**Verified (scoped gate, per the coordinator's load policy):** `:app:testDebugUnitTest --tests`
+covering every touched class (`TransmissionDetailScreenTest`, `RejectedDetailScreenTest`,
+`TransmissionDetailContentTest`, `CorrectionPollingInspectionTest`) — 62 tests, all clean, run
+together; `:app:ktlintCheck :app:detekt` (clean); `dependencyRules platformGuards` (clean — no new
+cross-module edge; `FailureActionBarScaffold` reuse is an intra-`:app` import, not a new module
+dependency); `python tools\spec-check\spec_check.py` (`spec-check: OK`); `coverageMatrix` then
+`coverageMatrixCheck` (separate invocations, both clean); `:app:assembleDebug` (clean, fresh
+compile confirmed — `:app:compileDebugKotlin` executed, not `UP-TO-DATE`) — the same fresh build
+installed for the R-422/R-423 device screenshot above.
+
+**Left open:** R-426's per-attempt timestamp/reason list — a `:pipeline`/`:data` schema gap
+(`WorkQueueItemEntity` needs a per-attempt history table), not something this round's `:app`-only
+scope can build honestly. No other new gaps this round.
 
 ### (pending) — ui-conformance WP6 round 10 · R-320 per-slot lattice grid, R-182 char-span highlight, R-321 undo restores the exact recorded prior
 

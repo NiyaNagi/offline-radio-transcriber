@@ -379,4 +379,50 @@ public class MigrationTest {
             db.close()
         }
     }
+
+    /**
+     * Register R-426 (`Fail-Pass.dc.html`): v5 -> v6 adds `work_attempt`. Proves both halves of
+     * FR-AST-5/6: a pre-existing `work_queue_item` row survives untouched, and the new table's
+     * write/read path ([org.ort.data.dao.WorkQueueDao.insert], `.attemptsFor`) is immediately
+     * usable afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "R-426")
+    public fun migration_from_v5_to_v6_preserves_existing_rows_and_adds_the_work_attempt_table() {
+        val dbName = "migration-test-db-v6-work-attempt"
+        val v5 = helper.createDatabase(dbName, 5)
+        v5.execSQL(
+            "INSERT INTO work_queue_item (id, transmissionId, pass, state, priority, attemptCount, " +
+                "lastError, shedLevel, leaseRunId, deadlineAt, enqueuedAt, startedAt) VALUES " +
+                "(1, 'TX1', 'B_OFFLINE', 'READY', 0, 2, 'out of memory in the decoder', 0, NULL, NULL, 0, NULL)",
+        )
+        v5.close()
+
+        helper.runMigrationsAndValidate(dbName, 6, true, OrtDatabase.MIGRATION_5_6)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val item = runBlocking { db.workQueueDao().getById(1) }
+            assertEquals("out of memory in the decoder", item?.lastError) // pre-existing row survives
+
+            runBlocking {
+                db.workQueueDao().insert(
+                    org.ort.data.entity.WorkAttemptEntity(
+                        itemId = 1,
+                        attemptNo = 1,
+                        startedAtMillis = 1_000L,
+                        finishedAtMillis = 2_000L,
+                        outcome = org.ort.data.entity.WorkAttemptOutcome.FAILED,
+                        reason = "out of memory in the decoder",
+                    ),
+                )
+            }
+            val attempts = runBlocking { db.workQueueDao().attemptsFor(1) }
+            assertEquals("out of memory in the decoder", attempts.single().reason) // new table usable post-migration
+        } finally {
+            db.close()
+        }
+    }
 }
