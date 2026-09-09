@@ -147,15 +147,16 @@ private fun IdleContent(state: NowViewState.Idle, onStartCapture: () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg).testTag("now-idle-start-capture"),
     )
 
-    val inputRigTier = listOfNotNull(state.inputLabel, state.rigLabel, state.tierLabel)
-    if (inputRigTier.isNotEmpty()) {
-        Text(
-            text = inputRigTier.joinToString(" · "),
-            style = OrtType.subLine,
-            color = OrtColors.textDim,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
-    }
+    // R-461: `Now-Idle.dc.html`'s own meta row — centred, "USB Audio Device"/"TH-D75A" each with
+    // their own leading dot, "tier 3" without one. Always rendered (never conditionally dropped):
+    // an unconfigured input/radio reads its own honest "No input"/"No radio" placeholder — with no
+    // dot, since a dot claims a real, present device — rather than the segment silently vanishing.
+    NowIdleMetaRow(
+        inputLabel = state.inputLabel,
+        rigLabel = state.rigLabel,
+        tierLabel = state.tierLabel ?: "tier —",
+        modifier = Modifier.padding(top = OrtSpacing.sm),
+    )
 
     // R-416: `Now-Idle.dc.html`'s own divider ahead of EARLIER NIGHTS — unconditional, the same
     // hairline `Drawer.kt`'s own Divider draws (OrtColors.lineDefault), independent of whether the
@@ -193,6 +194,34 @@ private fun IdleContent(state: NowViewState.Idle, onStartCapture: () -> Unit) {
             }
             Text(text = "Improve", style = OrtType.subtitle, color = OrtColors.accentGreen)
         }
+    }
+}
+
+/** R-461 (`Now-Idle.dc.html`'s own meta row beneath "Start capture"): centred, a leading dot on
+ * each of [inputLabel]/[rigLabel] when they are real (never on the honest "No input"/"No radio"
+ * fallback — a dot claims a real, present device), no dot on [tierLabel]. */
+@Composable
+private fun NowIdleMetaRow(inputLabel: String?, rigLabel: String?, tierLabel: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NowIdleMetaItem(label = inputLabel ?: "No input", real = inputLabel != null)
+        Text(text = "·", style = OrtType.subLine, color = OrtColors.textFaint)
+        NowIdleMetaItem(label = rigLabel ?: "No radio", real = rigLabel != null)
+        Text(text = "·", style = OrtType.subLine, color = OrtColors.textFaint)
+        Text(text = tierLabel, style = OrtType.subLine, color = OrtColors.textDim)
+    }
+}
+
+@Composable
+private fun NowIdleMetaItem(label: String, real: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (real) {
+            Box(modifier = Modifier.size(6.dp).background(OrtColors.accentGreen, CircleShape))
+        }
+        Text(text = label, style = OrtType.subLine, color = OrtColors.textDim)
     }
 }
 

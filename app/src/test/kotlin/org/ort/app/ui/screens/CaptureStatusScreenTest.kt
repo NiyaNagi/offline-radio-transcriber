@@ -7,6 +7,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -127,6 +130,29 @@ class CaptureStatusScreenTest {
 
         composeTestRule.onNodeWithTag("capture-status-level").performClick()
         assert(opened)
+    }
+
+    @Test
+    @Requirement("R-380")
+    fun `R_380_level_row the tagged node itself is the clickable leaf, carrying Level as its own description`() {
+        composeTestRule.setContent { OrtTheme { CaptureStatusScreen(state = baseState, onOpenLevel = {}) } }
+
+        // R-380: a real device's own `uiautomator` dump found the *tagged* node an unlabelled
+        // clickable wrapper, with the real "Level, ..." description living on a separate child
+        // node beneath it — `useUnmergedTree = true` is what makes that distinction visible to a
+        // test at all (a merged-tree lookup would silently read the child's own description as if
+        // it belonged to the tagged node). `KeyValueRow`'s own `onClick`/`onClickLabel` params
+        // (WP2's own fix) now make the tagged node the one, real clickable leaf.
+        val node = composeTestRule.onNodeWithTag("capture-status-level", useUnmergedTree = true).fetchSemanticsNode()
+        assertTrue(
+            "expected the tagged node itself to carry the OnClick action, not a separate child",
+            node.config.getOrNull(SemanticsActions.OnClick) != null,
+        )
+        val description = node.config.getOrNull(SemanticsProperties.ContentDescription)?.firstOrNull()
+        assertTrue(
+            "expected the clickable node's own description to start with \"Level\", got $description",
+            description?.startsWith("Level") == true,
+        )
     }
 
     @Test

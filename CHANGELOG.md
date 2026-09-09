@@ -32,6 +32,99 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP4 · R-494/461/462/380: configured-device seeding, honest meta row, KeyValueRow's own onClick)
+
+### 97463e4 — ui-conformance WP4 · R-494/461/462/380: configured-device seeding, honest meta row, KeyValueRow's own onClick
+
+**Scope:** `app/src/debug` (`Scenarios.kt`), `ui/screens` (`NowScreen.kt`, `CaptureStatusScreen.kt`),
+matching tests, plus one flagged out-of-row fix in `app/src/test/kotlin/org/ort/app/debug/tour/TourParityTest.kt`
+(WP12's file). Merged `main` forward twice more this round (`df75734` for R-494/461/462, then
+`41870d7`/`586ec9b` for R-380 once WP2's own `KeyValueRow` fix landed; final base `5dfd02b`).
+
+**Requirements/ACs:** register R-494, R-461, R-462, R-380.
+
+**What changed:**
+
+*Constitution Check.* Principle I again: R-494's own register text guessed `SetupStore` was the
+unread store; read `SettingsPolling.kt` before assuming that and found it reads live `InputStatus`/
+`RigStatus` instead — the actual fix follows the code, not the filed guess. R-461's own fallback
+copy ("No input · No radio") is chosen specifically so the row is never silently dropped
+(constitution III) when genuinely unconfigured, rather than picking the alternative (seed `empty`
+as if Setup had already run) that would misrepresent a scenario documented as the true first-launch
+state.
+
+- **R-494.** `SettingsPolling.kt`'s `inputSummaryLine`/`capture()` (CF01/CF02) and `rig()`/
+  `rigSummaryLine` (CF01/CF06) read `InputStatus`/`RigStatus` directly — confirmed by reading the
+  file, not the register's own guess. `Scenarios.seedConfiguredDeviceState` now also calls
+  `InputStatus.opened(...)` with the same descriptor/rate/resampler `SetupStore` already recorded
+  (matching what `SetupActivity` itself writes at S04/S05, the same values `input-verified`'s own
+  established fixture already uses). `RigStatus` deliberately stays `Absent` — `overnight`'s own
+  configuration is "no rig, 145.230 MHz by hand" and FR-RIG's module is genuinely unbuilt (register
+  R-084), so `Absent` is the *correct* state, not a gap: CF06 (`SettingsRigScreen.kt`, WP10's own
+  R-444 fix) already renders "No rig module is connected" / "No radio support in this build yet..."
+  for it, confirmed by a real test rather than assumed. Two new `TourParityFixtureTest` cases prove
+  both halves end to end through the real `SettingsPolling` functions.
+- **R-461.** `NowScreen.kt`'s idle meta row was one plain, left-aligned, dot-less `Text` built from
+  `listOfNotNull(...).joinToString(" · ")` — silently dropping any absent segment rather than
+  showing it honestly, and nothing like `Now-Idle.dc.html`'s own centred row with a leading green
+  dot on each of the input/rig items (tier gets none). New `NowIdleMetaRow`/`NowIdleMetaItem`
+  composables: centred, real items get a dot, an absent input/radio gets its own honest "No
+  input"/"No radio" text with no dot (a dot claims a real, present device), tier always shows.
+  Always rendered now, never conditionally hidden. `empty`'s own scenario builder (Scenarios.kt)
+  gained a `context` parameter so it can explicitly clear the same input fields
+  `seedConfiguredDeviceState` writes and reset `RigStatus` — `SharedPreferences` persist across
+  scenario loads (this file's own established rule elsewhere), so without this a prior `overnight`
+  load in the same process would leave `empty` rendering as if Setup had already run, contradicting
+  its own "true first-launch" doc comment.
+- **R-462.** `CaptureStatusContent.levelInputLabel()` already prepends the real device name from
+  `InputStatus` when one exists (confirmed by reading it) — `level-low`/`level-clip` never seeded
+  one, so the subtitle read only "last 60 s". Both now call the same `InputStatus.opened(...)` R-494
+  added, with the identical descriptor.
+- **R-380.** WP2's own `586ec9b` gave `KeyValueRow` (`ui/components/Rows.kt`) a real `onClick`/
+  `onClickLabel` pair that makes the row one `clearAndSetSemantics` clickable leaf. This package's
+  own `KeyValueRowWithDot` (`CaptureStatusScreen.kt`) was still wrapping `KeyValueRow` in its *own*,
+  external `.clickable(...)` + `.semantics(mergeDescendants = true) {...}` — two separate semantics
+  nodes on the same chain, which is exactly what a real device's own `uiautomator` dump showed: an
+  outer clickable wrapper with an empty description, the real "Level, ..." text on a separate child
+  node beneath it. Now passes `onClick`/`onClickLabel` straight into `KeyValueRow` and drops its own
+  wrapper entirely (including the now-redundant manual `heightIn(min = 44.dp)` — `KeyValueRow`'s own
+  Box already applies that unconditionally); `facts.trailingText` (e.g. "clipping") folds into the
+  row's own `subLine` instead of a separate trailing `Text`, so it still reaches the one merged
+  description `KeyValueRow` now builds. New `R_380_level_row` test, `useUnmergedTree = true`, asserts
+  the *tagged* node itself (not a child) carries both the `OnClick` semantics action and a
+  description starting with "Level" — verified this way rather than a live device dump (both ports
+  were validators' own this round; a Robolectric semantics-tree assertion is the more precise check
+  for this exact structural claim regardless).
+- **Flagged, out-of-row fix (WP12's `TourParityTest.kt`):** that file's own `R_TOUR_PARITY overnight`
+  test hardcoded `InputStatus.State.None`/`RigStatus.State.Absent` as `overnight`'s own baseline —
+  its own comment explicitly anticipated a future fixture change moving off `None`, which R-494 is.
+  Updated the assertion to `InputStatus.State.Opened` (keeping `RigStatus.Absent`, still correct)
+  and — a real bug this uncovered, not just the expected-value change — found that
+  `InputStatus.State.Opened.openedAtMillis` (real wall-clock time) made two back-to-back
+  `Scenarios.load("overnight")` calls genuinely produce two *different* snapshots, breaking the
+  test's own actual purpose (determinism, per its class kdoc). Fixed by normalising `openedAtMillis`
+  out of the snapshot comparison before asserting equality, not by weakening the fixture.
+
+**Verified:** `:app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.screens.LevelMeterScreenTest" --tests "org.ort.app.ui.data
+.NowViewStateMapperTest" --tests "org.ort.app.ui.data.LevelViewStateMapperTest" --rerun` — all
+green, including new `R_494`/`R_461`/`R_462`/`R_380_level_row` cases and the corrected
+`TourParityTest`. One incidental fix along the way: `NowScreenTest`'s own pre-existing `R_034` test
+started failing after this round's `main` merges brought in an unrelated shared-component
+accessibility fix (`FailedState`, not owned by this package) that folded its action label into a
+merged clickable leaf the same way R-380 does — updated that one assertion to `useUnmergedTree =
+true` rather than leaving it broken. `:app:ktlintCheck :app:detekt` clean. `dependencyRules
+platformGuards` OK. `:app:assembleDebug` succeeds. `spec_check.py` 8/8. `coverageMatrix`/
+`coverageMatrixCheck` 191/419 up to date.
+
+**Left open / not done:** R-380 verified via a Robolectric semantics-tree assertion, not a live
+`uiautomator` device dump (both ports were validators' own for this whole round) — a validator
+should still confirm on-device on the next pass, though the test asserts the exact structural claim
+(tagged node = clickable leaf, one description) the register's own dump finding was about.
+
+---
+
 ## 2026-09-08 (ui-conformance WP2: R-420/R-424 score-chip wrap and column-header stacking; R-380/R-381 clickable nodes carry their own description via clearAndSetSemantics; R-383 filter chip 44dp floor)
 
 ### (pending) — ui-conformance WP2 · R-420, R-424, R-380, R-381, R-383

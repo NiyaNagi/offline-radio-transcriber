@@ -164,4 +164,24 @@ class LatticeSlotFixtureTest {
 
         assertEquals(0L, LevelStatus.clippedSamplesThisSession)
     }
+
+    @Test
+    @Requirement("R-462")
+    fun `R_462 level-low seeds a real verified input so the meter subtitle carries its own device name`() = runTest {
+        Scenarios.load(context, "level-low")
+
+        val input = InputStatus.state
+        assertTrue("expected a real, verified input, not None", input is InputStatus.State.Opened)
+        assertEquals("USB Audio Device", (input as InputStatus.State.Opened).descriptor.label)
+    }
+
+    @Test
+    @Requirement("R-462")
+    fun `R_462 level-clip also seeds the same real verified input`() = runTest {
+        Scenarios.load(context, "level-clip")
+
+        val input = InputStatus.state
+        assertTrue("expected a real, verified input, not None", input is InputStatus.State.Opened)
+        assertEquals("USB Audio Device", (input as InputStatus.State.Opened).descriptor.label)
+    }
 }
