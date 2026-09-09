@@ -2,6 +2,7 @@ package org.ort.app.ui.data
 
 import android.content.Context
 import org.ort.core.Attribution
+import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
@@ -263,6 +264,16 @@ public object CorrectionPolling {
      * is correct for every *uncorrected* row) unchanged otherwise. [Attribution.withCorrection] is
      * used exactly the way [org.ort.data.dao.CorrectionDao.applyCorrectedAttribution]'s own write
      * shapes it — never a confidence this row does not have.
+     *
+     * **Register R-321: confirmed still live, not deleted.** A freshly *applied* correction (not
+     * yet undone) still goes through `applyCorrectedAttribution`'s own unconditional
+     * `INFERRED`/`NULL`-confidence write — unchanged by R-321, which only touches [undoAll]'s own
+     * *restore* path — so `ReaderPolling`'s downgrade-to-UNKNOWN bug this function patches is still
+     * reachable on every fresh correction. It is also still reachable *after* an undo whose
+     * restored snapshot was itself already `corrected` (a correction applied on top of an earlier,
+     * still-standing one, then undone back to that earlier one) — `restoreAttribution` can and does
+     * write that exact `corrected = true`/`INFERRED`/`NULL`-confidence shape back,
+     * since it is what the snapshot genuinely recorded ([org.ort.data.dao.CorrectionDao.restoreAttribution]).
      */
     public suspend fun currentAttribution(
         context: Context,
@@ -293,6 +304,41 @@ public object CorrectionPolling {
     public suspend fun currentTranscriptConfidence(context: Context, transmissionId: String): Double? {
         val db = OrtDatabase.create(context.applicationContext)
         return db.transcriptDao().getCurrent(transmissionId)?.confidence
+    }
+
+    /**
+     * Register R-320 (schema v5), `Detail-Why.dc.html` section 1: [ReaderPolling.transmissionDetail]'s
+     * own [InspectionViewState] never carries [org.ort.data.entity.LatticeSlotEntity] rows through
+     * (`ReaderPolling.kt` is WP4's file — this package's row does not extend that call) — this
+     * re-derives the identical [InspectionViewState] a caller already has, with real slot detail
+     * attached via [CatalogDao.slotDetailsFor], for [TransmissionDetailContent] to overwrite the
+     * base poll's own `inspection` with. A second, small, redundant read of `latticesFor`/
+     * `candidatesFor` — the same trade-off [currentAttribution]'s own extra `transmissionDao().getById`
+     * already accepts, rather than widening `ReaderPolling.kt`'s own signature.
+     */
+    public suspend fun inspectionWithSlots(context: Context, transmissionId: String): InspectionViewState {
+        val db = OrtDatabase.create(context.applicationContext)
+        return InspectionViewStateMapper.from(
+            db.catalogDao().latticesFor(transmissionId),
+            db.catalogDao().candidatesFor(transmissionId),
+            db.catalogDao().slotDetailsFor(transmissionId),
+        )
+    }
+
+    /**
+     * Register R-182 (schema v5), D01/D03's transcript highlight: the winning candidate's real
+     * `[start, end)` character span into the current transcript, from
+     * [CatalogDao.winningCandidateCharSpan] — `null` when either bound is `null` (no winning
+     * candidate, or one whose lattice was not text-anchored, e.g. every acoustic lattice; see
+     * [org.ort.lexicon.SlotDetail]'s own doc comment for exactly when a span exists), never a
+     * fabricated `0` standing in for "unknown".
+     */
+    public suspend fun winningCharSpan(context: Context, transmissionId: String): IntRange? {
+        val db = OrtDatabase.create(context.applicationContext)
+        val span = db.catalogDao().winningCandidateCharSpan(transmissionId)
+        val start = span.spanStart
+        val end = span.spanEnd
+        return if (start != null && end != null) start until end else null
     }
 
     /**
@@ -351,27 +397,61 @@ public object CorrectionPolling {
     }
 
     /**
-     * `Detail-Propagated.dc.html`'s `Undo all` — reverts every affected transmission back to its
-     * recorded [AffectedOverViewState.oldCallsign] as a **new** correction (never a delete), then
-     * reverses the voiceprint rebind and the prior adjustments the same way: a further, kept write
-     * restoring the previous value, never a delete. A row whose [AffectedOverViewState.oldCallsign]
-     * was `null` (it had no station before the correction) is left alone:
-     * [org.ort.data.dao.CorrectionDao.applyCorrectedAttribution]'s fixed SQL requires a non-null
-     * station, so a true revert-to-unattributed is not representable through the write path this
-     * package can call without editing `:data` — named here rather than silently skipped.
+     * `Detail-Propagated.dc.html`'s `Undo all` — restores every affected transmission's *exact*
+     * pre-correction attribution (register R-321, fixed): [org.ort.data.dao.CorrectionDao.recordCorrection]
+     * (used here before this fix) always writes the shape a genuine human correction has —
+     * `INFERRED`, no confidence, no source, `corrected = 1` — so an undo recorded that way lied
+     * about what the over's attribution really was before anyone touched it (an AMBIGUOUS over's
+     * `Undo all` left it reading INFERRED-and-corrected forever, never returning to its chooser).
+     * [org.ort.data.dao.CorrectionDao.recordCorrection] now stamps the transmission's real
+     * `attributionState`/`attributionConfidence`/`attributionSourceTransmissionId`/`corrected` —
+     * read *before* the correction it is about to apply — onto the very [org.ort.data.entity.CorrectionEntity] row it
+     * inserts (`previousAttributionState` etc.), so this only has to look that snapshot back up and
+     * hand it to the new, unconditional [org.ort.data.dao.CorrectionDao.restoreAttribution], which
+     * (unlike `applyCorrectedAttribution`) accepts an arbitrary state and a `null` `stationId` —
+     * closing the "no station before the correction" gap this function's own doc used to name as
+     * unrepresentable. Matched by [outcome]'s own `correctedAtMillis` (R-191) and `newValue`, so a
+     * transmission this propagation was not the most recent correction for is never misread.
+     * `previousCorrected == null`/no matching row at all (an older correction, from before this
+     * schema, whose snapshot was never captured) falls back to the honest, disclosed default this
+     * package always used before this fix (`UNKNOWN`, uncorrected) rather than fabricating one.
+     *
+     * **Still writes its own audit [org.ort.data.entity.CorrectionEntity]**, exactly as before this
+     * fix (constitution III: undo is itself a further, kept correction, not merely implied by the
+     * attribution changing) — via a plain [org.ort.data.dao.CorrectionDao.insert], not
+     * `recordCorrection` (which would call `applyCorrectedAttribution` and immediately re-break the
+     * very attribution [restoreAttribution] just wrote). Only when [AffectedOverViewState.oldCallsign]
+     * is non-null: [org.ort.data.entity.CorrectionEntity.newValue] is a non-null column, so a
+     * restore back to *no* station (a genuinely unattributed original) has no correction-log row to
+     * fit — the real attribution write below still happens unconditionally either way; only the
+     * audit trail for that one honest edge case is a named gap, not a fabricated row.
      */
     public suspend fun undoAll(context: Context, outcome: PropagationOutcome, atMillis: Long) {
         val db = OrtDatabase.create(context.applicationContext)
         outcome.affected.forEach { row ->
-            val old = row.oldCallsign ?: return@forEach
-            val entity = CorrectionRequest(
+            val original = db.correctionDao().correctionsFor(row.transmissionId).lastOrNull {
+                it.newValue == row.newCallsign &&
+                    (outcome.correctedAtMillis == null || it.correctedAt == outcome.correctedAtMillis)
+            }
+            row.oldCallsign?.let { old ->
+                db.correctionDao().insert(
+                    CorrectionRequest(
+                        transmissionId = row.transmissionId,
+                        previousStationId = row.newCallsign,
+                        newStationId = old,
+                        tier = CorrectionTier.PICK_CANDIDATE,
+                        correctedAtMillis = atMillis,
+                    ).toEntity(),
+                )
+            }
+            db.correctionDao().restoreAttribution(
                 transmissionId = row.transmissionId,
-                previousStationId = row.newCallsign,
-                newStationId = old,
-                tier = CorrectionTier.PICK_CANDIDATE,
-                correctedAtMillis = atMillis,
-            ).toEntity()
-            db.correctionDao().recordCorrection(entity)
+                state = original?.previousAttributionState ?: AttributionState.UNKNOWN,
+                stationId = row.oldCallsign,
+                confidence = original?.previousAttributionConfidence,
+                sourceTransmissionId = original?.previousAttributionSourceTransmissionId,
+                corrected = original?.previousCorrected ?: false,
+            )
         }
 
         outcome.voiceprintRebind?.let { rebind ->

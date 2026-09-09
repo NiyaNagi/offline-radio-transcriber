@@ -1,6 +1,7 @@
 package org.ort.app.ui.data
 
 import org.ort.data.entity.CallsignCandidateEntity
+import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.PhoneticLatticeEntity
 
 /**
@@ -53,6 +54,29 @@ public data class CandidateInspectionViewState(
      * lexicon search; this mapper simply had not read them before this fix). */
     val ituPrefix: String? = null,
     val ituCountry: String? = null,
+    /** Register R-320 (schema v5): the real [org.ort.data.entity.CallsignCandidateEntity.id] this
+     * candidate's [org.ort.data.entity.LatticeSlotEntity] rows key off — carried through so
+     * [DetailViewStateMapper.whyFor] can find the *winning* candidate's own slots without a second,
+     * redundant lookup. Not itself shown on screen. */
+    val id: String = "",
+    /** Register R-320, `Detail-Why.dc.html` section 1: this candidate's own per-slot detail, in
+     * lattice order — empty for a record `:data` recorded before schema v5 added
+     * [org.ort.data.entity.LatticeSlotEntity], never a fabricated placeholder grid. */
+    val slots: List<SlotDetailViewState> = emptyList(),
+)
+
+/**
+ * Register R-320/R-182 (schema v5): one [org.ort.data.entity.LatticeSlotEntity], translated.
+ * [belowThreshold] is [BELOW_THRESHOLD_SCORE]'s own disclosed policy cut (the board's own worked
+ * example, `Detail-Why.dc.html`: `.64` reads amber, `.88`+ reads green) — no corpus-fitted
+ * per-unit threshold exists anywhere in this codebase to read instead, the same honest-constant
+ * pattern [org.ort.app.ui.data.CorrectionPolling]'s own `PRIOR_ADJUSTMENT_INCREMENT` already uses.
+ */
+public data class SlotDetailViewState(
+    val unit: String,
+    val score: Double,
+    val keptAlternate: String?,
+    val belowThreshold: Boolean,
 )
 
 public data class LatticeInspectionViewState(val source: String, val modelId: String?, val createdAt: Long)
@@ -70,31 +94,55 @@ public data class InspectionViewState(
 
 public object InspectionViewStateMapper {
 
+    /** [SlotDetailViewState]'s own disclosed policy cut — see that class's doc comment. */
+    private const val BELOW_THRESHOLD_SCORE = 0.7
+
+    /**
+     * [slots] is register R-320/R-182's own addition (schema v5) — defaulted to empty so every
+     * call site built before it exists compiles unchanged; a caller that has looked up
+     * [org.ort.data.dao.CatalogDao.slotDetailsFor] passes it through, grouped here by
+     * [org.ort.data.entity.LatticeSlotEntity.candidateId] onto the matching
+     * [CandidateInspectionViewState.slots] — never guessed from rank or position, since a
+     * candidate's own real id is what the schema actually keys slots by.
+     */
     public fun from(
         lattices: List<PhoneticLatticeEntity>,
         candidates: List<CallsignCandidateEntity>,
-    ): InspectionViewState = InspectionViewState(
-        lattice = lattices.maxByOrNull { it.createdAt }?.let { entity ->
-            LatticeInspectionViewState(
-                source = entity.source.name,
-                modelId = entity.modelId,
-                createdAt = entity.createdAt,
-            )
-        },
-        candidates = candidates.sortedBy { it.rank }.map { entity ->
-            CandidateInspectionViewState(
-                callsign = entity.callsign,
-                rank = entity.rank,
-                score = entity.score,
-                grammarValid = entity.grammarValid,
-                databaseHit = entity.databaseHit,
-                selected = entity.selected,
-                priorContributions = (entity.priorBreakdown ?: emptyMap()).map { (name, logOdds) ->
-                    PriorContributionViewState(priorName = name, logOdds = logOdds, isColdStart = logOdds == 0.0)
-                }.sortedBy { it.priorName },
-                ituPrefix = entity.ituPrefix,
-                ituCountry = entity.ituCountry,
-            )
-        },
-    )
+        slots: List<LatticeSlotEntity> = emptyList(),
+    ): InspectionViewState {
+        val slotsByCandidateId = slots.groupBy { it.candidateId }
+        return InspectionViewState(
+            lattice = lattices.maxByOrNull { it.createdAt }?.let { entity ->
+                LatticeInspectionViewState(
+                    source = entity.source.name,
+                    modelId = entity.modelId,
+                    createdAt = entity.createdAt,
+                )
+            },
+            candidates = candidates.sortedBy { it.rank }.map { entity ->
+                CandidateInspectionViewState(
+                    callsign = entity.callsign,
+                    rank = entity.rank,
+                    score = entity.score,
+                    grammarValid = entity.grammarValid,
+                    databaseHit = entity.databaseHit,
+                    selected = entity.selected,
+                    priorContributions = (entity.priorBreakdown ?: emptyMap()).map { (name, logOdds) ->
+                        PriorContributionViewState(priorName = name, logOdds = logOdds, isColdStart = logOdds == 0.0)
+                    }.sortedBy { it.priorName },
+                    ituPrefix = entity.ituPrefix,
+                    ituCountry = entity.ituCountry,
+                    id = entity.id,
+                    slots = (slotsByCandidateId[entity.id] ?: emptyList()).sortedBy { it.index }.map { slot ->
+                        SlotDetailViewState(
+                            unit = slot.unit,
+                            score = slot.score,
+                            keptAlternate = slot.keptAlternate,
+                            belowThreshold = slot.score < BELOW_THRESHOLD_SCORE,
+                        )
+                    },
+                )
+            },
+        )
+    }
 }

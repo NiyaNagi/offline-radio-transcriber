@@ -425,7 +425,7 @@ class TransmissionDetailContentTest {
             .assertExists()
         // The exhaustive screen's own candidate row, not just the inline preview's — proves D05
         // itself rendered, not a re-render of the same detail screen.
-        composeTestRule.onNodeWithText("2 · Candidates that survived", ignoreCase = true, substring = true)
+        composeTestRule.onNodeWithText("3 · Candidates that survived", ignoreCase = true, substring = true)
             .assertExists()
     }
 
