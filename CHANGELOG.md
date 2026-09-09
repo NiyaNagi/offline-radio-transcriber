@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-08 (ui-conformance WP4 · R-494/461/462/380: configured-device seeding, honest meta row, KeyValueRow's own onClick)
 
-### (pending) — ui-conformance WP4 · R-494/461/462/380: configured-device seeding, honest meta row, KeyValueRow's own onClick
+### 97463e4 — ui-conformance WP4 · R-494/461/462/380: configured-device seeding, honest meta row, KeyValueRow's own onClick
 
 **Scope:** `app/src/debug` (`Scenarios.kt`), `ui/screens` (`NowScreen.kt`, `CaptureStatusScreen.kt`),
 matching tests, plus one flagged out-of-row fix in `app/src/test/kotlin/org/ort/app/debug/tour/TourParityTest.kt`
