@@ -126,14 +126,21 @@ class ReadyScreenTest {
     }
 
     /**
-     * Unlike [statusText][ReadyRow.statusText] above, [ReadyRow.actionLabel] ("Fix"/"Install", via
-     * [org.ort.app.ui.components.TextAction]) is deliberately never folded into a row's own
-     * announcement — it is always its own separate, real button stop, proven by the second
-     * assertion below rather than assumed ([ReadySetupRow]'s own doc comment explains why: folding
-     * it in would misattribute the button's click action to the whole row's announcement).
+     * R-361 (validator pass 5, halt): this row shape is the one R-342's own first fix left on
+     * [org.ort.app.ui.components.KeyValueRow]'s native merge, reasoning it was already correct — a
+     * real device dump proved otherwise (the *focusable* node had an **empty** description, the
+     * real text sat on a separate non-focusable child at the same bounds, so TalkBack announced
+     * nothing landing on the only reachable stop). [ReadySetupRow] now gives this row the identical
+     * `clearAndSetSemantics` treatment every row gets, action or not — this assertion, like R-342's
+     * own equivalent note, cannot itself prove the *old* shape wrong (Robolectric's own semantics
+     * query showed a correct merged description for it too, same as it did before R-342 was even
+     * found); the real proof is the on-device dump this package's own report quotes. Unlike
+     * [statusText][ReadyRow.statusText] above, [ReadyRow.actionLabel] ("Fix"/"Install", via
+     * [org.ort.app.ui.components.TextAction]) is never folded into a row's own announcement — it is
+     * always its own separate, real button stop, proven by the second assertion below.
      */
     @Test
-    fun `R_342 an amber row announces label and value, Fix is its own real button`() {
+    fun `R_361 an amber row's focusable node announces label and value, Fix is its own real button`() {
         val row = ReadyRow("Overnight", "Battery exemption skipped", ok = false, statusText = null, actionLabel = "Fix")
         composeTestRule.setContent {
             OrtTheme { ReadyScreen(state = ReadyViewState(listOf(row)), onStartCapture = {}) }

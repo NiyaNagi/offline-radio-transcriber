@@ -416,3 +416,121 @@ A real run of `scenario.ps1 -Port 5554 -Name overnight` followed by
 dot, no score), INFERRED (hollow ring, `0.70` score), real callsigns, times, frequencies and
 signal strengths. This is expected — WP0 seeds data and drives adb; it does not touch a single
 screen composable.
+
+## Screenshot tour (spec/ui-conformance-plan.md WP12)
+
+`tools/ui-audit/tour.ps1` is the bulk, deterministic alternative to the manual
+`scenario.ps1` → `nav.ps1` → `shoot.ps1` sequence above: one command produces every screenshot a
+validator brief names, in one pass, without hand-driving `uiautomator`. It exists so the expensive
+part of a validation pass — comparing each screen against its artboard — can happen off-device, in
+parallel, and so `diff.py` can show which screens actually changed since the last run.
+
+### How it works
+
+`ScreenshotTourActivity` (`app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt`,
+debug-build-only, `android:exported="true"` for the same adb-only reason `ScenarioReceiver` and
+`ScenarioReaderActivity` already are) reads a JSON step list, and for each step: loads the step's
+scenario through the real `Scenarios.load` — the same seeding `ScenarioReceiver` uses — then either
+composes the real `OrtNavHost` *directly inside its own `setContent`* (a destination step) or
+launches the real `SetupActivity` with its own, already-public `EXTRA_STEP` extra (a setup step),
+waits for composition/polling to settle, captures a `Bitmap` via
+`androidx.core.view.drawToBitmap`, and writes it to `<filesDir>/tour/<id>.png` plus one JSON line
+to `<filesDir>/tour/manifest.json`. A step that throws — an unknown scenario, an unresolvable
+destination, an unsupported `drillIn` key — is caught and recorded as one `error` line; the tour
+never aborts early.
+
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.101-hotspot"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+
+.\tools\ui-audit\install.ps1 -Port 5554
+.\tools\ui-audit\tour.ps1 -Port 5554
+
+# a subset only, by id glob:
+.\tools\ui-audit\tour.ps1 -Port 5554 -Only "overnight/*"
+```
+
+`tour.ps1` pushes `tools/ui-audit/tour.json` to the device, launches the activity, polls the
+on-device `<filesDir>/tour/manifest.json` (via `run-as`, since it is app-private storage) for its
+trailing `{"done": true, ...}` line (15-minute hard cap), then stages the whole `tour/` directory out
+to a world-readable `/sdcard` path with `run-as ... cp -r` and pulls it with a plain `adb pull` —
+never `adb exec-out` redirected to a file (brief-common.md's own rule). Screenshots land at
+`results/ui-audit/<scenario>/<screen>.png`, the same layout `shoot.ps1` already uses; the manifest
+lands at `results/ui-audit/tour-manifest.json`.
+
+### `tour.json`'s schema
+
+```jsonc
+{ "id": "overnight/N01-now", "scenario": "overnight", "destination": "NOW", "fontScale": 1.0 }
+{ "id": "overnight/CF03-settings-storage", "scenario": "overnight", "destination": "SETTINGS",
+  "drillIn": { "settingsScreen": "STORAGE" } }
+{ "id": "setup-verified/S01-welcome", "setup": "S01", "scenario": "setup-verified" }
+```
+
+`id` must be unique and follows the existing `<scenario>/<screen>` naming. `destination` is a
+`org.ort.app.ui.navigation.ReaderDestination` name (a `setup` step names a design-intent S-id
+instead — see `SetupStepIds.kt` for the S-id → `SetupStep` table — never both). `drillIn` is an
+optional object carried through verbatim from a validator brief's own vocabulary
+(`transmissionId`/`stationId`/`frequencyHz`/`sessionId`/`settingsScreen`/`openLogFilter`) — **only
+`settingsScreen` is honored**; see "What v1 cannot capture" below. `override` is a second scenario
+name, loaded in-process after the destination has composed and settled — the recovery-toast/
+transition shape (`rig-lost` → `rig-reconnected`, `storage-warn` → `storage-fine`). `fontScale`
+(destination steps only — see below) and `waitMillis` are optional.
+
+### What v1 cannot capture
+
+**No taps, no sheets, no drill-ins.** `OrtNavHost`'s public surface is exactly `sessionId`,
+`navigator` (`rememberReaderNavigator(initialDestination, initialSettingsScreen)`), and
+`failureActions`; `ReaderNavigator`'s is `open`, `openSettings`, `openSetupInput`. Every drill-in id
+— `NavHostNavState.openTransmissionId`/`openStationId`/`openFrequencyHz`/`openThreadId`/
+`pendingLogFilter`/`openCaptureLevelMeter`/`pendingReviewSessionId` — is `private` inside
+`OrtNavHost.kt` (WP3's file), populated only by a callback a real tap fires. That leaves v1 able to
+reach only: the ten `ReaderDestination` roots, `Settings`'s nine sub-screens
+(`initialSettingsScreen`), and `SetupActivity`'s `EXTRA_STEP` steps. It **cannot** reach: any
+transmission detail (D01–D11, F04/F10/F11/F18's own detail states), a thread detail (T02/T03), a
+station or frequency detail (ST02–04, FQ02–03), the `Log`/`Search` filter sheets open (L02, Q02),
+any `Search` result/empty/unavailable state (Q03–Q05 — reaching them needs a submitted query, a
+tap), the capture level-meter drill-in from `Capture` (N06, though `level-low`/`level-clip` scenarios
+still reach a *close* approximation by landing `Capture` itself in a degraded-level state), or
+`Earlier nights`' `Settings-Storage`-review seed. **This is the exact host-parameter gap reported to
+the lead** — `OrtNavHost`/`NavHostNavState`/`ReaderNavigator` would need new, explicit
+constructor/Intent parameters for each drill-in id, all inside `ui/navigation/**` (WP3's row, not
+WP12's) — see this package's own report for the literal fields.
+
+**Setup steps S05 (`VERIFY`) and S06 (`ROUTE_MISMATCH`) are excluded from `tour.json`.** Both are
+reached, in the real app, only as the *live result* of S04's "Verify this input" action
+(`SetupActivity.onStartVerify`/`onVerifyStateChanged`) — `EXTRA_STEP` can set `step` directly, but
+never runs that check, so a forced `VERIFY`/`ROUTE_MISMATCH` step would render from whatever
+`verifyState` happens to default to, not the real checked-or-mismatched content. **S10
+(`RADIO_USB`) and S11 (`RADIO_VERIFIED`) are excluded for the same reason** — real USB attach /
+rig verification, not a store gate a scenario can seed.
+
+**Setup steps have no font-scale hook at all.** `fontScale` on a `setup` step is accepted by the
+schema (silently ignored by `ScreenshotTourActivity` today) but never applied — `SetupActivity` is a
+real, separate `Activity` this package only launches; it exposes no `CompositionLocalProvider`
+seam the way composing `OrtNavHost` in place lets a destination step's `fontScale` actually work.
+A future fix would add an `EXTRA_FONT_SCALE` to `SetupActivity` itself (`ui/setup/**`, not WP12's
+row).
+
+**No `Search` result ever renders**, `search-corpus`/`search-unavailable` steps only reach the
+initial `Search` screen (`Q01`) — the query field starts empty and nothing submits it.
+
+A validator still drives every one of the states above by hand, exactly as `results/ui-audit/README.md`'s
+existing sections describe; the tour is additive, not a replacement for validation.
+
+### `diff.py`
+
+```powershell
+python tools\ui-audit\diff.py --before main --after results\ui-audit --manifest results\ui-audit\tour-manifest.json
+```
+
+`--before` is either a directory (an earlier tour run pulled somewhere else) or a git ref, read via
+`git show <ref>:<path>` per file. Each of the current manifest's `ok` steps lands in exactly one of
+`new` / `missing` / `changed` / `unchanged`, decided by downsampling both images to a 4×4 grid of
+per-cell mean RGB (the top 4% of rows — the OS status bar — excluded from every cell) and comparing
+mean absolute per-channel difference against `--threshold` (default `6.0`) — a coarse perceptual
+check, not a pixel-exact diff, since a live clock/elapsed header and PNG re-encoding are not
+byte-identical run to run. Writes `results/ui-audit/tour-diff.md` alongside printing the four lists.
+Uses Pillow if the interpreter running it has it; otherwise a small stdlib-only PNG decoder covers
+the common case these screenshots are actually encoded as (non-interlaced 8-bit RGB/RGBA — what
+`Bitmap.compress(PNG, ...)` produces) and fails loudly, never silently wrong, on anything else.

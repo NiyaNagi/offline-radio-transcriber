@@ -77,15 +77,28 @@ import org.ort.app.ui.theme.OrtType
  * very first composition (before `verticalScroll`'s own internal state has anything to report back)
  * the scrollable content is measured and placed at its *natural, unconstrained* height, which
  * exceeds the space actually left for it; only after a real user scroll (or a recomposition
- * triggered some other way) does the layout settle where it visually belongs. `migration-failed`'s
- * own R-292 finding (`FailureActionBarScaffold`, WP11b, b40f659) was the identical defect one layer
- * over: same fix here, `SubcomposeLayout` measuring the header and the bar first (both loose,
- * natural height), then handing the content slot a **hard** `maxHeight` of
- * `screenHeight − headerHeight − barHeight` — content cannot be placed into the bar's region at
- * *any* scroll offset, first frame included, because the layout system never gives it that space to
- * measure into in the first place. [SetupScaffoldTest]'s own new `R_341` test asserts this on the
- * unscrolled first frame specifically (`SetupScaffoldTest`'s existing `R_123` test only ever scrolls
- * first, which is exactly why it did not catch this).
+ * triggered some other way) does the layout settle where it visually belongs.
+ *
+ * **R-360 (validator pass 5, spec — reopens R-341, same defect a third time):** the first attempt
+ * at this fix (`SubcomposeLayout` with *three* slots — header, bar, content, each measured
+ * independently, content given a hard `maxHeight` of `screenHeight − headerHeight − barHeight`)
+ * passed its own Robolectric regression test and still clipped on a real device at 2.0 on cold
+ * launch, on every one of S01/S03/S06/S08/S12 — `ComposeTestRule.setContent` drives to a fully
+ * idle, settled layout before any query runs, so Robolectric cannot observe the transient pre-settle
+ * frame a real device's own first `screencap` catches (`setup/S01-welcome-pass5@2x.png` vs.
+ * `-afterscroll.png`). WP11b's `FailureActionBarScaffold` (R-292, `ui/failures/
+ * FailureActionBarScaffold.kt`) is confirmed correct on the device at 2.0 on cold launch, and this
+ * scaffold is now made **structurally identical** to it, not merely "the same idea": exactly *two*
+ * `subcompose` slots, `Bar` measured first (loose constraints) and `Content` second, given a hard
+ * `Constraints(minHeight = maxHeight = screenHeight − barHeight)` — the header (back/counter,
+ * segment bars, title/subtitle) lives *inside* the `Content` slot's own `Column`, above its own
+ * inner `verticalScroll` region, rather than as a separate, independently-measured third slot. The
+ * inner `weight(1f)` the scrollable region still uses is no longer the R-341/R-360 defect: that
+ * `Column`'s own *outer* bounds are now the `SubcomposeLayout`'s hard-constrained placeable, not an
+ * ambiguous, `wrap_content`-sized parent, so the weighted child has a true, already-settled "what's
+ * left" to measure against on the very first frame. Verified on a real device (`emulator-5554`,
+ * fresh `pm clear`, `settings put system font_scale 2.0`, cold `am start`, screenshot before any
+ * scroll) — this package's own report has the two screenshots and the exact recipe.
  */
 // R-343 added the one new parameter (titleOptional) that pushed this over detekt's 9-parameter
 // threshold -- every existing one already earns its place in this shared, deliberately flexible
@@ -119,8 +132,27 @@ public fun SetupScaffold(
             maxHeight = constraints.maxHeight,
         )
 
-        val headerPlaceables = subcompose(SetupScaffoldSlot.Header) {
-            Column {
+        // R-360: exactly the two slots FailureActionBarScaffold (R-292) has -- Bar measured first,
+        // Content second with a hard maxHeight -- not the three-slot version that still clipped on
+        // device (this file's own class doc has the full account).
+        val barPlaceables = subcompose(SetupScaffoldSlot.Bar) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+                verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+                content = bottomActions,
+            )
+        }.map { it.measure(looseConstraints) }
+        val barHeightPx = barPlaceables.maxOfOrNull { it.height } ?: 0
+
+        val contentHeightPx = (constraints.maxHeight - barHeightPx).coerceAtLeast(0)
+        val contentConstraints = Constraints(
+            minWidth = constraints.maxWidth,
+            maxWidth = constraints.maxWidth,
+            minHeight = contentHeightPx,
+            maxHeight = contentHeightPx,
+        )
+        val contentPlaceables = subcompose(SetupScaffoldSlot.Content) {
+            Column(modifier = Modifier.fillMaxSize()) {
                 ScaffoldHeaderRow(step = step, onBack = onBack)
                 step.indicatorIndex()?.let { index ->
                     SegmentBars(
@@ -133,46 +165,25 @@ public fun SetupScaffold(
                     )
                 }
                 ScaffoldTitleRow(title, subtitle, titleOptional, titleTrailing)
+                Column(
+                    modifier = Modifier
+                        .padding(horizontal = OrtSpacing.lg)
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(OrtSpacing.md),
+                    content = content,
+                )
             }
-        }.map { it.measure(looseConstraints) }
-        val headerHeightPx = headerPlaceables.maxOfOrNull { it.height } ?: 0
-
-        val barPlaceables = subcompose(SetupScaffoldSlot.Bar) {
-            Column(
-                modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
-                verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-                content = bottomActions,
-            )
-        }.map { it.measure(looseConstraints) }
-        val barHeightPx = barPlaceables.maxOfOrNull { it.height } ?: 0
-
-        val contentHeightPx = (constraints.maxHeight - headerHeightPx - barHeightPx).coerceAtLeast(0)
-        val contentConstraints = Constraints(
-            minWidth = constraints.maxWidth,
-            maxWidth = constraints.maxWidth,
-            minHeight = contentHeightPx,
-            maxHeight = contentHeightPx,
-        )
-        val contentPlaceables = subcompose(SetupScaffoldSlot.Content) {
-            Column(
-                modifier = Modifier
-                    .padding(horizontal = OrtSpacing.lg)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(OrtSpacing.md),
-                content = content,
-            )
         }.map { it.measure(contentConstraints) }
 
         layout(constraints.maxWidth, constraints.maxHeight) {
-            headerPlaceables.forEach { it.placeRelative(0, 0) }
-            contentPlaceables.forEach { it.placeRelative(0, headerHeightPx) }
+            contentPlaceables.forEach { it.placeRelative(0, 0) }
             barPlaceables.forEach { it.placeRelative(0, constraints.maxHeight - barHeightPx) }
         }
     }
 }
 
-private enum class SetupScaffoldSlot { Header, Content, Bar }
+private enum class SetupScaffoldSlot { Content, Bar }
 
 /** The title/subtitle pair (+ optional trailing composable) — split out of [SetupScaffold] itself
  * purely to keep it under detekt's `LongMethod` threshold, the same reason [ScaffoldHeaderRow]/

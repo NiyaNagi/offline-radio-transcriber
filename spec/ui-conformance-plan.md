@@ -132,6 +132,18 @@ state reachable by broadcast: `adb shell am broadcast -a org.ort.app.debug.SCENA
 A validator's finding is one register row with the screenshot path and the artboard it was
 compared against. Validators do not fix.
 
+**Bulk capture (added 2026-09-08, WP12).** Driving the emulator by hand costs 150–300 tool calls a
+pass, so screen-by-screen capture is done by the in-process screenshot tour instead:
+`tools/ui-audit/tour.ps1 -Port <p>` runs `ScreenshotTourActivity` (debug build) over
+`tools/ui-audit/tour.json` — each step seeds a scenario in-process, composes the real host with a
+`NavSeed` for the destination or drill-in, applies the font scale through `LocalDensity`, renders
+the bitmap and writes it plus a manifest line; the script pulls the set into `results/ui-audit/`.
+`tools/ui-audit/diff.py --before <git ref>` lists which captures changed since the last run.
+**Reviewers** (Sonnet, no device) then compare slices of the PNG set against the artboards in
+parallel, each with a lead-assigned finding range; only interactive checks — taps, TalkBack tree,
+system back, the correction flow — still use a validator on a port. Steps the tour cannot reach
+(sheets open, submitted search states, S05/S06/S10/S11) are listed in `results/ui-audit/README.md`.
+
 ### Phase F — iterate
 
 Lead reads every validator report, confirms or rejects each finding against the artboard, assigns
@@ -150,8 +162,10 @@ Memory updated.
 - **Worktrees.** Every builder runs in `isolation: worktree`. The lead merges to `main` in
   dependency order (WP0, WP1 → WP2 → the rest). Two builders on packages with no shared files can
   run concurrently; the table's `Owns` column is the conflict test.
-- **Emulators.** At most two AVDs at once (`ort_audit` on 5554, `ort_audit_2` on 5556).
-  Validators are told their port and never touch the other.
+- **Emulators.** At most two AVDs at once (`ort_audit` on 5554, `ort_audit_2` on 5556) while
+  a Gradle gate runs — the host starves otherwise (2026-09-08: `adb install` hung 40 minutes).
+  A third, `ort_audit_3` on 5558, may run the screenshot tour only when no full gate is running.
+  Validators are told their port and never touch the others.
 - **Never read the `eval` fold.** No scenario uses corpus audio; fixtures are synthetic rows.
 - **Nothing leaves the device.** Fixtures contain no real callsigns tied to real people, no
   voiceprints, no location. Synthetic callsigns from the existing tests' vocabulary only.

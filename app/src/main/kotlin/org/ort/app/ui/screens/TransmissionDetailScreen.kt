@@ -27,11 +27,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -137,7 +139,7 @@ public fun TransmissionDetailScreen(
                 // transmission; a rejected one was never even a candidate for that).
                 rejected != null -> RejectedTranscriptSection(state.detail)
                 passFailure != null -> FailedPassPartialSection(state.detail)
-                else -> TranscriptSection(state.detail, state.transcriptConfidence)
+                else -> TranscriptSection(state.detail, state.transcriptConfidence, state.transcriptCharSpan)
             }
             // R-196 (halt): a failed pass carries an UNKNOWN attribution (no pass ever finished to
             // resolve one), so `state.body` is genuinely `DetailBodyViewState.Unknown` — but the
@@ -576,31 +578,25 @@ private fun NoAudioNotice(detail: TransmissionDetailViewState) {
  * caption below the text ("Transcript confidence 0.61") — the real number alone, never the board's
  * own "· weak signal, cut off" qualitative clause, which this package has no honest way to derive
  * from a bare confidence value (constitution I).
+ *
+ * Register R-182 (schema v5): [transcriptCharSpan], when the winning candidate's lattice was
+ * text-anchored, highlights that exact `[start, end)` range — precise even for a phonetically
+ * spelled callsign ("kilo seven lima whiskey hotel"), which the literal substring fallback below
+ * could never match. Falls back to the plain [String.indexOf] check only when no span exists (an
+ * acoustic lattice, or a record from before schema v5) — see [highlightedTranscript]'s own doc.
  */
 @Composable
-private fun TranscriptSection(detail: TransmissionDetailViewState, transcriptConfidence: Double? = null) {
-    val stationId = detail.attribution.stationId
+private fun TranscriptSection(
+    detail: TransmissionDetailViewState,
+    transcriptConfidence: Double? = null,
+    transcriptCharSpan: IntRange? = null,
+) {
     val highlight = if (detail.attribution.state == AttributionState.CONFIRMED) {
         OrtColors.highlightGreen
     } else {
         OrtColors.highlightAmber
     }
-    val text = if (stationId != null) {
-        val index = detail.transcriptText.indexOf(stationId, ignoreCase = true)
-        if (index >= 0) {
-            buildAnnotatedString {
-                append(detail.transcriptText.substring(0, index))
-                withStyle(SpanStyle(background = highlight)) {
-                    append(detail.transcriptText.substring(index, index + stationId.length))
-                }
-                append(detail.transcriptText.substring(index + stationId.length))
-            }
-        } else {
-            buildAnnotatedString { append(detail.transcriptText) }
-        }
-    } else {
-        buildAnnotatedString { append(detail.transcriptText) }
-    }
+    val text = highlightedTranscript(detail.transcriptText, detail.attribution.stationId, transcriptCharSpan, highlight)
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
         Text(text = text, style = OrtType.bodyProse, color = OrtColors.textSecondary)
         transcriptConfidence?.let {
@@ -612,6 +608,44 @@ private fun TranscriptSection(detail: TransmissionDetailViewState, transcriptCon
             )
         }
     }
+}
+
+/**
+ * Register R-182: the real span, when [charSpan] is non-null and lands inside [transcriptText]
+ * (a defensive check, not an expected failure — a span computed against a different transcript
+ * version than the one currently shown could in principle disagree). Otherwise the honest, weaker
+ * fallback this package always used: a literal, case-insensitive substring match of [stationId] —
+ * never a phonetic-word guess, since no data anywhere maps a transcript's spoken words back to the
+ * callsign that produced them beyond what the span itself already gives when it exists.
+ */
+internal fun highlightedTranscript(
+    transcriptText: String,
+    stationId: String?,
+    charSpan: IntRange?,
+    highlight: Color,
+): AnnotatedString {
+    if (charSpan != null && charSpan.first in transcriptText.indices && charSpan.last < transcriptText.length) {
+        return buildAnnotatedString {
+            append(transcriptText.substring(0, charSpan.first))
+            withStyle(SpanStyle(background = highlight)) {
+                append(transcriptText.substring(charSpan.first, charSpan.last + 1))
+            }
+            append(transcriptText.substring(charSpan.last + 1))
+        }
+    }
+    if (stationId != null) {
+        val index = transcriptText.indexOf(stationId, ignoreCase = true)
+        if (index >= 0) {
+            return buildAnnotatedString {
+                append(transcriptText.substring(0, index))
+                withStyle(SpanStyle(background = highlight)) {
+                    append(transcriptText.substring(index, index + stationId.length))
+                }
+                append(transcriptText.substring(index + stationId.length))
+            }
+        }
+    }
+    return buildAnnotatedString { append(transcriptText) }
 }
 
 /** R-057: `Detail-Ambiguous.dc.html`'s chooser — both real candidates with their evidence, `Neither`. */

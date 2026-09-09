@@ -1,0 +1,109 @@
+package org.ort.app.debug.tour
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * spec/ui-conformance-plan.md WP12 (`tools/ui-audit/tour.json`'s own schema, this package's
+ * brief): one capture instruction. Two kinds share this shape — a **destination** step ([setup]
+ * null) composes the real [org.ort.app.ui.navigation.OrtNavHost] directly on
+ * [ScreenshotTourActivity]'s own destination/settings-screen; a **setup** step ([destination]
+ * null) launches the real [org.ort.app.ui.setup.SetupActivity] at the named
+ * [org.ort.app.ui.setup.SetupStep].
+ *
+ * [drillIn] is a map of symbolic keys resolved against the step's own just-loaded scenario by
+ * [TourIds.resolveSeed] into a real [org.ort.app.ui.navigation.NavSeed] — v2 (WP3 round 13 added
+ * `NavSeed`, a public seam `OrtNavHost`/`rememberReaderNavigator` both accept, closing the v1 gap
+ * this class's own history records): `transmission` (`confirmed`|`inferred`|`ambiguous`|`unknown`
+ * or a literal id), `station` (a callsign or a literal id), `frequency` (a literal Hz value),
+ * `thread` (`any` or a literal id), `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`,
+ * `captureLevelMeter` (`true`), `reviewSession` (`self` or a literal session id),
+ * `frequencyInitialView` (`Detail`|`Change`), `settingsScreen` (a `SettingsScreenId` name — carried
+ * through `NavSeed` now, same key as before). **Not seedable at all, in v2 either**: `Log`'s own
+ * filter sheet and `Search`'s own — see [org.ort.app.ui.navigation.NavSeed]'s own doc comment for
+ * exactly why (neither `LogContent.kt` nor `SearchContent.kt` accepts an initial-open parameter).
+ * A step naming a
+ * [drillIn] key outside this set fails loudly (recorded as one `error` line in the manifest, per
+ * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
+ * aborted tour) rather than being silently ignored.
+ *
+ * [override] (optional): a second scenario name, loaded with [org.ort.app.debug.Scenarios.load]
+ * *after* the base [scenario] and after the destination has already composed and settled — the
+ * exact in-process shape `results/ui-audit/README.md`'s "Recovery toast recipes" section documents
+ * for `scenario.ps1 -NoRestart` (the composed screen's own polling loop observes the change on its
+ * next tick; nothing is remounted). Used for the recovery-toast/transition captures (e.g.
+ * `rig-lost` → `rig-reconnected`).
+ */
+public data class TourStep(
+    public val id: String,
+    public val scenario: String,
+    public val destination: String? = null,
+    public val setup: String? = null,
+    public val drillIn: Map<String, String> = emptyMap(),
+    public val override: String? = null,
+    public val fontScale: Float = 1.0f,
+    public val waitMillis: Long = 0L,
+) {
+    init {
+        require(id.isNotBlank()) { "a tour step must have a non-blank id" }
+        require(scenario.isNotBlank()) { "tour step '$id' must name a scenario" }
+        require((destination == null) != (setup == null)) {
+            "tour step '$id' must name exactly one of destination or setup, not both or neither"
+        }
+    }
+
+    /** Every [drillIn] key [TourIds.resolveSeed] knows how to resolve — see this class's own doc
+     * comment for what each one means. */
+    public val unsupportedDrillInKeys: Set<String> get() = drillIn.keys - SUPPORTED_DRILL_IN_KEYS
+
+    public companion object {
+        private val SUPPORTED_DRILL_IN_KEYS: Set<String> = setOf(
+            "transmission",
+            "station",
+            "frequency",
+            "thread",
+            "logFilterFrequency",
+            "logFilterFromMillis",
+            "logFilterToMillis",
+            "captureLevelMeter",
+            "reviewSession",
+            "frequencyInitialView",
+            "settingsScreen",
+        )
+    }
+}
+
+/** The parsed contents of `tools/ui-audit/tour.json` — a flat, ordered list of [TourStep]s. */
+public data class TourSpec(public val steps: List<TourStep>) {
+    public companion object {
+        /** Parses `{"steps": [...]}`. Throws [org.json.JSONException] on malformed JSON and
+         * [IllegalArgumentException] on a structurally invalid step (see [TourStep]'s own `init`) —
+         * both are programmer/spec-authoring errors, never something a tour run should catch and
+         * limp past the way a per-step capture failure is. */
+        public fun parse(json: String): TourSpec {
+            val root = JSONObject(json)
+            val stepsArray: JSONArray = root.getJSONArray("steps")
+            val steps = (0 until stepsArray.length()).map { index -> parseStep(stepsArray.getJSONObject(index)) }
+            return TourSpec(steps)
+        }
+
+        private fun parseStep(obj: JSONObject): TourStep {
+            val drillInObj = obj.optJSONObject("drillIn")
+            val drillIn = if (drillInObj == null) {
+                emptyMap()
+            } else {
+                drillInObj.keys().asSequence().associateWith { key -> drillInObj.getString(key) }
+            }
+            return TourStep(
+                id = obj.getString("id"),
+                scenario = obj.getString("scenario"),
+                destination = obj.optString("destination").takeIf { it.isNotEmpty() },
+                setup = obj.optString("setup").takeIf { it.isNotEmpty() },
+                drillIn = drillIn,
+                override = obj.optString("override").takeIf { it.isNotEmpty() },
+                fontScale = obj.optDouble("fontScale", 1.0).toFloat(),
+                waitMillis = obj.optLong("waitMillis", 0L),
+            )
+        }
+    }
+}

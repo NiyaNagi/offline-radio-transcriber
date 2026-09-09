@@ -13,6 +13,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,6 +27,7 @@ import org.ort.app.ui.data.PassFailureViewState
 import org.ort.app.ui.data.PriorContributionViewState
 import org.ort.app.ui.data.RejectedViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.ort.core.PassId
@@ -673,5 +676,52 @@ class TransmissionDetailScreenTest {
 
         composeTestRule.onNodeWithText("What the model said", ignoreCase = true, substring = true).assertExists()
         composeTestRule.onNodeWithText("help help mayday mayday").assertExists()
+    }
+
+    // ---- R-182, `highlightedTranscript`: the real char span, falling back to a literal indexOf ----
+
+    @Test
+    fun `R_182_highlightedTranscript_highlights_the_real_span_for_a_phonetic_spelling`() {
+        val text = "this is kilo seven lima whiskey hotel, monitoring"
+        val span = 8 until 32 // "kilo seven lima whiskey hotel"
+
+        val result = highlightedTranscript(text, "K7LWH", span, OrtColors.highlightAmber)
+
+        assertEquals(text, result.text)
+        val styled = result.spanStyles.single()
+        assertEquals(8, styled.start)
+        assertEquals(32, styled.end)
+    }
+
+    @Test
+    fun `R_182_highlightedTranscript_falls_back_to_indexOf_when_no_span_is_recorded`() {
+        val text = "this is K7LWH, monitoring"
+
+        val result = highlightedTranscript(text, "K7LWH", null, OrtColors.highlightAmber)
+
+        val styled = result.spanStyles.single()
+        assertEquals(text.indexOf("K7LWH"), styled.start)
+        assertEquals(text.indexOf("K7LWH") + "K7LWH".length, styled.end)
+    }
+
+    @Test
+    fun `R_182_highlightedTranscript_highlights_nothing_when_neither_a_span_nor_a_literal_match_exists`() {
+        val text = "this is kilo seven lima whiskey hotel, monitoring"
+
+        val result = highlightedTranscript(text, "K7LWH", null, OrtColors.highlightAmber)
+
+        assertTrue(result.spanStyles.isEmpty())
+    }
+
+    @Test
+    fun `R_182_highlightedTranscript_ignores_an_out_of_bounds_span_and_falls_back_to_indexOf`() {
+        val text = "K7LWH here"
+        val badSpan = 100 until 105
+
+        val result = highlightedTranscript(text, "K7LWH", badSpan, OrtColors.highlightAmber)
+
+        val styled = result.spanStyles.single()
+        assertEquals(0, styled.start)
+        assertEquals(5, styled.end)
     }
 }

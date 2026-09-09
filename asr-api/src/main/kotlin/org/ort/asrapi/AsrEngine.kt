@@ -7,6 +7,23 @@ public interface AsrEngine {
     public suspend fun transcribe(audio: FloatArray, opts: DecodeOptions): AsrResult
 }
 
+/**
+ * register R-350: the typed failure an [AsrEngine] implementation throws when there is genuinely
+ * no engine available to run at all — `org.ort.pipeline.passb.UnavailableAsrEngine` (`:pipeline`)
+ * is today's one real thrower, wired in exactly when `RealAsrEngineProvider` reports
+ * `AsrEngineAvailability.Unavailable`. [RejectionPipeline.process] catches this type explicitly,
+ * *before* its own generic `catch (t: Throwable)`, so [reason] reaches
+ * [PassBOutcome.Failed]/`ReprocessStatus.Summary.failureReasons`/`WorkQueueItemEntity.lastError`
+ * verbatim — before this existed, that catch-all replaced the real "no ASR model installed at …"
+ * text with the generic "engine threw during transcribe", and R04's "Install" action (which greps
+ * `failureReasons` for exactly this fact) could never fire for a genuinely missing model.
+ * Deliberately a distinct, closed type rather than pattern-matching on
+ * [IllegalStateException]/[Throwable.message]: any other exception a real engine throws — a
+ * decode failure, an OOM, a native crash — must still fall through to the generic, path/stack-
+ * trace-free bucket, never be mistaken for "no model installed."
+ */
+public class AsrUnavailableException(public val reason: String) : Exception("ASR unavailable: $reason")
+
 /** Decode-time parameters (FR-ASR-4's hotword biasing, language, beam width, …). */
 public data class DecodeOptions(
     val language: String? = null,

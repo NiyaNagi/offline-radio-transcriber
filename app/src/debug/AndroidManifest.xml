@@ -27,5 +27,17 @@
              alias is how tools/ui-audit/nav.ps1 reaches it - see ScenarioReaderActivity's own
              doc comment. -->
         <activity android:name=".debug.ScenarioReaderActivity" android:exported="true" />
+
+        <!-- spec/ui-conformance-plan.md WP12: the bulk screenshot tour, launched by
+             tools/ui-audit/tour.ps1 with an am start naming this component and carrying the
+             on-device tour spec path as its tour_path string extra (see tour.ps1's own doc
+             comment for the exact command - not reproduced here as a literal invocation, since
+             two consecutive hyphens are not permitted inside an XML comment and every real adb
+             extra flag needs them).
+
+             exported="true" for the identical, debug-only, adb-only reason ScenarioReceiver and
+             ScenarioReaderActivity above already are - see ScreenshotTourActivity's own doc
+             comment. -->
+        <activity android:name=".debug.tour.ScreenshotTourActivity" android:exported="true" />
     </application>
 </manifest>

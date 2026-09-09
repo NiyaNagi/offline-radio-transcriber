@@ -58,6 +58,16 @@ public data class RankedCandidateViewState(val callsign: String, val scoreLabel:
  * [org.ort.app.ui.screens.TransmissionDetailScreen] already rendered before this package, kept
  * unchanged. [latticeSummary] is source + model only, never a fabricated per-slot render — see
  * this file's class doc.
+ *
+ * Register R-320 (schema v5): [winningSlots] is the *winning* candidate's own real per-slot detail
+ * ([SlotDetailViewState] — unit, score, kept alternate) — empty for a record from before schema v5
+ * added [org.ort.data.entity.LatticeSlotEntity], never a fabricated placeholder grid.
+ * [winningGrammarValid] is the winning candidate's own real
+ * [CandidateInspectionViewState.grammarValid] boolean — `null` exactly when there is no winning
+ * candidate to read it from ([hasData] is false). Deliberately **not** the board's own
+ * "prefix K · region 7 · suffix LWH" per-component parse: no API this package can reach returns
+ * that breakdown, only the pass/fail bit `CallsignCandidateEntity.grammarValid` already recorded —
+ * shown honestly as that bit alone, never an invented component split.
  */
 public data class DetailWhyViewState(
     val hasData: Boolean,
@@ -65,6 +75,8 @@ public data class DetailWhyViewState(
     val candidates: List<RankedCandidateViewState>,
     val priors: List<PriorBarViewState>,
     val runnerUp: RankedCandidateViewState?,
+    val winningSlots: List<SlotDetailViewState> = emptyList(),
+    val winningGrammarValid: Boolean? = null,
 )
 
 /**
@@ -118,6 +130,10 @@ public data class DetailViewState(
      * ([org.ort.app.ui.data.CorrectionPolling.currentTranscriptConfidence]) — `null` for no current
      * transcript row, or one that recorded no confidence; never a fabricated number. */
     val transcriptConfidence: Double? = null,
+    /** Register R-182 (schema v5): the winning candidate's real `[start, end)` character span into
+     * the transcript ([org.ort.app.ui.data.CorrectionPolling.winningCharSpan]) — `null` when no
+     * winning candidate has one (no candidate, or a lattice that was not text-anchored). */
+    val transcriptCharSpan: IntRange? = null,
 )
 
 public object DetailViewStateMapper {
@@ -148,6 +164,7 @@ public object DetailViewStateMapper {
         // call site compiles unchanged, populated by a caller that already knows the polled
         // `processingState` is `REJECTED` ([org.ort.app.ui.screens.TransmissionDetailContent]).
         rejected: RejectedViewState? = null,
+        transcriptCharSpan: IntRange? = null,
     ): DetailViewState = DetailViewState(
         detail = detail,
         body = bodyFor(detail, sourceOverTimeLabel),
@@ -155,6 +172,7 @@ public object DetailViewStateMapper {
         passFailure = passFailure,
         rejected = rejected,
         transcriptConfidence = transcriptConfidence,
+        transcriptCharSpan = transcriptCharSpan,
     )
 
     private fun bodyFor(detail: TransmissionDetailViewState, sourceOverTimeLabel: String? = null): DetailBodyViewState {
@@ -289,6 +307,8 @@ public object DetailViewStateMapper {
                     chosen = false,
                 )
             },
+            winningSlots = chosen?.slots ?: emptyList(),
+            winningGrammarValid = chosen?.grammarValid,
         )
     }
 

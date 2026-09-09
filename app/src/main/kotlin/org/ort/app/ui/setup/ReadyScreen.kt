@@ -111,94 +111,60 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
  * confirmed a lone `Modifier.semantics { contentDescription = ... }` on a plain descendant `Text`
  * does **not** fold into an ancestor's own merged `AccessibilityNodeInfo` — only
  * `Modifier.clearAndSetSemantics` on the row's own outer node, replacing its whole subtree's
- * accessibility surface outright, actually produced one clean merged node there (re-dumped and
- * confirmed after this fix, not assumed). Three shapes, by [ReadyRow.statusText]/
- * [ReadyRow.actionLabel] presence:
- * - **Neither or [ReadyRow.statusText] alone** — the whole row (marker + [KeyValueRow]) is wrapped
- *   in [Modifier.focusable] + [Modifier.clearAndSetSemantics], announcing [readyRowFactsDescription]
- *   as one real, focusable node — `KeyValueRow`'s own native merge (R-265) is bypassed entirely, not
- *   relied on, since it cannot see [ReadyRow.statusText] at all (it is composed inside
- *   `trailingMarker`, a plain slot [KeyValueRow]'s own explicit `contentDescription` never reaches).
- * - **[ReadyRow.actionLabel] alone** — left on [KeyValueRow]'s own native merge (R-265) unchanged:
- *   proven correct on the same real device dump (`Overnight`/`Model` rows) — the row reads its facts
- *   as one stop, the action is reached and activated as its own separate real button stop straight
- *   after.
- * - **Both together** (only [radioRow]'s `Connected` reading today) — the one case that cannot use
- *   either shape whole: clearing the whole row would swallow [TextAction]'s own separate button stop
- *   (the previous bullet's own correct behaviour); leaving it on [KeyValueRow]'s native merge alone
- *   would reproduce the exact R-342 defect for [ReadyRow.statusText] again ([KeyValueRow]'s own
- *   `contentDescription` still cannot see into `trailingMarker`). So the marker + [KeyValueRow] (with
- *   *only* [ReadyRow.statusText] passed to its `trailingMarker`) are wrapped in their own
- *   `clearAndSetSemantics` announcing [readyRowFactsDescription], and [ReadyRow.actionLabel] renders
- *   as a genuine sibling *outside* that boundary — the same "facts as one stop, action as its own
- *   separate stop straight after" shape as the second bullet, just with the facts assembled by hand
- *   instead of left to [KeyValueRow]'s own merge, because this is the one row where that merge alone
- *   cannot see everything the row needs to say.
+ * accessibility surface outright, actually produced one clean merged node there.
+ *
+ * R-361 (validator pass 5, halt): the first fix left [ReadyRow.actionLabel]-only rows
+ * (Overnight/Radio/Model) on [KeyValueRow]'s own native R-265 merge, reasoning that it already
+ * produced one correct node — a follow-up real device dump proved that wrong: the *focusable* outer
+ * node carried an **empty** description while a separate, non-focusable child at identical bounds
+ * carried the real text, so TalkBack landing on the only reachable stop announced nothing.
+ * [KeyValueRow]'s own merge (`Rows.kt`) is therefore never relied on here at all any more, action or
+ * not — [ReadySetupRow] now gives every row the identical, uniform shape: the marker + [KeyValueRow]
+ * (carrying only [ReadyRow.statusText], never [ReadyRow.actionLabel], in its `trailingMarker`) are
+ * wrapped in [Modifier.focusable] + [Modifier.clearAndSetSemantics], announcing
+ * [readyRowFactsDescription] as one real, focusable node regardless of whether the row has an
+ * action — and [ReadyRow.actionLabel], whenever present, renders as a genuine sibling *outside* that
+ * boundary, its own separate real button stop, reached straight after the facts stop. Re-dumped on
+ * a real device after this change — see this package's report for the three quoted lines.
  */
 @Composable
 private fun ReadySetupRow(row: ReadyRow) {
-    val marker: @Composable () -> Unit = {
-        if (row.ok) {
-            Box(modifier = Modifier.size(9.dp).background(OrtColors.accentGreen, CircleShape))
-        } else {
-            AmberHalfMarker()
-        }
-    }
     Row(
         modifier = Modifier.fillMaxWidth().testTag("setup-ready-row-${row.label.lowercase()}"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (row.actionLabel != null && row.statusText != null) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .focusable()
-                    .clearAndSetSemantics { contentDescription = readyRowFactsDescription(row) },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                marker()
-                KeyValueRow(
-                    key = row.label,
-                    value = row.value,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp),
-                    trailingMarker = {
-                        Text(text = row.statusText, style = OrtType.signal, color = OrtColors.accentGreenDim)
-                    },
-                )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .focusable()
+                .clearAndSetSemantics { contentDescription = readyRowFactsDescription(row) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (row.ok) {
+                Box(modifier = Modifier.size(9.dp).background(OrtColors.accentGreen, CircleShape))
+            } else {
+                AmberHalfMarker()
             }
-            TextAction(text = row.actionLabel, onClick = { row.onAction?.invoke() })
-        } else {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .then(
-                        if (row.actionLabel == null) {
-                            Modifier
-                                .focusable()
-                                .clearAndSetSemantics { contentDescription = readyRowFactsDescription(row) }
-                        } else {
-                            Modifier
-                        },
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                marker()
-                KeyValueRow(
-                    key = row.label,
-                    value = row.value,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp),
-                    trailingMarker = {
-                        // R-265: TextAction's own clickable is a genuine separate merge boundary
-                        // (`Rows.kt`) that stays its own child semantics node even nested inside
-                        // KeyValueRow's merge, not absorbed -- the *correct* shape for an
-                        // actionable element: the row reads its facts as one stop, the action is
-                        // reached and activated as its own real button stop straight after.
-                        row.actionLabel?.let { actionLabel ->
-                            TextAction(text = actionLabel, onClick = { row.onAction?.invoke() })
-                        }
-                    },
-                )
-            }
+            KeyValueRow(
+                key = row.label,
+                value = row.value,
+                modifier = Modifier.weight(1f).padding(start = 12.dp),
+                trailingMarker = {
+                    row.statusText?.let { statusText ->
+                        Text(text = statusText, style = OrtType.signal, color = OrtColors.accentGreenDim)
+                    }
+                },
+            )
+        }
+        // R-361: TextAction is always a genuine sibling *outside* the clearAndSetSemantics boundary
+        // above, never inside KeyValueRow's own trailingMarker -- confirmed on a real device
+        // (`setup-verified/S12-done-pass5.png`) that leaving it inside produced a focusable outer
+        // node with an EMPTY description while a separate non-focusable child at the same bounds
+        // carried the real text; TalkBack landing on the (only reachable) focusable node announced
+        // nothing. Rendered here, it stays its own real button stop, reached straight after the
+        // facts stop -- the same two-stop shape every row now shares, action or not.
+        row.actionLabel?.let { actionLabel ->
+            TextAction(text = actionLabel, onClick = { row.onAction?.invoke() })
         }
     }
 }
