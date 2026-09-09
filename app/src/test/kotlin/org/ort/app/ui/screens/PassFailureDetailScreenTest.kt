@@ -295,6 +295,51 @@ class PassFailureDetailScreenTest {
             .assertExists()
     }
 
+    // ---- R-564 (register): `Fail-Pass.dc.html` places "What went wrong" after the waveform card
+    // and the Live-partial section, not before them (the board's own visual order — header, meta,
+    // waveform, Live-partial, divider, "What went wrong · N attempts", closing health line, action
+    // bar). Asserted by real on-screen position, not merely by presence, since presence alone
+    // (`onNodeWithText`/`onNodeWithTag` on their own) cannot catch a section rendered in the wrong
+    // place — the exact gap round 4's device review found. ----
+
+    @Test
+    fun `R_564_the_what_went_wrong_block_renders_after_the_waveform_card_and_the_live_partial_section`() {
+        val attemptLog = listOf(
+            PassAttemptViewState(timeLabel = "01:23:20", reasonLabel = "Out of memory in the decoder"),
+            PassAttemptViewState(timeLabel = "01:24:05", reasonLabel = "Out of memory in the decoder"),
+            PassAttemptViewState(timeLabel = "01:25:35", reasonLabel = "Timed out"),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = failedState(attemptLog = attemptLog),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        val waveformTop = composeTestRule.onNodeWithTag("waveform-card").fetchSemanticsNode().boundsInRoot.top
+        val livePartialTop = composeTestRule
+            .onNodeWithText("Live partial, Pass A", ignoreCase = true, substring = true)
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .top
+        val whatWentWrongTop = composeTestRule
+            .onNodeWithTag("pass-failure-what-went-wrong")
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .top
+
+        assertTrue(
+            "waveform card ($waveformTop) must render above What went wrong ($whatWentWrongTop)",
+            waveformTop < whatWentWrongTop,
+        )
+        assertTrue(
+            "Live partial section ($livePartialTop) must render above What went wrong ($whatWentWrongTop)",
+            livePartialTop < whatWentWrongTop,
+        )
+    }
+
     // ---- R-470 (design, round 13): `Fail-Pass.dc.html`'s own closing "Counted in tonight's health" line ----
 
     @Test

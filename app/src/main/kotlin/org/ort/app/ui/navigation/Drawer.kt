@@ -26,8 +26,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -36,6 +42,7 @@ import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.ProgressBar
 import org.ort.app.ui.data.DrawerCountsViewState
+import org.ort.app.ui.data.pluralize
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -136,6 +143,11 @@ private sealed interface DrawerRowTrailing {
     data class CountPill(val text: String) : DrawerRowTrailing
 }
 
+/** R-163: `Threads`' own honest "nothing to report" marker — never a fabricated `0` while
+ * `threadId` is always null. [drawerRowDescription] below skips it rather than reading it aloud as
+ * literal punctuation. */
+private const val NO_COUNT_PLACEHOLDER = "—"
+
 private fun trailingFor(
     destination: ReaderDestination,
     badges: DrawerBadgeViewState,
@@ -143,12 +155,38 @@ private fun trailingFor(
     improveRecordsCount: Int?,
 ): DrawerRowTrailing? = when (destination) {
     ReaderDestination.LOG -> badges.logCount?.let { DrawerRowTrailing.Count(it.toString()) }
-    ReaderDestination.THREADS -> DrawerRowTrailing.Count("—")
+    ReaderDestination.THREADS -> DrawerRowTrailing.Count(NO_COUNT_PLACEHOLDER)
     ReaderDestination.STATIONS -> DrawerRowTrailing.Count(counts.stationCount.toString())
     ReaderDestination.FREQUENCIES -> DrawerRowTrailing.Count(counts.frequencyCount.toString())
     ReaderDestination.CAPTURE -> badges.captureElapsedLabel?.let { DrawerRowTrailing.Live(it) }
     ReaderDestination.IMPROVE_RECORDS -> improveRecordsCount?.let { DrawerRowTrailing.CountPill(it.toString()) }
     else -> null
+}
+
+/**
+ * R-546 (register, cf. R-380): the row's own spoken description — [destination]'s label plus
+ * whatever trailing figure or badge is visibly shown next to it (FR-UI-7's own count is exactly
+ * the kind of fact a sighted operator reads and a screen-reader user must not silently lose).
+ * [NO_COUNT_PLACEHOLDER] carries nothing to announce, so it is skipped rather than read as literal
+ * punctuation ("Threads, dash"). [ReaderDestination.IMPROVE_RECORDS] reads "Improve, N records"
+ * rather than "Improve records, N records" once a real count exists — the visible row still shows
+ * the destination's full [ReaderDestination.label] ("Improve records"); this is the one place the
+ * spoken and visible text deliberately differ, so "records" is never said twice.
+ */
+private fun drawerRowDescription(destination: ReaderDestination, trailing: DrawerRowTrailing?): String {
+    val trailingPhrase = when (trailing) {
+        is DrawerRowTrailing.Count -> trailing.text.takeIf { it != NO_COUNT_PLACEHOLDER }
+        is DrawerRowTrailing.Live -> "${trailing.elapsedLabel} elapsed"
+        is DrawerRowTrailing.CountPill -> pluralize(trailing.text.toInt(), "record")
+        null -> null
+    }
+    val spokenLabel = if (destination == ReaderDestination.IMPROVE_RECORDS && trailingPhrase != null) {
+        "Improve"
+    } else {
+        destination.label
+    }
+    val notBuiltPhrase = "not built".takeUnless { destination.hasScreen }
+    return listOfNotNull(spokenLabel, trailingPhrase, notBuiltPhrase).joinToString(", ")
 }
 
 private fun iconFor(destination: ReaderDestination): ImageVector = when (destination) {
@@ -172,6 +210,17 @@ private fun iconFor(destination: ReaderDestination): ImageVector = when (destina
  * `selected` state from TalkBack — merging the whole row into one accessibility node here is the
  * fix, not just adding a role); [ReaderDestination.hasScreen] `false` rows render `text/disabled`
  * with a trailing "not built" `subLine` (R-013), never silently identical to a built row.
+ *
+ * R-546 (register, cf. R-380): reproduced the R-380 defect verbatim — a plain, trailing
+ * `semantics(mergeDescendants = true) { contentDescription = ... }` does not reliably keep the
+ * description on the *clickable* node itself once real child content (this row's own `Text`s) sits
+ * beneath it on a real device, and the description it built ("Open <label>") never carried the
+ * trailing count/badge a sighted operator reads next to it either. `clearAndSetSemantics` is this
+ * package's own confirmed fix, the identical shape `FilterChip`'s selectable `Role.Checkbox` case
+ * already established (`Controls.kt`, read before writing this): `selectable()` above still
+ * supplies the click action and `Role.Tab` for touch/visuals, but `clearAndSetSemantics` erases its
+ * own semantics config the same way it erases every descendant's, so `selected`/`role`/`onClick`
+ * are re-declared explicitly in the block below rather than left to `selectable()` alone.
  */
 @Composable
 private fun DrawerRow(
@@ -186,6 +235,7 @@ private fun DrawerRow(
         selected -> OrtColors.textBright
         else -> OrtColors.textBody
     }
+    val description = drawerRowDescription(destination, trailing)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -199,7 +249,17 @@ private fun DrawerRow(
             )
             .selectable(selected = selected, onClick = { onSelect(destination) }, role = Role.Tab)
             .testTag("drawer-row-${destination.name}")
-            .semantics(mergeDescendants = true) { contentDescription = "Open ${destination.label}" }
+            .clearAndSetSemantics {
+                contentDescription = description
+                // R-380 correction (WP2, gate-blocking) — see `FilterChip`'s own doc comment.
+                text = AnnotatedString(description)
+                this.selected = selected
+                role = Role.Tab
+                onClick(label = null) {
+                    onSelect(destination)
+                    true
+                }
+            }
             .padding(horizontal = OrtSpacing.md, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(13.dp),

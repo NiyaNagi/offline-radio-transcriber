@@ -162,6 +162,16 @@ public fun TransmissionDetailScreen(
                 passFailure != null -> FailedPassPartialSection(state.detail)
                 else -> TranscriptSection(state.detail, state.transcriptConfidence, state.transcriptCharSpan)
             }
+            // R-564 (register): `Fail-Pass.dc.html`'s own visual order is header → meta → waveform
+            // card → Live partial → divider → "What went wrong · N attempts" → closing health line
+            // → action bar. Before this fix, [FailedPassHeaderSection] rendered the whole "What went
+            // wrong" account (attempts, retry-limit line, guidance, session-health line) as part of
+            // the header, ahead of [PlaybackSection]/[FailedPassPartialSection] — the exact ordering
+            // gap round 4's device review found. [FailedPassWhatWentWrongSection] is that same
+            // account, unchanged in content, placed here instead — after both.
+            if (passFailure != null) {
+                FailedPassWhatWentWrongSection(passFailure)
+            }
             // R-196 (halt): a failed pass carries an UNKNOWN attribution (no pass ever finished to
             // resolve one), so `state.body` is genuinely `DetailBodyViewState.Unknown` — but the
             // over's problem is that a *pass* errored, not that the resolver came up empty. These
@@ -304,7 +314,6 @@ private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFai
     // "errored 3 times on this over" in the sentence and "What went wrong · 3 attempts" in the
     // header — neither is a typo for the other.
     val attemptsTimesWord = if (attempts == 1) "1 time" else "$attempts times"
-    val attemptsCountWord = if (attempts == 1) "1 attempt" else "$attempts attempts"
     Column(
         modifier = Modifier
             .padding(horizontal = OrtSpacing.lg)
@@ -339,10 +348,27 @@ private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFai
             modifier = Modifier.padding(top = OrtSpacing.sm),
         )
         MetaRow(detail)
-        SectionHeader(
-            label = "What went wrong · $attemptsCountWord",
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
+    }
+}
+
+/**
+ * R-153/R-195/R-426/R-470, `Fail-Pass.dc.html`: the board's own "What went wrong · N attempts"
+ * block plus its closing "Counted in tonight's health" paragraph — split out of
+ * [FailedPassHeaderSection] by R-564 (register), whose device review found this whole account
+ * rendering *before* [PlaybackSection]/[FailedPassPartialSection] where the board places it
+ * *after* both. Content is unchanged from the pre-split version; only its position in
+ * [TransmissionDetailContent]'s composition moved.
+ */
+@Composable
+private fun FailedPassWhatWentWrongSection(passFailure: PassFailureViewState) {
+    val attempts = passFailure.attempts
+    val attemptsCountWord = if (attempts == 1) "1 attempt" else "$attempts attempts"
+    Column(
+        modifier = Modifier
+            .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
+            .testTag("pass-failure-what-went-wrong"),
+    ) {
+        SectionHeader(label = "What went wrong · $attemptsCountWord")
         // R-426 (round 12): the real per-attempt history from `:data` schema v6's
         // `WorkAttemptEntity`, oldest first, one line per attempt — `Fail-Pass.dc.html`'s own
         // "HH:MM:SS · reason" shape. A `FAILED` item whose attempts predate schema v6 has no

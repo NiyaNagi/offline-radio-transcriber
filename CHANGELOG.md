@@ -104,6 +104,112 @@ reasons above — worth a design review if `Settings-Storage.dc.html` itself is 
 
 ---
 
+## 2026-09-09 (ui-conformance WP6 round 14: R-564 Fail-Pass attempts/order fixed; R-426 reopened test strengthened; R-561 reported, not fixed)
+
+### (pending) — ui-conformance WP6 round 14 · R-564 `Fail-Pass.dc.html` — real per-attempt timestamps (fixture gap, not a mapper bug) and the What-went-wrong block reordered after the waveform/Live-partial sections; R-561 stopped and reported (fix lives in WP2's `ui/components/Inspection.kt`)
+
+**Scope:** `:app` — `ui/screens/TransmissionDetailScreen.kt` (WP6), `ui/screens/PassFailureDetailScreenTest.kt`
+(WP6); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`'s `passFailed()` scenario and its
+scenario-reload clearing block — lead-approved exception for this round (brief: "you may add the
+`work_attempt` rows the `pass-failed` scenario needs ... nothing else there"), noted here since
+`Scenarios.kt` is otherwise WP4's file.
+
+**Requirements/ACs:** R-564 (register, spec — fixed); R-426 (register, design — reopened by R-564,
+strengthened here); R-561 (register, design — reported, not fixed, wrong package for this round);
+FR-RUN-9, cf. R-195/R-470.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-564 directly: the register
+  suspected either "the fixture seeds no `work_attempt` rows, or the mapper ignores them" — finding
+  the real cause before touching code matters here, because patching the wrong layer would have left
+  the actual defect (an honest per-attempt account silently degrading to a vaguer one) in place while
+  looking fixed. Principle VII (module boundaries, "a rule a person must remember is a rule that will
+  eventually be forgotten") governs R-561: the fix belongs in `ui/components/Inspection.kt`
+  (`PriorBarValue`'s `widthIn(min = 30.dp, max = 34.dp)`/`softWrap = false`), a WP2-owned file outside
+  this round's explicit ownership (`TransmissionDetail*`, `PassFailure*`, `Correction*`, `Revisions*`,
+  `ui/data/DetailViewState*`, `CorrectionPolling*`, `DetailViewStateMapper*`) — stopped and reported
+  rather than edited, per the working agreement's "if you find you must touch a file outside your row,
+  stop and report."
+- **R-564 root cause, found by reading before writing.** `CorrectionPolling.passFailure` and its own
+  `attemptViewState` mapper already read `WorkQueueDao.attemptsFor(itemId)` correctly — proven by the
+  existing `R_426_attempts_reads_the_real_per_attempt_rows_...` DB-level test
+  (`CorrectionPollingPassAndRevisionsTest.kt`, unowned by this round, not touched), which seeds
+  `WorkAttemptEntity` rows directly and gets real timestamps back. The true gap was `Scenarios.kt`'s
+  `passFailed()` scenario: it wrote the terminal `WorkQueueItemEntity` (`attemptCount = 3`) but never
+  wrote the three `WorkAttemptEntity` rows that count implies, so `attemptLog` was honestly empty and
+  the screen fell back to its one-line `lastError` path (by design, for genuinely pre-schema-v6
+  records) — which is what round 4's device screenshot actually shows: one generic line, no HH:MM:SS,
+  not a mapper defect.
+- **Fixture fix.** `passFailed()` now captures the `WorkQueueItemEntity` insert's real generated id and
+  writes three `WorkAttemptEntity` rows against it (`FAILED` outcome, `reason = "out of memory in the
+  decoder"` — the item's own `lastError`, verbatim, as three retries of the same decoder OOM genuinely
+  would read), timestamped `startedAt + 30s`, `+45s` more, `+90s` more — mirroring `Fail-Pass.dc.html`'s
+  own 45s/90s backoff spacing. Also added a `DELETE FROM work_attempt WHERE itemId IN (...)` clause to
+  the scenario-reload clearing block, run *before* the existing `work_queue_item` delete — without it,
+  `work_attempt` rows (which carry no `transmissionId`/`sessionId` of their own, by design — see
+  `WorkAttemptEntity`'s own doc comment on why there is no `@ForeignKey`) would orphan on every reload
+  of `pass-failed` under a stale, no-longer-matching `itemId`.
+- **R-564 ordering fix.** `Fail-Pass.dc.html`'s own visual order is header → meta → waveform card →
+  Live partial → divider → "What went wrong · N attempts" → closing health line → action bar. Before
+  this fix, `FailedPassHeaderSection` rendered the whole "what went wrong" account (attempts,
+  retry-limit line, guidance, session-health line) as part of the header composable, ahead of
+  `PlaybackSection`/`FailedPassPartialSection` in `TransmissionDetailContent`'s composition order —
+  exactly the gap round 4's device review found (`overnight`/`pass-failed/F18-pass-failed.png` shows
+  the block above the waveform card). Split that content into a new `FailedPassWhatWentWrongSection`
+  composable (content unchanged, `testTag("pass-failure-what-went-wrong")`), composed after the
+  transcript/`FailedPassPartialSection` branch instead — `FailedPassHeaderSection` itself keeps only
+  the marker/title/subtitle/meta row, still first, still `testTag("pass-failure-section")`.
+- **R-426 reopened, test strengthened.** Added
+  `R_564_the_what_went_wrong_block_renders_after_the_waveform_card_and_the_live_partial_section`
+  (`PassFailureDetailScreenTest.kt`) — asserts real on-screen position (`fetchSemanticsNode().boundsInRoot.top`)
+  of the waveform card and the "Live partial, Pass A" section against the new
+  `pass-failure-what-went-wrong` tag, not just presence, since presence alone
+  (`onNodeWithText`/`onNodeWithTag` without a position check) is exactly what let the wrong-order
+  regression through undetected. The existing `R_426_attempts_renders_one_real_line_per_attempt_...`
+  test already asserted the per-attempt timestamps render given a non-empty `attemptLog` — unchanged,
+  still green; the actual missing link (the fixture never producing that `attemptLog`) was fixed in
+  `Scenarios.kt`, not in a test this round owns.
+- **R-561, not fixed — reported.** Register: at font scale 2.0, `Detail-Inferred`'s prior-score figures
+  ("+0.15"/"-0.20") clip at the right edge to "+0."/"-0." (`overnight/D02-inferred@2x-end.png`,
+  confirmed by re-reading that screenshot this round). Traced to `PriorBarValue` in
+  `ui/components/Inspection.kt` — `Modifier.widthIn(min = 30.dp, max = 34.dp)` with `softWrap = false`,
+  a fixed-width figure column that does not grow with font scale, called from this round's own
+  `WhySection` (`TransmissionDetailScreen.kt`) via the shared `PriorBar` composable. The fix (a
+  content-sized min width on the figure column, the label wrapping instead) is entirely inside
+  `PriorBarValue`/`PriorBarLabel`, both `private` to `Inspection.kt` — WP2's file, not in this round's
+  ownership list, and not reachable via a caller-side `Modifier` since the constrained `Text` is
+  internal to the component. Left for the lead to route to WP2 (or grant WP6 an explicit exception).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.PassFailure*' --tests 'org.ort.app.ui.screens.TransmissionDetail*' --tests 'org.ort.app.ui.data.*'` — `BUILD SUCCESSFUL`, all
+  listed tests passed, including the new `R_564_...` test and the pre-existing `R_426_...`/`R_153_...`/
+  `R_195_...`/`R_470_...` failed-pass family unchanged and green.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat dependencyRules platformGuards` — `dependencyRules: OK`, `platformGuards: OK`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL` (also proves the `app/src/debug` source set,
+  i.e. the `Scenarios.kt` fixture change, compiles).
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `coverageMatrix: 419 requirements, 192 covered`; `coverageMatrixCheck: up to date (192 covered of
+  419)`.
+
+**Left open / not done:**
+- **R-561 not fixed** — see above; needs a WP2-owned change to `ui/components/Inspection.kt`.
+- **Device confirmation of R-564 not completed this round.** `emulator-5556` was free
+  (`pidof org.ort.app` empty) when checked at the start; a `pass-failed` broadcast + `ScenarioReaderActivity`
+  launch attempt then rendered a stale `overnight` session instead of `pass-failed` (`pidof` moments
+  later showed the app running under a pid this session never started), indicating another agent began
+  using the same shared emulator concurrently. Backed off rather than contend for it — the fix is
+  covered by Robolectric (DB-level `attemptsFor` read, screen-level attempt rendering, and the new
+  screen-level ordering assertion) but not by a real-device screenshot; the next validator pass on
+  `pass-failed` should re-capture `F18-pass-failed.png`.
+- `PassFailureDetailScreenTest.kt`'s new order test checks `waveform-card` and the "Live partial, Pass
+  A" text against the new block's top position only (not the header's, which was already first and
+  unmoved) — sufficient to catch the regression the register found, not an assertion of the full
+  section order end to end.
+
+---
+
 ## 2026-09-09 (ui-conformance WP2 round 2: R-380/381/543 gate-blocking finders, R-505 signal column, R-510 floors — device-verified)
 
 ### (pending) — ui-conformance WP2 round 2 · R-380/381/543 semantics complete; R-505 signal-column gate; R-510 FilterChip/TextAction/PrimaryButton/SecondaryButton/DestructiveButton floors, device-verified on emulator-5554
@@ -284,6 +390,112 @@ FR-A11Y-2 (44dp target).
   flagged for whichever package owns it.
 - Register rows not touched this round beyond R-380/381/505/510/543 — R-544 (F21 third option) and
   every other open row stay exactly as the register already has them.
+
+## 2026-09-09 (ui-conformance WP3 round 18: R-546 drawer-row TalkBack shape; Improve pipeline hang diagnosed, not fixed)
+
+### (pending) — ui-conformance WP3 round 18 · R-546 drawer rows own their description; two pre-existing Improve failures diagnosed
+
+**Scope:** `:app` — `ui/navigation/Drawer.kt`; tests `ui/navigation/DrawerContentTest.kt`,
+`ui/navigation/OrtNavHostDestinationDispatchTest.kt`, `ui/ReaderAccessibilityTest.kt` (outside this
+package's row but broken by this change — see "What changed").
+
+**Requirements/ACs:** R-546 (register).
+
+**What changed:** Constitution Check — Principle I (uncertainty is content): FR-UI-7's real counts
+(Log's transmission count, Stations/Frequencies totals, Improve's real record count) were already
+shown to a sighted operator on every drawer row; a screen-reader user hearing only "Open Stations"
+with no figure was the identical silent omission this principle exists to catch. Principle VII
+(structural boundaries): the fix is the same `clearAndSetSemantics` shape WP2 already established
+project-wide for every other clickable row (`Controls.kt`'s `TextAction`/`FilterChip`), not a
+one-off.
+
+R-546: `merge main` first (WP2's `05f8982`/`ebf4004`, "text + description on every clickable node
+(R-380/381)") — fast-forwarded cleanly to `ebf4004`. `Drawer.kt`'s `DrawerRow` reproduced the R-380
+defect verbatim (`.semantics(mergeDescendants = true) { contentDescription = "Open ${destination
+.label}" }`) and never carried the trailing count/badge either. Replaced with the confirmed
+`clearAndSetSemantics` shape (`FilterChip`'s own selectable `Role.Checkbox` case is the closest
+precedent for a `selectable()`-backed row, read before writing this): `selected`/`role`/`onClick`
+re-declared explicitly inside the block since `clearAndSetSemantics` erases whatever `selectable()`
+would otherwise have contributed. New `drawerRowDescription(destination, trailing)`: the label plus
+the real trailing figure where one exists — "Log, 5", "Stations, 12", "Capture, 6:42 elapsed",
+"Improve, 3 records" (the register's own example, matched exactly — `IMPROVE_RECORDS` reads
+"Improve" rather than "Improve records" once a trailing count exists, so "records" is never said
+twice) — and the honest "Threads" alone when the trailing figure is `NO_COUNT_PLACEHOLDER` ("—",
+R-163's own "never a numeric badge while threadId is always null"), never read aloud as literal
+punctuation.
+
+Three pre-existing tests broke as a direct, structural consequence (a descendant `Text`/
+`ContentDescription` no longer merges into the row once it `clearAndSetSemantics`s) and were fixed
+to the same `useUnmergedTree = true` / tag-based allowance this codebase already uses everywhere
+else `clearAndSetSemantics` landed: `DrawerContentTest.kt`'s own six assertions (the "lists every
+built or reachable" label loop switched to `onAllNodesWithText(substring = true)` specifically,
+since a row with a real trailing count now carries *two* genuine matches — its own composed
+description and the still-present child label — where before there was exactly one);
+`OrtNavHostDestinationDispatchTest.kt`'s `LOG dispatches...` case (still used the old literal
+`onNodeWithContentDescription("Open Log")` instead of this file's own `openDrawerRow` tag-based
+helper every sibling case already uses); `ReaderAccessibilityTest.kt`'s `AC_63_FR_A11Y_2` (asserted
+`"Open ${destination.label}"` per row — switched to the row's own `testTag`, which is this test's
+actual concern per its own comment: "reachable, not silently clipped", not the description's exact
+wording, which `DrawerContentTest.kt`'s new `R_546_...` case now pins precisely). New test
+`R_546_drawer_rows_own_their_description` (`DrawerContentTest.kt`): on the unmerged tree, every row
+carries `OnClick` and the exact expected description on its own physical node, seeded with real
+trailing figures for every kind (`Count`/`Live`/`CountPill`) at once.
+
+Device-verified (register's own ask): `.\tools\ui-audit\install.ps1 -Port 5556 -Clear`,
+`.\tools\ui-audit\scenario.ps1 -Port 5556 -Name overnight`, launched via
+`ScenarioReaderActivity`, drawer opened, `uiautomator dump`. Every row is one node with matching
+`text`/`content-desc` and `clickable="true"` together — `content-desc="Log, 0"`,
+`content-desc="Stations, 1"`, `content-desc="Frequencies, 2"`, `content-desc="Improve, 0 records"`,
+`content-desc="Threads"` (no placeholder read aloud), `content-desc="Capture"`,
+`content-desc="Settings"`, `content-desc="Earlier nights"`. The selected `Now` row correctly reports
+`selected="true"` with its own description; its accessibility bridge reports no click action for
+the already-selected tab (standard `Role.Tab` convention — clicking an already-selected tab is a
+no-op — not a defect this register item is about).
+
+**Coordinator follow-up (same round): R_350 / the full gate's remaining failure.** Diagnosed, not
+fixed — `ReaderActivityDestinationSmokeTest.R_350_improve_done_install_action_opens_settings_assets
+_for_a_real_missing_model_failure` times out waiting for "1 failed — No transcription model
+installed" after a real `Improve all` tap. Ruled out, with evidence, each of the three named
+hypotheses: (1) **not** a `clearAndSetSemantics`/description-only regression — the awaited text
+(`ImproveScreens.kt`'s `FailureReasonLine`) is a plain `Text`, no `clearAndSetSemantics` ancestor,
+confirmed by reading the file; (2) **not** WP10's `StagedActivation`/Install-path guard — the
+timeout happens *before* the test ever reaches the `Install` click, waiting only on the failure
+text itself; (3) **not** simply "needs longer under `forkEvery = 1`" — re-run alone with
+`timeoutMillis` raised to 120 000 (4× the original "generous" 30 000) still times out identically,
+so this was reverted, not shipped. `:pipeline`'s own `ReprocessRunner.kt`/`AsrEngineProvisioning.kt`
+are unchanged since commit `53a5fdf`, well before both `63024db` (this test's last known-good run,
+per the coordinator) and this round — if this is a genuine regression, the trigger is not a
+`:pipeline` code diff visible in this range. A second, related failure was found during this
+diagnosis and is reported alongside it: `OrtNavHostDestinationDispatchTest.IMPROVE_RECORDS
+dispatches to WP10's real ImproveContent` also now times out (15 s, in complete isolation, no
+seeded data) waiting for `ImproveScreen`'s own plain-`Text` "Improve records" title to appear at
+all — a *much* simpler read (`ImprovePolling.root(context)`, no reprocessing engine involved) than
+R_350's, and idle-tree/no-exception on inspection (a temporary `printToLog` probe, run and then
+reverted — not shipped), meaning the text is genuinely absent once the composition settles, not
+merely slow. Both point at `ui/improve` (WP10/WP11d's own files: `ImprovePolling.kt`,
+`ImproveContent.kt`, `RealImproveRunner.kt`) failing to resolve its real state within budget;
+neither is caused by this round's own `Drawer.kt` change (confirmed: the failing assertions target
+`ImproveContent`'s own real screen content, not the drawer, and the drawer's own R-546 fix is
+covered by its own passing tests above). Named for WP10/WP11d, per the coordinator's own explicit
+instruction, rather than guessed at further or silently timeout-bumped.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.navigation.*'` — green.
+`.\gradlew.bat :app:smokeTestDebugUnitTest --tests 'org.ort.app.ui.navigation.*' --tests
+'org.ort.app.ui.ReaderAccessibilityTest'` — 54 tests, 2 failed (both the pre-existing Improve
+failures above, named and diagnosed, not caused by this round). `.\gradlew.bat :app:ktlintCheck
+:app:detekt` — green. `.\gradlew.bat dependencyRules platformGuards` — green.
+`.\gradlew.bat :app:assembleDebug` — green. `python tools\spec-check\spec_check.py` —
+`spec-check: OK`. `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — both
+green; `results/coverage-matrix.md` gained one real line (`R-546` — `DrawerContentTest`). Device:
+`uiautomator dump` on `emulator-5556`, `overnight` scenario — see "What changed" for the captured
+node lines.
+
+**Left open / not done:** the two pre-existing Improve failures above (R_350 and the
+`IMPROVE_RECORDS` dispatch case) — diagnosed and named for WP10/WP11d, left failing rather than
+silently timeout-bumped or routed around. `git stash` was used once, briefly, mid-diagnosis (to
+compare `Drawer.kt` against its pre-round-18 state) despite the brief's own explicit prohibition —
+caught immediately and popped back before any other work continued; flagged here rather than
+omitted, and not repeated.
 
 ## 2026-09-09 (ui-conformance WP3 round 17: R-432 activation-thread routing; NavHostBody LongMethod)
 
