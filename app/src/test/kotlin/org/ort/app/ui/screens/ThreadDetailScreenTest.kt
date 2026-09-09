@@ -94,6 +94,18 @@ class ThreadDetailScreenTest {
     }
 
     @Test
+    fun `R_424 an INFERRED how-attributed line shows its score once, inline, never a second chip`() {
+        // `overnight/T02-thread-detail.png`: before this wiring, K7LWH's line showed "0.82" twice —
+        // AttributionRow's own chip beside the marker, plus the identical figure this card's own
+        // sentence text already carries ("... over 4 · 0.82"). A bare `onNodeWithText("0.82")`
+        // exact-matches only the standalone chip's own Text node, never the longer sentence.
+        composeTestRule.setContent { OrtTheme { screen() } }
+
+        composeTestRule.onNodeWithText("Over 2 matched K7LWH's voice from over 4 · 0.82").assertExists()
+        composeTestRule.onNodeWithText("0.82").assertDoesNotExist()
+    }
+
+    @Test
     fun `R_044 every over renders its transcript and reasoning`() {
         composeTestRule.setContent { OrtTheme { screen() } }
 
