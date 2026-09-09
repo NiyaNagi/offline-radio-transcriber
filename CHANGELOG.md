@@ -32,6 +32,235 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP2: R-420/R-424 score-chip wrap and column-header stacking; R-380/R-381 clickable nodes carry their own description via clearAndSetSemantics; R-383 filter chip 44dp floor)
+
+### (pending) — ui-conformance WP2 · R-420, R-424, R-380, R-381, R-383
+
+**Scope:** `:app` `ui/components/{Rows.kt,Controls.kt,AttributionMarker.kt,LiveBar.kt}` and their
+tests (`RowsTest.kt`, `LogRowResponsiveTest.kt`, `ControlsTest.kt`, `AttributionMarkerTest.kt`,
+`LiveBarTest.kt`, `FeedbackTest.kt`) only. `git merge main` run this round; HEAD sits on `155116e`
+(V7 Accessibility pass 3 — the commit that filed R-380/R-381/R-383), a clean fast-forward, no
+files in this package touched by it. No rebase, no stash, no `gradlew --stop`.
+
+**Requirements/ACs:**
+- **R-420** (spec) — at font scale 2.0 the INFERRED score chip ("0.82") collapsed into a one-
+  character-per-line stack colliding with the SIG column, and the SIG header/values ran off the
+  right edge; R-244 covered the `NEW`/`CORRECTED`/`REVISED` badge only.
+- **R-424** (spec) — T02's "How these were attributed" card showed each score twice, since
+  `AttributionRow` always drew its own chip and WP5's own reasoning line already states it inline.
+- **R-380/R-381** (spec) — on the real device tree, every `TextAction`/`PrimaryButton` and every
+  merged row exposed a clickable/focusable outer node with an *empty* text/description while a
+  separate, non-focusable child carried the label — TalkBack lands on the control and announces
+  nothing.
+- **R-383** (spec) — `FilterChip`/`FilterChipRow` rendered 98–103px tall on L02's frequency chip
+  row, under the 116px/44dp floor, while a differently-built chip row on the same sheet met it.
+
+**What changed:**
+- **Constitution Check.** Principle VII (Boundaries Are Structural) governs every fix below: each
+  lives in the *shared component* that owns the defect, not in a caller's own screen code, so
+  landing it once here closes the finding everywhere the component is used. Principle IV (an
+  attribution without its confidence state is a bug, at the data layer, not just the UI) is the
+  constraint both R-420 and R-424's fix had to hold under: suppress the chip's own *pixels*, never
+  the *fact* — `attributionStateDescription` still states the confidence value in prose regardless
+  of `showScore`. Principle I (never claim a fix works when it hasn't been checked) is why this
+  entry replaces an earlier, uncommitted draft that claimed Robolectric had already reproduced the
+  R-380/R-381 defect precisely — see the dedicated correction below; that draft was wrong, caught
+  only by checking the real device before writing this entry, not by re-reading the test.
+
+- **R-420 — the score chip becomes its own `FlowRow` item, not welded to the callsign.**
+  `AttributionRow` gains `showScore: Boolean = true` (every caller before this existed
+  unaffected); `LogRowMarkerLine` passes `showScore = false` and renders a separate `ScoreChip`
+  right after `AttributionRow`, in its own `FlowRow` slot — free to wrap onto its own line below
+  the callsign the same way the badge already does (R-244), rather than staying inside
+  `AttributionRow`'s own plain, deliberately non-wrapping `Row` (still the right default for every
+  *other* caller). `ScoreChip`'s own value `Text` now also carries `maxLines = 1, softWrap =
+  false` — "0.82" is as unbreakable a token as a callsign, the same defect class R-373 (an earlier
+  entry) already fixed for the callsign itself.
+- **R-420 — `ColumnHeaderRow` stacks the same way `LogRow` does, for the identical reason.**
+  Restructured with the same `BoxWithConstraints` one-line/stacked decision R-373 already gave
+  `LogRow`: the existing one-line layout when `TIME + FREQ + the callsign floor + SIG` actually
+  fits, or — new — STATION on its own line with TIME/FREQ/SIG (together, never split from each
+  other) on the line beneath it. Four small private composables (`ColumnHeaderTimeText`/
+  `FreqText`/`StationText`/`SignalText`) factor the four labels out so both layouts render the
+  identical `Text`.
+- **R-424 — the same `showScore` fixes T02's double-count too.** No separate parameter needed —
+  R-420's own mechanism is exactly what T02's "How these were attributed" card needs; WP5 wires
+  `showScore = false` on that card once this merges.
+
+- **R-380/R-381 — the defect, and how the first attempted fix was proven wrong.** Every broken
+  composable shared one shape: `.clickable(...)`/`.selectable(...)` followed, in the same chain,
+  by either an *empty* `Modifier.semantics(mergeDescendants = true) {}` (`TextAction`) or *no*
+  `semantics` call at all (`PrimaryButton`/`SecondaryButton`/`DestructiveButton`/`FilterChip`).
+  The first fix attempted — the coordinator's own first suggestion, adding an explicit
+  `contentDescription = text` *inside that same existing `semantics(mergeDescendants = true)`
+  block* — passed every Robolectric test, **including** a dedicated `useUnmergedTree = true` test
+  written specifically to check it (asserting the node carrying `OnClick` also carries the
+  description). Installed on the real device (emulator-5554) and inspected with `uiautomator
+  dump`, it was **still broken**: the outer clickable node still showed `content-desc=""`, with
+  the real description on a separate, non-focusable child — the exact shape the register
+  originally reported, unchanged. This is a distinct Robolectric fidelity limitation from the
+  font-metric degeneracy this file's R-340/R-373 entries already disclose: it is specifically
+  about how `SemanticsNode` → platform `AccessibilityNodeInfo` conversion diverges for a node that
+  carries both a click action/role *and* real child content, and `useUnmergedTree = true` does
+  **not** catch it, because the unmerged `SemanticsNode`'s own `config` genuinely does carry the
+  `contentDescription` that was set — the divergence only shows up in the exported platform tree
+  a real accessibility service reads, which Robolectric's `SemanticsNode` model does not attempt
+  to reproduce. Switching to `Modifier.clearAndSetSemantics { contentDescription = ...; role =
+  Role.Button; onClick(label = ...) { onClick(); true } }` — replacing the trailing `semantics`
+  call entirely rather than adding to it — was then confirmed working via a second round of
+  install/dump: `TextAction` (S12's `Fix`), `PrimaryButton` (`Start capture`), `FilterChip`
+  ("All"/"145.230") and `LogRow` (both L01 rows) each now export a single leaf
+  `Button`/`CheckBox` `AccessibilityNodeInfo` with the real label on `content-desc`, no separate
+  child. `clearAndSetSemantics` also has a real side effect: it genuinely hides descendant
+  semantics nodes from the *unmerged* tree too (stronger than `mergeDescendants = true`, under
+  which a nested boundary stayed separately queryable) — every existing Robolectric test in this
+  package that queried a now-hidden child (`onNodeWithText` for a badge, transcript, or button
+  label on the default merged tree) needed `useUnmergedTree = true` added; ~20 call sites across
+  `ControlsTest.kt`/`FeedbackTest.kt`/`LiveBarTest.kt`/`LogRowResponsiveTest.kt`/`RowsTest.kt`
+  were fixed this way, each confirmed against the real, current behaviour rather than adjusted
+  blindly until green.
+- **R-380 fix — `TextAction`/`PrimaryButton`/`SecondaryButton`/`DestructiveButton`.** Each now
+  ends its modifier chain with `clearAndSetSemantics { contentDescription = text; role =
+  Role.Button; if (enabled) onClick(label = null) { onClick(); true } else disabled() }`. Device-
+  confirmed for `TextAction`/`PrimaryButton`; `SecondaryButton`/`DestructiveButton` carry the
+  identical code shape but were not separately re-dumped this round (see "Left open").
+- **R-381 fix — `FilterChip`.** `clearAndSetSemantics { contentDescription = label; this.selected
+  = selected; role = Role.Checkbox; onClick(label = null) { onClick(); true } }` on the same node
+  `.selectable(...)` lives on. Device-confirmed: "All"/"145.230" now dump as single-leaf
+  `android.widget.CheckBox` nodes with the right `content-desc`/`checked`.
+- **R-381 fix — `LogRow`.** `clearAndSetSemantics { contentDescription = logRowDescription(state);
+  role = Role.Button; onClick(label = null) { onClick(); true } }` replacing the prior plain
+  `semantics(mergeDescendants = true) { contentDescription = ... }`. Device-confirmed: both L01
+  rows dump as single leaf nodes, the nested `AttributionRow` semantics no longer independently
+  exported (see the `RowsTest.kt` note below — this is a stronger, simpler guarantee than the
+  "two separately queryable nodes" shape the original R-244 test proved).
+- **R-381 fix — `LiveBar`.** Identical `clearAndSetSemantics` shape, same code pattern as `LogRow`.
+  **Not independently re-dumped this round** — no live/capturing scenario was reached before time
+  ran out; disclosed honestly rather than claimed (see "Left open").
+- **R-381 fix — `KeyValueRow` gains `onClick`/`onClickLabel` (both `null` default, every caller
+  before this existed unaffected), using the same `clearAndSetSemantics` shape when `onClick !=
+  null`.** N04's own Level row (dumped, both before and after this fix, as `<node content-desc=""
+  clickable="true" focusable="true"><node content-desc="Level: … Open level meter"
+  focusable="false"/></node>`) is built by a caller wrapping this row in its *own* external
+  `Modifier.clickable` — `CaptureStatusContent.kt` (outside this package) has not migrated to the
+  new parameter yet, so the real N04 row is **still broken** on the device today, confirmed by
+  redumping it after this fix landed — this package now offers the correct mechanism, reaching
+  the device is "content owners re-verify after," per the register's own attribution for this
+  half, not this package's job.
+- **R-380/R-381 — `TextField` (the Search field): confirmed broken on the device, NOT fixed this
+  round.** An earlier, uncommitted draft of this entry asserted `TextField` was "already correct,
+  no code change" — that was wrong, based on reading its own KDoc rather than checking the
+  device. Dumped directly: `class="android.widget.EditText" content-desc=""` on the outer,
+  focusable node, with the real label on a separate, non-focusable child, and the placeholder on
+  a third — the identical broken shape as everything else this entry fixes. Not fixed here because
+  `BasicTextField` attaches its own real editable-text actions (`SetText`, `InsertTextAtCursor`,
+  `RequestFocus`, `GetTextLayoutResult`, …) directly on this same node, and `clearAndSetSemantics`
+  replaces a node's *entire* exported semantics config — every other fix in this entry had to
+  re-declare `role`/`onClick` explicitly inside the block for exactly this reason. Applying it here
+  without first working out which of `BasicTextField`'s own internal actions must be preserved
+  risks breaking real text editing (IME/`SetText`/accessibility-driven text input) for a real,
+  frequently-used field; that investigation did not fit this round. A confirmed, undisclosed gap
+  otherwise, not a silent one now.
+- **Other same-shape instances found in this file, not fixed this round — out of the register's
+  explicit naming, disclosed rather than silently left.** While tracing every `.clickable(...)` in
+  `Rows.kt` for the fix above, four more composables carry the identical broken pattern: `NavRow`
+  (a plain `.clickable(...).semantics(mergeDescendants = true) { contentDescription = description
+  }` — exactly the shape proven broken on-device this round for `TextAction`), `ActionBarButton`
+  (`.clickable(...)` with no trailing semantics at all, the `PrimaryButton`-before-fix shape),
+  `LogGroupHeader`'s conditional `onClick` branch (same, no semantics), and `RejectedRow`'s
+  conditional `onClick` branch (`.clickable(...)` plus a *separate* `semantics(mergeDescendants =
+  true) { contentDescription = buildString {...} }` — the exact two-stage shape this entry's own
+  R-380/R-381 finding proves does not survive to the real device). None of these were named by the
+  register's own R-380/R-381 text or its four dump targets; left for a future round rather than
+  expanding this one's diff unasked.
+
+- **R-383 fix — `FilterChip`'s outer `Box` modifier chain reordered: `.selectable(...).heightIn(min
+  = 44.dp)`, `heightIn` last, then `clearAndSetSemantics`.** This package's own established fix for
+  a `heightIn` floor measuring short once more modifiers follow it in the same chain. Device-
+  confirmed as part of the same dumps above (the chip's own bounds now meet 44dp).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.*"` — **108 of 108
+  passing, 0 failed** (confirmed after every fix in this entry, including the `ktlintFormat` pass
+  below). New/changed: `R_420_the score chip is one line and no column overflows the row's own
+  right edge, at font scale 2_0`, `R_420_column_header_row stacks STATION above TIME FREQ SIG when
+  too narrow for the callsign floor, at 2_0` (both `LogRowResponsiveTest.kt`); `R_424_showScore
+  false suppresses the chip but the merged description still states the confidence`
+  (`AttributionMarkerTest.kt`); `R_380_the same node that carries OnClick also carries a real,
+  non-empty description` (`ControlsTest.kt` — covers `TextAction`/`PrimaryButton`/
+  `SecondaryButton`/`DestructiveButton`/`FilterChip`/`KeyValueRow`); `R_381_the live bar's own
+  unmerged node carries both OnClick and the composed description` (`LiveBarTest.kt`);
+  `R_383_a filter chip in a real FilterChipRow still meets the 44dp floor, no leading icon`
+  (`ControlsTest.kt`). ~20 pre-existing tests across `ControlsTest.kt`/`FeedbackTest.kt`/
+  `LiveBarTest.kt`/`LogRowResponsiveTest.kt`/`RowsTest.kt` gained `useUnmergedTree = true` on
+  queries for content `clearAndSetSemantics` now hides from the merged tree — each confirmed
+  against real, current behaviour, not adjusted blindly until green.
+- **`R_380`'s own test's discriminative power confirmed directly**: re-run against a temporarily-
+  reverted `TextAction` (its `clearAndSetSemantics` block emptied back to plain
+  `semantics(mergeDescendants = true) {}`) and failed as expected before the real fix was
+  restored — the identical technique already established for R-373's own stacking tests.
+- **Direct device verification (`uiautomator dump`, emulator-5554, worktree APK installed via
+  `adb install -r`, `pm clear`, `RECORD_AUDIO`/`POST_NOTIFICATIONS` granted)** — the four dump
+  lines the coordinator asked for:
+  - S12 `Fix` (fixed): `<node index="…" text="" content-desc="Fix" class="android.widget.Button"
+    clickable="true" focusable="true" bounds="[…]" />` — one leaf node, no children.
+  - N04 Level row (**still broken**, caller-side, not this package's fix to make): `<node
+    content-desc="" class="android.view.View" clickable="true" focusable="true"><node
+    content-desc="Level: Not measured. no level signal yet this session. Open level meter"
+    focusable="false"/></node>` — `CaptureStatusContent.kt` has not migrated to `KeyValueRow`'s new
+    `onClick` parameter.
+  - An L01 log row (fixed): `<node content-desc="02:14:07, 145.230, Confirmed, W7NPC, this is …"
+    class="android.widget.Button" clickable="true" focusable="true" bounds="[…]" />` — one leaf
+    node, the previously-separate `AttributionRow` child no longer independently exported.
+  - The Search field (**still broken**, confirmed newly, not fixed this round): `<node
+    content-desc="" class="android.widget.EditText" clickable="true" focusable="true"><node
+    content-desc="Search text" focusable="false"/><node text="Callsign, frequency…"
+    focusable="false"/></node>`.
+- **A correction to this entry's own earlier, uncommitted draft, made honestly rather than
+  silently overwritten**: that draft claimed "Robolectric reproduces the real device's own finding
+  precisely" once queried with `useUnmergedTree = true`. That claim is **false** — see the
+  R-380/R-381 "What changed" section above for the full finding: the first fix attempt passed that
+  exact style of test and still failed on the device. This entry replaces that claim rather than
+  building on it.
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK** (17 modules).
+- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck` — **BUILD SUCCESSFUL** (one real violation in
+  `RowsTest.kt`, a line-length wrap `ktlintFormat` fixed automatically; `ktlintCheck` clean after).
+- `.\gradlew.bat :app:detekt` — **BUILD SUCCESSFUL**; `app\build\reports\detekt\detekt.txt`
+  confirmed **0 bytes**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **8/8 `[PASS]`**.
+- `.\gradlew.bat coverageMatrix` — **191 of 419 requirements covered**, `results\coverage-matrix.md`
+  unchanged (no diff — this round adds no new requirement coverage of its own).
+  `coverageMatrixCheck` — **up to date**.
+
+**Left open / not done:**
+- **`TextField` (the Search field) is confirmed broken on the real device and not fixed** — see
+  "What changed" above for why (risk to `BasicTextField`'s own real editable-text actions without
+  more dedicated investigation than this round had time for).
+- **`KeyValueRow`'s own `onClick` is unused by any real screen yet** — `CaptureStatusContent.kt`
+  (N04's Level row) and `ReadyScreen.kt` (S12's rows with a `Fix`/`Change` action) still wrap this
+  row in their own external `Modifier.clickable`; migrating those call sites to the new parameter
+  is explicitly "content owners re-verify after," per the register's own attribution — not done
+  here. N04's Level row was redumped and confirmed still broken.
+- **`SecondaryButton`/`DestructiveButton`/`LiveBar` fixed via the same confirmed
+  `clearAndSetSemantics` code shape, but not independently redumped this round** — no scenario
+  reached a `SecondaryButton`/`DestructiveButton`/live-capturing screen before time ran out; the
+  fix is the identical, twice-confirmed pattern by structural analogy, not by its own device
+  evidence.
+- **`NavRow`, `ActionBarButton`, `LogGroupHeader` and `RejectedRow`'s `onClick` branch carry the
+  same broken shape this entry fixes elsewhere, and were not fixed** — found while tracing every
+  `.clickable(...)` in `Rows.kt`; out of the register's explicit naming for this round, left for a
+  follow-up rather than expanding this diff unasked. See "What changed" for the exact shapes.
+- **The `overnight/L01-log-r420-after@2x.png` screenshot** was captured on emulator-5554 before the
+  `clearAndSetSemantics` rewrite; still visually valid (R-420's own fix is layout-only, unaffected
+  by the later accessibility-only changes) but taken at an earlier point in this round than the
+  final commit.
+- **The register is not updated by this commit** — closing out R-420/R-424/R-380/R-381/R-383 is
+  the validator/coordinator's own bookkeeping.
+
+---
+
 ## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
 
 ### ed7b13c — ui-conformance WP12 v2 · drill-in seeding through WP3's NavSeed, TourIds resolves symbolic ids against real fixture data

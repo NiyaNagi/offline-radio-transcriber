@@ -39,7 +39,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -61,7 +66,20 @@ import org.ort.app.ui.theme.OrtType
 
 /** guide §6.7: 13sp/500 `accent/green`, a real 44dp target, `bg/pressed` while pressed,
  * `text/disabled` when [enabled] is false. This is the default action style for a dense
- * instrument — most actions are text, not filled buttons. */
+ * instrument — most actions are text, not filled buttons.
+ *
+ * R-380 (`S12` `Fix`, dumped as `<node text="" content-desc="" clickable="true" focusable="true">
+ * <node text="Fix" focusable="false"/></node>`): the trailing `semantics(mergeDescendants = true)
+ * {}` this carried was an *empty* block — depending on merge-from-descendants alone to pull
+ * [text] up from the child `Text` into the clickable node's own accessible name, which this
+ * package's whole "nested merge boundary" history already found unreliable in this Compose
+ * version (`AttributionRow`-in-`LogRow`, `TextField`'s own `RequestFocus`/`SetText`, `KeyValueRow`-
+ * in-`ReadyScreen`, each an earlier entry in this file's `CHANGELOG.md`) — confirmed on a real
+ * device to fail here too, for the *outer clickable node's own name*, not only for what bubbles
+ * into a second ancestor. The fix already established for the working cases
+ * (`LogRow`/`LiveBar`/`KeyValueRow`: an *explicit*, literal `contentDescription` in the same
+ * `semantics` block, never left to merge alone) is what this now does too: [text] is composed
+ * directly, on the same node `clickable` itself lives on. */
 @Composable
 public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -82,7 +100,18 @@ public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Mo
                 onClick = onClick,
             )
             .padding(horizontal = 4.dp)
-            .semantics(mergeDescendants = true) {},
+            .clearAndSetSemantics {
+                contentDescription = text
+                role = Role.Button
+                if (enabled) {
+                    onClick(label = null) {
+                        onClick()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            },
         contentAlignment = Alignment.CenterStart,
     ) {
         Text(text = text, style = OrtType.textAction.copy(fontWeight = FontWeight.Medium), color = color)
@@ -90,7 +119,13 @@ public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Mo
 }
 
 /** guide §6.7: the filled button — setup and destructive actions only. 48dp tall, `accent/green`
- * fill, `accent/on-green` text; disabled is `bg/chip`/`text/disabled`. */
+ * fill, `accent/on-green` text; disabled is `bg/chip`/`text/disabled`.
+ *
+ * R-380 (`Start capture`, among others): this carried no `semantics` of its own at all — the label
+ * lived purely on the child `Text`, one real device confirmed a `clickable` node does not reliably
+ * absorb via merge alone (see [TextAction]'s own doc comment for the full finding). [text] is now
+ * composed explicitly on the same node `clickable` lives on, the pattern every fixed composable in
+ * this file now shares. */
 @Composable
 public fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val bg = if (enabled) OrtColors.accentGreen else OrtColors.bgChip
@@ -100,14 +135,27 @@ public fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier =
             .heightIn(min = 48.dp)
             .background(bg, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = 20.dp)
+            .clearAndSetSemantics {
+                contentDescription = text
+                role = Role.Button
+                if (enabled) {
+                    onClick(label = null) {
+                        onClick()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(text = text, style = OrtType.control.copy(fontWeight = FontWeight.Medium), color = fg)
     }
 }
 
-/** guide §6.7: the outlined companion to [PrimaryButton] — 44dp, `line/chip` border. */
+/** guide §6.7: the outlined companion to [PrimaryButton] — 44dp, `line/chip` border. R-380: see
+ * [PrimaryButton]'s own doc comment — the identical fix. */
 @Composable
 public fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val fg = if (enabled) OrtColors.textBody else OrtColors.textDisabled
@@ -116,14 +164,27 @@ public fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier
             .heightIn(min = 44.dp)
             .border(1.dp, OrtColors.lineChip, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = 20.dp)
+            .clearAndSetSemantics {
+                contentDescription = text
+                role = Role.Button
+                if (enabled) {
+                    onClick(label = null) {
+                        onClick()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(text = text, style = OrtType.control.copy(fontWeight = FontWeight.Medium), color = fg)
     }
 }
 
-/** guide §6.7: `halt/fill`/`halt/on-fill` — the one destructive button style in the product. */
+/** guide §6.7: `halt/fill`/`halt/on-fill` — the one destructive button style in the product. R-380:
+ * see [PrimaryButton]'s own doc comment — the identical fix. */
 @Composable
 public fun DestructiveButton(
     text: String,
@@ -136,7 +197,19 @@ public fun DestructiveButton(
             .heightIn(min = 44.dp)
             .background(OrtColors.haltFill, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 18.dp),
+            .padding(horizontal = 18.dp)
+            .clearAndSetSemantics {
+                contentDescription = text
+                role = Role.Button
+                if (enabled) {
+                    onClick(label = null) {
+                        onClick()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(text = text, style = OrtType.control.copy(fontWeight = FontWeight.Medium), color = OrtColors.haltOnFill)
@@ -149,7 +222,23 @@ public fun DestructiveButton(
 
 /** guide §6.3: pill, 14px radius, `5px 11px` padding. Selected is `bg/chip` fill/`text/high`/500;
  * unselected is a `line/chip` outline/`text/muted`/400. The visible pill is small, so the tap
- * target is padded out to 44dp around it (guide §5's rule, not the pill's own bounds). */
+ * target is padded out to 44dp around it (guide §5's rule, not the pill's own bounds).
+ *
+ * R-383 (`L02` `Log-Filter`'s frequency chip row, `[38,418][164,516]` — 98–103px, under the 116px
+ * floor, while the attribution chip row on the same sheet measures 126px): `heightIn(min = 44.dp)`
+ * as the *last* modifier in the chain, nothing measurement-relevant appended after it — this
+ * package's own established fix for a `heightIn` floor measuring short once more modifiers follow
+ * it in the same chain (`KeyValueRow`/`LogRow`/`RejectedRow`/`GapRow`/`LogGroupHeader`/
+ * `DrillInHeader`/`ScreenHeader`'s own outer-`Box`-carries-size, inner-content-carries-layout
+ * pattern is the fuller version of the same fix; here the outer `Box` already carries nothing but
+ * size and the click target, so reordering is the whole fix needed). [selectable] itself never
+ * changes the chip's own visible size — only the invisible touch target grows.
+ *
+ * R-380/R-381 ("L02 chips"): [label] is now also composed explicitly into this node's own
+ * `contentDescription` — `selectable()` alone carries the click action and the selected state
+ * (`Role.Checkbox`) but never the visible label, which previously lived only on the inner `Text`
+ * with nothing pulling it up onto this, the clickable node — see [TextAction]'s own doc comment
+ * for the fuller finding this package confirmed on a real device. */
 @Composable
 public fun FilterChip(
     label: String,
@@ -163,8 +252,17 @@ public fun FilterChip(
 ) {
     Box(
         modifier = modifier
+            .selectable(selected = selected, onClick = onClick, role = Role.Checkbox)
             .heightIn(min = 44.dp)
-            .selectable(selected = selected, onClick = onClick, role = Role.Checkbox),
+            .clearAndSetSemantics {
+                contentDescription = label
+                this.selected = selected
+                role = Role.Checkbox
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         contentAlignment = Alignment.CenterStart,
     ) {
         Row(

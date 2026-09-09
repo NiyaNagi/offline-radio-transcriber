@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
@@ -101,7 +102,11 @@ class FeedbackTest {
 
         composeTestRule.onNodeWithText("No overs on this frequency yet.").assertIsDisplayed()
         composeTestRule.onNodeWithText("No transcription model installed").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Install a model").assertIsDisplayed()
+        // R-380/R-381: `TextAction`'s own outer node now `clearAndSetSemantics` (an earlier entry
+        // in this file's own `CHANGELOG.md`), so its label `Text` is only reachable on the
+        // *unmerged* tree — the button's own merged description (which reads "Install a model")
+        // is what a real accessibility service reads instead.
+        composeTestRule.onNodeWithText("Install a model", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
@@ -115,9 +120,12 @@ class FeedbackTest {
         }
 
         composeTestRule.onNodeWithText("Filter the log").assertIsDisplayed()
-        val clearAll = composeTestRule.onNodeWithText("Clear all")
-        clearAll.assertIsDisplayed()
-        clearAll.assertHeightIsAtLeast(44.dp)
+        // R-380/R-381: see the note above. The 44dp floor belongs to `TextAction`'s own *outer*
+        // node — found here by its `contentDescription` (the outer node's own property) rather
+        // than `text` (the inner, now-unmerged label `Text`'s property) specifically so this
+        // resolves to the real target, not its smaller inner label.
+        composeTestRule.onNodeWithText("Clear all", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Clear all", useUnmergedTree = true).assertHeightIsAtLeast(44.dp)
     }
 
     @Test
@@ -153,8 +161,10 @@ class FeedbackTest {
 
         // Closing the sheet (the real screen's own dismissal — scrim tap/drag, outside this
         // package) restores it exactly as before — this is a visibility gate, not a deletion.
+        // R-380/R-381: `TextAction`'s own label is only reachable on the unmerged tree now (an
+        // earlier entry in this file's own `CHANGELOG.md`).
         sheetOpen = false
-        composeTestRule.onNodeWithText("Back to Log").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithText("Back to Log", useUnmergedTree = true).assertIsDisplayed().performClick()
         assert(backTapped)
     }
 }

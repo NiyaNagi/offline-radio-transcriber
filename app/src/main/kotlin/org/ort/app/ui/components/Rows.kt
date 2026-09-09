@@ -35,7 +35,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -263,50 +266,98 @@ public fun ScreenHeader(
  * `weight(1f)` column, which takes whatever width the fixed columns leave rather than being sized
  * to its own content — carries `maxLines = 1, softWrap = false`, so a short header word like
  * "STATION" is never itself broken mid-word ("STATIO"/"N") at a larger font scale; there is no
- * second line for a column *header* to wrap onto the way a data row's own content can. */
+ * second line for a column *header* to wrap onto the way a data row's own content can.
+ *
+ * R-420 (`overnight/L01-log@2x.png`): stacks the same way [LogRow] does, and for the identical
+ * reason — the SIG header/column ran off the right edge once TIME/FREQ/STATION's own real widths
+ * left it no room. A [BoxWithConstraints] picks, from the row's own real, current width, the
+ * existing one-line layout when it fits, or a stacked layout when it does not: STATION on its own
+ * line, TIME/FREQ/SIG — together, never split from each other — on the line beneath it, mirroring
+ * [LogRow]'s own marker-line/time-freq-signal split so a header always describes the row shape
+ * beneath it. */
 @Composable
 public fun ColumnHeaderRow(
     modifier: Modifier = Modifier,
     stationLabel: String = "station",
     signalLabel: String = "sig",
 ) {
-    Row(
+    val timeWidth = rememberTimeColumnWidth()
+    val freqWidth = rememberFreqColumnWidth()
+    val callsignWidth = rememberCallsignColumnWidth()
+    val gap = 10.dp
+    BoxWithConstraints(
         modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = OrtSpacing.xs),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(
-            text = "time".uppercase(),
-            style = OrtType.columnHeader,
-            color = OrtColors.textDisabled,
-            maxLines = 1,
-            softWrap = false,
-            modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
-        )
-        Text(
-            text = "freq".uppercase(),
-            style = OrtType.columnHeader,
-            color = OrtColors.textDisabled,
-            maxLines = 1,
-            softWrap = false,
-            modifier = Modifier.widthIn(min = rememberFreqColumnWidth()),
-        )
-        Text(
-            text = stationLabel.uppercase(),
-            style = OrtType.columnHeader,
-            color = OrtColors.textDisabled,
-            maxLines = 1,
-            softWrap = false,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = signalLabel.uppercase(),
-            style = OrtType.columnHeader,
-            color = OrtColors.textDisabled,
-            maxLines = 1,
-            softWrap = false,
-            modifier = Modifier.widthIn(min = SIGNAL_COLUMN),
-        )
+        val oneLineWidth = timeWidth + gap + freqWidth + gap + callsignWidth + gap + SIGNAL_COLUMN
+        if (maxWidth >= oneLineWidth) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                ColumnHeaderTimeText(Modifier.widthIn(min = timeWidth))
+                ColumnHeaderFreqText(Modifier.widthIn(min = freqWidth))
+                ColumnHeaderStationText(stationLabel, Modifier.weight(1f).widthIn(min = callsignWidth))
+                ColumnHeaderSignalText(signalLabel)
+            }
+        } else {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                ColumnHeaderStationText(stationLabel, Modifier.fillMaxWidth())
+                Row(
+                    modifier = Modifier.padding(top = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    ColumnHeaderTimeText(Modifier.widthIn(min = timeWidth))
+                    ColumnHeaderFreqText(Modifier.widthIn(min = freqWidth))
+                    ColumnHeaderSignalText(signalLabel)
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun ColumnHeaderTimeText(modifier: Modifier = Modifier) {
+    Text(
+        text = "time".uppercase(),
+        style = OrtType.columnHeader,
+        color = OrtColors.textDisabled,
+        maxLines = 1,
+        softWrap = false,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ColumnHeaderFreqText(modifier: Modifier = Modifier) {
+    Text(
+        text = "freq".uppercase(),
+        style = OrtType.columnHeader,
+        color = OrtColors.textDisabled,
+        maxLines = 1,
+        softWrap = false,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ColumnHeaderStationText(stationLabel: String, modifier: Modifier = Modifier) {
+    Text(
+        text = stationLabel.uppercase(),
+        style = OrtType.columnHeader,
+        color = OrtColors.textDisabled,
+        maxLines = 1,
+        softWrap = false,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ColumnHeaderSignalText(signalLabel: String, modifier: Modifier = Modifier) {
+    Text(
+        text = signalLabel.uppercase(),
+        style = OrtType.columnHeader,
+        color = OrtColors.textDisabled,
+        maxLines = 1,
+        softWrap = false,
+        modifier = modifier.widthIn(min = SIGNAL_COLUMN),
+    )
 }
 
 /** `Capture-Status.dc.html`'s key/value row: a key column sized to its content (a 96dp floor,
@@ -314,7 +365,23 @@ public fun ColumnHeaderRow(
  * cannot grow, so a long key runs directly into the value with no gap between them, e.g.
  * "Stations5"), a value + optional sub-line, and an optional trailing marker slot. The row's own
  * [OrtSpacing.sm] gap between columns is the floor that keeps key and value apart even when the
- * key's intrinsic width already reaches the value column's edge. */
+ * key's intrinsic width already reaches the value column's edge.
+ *
+ * R-381 (N04 `Capture-Status`'s Level row, dumped as `<node content-desc="" clickable="true"
+ * focusable="true"><node content-desc="Level: … Open level meter" focusable="false"/></node>`):
+ * before [onClick] existed, a caller that wanted the whole row tappable had no way to do that
+ * *on this composable's own outer node* — wrapping this row in a caller-side `Modifier.clickable`
+ * instead nests a second merge boundary inside the caller's own clickable node (this row's own
+ * `semantics(mergeDescendants = true)`), which this package's whole "nested merge boundary"
+ * history already found unreliable for carrying a name up to an *ancestor* on a real device (see
+ * [org.ort.app.ui.components.TextAction]'s own doc comment for the fuller finding, now confirmed
+ * to break the *immediate* clickable wrapper too, not only a second ancestor further out).
+ * [onClick] (`null` default, every caller before this existed unaffected) puts the click and the
+ * composed description on this row's *own* single node instead, the same fix already established
+ * for [LogRow]/[LiveBar]: nothing for a caller to get wrong by wrapping externally. [onClickLabel]
+ * (TalkBack's action hint, e.g. "Open level meter") is folded into the same composed description a
+ * non-clickable row already builds, so the row still reads as one fact plus its one action, not two
+ * unrelated stops. */
 @Composable
 public fun KeyValueRow(
     key: String,
@@ -322,14 +389,17 @@ public fun KeyValueRow(
     modifier: Modifier = Modifier,
     subLine: String? = null,
     trailingMarker: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+    onClickLabel: String? = null,
 ) {
     // R-265: a TalkBack traversal stop — without this, "Input"/"USB Audio Device"/"verified" are
     // three separate stops a screen-reader user has to swipe through individually instead of
     // hearing as the one fact row they visually are. `focusable()` (no `MutableInteractionSource`/
-    // visual indication needed — this row isn't clickable, so there is nothing to show pressed)
-    // marks the merged node as a real accessibility stop; `mergeDescendants = true` with an
-    // explicit `contentDescription` is the same explicit-composition pattern this package now uses
-    // in `LogRow`/`RejectedRow` rather than trusting merge behaviour alone.
+    // visual indication needed when [onClick] is null — nothing to show pressed) marks the merged
+    // node as a real accessibility stop when this row is not clickable; when it is, `clickable()`
+    // itself already carries that. `mergeDescendants = true` with an explicit `contentDescription`
+    // is the same explicit-composition pattern this package now uses in `LogRow`/`RejectedRow`
+    // rather than trusting merge behaviour alone.
     //
     // The outer `Box` (size/focus/semantics) wrapping an inner `Row` (padding/layout) is this
     // package's own established fix for a real, repeated Compose/Robolectric measurement bug: a
@@ -339,22 +409,47 @@ public fun KeyValueRow(
     // `padding(vertical = OrtSpacing.xs)` this chain also carries, the instant `focusable()`/
     // `semantics(...)` were appended after it) — the same defect `LogRow`/`GapRow`/`RejectedRow`/
     // `LogGroupHeader`/`DrillInHeader`/`ScreenHeader` already carry this exact structural fix for.
+    val description = buildString {
+        append(key)
+        append(", ")
+        append(value)
+        subLine?.let {
+            append(", ")
+            append(it)
+        }
+        onClickLabel?.let {
+            append(", ")
+            append(it)
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
-            .focusable()
-            .semantics(mergeDescendants = true) {
-                contentDescription = buildString {
-                    append(key)
-                    append(", ")
-                    append(value)
-                    subLine?.let {
-                        append(", ")
-                        append(it)
-                    }
-                }
-            },
+            .then(
+                if (onClick != null) {
+                    // R-381 (N04 Level row): a real device confirmed a plain, trailing
+                    // `semantics(mergeDescendants = true) { ... }` does not reliably keep this
+                    // node's own `contentDescription` on the *clickable* node itself once real
+                    // child content (this row's own `Text`s) sits beneath it — see [TextAction]'s
+                    // own doc comment for the full finding. `clearAndSetSemantics` is what this
+                    // package now confirms actually works.
+                    Modifier
+                        .clickable(role = Role.Button, onClickLabel = onClickLabel, onClick = onClick)
+                        .clearAndSetSemantics {
+                            contentDescription = description
+                            role = Role.Button
+                            onClick(label = onClickLabel) {
+                                onClick()
+                                true
+                            }
+                        }
+                } else {
+                    // The non-clickable, focusable-only case: R-265's own fix, already confirmed
+                    // correct on a real device (V7's own pass-3 notes) — unchanged.
+                    Modifier.focusable().semantics(mergeDescendants = true) { contentDescription = description }
+                },
+            ),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
@@ -598,7 +693,14 @@ public fun LogRow(state: LogRowViewState, onClick: () -> Unit, modifier: Modifie
             .background(rowBackground)
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = logRowDescription(state) },
+            .clearAndSetSemantics {
+                contentDescription = logRowDescription(state)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
     ) {
         val timeWidth = rememberTimeColumnWidth()
         val freqWidth = rememberFreqColumnWidth()
@@ -775,11 +877,17 @@ private fun highlightedTranscript(transcript: String, ranges: List<IntRange>): A
  * badge no longer both fit on one line — the badge previously had nowhere to go but clip to a
  * sliver or vanish entirely, since a plain `Row` never wraps. A `FlowRow` fixes the actual defect
  * (a badge must never clip, guide §5/AC-63) without touching [AttributionRow]'s own internal
- * layout: the attribution (shape + callsign + its own INFERRED score chip, or the AMBIGUOUS " or
- * <alternate>") stays the one atomic unit it already was — [AttributionRow] itself is shared far
- * too widely to change its own wrap behaviour from here — and [state]'s trailing `Badge`
- * (`NEW`/`REVISED`/`CORRECTED`) is the one thing that now wraps below it when there is no more
- * room, rather than being cut off. */
+ * layout: the attribution (shape + callsign, or the AMBIGUOUS " or <alternate>") stays the one
+ * atomic unit it already was — [AttributionRow] itself is shared far too widely to change its own
+ * wrap behaviour from here — and [state]'s trailing `Badge` (`NEW`/`REVISED`/`CORRECTED`) is the
+ * one thing that now wraps below it when there is no more room, rather than being cut off.
+ *
+ * R-420 (`overnight/L01-log@2x.png`): the INFERRED score chip is a *second* atomic unit, now
+ * pulled out of [AttributionRow]'s own call ([AttributionRow.showScore] `= false` here) and
+ * rendered as its own `FlowRow` item, right after it — free to wrap onto its own line below the
+ * callsign the same way the badge already does, rather than staying welded to the callsign inside
+ * `AttributionRow`'s own non-wrapping `Row` (where it previously collapsed into a one-character-
+ * per-line stack once there was no room for both, colliding with the SIG column). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LogRowMarkerLine(state: LogRowViewState, modifier: Modifier = Modifier) {
@@ -822,8 +930,15 @@ private fun LogRowMarkerLine(state: LogRowViewState, modifier: Modifier = Modifi
                     // AttributionRow's own default.
                     callsign = state.callsign ?: attribution.stationId,
                     alternate = state.alternate,
+                    // R-420: rendered as this FlowRow's own separate item, below.
+                    showScore = false,
                     modifier = Modifier.align(Alignment.CenterVertically),
                 )
+                if (attribution.state == AttributionState.INFERRED) {
+                    attribution.confidence?.let { confidence ->
+                        ScoreChip(confidence = confidence, modifier = Modifier.align(Alignment.CenterVertically))
+                    }
+                }
             }
         }
         state.badge?.let { badge ->

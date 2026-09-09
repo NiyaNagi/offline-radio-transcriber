@@ -19,9 +19,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,9 +70,13 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
                 .heightIn(min = 44.dp)
                 .background(palette.background)
                 .clickable(onClickLabel = state.label, role = Role.Button, onClick = onClick)
-                .semantics(mergeDescendants = true) {
+                .clearAndSetSemantics {
                     contentDescription = description
                     role = Role.Button
+                    onClick(label = state.label) {
+                        onClick()
+                        true
+                    }
                 },
             verticalAlignment = Alignment.Bottom,
         ) {
