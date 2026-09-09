@@ -468,7 +468,6 @@ public abstract class OrtDatabase : RoomDatabase() {
          * `.setQueryExecutor(queryExecutor)` — see [queryExecutor]'s own doc comment for why every
          * `OrtDatabase` instance needs a pool dedicated to this module, not Room's shared default.
          */
-        @Suppress("SpreadOperator") // MIGRATIONS is tiny; addMigrations(vararg) has no non-spread overload.
         public fun create(context: Context, name: String = DATABASE_NAME, inMemory: Boolean = false): OrtDatabase {
             // See [instances]'s own kdoc: every non-in-memory caller shares one live instance per
             // on-disk path, reused while it is still open and the file it names still exists.
@@ -488,6 +487,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             return buildAndInitialize(context, name, inMemory = true)
         }
 
+        @Suppress("SpreadOperator") // MIGRATIONS is tiny; addMigrations(vararg) has no non-spread overload.
         private fun buildAndInitialize(context: Context, name: String, inMemory: Boolean): OrtDatabase {
             val builder = if (inMemory) {
                 Room.inMemoryDatabaseBuilder(context, OrtDatabase::class.java)

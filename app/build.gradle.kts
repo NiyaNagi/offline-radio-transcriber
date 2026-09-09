@@ -136,13 +136,33 @@ dependencies {
 // Compose-testing JVM-sharing failure `ReaderActivityDestinationSmokeTest` already named above, not
 // a leak in this package's own code, and the same fix applies: a JVM this class's tests never share
 // with anything that runs after them.
+// Test-suite regression, 2026-09-08 (this task's own CHANGELOG entry): `SessionsContentTest`
+// (above) is one instance of a wider pattern — every test file below `setContent`s a screen's real
+// `*Content` composable (not a hand-built `*Screen`/view-state one), each of which owns its own
+// real `LaunchedEffect(key) { while (true) { ...; delay(2_000) } }` poll (`NowContent.kt`,
+// `CaptureStatusContent.kt`, `LogContent.kt`, `ThreadContent.kt`, `FailureHost.kt`, `OrtNavHost.kt`
+// itself). Bisecting the full suite kept finding a *different* one of these poisoning whatever
+// Compose test ran after it once excluded — `SessionsContentTest` fixed the `ui.digest`→`ui.failures`
+// crossing this session's own report bisected first; `NowContentTest` reproduced the identical
+// signature crossing into `ui.screens.NowScreenTest`/`CorrectionSheetTest` next. Every file in this
+// list reaches one of those real, recurring polls; isolating the whole set here (rather than
+// re-bisecting each remaining crossing one at a time against a suite that takes minutes per attempt)
+// is the same proven fix applied to every known instance of one root cause at once.
 val composeIdlePoisoningSmokeTestDebugUnitTest = tasks.register<Test>("smokeTestDebugUnitTest") {
     group = "verification"
-    description = "Runs the test classes already confirmed to poison later Compose tests' idle " +
-        "checking when they share a JVM with testDebugUnitTest's ~1200 others — each alone, in " +
-        "its own fresh JVM — see this task's own KDoc for the two confirmed so far."
+    description = "Runs the test classes already confirmed (or, by the same shape, suspected) to " +
+        "poison later Compose tests' idle checking when they share a JVM with testDebugUnitTest's " +
+        "~1200 others — each alone, in its own fresh JVM — see this task's own KDoc."
     include("**/ReaderActivityDestinationSmokeTest*")
     include("**/SessionsContentTest*")
+    include("**/NowContentTest*")
+    include("**/CaptureStatusContentTest*")
+    include("**/LogContentBackHandlerTest*")
+    include("**/LogAndThreadContentActivityTest*")
+    include("**/FailureHostTest*")
+    include("**/NavSeedTest*")
+    include("**/OrtNavHostDestinationDispatchTest*")
+    include("**/ReaderAccessibilityTest*")
     forkEvery = 1
 }
 
@@ -161,6 +181,35 @@ afterEvaluate {
     val debugUnitTest = tasks.withType<Test>().named("testDebugUnitTest").get()
     debugUnitTest.exclude("**/ReaderActivityDestinationSmokeTest*")
     debugUnitTest.exclude("**/SessionsContentTest*")
+    debugUnitTest.exclude("**/NowContentTest*")
+    debugUnitTest.exclude("**/CaptureStatusContentTest*")
+    debugUnitTest.exclude("**/LogContentBackHandlerTest*")
+    debugUnitTest.exclude("**/LogAndThreadContentActivityTest*")
+    debugUnitTest.exclude("**/FailureHostTest*")
+    debugUnitTest.exclude("**/NavSeedTest*")
+    debugUnitTest.exclude("**/OrtNavHostDestinationDispatchTest*")
+    debugUnitTest.exclude("**/ReaderAccessibilityTest*")
+    // Test-suite regression, 2026-09-08 (this task's own CHANGELOG entry): excluding the two
+    // confirmed-poisoning classes above (this file's own KDoc) was not sufficient on its own — the
+    // full suite still eventually wedged (confirmed: `ImproveScreensTest`, a file with no
+    // coroutine, `LaunchedEffect` or `OrtDatabase` use at all, was still "involved" once combined
+    // with enough of `ui.screens`, ruling out any single remaining bad test). Every real
+    // `*Polling`/`*Runner`/producer object across `:app` opens an `OrtDatabase` and — outside the
+    // handful of `@After` blocks that call `close()` — never closes it (`OrtDatabase.kt`'s own
+    // report has the count and the fix that caps *repeat* opens against the same on-disk path).
+    // Across ~1200 tests in one Robolectric-sandboxed JVM, though, most test methods get their own
+    // fresh simulated app install (a fresh `filesDir`/path), so that cap does not consolidate
+    // *across* them — each contributes its own live connection to `OrtDatabase`'s shared, never-
+    // shut-down `queryExecutor` (`Executors.newCachedThreadPool()`, deliberately unbounded per that
+    // pool's own doc comment, to isolate from a *different*, already-fixed contention bug). Enough
+    // live connections piling up over one long JVM run compounds into exactly the "runs fine in any
+    // one package, fine even at half the suite, eventually catastrophic" signature this session's
+    // bisection kept finding no single owner for. `forkEvery` — Gradle's own, standard remedy for a
+    // test task with cumulative, hard-to-fully-close JVM-process state — recycles the whole worker
+    // (a fresh JVM, a fresh Robolectric sandbox, a fresh `queryExecutor`) periodically, bounding the
+    // *worst case* to what one batch can accumulate regardless of which classes are in it, without
+    // forking every single class the way the confirmed-poisoning tasks above must.
+    debugUnitTest.forkEvery = 40
     composeIdlePoisoningSmokeTestDebugUnitTest.configure {
         testClassesDirs = debugUnitTest.testClassesDirs
         classpath = debugUnitTest.classpath
