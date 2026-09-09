@@ -32,6 +32,55 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (WP3 round 15 · R_133 OOM fixture fix)
+
+### d0fea1a — WP3 round 15 · fix R_133 OutOfMemoryError from unrealistic session endedAt fixture
+
+**Scope:** `ui/navigation` (`ReaderActivityDestinationSmokeTest.kt`'s own `seedSession()` fixture
+only — one field). `git merge main` twice this round (`05f43be` -> `8831cc8` -> `0d85cad`, both
+clean fast-forwards, no conflicts, neither touching this file).
+
+**Requirements/ACs:** none new. This is a test-fixture fix, not a behavior change; it keeps
+`R-432`/`R-448`'s own coverage (this file's existing cases) green against WP10's `da92a24`.
+
+**What changed:** the coordinator reported `ReaderActivityDestinationSmokeTest
+.R_133_settings_storage_review_link_opens_the_session_and_back_returns_to_settings_storage`
+(round 11's own case) failing on main at `1502423` after WP10's `da92a24` landed. Reproduced
+exactly: `java.lang.OutOfMemoryError: Java heap space` thrown from `ActivityPatternChartKt
+.HourBar`, reached via `SessionDetailScreen` when R_133 follows the Review link into DG04.
+Root-caused to WP10's own R-449 fix in `DigestPolling.sessionCoverageBuckets` — it replaced the
+old fixed 24-hour-of-day bucketing with real elapsed-hour-from-session-start bucketing
+(`(0 until totalHours)` where `totalHours` derives from `endedAt ?: nowMillis` minus
+`startedAt`). That is correct, honest behavior for a real session. But this file's shared
+`seedSession()` fixture set `startedAt = 0L` (epoch) and `endedAt = null`, so `endedAt ?:
+nowMillis` resolved to the *real* wall clock (~1.7e12 ms in 2026) — a ~486,000-hour span,
+~486,000 `HourBar` composables, and a genuine heap exhaustion the one time this fixture's own
+session detail actually composes (only R_133 reaches DG04). Confirmed by direct diff inspection
+that WP10's `da92a24` did **not** drop or rename the `Review` action or its tag — the
+`TextAction(text = "Review", ...)` and its content description
+`"Review the session from ${next.sessionDateLabel}"` in `SettingsStorageScreen.kt` are
+byte-for-byte unchanged; the R-441 empty-track change WP10 made is a different code path
+(`StorageCategoryBreakdown`'s bar rendering) entirely untouched by this fix. Fixed by changing
+`endedAt` from `null` to `3_600_000L` (a bounded, honest 1-hour session span) in `seedSession()`'s
+`SessionEntity` construction — nothing else in this file reads `endedAt`, so no other case is
+affected.
+
+**Verified:** `:app:testDebugUnitTest --tests "org.ort.app.debug.*"` not needed (no debug-package
+change); `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest.R_133*"` green in isolation, then
+the full `:app:smokeTestDebugUnitTest` suite green (no other regressions from the fixture
+change). `:app:ktlintCheck :app:detekt` — `BUILD SUCCESSFUL`. `dependencyRules platformGuards` —
+both `OK`. `python tools/spec-check/spec_check.py` — all 8 checks `[PASS]`. `:app:assembleDebug`
+— `BUILD SUCCESSFUL` (one pre-existing, unrelated `ClickableText` deprecation warning from
+WP6's `TransmissionDetailScreen.kt`, not touched here). `coverageMatrix` then, separately,
+`coverageMatrixCheck` — both green, 191/419 covered, matrix already up to date.
+
+**Left open / not done:** nothing on this file. Reported to the coordinator per their own
+instruction: WP10's screen and the Review action/tag were **not** dropped — this was purely a
+test-fixture timestamp-realism gap on my own side, now closed; no re-routing needed.
+
+---
+
 ## 2026-09-08 (ui-conformance WP4 · R-419 follow-up: real clip total)
 
 ### 165449f — ui-conformance WP4 · R-419 follow-up: switch to LevelStatus.clippedSamplesThisSession
