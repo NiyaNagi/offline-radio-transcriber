@@ -32,6 +32,204 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
+
+### ed7b13c — ui-conformance WP12 v2 · drill-in seeding through WP3's NavSeed, TourIds resolves symbolic ids against real fixture data
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourIds.kt` (new), `ScreenshotTourActivity.kt`
+(composes `OrtNavHost`/`rememberReaderNavigator` with a real `NavSeed` now), `TourSpec.kt` (the
+supported `drillIn` key set expanded from one key to eleven), `app/src/test/kotlin/org/ort/app/debug/tour/TourIdsTest.kt`
+(new), `TourSpecTest.kt` (one accessor rename, two new assertions), `tools/ui-audit/tour.json` (18
+new steps, 93 → 111). `git merge main` first (5163388, carrying WP3 round 13's `NavSeed`) — one real
+`CHANGELOG.md` conflict against three concurrent entries (WP3 rounds 12/13, WP11c/d's R-350 fix),
+resolved by keeping every section, no other file conflicted.
+
+**Requirements/ACs:** none new — validation tooling, unchanged from WP12's earlier rounds.
+
+**What changed:**
+
+*Constitution Check.* II (test-backed change — `TourIdsTest`'s 11 new cases run every resolution
+path against a *real*, just-loaded fixture, not a hand-built stand-in, including the failure path:
+asking for an attribution state that does not exist throws, proven, not assumed). I (uncertainty is
+content — `ST03`/`ST04` were checked against `StationDetailContent.kt`'s actual source, found
+genuinely unseedable, and reported as such below rather than silently left out of the step list with
+no explanation).
+
+- **`TourIds.resolveSeed`** (new): turns a `drillIn` map's *symbolic* values — `transmission:
+  "ambiguous"`, `station: "WA7HJR"`, `thread: "any"`, `reviewSession: "self"` — into a real
+  `org.ort.app.ui.navigation.NavSeed` by querying the step's own just-loaded scenario
+  (`TransmissionDao.listBySession`/`ActivityDao.listStations`, both already-public `:data` reads, no
+  new DAO query added). This is the coordinator's own point, verbatim: a fixture's ULIDs can change
+  on every reseed; `"ambiguous"`/`"WA7HJR"` do not. A symbol this table does not recognise, or a
+  literal id/Hz value that resolves to nothing in the loaded data, throws — caught by `TourRunner`
+  the same as any other per-step failure.
+- **`ScreenshotTourActivity`** now builds `rememberReaderNavigator(..., seed = navSeed)` and passes
+  the identical `seed` to `OrtNavHost(seed = navSeed, ...)` — `NavSeed`'s own `initialDestination()`
+  takes priority over the step's explicit `destination` whenever a drill-in id implies one (e.g. a
+  `transmission` drill-in always lands on `Log`'s own detail regardless of what `destination` says),
+  matching how a real tap would behave.
+- **`TourStep`'s supported `drillIn` keys**: `transmission`, `station`, `frequency`, `thread`,
+  `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`, `captureLevelMeter`,
+  `reviewSession`, `frequencyInitialView`, `settingsScreen` (unchanged from v1, now routed through
+  `NavSeed` instead of a separate parameter).
+- **18 new `tour.json` steps** (93 → 111): D01–D04 (confirmed/inferred/ambiguous/unknown, `overnight`,
+  D02 also `@2x`), D06 (`no-audio`), D07 (`revisions`), F18 (`pass-failed`), T02 (`overnight`, any
+  thread), ST02 (`stations-14-nights`, `WA7HJR`, plus `@2x`), FQ02/FQ03 (`frequency-change`,
+  145.230 MHz, `Detail`/`Change`, FQ03 also `@2x`), N06 seeded directly (`level-low`/`level-clip`),
+  the R-276 Log-filtered-by-frequency route, and `Earlier nights`'s Settings-Storage review seed
+  (`stations-14-nights`, `reviewSession: self`).
+- **A genuine finding, not a workaround**: `ST03`/`ST04` (Station-Pattern, Station-Identity) are
+  **not** seedable even with `NavSeed` — confirmed by reading `StationDetailContent.kt`'s own source:
+  which of Overview/Pattern/Identity shows is `var sub by remember(stationId) {
+  mutableStateOf(StationSubScreen.NONE) }`, a purely internal, un-exported Compose state with no
+  parameter `NavSeed` or any other caller could set. Left out of `tour.json` and named here rather
+  than silently absent.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — **BUILD SUCCESSFUL**,
+  24 tests, 24 passed (12 from v1/v1.1 plus `TourIdsTest`'s 11 new cases plus
+  `TourSpecTest`'s new `R_TOUR_DRILL_IN_KEYS`) — including
+  `R_TOUR_IDS_TRANSMISSION_STATES` (each of confirmed/inferred/ambiguous/unknown resolves, against
+  the real `overnight` fixture, to a real row of that exact `AttributionState`),
+  `R_TOUR_IDS_STATION_CALLSIGN` (`WA7HJR` resolves to that station's real database id in
+  `stations-14-nights`), `R_TOUR_IDS_THREAD_ANY`, `R_TOUR_IDS_LOG_FILTER`,
+  `R_TOUR_IDS_REVIEW_SESSION_SELF`, `R_TOUR_IDS_UNRESOLVABLE_STATE` (throws when nothing matches).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (191 covered of 419); no drift attributable to this package (still no requirement ids cited).
+- **Real device, `emulator-5558` (AVD `ort_audit_3`), fresh worktree APK (`adb install -r`), `pm
+  clear` + permissions granted, `.\tools\ui-audit\tour.ps1 -Port 5558 -Out .\tmp-tour-out`**:
+  **111/111 steps ok, 0 errors, 100.7s elapsed** (every one of the 18 new drill-in steps succeeded on
+  the first real run — every symbolic-id guess about the fixtures' own shape, made from reading
+  `results/ui-audit/README.md` alone, turned out correct). Three of the new captures opened directly
+  with the Read tool and visually confirmed as genuine, non-blank renders:
+  `overnight/D01-confirmed.png` (the real Transmission-Detail screen — header "Back to Log", callsign
+  `W7NPC`, transcript, waveform, the real "WHY THIS CALLSIGN" lattice/prior panel with actual scored
+  rows, both action buttons), `stations-14-nights/ST02-station.png` (`WA7HJR`'s real Station detail —
+  facts, the real activity pattern chart with its not-listening hatch, ten real "RECENT OVERS" rows),
+  and `overnight/L01-log-filtered-frequency.png` (the real Log screen with the `145.230` filter chip
+  already pressed/selected, rows genuinely filtered to that frequency — R-276's own seeded shape).
+  `tmp-tour-out/` was scratch, not part of this commit.
+
+**Left open / not done:**
+- `ST03`/`ST04` remain unseedable — named above with the exact internal state blocking them; a fix
+  would need `StationDetailContent.kt` (WP8's file, not WP12's row) to accept an initial-sub-screen
+  parameter the way `FrequencyDetailContent.initialView` already does.
+- `Log`'s and `Search`'s own filter sheets remain unseedable, per `NavSeed`'s own doc comment
+  (unchanged from v1's finding, now confirmed still true after WP3's round 13).
+- Setup steps still carry no font-scale hook (unchanged from v1.1).
+
+### 6c137a4 — ui-conformance WP12 v1.1 · fix spec transport and manifest poll, verify tour.ps1 end to end on a real device
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt` (spec now read from
+the app's own sandbox), `tools/ui-audit/tour.ps1` (spec write, manifest poll, and the whole pull
+mechanism rewritten), `tools/ui-audit/boot.ps1` (identical `getprop` poll bug, lead-approved exception
+to this package's file row — see "What changed").
+
+**Requirements/ACs:** none new — the same validation-tooling scope as WP12's first round.
+
+**What changed:**
+
+*Constitution Check.* II (test-backed change — every Kotlin-side change re-passed the existing 12-test
+scoped gate before touching a device; PowerShell has no equivalent test harness here, so its own
+correctness was established by actually running it against a real device three times, each failure
+diagnosed with a minimal, isolated repro before being fixed — the discipline this constitution asks
+of manual/device-only work when strict TDD does not apply). IV (capture never blocks — unaffected;
+nothing about this fix touches capture). VII (structural guarantees — unaffected).
+
+The coordinator's first real device run (`ort_audit_3`, port 5558) failed twice, both diagnosed by
+reproducing each failure in isolation against the real device before writing a fix, not by inspection:
+
+1. **Spec transport (`ScreenshotTourActivity.kt`).** `readSpecJson` read `/sdcard/ort-tour.json` and
+   crashed `FileNotFoundException ... EACCES` — API 34 scoped storage refuses this app any read of
+   `/sdcard`. Fixed: the spec now lives at `filesDir/tour/spec.json`, this app's own sandbox;
+   `EXTRA_SPEC_PATH` (`spec_path`) overrides the path for a caller that already has its own on-device
+   file, `EXTRA_TOUR_JSON` stays as an inline-JSON convenience.
+2. **`tour.ps1`'s spec write and manifest poll.** Two bugs, not one, both found by reproducing against
+   `emulator-5558` directly:
+   - A **quoting** bug: neither `run-as $pkg sh -c "..."` as separate PowerShell arguments nor as one
+     combined string with embedded **double**-quotes survives to the device — `adb shell` flattens
+     separate arguments with spaces before the device ever sees them (`mkdir: Needs 1 argument`,
+     reproduced), and `adb.exe`'s own Windows-side argument handling strips embedded double-quote
+     characters even from a single combined argument (identical failure, also reproduced). Embedded
+     **single** quotes survive intact and are genuine POSIX grouping on the device — confirmed with an
+     `echo A B` round trip before touching the real spec/manifest commands. `tour.ps1` now writes the
+     spec via `Get-Content -Raw | adb shell run-as $pkg sh -c 'mkdir -p files/tour && cat >
+     files/tour/spec.json'` and polls via `run-as $pkg sh -c 'test -f files/tour/manifest.json && cat
+     files/tour/manifest.json || true'` — both single-quoted.
+   - An **error-action** bug: before `manifest.json` exists, a bare `run-as ... cat` exits non-zero and
+     writes to stderr, which `$ErrorActionPreference = "Stop"` turns into a terminating
+     `NativeCommandError` even through `2>$null` — the same class as `boot.ps1`'s own `getprop` poll
+     (fixed there too, coordinator-approved exception to this package's file row: one `getprop` call
+     wrapped the same way, nothing else in that file touched). Fixed with `test -f ... && cat ... ||
+     true` (always exits 0) plus a local `$ErrorActionPreference = "Continue"` swap around every native
+     poll call, restored immediately after.
+3. **A third bug found only by running the fixed script end to end**, not named in the brief:
+   `Set-Content -Encoding utf8` writes a UTF-8 byte-order mark that survives the pipe onto the device
+   and sits before spec.json's opening `{`; `org.json.JSONObject`'s tokener does not tolerate it.
+   Switched to `[System.IO.File]::WriteAllText` with an explicit no-BOM `UTF8Encoding`.
+4. **A fourth, found the same way**: `run-as ... cp -r files/tour /sdcard/...` (the originally-planned
+   pull mechanism) and a direct `adb pull /data/data/<pkg>/...`/`/data/user/0/<pkg>/...` **both** fail
+   `Permission denied` on this device/adb (37.0.1) combination — API 30+ scoped storage refuses this
+   app's own `run-as`'d process write access to `/sdcard` at all (even its own
+   `/sdcard/Android/data/<pkg>/files`), and this adb has no working `run-as` pull-fallback for
+   `/data/data`/`/data/user/0` either. Replaced entirely: `run-as ... cat` already reads a *text* file
+   out over `adb shell`'s own captured stdout (the manifest poll); the same path reads *binary* PNGs
+   once base64-encoded to text first (toybox's `base64`, present on the device) and decoded back to
+   bytes locally with `[Convert]::FromBase64String`/`[System.IO.File]::WriteAllBytes`, one file per
+   step. Never `adb exec-out` redirected to a file at any point (brief-common.md's own rule) — every
+   byte in or out goes through `adb shell`'s ordinary, already-captured stdout/stdin.
+5. **A fifth, found the same way**: the first working pull wrote `tour-manifest.json` via
+   `Set-Content -Value <array> -NoNewline`, which concatenates every array element with **no**
+   separator at all when `-NoNewline` is given — the whole manifest landed on one run-on line.
+   Rewritten to join explicitly with `` `n `` before writing, matching the on-device JSONL exactly.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*" :app:ktlintCheck :app:detekt`
+  — **BUILD SUCCESSFUL**, all 12 tests still passing.
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — `up to date (191
+  covered of 419)`, no drift from this round (PowerShell-only changes cite no requirement ids).
+- **Real device, `emulator-5558` (AVD `ort_audit_3`), worktree APK installed fresh (`adb install -r`),
+  `pm clear` + `RECORD_AUDIO`/`POST_NOTIFICATIONS` granted, `.\tools\ui-audit\tour.ps1 -Port 5558 -Out
+  .\tmp-tour-out`**: **93/93 steps ok, 0 errors, 88.6s elapsed** (a second, otherwise-identical run
+  measured 85.4s — both well inside the 15-minute cap). `tour-manifest.json` pulled correctly as 94
+  JSONL lines (93 step entries + one `done` summary); 93 PNGs pulled, each a real, non-trivial capture
+  (1080×2400, matching the `ort_audit_3` AVD's own resolution) — two opened directly with the Read
+  tool and visually confirmed as genuine renders, not black/blank: `overnight/N01-now.png` (the `Now`
+  screen's real idle/ended state, "Not capturing · Last session ended 01:19 · 42 overs · 6 h 42 m",
+  "EARLIER NIGHTS · Overnight, Tue 8 Sep") and `setup-verified/S12-ready.png` (the real Setup "Ready"
+  summary, all five rows with their real state markers, "7 of 7"), plus a third,
+  `overnight/CF03-settings-storage.png` (the real Settings-Storage screen via `initialSettingsScreen`,
+  budget chips, format, the real FR-STO-2a/2b copy) — confirming both device-side capture paths
+  (`OrtNavHost` composed in place, and the real `SetupActivity` launched via `EXTRA_STEP`) produce
+  genuine content, not a placeholder.
+- `python tools\ui-audit\diff.py --before .\tmp-tour-out --after .\tmp-tour-out --manifest
+  .\tmp-tour-out\tour-manifest.json` (a run compared against itself, to prove it runs against real
+  device output, not just the earlier synthetic fixture): **93 unchanged, 0 new/missing/changed** —
+  wrote `tour-diff.md`. Confirms the stdlib PNG decoder handles these real, Android-produced RGBA PNGs
+  correctly, not only the earlier synthetic 8×8 fixture.
+- `tmp-tour-out/` was scratch (a temp dir under the worktree, never `results/`, per the coordinator's
+  instruction) and is not part of this commit.
+
+**Left open / not done:**
+- Every other native `adb`/`run-as` call in `tour.ps1` (the `am start`, the per-step `base64` pull
+  loop) still relies on its own explicit `$LASTEXITCODE` check rather than the belt-and-braces
+  `$ErrorActionPreference` swap — not reported broken by the coordinator and not reproduced broken
+  this round; the swap is applied only where a real failure was reproduced (the spec write and the
+  manifest poll) plus the base64 pull loop (new code, same risk class, applied pre-emptively).
+- `boot.ps1`'s fix is a narrow, coordinator-approved exception to this package's file row (one
+  `getprop` call wrapped, nothing else in that file touched) — flagged explicitly here and in the
+  commit message rather than silently expanding this package's ownership.
+
+---
+
+
 ## 2026-09-08 (ui-conformance WP9: pass-5 fixes)
 
 ### (pending) — ui-conformance WP9 pass-5 fixes: FailureActionBarScaffold-identical scaffold, action-row focusable descriptions
@@ -129,7 +327,6 @@ cold launch, before any scroll). R-361 fixed and verified on the same device via
   silently omitted.
 
 ---
-
 
 ## 2026-09-08 (ui-conformance WP3 round 13: NavSeed, a public seam for WP12's screenshot tour)
 

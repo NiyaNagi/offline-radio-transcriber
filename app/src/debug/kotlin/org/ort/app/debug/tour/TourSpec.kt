@@ -11,18 +11,21 @@ import org.json.JSONObject
  * null) launches the real [org.ort.app.ui.setup.SetupActivity] at the named
  * [org.ort.app.ui.setup.SetupStep].
  *
- * [drillIn] is carried through from the JSON verbatim (`transmissionId` | `stationId` |
- * `frequencyHz` | `sessionId` | `settingsScreen` | `openLogFilter`, per this package's brief) so
- * the spec format matches what a validator brief already names, but **only `settingsScreen` is
- * honored by v1** — see `ScreenshotTourActivity`'s own doc comment and this package's report for
- * exactly why: `OrtNavHost`'s public surface (`sessionId`, `navigator`, `failureActions`) and
- * `ReaderNavigator`'s (`open`, `openSettings`, `openSetupInput`) have no way to seed a drill-in id
- * at all — every one of `NavHostNavState`'s `openTransmissionId`/`openStationId`/`openFrequencyHz`/
- * `openThreadId`/`pendingLogFilter`/`openCaptureLevelMeter`/`pendingReviewSessionId` fields is
- * `private` in `OrtNavHost.kt` (WP3's file, not this package's row), populated only by a callback a
- * real tap fires. A step naming any other [drillIn] key fails loudly (recorded as one `error` line
- * in the manifest, per this file's own contract with [ScreenshotTourActivity] — never a silent
- * skip and never an aborted tour) rather than being silently ignored.
+ * [drillIn] is a map of symbolic keys resolved against the step's own just-loaded scenario by
+ * [TourIds.resolveSeed] into a real [org.ort.app.ui.navigation.NavSeed] — v2 (WP3 round 13 added
+ * `NavSeed`, a public seam `OrtNavHost`/`rememberReaderNavigator` both accept, closing the v1 gap
+ * this class's own history records): `transmission` (`confirmed`|`inferred`|`ambiguous`|`unknown`
+ * or a literal id), `station` (a callsign or a literal id), `frequency` (a literal Hz value),
+ * `thread` (`any` or a literal id), `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`,
+ * `captureLevelMeter` (`true`), `reviewSession` (`self` or a literal session id),
+ * `frequencyInitialView` (`Detail`|`Change`), `settingsScreen` (a `SettingsScreenId` name — carried
+ * through `NavSeed` now, same key as before). **Not seedable at all, in v2 either**: `Log`'s own
+ * filter sheet and `Search`'s own — see [org.ort.app.ui.navigation.NavSeed]'s own doc comment for
+ * exactly why (neither `LogContent.kt` nor `SearchContent.kt` accepts an initial-open parameter).
+ * A step naming a
+ * [drillIn] key outside this set fails loudly (recorded as one `error` line in the manifest, per
+ * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
+ * aborted tour) rather than being silently ignored.
  *
  * [override] (optional): a second scenario name, loaded with [org.ort.app.debug.Scenarios.load]
  * *after* the base [scenario] and after the destination has already composed and settled — the
@@ -49,12 +52,25 @@ public data class TourStep(
         }
     }
 
-    /** The one [drillIn] key v1 honors — see this class's own doc comment. */
-    public val settingsScreen: String? get() = drillIn["settingsScreen"]
+    /** Every [drillIn] key [TourIds.resolveSeed] knows how to resolve — see this class's own doc
+     * comment for what each one means. */
+    public val unsupportedDrillInKeys: Set<String> get() = drillIn.keys - SUPPORTED_DRILL_IN_KEYS
 
-    /** Every [drillIn] key besides `settingsScreen` — present only when this step needs a seed
-     * v1's host surface cannot provide (see this class's own doc comment). */
-    public val unsupportedDrillInKeys: Set<String> get() = drillIn.keys - "settingsScreen"
+    public companion object {
+        private val SUPPORTED_DRILL_IN_KEYS: Set<String> = setOf(
+            "transmission",
+            "station",
+            "frequency",
+            "thread",
+            "logFilterFrequency",
+            "logFilterFromMillis",
+            "logFilterToMillis",
+            "captureLevelMeter",
+            "reviewSession",
+            "frequencyInitialView",
+            "settingsScreen",
+        )
+    }
 }
 
 /** The parsed contents of `tools/ui-audit/tour.json` — a flat, ordered list of [TourStep]s. */

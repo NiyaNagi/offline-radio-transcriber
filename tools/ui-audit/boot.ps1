@@ -41,7 +41,16 @@ Start-Process -FilePath $emulatorExe -ArgumentList @(
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $booted = $false
 while ((Get-Date) -lt $deadline) {
+    # Before the device shows up in `adb devices` at all, `adb -s <serial> shell ...` writes
+    # `error: device '<serial>' not found` to stderr and exits non-zero. Under
+    # $ErrorActionPreference = "Stop" (set at the top of this script), PowerShell 5.1 turns that
+    # stderr line into a terminating NativeCommandError even though it is redirected to $null here
+    # - found by actually running this against a not-yet-visible device, not by inspection.
+    # Swallow it locally rather than letting one early poll kill the whole wait loop.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $prop = & $adb -s $serial shell getprop sys.boot_completed 2>$null
+    $ErrorActionPreference = $prevEap
     if ($prop -and ($prop | Select-Object -First 1).Trim() -eq "1") {
         $booted = $true
         break
