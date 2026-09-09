@@ -589,6 +589,19 @@ private fun navHostCallbacks(
             navState.openReviewSession(sessionId)
             currentState.value = ReaderDestination.EARLIER_NIGHTS
         },
+        // Round 17, register R-432: `Frequency-Change`'s "The activation thread" pill
+        // (`ActivationThreadRouting.resolveActivationThread`, called from `NavHostDispatch`) opens
+        // this once it has a real `threadId` — the live frequency drill-in is closed first (unlike
+        // `onOpenThread` above, built for the LOG/THREADS list rows, where no other drill-in id is
+        // ever already set) so `NavHostDispatch`'s own `when` does not keep matching the now-stale
+        // `frequencyHz` branch ahead of the new `threadId` one. `onOpenDrillIn` then records
+        // `currentState.value` (`FREQUENCIES`, in every real case this fires from) as `openedFrom`,
+        // so T02's own header reads "Back to Frequencies" — the true origin, not the frequency
+        // drill-in this was reached through, which no longer exists to return to.
+        onOpenActivationThread = { threadId ->
+            navState.closeDrillIns()
+            navState.onOpenDrillIn(currentState.value) { navState.openThreadId.value = threadId }
+        },
     )
 }
 
@@ -688,6 +701,9 @@ private data class NavHostCallbacks(
     val onOpenOvers: (Long, TimeWindow) -> Unit,
     // Round 11, register R-133: see `navHostCallbacks`'s own construction site.
     val onReviewSession: (String) -> Unit,
+    // Round 17, register R-432: see `navHostCallbacks`'s own construction site and
+    // `ActivationThreadRouting`'s own doc comment for what resolves the id this expects.
+    val onOpenActivationThread: (String) -> Unit,
 )
 
 /**
@@ -815,60 +831,7 @@ private fun NavHostBody(
         // extra clearance that comment explains.
         val clearance = bannerClearance(!isDrillIn && !isSearch && !isSettings, layout.contentTopPadding)
         Box(modifier = Modifier.weight(1f).padding(top = clearance, bottom = liveBarHeight)) {
-            when {
-                ids.transmissionId != null -> TransmissionDetailContent(
-                    context = context,
-                    transmissionId = ids.transmissionId,
-                    player = audioPlayer,
-                    onBack = callbacks.onCloseDrillIns,
-                    onOpenTransmission = callbacks.onOpenTransmission,
-                    backLabel = ids.openedFrom.label,
-                    initialRevisionsOpen = ids.transmissionInitialRevisionsOpen,
-                )
-
-                ids.stationId != null -> StationDetailContent(
-                    context = context,
-                    stationId = ids.stationId,
-                    onBack = callbacks.onCloseDrillIns,
-                    onOpenTransmission = callbacks.onOpenTransmission,
-                    backLabel = ids.openedFrom.label,
-                    // Round 14, register R-276 follow-on: `NONE` for every ordinary open; only the
-                    // WP12 tour's own `NavSeed.openStationSubScreen` ever sets this to `PATTERN`/
-                    // `IDENTITY`/`SPLIT`.
-                    initialSubScreen = ids.stationInitialSubScreen,
-                )
-
-                ids.frequencyHz != null -> FrequencyDetailContent(
-                    context = context,
-                    frequencyHz = ids.frequencyHz,
-                    onBack = callbacks.onCloseDrillIns,
-                    onOpenStation = callbacks.onOpenStation,
-                    onOpenOvers = callbacks.onOpenOvers, // R-276, real now — see NavHostCallbacks.onOpenOvers
-                    // Round 10: real now — WP8 merged it. `Detail` for every ordinary open; `Change`
-                    // only when the `BackHandler` above set it, restoring `Frequency-Change` itself.
-                    initialView = ids.frequencyInitialView,
-                    backLabel = ids.openedFrom.label,
-                )
-
-                ids.threadId != null -> ThreadDetailContent(
-                    context = context,
-                    sessionId = sessionId,
-                    threadId = ids.threadId,
-                    onBack = callbacks.onCloseDrillIns,
-                    onOpenOver = callbacks.onOpenTransmission,
-                    backLabel = ids.openedFrom.label,
-                )
-
-                else -> DestinationContent(
-                    current = ids.current,
-                    initialState = ids.contentInitialState,
-                    sessionId = sessionId,
-                    context = context,
-                    search = search,
-                    callbacks = callbacks,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+            NavHostDispatch(ids, callbacks, sessionId, context, audioPlayer, search)
         }
 
         // R-022: pinned to the bottom of every destination and drill-in alike, while a session
@@ -898,6 +861,103 @@ private fun NavHostBody(
         } else {
             liveBarHeight = 0.dp
         }
+    }
+}
+
+/**
+ * The four drill-in ids or, failing all of them, the current destination — extracted out of
+ * [NavHostBody] purely to keep that function under detekt's length limit (round 17: WP8's
+ * `onOpenThread` addition to [FrequencyDetailContent] pushed [NavHostBody] itself to the limit),
+ * the same reason [DestinationContent] was extracted out of [OrtNavHost] before it.
+ *
+ * Round 17, register R-432: the `ids.frequencyHz != null` branch's own `onOpenThread` resolves
+ * `Frequency-Change`'s "The activation thread" pill — see [ActivationThreadRouting]'s own doc
+ * comment for what it looks up and why it lives in this package rather than `ui/data/`. `scope` is
+ * scoped to this composable (not hoisted to [OrtNavHost] itself) since only this one branch ever
+ * launches anything from it.
+ */
+@Composable
+private fun NavHostDispatch(
+    ids: NavHostIds,
+    callbacks: NavHostCallbacks,
+    sessionId: String?,
+    context: android.content.Context,
+    audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
+    search: SearchHostState,
+) {
+    val scope = rememberCoroutineScope()
+    when {
+        ids.transmissionId != null -> TransmissionDetailContent(
+            context = context,
+            transmissionId = ids.transmissionId,
+            player = audioPlayer,
+            onBack = callbacks.onCloseDrillIns,
+            onOpenTransmission = callbacks.onOpenTransmission,
+            backLabel = ids.openedFrom.label,
+            initialRevisionsOpen = ids.transmissionInitialRevisionsOpen,
+        )
+
+        ids.stationId != null -> StationDetailContent(
+            context = context,
+            stationId = ids.stationId,
+            onBack = callbacks.onCloseDrillIns,
+            onOpenTransmission = callbacks.onOpenTransmission,
+            backLabel = ids.openedFrom.label,
+            // Round 14, register R-276 follow-on: `NONE` for every ordinary open; only the
+            // WP12 tour's own `NavSeed.openStationSubScreen` ever sets this to `PATTERN`/
+            // `IDENTITY`/`SPLIT`.
+            initialSubScreen = ids.stationInitialSubScreen,
+        )
+
+        ids.frequencyHz != null -> {
+            val frequencyHz = ids.frequencyHz
+            FrequencyDetailContent(
+                context = context,
+                frequencyHz = frequencyHz,
+                onBack = callbacks.onCloseDrillIns,
+                onOpenStation = callbacks.onOpenStation,
+                onOpenOvers = callbacks.onOpenOvers, // R-276, real now — see NavHostCallbacks.onOpenOvers
+                // Round 17, register R-432: real now — resolves the thread containing the first
+                // over on this frequency after tonight's change (`ActivationThreadRouting`), opens
+                // it (`NavHostCallbacks.onOpenActivationThread`), or falls through to the Log
+                // filtered to that same window (`onOpenOvers`) when no thread exists yet — never a
+                // no-op.
+                onOpenThread = {
+                    scope.launch {
+                        val resolution = ActivationThreadRouting.resolveActivationThread(context, frequencyHz)
+                        val threadId = resolution.threadId
+                        if (threadId != null) {
+                            callbacks.onOpenActivationThread(threadId)
+                        } else {
+                            callbacks.onOpenOvers(frequencyHz, resolution.window)
+                        }
+                    }
+                },
+                // Round 10: real now — WP8 merged it. `Detail` for every ordinary open; `Change`
+                // only when the `BackHandler` above set it, restoring `Frequency-Change` itself.
+                initialView = ids.frequencyInitialView,
+                backLabel = ids.openedFrom.label,
+            )
+        }
+
+        ids.threadId != null -> ThreadDetailContent(
+            context = context,
+            sessionId = sessionId,
+            threadId = ids.threadId,
+            onBack = callbacks.onCloseDrillIns,
+            onOpenOver = callbacks.onOpenTransmission,
+            backLabel = ids.openedFrom.label,
+        )
+
+        else -> DestinationContent(
+            current = ids.current,
+            initialState = ids.contentInitialState,
+            sessionId = sessionId,
+            context = context,
+            search = search,
+            callbacks = callbacks,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 

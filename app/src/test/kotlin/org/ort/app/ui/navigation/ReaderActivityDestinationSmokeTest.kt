@@ -128,6 +128,13 @@ private typealias ReaderComposeRule = ReaderComposeTestRule
  * row data to reach its drill-in.
  */
 @RunWith(RobolectricTestRunner::class)
+// Round 17: this class was already the largest in this package before R-432's own new case
+// (`R_432_activation_thread_route`) â€” one real `ActivityScenarioRule` per `ReaderDestination` plus
+// every real-tap-sequence drill-in case this package owns, deliberately kept together so a reader
+// finds every "launch a real ReaderActivity and tap through it" case in one place (this class's own
+// doc comment states that reasoning already). Splitting it is a real change, not a side effect of
+// a two-item routing/LongMethod round; out of scope here.
+@Suppress("LargeClass")
 class ReaderActivityDestinationSmokeTest {
 
     private val context = ApplicationProvider.getApplicationContext<Context>()
@@ -404,6 +411,64 @@ class ReaderActivityDestinationSmokeTest {
             rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
             rule.waitForIdle()
             rule.waitUntilContentDescriptionExists("Back to $OVERS_FREQUENCY_LABEL")
+        }
+    }
+
+    // Round 17, register R-432: `Frequency-Change`'s own second bottom pill, "The activation
+    // thread" (`FrequencyChangeScreen`'s `SecondaryButton(text = "The activation thread", onClick =
+    // onOpenThread)`), now has a real destination â€” `ActivationThreadRouting.resolveActivationThread`
+    // (this package's own new file) resolves the thread containing the first over on this frequency
+    // within tonight's window, then `NavHostCallbacks.onOpenActivationThread` opens T02 for it.
+    // `seedFrequencyOversPattern`'s own tonight session gives every one of its overs the identical
+    // real `threadId` ("overs-tonight-th") â€” exactly the "a thread exists" case this test proves;
+    // the "no thread exists yet" fallback to the filtered Log (same `onOpenOvers` route
+    // `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window` above already
+    // covers end to end) is `ActivationThreadRouting`'s own other branch, not re-proven here.
+    //
+    // `hasContentDescription(..., substring = true) and hasClickAction()`, not `hasText(...)`:
+    // `TextAction`/`SecondaryButton` (`Controls.kt`'s R-380 fix) both `clearAndSetSemantics {
+    // contentDescription = text; ... }` on the clickable node itself, so no `Text`/`EditableText`
+    // semantics property survives to match on â€” confirmed by reading `Controls.kt` before writing
+    // this, and by `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`
+    // above (written against the pre-R-380 contract) failing at the identical "Busier than usual"
+    // click for exactly this reason.
+    @Test
+    fun `R_432_activation_thread_route`() {
+        val tonightSessionId = seedFrequencyOversPattern()
+        runReaderActivity(ReaderDestination.FREQUENCIES, sessionId = tonightSessionId) { rule ->
+            rule.waitUntilContentDescriptionExists(OVERS_FREQUENCY_LABEL)
+            rule.onNodeWithContentDescription(OVERS_FREQUENCY_LABEL, substring = true).performClick()
+            rule.waitUntilContentDescriptionExists("Back to Frequencies")
+
+            rule.onNode(hasContentDescription("Busier than usual", substring = true) and hasClickAction())
+                .performClick()
+            rule.waitUntilContentDescriptionExists("Back to $OVERS_FREQUENCY_LABEL")
+
+            // `FrequencyChangeScreen.kt`'s own `SecondaryButton(text = "The activation thread",
+            // onClick = onOpenThread)`.
+            rule.onNode(hasContentDescription("The activation thread") and hasClickAction()).performClick()
+
+            // T02 (`ThreadDetailScreen`'s own `DrillInHeader(parentLabel = backLabel, ...)`) opens
+            // with the true origin as its back label â€” `Frequencies`, not the frequency drill-in
+            // this was reached through (`NavHostCallbacks.onOpenActivationThread` closes that drill-in
+            // first, the same reasoning its own doc comment gives) â€” and its own overs table is the
+            // honest proof this is T02, not merely that some content composed.
+            rule.waitUntilContentDescriptionExists("Back to Frequencies")
+            rule.waitUntilTestTagExists("thread-detail-overs")
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            rule.waitUntilContentDescriptionExists("Back to Frequencies")
+            rule.waitUntilTestTagExists("thread-detail-overs")
+
+            // System back from T02 goes straight to `Frequencies` â€” the frequency drill-in it was
+            // reached through no longer exists to pop back into first, the same true-origin
+            // reasoning as the header's own back label above.
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
+            rule.waitUntilContentDescriptionExists("Open navigation")
+            rule.waitUntilContentDescriptionExists(OVERS_FREQUENCY_LABEL)
         }
     }
 
