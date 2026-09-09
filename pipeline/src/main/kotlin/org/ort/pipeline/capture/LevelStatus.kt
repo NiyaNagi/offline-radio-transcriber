@@ -53,13 +53,37 @@ public object LevelStatus {
     public var peakHistoryDbfs: List<Float> = emptyList()
         private set
 
+    /**
+     * register R-419: `Level-Meter.dc.html`'s "Clipped samples this session" row, republished
+     * honestly from [org.ort.capture.android.LevelMeter.Snapshot.clippedSamplesTotal] — the real
+     * session-lifetime running total, never [State.Measured.clipCountLastSecond]'s rolling ~1 s
+     * window (WP4 had labelled that per-second figure as the session count for lack of a real one;
+     * see [recordClippedSamplesThisSession]'s own kdoc). `0L` before the first frame, honestly, not
+     * a placeholder.
+     */
+    @Volatile
+    public var clippedSamplesThisSession: Long = 0L
+        private set
+
     public fun update(measured: State.Measured, peakHistoryDbfs: List<Float>) {
         state = measured
         this.peakHistoryDbfs = peakHistoryDbfs
     }
 
+    /**
+     * register R-419: a separate mutator, not folded into [update], so every existing caller of
+     * [update] (including [LevelStatusTest]'s own direct calls) keeps compiling unchanged — this
+     * object does no arithmetic of its own (class kdoc); [total] is
+     * [org.ort.capture.android.LevelMeter.Snapshot.clippedSamplesTotal] passed straight through,
+     * on the same tick [update] is called on.
+     */
+    public fun recordClippedSamplesThisSession(total: Long) {
+        clippedSamplesThisSession = total
+    }
+
     public fun reset() {
         state = State.NotMeasured
         peakHistoryDbfs = emptyList()
+        clippedSamplesThisSession = 0L
     }
 }

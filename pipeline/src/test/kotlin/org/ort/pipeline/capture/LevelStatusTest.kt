@@ -56,4 +56,16 @@ class LevelStatusTest {
         assertEquals(LevelStatus.State.NotMeasured, LevelStatus.state)
         assertTrue(LevelStatus.peakHistoryDbfs.isEmpty())
     }
+
+    @Test
+    @Requirement("R-419")
+    fun `R_419_clippedSamplesThisSession is 0 before any frame, republishes the total, resets with the rest`() {
+        assertEquals(0L, LevelStatus.clippedSamplesThisSession)
+
+        LevelStatus.recordClippedSamplesThisSession(42L)
+        assertEquals(42L, LevelStatus.clippedSamplesThisSession)
+
+        LevelStatus.reset()
+        assertEquals(0L, LevelStatus.clippedSamplesThisSession)
+    }
 }
