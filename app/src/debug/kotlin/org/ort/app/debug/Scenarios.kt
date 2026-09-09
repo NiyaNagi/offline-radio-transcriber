@@ -40,6 +40,8 @@ import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TranscriptPass
+import org.ort.data.entity.WorkAttemptEntity
+import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
 import org.ort.data.execRaw
@@ -324,6 +326,18 @@ public object Scenarios {
                     "(SELECT id FROM transmission WHERE sessionId LIKE ?)",
                 likeScenario,
             )
+            // R-564: `pass-failed` is now also the first scenario to write `work_attempt` rows
+            // (schema v6) — cleared *before* `work_queue_item` below, via the same
+            // itemId → work_queue_item.transmissionId → transmission.sessionId join, since
+            // `WorkAttemptEntity` carries no direct `transmissionId`/`sessionId` of its own (it is
+            // deliberately outlived by no `@ForeignKey` — see the entity's own doc comment) and the
+            // next line's delete would otherwise leave these rows orphaned on every reload.
+            db.execRaw(
+                "DELETE FROM work_attempt WHERE itemId IN " +
+                    "(SELECT id FROM work_queue_item WHERE transmissionId IN " +
+                    "(SELECT id FROM transmission WHERE sessionId LIKE ?))",
+                likeScenario,
+            )
             // R-153: `pass-failed` is the first scenario to write a work_queue_item row — cleared
             // by the same transmissionId-through-sessionId join every other per-transmission table
             // uses.
@@ -569,6 +583,17 @@ public object Scenarios {
      * the same "prove the rendering path, not the pipeline" approach [osStopped] already uses for
      * its gap row. Retained audio is written so `Retry this pass`/the waveform have a real over to
      * act on, matching `Fail-Pass.dc.html`'s own "the audio is here" reading.
+     *
+     * Register R-564: this also writes the three [WorkAttemptEntity] rows the terminal
+     * [WorkQueueItemEntity.attemptCount] of `3` implies — the same durable per-attempt audit
+     * [org.ort.data.WorkQueue.failPass] itself writes on every real failure (schema v6). Without
+     * these rows, `CorrectionPolling.passFailure`'s own `attemptLog` is honestly empty (a real,
+     * disclosed fallback for a record that predates schema v6 — see
+     * `TransmissionDetailScreen`'s `FailedPassWhatWentWrongSection`), which is what round 4's device
+     * review actually found: not a mapper bug, a fixture gap — this scenario never had per-attempt
+     * rows to read. Timestamps mirror `Fail-Pass.dc.html`'s own spacing (a 45s then a 90s backoff
+     * between attempts); the reason repeats the item's own `lastError` verbatim, exactly as three
+     * retries of the same decoder OOM genuinely would.
      */
     private suspend fun passFailed(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("pass-failed")
@@ -602,7 +627,7 @@ public object Scenarios {
                 confidence = null,
             ),
         )
-        db.workQueueDao().insert(
+        val itemId = db.workQueueDao().insert(
             WorkQueueItemEntity(
                 transmissionId = txId,
                 pass = PassId.B_OFFLINE,
@@ -611,6 +636,41 @@ public object Scenarios {
                 attemptCount = 3,
                 lastError = "out of memory in the decoder",
                 enqueuedAt = startedAt,
+            ),
+        )
+        // R-564: the real per-attempt audit trail `Fail-Pass.dc.html`'s "What went wrong · 3
+        // attempts" block reads — see this function's own doc comment above.
+        val attempt1FinishedAt = startedAt + 30_000L
+        val attempt2FinishedAt = attempt1FinishedAt + 45_000L
+        val attempt3FinishedAt = attempt2FinishedAt + 90_000L
+        db.workQueueDao().insert(
+            WorkAttemptEntity(
+                itemId = itemId,
+                attemptNo = 1,
+                startedAtMillis = startedAt,
+                finishedAtMillis = attempt1FinishedAt,
+                outcome = WorkAttemptOutcome.FAILED,
+                reason = "out of memory in the decoder",
+            ),
+        )
+        db.workQueueDao().insert(
+            WorkAttemptEntity(
+                itemId = itemId,
+                attemptNo = 2,
+                startedAtMillis = attempt1FinishedAt,
+                finishedAtMillis = attempt2FinishedAt,
+                outcome = WorkAttemptOutcome.FAILED,
+                reason = "out of memory in the decoder",
+            ),
+        )
+        db.workQueueDao().insert(
+            WorkAttemptEntity(
+                itemId = itemId,
+                attemptNo = 3,
+                startedAtMillis = attempt2FinishedAt,
+                finishedAtMillis = attempt3FinishedAt,
+                outcome = WorkAttemptOutcome.FAILED,
+                reason = "out of memory in the decoder",
             ),
         )
         return LoadResult(1, 1, sessionId)

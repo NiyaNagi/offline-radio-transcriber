@@ -32,6 +32,112 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP6 round 14: R-564 Fail-Pass attempts/order fixed; R-426 reopened test strengthened; R-561 reported, not fixed)
+
+### (pending) — ui-conformance WP6 round 14 · R-564 `Fail-Pass.dc.html` — real per-attempt timestamps (fixture gap, not a mapper bug) and the What-went-wrong block reordered after the waveform/Live-partial sections; R-561 stopped and reported (fix lives in WP2's `ui/components/Inspection.kt`)
+
+**Scope:** `:app` — `ui/screens/TransmissionDetailScreen.kt` (WP6), `ui/screens/PassFailureDetailScreenTest.kt`
+(WP6); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`'s `passFailed()` scenario and its
+scenario-reload clearing block — lead-approved exception for this round (brief: "you may add the
+`work_attempt` rows the `pass-failed` scenario needs ... nothing else there"), noted here since
+`Scenarios.kt` is otherwise WP4's file.
+
+**Requirements/ACs:** R-564 (register, spec — fixed); R-426 (register, design — reopened by R-564,
+strengthened here); R-561 (register, design — reported, not fixed, wrong package for this round);
+FR-RUN-9, cf. R-195/R-470.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs R-564 directly: the register
+  suspected either "the fixture seeds no `work_attempt` rows, or the mapper ignores them" — finding
+  the real cause before touching code matters here, because patching the wrong layer would have left
+  the actual defect (an honest per-attempt account silently degrading to a vaguer one) in place while
+  looking fixed. Principle VII (module boundaries, "a rule a person must remember is a rule that will
+  eventually be forgotten") governs R-561: the fix belongs in `ui/components/Inspection.kt`
+  (`PriorBarValue`'s `widthIn(min = 30.dp, max = 34.dp)`/`softWrap = false`), a WP2-owned file outside
+  this round's explicit ownership (`TransmissionDetail*`, `PassFailure*`, `Correction*`, `Revisions*`,
+  `ui/data/DetailViewState*`, `CorrectionPolling*`, `DetailViewStateMapper*`) — stopped and reported
+  rather than edited, per the working agreement's "if you find you must touch a file outside your row,
+  stop and report."
+- **R-564 root cause, found by reading before writing.** `CorrectionPolling.passFailure` and its own
+  `attemptViewState` mapper already read `WorkQueueDao.attemptsFor(itemId)` correctly — proven by the
+  existing `R_426_attempts_reads_the_real_per_attempt_rows_...` DB-level test
+  (`CorrectionPollingPassAndRevisionsTest.kt`, unowned by this round, not touched), which seeds
+  `WorkAttemptEntity` rows directly and gets real timestamps back. The true gap was `Scenarios.kt`'s
+  `passFailed()` scenario: it wrote the terminal `WorkQueueItemEntity` (`attemptCount = 3`) but never
+  wrote the three `WorkAttemptEntity` rows that count implies, so `attemptLog` was honestly empty and
+  the screen fell back to its one-line `lastError` path (by design, for genuinely pre-schema-v6
+  records) — which is what round 4's device screenshot actually shows: one generic line, no HH:MM:SS,
+  not a mapper defect.
+- **Fixture fix.** `passFailed()` now captures the `WorkQueueItemEntity` insert's real generated id and
+  writes three `WorkAttemptEntity` rows against it (`FAILED` outcome, `reason = "out of memory in the
+  decoder"` — the item's own `lastError`, verbatim, as three retries of the same decoder OOM genuinely
+  would read), timestamped `startedAt + 30s`, `+45s` more, `+90s` more — mirroring `Fail-Pass.dc.html`'s
+  own 45s/90s backoff spacing. Also added a `DELETE FROM work_attempt WHERE itemId IN (...)` clause to
+  the scenario-reload clearing block, run *before* the existing `work_queue_item` delete — without it,
+  `work_attempt` rows (which carry no `transmissionId`/`sessionId` of their own, by design — see
+  `WorkAttemptEntity`'s own doc comment on why there is no `@ForeignKey`) would orphan on every reload
+  of `pass-failed` under a stale, no-longer-matching `itemId`.
+- **R-564 ordering fix.** `Fail-Pass.dc.html`'s own visual order is header → meta → waveform card →
+  Live partial → divider → "What went wrong · N attempts" → closing health line → action bar. Before
+  this fix, `FailedPassHeaderSection` rendered the whole "what went wrong" account (attempts,
+  retry-limit line, guidance, session-health line) as part of the header composable, ahead of
+  `PlaybackSection`/`FailedPassPartialSection` in `TransmissionDetailContent`'s composition order —
+  exactly the gap round 4's device review found (`overnight`/`pass-failed/F18-pass-failed.png` shows
+  the block above the waveform card). Split that content into a new `FailedPassWhatWentWrongSection`
+  composable (content unchanged, `testTag("pass-failure-what-went-wrong")`), composed after the
+  transcript/`FailedPassPartialSection` branch instead — `FailedPassHeaderSection` itself keeps only
+  the marker/title/subtitle/meta row, still first, still `testTag("pass-failure-section")`.
+- **R-426 reopened, test strengthened.** Added
+  `R_564_the_what_went_wrong_block_renders_after_the_waveform_card_and_the_live_partial_section`
+  (`PassFailureDetailScreenTest.kt`) — asserts real on-screen position (`fetchSemanticsNode().boundsInRoot.top`)
+  of the waveform card and the "Live partial, Pass A" section against the new
+  `pass-failure-what-went-wrong` tag, not just presence, since presence alone
+  (`onNodeWithText`/`onNodeWithTag` without a position check) is exactly what let the wrong-order
+  regression through undetected. The existing `R_426_attempts_renders_one_real_line_per_attempt_...`
+  test already asserted the per-attempt timestamps render given a non-empty `attemptLog` — unchanged,
+  still green; the actual missing link (the fixture never producing that `attemptLog`) was fixed in
+  `Scenarios.kt`, not in a test this round owns.
+- **R-561, not fixed — reported.** Register: at font scale 2.0, `Detail-Inferred`'s prior-score figures
+  ("+0.15"/"-0.20") clip at the right edge to "+0."/"-0." (`overnight/D02-inferred@2x-end.png`,
+  confirmed by re-reading that screenshot this round). Traced to `PriorBarValue` in
+  `ui/components/Inspection.kt` — `Modifier.widthIn(min = 30.dp, max = 34.dp)` with `softWrap = false`,
+  a fixed-width figure column that does not grow with font scale, called from this round's own
+  `WhySection` (`TransmissionDetailScreen.kt`) via the shared `PriorBar` composable. The fix (a
+  content-sized min width on the figure column, the label wrapping instead) is entirely inside
+  `PriorBarValue`/`PriorBarLabel`, both `private` to `Inspection.kt` — WP2's file, not in this round's
+  ownership list, and not reachable via a caller-side `Modifier` since the constrained `Text` is
+  internal to the component. Left for the lead to route to WP2 (or grant WP6 an explicit exception).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.PassFailure*' --tests 'org.ort.app.ui.screens.TransmissionDetail*' --tests 'org.ort.app.ui.data.*'` — `BUILD SUCCESSFUL`, all
+  listed tests passed, including the new `R_564_...` test and the pre-existing `R_426_...`/`R_153_...`/
+  `R_195_...`/`R_470_...` failed-pass family unchanged and green.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat dependencyRules platformGuards` — `dependencyRules: OK`, `platformGuards: OK`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL` (also proves the `app/src/debug` source set,
+  i.e. the `Scenarios.kt` fixture change, compiles).
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `coverageMatrix: 419 requirements, 192 covered`; `coverageMatrixCheck: up to date (192 covered of
+  419)`.
+
+**Left open / not done:**
+- **R-561 not fixed** — see above; needs a WP2-owned change to `ui/components/Inspection.kt`.
+- **Device confirmation of R-564 not completed this round.** `emulator-5556` was free
+  (`pidof org.ort.app` empty) when checked at the start; a `pass-failed` broadcast + `ScenarioReaderActivity`
+  launch attempt then rendered a stale `overnight` session instead of `pass-failed` (`pidof` moments
+  later showed the app running under a pid this session never started), indicating another agent began
+  using the same shared emulator concurrently. Backed off rather than contend for it — the fix is
+  covered by Robolectric (DB-level `attemptsFor` read, screen-level attempt rendering, and the new
+  screen-level ordering assertion) but not by a real-device screenshot; the next validator pass on
+  `pass-failed` should re-capture `F18-pass-failed.png`.
+- `PassFailureDetailScreenTest.kt`'s new order test checks `waveform-card` and the "Live partial, Pass
+  A" text against the new block's top position only (not the header's, which was already first and
+  unmoved) — sufficient to catch the regression the register found, not an assertion of the full
+  section order end to end.
+
+---
+
 ## 2026-09-09 (ui-conformance WP2 round 2: R-380/381/543 gate-blocking finders, R-505 signal column, R-510 floors — device-verified)
 
 ### (pending) — ui-conformance WP2 round 2 · R-380/381/543 semantics complete; R-505 signal-column gate; R-510 FilterChip/TextAction/PrimaryButton/SecondaryButton/DestructiveButton floors, device-verified on emulator-5554
