@@ -32,9 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP10: R-540, Session coverage chart hatches a real gap under real overs)
+
+### (pending) — ui-conformance WP10 · R-540: a real recorded gap now hatches its own hour even when the hour also had real overs
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt` (`sessionCoverageBuckets`);
+test beside it, `app/src/test/kotlin/org/ort/app/ui/digest/DigestPollingTest.kt`.
+
+**Requirements/ACs:** R-540 (register, Reviewer D, tour run 3,
+`results/ui-audit/stations-14-nights/DG04-session-review.png`); revises the two R-449 tests this
+round's own bug shares a function with, without reopening R-449 itself.
+
+**What changed:**
+
+*Constitution Check.* I and the segmenter/gap principles bear here: a real, recorded `CaptureGap`
+row is exactly the kind of fact this product must never silently drop from a view that claims to
+summarize it. `sessionCoverageBuckets` already read real `SessionWindow.gaps` — nothing was
+fabricated or invented — but the state it chose per hour-bucket buried that real row under
+`heardCount > 0`, so an hour with any real over anywhere in it always read solid HEARD even when a
+real, recorded gap also fell inside the same hour.
+
+The coordinator's own diagnostic question ("does the chart derive gaps from the session's
+`CaptureGap` rows, or from transmission density") has a clear answer: it always read the real
+`CaptureGap` rows — the GAPS list and the coverage chart share the same source. The bug was never
+about the data source; it was about priority. Two things stacked to hide a real 22-minute gap:
+
+1. `heardCount > 0` was checked before any gap check, so a bucket with a real over anywhere in it
+   never even looked at `window.gaps`.
+2. The old gap check itself required `gapMillis * 2 >= bucketMillis` (the gap covering at least
+   half the hour) before hatching — a real 22-minute gap in a 60-minute bucket (37%) would have
+   failed that floor too, independent of bug 1.
+
+Fixed by reordering the `when` so a real, non-zero overlap with any `window.gaps` entry always wins
+first, regardless of `heardCount`, and by changing the overlap test from "covers half the bucket"
+to "overlaps the bucket at all" (`overlapEnd > overlapStart`) — matching the board's own literal
+rule (`design/canvas/Session.dc.html` lines 43/49: every real gap inside an hour hatches that
+hour, unconditionally). `ActivityPatternChart` (`ui/components/`, shared and out of WP10's
+ownership) still renders exactly one of three discrete states per bucket — no sub-bar proportional
+split was added or is possible without touching that shared renderer; "one hatched span at the
+right fraction" is satisfied at hour-bucket granularity: the bucket whose real gap actually falls
+in it is the one that hatches, the others read on their own real heard/silent state.
+
+`DigestPollingTest.kt`: kept `R_449 a continuously run session with no real gap at all is never
+hatched not-listening` (now genuinely gap-free, a 3-hour session with a real over in every bucket
+and no `CaptureGapEntity` row at all, asserting all three read HEARD); added
+`R_540 a real recorded gap hatches its own hour, one span, even with real overs elsewhere in it`
+(3-hour session, real overs in every bucket, one real 22-minute `ROUTE_CHANGE` gap inside the first
+hour, asserting `coverage.map{it.state} == [NOT_LISTENING, HEARD, HEARD]` — the exact scenario the
+register row named); renamed and shrank the old ≥50%-threshold R-449 test to
+`R_449 any real recorded gap overlap, however small, hatches its own hour` (gap shrunk from 40 of
+60 minutes to 1 of 60, still hatches, now testing the real "any overlap" rule rather than a
+half-covered one).
+
+**Verified:**
+
+- `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.digest.DigestPollingTest` — **16
+  tests, 16 passed**, including `R_540` and both revised `R_449` tests.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.digest.*` — **18 tests, 18 passed**
+  (adds `SessionsScreensTest`'s two R-250 tests; `SessionsContentTest` contributed no matches under
+  this filter but the module still built and the run stayed green).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — **OK** (8/8 checks).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — up to date
+  (192 covered of 419).
+- `git status --porcelain` after the gate — only the two touched source files and
+  `results/coverage-matrix.md`, no foreign-file pollution.
+
+**Left open / not done:** the coverage chart's granularity is still one discrete state per elapsed
+hour bucket (`ActivityPatternChart`, shared/out-of-ownership) — a gap that only partially overlaps
+a bucket still hatches the *whole* bucket, same honest limitation as before this fix, just no
+longer one a real over elsewhere in the same hour can hide.
+
+---
+
 ## 2026-09-08 (ui-conformance WP10: R-490..R-493, Fail-Lexicon content gaps closed against the real board)
 
-### <HASH> — ui-conformance WP10 · R-490..R-493: Fail-Lexicon's checklist, banner, still-active row and header match the real board
+### ee3a812 — ui-conformance WP10 · R-490..R-493: Fail-Lexicon's checklist, banner, still-active row and header match the real board
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`, `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`;
 tests beside each, plus `app/src/test/kotlin/org/ort/app/debug/LexiconCorruptScenarioTest.kt` and
@@ -105,7 +181,7 @@ board (`design/canvas/Fail-Lexicon.dc.html`), read line by line as the source of
 
 ## 2026-09-08 (ui-conformance WP10: FR-AST-4 staged activation, F21 Fail-Asset-Swap runtime signal)
 
-### <HASH> — ui-conformance WP10 · FR-AST-4: a mid-session lexicon swap or model install stages, never activates immediately
+### 5f49b49 — ui-conformance WP10 · FR-AST-4: a mid-session lexicon swap or model install stages, never activates immediately
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (`ModelsController`,
 `RoomActiveLexiconStore`, the model install path), `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`,
@@ -991,7 +1067,7 @@ CHANGELOG entry flagged is now closed.
 
 ## 2026-09-08 (ui-conformance WP10: register at e927690, R-441/444/445/449/450/451/413/443)
 
-### <HASH> — ui-conformance WP10 · register at e927690: R-441/444/445/449/450/451/413/443 closed
+### da92a24 — ui-conformance WP10 · register at e927690: R-441/444/445/449/450/451/413/443 closed
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsStorageScreen.kt`,
 `SettingsRigScreen.kt`, `SettingsRootScreen.kt`; `app/src/main/kotlin/org/ort/app/ui/improve/ImprovePolling.kt`;
