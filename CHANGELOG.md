@@ -114,6 +114,100 @@ changes landed in `94c946c`, not this row's to touch).
 
 ---
 
+## 2026-09-08 (ui-conformance data: dedicated Room query/transaction executor, Compose Flow-idle regression)
+
+### b5a145c — ui-conformance data · dedicated query/transaction executor, fixes the post-R-204 Compose idle regression
+
+**Scope:** `:data` only — `OrtDatabase.kt` (`create`, new `queryExecutor`).
+
+**Requirements/ACs:** R-204 follow-up (no new FR/AC; a build-tooling/test-infrastructure fix, not
+product behaviour). Constitution VI ("never report a number without its fold, machine and
+provider") governs how the before/after timings below are reported.
+
+**What changed:**
+
+*Constitution Check.* No product principle is directly at stake — this is the coordinator's urgent
+escalation that the FTS5/`BundledSQLiteDriver` merge (R-204, commit `8997633`) made every Compose
+screen that collects a Room `Flow` take minutes instead of seconds to go idle under
+`RobolectricIdlingStrategy.runUntilIdle`, wedging main's gate. Root cause, confirmed by
+disassembling the shipped `androidx.room:room-runtime-android:2.7.2` classes (`javap` against the
+AAR's `classes.jar` — there is no public API surface for this): `RoomDatabase.Builder.build()`,
+when neither `setQueryExecutor`/`setTransactionExecutor` nor `setQueryCoroutineContext` is called
+— true of `OrtDatabase.create()` **both before and after** the driver switch, confirmed by diffing
+this file at `95fa901` (pre-R-204) — falls back to
+`androidx.arch.core.executor.ArchTaskExecutor.getIOThreadExecutor()`, itself
+`Executors.newFixedThreadPool(4, ...)`: a **static, JVM-process-wide singleton** shared with every
+other AndroidX Architecture Components consumer live in the same test JVM (LiveData,
+WorkManager-compat, Paging), not scoped per `OrtDatabase` instance. `RoomDatabase.getCoroutineScope()`
+— the dispatcher `androidx.room.util.DBUtil.getCoroutineContext` hands to every suspend query run
+outside an explicit transaction, including `TriggerBasedInvalidationTracker`'s `Flow` collector
+every `Flow`-returning DAO query subscribes to — is built directly on that same 4-thread pool.
+
+That pool was already the (undocumented) default before R-204, so the driver switch alone doesn't
+explain a regression. What changed at the driver switch: `applyHandWrittenSchema` now runs through
+`useWriterConnection` on **every** `create()` call (the `RoomDatabase.Callback` path it replaces
+never touched an executor at all), so opening a database now itself round-trips through this same
+shared 4-thread pool on every test — on top of the `configureBusyTimeout` 10s ceiling (the other
+R-204-follow-up change in the same merge) a stuck writer can now hold a pool thread for. Under one
+JVM running many test classes (each constructing its own `OrtDatabase`) at once, that shared pool
+saturates; a Compose screen's `Flow` collector queued behind it can't produce its next value, so
+`runUntilIdle` spins — at 100% CPU, since it is polling for idleness rather than blocked — until
+the queue finally drains. A class run alone never saturates 4 threads, matching the coordinator's
+own observation (`DrawerContentTest` 14 tests / 5.6 s alone).
+
+- **`OrtDatabase.create()` now passes `.setQueryExecutor(queryExecutor)`** to the builder, where
+  `queryExecutor` is a single `Executors.newCachedThreadPool()` held for the process's lifetime
+  (never `shutdown()` — Room has no `OrtDatabase`-scoped shutdown hook, and a per-instance pool
+  would leak threads across the many short-lived `OrtDatabase.create(..., inMemory = true)`
+  instances tests already construct; a cached pool's idle threads time out on their own after 60s,
+  so this never grows unbounded the way a per-instance never-shut-down pool would). Room reuses a
+  builder's `queryExecutor` for `transactionExecutor` too when only the former is set (confirmed
+  the same way, by disassembly of `RoomDatabase.Builder.build()`'s own fallback logic) — one call
+  covers both. The actual defect being fixed is isolation, not pool size: `:data`'s own database
+  work should never contend with whatever else in the process happens to be drawing on
+  `ArchTaskExecutor`'s shared pool.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+  "org.ort.app.ui.navigation.*"` — **before** the fix: 117 tests, 1 failed (pre-existing,
+  unrelated: `FailureHostTest.R_300 ... font scale 2_0`, a `ComposeTimeoutException` on a
+  `waitUntil` assertion at its own 5000ms cap — not a `runUntilIdle` hang), BUILD FAILED (for that
+  one test) in 31s wall time, machine: this worktree's Windows dev box, JDK 17.0.20.101-hotspot,
+  Gradle 8.10.2, while five other worktree agents' background builds were concurrently active.
+  **After** the fix: identical result — 117 tests, the same single pre-existing failure, BUILD
+  FAILED in 26s, same machine/provider, same concurrent load. No test in either run exceeded 5.3s
+  individually (checked via each `TEST-*.xml`'s `time` attribute) — this narrower, coordinator-named
+  subset did not itself reproduce a multi-minute `runUntilIdle` hang in either run, honestly
+  reported rather than claimed fixed by inference; see Left open.
+- `.\gradlew.bat :data:testDebugUnitTest :pipeline:testDebugUnitTest` — green, no regression from
+  the executor change.
+- `.\gradlew.bat :data:ktlintCheck :data:detekt` — clean (one import-order fix needed: ktlint's
+  `standard:import-ordering` sorts `java.*` last, not alphabetically interleaved).
+- `.\gradlew.bat dependencyRules platformGuards` — OK.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- Per the coordinator's own revised load policy (2026-09-08), the full `:app:testDebugUnitTest` was
+  **not** run — out of `:data`'s own gate scope now; the coordinator runs the full gate on main.
+
+**Left open / not done:**
+- This worktree's own timed reproduction of the coordinator-named test packages did not exhibit the
+  reported multi-minute hang in either the before or after run — likely because a narrow,
+  two-package `--tests` filter constructs far fewer `OrtDatabase` instances within one JVM than a
+  full `:app:testDebugUnitTest` run does, and the 4-thread shared-pool saturation this fix targets
+  needs that larger volume to manifest. The fix is applied on the strength of the disassembly
+  evidence above (a real, confirmed isolation defect matching every symptom in the coordinator's
+  report), not a reproduced-then-fixed timing delta on this machine. The coordinator should
+  validate against a full `:app:testDebugUnitTest` run on main after merge, per their own note that
+  they run that gate.
+- `ensureFtsIndex`'s per-`create()` FTS5 `'rebuild'` and the 10s `busy_timeout` itself were both
+  named as candidate mechanisms in the escalation; neither was touched here. `'rebuild'` against an
+  empty (fresh/in-memory) `transcript` table is O(1) and not a plausible multi-minute contributor;
+  `busy_timeout` staying at 10s is deliberate (register R-204 follow-up's own reasoning) and, once
+  `:data`'s work no longer shares a starved pool with the rest of the process, a stuck writer
+  holding *its own* dedicated pool's thread for up to 10s no longer starves unrelated Compose
+  screens' invalidation-tracker queries the way it did sharing `ArchTaskExecutor`'s pool.
+
+---
+
 ## 2026-09-08 (ui-conformance WP3 round 11: one back handler for the whole app (R-333), the drawer above the banner (R-334), Settings-Storage's Review link (R-133))
 
 ### e7d5dca — ui-conformance WP3 round 11 · one BackHandler (R-333), FailureHost under the drawer (R-334), Settings-Storage Review → Earlier nights (R-133)
@@ -483,7 +577,6 @@ validator screenshot was taken this round (no free device); a validator should c
 `search-unavailable`'s banner/`Retry` on-device on the next pass.
 
 ---
-
 
 ## 2026-09-08 (ui-conformance data: R-320/R-182 per-slot lattice detail and transcript span)
 
