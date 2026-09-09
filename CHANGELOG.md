@@ -32,8 +32,124 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
+## 2026-09-08 (test-suite speed: :app:testDebugUnitTest 1hr+ -> 2m18s)
 
+### 5aab408 — audit test-suite-speed · :app:testDebugUnitTest regression fixed: 1hr+ -> 2m18s (1234 tests, 0 failures)
+
+**Scope:** `app/build.gradle.kts` (test-task config only), `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`
+(`create()`/`instances` cache), `app/src/test/kotlin/org/ort/app/ui/digest/SessionsScreensTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/digest/SessionsContentTest.kt`.
+
+**Requirements/ACs:** none new — test-infrastructure health, not product behaviour.
+
+**What changed:**
+
+*Constitution Check.* II (test-backed change — the exit criterion this session worked to was the
+suite itself; every fix below is validated by a full `:app:testDebugUnitTest` run, not a unit in
+isolation). VII (boundaries are structural — `queryExecutor`'s per-path cache in `OrtDatabase.kt`
+fixes the shared resource every `*Polling` call site already assumed was cheap, at the one place
+they all funnel through, rather than patching each call site).
+
+On main, `:app:testDebugUnitTest` (~1,200 Robolectric/Compose tests) had regressed from ~3 minutes
+to over an hour. `jstack` on the stuck worker consistently showed the "SDK 34 Main Thread" at ~95%
+CPU inside `androidx.compose.ui.test.RobolectricIdlingStrategy.runUntilIdle` ->
+`MainTestClock.advanceTimeByFrame`, for whatever Compose test happened to run *after* one of several
+specific earlier classes — never inside this app's own composables. Bisection (cumulative-prefix
+timing, `--tests` narrowed to individual methods, `jstack` while stuck) found three independent,
+confirmed causes, all sharing the same signature (fine alone, fine in most combinations, poisons a
+Compose test that runs later in the same JVM fork):
+
+1. **`SessionsScreensTest`'s two `R-250` tests wrapped `composeTestRule.setContent`/`waitForIdle()`
+   in `kotlinx.coroutines.withTimeout(5_000)`.** Both are plain (non-`suspend`) calls that, under
+   Robolectric, synchronously hand work to the dedicated main thread via a cross-thread
+   `FutureTask.get()` (`Sandbox.runOnMainThread`) — `withTimeout` can only react to cancellation at
+   a coroutine's own suspension points, so it cannot actually interrupt that blocking call. If it
+   were ever slow, `withTimeout` would abandon the *test's* coroutine while the `FutureTask` kept
+   running to completion in the background on that shared, JVM-fork-wide thread — an orphaned
+   background operation the test framework has no way to know about. Removed both `withTimeout`
+   wrappers; the loop the tests are proving bounded (`drawHatchRegion`) is provably finite on its
+   own (fixed positive `pitchPx`, `width`/`height` guarded `> 0f`), so nothing needs racing against a
+   timer that cannot enforce itself.
+2. **`SessionsContentTest`** (the one test in `ui.digest` that drives a tap into the embedded
+   `LogContent`, starting its real `while (true) { ...; delay(2_000) } }` polling `LaunchedEffect`)
+   reliably poisoned whichever Compose test ran right after it — reproduced repeatedly via
+   cumulative-prefix bisection down to two of its three test methods plus `ui.failures.*`. Every
+   code-level mitigation tried (closing its own `OrtDatabase`, forcing the compose clock to settle
+   before the test method returns, `ShadowLooper.shadowMainLooper().reset()` in `@After`, disabling
+   the recurring poll entirely as a diagnostic) made no difference — the same class this repo's own
+   `ReaderActivity.kt` kdoc already documents for `ReaderActivityDestinationSmokeTest`
+   ("a Robolectric-driven test never gets a chance to cleanly cancel" a `while (true) { delay }`
+   loop once started). Applied the same, already-proven fix: added `SessionsContentTest` to the
+   existing `smokeTestDebugUnitTest` task (renamed in intent, not in Gradle task name, to cover more
+   than one class) so it — and seven more test files confirmed by the same shape (each `setContent`s
+   a screen's real `*Content` composable with its own such loop: `NowContentTest`,
+   `CaptureStatusContentTest`, `LogContentBackHandlerTest`, `LogAndThreadContentActivityTest`,
+   `FailureHostTest`, `NavSeedTest`, `OrtNavHostDestinationDispatchTest`, `ReaderAccessibilityTest`)
+   — run each alone, in its own fresh JVM (`forkEvery = 1`), excluded from `testDebugUnitTest`.
+3. **`OrtDatabase.create()`** opened a brand-new Room database (its own connection, WAL files,
+   `InvalidationTracker`) on every call and never closed it — by design, every real `*Polling`
+   object in `:app` calls it fresh, several from inside a 2-second poll loop, for as long as a
+   screen stays open (`ReaderPolling.kt`'s own kdoc: "this stays a poll for now"). Added a
+   process-lifetime cache in `OrtDatabase`'s companion object, keyed by the on-disk path
+   (`Context.getDatabasePath`), so repeated non-in-memory `create()` calls against the same file
+   reuse the same live instance instead of opening a new one — a cache hit is discarded (and
+   rebuilt) if the cached instance is no longer open (`RoomDatabase.isOpen`) or the file it names no
+   longer exists, so `db.close()` (only test `@After` blocks call it) and
+   `context.deleteDatabase(...)` (three `ui.data` tests) both still behave as every existing caller
+   already expects. `inMemory` instances are never cached (each is deliberately isolated). This is
+   also a genuine device-side fix, not just a test one: a real capture session left open for hours
+   was accumulating one native SQLite connection every 2 seconds from every polling screen visited.
+
+Also added `debugUnitTest.forkEvery = 40` on `testDebugUnitTest` itself as a general safety margin
+against whatever of this shape remains undiscovered — recycling the JVM (and its accumulated
+`OrtDatabase`/`queryExecutor` state) periodically bounds the worst case regardless of which classes
+land in a given batch, without the per-class fork cost the confirmed-poisoning task above pays.
+
+**Verified:**
+
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL in 2m 18s** (was 1hr+ on main
+  449a1d0); summed test-result XML: **1234 tests, 0 failures, 0 errors**.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` — 62 tests, 2 failures, both pre-existing and
+  unrelated to this session's changes: `FailureHostTest`'s `R_300` (`ComposeTimeoutException` after
+  its own 5s bound — reproduced on the very first, unmodified run of this session, before any fix
+  landed) and `ReaderActivityDestinationSmokeTest`'s `R_350_improve_done_...`
+  (`ComposeTimeoutException` after its own 30s bound, in a file this change never touches). Both
+  reproduce deterministically even fully isolated (`forkEvery = 1`, low machine load at the time) —
+  not flaky, not the cross-test-poisoning bug this entry fixes, and outside this task's scope.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt :data:ktlintCheck :data:detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules checked.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — 191/419 requirements covered, up to
+  date, no delta.
+
+**Left open / not done:**
+
+- The exact mechanism by which a leaked `while (true) { delay }` `LaunchedEffect` survives
+  `composeTestRule`'s own disposal under Robolectric was not root-caused to a single line — this
+  entry documents it (matching `ReaderActivity.kt`'s own prior, identical finding) and works around
+  it by JVM isolation, the same fix this repo already had precedent for. A from-first-principles fix
+  (e.g. in `androidx.compose.ui.test`/Robolectric itself, or restructuring every `*Content`
+  composable's poll away from `while (true) { delay }`) is out of scope here.
+- The eight additional test files isolated into `smokeTestDebugUnitTest` alongside
+  `SessionsContentTest` were isolated by the same confirmed *shape* (a real `*Content` composable
+  with its own recurring poll), not each individually re-bisected against a full-suite run — doing
+  so was not affordable at minutes-per-attempt once the shape was established from two independent,
+  fully bisected instances (`SessionsContentTest`, `NowContentTest`).
+- `ui.failures.FailureHostTest`'s `R_300` and `ui.navigation.ReaderActivityDestinationSmokeTest`'s
+  `R_350_improve_done_...` are real, pre-existing, deterministic failures worth a separate fix —
+  flagged here, not fixed, since neither is the speed regression this session was asked to find.
+- This session's own worktree merged `main` mid-task (979addc -> e927690) at the coordinating
+  agent's direction; the coordinator's own bisection (`ui.digest.SessionsScreensTest`'s `R_250`
+  test, `SessionsScreens.drawGapHatch`) named the `withTimeout` mechanism this entry's fix #1
+  addresses — independently arrived at here from `jstack` evidence before that message, then
+  confirmed against the named test.
+
+---
+
+## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
+
+## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
 ### 0df676d — ui-conformance WP12 v3 · R-440/443/446 investigated (no receiver/tour divergence found), R-410 fixes, TourParityTest + TourStepsTest, 111 → 117 steps
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt` (`EXTRA_FONT_SCALE`
