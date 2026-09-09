@@ -67,14 +67,38 @@ class LevelViewStateMapperTest {
     }
 
     @Test
-    fun `clipCountLastSecond is carried through as the honest per-second count, not a session total`() {
+    @Requirement("R-419")
+    fun `R_419 clippedThisSessionLabel reads the real session total, not clipCountLastSecond`() {
         val view = LevelViewStateMapper.from(
             level = LevelStatus.State.Measured(
                 peakDbfs = 0f,
                 rmsDbfs = -4f,
                 noiseFloorDbfs = -58f,
                 clipped = true,
+                // Deliberately different from clippedSamplesThisSession below, so a test that
+                // read the wrong field would fail.
                 clipCountLastSecond = 7,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            history = emptyList(),
+            inputLabel = "USB Audio Device",
+            clippedSamplesThisSession = 340L,
+        )
+
+        assertEquals("340", view.clippedThisSessionLabel)
+    }
+
+    @Test
+    @Requirement("R-419")
+    fun `R_419 clippedThisSessionLabel is honestly zero before any session has clipped`() {
+        val view = LevelViewStateMapper.from(
+            level = LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
                 sampleRateHz = 16_000,
                 updatedAtMillis = 0L,
             ),
@@ -82,7 +106,7 @@ class LevelViewStateMapperTest {
             inputLabel = "USB Audio Device",
         )
 
-        assertEquals("7", view.clippedLastSecondLabel)
+        assertEquals("0", view.clippedThisSessionLabel)
     }
 
     @Test

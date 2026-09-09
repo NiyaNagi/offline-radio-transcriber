@@ -32,6 +32,45 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP4 · R-419 follow-up: real clip total)
+
+### 165449f — ui-conformance WP4 · R-419 follow-up: switch to LevelStatus.clippedSamplesThisSession
+
+**Scope:** `ui/data` (`CaptureStatusViewState.kt`), `ui/screens` (`LevelMeterScreen.kt`,
+`CaptureStatusContent.kt`), `app/src/debug` (`Scenarios.kt`), matching tests. `git merge --ff-only
+main` once WP11c's `44ac73f` landed (final base `0ace850`).
+
+**Requirements/ACs:** register R-419 (this round's own follow-up — the label fix landed last
+round; this is the value fix WP11c's own `LevelStatus.clippedSamplesThisSession` unblocked).
+
+**What changed:** `LevelViewState.clippedLastSecondLabel` renamed `clippedThisSessionLabel` and
+re-sourced from the new `LevelStatus.clippedSamplesThisSession` (a real session-lifetime running
+total WP11c republishes from `LevelMeter.Snapshot.clippedSamplesTotal`) instead of
+`LevelStatus.State.Measured.clipCountLastSecond`'s rolling ~1 s window — the flagged gap from last
+round's own CHANGELOG entry is now closed, not just labelled honestly. `LevelViewStateMapper.from`
+gained a `clippedSamplesThisSession: Long = 0L` parameter; both `CaptureStatusContent.kt` call
+sites now pass `LevelStatus.clippedSamplesThisSession` through. `Scenarios.kt`'s `level-low`/
+`level-clip` now call the new `LevelStatus.recordClippedSamplesThisSession(...)` (0 and 340
+respectively — real, distinct from each scenario's own `clipCountLastSecond` so a test that read
+the wrong field would fail). S07 (`Setup-Level.dc.html`) does not show this row (checked: its own
+"clip 0" text is a static chart-legend label, unrelated to a session total) — nothing to change
+there, per the coordinator's own "if S07 shows it" qualifier.
+
+**Verified:** `:app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.screens.LevelMeterScreenTest" --tests "org.ort.app.ui.data
+.NowViewStateMapperTest" --tests "org.ort.app.ui.data.LevelViewStateMapperTest" --rerun` — all
+green (new/renamed `R_419` cases in `LevelViewStateMapperTest`, `LevelMeterScreenTest`, and two new
+fixture-level cases in `LatticeSlotFixtureTest` proving `level-low`/`level-clip` each publish the
+real, distinct total). `:app:ktlintCheck :app:detekt` clean. `dependencyRules platformGuards` OK.
+`:app:assembleDebug` succeeds. `spec_check.py` 8/8. `coverageMatrix`/`coverageMatrixCheck` 191/419,
+up to date.
+
+**Left open / not done:** none for this item — the value-source gap the previous round's own
+CHANGELOG entry flagged is now closed.
+
+---
+
 ## 2026-09-08 (ui-conformance WP10: register at e927690, R-441/444/445/449/450/451/413/443)
 
 ### <HASH> — ui-conformance WP10 · register at e927690: R-441/444/445/449/450/451/413/443 closed

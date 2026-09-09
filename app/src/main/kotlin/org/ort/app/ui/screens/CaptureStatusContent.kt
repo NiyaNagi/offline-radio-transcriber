@@ -83,6 +83,7 @@ public fun CaptureStatusContent(
                 level = LevelStatus.state,
                 history = LevelStatus.peakHistoryDbfs,
                 inputLabel = levelInputLabel(),
+                clippedSamplesThisSession = LevelStatus.clippedSamplesThisSession,
             ),
         )
     }
@@ -170,6 +171,7 @@ private suspend fun currentLevelViewState(context: Context, sessionId: String?):
         history = LevelStatus.peakHistoryDbfs,
         inputLabel = levelInputLabel(),
         weakestOverLabel = sessionId?.let { ReaderPolling.weakestOverLabel(context, it) },
+        clippedSamplesThisSession = LevelStatus.clippedSamplesThisSession,
     )
 
 private fun levelInputLabel(): String {

@@ -1065,6 +1065,9 @@ public object Scenarios {
             ),
             peakHistoryDbfs = List(60) { -40f + (it % 5) },
         )
+        // R-419: `LevelStatus.clippedSamplesThisSession` (WP11c's own follow-up) — quiet audio
+        // genuinely never clips, so this stays honestly zero.
+        LevelStatus.recordClippedSamplesThisSession(0L)
         // R-419: `ReaderPolling.weakestOverLabel` reads this session's own transmissions' real
         // `signalStrength` (the weakest one) — this scenario used to seed none at all, so
         // `Level-Meter.dc.html`'s own "Weakest over resolved tonight" row was honestly absent, not
@@ -1117,6 +1120,10 @@ public object Scenarios {
             ),
             peakHistoryDbfs = List(60) { if (it % 4 == 0) 0f else -8f },
         )
+        // R-419: `LevelStatus.clippedSamplesThisSession` (WP11c's own follow-up) — a real,
+        // plausible running total for a 20-minute session that has been clipping at 12/s,
+        // distinctly larger than `clipCountLastSecond` so a test can tell them apart.
+        LevelStatus.recordClippedSamplesThisSession(340L)
         return LoadResult(0, 1, sessionId)
     }
 
