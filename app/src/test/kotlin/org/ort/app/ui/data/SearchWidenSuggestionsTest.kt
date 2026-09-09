@@ -82,20 +82,35 @@ class SearchWidenSuggestionsTest {
         }
 
     @Test
-    fun `an include-everything widen option is offered from facetCounts alone, no extra query`(): Unit = runTest {
+    fun `R_503 an include-inferred-and-ambiguous widen option is offered from facetCounts alone`(): Unit = runTest {
+        // `Search-Empty.dc.html`'s own second widen category — "Include inferred and ambiguous" —
+        // replaces the previous, broader "every attribution state, rejected and corrected"; Unknown
+        // is deliberately excluded from this row's own AMBIGUOUS-row count below (real signal only).
         val input = SearchFilterInput(attributionStates = setOf(AttributionState.CONFIRMED))
         val facetFilter = SearchFacetFilter.from(input)
         val facetCounts = SearchFacetCounts(
             listOf(
                 SearchFacetRow(AttributionState.CONFIRMED, rejected = false, corrected = false),
-                SearchFacetRow(AttributionState.UNKNOWN, rejected = false, corrected = false),
+                SearchFacetRow(AttributionState.AMBIGUOUS, rejected = false, corrected = false),
             ),
         )
 
         val widen = SearchWidenSuggestions.build(context, input, SearchQueryParams(), facetFilter, facetCounts)
 
-        val includeAll = widen.options.single { it.id == "include_all_states" }
-        assertTrue(includeAll.detail.contains("2 overs"))
+        val option = widen.options.single { it.id == "include_inferred_ambiguous" }
+        assertEquals("Include inferred and ambiguous", option.label)
+        assertTrue(option.detail.contains("2 overs"))
+    }
+
+    @Test
+    fun `R_503 no include-inferred-and-ambiguous option when neither state would add anything`(): Unit = runTest {
+        val input = SearchFilterInput()
+        val facetFilter = SearchFacetFilter.from(input)
+        val facetCounts = SearchFacetCounts(listOf(SearchFacetRow(AttributionState.CONFIRMED, false, false)))
+
+        val widen = SearchWidenSuggestions.build(context, input, SearchQueryParams(), facetFilter, facetCounts)
+
+        assertEquals(0, widen.options.count { it.id == "include_inferred_ambiguous" })
     }
 
     @Test

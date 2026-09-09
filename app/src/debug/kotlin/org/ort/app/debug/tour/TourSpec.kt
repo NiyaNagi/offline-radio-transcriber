@@ -35,6 +35,14 @@ import org.json.JSONObject
  * for `scenario.ps1 -NoRestart` (the composed screen's own polling loop observes the change on its
  * next tick; nothing is remounted). Used for the recovery-toast/transition captures (e.g.
  * `rig-lost` → `rig-reconnected`).
+ *
+ * [scroll] (v5, register R-460): `"end"` (the only value this class accepts — anything else fails
+ * to parse, the same "programmer/spec-authoring error" class as a malformed step) scrolls the
+ * screen's own primary vertical scroll container to its end, after the ordinary settle and before
+ * capture — see [TourAccessibilityScroll] for how, and its own doc comment for exactly why an
+ * `AccessibilityNodeInfo` walk, not a `SemanticsOwner` one. A step naming `scroll` on a screen with
+ * no vertically-scrollable container throws (recorded as one `error` manifest line, same as any
+ * other per-step failure) — never silently captured as if nothing had been asked for.
  */
 public data class TourStep(
     public val id: String,
@@ -45,12 +53,16 @@ public data class TourStep(
     public val override: String? = null,
     public val fontScale: Float = 1.0f,
     public val waitMillis: Long = 0L,
+    public val scroll: String? = null,
 ) {
     init {
         require(id.isNotBlank()) { "a tour step must have a non-blank id" }
         require(scenario.isNotBlank()) { "tour step '$id' must name a scenario" }
         require((destination == null) != (setup == null)) {
             "tour step '$id' must name exactly one of destination or setup, not both or neither"
+        }
+        require(scroll == null || scroll == "end") {
+            "tour step '$id' names unknown scroll value '$scroll' — only 'end' is supported"
         }
     }
 
@@ -110,6 +122,7 @@ public data class TourSpec(public val steps: List<TourStep>) {
                 override = obj.optString("override").takeIf { it.isNotEmpty() },
                 fontScale = obj.optDouble("fontScale", 1.0).toFloat(),
                 waitMillis = obj.optLong("waitMillis", 0L),
+                scroll = obj.optString("scroll").takeIf { it.isNotEmpty() },
             )
         }
     }

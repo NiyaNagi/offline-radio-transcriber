@@ -67,7 +67,7 @@ prefer the project's own fakes, which are behavioural.
 ./gradlew :lexicon:test         # one module
 ./gradlew dependencyRules       # module boundary enforcement — must pass
 ./gradlew coverageMatrix        # regenerates results/coverage-matrix.md
-python tools/spec_check.py      # spec integrity: ids, dangling refs, traceability
+python tools/spec-check/spec_check.py  # spec integrity: ids, dangling refs, traceability
 cd corpus && pytest             # the Python side
 ```
 

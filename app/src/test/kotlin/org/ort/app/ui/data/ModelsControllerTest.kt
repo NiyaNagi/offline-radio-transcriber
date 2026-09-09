@@ -1,7 +1,9 @@
 package org.ort.app.ui.data
 
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -20,6 +22,7 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.net.Checksum
 import org.ort.net.ModelFetchSpec
 import org.ort.net.fake.FakeHttpRangeClient
+import org.ort.pipeline.capture.CaptureState
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import java.io.File
@@ -63,6 +66,16 @@ class ModelsControllerTest {
         // note on why a shared in-memory instance would not be observed by the code under test.
         db = OrtDatabase.create(context)
         modelsDir = Files.createTempDirectory("models-controller-test").toFile()
+    }
+
+    @After
+    fun tearDown() {
+        // [CaptureState] and [ModelsController] are both process-wide singletons (Robolectric does
+        // not reset them between `@Test` methods in this class) — never leave a live session or a
+        // staged fact bleeding into the next test. `activateStaged` is the real API, not a test-only
+        // reset hook: draining whatever this test left staged is itself a legitimate call.
+        CaptureState.idle(clearSession = true)
+        runBlocking { ModelsController.activateStaged(context) }
     }
 
     private fun specFor(checksum: Checksum): (ModelId, File) -> ModelFetchSpec = { id, _ ->
@@ -230,6 +243,99 @@ class ModelsControllerTest {
         assertFalse(detail.contains("HuggingFace"))
         assertFalse(detail.contains("SHA-1"))
         assertFalse(detail.contains("checked 2026"))
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `FR_AST_4 a model install mid-session stages the reprocess, never requeues immediately`(): Unit = runTest {
+        db.sessionDao().insert(session("S-STAGED"))
+        db.transmissionDao().insert(transmission("TX-STAGED-1", "S-STAGED"))
+        val queue = WorkQueue(db, SystemClock, maxAttempts = 1)
+        queue.enqueue("TX-STAGED-1", PassId.B_OFFLINE)
+        val leased = queue.leaseBatch("run-staged-1", limit = 10) { 60_000L }.single()
+        queue.failPass(leased, "ASR unavailable: no ASR model installed")
+
+        CaptureState.capturing("S-STAGED")
+        val result = ModelsController.download(
+            context,
+            ModelId.VAD,
+            client = FakeHttpRangeClient(body),
+            specFor = specFor(goodChecksum),
+        )
+
+        val success = result as ModelActionResult.Success
+        assertEquals(
+            "nothing was really requeued yet — the file installed, only the reprocess is staged",
+            0,
+            success.requeuedCount,
+        )
+        assertEquals(
+            "the failed item must stay FAILED, never silently reprocessed mid-session (FR-AST-4)",
+            TransmissionState.FAILED,
+            db.transmissionDao().getById("TX-STAGED-1")!!.processingState,
+        )
+        val staged = ModelsController.stagedActivation.value
+        assertTrue("expected a staged activation, got null", staged != null)
+        assertEquals(ModelId.VAD.name, staged!!.assetId)
+        assertTrue("reason must cite the real requirement, got: ${staged.reason}", staged.reason.contains("FR-AST-4"))
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `FR_AST_4 activateStaged requeues a staged model install once the session has ended`(): Unit = runTest {
+        db.sessionDao().insert(session("S-STAGED-2"))
+        db.transmissionDao().insert(transmission("TX-STAGED-2", "S-STAGED-2"))
+        val queue = WorkQueue(db, SystemClock, maxAttempts = 1)
+        queue.enqueue("TX-STAGED-2", PassId.B_OFFLINE)
+        val leased = queue.leaseBatch("run-staged-2", limit = 10) { 60_000L }.single()
+        queue.failPass(leased, "ASR unavailable: no ASR model installed")
+
+        CaptureState.capturing("S-STAGED-2")
+        ModelsController.download(
+            context,
+            ModelId.VAD,
+            client = FakeHttpRangeClient(body),
+            specFor = specFor(goodChecksum),
+        )
+        CaptureState.idle(clearSession = true)
+
+        val activated = ModelsController.activateStaged(context)
+
+        assertTrue("expected the staged activation to apply, got null", activated != null)
+        assertEquals(
+            TransmissionState.PROCESSING,
+            db.transmissionDao().getById("TX-STAGED-2")!!.processingState,
+        )
+        assertNull(ModelsController.stagedActivation.value)
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `FR_AST_4 with no session ever live, download requeues immediately exactly as before`(): Unit = runTest {
+        db.sessionDao().insert(session("S-NOT-STAGED"))
+        db.transmissionDao().insert(transmission("TX-NOT-STAGED-1", "S-NOT-STAGED"))
+        val queue = WorkQueue(db, SystemClock, maxAttempts = 1)
+        queue.enqueue("TX-NOT-STAGED-1", PassId.B_OFFLINE)
+        val leased = queue.leaseBatch("run-not-staged-1", limit = 10) { 60_000L }.single()
+        queue.failPass(leased, "ASR unavailable: no ASR model installed")
+
+        val result = ModelsController.download(
+            context,
+            ModelId.VAD,
+            client = FakeHttpRangeClient(body),
+            specFor = specFor(goodChecksum),
+        )
+
+        assertEquals(1, (result as ModelActionResult.Success).requeuedCount)
+        assertNull(ModelsController.stagedActivation.value)
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `FR_AST_4 activateStaged is a safe no-op with nothing staged`(): Unit = runTest {
+        val activated = ModelsController.activateStaged(context)
+
+        assertNull(activated)
     }
 
     private fun session(id: String) = SessionEntity(

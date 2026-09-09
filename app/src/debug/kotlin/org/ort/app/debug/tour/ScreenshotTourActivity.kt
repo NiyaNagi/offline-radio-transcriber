@@ -195,6 +195,10 @@ public class ScreenshotTourActivity : ComponentActivity() {
             delay(OVERRIDE_SETTLE_MILLIS)
         }
         if (step.waitMillis > 0) delay(step.waitMillis)
+        if (step.scroll == "end") {
+            TourAccessibilityScroll.scrollToEnd(window.decorView)
+            delay(SCROLL_SETTLE_MILLIS)
+        }
         val bitmap = window.decorView.drawToBitmap()
         currentDestinationStep = null
         return TourCapture(bitmap, bitmap.width, bitmap.height)
@@ -214,6 +218,10 @@ public class ScreenshotTourActivity : ComponentActivity() {
         pendingSetupActivity = null
         delay(DESTINATION_SETTLE_MILLIS)
         if (step.waitMillis > 0) delay(step.waitMillis)
+        if (step.scroll == "end") {
+            TourAccessibilityScroll.scrollToEnd(setupActivity.window.decorView)
+            delay(SCROLL_SETTLE_MILLIS)
+        }
         val bitmap = setupActivity.window.decorView.drawToBitmap()
         setupActivity.finish()
         return TourCapture(bitmap, bitmap.width, bitmap.height)
@@ -235,5 +243,11 @@ public class ScreenshotTourActivity : ComponentActivity() {
         private const val DESTINATION_SETTLE_MILLIS = 600L
         private const val OVERRIDE_SETTLE_MILLIS = 2_300L
         private const val SETUP_LAUNCH_TIMEOUT_MILLIS = 10_000L
+
+        /** After [TourAccessibilityScroll.scrollToEnd] — content shifting into place from a real
+         * scroll (not a fresh composition) needs its own settle, not the destination-composition one
+         * above; one frame plus margin, not sized to any poll interval since nothing here waits on a
+         * poll tick. */
+        private const val SCROLL_SETTLE_MILLIS = 300L
     }
 }

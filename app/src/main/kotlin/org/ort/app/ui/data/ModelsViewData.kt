@@ -1,7 +1,12 @@
 package org.ort.app.ui.data
 
 import android.content.Context
+import android.content.SharedPreferences
+import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.ort.core.Outcome
@@ -12,8 +17,10 @@ import org.ort.data.entity.LexiconVersionEntity
 import org.ort.lexicon.import.ActiveLexiconRecord
 import org.ort.lexicon.import.ActiveLexiconStore
 import org.ort.lexicon.import.CheckStatus
+import org.ort.lexicon.import.LexiconCheck
 import org.ort.lexicon.import.LexiconImportInstaller
 import org.ort.lexicon.import.LexiconImportResult
+import org.ort.lexicon.import.LexiconImportValidator
 import org.ort.net.AcquiredModel
 import org.ort.net.Checksum
 import org.ort.net.HttpRangeClient
@@ -23,6 +30,7 @@ import org.ort.net.ModelFetchSpec
 import org.ort.net.NetCapability
 import org.ort.net.real.RealHttpRangeClient
 import org.ort.net.sha256Of
+import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.SileroVadLocator
 import org.ort.pipeline.passb.AsrModelLocator
 import java.io.File
@@ -209,10 +217,15 @@ public sealed interface ModelActionResult {
  * keep that composable's own parameter list under detekt's threshold once the lexicon row added a
  * ninth. [lastMessage] and [downloadFailure] were already mutually exclusive in practice
  * (`ModelsContent` clears one when it sets the other) — this makes that structural, not just a
- * convention two separate optional params relied on. */
+ * convention two separate optional params relied on.
+ *
+ * FR-AST-4 (WP11b's F21 audit finding): [stagedActivation] joined this bundle for the identical
+ * reason — [ModelsController.stagedActivation] would otherwise have been this composable's own
+ * tenth bare parameter. */
 public data class ModelsScreenStatus(
     val lastMessage: String? = null,
     val downloadFailure: ModelDownloadFailureViewState? = null,
+    val stagedActivation: StagedActivation? = null,
 )
 
 /** R-140 (register, round 4 System validator): a failed *download* specifically — split out of the
@@ -289,15 +302,25 @@ public sealed interface LexiconImportViewState {
     ) : LexiconImportViewState
 
     /**
-     * At least one check failed; nothing was replaced. [stillActiveLabel] is `null` only when there
-     * was genuinely no lexicon active before this import attempt (a first-ever install) — never
-     * omitted for any other reason.
+     * At least one check failed; nothing was replaced. [stillActiveLabel]/[stillActiveRecordCount]
+     * are `null` only when there was genuinely no lexicon active before this import attempt (a
+     * first-ever install) — never omitted for any other reason, and always both null or both real
+     * together (both come from the same [org.ort.lexicon.import.ActiveLexiconRecord]).
+     *
+     * R-492 (register, Reviewer D): the board's own STILL ACTIVE row is two real lines — the
+     * lexicon's name, then "N records · verified · in use by the running session" — [stillActiveLabel]
+     * carries the name alone now (was the whole combined string) so the screen can draw both without
+     * re-parsing it. "verified" and "in use by the running session" are both structurally true for
+     * *any* currently active lexicon, never fields to source separately: [RoomActiveLexiconStore.activate]
+     * is the only writer of "the active lexicon" and only ever runs after [LexiconImportValidator.validate]
+     * returns [Accepted], and this exact record is read from that same store.
      */
     public data class Rejected(
         override val fileName: String,
         override val checks: List<LexiconCheckViewRow>,
         val reason: String,
         val stillActiveLabel: String?,
+        val stillActiveRecordCount: Int? = null,
     ) : LexiconImportViewState
 }
 
@@ -321,6 +344,147 @@ public data class LexiconAssetActions(
 )
 
 /**
+ * FR-AST-4 (functional spec §9, `Fail-Asset-Swap.dc.html`/F21; WP11b's audit finding that
+ * [LexiconImportInstaller.installValidated] activated unconditionally with no runtime signal at
+ * all): the fact a lexicon swap or model install could not activate immediately because a session
+ * was live when it finished — "a swap mid-session changes what usual means" is F21's own board
+ * rationale for why activation must defer. [assetId] is either
+ * [ModelsController.CALLSIGN_LEXICON_ASSET_ID] or a [ModelId.name]; [version] is the lexicon's
+ * real version string or a model's real checksum prefix — never a placeholder, and never blank.
+ * This is the exact, trimmed shape [ModelsController.stagedActivation] exposes; WP11b's own
+ * `FailureSignals`/`AssetSwap` mapper is expected to read it directly, so it carries nothing an
+ * operator or that mapper would not need — the extra facts a real lexicon activation needs later
+ * ([ActiveLexiconRecord]'s `recordCount`/`checksum`) live in [StagedActivationStore] instead, never
+ * folded into this type.
+ */
+public data class StagedActivation(
+    public val assetId: String,
+    public val version: String,
+    public val stagedAtMillis: Long,
+    public val reason: String,
+)
+
+/**
+ * Where a staged activation is persisted — app-level `SharedPreferences`, not `:data` (this round's
+ * brief, verbatim: "app-level DataStore/prefs is fine; no `:data` schema"). This is a pending
+ * operational fact about *this device*, not a domain record the corpus or a backup would ever need
+ * to carry — the same reasoning `SettingsStore.kt`'s own doc comment gives for its own choice of
+ * store. [pendingLexiconRecord] carries the one extra fact [StagedActivation] itself deliberately
+ * omits — the full [ActiveLexiconRecord] a real, later activation needs — so a real activation is
+ * never a lossy replay of the trimmed DTO.
+ */
+public interface StagedActivationStore {
+    public fun current(): StagedActivation?
+    public fun stageLexicon(activation: StagedActivation, record: ActiveLexiconRecord)
+    public fun stageModel(activation: StagedActivation)
+    public fun pendingLexiconRecord(): ActiveLexiconRecord?
+    public fun clear()
+}
+
+/** The real, `SharedPreferences`-backed [StagedActivationStore] — follows `SettingsStore.kt`'s own
+ * established shape for this codebase's app-level preferences stores. */
+public class SharedPreferencesStagedActivationStore(context: Context) : StagedActivationStore {
+
+    private val prefs: SharedPreferences =
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    override fun current(): StagedActivation? {
+        val assetId = prefs.getString(KEY_ASSET_ID, null) ?: return null
+        val version = prefs.getString(KEY_VERSION, null) ?: return null
+        val reason = prefs.getString(KEY_REASON, null) ?: return null
+        val stagedAt = prefs.getLong(KEY_STAGED_AT, -1L)
+        if (stagedAt < 0L) return null
+        return StagedActivation(assetId, version, stagedAt, reason)
+    }
+
+    override fun stageLexicon(activation: StagedActivation, record: ActiveLexiconRecord) {
+        writeCommon(activation)
+        prefs.edit {
+            putString(KEY_LEXICON_VERSION, record.version)
+            putInt(KEY_LEXICON_RECORD_COUNT, record.recordCount)
+            putString(KEY_LEXICON_CHECKSUM, record.checksum)
+        }
+    }
+
+    override fun stageModel(activation: StagedActivation) {
+        writeCommon(activation)
+        prefs.edit {
+            remove(KEY_LEXICON_VERSION)
+            remove(KEY_LEXICON_RECORD_COUNT)
+            remove(KEY_LEXICON_CHECKSUM)
+        }
+    }
+
+    override fun pendingLexiconRecord(): ActiveLexiconRecord? {
+        val assetId = prefs.getString(KEY_ASSET_ID, null) ?: return null
+        val version = prefs.getString(KEY_LEXICON_VERSION, null) ?: return null
+        if (!prefs.contains(KEY_LEXICON_RECORD_COUNT)) return null
+        val recordCount = prefs.getInt(KEY_LEXICON_RECORD_COUNT, 0)
+        val checksum = prefs.getString(KEY_LEXICON_CHECKSUM, null)
+        return ActiveLexiconRecord(assetId, version, recordCount, checksum)
+    }
+
+    override fun clear() {
+        prefs.edit {
+            remove(KEY_ASSET_ID)
+            remove(KEY_VERSION)
+            remove(KEY_STAGED_AT)
+            remove(KEY_REASON)
+            remove(KEY_LEXICON_VERSION)
+            remove(KEY_LEXICON_RECORD_COUNT)
+            remove(KEY_LEXICON_CHECKSUM)
+        }
+    }
+
+    private fun writeCommon(activation: StagedActivation) {
+        prefs.edit {
+            putString(KEY_ASSET_ID, activation.assetId)
+            putString(KEY_VERSION, activation.version)
+            putLong(KEY_STAGED_AT, activation.stagedAtMillis)
+            putString(KEY_REASON, activation.reason)
+        }
+    }
+
+    private companion object {
+        const val PREFS_NAME: String = "org.ort.app.staged_activation"
+        const val KEY_ASSET_ID = "asset_id"
+        const val KEY_VERSION = "version"
+        const val KEY_STAGED_AT = "staged_at_millis"
+        const val KEY_REASON = "reason"
+        const val KEY_LEXICON_VERSION = "lexicon_version"
+        const val KEY_LEXICON_RECORD_COUNT = "lexicon_record_count"
+        const val KEY_LEXICON_CHECKSUM = "lexicon_checksum"
+    }
+}
+
+/** The behavioural fake (constitution II) — a plain in-memory [StagedActivationStore] for tests,
+ * matching this file's own `InMemory*`-free precedent set by `SettingsStore.kt`'s
+ * `InMemorySettingsStore`. */
+public class InMemoryStagedActivationStore(
+    private var pending: StagedActivation? = null,
+    private var pendingRecord: ActiveLexiconRecord? = null,
+) : StagedActivationStore {
+    override fun current(): StagedActivation? = pending
+
+    override fun stageLexicon(activation: StagedActivation, record: ActiveLexiconRecord) {
+        pending = activation
+        pendingRecord = record
+    }
+
+    override fun stageModel(activation: StagedActivation) {
+        pending = activation
+        pendingRecord = null
+    }
+
+    override fun pendingLexiconRecord(): ActiveLexiconRecord? = pendingRecord
+
+    override fun clear() {
+        pending = null
+        pendingRecord = null
+    }
+}
+
+/**
  * Reads and drives model install state for the Models screen. Every write goes through
  * [ModelAcquisition] — this object never writes a model file itself — so "installed" always means
  * what [ModelAcquisition] itself verified, never a file this code merely observed to exist.
@@ -330,18 +494,93 @@ public object ModelsController {
     /** The one lexicon asset id this build imports (technical design §12.1's `LexiconVersion.assetId`). */
     public const val CALLSIGN_LEXICON_ASSET_ID: String = "callsign-lexicon"
 
+    private val stagedActivationFlow = MutableStateFlow<StagedActivation?>(null)
+
+    /** FR-AST-4: the one staged lexicon swap or model install waiting for a live session to end, or
+     * `null` when nothing is staged. WP11b's `FailureSignals`/`AssetSwap` mapper is expected to read
+     * this directly (see [StagedActivation]'s own doc comment) — never re-derive it from
+     * `SharedPreferences` a second time elsewhere; this is the one live, in-process source. Starts
+     * `null` on every fresh process until [currentState] or [refreshStagedActivation] first reads
+     * whatever [StagedActivationStore] persisted from an earlier run. */
+    public val stagedActivation: StateFlow<StagedActivation?> = stagedActivationFlow.asStateFlow()
+
+    /** Re-reads the persisted staged activation into [stagedActivation] — [currentState] already
+     * does this as a side effect of its own read, so a caller that only needs this fact refreshed
+     * (never the whole [ModelsViewState]) can reach for this instead. */
+    public fun refreshStagedActivation(
+        context: Context,
+        stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
+    ) {
+        stagedActivationFlow.value = stagedStore.current()
+    }
+
+    /** [RoomActiveLexiconStore.activate] calls this instead of writing to `:data` when
+     * [CaptureState.isCapturing] is true — the actual defer-and-remember step FR-AST-4 asks for.
+     * Internal: the only real caller is that class, in this same file; a test drives this path
+     * through [installLexicon] with a real [CaptureState.capturing] session in effect, exactly as
+     * production would, rather than calling this directly. */
+    internal fun stageLexiconActivation(
+        context: Context,
+        record: ActiveLexiconRecord,
+        stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
+    ) {
+        val activation = StagedActivation(
+            assetId = record.assetId,
+            version = record.version,
+            stagedAtMillis = SystemClock.wallMillis(),
+            reason = "a session is live — activating a new callsign lexicon mid-session would " +
+                "change which callsigns read as usual until this session ends (FR-AST-4)",
+        )
+        stagedStore.stageLexicon(activation, record)
+        stagedActivationFlow.value = activation
+    }
+
+    /**
+     * FR-AST-4: really activates whatever is staged — a real lexicon write via
+     * [RoomActiveLexiconStore] (safe to call directly here since [CaptureState.isCapturing] is
+     * already confirmed false below, so it takes that class's own real-write branch, never its
+     * staging one), or, for a staged model, the same [requeueFailed] a normal install triggers
+     * immediately. Refuses, with no effect, while [CaptureState.isCapturing] is still true — never
+     * force-activates mid-session even if called incorrectly — so both the Settings-Assets
+     * next-visit trigger and F21's `Reprocess`/`Install` action are safe to call unconditionally.
+     * Returns the activation that was applied, or `null` when nothing happened (nothing staged, or
+     * a session is still live).
+     */
+    public suspend fun activateStaged(
+        context: Context,
+        stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
+    ): StagedActivation? = withContext(Dispatchers.IO) {
+        if (CaptureState.isCapturing) return@withContext null
+        val pending = stagedStore.current() ?: return@withContext null
+        if (pending.assetId == CALLSIGN_LEXICON_ASSET_ID) {
+            stagedStore.pendingLexiconRecord()?.let { record -> RoomActiveLexiconStore(context).activate(record) }
+        } else {
+            requeueFailed(context)
+        }
+        stagedStore.clear()
+        stagedActivationFlow.value = null
+        pending
+    }
+
     /**
      * R-154: validates [source] and, only when every check passes, installs it as the new callsign
      * lexicon (FR-LEX-30, FR-AST-2) — the "Install from a file" action's real call site. Makes no
      * network call, ever (constitution V — [org.ort.lexicon.import.LexiconImportValidator] reads only
      * [source]), and runs off whatever dispatcher the caller (a Compose coroutine scope) is on.
+     *
+     * FR-AST-4: [store] (the real [RoomActiveLexiconStore] by default) itself decides whether an
+     * `Accepted` result activates for real or is staged — this function's own job is only to refresh
+     * [stagedActivation] afterward so the caller's next read is never stale.
      */
     public suspend fun installLexicon(
         context: Context,
         source: File,
         store: ActiveLexiconStore = RoomActiveLexiconStore(context),
+        stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
     ): LexiconImportViewState = withContext(Dispatchers.IO) {
-        toViewState(LexiconImportInstaller.installValidated(source, CALLSIGN_LEXICON_ASSET_ID, store))
+        val result = toViewState(LexiconImportInstaller.installValidated(source, CALLSIGN_LEXICON_ASSET_ID, store))
+        stagedActivationFlow.value = stagedStore.current()
+        result
     }
 
     /**
@@ -371,7 +610,9 @@ public object ModelsController {
         context: Context,
         requeuedMessage: String? = null,
         specFor: (ModelId, File) -> ModelFetchSpec? = ModelCatalog::specFor,
+        stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
     ): ModelsViewState {
+        stagedActivationFlow.value = stagedStore.current()
         val filesDir = context.filesDir
         val rows = ModelId.entries.map { id -> rowFor(id, filesDir, specFor) }
         return ModelsViewState(rows = rows, requeuedMessage = requeuedMessage)
@@ -393,12 +634,13 @@ public object ModelsController {
         id: ModelId,
         client: HttpRangeClient = RealHttpRangeClient(),
         specFor: (ModelId, File) -> ModelFetchSpec? = ModelCatalog::specFor,
+        stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
     ): ModelActionResult = withContext(Dispatchers.IO) {
         val spec = specFor(id, context.filesDir) ?: return@withContext ModelActionResult.Failure(
             "no published checksum for ${id.label} — a download cannot be verified, so it is refused; " +
                 "side-load a copy you trust instead",
         )
-        finish(context, ModelAcquisition(client).fetch(spec, NetCapability.UserInitiated))
+        finish(context, id, ModelAcquisition(client).fetch(spec, NetCapability.UserInitiated), stagedStore)
     }
 
     /**
@@ -415,10 +657,11 @@ public object ModelsController {
         id: ModelId,
         source: File,
         specFor: (ModelId, File) -> ModelFetchSpec? = ModelCatalog::specFor,
+        stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
     ): ModelActionResult = withContext(Dispatchers.IO) {
         val spec = specFor(id, context.filesDir) ?: unverifiedSpecFor(id, context.filesDir, source)
         val acquisition = ModelAcquisition(NeverCalledHttpRangeClient)
-        finish(context, acquisition.sideload(source, spec, NetCapability.UserInitiated))
+        finish(context, id, acquisition.sideload(source, spec, NetCapability.UserInitiated), stagedStore)
     }
 
     /**
@@ -436,8 +679,36 @@ public object ModelsController {
         )
     }
 
-    private suspend fun finish(context: Context, outcome: Outcome<AcquiredModel>): ModelActionResult = when (outcome) {
-        is Outcome.Ok -> ModelActionResult.Success(requeuedCount = requeueFailed(context))
+    /**
+     * FR-AST-4: a successful install's [requeueFailed] retrigger is itself the mid-session-visible
+     * change (freshly reprocessed transcripts appearing while a session is live) — deferred exactly
+     * like a lexicon swap, when [CaptureState.isCapturing]. The file itself is still downloaded/
+     * side-loaded, verified and written to disk immediately either way — real bytes on disk are not
+     * the risk FR-AST-4 names; only the *reprocessing* consequence waits. `requeuedCount = 0` in the
+     * staged branch is the honest, literal count (nothing was requeued yet), never a placeholder.
+     */
+    private suspend fun finish(
+        context: Context,
+        id: ModelId,
+        outcome: Outcome<AcquiredModel>,
+        stagedStore: StagedActivationStore,
+    ): ModelActionResult = when (outcome) {
+        is Outcome.Ok -> {
+            if (CaptureState.isCapturing) {
+                val activation = StagedActivation(
+                    assetId = id.name,
+                    version = outcome.value.checksum.value.take(CHECKSUM_PREFIX_LENGTH),
+                    stagedAtMillis = SystemClock.wallMillis(),
+                    reason = "a session is live — reprocessing previously failed overs with " +
+                        "${id.label} mid-session would change what this session finds usual (FR-AST-4)",
+                )
+                stagedStore.stageModel(activation)
+                stagedActivationFlow.value = activation
+                ModelActionResult.Success(requeuedCount = 0)
+            } else {
+                ModelActionResult.Success(requeuedCount = requeueFailed(context))
+            }
+        }
         is Outcome.Err -> ModelActionResult.Failure(outcome.reason)
     }
 
@@ -512,7 +783,7 @@ public object ModelsController {
      * [ActiveLexiconRecord] into the one-line label the board shows.
      */
     private fun toViewState(result: LexiconImportResult): LexiconImportViewState {
-        val checks = result.checks.map { LexiconCheckViewRow(it.name, it.status, it.detail) }
+        val checks = foldChecksToBoardRows(result.checks)
         return when (result) {
             is LexiconImportResult.Accepted ->
                 LexiconImportViewState.Accepted(result.fileName, checks, result.version, result.recordCount)
@@ -521,9 +792,68 @@ public object ModelsController {
                     result.fileName,
                     checks,
                     result.reason,
-                    result.stillActive?.let(::activeLexiconLabel),
+                    result.stillActive?.let { "Callsign lexicon ${it.version}" },
+                    result.stillActive?.recordCount,
                 )
         }
+    }
+
+    /**
+     * R-490 (register, Reviewer D, `Fail-Lexicon.dc.html`'s own WHAT WAS CHECKED list): the board
+     * names four checks — "Manifest readable", "Checksum", "Record count", "Prefix table
+     * consistency" — but [LexiconImportValidator.validate] (real, correctly) runs five
+     * ([LexiconImportValidator.CHECK_MANIFEST]/[CHECK_CHECKSUM]/[CHECK_RECORD_SHAPE]/
+     * [CHECK_GRAMMAR_SAMPLE]/[CHECK_DUPLICATE_KEYS]) — a genuinely finer-grained validator than the
+     * board's four-row sketch, not a defect to shrink. Per this round's own instruction ("the
+     * validator may run more checks; fold them under the board's four rows"), this folds — never
+     * drops a real result: [CHECK_RECORD_SHAPE] and [CHECK_DUPLICATE_KEYS] (both concern the
+     * record set's own structural integrity) fold into one "Record count" row, and
+     * [CHECK_GRAMMAR_SAMPLE] (validates each sampled callsign's shape against
+     * [org.ort.lexicon.ItuPrefixTable]'s own allocation table) displays as "Prefix table
+     * consistency" — the real fact it already checks, under the board's own name for it. A folded
+     * row's status is the worse of its parts (`FAILED` over `NOT_REACHED` over `PASSED`) and its
+     * detail carries both real facts, never only one.
+     */
+    private fun foldChecksToBoardRows(checks: List<LexiconCheck>): List<LexiconCheckViewRow> {
+        fun find(name: String) = checks.firstOrNull { it.name == name }
+        val rows = mutableListOf<LexiconCheckViewRow>()
+        find(LexiconImportValidator.CHECK_MANIFEST)?.let { rows += LexiconCheckViewRow(it.name, it.status, it.detail) }
+        find(LexiconImportValidator.CHECK_CHECKSUM)?.let { rows += LexiconCheckViewRow(it.name, it.status, it.detail) }
+        val shape = find(LexiconImportValidator.CHECK_RECORD_SHAPE)
+        val duplicates = find(LexiconImportValidator.CHECK_DUPLICATE_KEYS)
+        foldPair("Record count", shape, duplicates)?.let { rows += it }
+        find(LexiconImportValidator.CHECK_GRAMMAR_SAMPLE)?.let {
+            rows += LexiconCheckViewRow("Prefix table consistency", it.status, it.detail)
+        }
+        return rows
+    }
+
+    /**
+     * Combines two real [LexiconCheck]s that only exist as one row on the board — `null` only when
+     * neither ran at all (never expected from [LexiconImportValidator.validate], which always runs
+     * both, but this stays honestly absent rather than fabricating a row with nothing behind it).
+     * When one part is genuinely worse than the other, that part's own real detail carries the row
+     * alone — the board's own `Fail-Lexicon.dc.html` example shows exactly this: a record-shape
+     * failure's own text verbatim, with no "not reached" from the duplicate-keys check it
+     * short-circuited appended alongside it (real, but not what an operator needs when there is
+     * already a concrete reason). Two parts at the *same* severity (both passed, or both genuinely
+     * failed) both carry real, independent facts, so both join the row's own detail.
+     */
+    private fun foldPair(displayName: String, a: LexiconCheck?, b: LexiconCheck?): LexiconCheckViewRow? {
+        val parts = listOfNotNull(a, b)
+        if (parts.isEmpty()) return null
+        val worstSeverity = parts.minOf { checkSeverity(it.status) }
+        val atWorst = parts.filter { checkSeverity(it.status) == worstSeverity }
+        val detail = atWorst.joinToString("; ") { it.detail }
+        return LexiconCheckViewRow(displayName, atWorst.first().status, detail)
+    }
+
+    /** Lower sorts worse — [CheckStatus.FAILED] first, [CheckStatus.PASSED] last — so
+     * [foldPair]'s `minByOrNull` picks the real worst outcome among the folded parts. */
+    private fun checkSeverity(status: CheckStatus): Int = when (status) {
+        CheckStatus.FAILED -> 0
+        CheckStatus.NOT_REACHED -> 1
+        CheckStatus.PASSED -> 2
     }
 
     private fun activeLexiconLabel(record: ActiveLexiconRecord): String =
@@ -539,11 +869,16 @@ public object ModelsController {
  * `ORDER BY importedAt DESC`) row for [assetId] — [activate] never deletes a superseded row, matching
  * constitution III's "nothing is deleted quietly" for every other asset in this schema.
  *
- * [current]/[activate] are plain (non-suspend) — the [ActiveLexiconStore] interface [org.ort.lexicon.import.LexiconImportInstaller]
- * calls is deliberately synchronous, since `:lexicon` carries no coroutines dependency. Both call
+ * [current]/[activate] are plain (non-suspend) — the [ActiveLexiconStore] interface
+ * [org.ort.lexicon.import.LexiconImportInstaller] calls is deliberately synchronous, since
+ * `:lexicon` carries no coroutines dependency. Both call
  * sites here already run on [Dispatchers.IO] ([ModelsController.installLexicon]), so bridging to the
  * DAO's `suspend` functions with [runBlocking] blocks a thread that is already meant for blocking
  * I/O, not the caller's own dispatcher.
+ *
+ * FR-AST-4 (WP11b's F21 `Fail-Asset-Swap` audit finding): [activate] itself is now the one real
+ * gate deciding whether a validated import lands immediately or is staged for later — see its own
+ * doc comment.
  */
 public class RoomActiveLexiconStore(private val context: Context) : ActiveLexiconStore {
 
@@ -553,7 +888,19 @@ public class RoomActiveLexiconStore(private val context: Context) : ActiveLexico
         }
     }
 
+    /**
+     * FR-AST-4: [LexiconImportInstaller.installValidated] calls this unconditionally on an
+     * `Accepted` result (that class's own doc comment) — this is the one real gate that decides
+     * whether the write actually lands now. While [CaptureState.isCapturing] this defers to
+     * [ModelsController.stageLexiconActivation] instead of writing: the previous lexicon stays
+     * active/"usual" for the rest of this session, and the new one becomes real only once
+     * [ModelsController.activateStaged] runs after the session ends.
+     */
     override fun activate(record: ActiveLexiconRecord) {
+        if (CaptureState.isCapturing) {
+            ModelsController.stageLexiconActivation(context, record)
+            return
+        }
         runBlocking {
             db().catalogDao().insert(
                 LexiconVersionEntity(

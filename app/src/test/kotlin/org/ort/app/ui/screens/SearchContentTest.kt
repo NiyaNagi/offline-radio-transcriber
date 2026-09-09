@@ -6,6 +6,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -187,10 +188,12 @@ class SearchContentTest {
 
         // Same real-background-thread-I/O reasoning as the widen-suggestions test above:
         // `SearchPolling.facetCounts` is a genuine Room query, not tracked by `waitForIdle()`.
+        // `PrimaryButton`'s own `clearAndSetSemantics` (`Controls.kt`, WP2's R-373-adjacent fix)
+        // exposes its label only via `contentDescription`, never `Text`/`EditableText`.
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
-            composeTestRule.onAllNodesWithText("Show 3 overs").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithContentDescription("Show 3 overs").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText("Show 3 overs").assertExists()
+        composeTestRule.onNodeWithContentDescription("Show 3 overs").assertExists()
     }
 
     // --- Screenshot-tour seam: initialQuery/submitOnStart/initialFiltersOpen ---

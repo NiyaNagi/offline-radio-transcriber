@@ -175,12 +175,19 @@ public object DigestPolling {
      * within [window]'s own real span — see the doc comment at this function's own call site for
      * why `ActivityPatternMapper.buildPattern`'s hour-*of-day* folding (correct for `Station`/
      * `Frequencies`, wrong reused here) hatched nearly every bar. Exactly as many buckets as the
-     * session's own real duration spans (never a fixed 24) — a bucket hatches [HourActivityState.
-     * NOT_LISTENING] only when a *real*, recorded [SessionWindow.gaps] entry covers at least half
-     * its own span (hour-granularity cannot represent a sub-hour gap exactly; a real gap that
-     * shares an hour with real listening still reads as that hour being predominantly one or the
-     * other, never invented as either) — never merely because no over happened to land in it, which
-     * [HourActivityState.SILENT_WHILE_LISTENING] (an empty, un-hatched bar) already states honestly.
+     * session's own real duration spans (never a fixed 24).
+     *
+     * R-540 (register, Reviewer D, tour run 3): the first fix above (only hatching a bucket the
+     * *majority* of whose span a real gap covered, and only when nothing was heard in it at all)
+     * swallowed a real, recorded 22-minute gap entirely — the bucket also had real overs elsewhere
+     * in the same hour, so `heardCount > 0` always won, and 22 minutes never reached the old ≥50%
+     * floor either way. The board's own rule (`design/canvas/Session.dc.html`'s coverage chart,
+     * cf. its own gap list) is simpler and unconditional: **any** real, recorded
+     * [SessionWindow.gaps] overlap inside an hour hatches that hour's bar — real overs elsewhere in
+     * the same hour never hide it. `ActivityPatternChart` (the shared, out-of-ownership renderer)
+     * draws one of exactly three states per bucket, never a sub-bar split proportional to how much
+     * of the hour the gap actually covered — that honest, hour-granularity limit is unchanged, only
+     * which state wins a real conflict.
      */
     private fun sessionCoverageBuckets(
         window: SessionWindow,
@@ -195,16 +202,15 @@ public object DigestPolling {
         return (0 until totalHours).map { hourIndex ->
             val bucketStart = window.startedAtUtc + hourIndex * HOUR_MILLIS
             val bucketEnd = minOf(bucketStart + HOUR_MILLIS, sessionEnd)
-            val bucketMillis = (bucketEnd - bucketStart).coerceAtLeast(1L)
             val heardCount = matchingTransmissionTimestamps.count { it in bucketStart until bucketEnd }
-            val gapMillis = window.gaps.sumOf { gap ->
+            val hasRealGap = window.gaps.any { gap ->
                 val overlapStart = maxOf(gap.startedAt, bucketStart)
                 val overlapEnd = minOf(gap.endedAt ?: sessionEnd, bucketEnd)
-                (overlapEnd - overlapStart).coerceAtLeast(0L)
+                overlapEnd > overlapStart
             }
             val state = when {
+                hasRealGap -> HourActivityState.NOT_LISTENING
                 heardCount > 0 -> HourActivityState.HEARD
-                gapMillis * 2 >= bucketMillis -> HourActivityState.NOT_LISTENING
                 else -> HourActivityState.SILENT_WHILE_LISTENING
             }
             HourActivityBucket(hourOfDayUtc = hourIndex, state = state, heardCount = heardCount)

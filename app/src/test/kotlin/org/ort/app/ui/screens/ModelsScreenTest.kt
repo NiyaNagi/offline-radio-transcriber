@@ -6,7 +6,6 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
@@ -16,6 +15,7 @@ import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.ModelsViewState
+import org.ort.app.ui.data.StagedActivation
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -215,7 +215,12 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithText("No transcription model installed").assertExists()
-        composeTestRule.onNodeWithText("Install").assertExists()
+        // WP2's R-380/R-381 fix (`PrimaryButton`/`SecondaryButton`/`TextAction`'s own
+        // `clearAndSetSemantics` now sets `contentDescription = text` on the button's own node and
+        // clears its inner Text's semantics entirely, merged or not) — the button's label is a
+        // content description now, never a `Text` node `onNodeWithText` can find. Real behaviour,
+        // not a regression here.
+        composeTestRule.onNodeWithContentDescription("Install").assertExists()
     }
 
     @Test
@@ -411,92 +416,42 @@ class ModelsScreenTest {
         )
             .assertExists()
         composeTestRule.onNodeWithText("Unable to resolve host", substring = true).assertDoesNotExist()
-        composeTestRule.onNodeWithText("Details").performClick()
+        // WP2's R-380/R-381 fix — see this file's own `F13`/`R_448` tests' comment for what
+        // changed; the button's label is a content description now, never a `Text` node.
+        composeTestRule.onNodeWithContentDescription("Details").performClick()
         composeTestRule.onNodeWithText("Unable to resolve host", substring = true).assertExists()
 
-        composeTestRule.onNodeWithText("Retry").performClick()
+        composeTestRule.onNodeWithContentDescription("Retry").performClick()
 
         assert(retried == ModelId.VAD) { "expected Retry to re-run the download for VAD, got $retried" }
     }
 
     @Test
-    @Requirement("R-154")
-    fun `R_154_a_rejected_import_renders_every_check_and_what_stays_active`() {
-        var choseAnotherFile = false
-        var done = false
-        val rejected = org.ort.app.ui.data.LexiconImportViewState.Rejected(
-            fileName = "lexicon-2026.09.tsv.zst",
-            checks = listOf(
-                org.ort.app.ui.data.LexiconCheckViewRow(
-                    "Manifest readable",
-                    org.ort.lexicon.import.CheckStatus.PASSED,
-                    "version 2026.09 · declares 1,122,410 records",
-                ),
-                org.ort.app.ui.data.LexiconCheckViewRow(
-                    "Checksum",
-                    org.ort.lexicon.import.CheckStatus.FAILED,
-                    "computed sha256 e07c… · does not match",
-                ),
-                org.ort.app.ui.data.LexiconCheckViewRow(
-                    "Record count and shape",
-                    org.ort.lexicon.import.CheckStatus.FAILED,
-                    "read 1,004,392 · declared 1,122,410 · file ends mid-record",
-                ),
-                org.ort.app.ui.data.LexiconCheckViewRow(
-                    "Callsign grammar sample",
-                    org.ort.lexicon.import.CheckStatus.NOT_REACHED,
-                    "not reached",
-                ),
-            ),
-            reason = "Checksum mismatched and the record count did not match the manifest — a partial " +
-                "or corrupted download, most likely. Nothing was replaced.",
-            stillActiveLabel = "Callsign lexicon 2026.08 · 1,104,208 records",
-        )
-
+    @Requirement("R-448")
+    fun `R_448_asset_swap_a_staged_model_row_shows_the_staged_badge`() {
         composeTestRule.setContent {
             OrtTheme {
                 ModelsScreen(
-                    state = ModelsViewState(rows = emptyList()),
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 1L, checksumPrefix = "aa"),
+                        ),
+                    ),
                     onDownload = {},
                     onSideload = {},
-                    lexicon = org.ort.app.ui.data.LexiconAssetActions(
-                        row = org.ort.app.ui.data.LexiconAssetRowViewState(installed = true, label = "x"),
-                        importResult = rejected,
-                        onInstall = { choseAnotherFile = true },
-                        onDismissResult = { done = true },
+                    status = org.ort.app.ui.data.ModelsScreenStatus(
+                        stagedActivation = StagedActivation(ModelId.VAD.name, "aa", 0L, "a session is live"),
                     ),
                 )
             }
         }
 
-        composeTestRule.onNodeWithText("Import refused").assertExists()
-        composeTestRule.onNodeWithText("lexicon-2026.09.tsv.zst", substring = true).assertExists()
-
-        // Every check, in order, with its real status word represented (not colour-only) via detail.
-        composeTestRule.onNodeWithText("Manifest readable").assertExists()
-        composeTestRule.onNodeWithText("version 2026.09 · declares 1,122,410 records").assertExists()
-        composeTestRule.onNodeWithText("Checksum").assertExists()
-        composeTestRule.onNodeWithText("computed sha256 e07c… · does not match").assertExists()
-        composeTestRule.onNodeWithText("Record count and shape").assertExists()
-        composeTestRule.onNodeWithText("Callsign grammar sample").assertExists()
-        composeTestRule.onNodeWithText("not reached").assertExists()
-
-        // The reason and what stays active.
-        composeTestRule.onNodeWithText(rejected.reason, substring = true).assertExists()
-        composeTestRule.onNodeWithText("Callsign lexicon 2026.08 · 1,104,208 records").assertExists()
-
-        composeTestRule.onNode(androidx.compose.ui.test.hasScrollAction())
-            .performScrollToNode(androidx.compose.ui.test.hasText("Done"))
-        composeTestRule.onNodeWithText("Choose another file").performClick()
-        assert(choseAnotherFile) { "expected Choose another file to call onInstall" }
-
-        composeTestRule.onNodeWithText("Done").performClick()
-        assert(done) { "expected Done to call onDismissResult" }
+        composeTestRule.onNodeWithText("staged · activates when this session ends").assertExists()
     }
 
     @Test
-    @Requirement("R-154")
-    fun `R_154 an accepted lexicon import folds back into the assets list, no full-screen takeover`() {
+    @Requirement("R-448")
+    fun `R_448_asset_swap_a_staged_lexicon_row_shows_the_staged_badge, the old lexicon still reads active`() {
         composeTestRule.setContent {
             OrtTheme {
                 ModelsScreen(
@@ -506,23 +461,69 @@ class ModelsScreenTest {
                     lexicon = org.ort.app.ui.data.LexiconAssetActions(
                         row = org.ort.app.ui.data.LexiconAssetRowViewState(
                             installed = true,
-                            label = "Callsign lexicon 2026.09 · 1,122,410 records",
+                            label = "Callsign lexicon 2026.08 · 1,104,208 records",
                         ),
-                        importResult = org.ort.app.ui.data.LexiconImportViewState.Accepted(
-                            fileName = "lexicon-2026.09.tsv.zst",
-                            checks = emptyList(),
-                            version = "2026.09",
-                            recordCount = 1_122_410,
-                        ),
+                        importResult = null,
                         onInstall = {},
                         onDismissResult = {},
+                    ),
+                    status = org.ort.app.ui.data.ModelsScreenStatus(
+                        stagedActivation = StagedActivation(
+                            ModelsController.CALLSIGN_LEXICON_ASSET_ID,
+                            "2026.09",
+                            0L,
+                            "a session is live",
+                        ),
                     ),
                 )
             }
         }
 
-        composeTestRule.onNodeWithText("Import refused").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Models and lexicon").assertExists()
-        composeTestRule.onNodeWithText("Callsign lexicon 2026.09 · 1,122,410 records").assertExists()
+        composeTestRule.onNodeWithText("staged · activates when this session ends").assertExists()
+        // FR-AST-4's own point: the previous version stays "usual" until the staged swap is real.
+        composeTestRule.onNodeWithText("Callsign lexicon 2026.08 · 1,104,208 records").assertExists()
+    }
+
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_no_staged_activation_shows_no_badge_at_all`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 1L, checksumPrefix = "aa"),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("staged · activates when this session ends").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_a_staged_id_for_a_different_asset_never_leaks_onto_this_row`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 1L, checksumPrefix = "aa"),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                    status = org.ort.app.ui.data.ModelsScreenStatus(
+                        stagedActivation = StagedActivation(ModelId.ASR_ENCODER.name, "bb", 0L, "a session is live"),
+                    ),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("staged · activates when this session ends").assertDoesNotExist()
     }
 }

@@ -148,20 +148,23 @@ class SearchScreenTest {
     }
 
     @Test
-    fun `R_063 the unavailable field shows a degraded not-applied cue, never a halt one`() {
+    fun `R_504 the query text renders struck through in a neutral field, never an amber not-applied caption`() {
         val result =
             SearchResult(details = emptyList(), textSearchUnavailable = true, facetCounts = SearchFacetCounts.EMPTY)
         screen(input = SearchFilterInput(text = "mayday"), result = result)
 
-        // A textual, description-based check (guide §9: never colour alone) — `errorTone =
-        // FieldTone.Degraded` is what keeps this amber rather than `halt/text` red at the
-        // component level; asserting the specific "Not applied" cue (not, say, an "Error" or
-        // "Invalid" halt-style message) is the part observable from outside `TextField` itself.
-        composeTestRule.onNodeWithText("Not applied").assertExists()
+        // R-504: the board strikes the query text through, in a neutral field — not the amber
+        // border + separate "Not applied" caption the shared `TextField`'s `FieldTone.Degraded`
+        // drew before this fix. The live, editable field is gone in this state entirely (a
+        // read-only stand-in takes over) and so is the old caption text.
+        composeTestRule.onNodeWithTag("search-struck-through-query").assertExists()
+        composeTestRule.onNodeWithContentDescription("mayday", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Not applied").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("Search text").assertDoesNotExist()
     }
 
     @Test
-    fun `no not-applied cue shows once the search actually ran`() {
+    fun `R_504 the live editable field returns, with no strikethrough, once a search actually succeeds`() {
         val result = SearchResult(
             details = listOf(detail("TX1", "mayday mayday", Attribution.confirmed("W7NPC", 0.9))),
             textSearchUnavailable = false,
@@ -169,6 +172,8 @@ class SearchScreenTest {
         )
         screen(input = SearchFilterInput(text = "mayday"), result = result)
 
+        composeTestRule.onNodeWithTag("search-struck-through-query").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("Search text").assertExists()
         composeTestRule.onNodeWithText("Not applied").assertDoesNotExist()
     }
 
@@ -207,26 +212,33 @@ class SearchScreenTest {
 
     @Test
     fun `R_202 the filter sheet's counts come from filterFacetCounts, live from the caller`() {
+        // R-500: the sheet's own default filter is Confirmed + Inferred (never Unknown) — every
+        // row here must be a state the default actually includes, or this test would be proving
+        // R-500's own narrowing instead of R-202's live-count wiring.
         val counts = SearchFacetCounts(
             listOf(
                 SearchFacetRow(AttributionState.CONFIRMED, false, false),
                 SearchFacetRow(AttributionState.CONFIRMED, false, false),
-                SearchFacetRow(AttributionState.UNKNOWN, false, false),
+                SearchFacetRow(AttributionState.INFERRED, false, false),
             ),
         )
         screen(filtersSheetOpen = true, filterFacetCounts = counts)
 
         // Real counts on a plain, untouched (default) filter input — never the 0 the register
         // caught when this sourced `result?.facetCounts` (`EMPTY` before any search had run).
-        composeTestRule.onNodeWithText("Show 3 overs").assertExists()
+        // `PrimaryButton`'s own `clearAndSetSemantics` (`Controls.kt`) exposes its label only via
+        // `contentDescription`, same as `FilterChip`/`LogRow` above.
+        composeTestRule.onNodeWithContentDescription("Show 3 overs").assertExists()
     }
 
     @Test
     fun `R_203 heardFrequenciesHz reaches the filter sheet's chip row`() {
         screen(filtersSheetOpen = true, heardFrequenciesHz = listOf(145_230_000L))
 
-        composeTestRule.onNodeWithText("145.230").assertExists()
-        composeTestRule.onNodeWithText("2M").assertExists()
+        // `FilterChip`'s own `clearAndSetSemantics` (`Controls.kt`, alongside `LogRow`'s R-373 fix)
+        // now exposes its label only via `contentDescription`, never `Text`/`EditableText`.
+        composeTestRule.onNodeWithContentDescription("145.230").assertExists()
+        composeTestRule.onNodeWithContentDescription("2 m").assertExists()
     }
 
     // --- Initial state (R-063) ---
@@ -315,9 +327,11 @@ class SearchScreenTest {
         )
         screen(input = current, result = result, onInputChange = { current = it }, onSearch = { searchCount++ })
 
-        // R-380/R-381 (WP2, `ui/components/CHANGELOG.md`): the dismiss icon is a descendant of
-        // `FilterChip`'s own outer `clearAndSetSemantics` node, so it is only reachable on the
-        // unmerged tree now.
+        // R-380/R-381/R-543 (WP2, `ui/components/CHANGELOG.md`): the dismiss icon is a descendant
+        // of `FilterChip`'s own outer `clearAndSetSemantics` node, so it is only reachable on the
+        // unmerged tree in Robolectric's own model now — on a real device the icon is also exposed
+        // as a `CustomAccessibilityAction` on the chip's own node (`Controls.kt`'s own doc
+        // comment), so this stays reachable for TalkBack too, not only for a raw tap.
         composeTestRule
             .onNodeWithContentDescription("Remove W7NPC filter", useUnmergedTree = true)
             .performScrollTo()
@@ -384,6 +398,38 @@ class SearchScreenTest {
         composeTestRule.onNodeWithText("Text search is unavailable right now").assertExists()
         // R-380/R-381 (WP2, `ui/components/CHANGELOG.md`): see the note on the `R_065` test above.
         composeTestRule.onNodeWithText("irrelevant transcript", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `R_504 the unavailable count line reads N overs unfiltered by text, never the ordinary count line`() {
+        val result = SearchResult(
+            details = listOf(
+                detail("TX1", "one", Attribution.confirmed("W7NPC", 0.9)),
+                detail("TX2", "two", Attribution.confirmed("KJ7ABC", 0.9)),
+            ),
+            textSearchUnavailable = true,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+        screen(input = SearchFilterInput(text = "mayday"), result = result)
+
+        // No frequency/band filter is active here — "on <freq>" never appears when there is
+        // nothing real to name (never a frequency invented to match the board's own example).
+        composeTestRule.onNodeWithTag("search-unavailable-count-line").assertExists()
+        composeTestRule.onNodeWithText("2 overs", substring = true).assertExists()
+        composeTestRule.onNodeWithText("unfiltered by text", substring = true).assertExists()
+        composeTestRule.onNodeWithText("2 overs · 1 night", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_504 the unavailable count line names the active frequency when one is set`() {
+        val result = SearchResult(
+            details = listOf(detail("TX1", "one", Attribution.confirmed("W7NPC", 0.9))),
+            textSearchUnavailable = true,
+            facetCounts = SearchFacetCounts.EMPTY,
+        )
+        screen(input = SearchFilterInput(text = "mayday", frequencyMhz = "146.960"), result = result)
+
+        composeTestRule.onNodeWithText("on 146.960", substring = true).assertExists()
     }
 
     @Test
