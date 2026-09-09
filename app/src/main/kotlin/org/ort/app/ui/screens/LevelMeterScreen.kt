@@ -35,6 +35,7 @@ import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.LiveBar
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.components.SectionHeader
+import org.ort.app.ui.components.referenceLineY
 import org.ort.app.ui.data.CaptureStateTone
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.theme.OrtColors
@@ -83,6 +84,10 @@ public fun LevelMeterScreen(
 
 /** R-419: `Level-Meter.dc.html`'s own fixed copy beneath the band-state sentence — a UI constant,
  * not a per-session measurement. */
+/** R-542: the same edge clearance WP9's own `LevelScreen.kt` uses (`lineClearPx`) — see
+ * `referenceLineY`'s own doc comment (`ui/components/ChartGeometry.kt`) for why. */
+private const val LINE_EDGE_CLEARANCE_DP = 1.5f
+
 private const val LEVEL_METER_STATE_PARAGRAPH = "The level is set on the radio. If it drifts out of " +
     "band the status surface and the notification say so; this screen is where you watch it while " +
     "you turn the knob."
@@ -192,10 +197,21 @@ private fun LevelHistoryChart(history: List<Float>, noiseFloorDbfs: Float?, modi
                 val floor = LevelViewState.CHART_FLOOR_DBFS
                 val range = ceiling - floor
                 fun yFor(dbfs: Float): Float = size.height * ((ceiling - dbfs) / range).coerceIn(0f, 1f)
+                // R-542 (register — WP9's own R-465 found this first, `LevelScreen.kt`/S07): a
+                // fixed reference line at fraction 0f/1f lands exactly on canvas row 0/height,
+                // where a full-width stroke is bisected by the canvas bounds and this Box's own
+                // border (drawn over its children) overpaints what's left — the clip line at 0
+                // dBFS never rendered. `referenceLineY` (`ui/components/ChartGeometry.kt`, shared
+                // with `LevelScreen.kt` — see that function's own doc) keeps every fixed line at
+                // least [LINE_EDGE_CLEARANCE_PX] from either edge; bars stay on the unclamped
+                // [yFor] on purpose (a bar's own rectangle is meant to reach the true edge).
+                val lineClearPx = LINE_EDGE_CLEARANCE_DP.dp.toPx()
+                fun yForReferenceLine(dbfs: Float): Float =
+                    referenceLineY((dbfs - floor) / range, size.height, lineClearPx)
 
                 // Target band — the artboard's fixed green zone, not a measurement.
-                val bandTopY = yFor(LevelViewState.TARGET_BAND_TOP_DBFS)
-                val bandBottomY = yFor(LevelViewState.TARGET_BAND_BOTTOM_DBFS)
+                val bandTopY = yForReferenceLine(LevelViewState.TARGET_BAND_TOP_DBFS)
+                val bandBottomY = yForReferenceLine(LevelViewState.TARGET_BAND_BOTTOM_DBFS)
                 drawRect(
                     color = OrtColors.accentGreen.copy(alpha = 0.09f),
                     topLeft = Offset(0f, bandTopY),
@@ -214,8 +230,9 @@ private fun LevelHistoryChart(history: List<Float>, noiseFloorDbfs: Float?, modi
                     strokeWidth = 1.dp.toPx(),
                 )
 
-                // Clip line — 0 dBFS, halt-coloured (the one thing on this chart that is never amber).
-                val clipY = yFor(LevelViewState.CHART_CEILING_DBFS)
+                // Clip line — 0 dBFS, halt-coloured (the one thing on this chart that is never
+                // amber). Fraction 1.0 exactly — the line R-542 was filed about.
+                val clipY = yForReferenceLine(LevelViewState.CHART_CEILING_DBFS)
                 drawLine(
                     color = OrtColors.haltText.copy(alpha = 0.6f),
                     start = Offset(0f, clipY),
@@ -225,7 +242,7 @@ private fun LevelHistoryChart(history: List<Float>, noiseFloorDbfs: Float?, modi
 
                 // The real noise-floor reading, dashed, only when one has actually been tracked.
                 if (noiseFloorDbfs != null) {
-                    val noiseY = yFor(noiseFloorDbfs)
+                    val noiseY = yForReferenceLine(noiseFloorDbfs)
                     drawLine(
                         color = OrtColors.accentGapDim,
                         start = Offset(0f, noiseY),

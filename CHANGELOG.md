@@ -32,6 +32,55 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP4 · R-542: Level-Meter's own clip line, the same edge-clearance fix as WP9's R-465)
+
+### (pending) — ui-conformance WP4 · R-542: Level-Meter's own clip line, the same edge-clearance fix as WP9's R-465
+
+**Scope:** new `ui/components/ChartGeometry.kt` (shared helper), `ui/screens/LevelMeterScreen.kt`,
+matching tests. `git merge main` for WP9's `662a73c` (R-465) first.
+
+**Requirements/ACs:** register R-542 (WP9's own R-465 finding, byte-identical defect in this
+package's own chart).
+
+**What changed:** WP9 found and device-verified (`setup-level/S07-level.png`) that a fixed
+reference line whose fraction is exactly `0f`/`1f` lands exactly on the canvas's own top/bottom row
+— a full-width stroke centred there is bisected by the canvas bounds, and the enclosing `Box`'s own
+1dp border (drawn over its children) overpaints what's left, so the line never actually renders
+(their own `referenceLineY` fix in `LevelScreen.kt`, register R-465). `LevelMeterScreen.kt`'s
+`LevelHistoryChart` had the byte-identical `clipY = yFor(CHART_CEILING_DBFS)` — fraction 1.0 exactly
+— so the same red clip line at 0 dBFS never rendered there either.
+
+Per the coordinator's own instruction, lifted the fix into a new shared helper,
+`ui/components/ChartGeometry.kt` (`referenceLineY(fraction, heightPx, edgeClearancePx)`, `public`,
+byte-identical math to WP9's own private copy), since `ui/components` had no chart-geometry helper
+yet. `LevelHistoryChart` now routes the target-band top/bottom, the clip line and the noise-floor
+line through it (`LINE_EDGE_CLEARANCE_DP = 1.5f`, the same clearance WP9 used) — **bars stay on the
+plain, unclamped `yFor`**, per the coordinator's own explicit instruction (a bar's own rectangle is
+meant to reach the true edge). `LevelScreen.kt` (WP9's file) is untouched — not edited here, per the
+coordinator's own "tell WP9" instruction rather than "switch it yourself"; flagged here and in this
+report for WP9 to move their own private `referenceLineY` over to the shared one.
+
+**Verified:** `:app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.screens.LevelMeterScreenTest" --tests "org.ort.app.ui.data
+.NowViewStateMapperTest" --tests "org.ort.app.ui.data.LevelViewStateMapperTest" --tests
+"org.ort.app.ui.components.ChartGeometryTest" --rerun` — all green, including new
+`ChartGeometryTest` (four cases proving the clearance math directly, the same style WP9's own
+`LevelScreenTest`'s `R_465` cases already established) and `LevelMeterScreenTest`'s new `R_542` case
+(a clipped reading at the scale's own ceiling renders the chart without crashing — the composable
+integration check; the pure math is `ChartGeometryTest`'s own job). `:app:ktlintCheck :app:detekt`
+clean. `dependencyRules platformGuards` OK. `:app:assembleDebug` succeeds. `spec_check.py` 8/8.
+`coverageMatrix`/`coverageMatrixCheck` 191/419 up to date.
+
+**Left open / not done:** `LevelScreen.kt` (WP9's own file) still carries its own private
+`referenceLineY` copy — this round only added the shared helper and pointed this package's own
+chart at it, per the coordinator's explicit "tell WP9 so both call it" instruction; WP9 still needs
+to switch their own file over and delete their private copy. Not verified on a real device this
+round (no free port) — the fix is the identical, already device-verified math WP9's own R-465 used,
+applied through the same shared function, and the pure clearance math is directly tested.
+
+---
+
 ## 2026-09-09 (ui-conformance WP9: R-465, the Setup-Level chart's clip line was genuinely invisible)
 
 ### (pending) — ui-conformance WP9 · R-465 fixed: the clip line sat exactly on the chart's own edge, overpainted by the Box's own border

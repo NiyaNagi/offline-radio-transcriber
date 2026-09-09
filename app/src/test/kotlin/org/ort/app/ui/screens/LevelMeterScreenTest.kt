@@ -164,4 +164,29 @@ class LevelMeterScreenTest {
         composeTestRule.onNodeWithTag("level-meter-band-state-body").assertExists()
         composeTestRule.onNodeWithText("The level is set on the radio.", substring = true).assertExists()
     }
+
+    @Test
+    @Requirement("R-542")
+    fun `R_542 a clipped reading at the scale's own ceiling renders the chart without crashing`() {
+        // peakDbfs = 0f is exactly LevelViewState.CHART_CEILING_DBFS — fraction 1.0, the real
+        // on-device symptom (the clip line silently never drawing) this round's own fix is for.
+        // The pure clearance math is proven directly in ChartGeometryTest; this is the composable
+        // integration check that wiring the fix in did not break rendering at that exact reading.
+        val state = LevelViewStateMapper.from(
+            level = LevelStatus.State.Measured(
+                peakDbfs = 0f,
+                rmsDbfs = -4f,
+                noiseFloorDbfs = LevelViewState.CHART_FLOOR_DBFS,
+                clipped = true,
+                clipCountLastSecond = 12,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            history = List(60) { 0f },
+            inputLabel = "USB Audio Device · last 60 s",
+        )
+        composeTestRule.setContent { OrtTheme { LevelMeterScreen(state = state) } }
+
+        composeTestRule.onNodeWithTag("level-meter-chart").assertExists()
+    }
 }
