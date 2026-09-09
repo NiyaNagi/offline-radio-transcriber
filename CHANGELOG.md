@@ -13901,6 +13901,89 @@ only the `ScoreChip` render on the INFERRED branch, independent of `callsign`.
 - **R-424** needs `AttributionRow(..., showScore: Boolean = true)` (or equivalent) from WP2 before
   this package can wire the "how these were attributed" card to render shape-only, no-chip lines.
 
+### (pending) — ui-conformance WP5 · R-424 wired against WP2's `showScore`; a WP2 semantics change fixed forward in `LogScreenTest`
+
+**Scope:** `ui/screens/ThreadDetailScreen.kt` (R-424 wiring) and its test; `ui/screens/LogScreenTest.kt`
+(unrelated cross-owner fix-forward, explained below — no non-test file outside WP5 touched for it).
+
+**Requirements/ACs:** R-424 (register.md).
+
+**Constitution Check.** Design canvas as source of truth: before touching anything, read
+`Rows.dc.html`'s own caption for INFERRED ("Hollow ring, dimmer callsign, score chip") and
+`Log.dc.html`'s own literal "0.82" chip on K7LWH — both confirm Log rows (L01) keep their score
+chip; only T02's "how these were attributed" card is the actual, registered R-424 defect (each
+inferred line showed the score twice). Never fabricate a fix from an unverified premise: the round's
+own brief additionally asked for `showScore = false` on "Log rows (L01, and the embedded rows on
+T02/DG03/FQ02 if they reuse LogRow)", which contradicts the board and R-020 (register, status
+`fixed`) — not applied; see "Not done, and why" below. Test-Backed Change: root-caused the second,
+unrelated `LogScreenTest` failure (12 of 20 tests) by running it directly and reading its real
+`useUnmergedTree` guidance, not by guessing.
+
+**What changed (R-424, the actual registered defect):** WP2's `AttributionRow(..., showScore:
+Boolean = false)` landed on main at `6cea753`, built for exactly this caller (its own doc comment
+names "T02 how these were attributed" directly). Wired it in `HowAttributedCard` —
+`AttributionRow(attribution = line.attribution, callsign = null, showScore = false)` — so the
+marker no longer draws its own chip; `line.text`'s existing inline "· 0.85" (WP5's own
+`ThreadListMapper.howAttributedLines`, unchanged) is now the score's one and only appearance. New
+`ThreadDetailScreenTest.R_424`: with the existing fixture's INFERRED line (K7LWH, 0.82), asserts the
+full sentence text still renders and an exact `onNodeWithText("0.82")` (which would only match a
+standalone chip's own `Text`, never the longer sentence) now finds nothing.
+
+**Not done, and why (the "Log rows" part of the round's brief):** `Rows.dc.html`'s own caption for
+the INFERRED row example reads, verbatim, "Hollow ring, dimmer callsign, score chip" — and
+`Log.dc.html`'s own K7LWH row literally draws "0.82" beside the callsign. R-020 (register, `fixed`)
+established this exact behaviour: "a score chip **only** on INFERRED... CONFIRMED shows no number."
+Stripping the chip from `LogRow` (`ui/components/Rows.kt`, WP2-owned) would revert both. Separately,
+grepped every `LogRow(` call site: only `LogScreen.kt` (L01) and `SearchScreen.kt` use it — T02,
+DG03 and FQ02 do not reuse `LogRow` today, so that half of the conditional instruction is moot.
+Reporting this back rather than applying a change that contradicts the board and a closed register
+row; the real, registered R-424 defect (T02's double chip) is fixed above.
+
+**Found and fixed forward (unrelated to R-424, discovered while running the scoped gate):** the
+same WP2 merge that added `showScore` also landed R-380/R-381 elsewhere in `Rows.kt`/`Controls.kt`
+— `LogRow`, `FilterChip` and `TextAction` now `clearAndSetSemantics` on their own outer node for one
+explicit, deliberate merged description, which removes their inner `Text`s from the *default*
+(merged) semantics tree WP5's own `LogScreenTest.kt` was still querying against. `RowsTest.kt`
+(WP2's file) already carries the fix pattern (`useUnmergedTree = true`) and an explicit note: "the
+same way `ui/screens/LogScreenTest.kt`'s own real caller pattern would need updating to keep working
+(outside this package, not done here)" — WP2 flagged it, left it for WP5. Ran `LogScreenTest`
+directly first (12 of 20 failing, every one an `AssertionError` naming the exact fix: "the unmerged
+tree contains '1' node... missing `useUnmergedNode = true`") before changing anything. Fixed by
+adding `useUnmergedTree = true` to every affected `onNodeWithText`/`onNodeWithContentDescription`
+call (`R_045`, `R_041` ×2, `R_042` ×2, `R_240`, `R_276`, `R_322`, `FR_UI_1` ×2,
+`FR_UI_4_state_marker_is_never_omitted...`, `tapping a row opens that transmission`), and switching
+the `R_276` frequency-chip matcher from `hasText("145.230")` to `hasContentDescription("145.230")`
+— `FilterChip`'s own outer node now carries the label as an explicit `contentDescription`, not a
+`Text` property. No file outside `ui/screens/LogScreenTest.kt` (a test file) was touched for this;
+`ui/components/Rows.kt` and `ui/components/Controls.kt` (WP2's own R-380/R-381 change) are unchanged.
+
+**Verified:**
+- Read R-424 in `results/ui-audit/register.md` in full, `Thread-Detail.dc.html`'s "how these were
+  attributed" markup, `Rows.dc.html`'s and `Log.dc.html`'s own INFERRED captions/chip, and R-020's
+  register text, before deciding what to change and what to leave alone.
+- `git merge main` — fast-forward to `6cea753` (WP2's `showScore`/R-380/R-381/R-383 round), no
+  conflicts.
+- Ran `LogScreenTest` directly before any fix: 12/20 failing, root cause read from the real stack
+  traces (`useUnmergedNode` guidance), not guessed.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.LogScreenTest" --tests
+  "org.ort.app.ui.screens.ThreadDetailScreenTest" --tests "org.ort.app.ui.data.ThreadViewDataTest"
+  --tests "org.ort.app.ui.components.AttributionMarkerTest" --tests
+  "org.ort.app.ui.components.RowsTest" --tests "org.ort.app.ui.components.LogRowResponsiveTest"` —
+  BUILD SUCCESSFUL; `LogScreenTest` 20/20 (was 8/20), every other suite unaffected (`RowsTest` 27/27,
+  `AttributionMarkerTest` 12/12, `LogRowResponsiveTest` 5/5).
+- `.\gradlew.bat :app:ktlintFormat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, both clean;
+  `git status --short` confirmed only the 3 intended files touched.
+- `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` / `coverageMatrixCheck` — `419 requirements, 191 covered` (unchanged),
+  up to date.
+
+**Left open:**
+- The "Left open" items from the earlier WP5 entries above are unchanged by this follow-up.
+- If T02/DG03/FQ02 are ever changed to reuse `LogRow` directly, that embedding would need its own
+  `showScore` decision at that time — not applicable today.
+
 ---
 
 ## 2026-09-08 (ui-conformance WP4: Now home, capture status surface, level meter, live-bar feed)

@@ -4,7 +4,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -97,7 +97,10 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("(captured, not yet transcribed)").assertExists()
+        // R-380/R-381 (WP2, main 6cea753): `LogRow`'s own outer node now `clearAndSetSemantics`
+        // for one explicit merged description — its inner `Text`s are only reachable on the
+        // unmerged tree now (`ui/components/RowsTest.kt`'s own equivalent note).
+        composeTestRule.onNodeWithText("(captured, not yet transcribed)", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -124,7 +127,8 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("REVISED").assertExists()
+        // R-380/R-381: see the note above — `LogRow`'s badge `Text` is only reachable unmerged now.
+        composeTestRule.onNodeWithText("REVISED", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -148,15 +152,21 @@ class LogScreenTest {
         }
 
         // The state — the marker shape — is never omitted, on every one of the four closed states.
-        fun marker(description: String) = composeTestRule.onNodeWithContentDescription(description, substring = true)
+        // R-380/R-381: `AttributionRow`'s own contentDescription node sits inside `LogRow`'s outer
+        // `clearAndSetSemantics` boundary now, so it is only reachable on the unmerged tree.
+        fun marker(description: String) = composeTestRule.onNodeWithContentDescription(
+            description,
+            substring = true,
+            useUnmergedTree = true,
+        )
         marker("filled circle, Confirmed, W7NPC").assertExists()
         marker("outlined circle, Inferred, K7LWH").assertExists()
         marker("half-filled circle, Ambiguous").assertExists()
         marker("small dot, Unknown, unknown station").assertExists()
 
         // The score chip is visible text beside INFERRED only — never a number on CONFIRMED.
-        composeTestRule.onNodeWithText("0.82").assertExists()
-        composeTestRule.onNodeWithText("0.95").assertDoesNotExist()
+        composeTestRule.onNodeWithText("0.82", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithText("0.95", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
@@ -185,11 +195,16 @@ class LogScreenTest {
         }
 
         // The kept candidate renders in the row's own visible text (guide: primary in text/high)...
-        composeTestRule.onNodeWithText("KE7QRS").assertExists()
+        // R-380/R-381: only reachable on the unmerged tree now — see the note above.
+        composeTestRule.onNodeWithText("KE7QRS", useUnmergedTree = true).assertExists()
         // ...and the merged marker description names both — the kept candidate, then "or" the
         // alternate — never just the alternate on its own (the bug R-240 named).
         composeTestRule
-            .onNodeWithContentDescription("half-filled circle, Ambiguous, KE7QRS, or KE7QRF", substring = true)
+            .onNodeWithContentDescription(
+                "half-filled circle, Ambiguous, KE7QRS, or KE7QRF",
+                substring = true,
+                useUnmergedTree = true,
+            )
             .assertExists()
     }
 
@@ -207,7 +222,10 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("roger that").performClick()
+        // R-380/R-381: the transcript `Text` is only reachable unmerged now; `performClick()` on it
+        // still dispatches a real touch at that node's own on-screen position, which the row's own
+        // outer `clickable` (unaffected by the semantics change) picks up exactly as before.
+        composeTestRule.onNodeWithText("roger that", useUnmergedTree = true).performClick()
 
         assert(opened == "TX1") { "expected TX1 to be opened but was $opened" }
     }
@@ -232,7 +250,9 @@ class LogScreenTest {
         }
 
         composeTestRule.onNodeWithText("Log").assertExists()
-        composeTestRule.onNodeWithText("All").assertExists()
+        // R-380/R-381: `FilterChip`'s own label is only reachable unmerged now (its outer node
+        // `clearAndSetSemantics`-es an explicit `contentDescription` instead).
+        composeTestRule.onNodeWithText("All", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithText("No overs yet.").assertExists()
         composeTestRule
             .onNodeWithText("Listening since 23:32. The first one appears here the moment squelch opens.")
@@ -425,8 +445,9 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("hearing…").assertExists()
-        composeTestRule.onNodeWithText("and we're clear on the rep").assertExists()
+        // R-380/R-381: see the note above — `LogRow`'s inner `Text`s are only reachable unmerged.
+        composeTestRule.onNodeWithText("hearing…", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithText("and we're clear on the rep", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -444,7 +465,8 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("resolving…").assertExists()
+        // R-380/R-381: see the note above.
+        composeTestRule.onNodeWithText("resolving…", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -461,7 +483,9 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Filter").performClick()
+        // R-380: `TextAction`'s own label is only reachable unmerged now (its outer node
+        // `clearAndSetSemantics`-es an explicit `contentDescription` instead).
+        composeTestRule.onNodeWithText("Filter", useUnmergedTree = true).performClick()
 
         assert(clicked) { "expected the Filter action to invoke its callback" }
     }
@@ -480,7 +504,8 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Rejected").performClick()
+        // R-380/R-381: `FilterChip`'s own label is only reachable unmerged now — see the note above.
+        composeTestRule.onNodeWithText("Rejected", useUnmergedTree = true).performClick()
 
         assert(selected == LogQuickFilterId.Rejected) { "expected the Rejected chip to be selected but was $selected" }
     }
@@ -537,13 +562,17 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("TX-in-window transcript").assertExists()
-        composeTestRule.onNodeWithText("TX-out-of-window transcript").assertDoesNotExist()
-        composeTestRule.onNodeWithText("TX-other-freq transcript").assertDoesNotExist()
+        // R-380/R-381: `LogRow`'s transcript `Text` is only reachable unmerged now.
+        composeTestRule.onNodeWithText("TX-in-window transcript", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithText("TX-out-of-window transcript", useUnmergedTree = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("TX-other-freq transcript", useUnmergedTree = true).assertDoesNotExist()
         // "145.230" also appears in the matching row's own frequency column, so this narrows to the
         // quick-filter chip specifically by its `Role.Checkbox` (`FilterChip`'s own `.selectable`
-        // role — the row is a plain `Role.Button`).
-        val chipMatcher = hasText("145.230") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox)
+        // role — the row is a plain `Role.Button`). R-380/R-381: `FilterChip`'s own outer node now
+        // `clearAndSetSemantics`-es an explicit `contentDescription = label`, not a `Text` property,
+        // so this matches on content description rather than `hasText`.
+        val chipMatcher = hasContentDescription("145.230") and
+            SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox)
         composeTestRule.onNode(chipMatcher).assertIsSelected()
     }
 
@@ -573,9 +602,14 @@ class LogScreenTest {
         }
 
         // The visible callsign, primary in `text/high` (guide: never just the alternate alone).
-        composeTestRule.onNodeWithText("KE7QRS").assertExists()
+        // R-380/R-381: only reachable on the unmerged tree now — see the note above.
+        composeTestRule.onNodeWithText("KE7QRS", useUnmergedTree = true).assertExists()
         composeTestRule
-            .onNodeWithContentDescription("half-filled circle, Ambiguous, KE7QRS, or KE7QRF", substring = true)
+            .onNodeWithContentDescription(
+                "half-filled circle, Ambiguous, KE7QRS, or KE7QRF",
+                substring = true,
+                useUnmergedTree = true,
+            )
             .assertExists()
     }
 }
