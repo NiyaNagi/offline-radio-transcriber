@@ -4,14 +4,20 @@ import android.Manifest
 import android.app.Application
 import android.content.Intent
 import android.os.Looper
+import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.Description
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import org.ort.app.MainActivity
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.navigation.ReaderDestination
@@ -20,6 +26,7 @@ import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.util.ReflectionHelpers
 
 /**
@@ -317,5 +324,86 @@ class SetupActivityTest {
                 .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE),
         )
         assertEquals(null, store.radioChoice)
+    }
+
+    // --- WP12 screenshot-tour seam: EXTRA_FONT_SCALE renders Setup at a chosen scale in-process ---
+
+    /**
+     * The tour (package `org.ort.app.debug.tour`) reaches font scale 2.0 this way
+     * rather than the *system* `font_scale` setting, which needs a relaunch and starves the one
+     * emulator both the tour and a validator's own manual walk depend on — [SetupActivity]'s own
+     * class doc has the full account. A fresh install (no `SharedPreferences` written) naturally
+     * resumes on S01 ([WelcomeScreen]) with no setup needed, so this drives the real `Activity`
+     * straight, no fabricated shortcut, comparing the *same* title node's real rendered height with
+     * and without the extra.
+     *
+     * [GraphicsMode.Mode.NATIVE] is scoped to this one test method, not the module (a
+     * `robolectric.properties` blanket override was tried first and reverted -- it broke text
+     * measurement in several other suites' own tests elsewhere in `:app`, e.g. `CaptureStatusScreenTest`
+     * and `FailureScreensTest`, presumably by changing how those screens' own layouts settle under a
+     * real graphics shadow rather than the legacy one they were written against). Robolectric's
+     * *default* graphics shadow does not vary `Text` measurement with [LocalDensity]'s `fontScale` at
+     * all (confirmed by an isolated probe: identical measured height at 1.0 and 2.0); `NATIVE` is the
+     * one Robolectric mode that does.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_TOUR_setup_font_scale a 2_0 extra renders the S01 title at twice the height of the 1_0 case`() {
+        val heightAt1x = welcomeTitleHeightPx(fontScale = null)
+        val heightAt2x = welcomeTitleHeightPx(fontScale = 2.0f)
+
+        // A wrapped, multi-line Text's total block height need not double *exactly* (line-wrap
+        // points can shift, and this real title's own line count is not a clean multiple at every
+        // scale -- confirmed directly: 96px -> 172px, a genuine ~1.79x, not a rounding artefact),
+        // so this allows a real tolerance rather than bit-exact equality -- still tight enough that
+        // a scale left un-applied (ratio ~=1.0) or halved (a sign bug) fails immediately.
+        val ratio = heightAt2x.toDouble() / heightAt1x.toDouble()
+        assertTrue(
+            "expected the S01 title to render at roughly twice the height at fontScale 2.0 " +
+                "(1x=$heightAt1x px, 2x=$heightAt2x px, ratio=$ratio)",
+            ratio in 1.6..2.3,
+        )
+    }
+
+    /** Real rendered height (px) of S01's own title node — `null` launches with no
+     * [SetupActivity.EXTRA_FONT_SCALE] extra at all (platform default), a real value sets it. Builds
+     * the same [AndroidComposeTestRule] `createAndroidComposeRule<SetupActivity>()` itself builds
+     * internally, given an [ActivityScenarioRule] constructed from a caller-chosen `Intent` instead
+     * of a bare activity class -- `ReaderActivityDestinationSmokeTest.runReaderActivity`'s own
+     * established pattern for exactly this seam (a fixed default launch intent has no way to carry
+     * a per-test extra), applied and evaluated manually since the intent must be built before this
+     * rule can exist, not before JUnit has picked a `@Test` method to run. */
+    private fun welcomeTitleHeightPx(fontScale: Float?): Int {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val intent = Intent(context, SetupActivity::class.java).apply {
+            if (fontScale != null) putExtra(SetupActivity.EXTRA_FONT_SCALE, fontScale)
+        }
+        val activityRule = ActivityScenarioRule<SetupActivity>(intent)
+        val rule = AndroidComposeTestRule(activityRule) { r ->
+            var activity: SetupActivity? = null
+            r.scenario.onActivity { activity = it }
+            checkNotNull(activity) { "SetupActivity did not reach RESUMED" }
+        }
+        var heightPx = -1
+        val statement = object : Statement() {
+            override fun evaluate() {
+                rule.waitForIdle()
+                heightPx = rule.onNodeWithText(WELCOME_TITLE_TEXT).fetchSemanticsNode().size.height
+                rule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+            }
+        }
+        val description = Description.createTestDescription(
+            SetupActivityTest::class.java,
+            "welcomeTitleHeightPx[fontScale=$fontScale]",
+        )
+        rule.apply(statement, description).evaluate()
+        check(heightPx >= 0) { "welcomeTitleHeightPx never measured a real height" }
+        return heightPx
+    }
+
+    private companion object {
+        /** [WelcomeScreen]'s own title text, `WelcomeHeader`'s own literal — kept as one constant
+         * here rather than re-typed at each call site. */
+        const val WELCOME_TITLE_TEXT = "Everything your radio heard, written down, on this phone only."
     }
 }

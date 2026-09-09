@@ -12,10 +12,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
@@ -55,6 +58,21 @@ import org.ort.pipeline.capture.RigStatus
  * cold start, not on every [refreshStep] call: after the initial jump, normal forward/back
  * navigation and any later `onResume` re-check behave exactly as they did before this extra
  * existed.
+ *
+ * [EXTRA_FONT_SCALE] (ui-conformance-plan WP9, screenshot-tour seam for WP12): the screenshot tour
+ * (package `org.ort.app.debug.tour`, under this app module's own `debug` source set) captures Setup
+ * steps by launching this activity with [EXTRA_STEP] directly — but reaching font scale 2.0 the same
+ * way would mean changing the *system* `font_scale` setting, which needs an activity relaunch to
+ * take effect and starves the one emulator the tour and a validator's own manual walk both depend
+ * on. Read once in [onCreate], the same way [EXTRA_STEP] is: when the intent carries this extra,
+ * [LocalDensity] is overridden for the whole Setup composition with a [Density] at the *same* pixel
+ * density the platform already reports ([LocalDensity.current] itself, read before the override —
+ * never a hardcoded `1f`, which would be wrong on any real device) and the requested `fontScale`, so
+ * every Setup screen renders at that scale in-process, no system setting touched and no relaunch
+ * needed. Absence of the extra changes nothing at all — the composition is never wrapped, so an
+ * ordinary launch still reads the real platform [LocalDensity] exactly as before this existed;
+ * debug/tooling-only in effect (the tour is itself part of the `debug` source set, never compiled
+ * into a release build), and harmless there regardless, since no launcher sets it.
  *
  * Every screen composable this class dispatches to stays a pure function of a view-state (guide's
  * own rule) — all `Context`/coroutine/IO work lives here, in the one place allowed to touch it.
@@ -96,8 +114,16 @@ public class SetupActivity : ComponentActivity() {
         selectedInputId = store.selectedInputId
         selectedInputLabel = store.selectedInputLabel
 
+        val fontScaleOverride = intent?.takeIf { it.hasExtra(EXTRA_FONT_SCALE) }?.getFloatExtra(EXTRA_FONT_SCALE, 1f)
         setContent {
-            OrtTheme { RenderStep() }
+            if (fontScaleOverride != null) {
+                val platformDensity = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(platformDensity.density, fontScaleOverride)) {
+                    OrtTheme { RenderStep() }
+                }
+            } else {
+                OrtTheme { RenderStep() }
+            }
         }
         if (!tryOpenAtRequestedStep(intent?.getStringExtra(EXTRA_STEP))) refreshStep()
     }
@@ -589,6 +615,11 @@ public class SetupActivity : ComponentActivity() {
     internal companion object {
         /** See this class's own doc comment. The name of a [SetupStep] entry, e.g. `"INPUT"`. */
         const val EXTRA_STEP: String = "step"
+
+        /** See this class's own doc comment. A `Float` `fontScale`, e.g. `2.0f`. Absent means
+         * "render at the platform's own font scale" — never assume `1.0f` means the same thing as
+         * absence; they differ whenever the platform's own real setting is not already `1.0`. */
+        const val EXTRA_FONT_SCALE: String = "font_scale"
 
         const val TAG = "SetupActivity"
         const val REQUEST_CODE = 1002
