@@ -10201,6 +10201,126 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 11 · R-422 first-frame clipping, R-423 inline source-over link, R-425 real chooser evidence, R-426 pass-failure header/retry line, D07 seam for WP12's tour
+
+**Scope:** `:app`, this package's own files — `ui/screens/{TransmissionDetailScreen,TransmissionDetailContent}.kt`,
+`ui/data/{DetailViewState,CorrectionPolling}.kt`, and their tests (a new
+`RejectedDetailScreenTest.kt`, split from `TransmissionDetailScreenTest.kt` for `LargeClass`;
+extensions to `TransmissionDetailScreenTest.kt`/`TransmissionDetailContentTest.kt`/
+`CorrectionPollingInspectionTest.kt`). Reviewer B's capture review at e927690; `git merge main`
+(HEAD was behind — `3baef8b`, fast-forward, no conflicts in any file this package owns). **Gate
+per the coordinator's load policy:** `:app:testDebugUnitTest --tests` scoped to touched classes,
+`:app:ktlintCheck :app:detekt`, `dependencyRules platformGuards`, `:app:assembleDebug`,
+`spec_check.py`, `coverageMatrix` then `coverageMatrixCheck` — no whole-project `build`, no
+un-scoped `:app:testDebugUnitTest`.
+
+**Requirements/ACs:** R-422 (spec, fixed), R-423 (design, fixed), R-425 (spec, fixed), R-426
+(design, partial — header/retry-limit line fixed, per-attempt list reported as a `:pipeline`/
+`:data` schema gap); D02/D03/F18, FR-UI-4; constitution I (never fabricate — the R-426 per-attempt
+list stays named as unbuilt rather than invented), II (fake ships unchanged — no new interface
+method needed), III (nothing deleted quietly).
+
+**Constitution Check.** Principle I governs every row this round: R-426's new retry-limit line
+states only what `WorkQueue.failPass`'s own real logic guarantees — a terminally FAILED item's
+stored `attemptCount` equals the value that tripped `attempts >= maxAttempts`
+(`data/src/main/kotlin/org/ort/data/WorkQueue.kt`'s `DEFAULT_MAX_ATTEMPTS = 5`, both real call
+sites use the default) — so "Retry limit reached after N attempts" is a true, disclosed structural
+fact, never a guess; the per-attempt timestamp/reason list `Fail-Pass.dc.html` also draws is
+**not** built, because `WorkQueueItemEntity` (confirmed unchanged after this merge) still stores
+only the aggregate `attemptCount`/`lastError`, not a history table — reported to the coordinator to
+route to `:pipeline`, not silently approximated from the aggregate. R-423 is principle I from the
+other direction: the removed "Confidence 0.82." sentence was never wrong, but it duplicated the
+score the chip beside the callsign already carries, so keeping it was a redundant, not an honest,
+disclosure — `Detail.dc.html` itself carries the score in exactly one place. R-425's evidence is
+built entirely from real `:data` reads (`TransmissionDao.listAll()` filtered by `stationId`,
+`CatalogDao.voiceprintsForStation`) — no candidate's heard-count, last-heard time, or voice-match
+bit is fabricated; a candidate with no evidence lookup (e.g. a pre-fetch render) still falls back
+to the old, honest `databaseHit`/`ituCountry` phrasing rather than showing nothing.
+
+**What changed:**
+
+1. **R-422 (spec), fixed.** Same first-frame-clipping class as R-360/R-292 (Robolectric cannot
+   observe it — confirmed by device screenshot only). `TransmissionDetailScreen`'s root layout
+   changed from a plain `Column(fillMaxSize) { Column(weight(1f).verticalScroll) { … }; BottomActionBar(…) }`
+   to `FailureActionBarScaffold` (`ui/failures/FailureActionBarScaffold.kt`, WP11b's file, reused
+   per the coordinator's explicit round-11 instruction — disclosed here as out-of-scope-but-directed,
+   same precedent as R-323's `PriorBar` reuse): the bar is subcomposed first, and the scrollable
+   content slot is height-constrained to `viewport − barHeight`, so content can never render behind
+   or through the pinned bar at any scroll offset, first frame included. Verified on
+   `emulator-5558`: `scenario-overnight-tx02` (the real K7LWH/INFERRED fixture row, found by
+   querying the device's own `ort.db` directly — no synthetic id), font scale 2.0, deep-linked via
+   `ScenarioReaderActivity --es nav_open_transmission_id`; screenshot at
+   `results/ui-audit/overnight/D02-inferred-r422-after@2x.png` shows content rendering continuously
+   from the header through the "Why this callsign" section down to the pinned `Not right?`/`Confirm`
+   bar, no blank gap. Font scale reset to 1.0 after.
+2. **R-423 (design), fixed.** `Detail.dc.html`'s own inline link — the source-over's real timestamp
+   is itself the tappable span ("Matched by voice to `20:02:28`, where the callsign was heard
+   clearly."), styled the board's accent green, via `ClickableText`/`buildAnnotatedString`/
+   `pushStringAnnotation`. The separate `TextAction(text = "Open the source over", …)` line and the
+   `confidenceClause` (" Confidence 0.82.") string-append are both removed — neither exists on the
+   board. New `DetailBodyViewState.Inferred.sourceOverTimeLabel: String?` carries the real label
+   (falls back to the generic phrase "the source over" only when no time is known, never a
+   fabricated one). Extracted `internal fun buildInferredExplanationText`/`sourceIdAtOffset` (the
+   same `internal`-for-direct-testability precedent `highlightedTranscript`/`scrubFraction` already
+   set) so the span/tag/colour are asserted without Compose. Confirmed together with R-422 in the
+   same device screenshot — no separate "Open the source over" line, no "Confidence 0.82." sentence.
+   Tests named `R_423`: two on `buildInferredExplanationText` (tags exactly the time-label span;
+   falls back to the generic phrase), one asserting the old line's absence and the CONFIRMED chip's
+   `Confidence` text stays chip-only (`FR_UI_4`, renamed to say so).
+3. **R-425 (spec), fixed.** D03 chooser rows now carry distinct, real per-candidate evidence — heard
+   count, last-heard time, voice match — instead of both candidates reading the same generic "a
+   known station · United States". New `CorrectionPolling.ambiguousCandidateEvidence` reads
+   `TransmissionDao.listAll()` filtered by each candidate's callsign for heard-count and the latest
+   `startedAtUtc` (via the existing `ReaderTransmissionViewStateMapper.timeLabel` for consistent
+   formatting), and cross-references the current over's own `TransmissionEntity.voiceprintId`
+   against `CatalogDao.voiceprintsForStation(callsign)` for "voice match" — the strongest honest
+   signal available (never a promotion to CONFIRMED; this is D03 evidence, not an attribution
+   write). `DetailViewStateMapper.from` gained a defaulted `ambiguousEvidence` parameter so every
+   existing call site (including `ReaderPolling.kt`) compiles unchanged;
+   `TransmissionDetailContent.pollDetail()` fetches it only when `attribution.state == AMBIGUOUS`,
+   for the top-ranked candidate callsigns. A candidate absent from the lookup (or before the fetch
+   lands) still falls back to the old `databaseHit`/`ituCountry` phrasing, never a blank row. Tests
+   named `R_425`: `CorrectionPollingInspectionTest` (real DAO round trip — heard-count and
+   last-heard from real past transmissions; voice-match true only for the over's own bound
+   voiceprint), `TransmissionDetailScreenTest` (the mapper renders "heard 4 times", "last …", "voice
+   match", "never heard before" from a hand-built evidence map, never the generic fallback when
+   evidence is present).
+4. **R-426 (design), partial.** `F18`'s header now reads `What went wrong · 3 attempts` (was
+   `3 times` — the board's own header wording, kept distinct from the prose sentence's "errored 3
+   times"). A new retry-limit line — "Retry limit reached after 3 attempts. Marked failed; the queue
+   continued without it." — follows the last-error line, using the real, stored `attemptCount` (see
+   Constitution Check above for why this is honest, not approximated). **Not built:** the
+   per-attempt list itself (each attempt's own timestamp and reason, `Fail-Pass.dc.html`'s section 1
+   body) — `WorkQueueItemEntity` (re-confirmed unchanged after this round's merge) has no history
+   table, only the aggregate `attemptCount`/`lastError`; reported to the coordinator to route to
+   `:pipeline`. Test named `R_426`: the retry-limit line's tag and exact text.
+5. **Seam, for WP12's tour.** `TransmissionDetailContent(initialRevisionsOpen: Boolean = false)` —
+   when `true`, `destination` initializes directly to `DetailDestination.Revisions` (D07), skipping
+   the real tap on the "N earlier versions" link the tour would otherwise have to simulate. No
+   equivalent seam was added for `Why` (D05) or the rejected state: `Why` is already reachable by a
+   real tap the tour performs (it is a destination toggle, not a multi-step flow), and rejected is
+   not a destination at all — `DetailViewState.rejected` is derived automatically from the real
+   `processingState`, so a tour scenario reaches it by seeding a rejected transmission, not by a
+   parameter. Test named `seam_initialRevisionsOpen_reaches_D07_directly_with_no_tap` — reuses
+   `R_194`'s own real two-transcript-version fixture and its documented wait-order (the async "2
+   versions" text must be waited on before the static closing note, or the final assertion races the
+   revisions fetch — the same race `R_194`'s own comment already names, hit and fixed once in this
+   round's own new test before the gate went green).
+
+**Verified (scoped gate, per the coordinator's load policy):** `:app:testDebugUnitTest --tests`
+covering every touched class (`TransmissionDetailScreenTest`, `RejectedDetailScreenTest`,
+`TransmissionDetailContentTest`, `CorrectionPollingInspectionTest`) — 62 tests, all clean, run
+together; `:app:ktlintCheck :app:detekt` (clean); `dependencyRules platformGuards` (clean — no new
+cross-module edge; `FailureActionBarScaffold` reuse is an intra-`:app` import, not a new module
+dependency); `python tools\spec-check\spec_check.py` (`spec-check: OK`); `coverageMatrix` then
+`coverageMatrixCheck` (separate invocations, both clean); `:app:assembleDebug` (clean, fresh
+compile confirmed — `:app:compileDebugKotlin` executed, not `UP-TO-DATE`) — the same fresh build
+installed for the R-422/R-423 device screenshot above.
+
+**Left open:** R-426's per-attempt timestamp/reason list — a `:pipeline`/`:data` schema gap
+(`WorkQueueItemEntity` needs a per-attempt history table), not something this round's `:app`-only
+scope can build honestly. No other new gaps this round.
+
 ### (pending) — ui-conformance WP6 round 10 · R-320 per-slot lattice grid, R-182 char-span highlight, R-321 undo restores the exact recorded prior
 
 **Scope:** `:app`, this package's own files — `ui/data/InspectionSurface.kt`,

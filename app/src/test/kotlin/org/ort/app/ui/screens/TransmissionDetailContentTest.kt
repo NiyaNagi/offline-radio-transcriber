@@ -470,7 +470,10 @@ class TransmissionDetailContentTest {
         composeTestRule.waitUntilTextExists("00:00:00")
 
         composeTestRule.onNodeWithText("00:00:00", substring = true).assertExists()
-        composeTestRule.onNodeWithText("Open the source over").assertExists()
+        // R-423 (design): the timestamp itself is the inline link now — the separate "Open the
+        // source over" line, and the "Confidence 0.82." sentence, are both gone.
+        composeTestRule.onNodeWithText("Open the source over").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Confidence", substring = true).assertDoesNotExist()
     }
 
     // ---- R-153, F18 Fail-Pass, FR-RUN-9 ----
@@ -692,5 +695,72 @@ class TransmissionDetailContentTest {
                     "Nothing here can be deleted from this screen — retention handles audio, and never transcripts.",
             )
             .assertExists()
+    }
+
+    /**
+     * Seam, register the tour's own ask: `initialRevisionsOpen = true` reaches D07
+     * (`Detail-Revisions.dc.html`) directly, with no tap at all — the same real fixture shape
+     * `R_194` above uses, proving the seam actually renders real revision data, not an empty stub.
+     */
+    @Test
+    fun `seam_initialRevisionsOpen_reaches_D07_directly_with_no_tap`() {
+        val txId = "TXREVSEAM"
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission(txId, stationId = "W7NPC"))
+            db.transcriptDao().insert(
+                TranscriptEntity(
+                    id = "$txId-t1",
+                    transmissionId = txId,
+                    pass = TranscriptPass.A,
+                    text = "and we're clear on the repeater, seven th",
+                    modelId = "whisper-small",
+                    modelVersion = "1",
+                    quantization = null,
+                    decodeParams = null,
+                    noSpeechProb = null,
+                    confidence = null,
+                    isCurrent = false,
+                    createdAt = 10L,
+                ),
+            )
+            db.transcriptDao().insert(
+                TranscriptEntity(
+                    id = "$txId-t2",
+                    transmissionId = txId,
+                    pass = TranscriptPass.B,
+                    text = "and we're clear on the repeater, seven three",
+                    modelId = "whisper-small",
+                    modelVersion = "1",
+                    quantization = null,
+                    decodeParams = null,
+                    noSpeechProb = null,
+                    confidence = 0.9,
+                    isCurrent = true,
+                    createdAt = 20L,
+                ),
+            )
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = txId,
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                    initialRevisionsOpen = true,
+                )
+            }
+        }
+
+        composeTestRule.waitUntilTextExists("Earlier versions")
+        // Same race R_194 above already documents: the closing note is static and present even
+        // before the revisions fetch lands, so it must not be waited on first — wait on the real,
+        // async "2 versions" text before asserting either.
+        composeTestRule.waitUntilTextExists("2 versions")
+        composeTestRule.waitUntilTextExists("Nothing here can be deleted from this screen")
+        composeTestRule.onNodeWithText("2 versions", substring = true).assertExists()
     }
 }
