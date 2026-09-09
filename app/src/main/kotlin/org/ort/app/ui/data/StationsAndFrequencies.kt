@@ -225,8 +225,45 @@ public data class FrequencyDetailViewState(
 // Frequency-Change (R-074) — Frequency-Change.dc.html.
 // -------------------------------------------------------------------------------------------
 
-/** One `WHAT MADE IT BUSY` line on `Frequency-Change.dc.html` (R-074) — honestly derived only. */
-public data class FrequencyChangeCause(val label: String, val isUnidentified: Boolean = false)
+/**
+ * R-591 (register, design): what *kind* of thing a [FrequencyChangeCause] is, so the closing
+ * paragraph can narrate it in a real sentence ([narrateFrequencyChangeCause]) instead of splicing
+ * the list's own dotted `label` text mid-sentence. [ACTIVATION] and [NET] are not produced by
+ * [FrequencyPolling.frequencyChange] today (this package's own read path builds neither a
+ * thread/session-wide correlation nor a per-night net-slot match — see [FrequencyChangeViewState]'s
+ * own doc comment) — named here so a future cause of either kind narrates correctly the moment one
+ * exists, never silently falling back. [UNKNOWN] is the honest default: a cause this package
+ * cannot narrate as a full sentence (today, [NEW_STATION] causes and an unidentified-voices cause
+ * both stay tagged appropriately, never guessed into a kind that would over-claim).
+ */
+public enum class FrequencyChangeCauseKind { ACTIVATION, NEW_STATION, NET, UNKNOWN }
+
+/** One `WHAT MADE IT BUSY` line on `Frequency-Change.dc.html` (R-074) — honestly derived only.
+ * [subjectId] (a station id, today) is the one extra fact [narrateFrequencyChangeCause] needs to
+ * narrate a [FrequencyChangeCauseKind.NEW_STATION] cause as a full sentence — kept separate from
+ * [label], which stays exactly the list's own dotted facts, never itself spliced into prose. */
+public data class FrequencyChangeCause(
+    val label: String,
+    val isUnidentified: Boolean = false,
+    val kind: FrequencyChangeCauseKind = FrequencyChangeCauseKind.UNKNOWN,
+    val subjectId: String? = null,
+)
+
+/**
+ * R-591 (register, design): the real narrated sentence fragment for [cause] — "an activation
+ * pulled the regulars over", "a station heard for the first time, `<id>`, brought the regulars
+ * out", "the weekly net ran here" — or `null` when [cause] cannot honestly be narrated as a full
+ * sentence (its own kind is [FrequencyChangeCauseKind.UNKNOWN], or a [FrequencyChangeCauseKind.NEW_STATION]
+ * cause is missing the [FrequencyChangeCause.subjectId] it needs). A `null` result is the caller's
+ * own cue to fall back to the honest "see What made it busy above" pointer rather than a fragment.
+ */
+public fun narrateFrequencyChangeCause(cause: FrequencyChangeCause): String? = when (cause.kind) {
+    FrequencyChangeCauseKind.ACTIVATION -> "an activation pulled the regulars over"
+    FrequencyChangeCauseKind.NEW_STATION ->
+        cause.subjectId?.let { id -> "a station heard for the first time, $id, brought the regulars out" }
+    FrequencyChangeCauseKind.NET -> "the weekly net ran here"
+    FrequencyChangeCauseKind.UNKNOWN -> null
+}
 
 /**
  * A real, honestly-derived time window (R-276, register) — `FrequencyChangeScreen`'s "The N

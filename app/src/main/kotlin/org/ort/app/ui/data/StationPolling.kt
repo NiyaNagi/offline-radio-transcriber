@@ -601,7 +601,13 @@ public object FrequencyPolling {
             val firstHeardAt = station?.firstHeardAt
             if (firstHeardAt != null && latestSession != null && firstHeardAt >= latestSession.startedAt) {
                 val count = tonightTx.count { it.stationId == stationId }
-                causes.add(FrequencyChangeCause("$stationId · ${pluralize(count, "over")} · first time heard"))
+                causes.add(
+                    FrequencyChangeCause(
+                        label = "$stationId · ${pluralize(count, "over")} · first time heard",
+                        kind = FrequencyChangeCauseKind.NEW_STATION,
+                        subjectId = stationId,
+                    ),
+                )
             }
         }
         val unidentifiedTonight = tonightTx.filter { it.attributionState == AttributionState.UNKNOWN }
@@ -629,17 +635,20 @@ public object FrequencyPolling {
         } else {
             "Tonight · ${pluralize(overCount, "over")} where the usual is $usualTotalLabel"
         }
-        // R-275/R-563: the board's full closing paragraph, not just its first sentence, and
-        // stating the real reason itself (R-563, register: "an activation pulled the regulars
-        // over" in the board's own example) rather than deflecting to "see What made it busy
-        // above" — [causes] is the exact same source that section renders, so its own primary
-        // (first) entry's label is what the sentence names; never a fabricated reason when there
-        // is none to point at.
+        // R-275/R-563/R-591: the board's full closing paragraph, not just its first sentence, and
+        // stating the real reason as a real *narrated* sentence (R-591: "an activation pulled the
+        // regulars over", never the raw dotted list-item text R-563's own fix spliced in) —
+        // [narrateFrequencyChangeCause] turns the primary (first) cause's own kind into that
+        // sentence, or `null` when it cannot be narrated honestly, in which case this falls back
+        // to the same "see What made it busy above" pointer R-563 replaced for every narratable
+        // cause — a fragment is worse than a pointer, never the other way round.
         val explanationParagraph = buildString {
             append("A departure is a finding, not an alarm.")
             val primaryCause = causes.firstOrNull()
-            if (primaryCause != null) {
-                append(" This one has an explanation — ${primaryCause.label}.")
+            val narrated = primaryCause?.let { narrateFrequencyChangeCause(it) }
+            when {
+                narrated != null -> append(" This one has an explanation — $narrated.")
+                primaryCause != null -> append(" This one has an explanation — see What made it busy above.")
             }
             append(
                 " It will appear in tonight's digest, and will not change what \"usual\" means " +

@@ -154,4 +154,50 @@ class StationsAndFrequenciesTest {
 
         assertEquals("", label)
     }
+
+    // --- R-591: FQ03's closing paragraph narrates a cause from its kind, never the raw list text ---
+
+    @Test
+    fun `R_591 an activation cause narrates as a real sentence`() {
+        val cause = FrequencyChangeCause(
+            label = "K-4412 activation",
+            kind = FrequencyChangeCauseKind.ACTIVATION,
+        )
+
+        assertEquals("an activation pulled the regulars over", narrateFrequencyChangeCause(cause))
+    }
+
+    @Test
+    fun `R_591 a new-station cause narrates the real callsign, never a fragment of the list label`() {
+        val cause = FrequencyChangeCause(
+            label = "KE7QRS · 1 over · first time heard",
+            kind = FrequencyChangeCauseKind.NEW_STATION,
+            subjectId = "KE7QRS",
+        )
+
+        assertEquals(
+            "a station heard for the first time, KE7QRS, brought the regulars out",
+            narrateFrequencyChangeCause(cause),
+        )
+    }
+
+    @Test
+    fun `R_591 a net cause narrates as a real sentence`() {
+        val cause = FrequencyChangeCause(label = "Tuesday net", kind = FrequencyChangeCauseKind.NET)
+
+        assertEquals("the weekly net ran here", narrateFrequencyChangeCause(cause))
+    }
+
+    @Test
+    fun `R_591 an unknown-kind cause narrates to null, never a spliced fragment`() {
+        val unidentified = FrequencyChangeCause(label = "4 unidentified voices, 4 overs", isUnidentified = true)
+        val newStationWithNoSubject = FrequencyChangeCause(
+            label = "KE7QRS · 1 over · first time heard",
+            kind = FrequencyChangeCauseKind.NEW_STATION,
+            // subjectId omitted — the one fact the sentence needs is honestly absent.
+        )
+
+        assertNull(narrateFrequencyChangeCause(unidentified))
+        assertNull(narrateFrequencyChangeCause(newStationWithNoSubject))
+    }
 }
