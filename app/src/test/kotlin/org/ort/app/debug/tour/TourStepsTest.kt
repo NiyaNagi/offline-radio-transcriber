@@ -41,12 +41,13 @@ import java.io.File
  * failing test rather than a reviewer's own manual comparison.
  *
  * **Scope, stated plainly rather than silently narrowed**: this class covers every *destination*
- * step (composes the real [OrtNavHost] the same way [ScreenshotTourActivity] does) — 119 of
- * `tour.json`'s 138 steps at the time of writing (v5, register R-460, added `scroll: "end"`
+ * step (composes the real [OrtNavHost] the same way [ScreenshotTourActivity] does) — 123 of
+ * `tour.json`'s 142 steps at the time of writing (v5, register R-460, added `scroll: "end"`
  * variants of six existing destination steps plus five setup-only steps — the former are covered
  * here automatically since they carry the same `destination`/`drillIn` as their non-scrolled
  * sibling; [TourAccessibilityScroll] itself is exercised only on a real device, this class having
- * no window to scroll). The 19 *setup* steps are not covered here:
+ * no window to scroll; v6, WP8's `stationSubScreen` seam, added ST03/ST04 as four more destination
+ * steps). The 19 *setup* steps are not covered here:
  * `SetupActivity`'s screen rendering is a set of private methods on the `Activity` itself (see
  * `ScreenshotTourActivity`'s own doc comment, confirmed by reading `SetupActivity.kt`), so there is
  * no composable this class can call directly the way it calls `OrtNavHost` — their correctness rests
@@ -105,6 +106,16 @@ class TourStepsTest {
         drillIn["searchFiltersOpen"] == "true" -> Expected.Tag("search-filters-sheet")
         drillIn["logSheetOpen"] == "true" -> Expected.Text("Filter the log")
         drillIn.containsKey("transmission") -> Expected.Text("Log")
+        // ST03/ST04 (WP8's `initialSubScreen` seam): checked before the bare `station` branch
+        // below - `Station-Pattern`/`Station-Identity` draw their own `DrillInHeader` with
+        // `parentLabel` set to the station's own callsign/label (`StationPatternScreen.kt`/
+        // `StationIdentityScreen.kt`, confirmed by reading both before writing this), never the
+        // "Stations" origin-destination label the plain station root (ST02) shows - so the two
+        // real, on-screen titles this class already knows are real strings this app renders
+        // (`StationPatternScreen.kt`'s "When they are around", `StationIdentityScreen.kt`'s "How
+        // this station is known") are the honest check here, not a guessed one.
+        drillIn["stationSubScreen"] == "PATTERN" -> Expected.Text("When they are around")
+        drillIn["stationSubScreen"] == "IDENTITY" -> Expected.Text("How this station is known")
         drillIn.containsKey("station") -> Expected.Text("Stations")
         drillIn.containsKey("thread") -> Expected.Text("Threads")
         drillIn.containsKey("frequency") -> Expected.Text("Frequencies")

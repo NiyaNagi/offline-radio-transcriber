@@ -3,6 +3,7 @@ package org.ort.app.debug.tour
 import android.content.Context
 import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.LogFilterSelection
+import org.ort.app.ui.data.StationSubScreen
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.core.AttributionState
@@ -35,6 +36,11 @@ import org.ort.data.OrtDatabase
  *   always seeds *some* session, and the one this step just loaded is the only one a step naming no
  *   other scenario could sensibly mean), or a literal session id.
  * - `frequencyInitialView`: `Detail` | `Change`.
+ * - `stationSubScreen` (WP8's own seam, round 14): a [StationSubScreen] name — `PATTERN` (ST03) or
+ *   `IDENTITY` (ST04) — a companion to `station` the same way `frequencyInitialView` companions
+ *   `frequency`: meaningful only alongside a `station` key in the same step (a `stationSubScreen`
+ *   named with no `station` resolves a real [NavSeed.openStationSubScreen] that `OrtNavHost` never
+ *   reads, since it only seeds a station's sub-screen once [NavSeed.openStationId] itself is set).
  * - `settingsScreen`: a [SettingsScreenId] name — unchanged from v1, carried through [NavSeed] now
  *   instead of a separate parameter.
  * - `searchQuery` / `searchSubmit` / `searchFiltersOpen` (v4, round 14's `NavSeed` fields): a literal
@@ -59,6 +65,10 @@ public object TourIds {
             openStationId = drillIn["station"]?.let { resolveStationId(db, it) },
             openFrequencyHz = drillIn["frequency"]?.let { resolveFrequencyHz(it) },
             openThreadId = drillIn["thread"]?.let { resolveThreadId(db, sessionId, it) },
+            openStationSubScreen = drillIn["stationSubScreen"]?.let { name ->
+                StationSubScreen.entries.firstOrNull { it.name == name }
+                    ?: error("unknown stationSubScreen '$name' — expected PATTERN, IDENTITY or SPLIT")
+            },
             pendingLogFilter = resolveLogFilter(drillIn),
             openCaptureLevelMeter = drillIn["captureLevelMeter"]?.let { it.equals("true", ignoreCase = true) },
             pendingReviewSessionId = drillIn["reviewSession"]?.let { if (it == "self") sessionId else it },

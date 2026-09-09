@@ -32,6 +32,97 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP12c: screenshot tour — ST03/ST04 station sub-screens now seedable)
+
+### (pending) — ui-conformance WP12c · tour.json ST03/ST04 (Station-Pattern/Station-Identity), TourIds `stationSubScreen`
+
+**Scope:** `:app` — `app/src/debug/kotlin/org/ort/app/debug/tour/TourIds.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/TourSpec.kt`; tests
+`app/src/test/kotlin/org/ort/app/debug/tour/TourIdsTest.kt`,
+`app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt`; `tools/ui-audit/tour.json`;
+`results/ui-audit/README.md`. Worktree branch `worktree-wp12c` on main `933c523` (WP8's
+`933c523`/`d016e30` merge, which shipped the `StationDetailContent(initialSubScreen)` /
+`NavSeed.openStationSubScreen` / `nav_open_station_sub_screen` seam this entry consumes but does
+not touch).
+
+**Requirements/ACs:** R-276 follow-on (register, `NavSeed.openStationSubScreen`); FR-UI-9,
+FR-UI-11, FR-UI-12 (ST03/ST04 themselves, per `design/design-intent.md`'s own rows).
+
+**What changed:** Constitution Check — Principle VII (structural boundaries): no `ui/**`
+production file was touched (WP8 already shipped the seam this package only *consumes*, per this
+package's own file boundary — `ui/navigation/**` stays WP3's). Principle VI (never report a
+number without its fold/machine/provider): the new tests assert against real, on-screen strings
+this app actually renders (`StationPatternScreen.kt`'s "When they are around",
+`StationIdentityScreen.kt`'s "How this station is known"), confirmed by reading both files before
+writing the assertions, never a guessed string.
+
+1. `TourIds.resolveSeed` now resolves a `stationSubScreen` drillIn key (`PATTERN`|`IDENTITY`,
+   naming `org.ort.app.ui.data.StationSubScreen`) into `NavSeed.openStationSubScreen`, the same
+   `error(...)`-on-unknown-name pattern `frequencyInitialView`/`settingsScreen` already use.
+   Meaningful only alongside a `station` key in the same step (documented on both
+   `TourIds.resolveSeed` and `TourStep`'s own doc comments) — `OrtNavHost` only seeds a station's
+   sub-screen once `NavSeed.openStationId` is itself set.
+2. `TourStep.SUPPORTED_DRILL_IN_KEYS` now includes `stationSubScreen`; `TourStep`'s own doc
+   comment's stale "Still not seedable: Station's own Pattern/Identity sub-screen" note (written
+   before WP8 shipped the seam) is replaced with the real v6 account, including why there is no
+   fourth tour step for `Station`'s own Split sub-screen: `design/design-intent.md` lists no
+   `Station-Split.dc.html` board (checked `design/canvas/Station-*.dc.html` — only `Station`,
+   `Station-Pattern`, `Station-Identity` exist) — ST04's "Split cluster" action opens
+   `F10`/`Fail-Cluster.dc.html` instead, a different, already-independent screen id.
+3. `tools/ui-audit/tour.json`: four new steps under `stations-14-nights` (138 → 142 total, 123
+   destination steps) — `ST03-station-pattern`(`@2x`), `ST04-station-identity`(`@2x`), all
+   `{"station": "WA7HJR", "stationSubScreen": "PATTERN"|"IDENTITY"}` — `WA7HJR` matches ST01/ST02's
+   own existing steps and is the one station `StationsFixtures.kt` (WP8's fixture, `SPLIT_STATION`)
+   gives two real voiceprint clusters, so ST04's capture has a real, non-empty "Split" action to
+   show, and ST03 has fourteen real nights of hour-of-day data with a genuine not-listening hatch.
+4. `TourStepsTest.expectedForDrillIn` now checks `stationSubScreen` before the bare `station`
+   branch — `Station-Pattern`/`Station-Identity` draw their own `DrillInHeader` with `parentLabel`
+   set to the station's own callsign/label (confirmed by reading `StationPatternScreen.kt`/
+   `StationIdentityScreen.kt`), never the "Stations" origin-destination label the plain station
+   root (ST02) shows, so the generic `Expected.Text("Stations")` check would have false-passed on
+   a step that actually landed on the wrong (root) screen. Updated the class's own step-count doc
+   comment (119/138 → 123/142).
+5. `TourIdsTest`: `R_TOUR_IDS_STATION_SUB_SCREEN` (each of `PATTERN`/`IDENTITY` resolves to the
+   real enum value) and `R_TOUR_IDS_STATION_SUB_SCREEN_UNKNOWN` (an unrecognised name throws
+   `IllegalStateException`, not a silent null).
+6. `results/ui-audit/README.md`: documented the current, full `drillIn` key list (it had drifted
+   well past the v1 "only `settingsScreen` is honored" claim already, unrelated to this change) and
+   added a "v6 update" paragraph under "What v1 cannot capture" recording that ST03/ST04 are now
+   reachable and why Split still has no step.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.debug.tour.*'` — BUILD
+SUCCESSFUL, 30 tests, 0 failures (`TourIdsTest`'s two new tests and `TourStepsTest`'s
+`R_TOUR_STEPS` — which now covers all four new steps — seen passing; `R_TOUR_STEPS` fails loudly
+if a step's own screen assertion is wrong, proving ST03/ST04 land on the sub-screen, not the
+station root). `.\gradlew.bat :app:ktlintCheck` — BUILD SUCCESSFUL (one import-order violation in
+`TourIdsTest.kt` found and fixed during this session). `.\gradlew.bat :app:detekt` — 1 pre-existing
+weighted issue, `LongMethod` on `NavHostBody` (`OrtNavHost.kt:748`, 80/80) — confirmed via `git
+diff main -- app/.../OrtNavHost.kt` (empty) that this file is byte-identical to main and untouched
+by this package; the same finding WP8's own changelog entry above already recorded as
+pre-existing/WP3's. `.\gradlew.bat dependencyRules platformGuards` — BUILD SUCCESSFUL.
+`.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` —
+all 8 checks PASS. `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — both BUILD
+SUCCESSFUL, no diff to `results/coverage-matrix.md`. Device: `.\tools\ui-audit\install.ps1 -Port
+5558 -Clear` then `.\tools\ui-audit\tour.ps1 -Port 5558 -Only "stations-14-nights/ST0*"` on
+emulator-5558 (confirmed idle first, `adb -s emulator-5558 shell pidof org.ort.app` empty) — 8/8
+steps ok, 0 errors; read all four new PNGs (1.0 and 2.0 font scale) and confirmed by eye:
+`ST03-station-pattern(@2x)` shows "When they are around" with the real hour-of-day bars and the
+hatched "not listening" legend; `ST04-station-identity(@2x)` shows "How this station is known"
+with the real "One cluster, 10 overs" voiceprint row and a live "Split" link — neither is the
+`Station` root screen. Captured PNGs/manifest reverted before commit (`git checkout --` the four
+tracked files the capture touched, deleted the four new untracked PNGs) per "never commit captured
+PNGs".
+
+**Left open / not done:** `Station`'s Split sub-screen still has no tour step (no design board
+names it as one — see point 2 above); a future round adding a `Station-Split.dc.html` board would
+need one. The pre-existing `NavHostBody` `LongMethod` detekt finding (WP3's file, already on
+main, not touched by this package). `results/ui-audit/README.md`'s "What v1 cannot capture"
+section is still historically stale in places unrelated to this change (transmission/thread/
+search-result drill-ins it still lists as unreachable are, in fact, already in `tour.json` today)
+— flagged, not fully rewritten here, to stay inside this package's ST03/ST04 mandate.
+
+---
+
 ## 2026-09-09 (ui-conformance WP8: station sub-screen seam finished, R-430/431/432/433 fixed)
 
 ### (pending) — ui-conformance WP8 · station sub-screen seam finished; R-430/R-431/R-432/R-433 fixed

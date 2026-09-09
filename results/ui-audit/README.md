@@ -470,17 +470,24 @@ lands at `results/ui-audit/tour-manifest.json`.
 `id` must be unique and follows the existing `<scenario>/<screen>` naming. `destination` is a
 `org.ort.app.ui.navigation.ReaderDestination` name (a `setup` step names a design-intent S-id
 instead — see `SetupStepIds.kt` for the S-id → `SetupStep` table — never both). `drillIn` is an
-optional object carried through verbatim from a validator brief's own vocabulary
-(`transmissionId`/`stationId`/`frequencyHz`/`sessionId`/`settingsScreen`/`openLogFilter`) — **only
-`settingsScreen` is honored**; see "What v1 cannot capture" below. `override` is a second scenario
+optional object of symbolic keys `TourIds.resolveSeed` (`app/src/debug/.../tour/TourIds.kt`)
+resolves against the step's own just-loaded scenario data into a real `NavSeed` — see that class's
+own doc comment for the full, current list (`transmission`, `station`, `frequency`, `thread`,
+`stationSubScreen`, `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`,
+`captureLevelMeter`, `reviewSession`, `frequencyInitialView`, `settingsScreen`, `searchQuery`/
+`searchSubmit`/`searchFiltersOpen`, `logSheetOpen`, `revisionsOpen`) — this list has grown well past
+the "only `settingsScreen`" v1 state "What v1 cannot capture" below still describes historically.
+`override` is a second scenario
 name, loaded in-process after the destination has composed and settled — the recovery-toast/
 transition shape (`rig-lost` → `rig-reconnected`, `storage-warn` → `storage-fine`). `fontScale`
 (destination steps only — see below) and `waitMillis` are optional.
 
 ### What v1 cannot capture
 
-**No taps, no sheets, no drill-ins.** `OrtNavHost`'s public surface is exactly `sessionId`,
-`navigator` (`rememberReaderNavigator(initialDestination, initialSettingsScreen)`), and
+*(v1's own account, kept here for its history; superseded piecemeal as WP3/WP8 shipped the seams
+named below — see "v6" further down for the current, accurate account of `Station`'s own
+sub-screens.)* **No taps, no sheets, no drill-ins.** `OrtNavHost`'s public surface is exactly
+`sessionId`, `navigator` (`rememberReaderNavigator(initialDestination, initialSettingsScreen)`), and
 `failureActions`; `ReaderNavigator`'s is `open`, `openSettings`, `openSetupInput`. Every drill-in id
 — `NavHostNavState.openTransmissionId`/`openStationId`/`openFrequencyHz`/`openThreadId`/
 `pendingLogFilter`/`openCaptureLevelMeter`/`pendingReviewSessionId` — is `private` inside
@@ -496,6 +503,16 @@ still reach a *close* approximation by landing `Capture` itself in a degraded-le
 the lead** — `OrtNavHost`/`NavHostNavState`/`ReaderNavigator` would need new, explicit
 constructor/Intent parameters for each drill-in id, all inside `ui/navigation/**` (WP3's row, not
 WP12's) — see this package's own report for the literal fields.
+
+**v6 update (WP8's `StationDetailContent.initialSubScreen` seam, coordinator round 2026-09-08):**
+`Station`'s own Pattern (ST03) and Identity (ST04) sub-screens are now reachable — a `stationSubScreen`
+drillIn key (`PATTERN`|`IDENTITY`, alongside a `station` key in the same step) seeds
+`NavSeed.openStationSubScreen`, which `OrtNavHost` now threads through to
+`StationDetailContent(initialSubScreen = ...)`. See `tools/ui-audit/tour.json`'s
+`stations-14-nights/ST03-station-pattern`/`ST04-station-identity` steps (both with an `@2x`
+sibling). `Station`'s own Split sub-screen still has no step: `design/design-intent.md` names no
+`Station-Split.dc.html` board — ST04's "Split cluster" action opens `F10`/`Fail-Cluster.dc.html`
+instead, a different, already-independent screen id.
 
 **Setup steps S05 (`VERIFY`) and S06 (`ROUTE_MISMATCH`) are excluded from `tour.json`.** Both are
 reached, in the real app, only as the *live result* of S04's "Verify this input" action

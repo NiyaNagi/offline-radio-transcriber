@@ -11,6 +11,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.debug.Scenarios
+import org.ort.app.ui.data.StationSubScreen
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.core.AttributionState
@@ -95,6 +96,31 @@ class TourIdsTest {
         val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("station" to "WA7HJR"))
 
         assertEquals(expectedId, seed?.openStationId)
+    }
+
+    @Test
+    fun `R_TOUR_IDS_STATION_SUB_SCREEN each named sub-screen resolves to the real enum value`() = runTest {
+        for ((name, expected) in listOf(
+            "PATTERN" to StationSubScreen.PATTERN,
+            "IDENTITY" to StationSubScreen.IDENTITY,
+        )) {
+            val seed = TourIds.resolveSeed(
+                context,
+                sessionId = null,
+                mapOf("station" to "WA7HJR", "stationSubScreen" to name),
+            )
+            assertEquals("'$name' should resolve to $expected", expected, seed?.openStationSubScreen)
+        }
+    }
+
+    @Test
+    fun `R_TOUR_IDS_STATION_SUB_SCREEN_UNKNOWN throws a clear error rather than a silent null`() = runTest {
+        try {
+            TourIds.resolveSeed(context, sessionId = null, mapOf("stationSubScreen" to "NOT_A_REAL_SCREEN"))
+            fail("expected an exception for an unrecognised stationSubScreen value")
+        } catch (expected: IllegalStateException) {
+            assertNotNull(expected.message)
+        }
     }
 
     @Test
