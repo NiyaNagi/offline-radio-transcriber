@@ -229,6 +229,112 @@ reproducing each failure in isolation against the real device before writing a f
 
 ---
 
+## 2026-09-08 (ui-conformance WP9: screenshot-tour font-scale seam for WP12)
+
+### (pending) — ui-conformance WP9 · EXTRA_FONT_SCALE lets the screenshot tour render Setup at any scale in-process
+
+**Scope:** `:app` `ui/setup/SetupActivity.kt`, `ui/setup/SetupActivityTest.kt`. `git merge main`
+first (fast-forward; `main` already carried WP9's own `0d0fce1` at `395072d`, plus WP12 v1/v2 —
+`e927690`).
+
+**Requirements/ACs:** none new (a tooling seam, not a user-facing requirement) — enables WP12's
+own future Setup-at-2.0 steps. Verified against R-080's existing Activity-level suite (unchanged
+behaviour when the new extra is absent).
+
+**What changed:**
+
+*Constitution Check.* II (test-backed — `R_TOUR_setup_font_scale` drives the real `SetupActivity`,
+not a fabricated shortcut). I (uncertainty is content — the `graphicsMode=NATIVE` detour below is
+reported in full, including the regression it caused and how it was found and reverted, rather than
+only the version that shipped). VII (boundaries are structural — the fix was rescoped from a
+module-wide config file to a single test method specifically because the module-wide version
+reached outside this package's own files).
+
+- **`SetupActivity.EXTRA_FONT_SCALE`** (new `String` intent-extra constant, `"font_scale"`, a
+  `Float`, e.g. `2.0f`): read once in `onCreate` alongside the existing `EXTRA_STEP`. When present,
+  the whole Setup composition is wrapped in `CompositionLocalProvider(LocalDensity provides
+  Density(platformDensity.density, fontScaleOverride))` — `density` is read from the real
+  `LocalDensity.current` first and carried through unchanged (never hardcoded to `1f`, which would
+  be wrong on any real device's own pixel density), only `fontScale` is overridden. Absence of the
+  extra changes nothing: the composition is never wrapped, so an ordinary launch (including every
+  existing `SetupActivityTest`/`SetupScreenSelectionTest` case) reads the platform's own
+  `LocalDensity` exactly as before this existed. This is the seam the coordinator asked for: the
+  screenshot tour (`org.ort.app.debug.tour`, this app module's own `debug` source set) can now reach
+  font scale 2.0 by setting one intent extra, in-process, with no system `font_scale` setting change
+  and no activity relaunch — the real setting change starves the one emulator the tour and a
+  validator's own manual walk both depend on.
+- **Test `R_TOUR_setup_font_scale`** (`SetupActivityTest.kt`): launches the real `SetupActivity`
+  twice via a manually-built `AndroidComposeTestRule` over a custom-`Intent` `ActivityScenarioRule`
+  (`ReaderActivityDestinationSmokeTest.runReaderActivity`'s own established pattern for a per-test
+  intent extra a fixed `@get:Rule` field can't carry), once with no `EXTRA_FONT_SCALE` and once with
+  `2.0f`, and compares S01's own title node's real rendered height. A fresh install naturally resumes
+  on S01 with no setup needed, so no fabricated shortcut is needed to reach it.
+- **Robolectric detour, reported in full.** The first version of this test failed with *identical*
+  measured heights (35px) at both scales — an isolated three-part probe (bare `Text`, a plain
+  `Modifier.size(50.dp)` `Box` at `density` 1x/2x, and `onTextLayout`'s own reported size) proved
+  Robolectric's *default* graphics shadow does not vary `Text` measurement with `LocalDensity`'s
+  `fontScale` at all (while `density` scaling itself measured correctly, 50px→100px), and that
+  `graphicsMode=NATIVE` is the one Robolectric mode that does (probe: 16px→30px; the real title:
+  96px→172px). The first fix added `app/src/test/resources/robolectric.properties`
+  (`graphicsMode=NATIVE`) — a **module-wide** `:app` Robolectric config change. Before committing to
+  it, ran a broader sample beyond this package's own scope
+  (`org.ort.app.ui.failures.*`/`ui.components.*`/`ui.screens.*`) specifically to check for
+  regressions elsewhere, since that file's effect is not narrowly scoped to this package's own
+  files, and found real failures caused by it in files this package does not own —
+  `InspectionTest.R_323`, `RowsTest.R_244`, `FailureScreensTest.R_300`/`F16_usb` (both
+  `"component is not displayed"`), plus `CaptureStatusScreenTest` timing out entirely under the new
+  graphics shadow. **Reverted** the properties file; `graphicsMode=NATIVE` is instead declared with
+  `@GraphicsMode(GraphicsMode.Mode.NATIVE)` on `R_TOUR_setup_font_scale` alone — Robolectric supports
+  this annotation at the method level, so the effect is confined to this one test and every other
+  suite in `:app` keeps its existing (legacy) graphics shadow unchanged. Re-ran the same broader
+  sample after the revert: the four `InspectionTest`/`RowsTest`/`FailureScreensTest`
+  failures were gone; `FailureHostTest.R_300 ... font scale 2_0` still failed, but this is a
+  pre-existing, already-documented flake unrelated to this change (see this file's own
+  `2026-09-08 (ui-conformance WP4...)` entry: a `ComposeTimeoutException` on a `waitUntil`'s own
+  5000ms cap, previously reproduced both before and after an unrelated fix, attributed there to
+  machine load from concurrently-running worktree agents) — confirmed by running it alone,
+  identical failure, and by that prior entry's own record that it already failed on `main` before
+  this round's edits touched anything in `ui/failures`.
+- **Tolerance.** A wrapped multi-line `Text`'s block height does not double *exactly* at 2x scale
+  (line-wrap points can shift the count) — the real measured ratio is ≈1.79 (96px→172px), not 2.0
+  on the nose — so the assertion accepts `1.6..2.3`, tight enough to catch a scale left un-applied
+  (ratio≈1.0) or inverted, wide enough to tolerate the real wrap-point variance.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --rerun` — **BUILD
+  SUCCESSFUL**; `SetupActivityTest` itself: 12 tests, 0 failures (confirmed directly from
+  `TEST-org.ort.app.ui.setup.SetupActivityTest.xml`, including `R_TOUR_setup_font_scale`).
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.InspectionTest" --tests
+  "org.ort.app.ui.failures.RowsTest" --tests "org.ort.app.ui.failures.FailureHostTest" --tests
+  "org.ort.app.ui.failures.FailureScreensTest" --rerun` — 37 tests, 1 failure
+  (`FailureHostTest.R_300 ... font scale 2_0`, the pre-existing flake above; re-ran in isolation,
+  same result). All other tests in this unowned-package sample green, confirming the
+  module-wide-config regression is gone after rescoping to the method-level annotation.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- `.\gradlew.bat dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, no diff to
+  `results/coverage-matrix.md`.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- Machine/provider for every run above: this worktree's Windows dev box, JDK
+  17.0.20.101-hotspot, Gradle 8.10.2, other worktree agents' background builds concurrently active.
+
+**Left open / not done:**
+- The full, unscoped `:app:testDebugUnitTest` was not run — this round's coordinator instruction
+  named a scoped gate explicitly, and the pre-existing `SessionsScreensTest`-triggered
+  `AppNotIdleException` cascade (documented in earlier rounds of this same WP9 block) makes the full
+  suite non-green independent of this change. The sample above was chosen specifically to bracket
+  the one file (`robolectric.properties`) that risked reaching outside this package's own files, not
+  to stand in for a full-suite run.
+- `FailureHostTest.R_300 ... font scale 2_0`'s flake itself is not this package's to fix (outside
+  WP9's file ownership) — reported here only as evidence that this round's own change did not cause
+  it, per its own prior appearance on `main`.
+- WP12 still owns actually adding the Setup-at-2.0 screenshot-tour steps that use this extra; none
+  were added here.
+
+---
+
 
 ## 2026-09-08 (ui-conformance WP9: pass-5 fixes)
 
