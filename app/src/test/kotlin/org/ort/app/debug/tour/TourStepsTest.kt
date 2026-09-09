@@ -95,6 +95,11 @@ class TourStepsTest {
      * [drillIn] names none of the kinds this class knows how to check. */
     private fun expectedForDrillIn(drillIn: Map<String, String>): Expected? = when {
         drillIn["captureLevelMeter"] == "true" -> Expected.Tag("level-meter-chart")
+        // R-261: an open sheet blocks the tree behind it (confirmed by `TourStepsTest` itself, run
+        // once and read - the query field genuinely disappears while `search-filters-sheet` shows),
+        // so these two check the sheet's own content, never the destination root underneath it.
+        drillIn["searchFiltersOpen"] == "true" -> Expected.Tag("search-filters-sheet")
+        drillIn["logSheetOpen"] == "true" -> Expected.Text("Filter the log")
         drillIn.containsKey("transmission") -> Expected.Text("Log")
         drillIn.containsKey("station") -> Expected.Text("Stations")
         drillIn.containsKey("thread") -> Expected.Text("Threads")
@@ -172,7 +177,7 @@ class TourStepsTest {
             composeTestRule.waitForIdle()
 
             val expected = expectedFor(step)
-            val found = when (expected) {
+            fun isFound(): Boolean = when (expected) {
                 is Expected.Tag -> composeTestRule.onAllNodesWithTag(expected.tag).fetchSemanticsNodes().isNotEmpty()
                 is Expected.AnyTag -> expected.tags.any {
                     composeTestRule.onAllNodesWithTag(it).fetchSemanticsNodes().isNotEmpty()
@@ -180,9 +185,26 @@ class TourStepsTest {
                 is Expected.Text -> composeTestRule.onAllNodes(hasText(expected.text, substring = true))
                     .fetchSemanticsNodes().isNotEmpty()
             }
+            // Some states (a sheet whose own content waits on a nested poll, e.g. Log's filter
+            // sheet's facet counts) are not necessarily settled by one `waitForIdle` - retry with
+            // `waitUntil` before calling a step a real wrong-screen failure.
+            val found = if (isFound()) {
+                true
+            } else {
+                try {
+                    composeTestRule.waitUntil(WAIT_UNTIL_TIMEOUT_MILLIS) { isFound() }
+                    true
+                } catch (timeout: Exception) {
+                    false
+                }
+            }
             if (!found) failures += "${step.id}: expected $expected, not found"
         }
 
         assertTrue("wrong-screen captures:\n${failures.joinToString("\n")}", failures.isEmpty())
+    }
+
+    private companion object {
+        const val WAIT_UNTIL_TIMEOUT_MILLIS = 10_000L
     }
 }

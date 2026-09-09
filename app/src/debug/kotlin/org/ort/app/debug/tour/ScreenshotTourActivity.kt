@@ -19,6 +19,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import org.ort.app.BuildConfig
 import org.ort.app.debug.Scenarios
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
@@ -141,7 +142,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
         val renderer = TourStepRenderer { step, sessionId ->
             if (step.setup != null) renderSetupStep(step) else renderDestinationStep(step, sessionId)
         }
-        TourRunner(applicationContext, renderer, outputDir).run(spec)
+        TourRunner(applicationContext, renderer, outputDir, apkHash = BuildConfig.GIT_SHORT_COMMIT).run(spec)
     }
 
     /**

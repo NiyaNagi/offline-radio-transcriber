@@ -587,7 +587,89 @@ fallback already highlights them with no fixture change needed.
 
 ---
 
-## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
+## 2026-09-08 (ui-conformance WP12 v4: Search/L02/D07 drill-ins via NavSeed round 14, apkHash on every manifest line, 117 → 127 steps)
+
+### 5bc4450 — ui-conformance WP12 v4 · Search results/callsign/empty/unavailable, filters sheet, L02, D07 revisions, apkHash
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourIds,TourSpec,TourManifest,TourRunner,ScreenshotTourActivity}.kt`
+(new `drillIn` keys, `apkHash` threaded onto every manifest entry), `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt`
+(two new expectations, `waitUntil` retry), `tools/ui-audit/tour.json` (127 steps: +10 v4 drill-ins).
+`git merge main` twice — once for WP3 round 14's `NavSeed.searchQuery`/`searchSubmit`/
+`searchFiltersOpen`/`logSheetOpen`/`openTransmissionRevisions` (already landed by the time this round
+started), once more right before the device run for WP4/WP10 fixture/UI work merged in between —
+both clean fast-forwards, no conflicts. Checked `adb ... dumpsys activity activities` for
+`ScreenshotTourActivity` on `emulator-5558` before every install this round, per the coordinator's own
+instruction — found another agent's tour still resumed on the first check, waited, confirmed clear
+before touching the device.
+
+**Requirements/ACs:** none new — validation tooling.
+
+**What changed:**
+
+*Constitution Check.* II governs the whole round again: the Search-results timing bug below was
+caught by actually opening the pulled PNGs, not assumed fixed once the manifest read `ok`.
+
+- **`TourIds.resolveSeed`** gained `searchQuery`/`searchSubmit`/`searchFiltersOpen` (literal values —
+  a search query is operator-typed text, not a fixture row with a symbolic state the way an
+  attribution is), `logSheetOpen` (`true`), and `revisionsOpen` (a companion to `transmission`, the
+  same relationship `frequencyInitialView` has to `frequency`) — all pass straight through to the
+  matching, already-real `NavSeed` fields WP3 round 14 shipped (confirmed by reading `NavSeed.kt`
+  and `OrtNavHost.kt`'s `searchHostState()`/`SearchContent(...)` call site before wiring this: `seed`
+  reaches `SearchContent.initialQuery`/`submitOnStart`/`initialFiltersOpen` correctly).
+- **10 new `tour.json` steps**: `Q03` results ("park", real FTS5 hits with the term highlighted) and
+  callsign ("KE7QRS") queries, `Q04` empty (typo "KE7QRT"), `Q05` `search-unavailable` + a submitted
+  query, `Q02` filters sheet (+`@2x`), `L02` filter sheet (+`@2x`, `overnight`), `D07` revisions open
+  (`revisions` scenario, the same `confirmed` transmission v2 already resolves).
+- **A real timing bug, found only by opening the pulled PNGs, not by "steps: N ok: N"**: the first
+  full run reported `Q03-results-park` `ok`, but the pulled PNG showed the query field correctly
+  filled with "park" and *no results* — still the plain initial `TRY`-hints screen. `logSheetOpen`
+  and `revisionsOpen` (an in-process DB read/DAO call, same cost class as every other drill-in this
+  package already resolves) settled well inside the existing `DESTINATION_SETTLE_MILLIS` (600ms);
+  `searchSubmit` additionally runs a real FTS5 query through `SearchPolling.search` inside its own
+  `LaunchedEffect(Unit)`, several coroutine hops deeper, and did not. Fixed with a per-step
+  `waitMillis: 2000` on the five `searchSubmit: true` steps (`TourStep.waitMillis` already existed for
+  exactly this) — re-verified afterward: `Q03-results-park.png` now shows "14 overs · 3 nights · 5
+  stations", grouped rows, "park" highlighted in every transcript line.
+- **`apkHash`** (reviewers' own ask): every `TourManifestEntry` now carries the exact build that
+  produced it — `org.ort.app.BuildConfig.GIT_SHORT_COMMIT`, threaded through a new `TourRunner`
+  constructor parameter (`"unknown"` default, so this package's own existing tests need not pass one)
+  rather than a `TourManifestEntry.success`/`.failure` call site change scattered across callers.
+- **ST03/ST04 (WP8's `StationDetailContent.initialSubScreen`/`NavSeed.openStationSubScreen`) polled
+  for three times across this round (three separate `git log main --oneline` checks) and confirmed
+  still unlanded at this round's own close** — not added; will be picked up once it lands, per this
+  package's own standing rule against hand-rolling a copy of a seam that belongs to another package.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — **BUILD SUCCESSFUL**,
+  27 tests, 27 passed. `TourStepsTest` needed two fixes to stay accurate against the newly-added
+  steps: `searchFiltersOpen`'s own sheet blocks the query field underneath it (R-261's own pattern —
+  checked `search-filters-sheet` instead), and a single global `waitForIdle()` was not reliably enough
+  for `logSheetOpen`'s own nested facet-count poll — replaced with a `waitUntil`-based retry
+  (`isFound()` re-checked for up to 10s real-time) for every step, not just the two that needed it,
+  so a future poll-dependent addition does not reintroduce the same flake.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL** (one `ktlintFormat` pass needed
+  first). `.\gradlew.bat dependencyRules platformGuards` — both **OK**. `.\gradlew.bat :app:assembleDebug`
+  — **BUILD SUCCESSFUL**. `python tools\spec-check\spec_check.py` — **OK** (8/8). `coverageMatrix`
+  then `coverageMatrixCheck` (separate) — up to date, byte-identical.
+- **Real device, `emulator-5558` (AVD `ort_audit_3`), fresh worktree APK, `pm clear` + permissions,
+  `.\tools\ui-audit\tour.ps1 -Port 5558 -Out .\tmp-tour-out`**: first run **127/127 ok, 0 errors,
+  122.7s** but with the Search-results bug described above (caught only by opening the PNG, not by
+  the "ok" count); fixed and re-run clean: **127/127 ok, 0 errors, 125.2s**, `apkHash` present and
+  correct (`587fe64`, `main`'s tip immediately before this round's own merge) on every one of 128
+  manifest lines. Two captures opened directly with the Read tool and visually confirmed as genuine
+  renders after the fix: `search-corpus/Q03-results-park.png` (real grouped results, "park"
+  highlighted, honest count line) and `overnight/L02-filter-sheet.png` (the real filter sheet, real
+  per-state counts — Confirmed 25 / Inferred 13 / Ambiguous 1 / Unknown 2 — "Show 41 overs"); a third,
+  `revisions/D07-revisions-open.png`, confirms the revisions drill-in too (two real versions, current/
+  superseded, a real word-level diff). `tmp-tour-out/` and a small standalone `-Only "search-corpus/Q03*"`
+  check run while diagnosing the timing bug were scratch, not part of this commit.
+
+**Left open / not done:**
+- ST03/ST04 — polled for, not yet landed; picked up in a future round.
+- The `searchSubmit` 2000ms wait is sized to what this corpus/device actually needed this round, not
+  derived from a documented constant the way `OVERRIDE_SETTLE_MILLIS` is tied to `OrtNavHost`'s own
+  2000ms poll interval — a larger corpus or a slower device could need more; flagged rather than
+  quietly assumed to generalize.
 
 ## 2026-09-08 (ui-conformance data: R-426 per-attempt work_attempt history)
 ### be8dca4 — ui-conformance data · R-426 per-attempt work_attempt history

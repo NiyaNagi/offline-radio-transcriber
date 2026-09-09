@@ -4,7 +4,9 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Instant
 
-/** One line of `<filesDir>/tour/manifest.json` — this package's brief names this exact field set. */
+/** One line of `<filesDir>/tour/manifest.json` — this package's brief names this exact field set,
+ * plus [apkHash] (v4 — reviewers asked for it: which build a whole run's worth of screenshots came
+ * from, without cross-referencing `tour.ps1`'s own stdout separately). */
 public data class TourManifestEntry(
     public val id: String,
     public val scenario: String,
@@ -14,6 +16,7 @@ public data class TourManifestEntry(
     public val capturedAt: String,
     public val ok: Boolean,
     public val errorMessage: String?,
+    public val apkHash: String,
 ) {
     public fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -24,6 +27,7 @@ public data class TourManifestEntry(
         put("capturedAt", capturedAt)
         put("ok", ok)
         put("errorMessage", errorMessage ?: JSONObject.NULL)
+        put("apkHash", apkHash)
     }
 
     public companion object {
@@ -33,6 +37,7 @@ public data class TourManifestEntry(
             fontScale: Float,
             width: Int,
             height: Int,
+            apkHash: String,
         ): TourManifestEntry = TourManifestEntry(
             id,
             scenario,
@@ -42,19 +47,26 @@ public data class TourManifestEntry(
             Instant.now().toString(),
             ok = true,
             errorMessage = null,
+            apkHash = apkHash,
         )
 
-        public fun failure(id: String, scenario: String, fontScale: Float, message: String): TourManifestEntry =
-            TourManifestEntry(
-                id,
-                scenario,
-                fontScale,
-                width = 0,
-                height = 0,
-                capturedAt = Instant.now().toString(),
-                ok = false,
-                errorMessage = message,
-            )
+        public fun failure(
+            id: String,
+            scenario: String,
+            fontScale: Float,
+            message: String,
+            apkHash: String,
+        ): TourManifestEntry = TourManifestEntry(
+            id,
+            scenario,
+            fontScale,
+            width = 0,
+            height = 0,
+            capturedAt = Instant.now().toString(),
+            ok = false,
+            errorMessage = message,
+            apkHash = apkHash,
+        )
 
         public fun fromJson(obj: JSONObject): TourManifestEntry {
             val hasError = obj.has("errorMessage") && !obj.isNull("errorMessage")
@@ -67,6 +79,7 @@ public data class TourManifestEntry(
                 capturedAt = obj.getString("capturedAt"),
                 ok = obj.getBoolean("ok"),
                 errorMessage = obj.optString("errorMessage").takeIf { hasError },
+                apkHash = obj.optString("apkHash", "unknown"),
             )
         }
     }
