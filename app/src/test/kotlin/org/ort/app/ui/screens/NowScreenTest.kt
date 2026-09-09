@@ -90,11 +90,10 @@ class NowScreenTest {
         composeTestRule.setContent { OrtTheme { NowScreen(state = activeState(missingModel = missing)) } }
 
         composeTestRule.onNodeWithTag("now-missing-model").assertExists()
-        // A shared-component accessibility fix (`FailedState`, not this package's own file) now
-        // folds the action's own label into one clearAndSetSemantics clickable leaf — the same
-        // merged-node shape this round's own R-380 fixes for KeyValueRow — so the raw "Install a
-        // model" text only shows up in the unmerged tree now.
-        composeTestRule.onNodeWithText("Install a model", substring = true, useUnmergedTree = true).assertExists()
+        // R-380 correction (WP2, gate-blocking): `TextAction`'s own outer node carries its label
+        // as both `contentDescription` and `text` (`ui/components/CHANGELOG.md`), so the default
+        // merged tree finds it directly and uniquely.
+        composeTestRule.onNodeWithText("Install a model", substring = true).assertExists()
     }
 
     @Test

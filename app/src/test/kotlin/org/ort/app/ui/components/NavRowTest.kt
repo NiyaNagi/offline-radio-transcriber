@@ -6,6 +6,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
@@ -50,8 +53,18 @@ class NavRowTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Rig").assertIsDisplayed()
-        composeTestRule.onNodeWithText("TH-D75A · connected").assertIsDisplayed()
+        // R-380 correction (WP2, gate-blocking): `NavRow`'s own outer node now carries its
+        // composed description as both `contentDescription` and `text` (this package's
+        // `CHANGELOG.md`). For "Rig"/"TH-D75A · connected" (a row *with* a sub-line, whose own
+        // composed text is "Rig. TH-D75A · connected" — never equal to either fragment alone),
+        // this stays exactly what it always was: the inner `Text` is the only exact match, reached
+        // with `useUnmergedTree = true` since `clearAndSetSemantics` keeps it off the merged tree.
+        // "Improve" (no sub-line) is the different case: its own composed text *is* exactly
+        // "Improve" too, so the *default* merged tree is what stays a single, unambiguous match —
+        // `useUnmergedTree = true` there would also surface the still-present inner `Text`, two
+        // matches instead of one.
+        composeTestRule.onNodeWithText("Rig", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("TH-D75A · connected", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Improve").assertIsDisplayed()
     }
 
@@ -82,6 +95,37 @@ class NavRowTest {
     }
 
     @Test
+    fun `R_380_nav_row's own unmerged node carries both OnClick and the composed description`() {
+        // The register's own real-device finding, `NavRow`'s own instance of it (WP2 next round):
+        // a plain, trailing `semantics(mergeDescendants = true) { contentDescription = ... }` does
+        // not reliably keep the description on the *clickable* node itself once real child content
+        // (this row's own `Text`s) sits beneath it — confirmed on-device for `TextAction`/`LogRow`/
+        // `FilterChip` in an earlier round, fixed here with the identical `clearAndSetSemantics`
+        // shape. Checked on the unmerged tree specifically, so this is about the one physical node
+        // `OnClick` lives on, not a descendant's merged-in text.
+        composeTestRule.setContent {
+            OrtTheme {
+                NavRow(
+                    rowTitle = "Rig",
+                    subLine = "TH-D75A · connected",
+                    onClick = {},
+                    modifier = Modifier.testTag("nav-rig"),
+                )
+            }
+        }
+
+        val node = composeTestRule.onNodeWithTag("nav-rig", useUnmergedTree = true).fetchSemanticsNode()
+        assert(node.config.getOrNull(SemanticsActions.OnClick) != null) {
+            "expected NavRow's own node to carry OnClick"
+        }
+        val description = node.config.getOrNull(SemanticsProperties.ContentDescription)?.joinToString()
+        assert(description?.contains("Rig") == true && description.contains("TH-D75A")) {
+            "expected NavRow's own node (carrying OnClick) to also carry a description with both " +
+                "the title and the sub-line, got $description"
+        }
+    }
+
+    @Test
     fun `R_131_nav_row fires onClick and renders an optional trailing slot beside the chevron`() {
         var tapped = false
         composeTestRule.setContent {
@@ -95,7 +139,7 @@ class NavRowTest {
             }
         }
 
-        composeTestRule.onNodeWithText("TIER 1").assertIsDisplayed()
+        composeTestRule.onNodeWithText("TIER 1", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("nav-tier").performClick()
         assert(tapped)
     }
@@ -128,7 +172,7 @@ class NavRowTest {
             }
         }
 
-        composeTestRule.onNodeWithText(longSubLine).assertIsDisplayed()
+        composeTestRule.onNodeWithText(longSubLine, useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("nav-tier").assert(hasContentDescription(longSubLine, substring = true))
     }
 
@@ -152,6 +196,8 @@ class NavRowTest {
         // colour differs, which this test does not (and, per this package's prior findings on
         // Robolectric font/paint metrics, reliably cannot) assert directly; the structural claim
         // — the row still renders and is still a real target — is what is checked here.
+        // R-380 correction (WP2, gate-blocking): see the note above — the default merged tree
+        // finds the outer node's own `text` uniquely now.
         composeTestRule.onNodeWithText("Rig").assertIsDisplayed()
         composeTestRule.onNodeWithTag("nav-not-built").assertHeightIsAtLeast(44.dp)
     }

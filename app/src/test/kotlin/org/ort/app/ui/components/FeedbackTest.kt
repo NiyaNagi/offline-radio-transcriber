@@ -102,11 +102,11 @@ class FeedbackTest {
 
         composeTestRule.onNodeWithText("No overs on this frequency yet.").assertIsDisplayed()
         composeTestRule.onNodeWithText("No transcription model installed").assertIsDisplayed()
-        // R-380/R-381: `TextAction`'s own outer node now `clearAndSetSemantics` (an earlier entry
-        // in this file's own `CHANGELOG.md`), so its label `Text` is only reachable on the
-        // *unmerged* tree — the button's own merged description (which reads "Install a model")
-        // is what a real accessibility service reads instead.
-        composeTestRule.onNodeWithText("Install a model", useUnmergedTree = true).assertIsDisplayed()
+        // R-380 correction (WP2, gate-blocking): `TextAction`'s own outer node now carries its
+        // label as both `contentDescription` and `text` (this file's own `CHANGELOG.md`) — the
+        // default merged tree finds it directly and uniquely; `useUnmergedTree = true` would also
+        // surface the still-present inner `Text`, two matches instead of one.
+        composeTestRule.onNodeWithText("Install a model").assertIsDisplayed()
     }
 
     @Test
@@ -120,11 +120,11 @@ class FeedbackTest {
         }
 
         composeTestRule.onNodeWithText("Filter the log").assertIsDisplayed()
-        // R-380/R-381: see the note above. The 44dp floor belongs to `TextAction`'s own *outer*
-        // node — found here by its `contentDescription` (the outer node's own property) rather
-        // than `text` (the inner, now-unmerged label `Text`'s property) specifically so this
-        // resolves to the real target, not its smaller inner label.
-        composeTestRule.onNodeWithText("Clear all", useUnmergedTree = true).assertIsDisplayed()
+        // R-380 correction (WP2, gate-blocking): see the note above — the default merged tree
+        // finds `TextAction`'s own outer node uniquely by its own `text` now. The 44dp floor check
+        // still queries by `contentDescription` specifically (also on that same outer node) —
+        // either now resolves to the one real target, this just keeps the two checks distinct.
+        composeTestRule.onNodeWithText("Clear all").assertIsDisplayed()
         composeTestRule.onNodeWithContentDescription("Clear all", useUnmergedTree = true).assertHeightIsAtLeast(44.dp)
     }
 
@@ -161,10 +161,10 @@ class FeedbackTest {
 
         // Closing the sheet (the real screen's own dismissal — scrim tap/drag, outside this
         // package) restores it exactly as before — this is a visibility gate, not a deletion.
-        // R-380/R-381: `TextAction`'s own label is only reachable on the unmerged tree now (an
-        // earlier entry in this file's own `CHANGELOG.md`).
+        // R-380 correction (WP2, gate-blocking): see the note above — the default merged tree
+        // finds `TextAction`'s own outer node uniquely by its own `text` now.
         sheetOpen = false
-        composeTestRule.onNodeWithText("Back to Log", useUnmergedTree = true).assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithText("Back to Log").assertIsDisplayed().performClick()
         assert(backTapped)
     }
 }

@@ -64,15 +64,16 @@ class LogFilterSheetTest {
             OrtTheme { noopSheet() }
         }
 
-        // R-380/R-381: `FilterChip`'s own label is only reachable on the unmerged tree now (its
-        // outer node `clearAndSetSemantics`-es an explicit `contentDescription` instead) — see the
-        // identical fix already applied in `ui/screens/LogScreenTest.kt`.
-        composeTestRule.onNodeWithText("145.230 318", useUnmergedTree = true).assertExists()
+        // R-380 correction (WP2, gate-blocking): `FilterChip`'s/`PrimaryButton`'s own outer node
+        // now carries its label as both `contentDescription` and `text`
+        // (`ui/components/CHANGELOG.md`), so the default merged tree finds it directly and
+        // uniquely — `useUnmergedTree = true` would also surface the still-present inner `Text`,
+        // two matches instead of one.
+        composeTestRule.onNodeWithText("145.230 318").assertExists()
         composeTestRule.onNodeWithText("Confirmed").assertExists()
         composeTestRule.onNodeWithText("291").assertExists()
         composeTestRule.onNodeWithText("Rejected segments").assertExists()
-        // R-380: `PrimaryButton`'s own label is only reachable on the unmerged tree now.
-        composeTestRule.onNodeWithText("Show 376 overs", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithText("Show 376 overs").assertExists()
     }
 
     @Test
@@ -94,8 +95,8 @@ class LogFilterSheetTest {
             OrtTheme { noopSheet(onClearAll = { cleared = true }) }
         }
 
-        // R-380: `Sheet`'s own "Clear all" action is only reachable on the unmerged tree now.
-        composeTestRule.onNodeWithText("Clear all", useUnmergedTree = true).performClick()
+        // R-380 correction (WP2, gate-blocking): see the note above.
+        composeTestRule.onNodeWithText("Clear all").performClick()
 
         assert(cleared)
     }

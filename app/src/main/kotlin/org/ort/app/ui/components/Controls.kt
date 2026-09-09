@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -38,14 +39,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -102,6 +108,14 @@ public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Mo
             .padding(horizontal = 4.dp)
             .clearAndSetSemantics {
                 contentDescription = text
+                // R-380 correction (WP2, gate-blocking): `clearAndSetSemantics` alone erases the
+                // child `Text`'s own `SemanticsProperties.Text`, so a `hasText(...)` matcher on the
+                // default merged tree — several real smoke tests use exactly this shape — can no
+                // longer find this node even though `contentDescription` does carry it. Declaring
+                // `text` here too (the same string) keeps both routes working — device-verified
+                // (see `CHANGELOG.md`) that `contentDescription` still wins what TalkBack
+                // announces when both are present, so this does not double-announce.
+                this.text = AnnotatedString(text)
                 role = Role.Button
                 if (enabled) {
                     onClick(label = null) {
@@ -138,6 +152,8 @@ public fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier =
             .padding(horizontal = 20.dp)
             .clearAndSetSemantics {
                 contentDescription = text
+                // R-380 correction (WP2, gate-blocking) — see [TextAction]'s own doc comment.
+                this.text = AnnotatedString(text)
                 role = Role.Button
                 if (enabled) {
                     onClick(label = null) {
@@ -167,6 +183,8 @@ public fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier
             .padding(horizontal = 20.dp)
             .clearAndSetSemantics {
                 contentDescription = text
+                // R-380 correction (WP2, gate-blocking) — see [TextAction]'s own doc comment.
+                this.text = AnnotatedString(text)
                 role = Role.Button
                 if (enabled) {
                     onClick(label = null) {
@@ -200,6 +218,8 @@ public fun DestructiveButton(
             .padding(horizontal = 18.dp)
             .clearAndSetSemantics {
                 contentDescription = text
+                // R-380 correction (WP2, gate-blocking) — see [TextAction]'s own doc comment.
+                this.text = AnnotatedString(text)
                 role = Role.Button
                 if (enabled) {
                     onClick(label = null) {
@@ -238,7 +258,33 @@ public fun DestructiveButton(
  * `contentDescription` — `selectable()` alone carries the click action and the selected state
  * (`Role.Checkbox`) but never the visible label, which previously lived only on the inner `Text`
  * with nothing pulling it up onto this, the clickable node — see [TextAction]'s own doc comment
- * for the fuller finding this package confirmed on a real device. */
+ * for the fuller finding this package confirmed on a real device.
+ *
+ * R-543: `clearAndSetSemantics` (the fix just above) genuinely removes every descendant from the
+ * exported accessibility tree on a real device — confirmed there for [onDismiss]'s own dismiss
+ * icon specifically, which used to be its own separate, labelled, focusable node ("Remove $label
+ * filter") a screen reader could reach independently of the chip's own selection target, and after
+ * the R-380/R-381 fix could not be reached at all. Rather than restructure the chip's own layout
+ * (the dismiss icon's hit target deliberately sits *inside* the same visual pill, consuming its
+ * own touch before the chip's own `selectable` ever sees it — changing that risks the touch
+ * geometry, not just the semantics), [onDismiss] is exposed as a
+ * [androidx.compose.ui.semantics.CustomAccessibilityAction] on the chip's own node instead — the
+ * idiomatic Compose shape for "a secondary action nested inside a single accessible control"
+ * (TalkBack's own local context menu, not a second on-screen stop). The dismiss icon's own visible
+ * `Icon`/`contentDescription`/`clickable` are unchanged — sighted/touch interaction is identical to
+ * before; only the *screen-reader* route to it changed shape.
+ *
+ * R-510 (`overnight/L02-filter-sheet.png`, `@2x` — the frequency chip row's own real fill height
+ * measured 24dp at 1.0 and 37.7dp at 2.0, under the 44dp floor even after R-383's reordering fix):
+ * a plain `heightIn(min = 44.dp)` only ever *raises* whatever floor the incoming constraints
+ * already carry — it can never violate a *tighter* bound a caller's own modifier fixed further out
+ * in the chain (`modifier`, this composable's own leftmost/outermost parameter, ahead of every
+ * modifier this file adds), so a caller able to pass its own fixed/narrower height genuinely
+ * undercuts it — exactly what "enforce the 44dp floor inside the component so no caller can
+ * undercut it" names. `requiredHeightIn(min = 44.dp)` is this package's fix: unlike `heightIn`, it
+ * does not coerce its own floor into the incoming constraints — it is enforced regardless of them,
+ * the standard defensive-minimum-touch-target technique for a component that must guarantee its
+ * own floor independent of its caller (`ControlsTest.kt`'s own `R_510` test pins this directly). */
 @Composable
 public fun FilterChip(
     label: String,
@@ -253,14 +299,27 @@ public fun FilterChip(
     Box(
         modifier = modifier
             .selectable(selected = selected, onClick = onClick, role = Role.Checkbox)
-            .heightIn(min = 44.dp)
+            // R-510: `requiredHeightIn`, not `heightIn` — see this composable's own doc comment.
+            .requiredHeightIn(min = 44.dp)
             .clearAndSetSemantics {
                 contentDescription = label
+                // R-380 correction (WP2, gate-blocking) — see [TextAction]'s own doc comment.
+                this.text = AnnotatedString(label)
                 this.selected = selected
                 role = Role.Checkbox
                 onClick(label = null) {
                     onClick()
                     true
+                }
+                // R-543: see this composable's own doc comment — the dismiss icon reaches a
+                // screen reader as a custom action on this node, not as an independent one.
+                if (onDismiss != null) {
+                    customActions = listOf(
+                        CustomAccessibilityAction(label = "Remove $label filter") {
+                            onDismiss()
+                            true
+                        },
+                    )
                 }
             },
         contentAlignment = Alignment.CenterStart,
@@ -592,8 +651,32 @@ public enum class FieldTone { Halt, Degraded }
  * work exactly as `RequestFocus`/`SetText` on a plain `BasicTextField` always have, because
  * semantics merging an ancestor's way into a descendant's `RequestFocus`/`SetText` is not reliable
  * in this Compose version (verified by experiment), so this field never depends on it.
+ *
+ * R-381 (`Search.dc.html`'s field, dumped as `<node content-desc="" class="android.widget.EditText"
+ * clickable="true" focusable="true"><node content-desc="Search text" focusable="false"/><node
+ * text="…" focusable="false"/></node>` — the field's own node exported *empty* despite the
+ * `semantics { contentDescription = … }` above): this composable deliberately does **not** switch
+ * that block to `clearAndSetSemantics` the way every clickable control elsewhere in this package
+ * did for the identical-looking defect (`TextAction`, `LogRow`, `FilterChip` — see `CHANGELOG.md`).
+ * [BasicTextField] attaches its own real editable-text actions (`SetText`, `InsertTextAtCursor`,
+ * `RequestFocus`, `GetTextLayoutResult`, …) directly on this same node; `clearAndSetSemantics`
+ * replaces a node's *entire* exported config, and this field has no safe way to redeclare those
+ * internal, framework-owned actions the way `TextAction` redeclares its own `onClick`. Instead: the
+ * [label] and [placeholder] `Text`s below are marked `Modifier.semantics { invisibleToUser() }` —
+ * their words are already carried by this node's own [contentDescriptionText]/[label]/[placeholder]
+ * fallback chain above, so exporting them a *second* time, as their own separate descendant nodes
+ * (which is what left "Search text" on a orphaned child rather than the field's own name), serves
+ * no one; hiding them individually removes the redundant children without touching the field's own
+ * real actions at all. [leadingIcon] (decorative, `contentDescription = null`) and [trailingAction]
+ * (real, interactive content a caller supplies — e.g. a clear `×` button with its own literal
+ * `contentDescription` and `clickable`) are deliberately left fully visible to accessibility: they
+ * are not redundant with this field's own name, and a real device confirmed a leaf `Icon` with a
+ * literal `contentDescription` plus `clickable` (no descendants of its own) already survives as its
+ * own separate stop — the "reference shape" this package's other fixes cite. [errorText] is left
+ * alone for the same reason: it states something the field's own description does not.
  */
 @Suppress("LongParameterList") // every parameter is an independent, optional field concern.
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class) // invisibleToUser() (R-381)
 @Composable
 public fun TextField(
     value: String,
@@ -640,7 +723,12 @@ public fun TextField(
                         text = it,
                         style = OrtType.sectionLabel,
                         color = OrtColors.textFaint,
-                        modifier = Modifier.padding(bottom = OrtSpacing.xs),
+                        // R-381: this word is already carried by the field's own node (see this
+                        // composable's own doc comment) — hidden individually so it does not also
+                        // export as a redundant, orphaned child.
+                        modifier = Modifier
+                            .padding(bottom = OrtSpacing.xs)
+                            .semantics { invisibleToUser() },
                     )
                 }
                 Row(
@@ -663,7 +751,14 @@ public fun TextField(
                     }
                     Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.weight(1f)) {
                         if (value.isEmpty() && placeholder != null) {
-                            Text(text = placeholder, style = OrtType.control, color = OrtColors.textSignal)
+                            Text(
+                                text = placeholder,
+                                style = OrtType.control,
+                                color = OrtColors.textSignal,
+                                // R-381: see this composable's own doc comment — already carried
+                                // by the field's own node when no explicit label is given.
+                                modifier = Modifier.semantics { invisibleToUser() },
+                            )
                         }
                         innerTextField()
                     }

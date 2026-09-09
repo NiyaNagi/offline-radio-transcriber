@@ -63,13 +63,15 @@ class LiveBarTest {
         }
 
         // Different labels/copy per tone, not merely a colour swap (constitution: "colour is
-        // reinforcement, never signal"). R-380/R-381: `LiveBar`'s own outer node now
-        // `clearAndSetSemantics` (an earlier entry in this file's own `CHANGELOG.md`), so these
-        // inner `Text`s are only reachable on the *unmerged* tree — the row's own merged
-        // description (asserted below) is what a real accessibility service reads instead.
+        // reinforcement, never signal"). R-380 correction (WP2, gate-blocking): `LiveBar`'s own
+        // outer node now carries its composed description as both `contentDescription` and `text`
+        // (this file's own `CHANGELOG.md`) — the default merged tree finds it directly and
+        // uniquely; `useUnmergedTree = true` would also surface the still-present inner `Text`s,
+        // two matches instead of one for the bare-label ("Tier 2"/"Halted — no route") cases,
+        // where the composed description equals the label alone.
         composeTestRule.onNodeWithText("Live", useUnmergedTree = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Tier 2", useUnmergedTree = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Halted — no route", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Tier 2").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Halted — no route").assertIsDisplayed()
     }
 
     @Test
@@ -188,7 +190,10 @@ class LiveBarTest {
             OrtTheme { LiveBar(state = state, onClick = {}, modifier = Modifier.testTag("act-bar")) }
         }
 
-        composeTestRule.onNodeWithText("Act", useUnmergedTree = true).assertIsDisplayed()
+        // R-380 correction (WP2, gate-blocking): see the note above — this bar's own composed
+        // description equals the bare label ("Act", no partial text), so the default merged tree
+        // finds the outer node uniquely.
+        composeTestRule.onNodeWithText("Act").assertIsDisplayed()
         composeTestRule.onNodeWithTag("act-bar").assert(hasContentDescription("Act", substring = true))
     }
 

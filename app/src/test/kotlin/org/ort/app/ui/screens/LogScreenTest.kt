@@ -250,9 +250,11 @@ class LogScreenTest {
         }
 
         composeTestRule.onNodeWithText("Log").assertExists()
-        // R-380/R-381: `FilterChip`'s own label is only reachable unmerged now (its outer node
-        // `clearAndSetSemantics`-es an explicit `contentDescription` instead).
-        composeTestRule.onNodeWithText("All", useUnmergedTree = true).assertExists()
+        // R-380 correction (WP2, gate-blocking): `FilterChip`'s own outer node now carries its
+        // label as both `contentDescription` and `text` (`ui/components/CHANGELOG.md`), so the
+        // default merged tree finds it directly and uniquely — `useUnmergedTree = true` would also
+        // surface the still-present inner `Text`, two matches instead of one.
+        composeTestRule.onNodeWithText("All").assertExists()
         composeTestRule.onNodeWithText("No overs yet.").assertExists()
         composeTestRule
             .onNodeWithText("Listening since 23:32. The first one appears here the moment squelch opens.")
@@ -365,7 +367,12 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText(whyText).assertExists()
+        // R-381 (WP2 next round): `RejectedRow`'s own clickable branch (this dedicated Rejected
+        // view opens the row, so it renders via `onClick`) now `clearAndSetSemantics`
+        // (`ui/components/CHANGELOG.md`), so its own `why` line is only reachable on the unmerged
+        // tree — the row's own composed description states it too, but this checks the real
+        // rendered text specifically.
+        composeTestRule.onNodeWithText(whyText, useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -405,7 +412,8 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("0.4 s").assertExists()
+        // R-381 (WP2 next round): see the note on `R_043 the why line shows...` above.
+        composeTestRule.onNodeWithText("0.4 s", useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -483,9 +491,11 @@ class LogScreenTest {
             }
         }
 
-        // R-380: `TextAction`'s own label is only reachable unmerged now (its outer node
-        // `clearAndSetSemantics`-es an explicit `contentDescription` instead).
-        composeTestRule.onNodeWithText("Filter", useUnmergedTree = true).performClick()
+        // R-380 correction (WP2, gate-blocking): `TextAction`'s own outer node now carries its
+        // label as both `contentDescription` and `text`, so the default merged tree finds it
+        // directly and uniquely — `useUnmergedTree = true` would also surface the still-present
+        // inner `Text`, two matches instead of one (breaking `performClick`'s own node resolution).
+        composeTestRule.onNodeWithText("Filter").performClick()
 
         assert(clicked) { "expected the Filter action to invoke its callback" }
     }
@@ -504,8 +514,8 @@ class LogScreenTest {
             }
         }
 
-        // R-380/R-381: `FilterChip`'s own label is only reachable unmerged now — see the note above.
-        composeTestRule.onNodeWithText("Rejected", useUnmergedTree = true).performClick()
+        // R-380 correction (WP2, gate-blocking): see the note above.
+        composeTestRule.onNodeWithText("Rejected").performClick()
 
         assert(selected == LogQuickFilterId.Rejected) { "expected the Rejected chip to be selected but was $selected" }
     }

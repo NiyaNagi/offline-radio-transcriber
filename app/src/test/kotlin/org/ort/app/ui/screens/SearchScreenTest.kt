@@ -281,7 +281,10 @@ class SearchScreenTest {
         )
         screen(input = SearchFilterInput(text = "mayday"), result = result)
 
-        composeTestRule.onNodeWithText("mayday mayday").assertExists()
+        // R-380/R-381 (WP2, `ui/components/CHANGELOG.md`): `LogRow`'s own outer node
+        // `clearAndSetSemantics`-es its composed description — its transcript `Text` is only
+        // reachable on the unmerged tree now.
+        composeTestRule.onNodeWithText("mayday mayday", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithTag("search-count-line").assertExists()
         composeTestRule.onNodeWithText("Newest first").assertExists()
     }
@@ -312,7 +315,13 @@ class SearchScreenTest {
         )
         screen(input = current, result = result, onInputChange = { current = it }, onSearch = { searchCount++ })
 
-        composeTestRule.onNodeWithContentDescription("Remove W7NPC filter").performScrollTo().performClick()
+        // R-380/R-381 (WP2, `ui/components/CHANGELOG.md`): the dismiss icon is a descendant of
+        // `FilterChip`'s own outer `clearAndSetSemantics` node, so it is only reachable on the
+        // unmerged tree now.
+        composeTestRule
+            .onNodeWithContentDescription("Remove W7NPC filter", useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
 
         assert(current.callsign == "") { "expected dismissing the chip to clear the callsign filter" }
         assert(searchCount == 1) { "expected dismissing a chip to re-run the search" }
@@ -373,7 +382,8 @@ class SearchScreenTest {
 
         composeTestRule.onNodeWithTag("search-unavailable-banner").assertExists()
         composeTestRule.onNodeWithText("Text search is unavailable right now").assertExists()
-        composeTestRule.onNodeWithText("irrelevant transcript").assertExists()
+        // R-380/R-381 (WP2, `ui/components/CHANGELOG.md`): see the note on the `R_065` test above.
+        composeTestRule.onNodeWithText("irrelevant transcript", useUnmergedTree = true).assertExists()
     }
 
     @Test

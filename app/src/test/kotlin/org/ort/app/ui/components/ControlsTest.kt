@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
@@ -217,6 +218,43 @@ class ControlsTest {
     }
 
     @Test
+    fun `R_543_a dismissable chip exposes Remove as a custom accessibility action on its own node`() {
+        // A real device confirmed `clearAndSetSemantics` (R-380/R-381's own fix) genuinely removes
+        // every descendant from the *exported* accessibility tree — including the dismiss icon's
+        // own, previously independently-reachable node. Robolectric's own `SemanticsNode` model
+        // does not delete descendants the same way (`useUnmergedTree = true` still finds the icon's
+        // own node directly, confirmed by this file's other filter-chip tests, unaffected by this
+        // fix) — this test is instead checking the *mechanism* this fix actually adds: a
+        // `CustomAccessibilityAction` on the chip's own node, the one thing Robolectric's model
+        // *can* verify here, and the one thing a real device's TalkBack reads from without needing
+        // a second, independently-reachable node at all.
+        var dismissed = false
+        composeTestRule.setContent {
+            OrtTheme {
+                FilterChip(
+                    label = "W7NPC",
+                    selected = true,
+                    onClick = {},
+                    onDismiss = { dismissed = true },
+                    modifier = Modifier.testTag("chip"),
+                )
+            }
+        }
+
+        val node = composeTestRule.onNodeWithTag("chip").fetchSemanticsNode()
+        val actions = node.config.getOrNull(SemanticsActions.CustomActions)
+        assert(actions != null && actions.size == 1) {
+            "expected the chip's own node to carry exactly one custom accessibility action, got $actions"
+        }
+        val removeAction = actions!!.first()
+        assert(removeAction.label == "Remove W7NPC filter") {
+            "expected the custom action's own label to name the filter, got '${removeAction.label}'"
+        }
+        removeAction.action.invoke()
+        assert(dismissed) { "expected invoking the custom action to reach the caller's onDismiss" }
+    }
+
+    @Test
     fun `R_211_filter_chip_row scrolls so an overflowing last chip is reachable at font scale 2`() {
         // Station-Pattern.dc.html: at font scale 2.0 a third mode chip ("Change over time") was
         // clipped off-screen with no way to reach it — a narrow, fixed-width container here
@@ -235,8 +273,11 @@ class ControlsTest {
 
         // Reachable only by scrolling the row — if the row clipped instead of scrolling,
         // `performScrollTo` would find no scrollable ancestor able to bring it into view and this
-        // would fail, exactly the defect the register caught on a real device.
-        composeTestRule.onNodeWithText("Change over time", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        // would fail, exactly the defect the register caught on a real device. R-380 correction
+        // (WP2, gate-blocking): `FilterChip`'s own outer node now carries its label as both
+        // `contentDescription` and `text` (`CHANGELOG.md`), so the default merged tree finds it
+        // directly and uniquely.
+        composeTestRule.onNodeWithText("Change over time").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -333,7 +374,8 @@ class ControlsTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Filters", useUnmergedTree = true).assertIsDisplayed()
+        // R-380 correction (WP2, gate-blocking): see the note above.
+        composeTestRule.onNodeWithText("Filters").assertIsDisplayed()
         composeTestRule.onNodeWithTag("filters-chip").assertHeightIsAtLeast(44.dp)
     }
 
@@ -360,6 +402,35 @@ class ControlsTest {
         }
 
         composeTestRule.onNodeWithTag("all").assertHeightIsAtLeast(44.dp)
+    }
+
+    @Test
+    fun `R_510_filter_chip meets the 44dp floor even when a caller's own modifier tries to undercut it`() {
+        // L02 `Log-Filter`'s own frequency chip row (`overnight/L02-filter-sheet.png`, `@2x`):
+        // the register measured 24dp at 1.0 and 37.7dp at 2.0 — exactly the chip's own *content*
+        // height (padding + one line of `OrtType.chip` text) with no 44dp floor applied at all,
+        // not merely a floor squeezed narrower by real content the way R-383's own repro was. A
+        // plain `heightIn(min = 44.dp)`, deep in this composable's own modifier chain, only ever
+        // *raises* the incoming constraints' floor — it cannot violate a *tighter* constraint a
+        // caller's own modifier already fixed further out in the chain (`modifier` is this
+        // composable's own leftmost/outermost parameter, ahead of everything this file adds), so
+        // a caller able to pass e.g. `Modifier.height(24.dp)` genuinely undercuts it. This is
+        // exactly what "enforce the 44dp floor inside the component so no caller can undercut it"
+        // means: `requiredHeightIn(min = 44.dp)` — the fix — ignores the incoming constraint
+        // rather than merely widening it, the same defensive-minimum-touch-target technique used
+        // wherever a component must guarantee its own floor regardless of its caller.
+        composeTestRule.setContent {
+            OrtTheme {
+                FilterChip(
+                    label = "145.230",
+                    selected = true,
+                    onClick = {},
+                    modifier = Modifier.testTag("undercut").height(24.dp),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("undercut").assertHeightIsAtLeast(44.dp)
     }
 
     @Test

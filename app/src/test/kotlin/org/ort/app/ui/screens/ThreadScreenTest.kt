@@ -101,10 +101,10 @@ class ThreadScreenTest {
                 "This phone is at tier 2, so every over is here individually and " +
                 "nothing has been guessed about who was talking to whom.",
         ).assertExists()
-        // R-380: `TextAction`'s own label is only reachable on the unmerged tree now (its outer
-        // node `clearAndSetSemantics`-es an explicit `contentDescription` instead) — see the
-        // identical fix already applied in `ui/screens/LogScreenTest.kt`.
-        composeTestRule.onNodeWithText("What tier 2 can and cannot do", useUnmergedTree = true).assertExists()
+        // R-380 correction (WP2, gate-blocking): `TextAction`'s own outer node now carries its
+        // label as both `contentDescription` and `text` (`ui/components/CHANGELOG.md`), so the
+        // default merged tree finds it directly and uniquely.
+        composeTestRule.onNodeWithText("What tier 2 can and cannot do").assertExists()
         composeTestRule.onNodeWithText("BY FREQUENCY, MEANWHILE").assertExists()
     }
 
