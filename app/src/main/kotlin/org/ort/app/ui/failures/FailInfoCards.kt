@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
@@ -95,7 +96,10 @@ public fun FailInterruptedCard(state: InterruptedViewState, modifier: Modifier =
 }
 
 /** F14 full screen — register R-147. `Fail-Clock.dc.html`'s facts table plus its "Around the
- * change" log, from [ClockViewState.logRows]. */
+ * change" log, from [ClockViewState.logRows]. Register R-448: the board's own "‹ Earlier nights"
+ * back header — [onContinue] is the only dismiss this screen already has (F14 is one of the two
+ * dismissable takeovers, `FailureHost.kt`'s own `isTakeoverShown`/`dismiss.onDismissClock`), so the
+ * header's back chevron reuses it rather than inventing a second way to leave. */
 @Composable
 public fun FailClockScreen(state: ClockViewState, onContinue: () -> Unit, modifier: Modifier = Modifier) {
     Column(
@@ -106,6 +110,11 @@ public fun FailClockScreen(state: ClockViewState, onContinue: () -> Unit, modifi
             .verticalScroll(rememberScrollState())
             .testTag("failure-clock-screen"),
     ) {
+        DrillInHeader(
+            parentLabel = "Earlier nights",
+            onBack = onContinue,
+            modifier = Modifier.testTag("failure-clock-back"),
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),

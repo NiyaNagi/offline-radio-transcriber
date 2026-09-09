@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
+import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -29,6 +30,14 @@ import org.ort.app.ui.theme.OrtType
  * F19 — `Fail-Reconcile.dc.html`. WP11b: a standalone screen (records and files disagree on
  * launch). **No runtime signal today** — nothing walks `:data`'s records against the audio
  * directory looking for orphans on either side; see [DebugFailureOverride]'s kdoc.
+ *
+ * Register R-448: the board's own "‹ Storage and retention" back header — [onLeaveAsIs] is the
+ * screen's own existing "leave everything as it is" dismiss (unchanged: still a documented no-op
+ * stub at the `FailureHost.kt` integration level, same as every other action on this screen — see
+ * that file's own report), so the header's back chevron reuses it rather than inventing a second
+ * dismiss path. No `FailureHostActions` callback maps to "Storage and retention" navigation
+ * specifically today (`onOpenStorageSettings`/`onOpenRetentionSettings` open Settings' *root*, not
+ * a screen this takeover was ever reached *from*) — reported, not fabricated.
  */
 @Composable
 public fun FailReconcileScreen(
@@ -46,6 +55,11 @@ public fun FailReconcileScreen(
             .verticalScroll(rememberScrollState())
             .testTag("failure-reconcile-screen"),
     ) {
+        DrillInHeader(
+            parentLabel = "Storage and retention",
+            onBack = onLeaveAsIs,
+            modifier = Modifier.testTag("failure-reconcile-back"),
+        )
         Text(
             text = "Records and files disagree",
             style = OrtType.screenTitle,
