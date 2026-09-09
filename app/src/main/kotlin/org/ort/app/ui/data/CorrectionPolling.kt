@@ -15,6 +15,8 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintBindingSource
 import org.ort.data.entity.VoiceprintEntity
+import org.ort.data.entity.WorkAttemptEntity
+import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueState
 import org.ort.data.inWriteTransaction
 import org.ort.data.requireLegalTransition
@@ -218,6 +220,46 @@ public object CorrectionPolling {
     }
 
     /**
+     * Register R-425, `Detail-Ambiguous.dc.html`: real, per-candidate evidence for the two-up
+     * chooser — before this fix, both rows read the identical "a known station · United States"
+     * whenever the two candidates shared an ITU country, which they usually do (adjacent
+     * callsigns). [heardCount]/[lastHeardLabel] are this device's own real hear history for that
+     * exact callsign ([org.ort.data.dao.TransmissionDao.listAll], the same source
+     * [searchHeardStations] already reads for an identical fact); [voiceOnFile] is real
+     * [org.ort.data.dao.CatalogDao.voiceprintsForStation] evidence, further narrowed to whether
+     * *this* over's own voiceprint — not just any voiceprint — is the one bound to that candidate,
+     * the strongest real signal this schema can offer for "this candidate is who was actually
+     * speaking" short of the phonetics themselves. Never the board's own fabricated
+     * "Tuesday net regular" narrative (this package has no day-of-week query to honestly back it —
+     * the same named gap [searchHeardStations]'s own doc comment already discloses).
+     */
+    public data class AmbiguousCandidateEvidenceViewState(
+        val heardCount: Int,
+        val lastHeardLabel: String?,
+        val voiceOnFile: Boolean,
+    )
+
+    public suspend fun ambiguousCandidateEvidence(
+        context: Context,
+        transmissionId: String,
+        callsigns: List<String>,
+    ): Map<String, AmbiguousCandidateEvidenceViewState> {
+        val db = OrtDatabase.create(context.applicationContext)
+        val all = db.transmissionDao().listAll()
+        val currentVoiceprintId = db.transmissionDao().getById(transmissionId)?.voiceprintId
+        return callsigns.associateWith { callsign ->
+            val heard = all.filter { it.stationId == callsign }
+            val lastHeard = heard.maxByOrNull { it.startedAtUtc }
+            val boundVoiceprints = db.catalogDao().voiceprintsForStation(callsign)
+            AmbiguousCandidateEvidenceViewState(
+                heardCount = heard.size,
+                lastHeardLabel = lastHeard?.let { ReaderTransmissionViewStateMapper.timeLabel(it.startedAtUtc) },
+                voiceOnFile = currentVoiceprintId != null && boundVoiceprints.any { it.id == currentVoiceprintId },
+            )
+        }
+    }
+
+    /**
      * R-183, `Detail.dc.html`: an INFERRED explanation names the source over's real time ("to
      * 02:14:07, where the callsign was heard clearly"), not the generic "to the source over" this
      * package fell back to before this fix. Real, honest, and non-throwing for a source id that
@@ -332,10 +374,23 @@ public object CorrectionPolling {
      * candidate, or one whose lattice was not text-anchored, e.g. every acoustic lattice; see
      * [org.ort.lexicon.SlotDetail]'s own doc comment for exactly when a span exists), never a
      * fabricated `0` standing in for "unknown".
+     *
+     * Register R-471 (D03, `Detail-Ambiguous.dc.html`): an AMBIGUOUS over has no *selected*
+     * candidate at all — nothing is chosen yet — so [CatalogDao.winningCandidateCharSpan] always
+     * comes back `null`/`null` for one, leaving D03's transcript with no highlight even when Pass
+     * B's own lattice was text-anchored. When the selected-candidate query is empty, this falls
+     * back to [CatalogDao.topRankedCandidateCharSpan] (rank `0`) — a strict widening: a resolved
+     * over's rank-0 candidate is its selected one by construction, so the fallback query returns
+     * the identical result there, never masking a genuine "unanchored lattice" null.
      */
     public suspend fun winningCharSpan(context: Context, transmissionId: String): IntRange? {
         val db = OrtDatabase.create(context.applicationContext)
-        val span = db.catalogDao().winningCandidateCharSpan(transmissionId)
+        val winning = db.catalogDao().winningCandidateCharSpan(transmissionId)
+        val span = if (winning.spanStart == null || winning.spanEnd == null) {
+            db.catalogDao().topRankedCandidateCharSpan(transmissionId)
+        } else {
+            winning
+        }
         val start = span.spanStart
         val end = span.spanEnd
         return if (start != null && end != null) start until end else null
@@ -577,11 +632,39 @@ public object CorrectionPolling {
                     passLabel = passLabel(pass),
                     lastError = item.lastError?.takeIf { it.isNotBlank() } ?: "no error text recorded",
                     attempts = item.attemptCount,
+                    attemptLog = db.workQueueDao().attemptsFor(item.id).map(::attemptViewState),
+                    sessionFailedCount = sessionFailedCount(db, transmissionId),
                 )
             }
         }
         return null
     }
+
+    /**
+     * Register R-470 (design), `Fail-Pass.dc.html`'s own closing "Counted in tonight's health: N
+     * failed." paragraph: the real count of `FAILED` transmissions in this over's own session — the
+     * same real fact [ReaderPolling.captureStatus]'s own `failedCount` already counts for
+     * `Capture-Status.dc.html` (`transmissions.count { it.processingState == FAILED }`, scoped to
+     * one session via `TransmissionDao.listBySession`) — never a fabricated "since app install" or
+     * global total. `0` (never negative, never omitted) for a transmission whose own row cannot be
+     * found, which should not happen for a real, just-polled `FAILED` transmission but is not worth
+     * a nullable return type over.
+     */
+    private suspend fun sessionFailedCount(db: OrtDatabase, transmissionId: String): Int {
+        val sessionId = db.transmissionDao().getById(transmissionId)?.sessionId ?: return 0
+        return db.transmissionDao().listBySession(sessionId).count { it.processingState == TransmissionState.FAILED }
+    }
+
+    /** Register R-426: the real per-attempt row, humanized — see [PassAttemptViewState]'s own doc
+     * comment for why a `TIMEOUT` outcome reads "Timed out" rather than its raw stored `"timeout"`
+     * reason. */
+    private fun attemptViewState(attempt: WorkAttemptEntity): PassAttemptViewState = PassAttemptViewState(
+        timeLabel = ReaderTransmissionViewStateMapper.timeLabel(attempt.finishedAtMillis),
+        reasonLabel = when (attempt.outcome) {
+            WorkAttemptOutcome.TIMEOUT -> "Timed out"
+            WorkAttemptOutcome.FAILED -> attempt.reason.replaceFirstChar { it.titlecase() }
+        },
+    )
 
     /** Guide §9's "pass" vocabulary, sentence case, never the raw [PassId] enum name. */
     private fun passLabel(pass: PassId): String = when (pass) {

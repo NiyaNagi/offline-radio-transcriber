@@ -74,8 +74,21 @@ public fun CaptureStatusScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(OrtSpacing.lg),
         ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
+            // R-412 (halt): a plain unweighted Column here let the title claim its own full
+            // intrinsic width before TextAction was ever measured — at font scale 2.0 that left
+            // "Stop" a one-character-remaining sliver, wrapping one letter per line down the right
+            // edge and overlapping the title, with or without a banner above. `weight(1f)` gives the
+            // title column only the space left after the action's own intrinsic width is honoured,
+            // so the title wraps onto a second line instead — the same shape the coordinator's own
+            // instruction names, and the same class of fix `EarlierNightMetaLine`/`LogRowMarkerLine`
+            // already established for "the last item has nowhere to go" (R-244/R-260) elsewhere in
+            // this package's row family.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = OrtSpacing.sm)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(9.dp),
@@ -158,48 +171,25 @@ private fun KeyValueRowWithDot(
     onClick: (() -> Unit)? = null,
     onClickDescription: String? = null,
 ) {
-    val description = buildString {
-        append(key)
-        append(": ")
-        append(facts.value)
-        facts.subLine?.let {
-            append(". ")
-            append(it)
-        }
-        facts.trailingText?.let {
-            append(". ")
-            append(it)
-        }
-    }
+    // R-380 (register, WP2's own 586ec9b): a plain-text `Row`'s label (`facts.trailingText`, e.g.
+    // "clipping") folded into the sub-line rather than a separate trailing slot, so `KeyValueRow`'s
+    // own internal description (key/value/subLine/onClickLabel — WP2's own new contract) always
+    // carries it — this used to live only in this composable's own external `semantics(...)`
+    // block, which sat *outside* `KeyValueRow`'s own clickable/`clearAndSetSemantics` node, leaving
+    // a real device's own `uiautomator` dump showing an unlabelled outer clickable wrapping a
+    // separately-labelled child (two nodes, not one — the bug this round's own instruction names).
+    val subLineWithTrailing = listOfNotNull(facts.subLine, facts.trailingText).joinToString(" · ").ifEmpty { null }
     KeyValueRow(
         key = key,
         value = facts.value,
-        subLine = facts.subLine,
-        modifier = modifier
-            .then(
-                if (onClick != null) {
-                    Modifier
-                        .heightIn(min = 44.dp)
-                        .clickable(role = Role.Button, onClickLabel = onClickDescription, onClick = onClick)
-                } else {
-                    Modifier
-                },
-            )
-            .testTag(testTagValue)
-            .semantics(mergeDescendants = true) {
-                contentDescription = onClickDescription?.let { "$description. $it" } ?: description
-                if (onClick != null) role = Role.Button
-            },
+        subLine = subLineWithTrailing,
+        // R-382 (spec): `KeyValueRow`'s own 44dp floor (WP2's own file) already applies
+        // unconditionally now, tappable or not.
+        modifier = modifier.testTag(testTagValue),
+        onClick = onClick,
+        onClickLabel = onClickDescription,
         trailingMarker = facts.trailingDot?.let { tone ->
-            {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    StateDot(tone = tone, size = 9.dp)
-                    facts.trailingText?.let { Text(text = it, style = OrtType.subLine, color = OrtColors.textDim) }
-                }
-            }
+            { StateDot(tone = tone, size = 9.dp) }
         },
     )
 }

@@ -1,22 +1,31 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
-import org.ort.app.ui.components.Tile
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -43,26 +52,20 @@ public fun SettingsRigScreen(state: SettingsRigViewState, onBack: () -> Unit, mo
 
             if (state.bands.isNotEmpty()) {
                 SectionHeader(label = "Bands", modifier = Modifier.padding(top = OrtSpacing.md))
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
-                    horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-                ) {
-                    state.bands.forEach { band ->
-                        Tile(
-                            figure = band.frequencyLabel,
-                            caption = "${band.label} · ${band.statusLabel}",
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
+                BandTilesRow(bands = state.bands, modifier = Modifier.padding(top = OrtSpacing.sm))
             }
 
             if (!state.connected) {
+                // R-444 (register, Reviewer D): "FR-RIG's module contract (…)" named the
+                // requirement, not a fact this screen's own operator would recognise — guide §9's
+                // discipline `CaptureStatusViewState.radioFacts` (R-263) already established for
+                // the identical fact: "no radio support in this build yet", verbatim, never a
+                // second differently-worded claim about the same thing.
                 FailedState(
                     title = "No rig module is connected",
-                    body = "FR-RIG's module contract (a built-in TH-D75A driver and a manual-entry null " +
-                        "module) is not built yet. Capture is unaffected — frequencies are logged from " +
-                        "Settings › Input and level's manual entry until a rig module exists.",
+                    body = "No radio support in this build yet. Capture is unaffected — " +
+                        "frequencies are logged from Settings › Input and level's manual entry " +
+                        "until a rig module exists.",
                     modifier = Modifier.padding(top = OrtSpacing.lg),
                 )
             } else {
@@ -80,3 +83,84 @@ public fun SettingsRigScreen(state: SettingsRigViewState, onBack: () -> Unit, mo
         }
     }
 }
+
+/**
+ * R-413 (register, halt, Reviewer D): the band row used to hand every `Tile` `Modifier.fillMaxWidth()`
+ * inside a plain (unweighted) `Row` — the first tile claimed the *entire* row for itself, leaving
+ * the second one squeezed into essentially `0px`, which forced its own mono frequency text
+ * (`"146.960?"`) to wrap one character per line down the whole screen at font scale 1.0, let alone
+ * 2.0. `ui/components`'s own shared `Tile` (`Rows.kt`) has no `maxLines`/`softWrap` override to fix
+ * this from the call site, so this package draws its own [BandTile] instead of reusing it — the
+ * same reason [NextDeletionMarker]/[ColorSwatch] in `SettingsStorageScreen.kt` are this package's
+ * own local composables rather than a shared one that does not fit.
+ *
+ * [FlowRow] (not a plain `Row`) lets the two tiles stack onto their own lines when the row is too
+ * narrow for both side by side (a large font scale, a narrow device) instead of being crushed —
+ * each tile keeps a real, measured minimum width ([rememberBandFrequencyMinWidth], the real render
+ * width of this screen's own worst-case sample, `"146.960?"`, the stale-band marker included) so
+ * neither tile's own text ever again depends on however much space happens to be left over.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BandTilesRow(bands: List<SettingsRigBandViewState>, modifier: Modifier = Modifier) {
+    val minWidth = rememberBandFrequencyMinWidth()
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        bands.forEach { band ->
+            BandTile(
+                band = band,
+                modifier = Modifier.widthIn(min = minWidth).testTag(BAND_TILE_TEST_TAG),
+            )
+        }
+    }
+}
+
+@Composable
+private fun BandTile(band: SettingsRigBandViewState, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .background(SETTINGS_CARD_BG, SETTINGS_CARD_SHAPE)
+            .padding(vertical = OrtSpacing.md, horizontal = OrtSpacing.sm),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = band.frequencyLabel,
+            style = OrtType.figure,
+            color = OrtColors.textHigh,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.testTag(BAND_TILE_FREQUENCY_TEST_TAG),
+        )
+        Text(
+            text = "${band.label} · ${band.statusLabel}",
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+/** The real, measured render width of this screen's own worst-case band frequency sample
+ * (`"146.960?"` — the stale-band `?` suffix included, real device data per
+ * `SettingsPolling.rig`/`rigLastKnown`, never a guessed constant) at [OrtType.figure] — the same
+ * `rememberTextMeasurer` technique `ui/components/Rows.kt`'s own `rememberTimeColumnWidth`/
+ * `rememberFreqColumnWidth` already use for an identical "never let a mono value's own column
+ * shrink narrower than its real content" contract. */
+@Composable
+private fun rememberBandFrequencyMinWidth(): Dp {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(measurer, density) {
+        with(density) { measurer.measure(BAND_FREQUENCY_SAMPLE, OrtType.figure).size.width.toDp() }
+    }
+}
+
+private const val BAND_FREQUENCY_SAMPLE = "146.960?"
+
+/** R-413: stable handles so a test can assert the frequency `Text` renders as one real line (never
+ * wraps) at both font scale 1.0 and 2.0 — the direct proof of the fix. */
+internal const val BAND_TILE_TEST_TAG: String = "settings-rig-band-tile"
+internal const val BAND_TILE_FREQUENCY_TEST_TAG: String = "settings-rig-band-tile-frequency"

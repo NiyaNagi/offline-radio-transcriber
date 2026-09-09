@@ -23,13 +23,10 @@ import org.ort.app.ui.settings.SettingsScreenId
  * [rememberReaderNavigator] and [OrtNavHost]) sees exactly today's unseeded behaviour, and every
  * existing caller keeps compiling and behaving unchanged.
  *
- * **Fields deliberately not included, and why**: `Log`'s own filter sheet (`LogContent.kt`'s
- * `sheetOpen`) and `Search`'s own (`SearchContent.kt`'s `filtersSheetOpen`) are each a private,
- * un-exported `Boolean` local to those two composables — confirmed by reading both before writing
- * this — and **neither accepts an initial-open parameter today** (only `LogContent.initialFilter`,
- * which seeds the filter's own *value*, not whether the sheet is showing). There is nothing this
- * seed could set them with short of editing those two files, which sit outside this round's own
- * `ui/navigation` row (WP5's and WP7's respectively) — reported here rather than worked around.
+ * Round 14: `Log`'s own filter sheet (`LogContent.kt`'s `sheetOpen`) and `Search`'s own
+ * (`SearchContent.kt`'s `filtersSheetOpen`) — round 13's own report named neither as accepting an
+ * initial-open parameter; both now do (`LogContent.initialSheetOpen`, WP5's own merge;
+ * `SearchContent.initialFiltersOpen`, WP7's, already wired above) — [logSheetOpen] closes that gap.
  *
  * [settingsScreen] duplicates [rememberReaderNavigator]'s own `initialSettingsScreen` in shape —
  * kept here too so one `NavSeed` is the single thing a caller (the tour, [NavSeed.fromIntent])
@@ -51,6 +48,24 @@ public data class NavSeed(
     // drill-in opens on — `null`/`NONE` for every ordinary seed, `PATTERN`/`IDENTITY`/`SPLIT` only
     // for the tour's own ST03/ST04 steps.
     val openStationSubScreen: StationSubScreen? = null,
+    // Round 14 (after WP7 merged `SearchContent(initialQuery, submitOnStart, initialFiltersOpen)`
+    // — confirmed by reading `ui/screens/SearchContent.kt` before wiring this): the tour's own
+    // gap on `SEARCH` — no real keyboard/tap to reach results, the empty state, or the open
+    // filters sheet. `searchSubmit`/`searchFiltersOpen` are nullable `Boolean` (not plain
+    // `Boolean = false`, unlike `SearchContent`'s own params) for the same reason
+    // [openCaptureLevelMeter] already is: `null` here means "say nothing," distinct from an
+    // explicit `false` a caller could still choose to pass.
+    val searchQuery: String? = null,
+    val searchSubmit: Boolean? = null,
+    val searchFiltersOpen: Boolean? = null,
+    // Round 14 (after WP5 merged `LogContent(initialSheetOpen)` — confirmed by reading
+    // `ui/screens/LogContent.kt` before wiring this): the L02 half of round 13's own reported gap.
+    val logSheetOpen: Boolean? = null,
+    // Round 14 (after WP6 merged `TransmissionDetailContent(initialRevisionsOpen)` — confirmed by
+    // reading `ui/screens/TransmissionDetailContent.kt` before wiring this, which shipped only
+    // this one seam, no sibling why/lattice flag). Only meaningful alongside [openTransmissionId],
+    // the same companion relationship [frequencyInitialView] already has to [openFrequencyHz].
+    val openTransmissionRevisions: Boolean? = null,
 ) {
     /**
      * The [ReaderDestination] this seed's own state is actually read under. The four drill-in ids
@@ -68,9 +83,11 @@ public data class NavSeed(
         openFrequencyHz != null -> openedFromDestination()
         openThreadId != null -> openedFromDestination()
         pendingLogFilter != null -> ReaderDestination.LOG
+        logSheetOpen == true -> ReaderDestination.LOG
         openCaptureLevelMeter == true -> ReaderDestination.CAPTURE
         pendingReviewSessionId != null -> ReaderDestination.EARLIER_NIGHTS
         settingsScreen != null -> ReaderDestination.SETTINGS
+        searchQuery != null || searchSubmit == true || searchFiltersOpen == true -> ReaderDestination.SEARCH
         else -> null
     }
 
@@ -104,6 +121,11 @@ public data class NavSeed(
         frequencyInitialView?.let { intent.putExtra(EXTRA_FREQUENCY_INITIAL_VIEW, it.name) }
         openStationSubScreen?.let { intent.putExtra(EXTRA_OPEN_STATION_SUB_SCREEN, it.name) }
         settingsScreen?.let { intent.putExtra(EXTRA_SETTINGS_SCREEN, it.name) }
+        searchQuery?.let { intent.putExtra(EXTRA_SEARCH_QUERY, it) }
+        searchSubmit?.let { intent.putExtra(EXTRA_SEARCH_SUBMIT, it) }
+        searchFiltersOpen?.let { intent.putExtra(EXTRA_SEARCH_FILTERS_OPEN, it) }
+        logSheetOpen?.let { intent.putExtra(EXTRA_LOG_SHEET_OPEN, it) }
+        openTransmissionRevisions?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_REVISIONS, it) }
     }
 
     public companion object {
@@ -131,6 +153,17 @@ public data class NavSeed(
         // new, second name for the same fact) — a caller seeding `Settings` reaches it exactly
         // the way `EXTRA_DESTINATION=SETTINGS` + this extra already does today.
         public const val EXTRA_SETTINGS_SCREEN: String = "settings_screen"
+
+        // Round 14 — see [searchQuery]/[searchSubmit]/[searchFiltersOpen]'s own doc comment.
+        public const val EXTRA_SEARCH_QUERY: String = "nav_search_query"
+        public const val EXTRA_SEARCH_SUBMIT: String = "nav_search_submit"
+        public const val EXTRA_SEARCH_FILTERS_OPEN: String = "nav_search_filters_open"
+
+        // Round 14 — see [logSheetOpen]'s own doc comment.
+        public const val EXTRA_LOG_SHEET_OPEN: String = "nav_log_sheet_open"
+
+        // Round 14 — see [openTransmissionRevisions]'s own doc comment.
+        public const val EXTRA_OPEN_TRANSMISSION_REVISIONS: String = "nav_open_transmission_revisions"
 
         /**
          * Parses [intent]'s own seed extras (any subset, including none) into a [NavSeed] — `null`
@@ -161,11 +194,7 @@ public data class NavSeed(
                 openFrequencyHz = frequencyHz,
                 openThreadId = intent.getStringExtra(EXTRA_OPEN_THREAD_ID),
                 pendingLogFilter = pendingLogFilter,
-                openCaptureLevelMeter = if (intent.hasExtra(EXTRA_OPEN_CAPTURE_LEVEL_METER)) {
-                    intent.getBooleanExtra(EXTRA_OPEN_CAPTURE_LEVEL_METER, false)
-                } else {
-                    null
-                },
+                openCaptureLevelMeter = intent.getBooleanExtraOrNull(EXTRA_OPEN_CAPTURE_LEVEL_METER),
                 pendingReviewSessionId = intent.getStringExtra(EXTRA_PENDING_REVIEW_SESSION_ID),
                 frequencyInitialView = intent.getStringExtra(EXTRA_FREQUENCY_INITIAL_VIEW)
                     ?.let { name -> FrequencyDetailView.entries.firstOrNull { it.name == name } },
@@ -173,10 +202,18 @@ public data class NavSeed(
                     ?.let { name -> StationSubScreen.entries.firstOrNull { it.name == name } },
                 settingsScreen = intent.getStringExtra(EXTRA_SETTINGS_SCREEN)
                     ?.let { name -> SettingsScreenId.entries.firstOrNull { it.name == name } },
+                searchQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY),
+                searchSubmit = intent.getBooleanExtraOrNull(EXTRA_SEARCH_SUBMIT),
+                searchFiltersOpen = intent.getBooleanExtraOrNull(EXTRA_SEARCH_FILTERS_OPEN),
+                logSheetOpen = intent.getBooleanExtraOrNull(EXTRA_LOG_SHEET_OPEN),
+                openTransmissionRevisions = intent.getBooleanExtraOrNull(EXTRA_OPEN_TRANSMISSION_REVISIONS),
             )
             return if (seed == NavSeed()) null else seed
         }
 
         private fun Intent.getLongExtraOrNull(key: String): Long? = if (hasExtra(key)) getLongExtra(key, 0L) else null
+
+        private fun Intent.getBooleanExtraOrNull(key: String): Boolean? =
+            if (hasExtra(key)) getBooleanExtra(key, false) else null
     }
 }

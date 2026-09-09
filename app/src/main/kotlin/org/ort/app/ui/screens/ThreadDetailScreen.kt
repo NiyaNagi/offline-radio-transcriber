@@ -142,7 +142,11 @@ private fun HowAttributedCard(lines: List<ThreadAttributionExplanationLine>, mod
                     // ("W7NPC heard in overs 1 and 3"), so the marker's own merged description
                     // stays shape + state only; never a confidence figure on CONFIRMED, which the
                     // legacy `AttributionMarker(showConfidence = false)` path still announced.
-                    AttributionRow(attribution = line.attribution, callsign = null)
+                    // R-424 (`overnight/T02-thread-detail.png`): `showScore = false` — `line.text`
+                    // already states the confidence inline ("· 0.85"), so the marker's own chip was
+                    // a second, redundant copy of the identical number; the merged content
+                    // description still carries it (AttributionRow's own R-424 doc comment).
+                    AttributionRow(attribution = line.attribution, callsign = null, showScore = false)
                     Text(text = line.text, style = OrtType.chip, color = OrtColors.textBody)
                 }
             }

@@ -19,6 +19,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import org.ort.app.BuildConfig
 import org.ort.app.debug.Scenarios
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
@@ -64,7 +65,8 @@ import java.io.File
  *   itself (confirmed by reading `SetupActivity.kt` before writing this — there is no reusable,
  *   `Context`-free composable to call directly the way [OrtNavHost] is), so a real, separate
  *   `Activity` launch is the only way to reach it without duplicating WP9's own dispatch. Font scale
- *   has no equivalent hook for a setup step — see this package's report.
+ *   (v3) uses [SetupActivity.EXTRA_FONT_SCALE] (WP9's own seam for this tour, added after v2 was
+ *   written — its own doc comment explains why the *system* font-scale setting was never an option).
  *
  * captures a `Bitmap` via [androidx.core.view.drawToBitmap] once composition/polling has had time to
  * settle (see [DESTINATION_SETTLE_MILLIS]'s own doc comment for why that duration, not an arbitrary
@@ -140,7 +142,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
         val renderer = TourStepRenderer { step, sessionId ->
             if (step.setup != null) renderSetupStep(step) else renderDestinationStep(step, sessionId)
         }
-        TourRunner(applicationContext, renderer, outputDir).run(spec)
+        TourRunner(applicationContext, renderer, outputDir, apkHash = BuildConfig.GIT_SHORT_COMMIT).run(spec)
     }
 
     /**
@@ -193,6 +195,10 @@ public class ScreenshotTourActivity : ComponentActivity() {
             delay(OVERRIDE_SETTLE_MILLIS)
         }
         if (step.waitMillis > 0) delay(step.waitMillis)
+        if (step.scroll == "end") {
+            TourAccessibilityScroll.scrollToEnd(window.decorView)
+            delay(SCROLL_SETTLE_MILLIS)
+        }
         val bitmap = window.decorView.drawToBitmap()
         currentDestinationStep = null
         return TourCapture(bitmap, bitmap.width, bitmap.height)
@@ -203,11 +209,19 @@ public class ScreenshotTourActivity : ComponentActivity() {
             ?: error("tour step '${step.id}' names unknown setup id '${step.setup}'")
         val deferred = CompletableDeferred<SetupActivity>()
         pendingSetupActivity = deferred
-        startActivity(Intent(this, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, stepName))
+        startActivity(
+            Intent(this, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_STEP, stepName)
+                .putExtra(SetupActivity.EXTRA_FONT_SCALE, step.fontScale),
+        )
         val setupActivity = withTimeout(SETUP_LAUNCH_TIMEOUT_MILLIS) { deferred.await() }
         pendingSetupActivity = null
         delay(DESTINATION_SETTLE_MILLIS)
         if (step.waitMillis > 0) delay(step.waitMillis)
+        if (step.scroll == "end") {
+            TourAccessibilityScroll.scrollToEnd(setupActivity.window.decorView)
+            delay(SCROLL_SETTLE_MILLIS)
+        }
         val bitmap = setupActivity.window.decorView.drawToBitmap()
         setupActivity.finish()
         return TourCapture(bitmap, bitmap.width, bitmap.height)
@@ -229,5 +243,11 @@ public class ScreenshotTourActivity : ComponentActivity() {
         private const val DESTINATION_SETTLE_MILLIS = 600L
         private const val OVERRIDE_SETTLE_MILLIS = 2_300L
         private const val SETUP_LAUNCH_TIMEOUT_MILLIS = 10_000L
+
+        /** After [TourAccessibilityScroll.scrollToEnd] — content shifting into place from a real
+         * scroll (not a fresh composition) needs its own settle, not the destination-composition one
+         * above; one frame plus margin, not sized to any poll interval since nothing here waits on a
+         * poll tick. */
+        private const val SCROLL_SETTLE_MILLIS = 300L
     }
 }

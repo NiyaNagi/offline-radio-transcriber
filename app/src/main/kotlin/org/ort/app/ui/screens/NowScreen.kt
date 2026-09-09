@@ -147,16 +147,28 @@ private fun IdleContent(state: NowViewState.Idle, onStartCapture: () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg).testTag("now-idle-start-capture"),
     )
 
-    val inputRigTier = listOfNotNull(state.inputLabel, state.rigLabel, state.tierLabel)
-    if (inputRigTier.isNotEmpty()) {
-        Text(
-            text = inputRigTier.joinToString(" · "),
-            style = OrtType.subLine,
-            color = OrtColors.textDim,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
-    }
+    // R-461: `Now-Idle.dc.html`'s own meta row — centred, "USB Audio Device"/"TH-D75A" each with
+    // their own leading dot, "tier 3" without one. Always rendered (never conditionally dropped):
+    // an unconfigured input/radio reads its own honest "No input"/"No radio" placeholder — with no
+    // dot, since a dot claims a real, present device — rather than the segment silently vanishing.
+    NowIdleMetaRow(
+        inputLabel = state.inputLabel,
+        rigLabel = state.rigLabel,
+        tierLabel = state.tierLabel ?: "tier —",
+        modifier = Modifier.padding(top = OrtSpacing.sm),
+    )
 
+    // R-416: `Now-Idle.dc.html`'s own divider ahead of EARLIER NIGHTS — unconditional, the same
+    // hairline `Drawer.kt`'s own Divider draws (OrtColors.lineDefault), independent of whether the
+    // meta row above it has anything to show.
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = OrtSpacing.lg)
+            .height(1.dp)
+            .background(OrtColors.lineDefault)
+            .testTag("now-idle-earlier-nights-divider"),
+    )
     SectionHeader(label = "Earlier nights", modifier = Modifier.padding(top = OrtSpacing.lg))
     if (state.earlierNights.isEmpty()) {
         EmptyState(message = "No earlier nights yet.")
@@ -182,6 +194,34 @@ private fun IdleContent(state: NowViewState.Idle, onStartCapture: () -> Unit) {
             }
             Text(text = "Improve", style = OrtType.subtitle, color = OrtColors.accentGreen)
         }
+    }
+}
+
+/** R-461 (`Now-Idle.dc.html`'s own meta row beneath "Start capture"): centred, a leading dot on
+ * each of [inputLabel]/[rigLabel] when they are real (never on the honest "No input"/"No radio"
+ * fallback — a dot claims a real, present device), no dot on [tierLabel]. */
+@Composable
+private fun NowIdleMetaRow(inputLabel: String?, rigLabel: String?, tierLabel: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NowIdleMetaItem(label = inputLabel ?: "No input", real = inputLabel != null)
+        Text(text = "·", style = OrtType.subLine, color = OrtColors.textFaint)
+        NowIdleMetaItem(label = rigLabel ?: "No radio", real = rigLabel != null)
+        Text(text = "·", style = OrtType.subLine, color = OrtColors.textFaint)
+        Text(text = tierLabel, style = OrtType.subLine, color = OrtColors.textDim)
+    }
+}
+
+@Composable
+private fun NowIdleMetaItem(label: String, real: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (real) {
+            Box(modifier = Modifier.size(6.dp).background(OrtColors.accentGreen, CircleShape))
+        }
+        Text(text = label, style = OrtType.subLine, color = OrtColors.textDim)
     }
 }
 
@@ -264,10 +304,15 @@ private fun ActiveContent(
             modifier = Modifier.padding(top = OrtSpacing.lg).testTag("now-first-session-chart"),
         )
     } else if (state.activityPattern.isNotEmpty()) {
+        // R-415: `Main.dc.html`'s populated hour chart has no title at all (a regression of
+        // R-021/R-075, which already established this) — passing one here put "ACTIVITY BY HOUR
+        // (UTC)" back above the chart. `title = null` is `ActivityPatternChart`'s own honest
+        // no-title default; not passed at all, so a future default change is never silently undone
+        // here again.
         ActivityPatternChart(
             pattern = state.activityPattern,
             modifier = Modifier.padding(top = OrtSpacing.lg).testTag("now-activity-chart"),
-            title = "ACTIVITY BY HOUR (UTC)",
+            title = null,
             axisStart = state.axisStartLabel,
             axisEnd = state.axisEndLabel,
             notListeningLabel = state.notListeningLabel,
@@ -294,6 +339,20 @@ private fun ActiveContent(
         state.worthKnowing.forEach { item -> WorthKnowingRow(item) }
     }
 
+    StationsHeardSection(state = state, onOpenStation = onOpenStation, onOpenStations = onOpenStations)
+}
+
+/** `Main.dc.html`/`Now-First.dc.html`'s "Stations heard" section — split out of [ActiveContent]
+ * itself (detekt's `LongMethod`, the same split this package's row family already reaches for
+ * rather than suppressing). R-417 (`Now-First.dc.html`): the empty-state second line "Listening
+ * since 23:32." — the session's own real start time (`state.axisStartLabel`, the same fact the
+ * hour chart's own left axis label uses), never fabricated when it is genuinely unknown. */
+@Composable
+private fun StationsHeardSection(
+    state: NowViewState.Active,
+    onOpenStation: (String) -> Unit,
+    onOpenStations: () -> Unit,
+) {
     SectionHeader(
         label = "Stations heard",
         modifier = Modifier.padding(top = OrtSpacing.lg),
@@ -306,6 +365,14 @@ private fun ActiveContent(
             style = OrtType.bodyProse,
             color = OrtColors.textMuted,
         )
+        state.axisStartLabel?.let { started ->
+            Text(
+                text = "Listening since $started.",
+                style = OrtType.subLine,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
     } else {
         state.stations.rows.forEach { row -> StationRowContent(row, onClick = { onOpenStation(row.stationId) }) }
         state.stations.unidentifiedLabel?.let { label ->

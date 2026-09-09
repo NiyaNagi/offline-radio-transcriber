@@ -11,7 +11,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.NavRow
 import org.ort.app.ui.components.OrtIcons
@@ -80,9 +84,19 @@ public fun SettingsRootScreen(
  * composable never had). No bespoke icon exists per [SettingsScreenId] (`ui/components` is outside
  * this round's file ownership to add one to), so this reuses the closest existing `OrtIcons` glyph
  * for each — `TIER`/`ABOUT` both fall back to [OrtIcons.settings] and `CONTRIBUTE` to
- * [OrtIcons.lock] (a privacy-consent screen), rather than drawing no icon at all. */
+ * [OrtIcons.lock] (a privacy-consent screen), rather than drawing no icon at all.
+ *
+ * R-451 (register, polish, Reviewer D): `CAPTURE`'s row ("Input and level") drew `OrtIcons.capture`
+ * — an 8-ray sunburst, the board's own icon for a *different* concept — rather than
+ * `Settings.dc.html`'s own recorder glyph for this exact row (a rounded-rectangle mic capsule and
+ * its stand). `ui/components/OrtIcons.kt` has no such glyph to reuse and is outside this round's
+ * file ownership to add one to, so [SettingsInputAndLevelIcon] below draws it locally, from the
+ * board's own SVG (`<rect x="6" y="3" width="12" height="9" rx="2">` converted to its path
+ * equivalent, `<path d="M12 12v4M8 21h8M12 16v5">` verbatim) — the same technique
+ * `OrtIcons.kt`'s own doc comment describes using for every other icon there.
+ */
 internal fun iconFor(screen: SettingsScreenId): ImageVector = when (screen) {
-    SettingsScreenId.CAPTURE -> OrtIcons.capture
+    SettingsScreenId.CAPTURE -> SettingsInputAndLevelIcon
     SettingsScreenId.RIG -> OrtIcons.rig
     SettingsScreenId.TIER -> OrtIcons.settings
     SettingsScreenId.STORAGE -> OrtIcons.storage
@@ -112,3 +126,33 @@ internal fun SettingsMonoTag(text: String, modifier: Modifier = Modifier) {
 
 internal val SETTINGS_CARD_SHAPE = RoundedCornerShape(10.dp)
 internal val SETTINGS_CARD_BG: Color = OrtColors.bgCard
+
+/** R-451: `Settings.dc.html`'s own "Input and level" row glyph — see [iconFor]'s own doc comment
+ * for the exact board SVG this traces and why it is drawn locally rather than added to the shared
+ * `OrtIcons` set. `Color.Black` is a build-time placeholder only, exactly like every `OrtIcons`
+ * glyph's own doc comment says of its own paths — a caller always supplies the real tint via
+ * `Icon(..., tint = ...)`, which overrides it ([NavRow]'s own icon slot does this already). */
+internal val SettingsInputAndLevelIcon: ImageVector = ImageVector.Builder(
+    name = "settingsInputAndLevel",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    addPath(
+        pathData = addPathNodes(
+            "M8 3L16 3A2 2 0 0 1 18 5L18 10A2 2 0 0 1 16 12L8 12A2 2 0 0 1 6 10L6 5A2 2 0 0 1 8 3Z",
+        ),
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 1.9f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+    )
+    addPath(
+        pathData = addPathNodes("M12 12v4M8 21h8M12 16v5"),
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 1.9f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+    )
+}.build()

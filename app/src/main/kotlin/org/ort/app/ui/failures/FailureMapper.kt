@@ -1,5 +1,8 @@
 package org.ort.app.ui.failures
 
+import org.ort.app.ui.data.ModelId
+import org.ort.app.ui.data.ModelsController
+import org.ort.app.ui.data.StagedActivation
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.pipeline.capture.CaptureState
@@ -18,7 +21,11 @@ import java.util.Locale
  * [FailureMapper.map] is a pure function of one consistent read — never a live re-read mid-mapping
  * (which could otherwise see [org.ort.pipeline.capture.InputStatus] change halfway through a
  * decision). No Android dependency: every field here is a plain `:pipeline`/`:data` type, so
- * [FailureMapper] is unit-testable without Robolectric.
+ * [FailureMapper] is unit-testable without Robolectric — [stagedActivation] and
+ * [stagedActivationActiveLabel] (`:app`'s own [StagedActivation], a plain data class) are the one
+ * exception to "pipeline/data type", added by coordinator direction once FR-AST-4's real guard
+ * landed (`ModelsController`, WP10) — see [FailureMapper.map]'s own kdoc for why this package reads
+ * across into `ui/data` for exactly this one signal.
  */
 public data class FailureSignals(
     public val captureState: CaptureState.State,
@@ -43,6 +50,17 @@ public data class FailureSignals(
     /** Register R-149: the real, in-process-observed `ShedStatus.backlog` depth for up to the
      * last 30 minutes, oldest first. */
     public val backlogHistory: List<BacklogSample> = emptyList(),
+    /** FR-AST-4 (register R-448 follow-up): [ModelsController.stagedActivation]'s own real fact —
+     * the one lexicon swap or model install waiting for the live session to end, or `null` when
+     * nothing is staged. `null` on every real poll tick until WP10's own guard actually stages
+     * something — never fabricated when it has not. */
+    public val stagedActivation: StagedActivation? = null,
+    /** The real, currently-*active* counterpart's label — `RoomActiveLexiconStore.current()`'s
+     * version for a staged lexicon swap, or the currently-installed checksum prefix for a staged
+     * model — computed only when [stagedActivation] is non-null (Android/file I/O, so it lives in
+     * [FailureSignalsPolling], never derived here). `null` exactly when [stagedActivation] is, or
+     * when nothing real is installed yet to compare against. */
+    public val stagedActivationActiveLabel: String? = null,
 )
 
 /** One observed [org.ort.pipeline.capture.StorageForecast.State] transition, timestamped. */
@@ -94,6 +112,14 @@ public sealed interface FailurePresentation {
  * order (a route/USB problem outranks a stale rig, which outranks a informational recovery notice).
  * [FailureSignals.debugOverride], when set, wins outright — see [DebugFailureOverride]'s kdoc for
  * why that is the *only* way six of this package's seventeen ids can be exercised at all today.
+ *
+ * F21/`AssetSwap` is no longer one of the six (WP10's FR-AST-4 `ModelsController.stagedActivation`
+ * guard landed on main): [assetSwapViewState] reads `:app/ui/data`'s own [StagedActivation] type
+ * directly, a coordinator-directed exception to this package's usual "no Android/`ui.data`
+ * dependency" rule (matching R-448's own precedent — [org.ort.app.ui.ReaderActivity]'s
+ * `onOpenModels`/`onOpenEarlierNights` wiring is the same kind of directed cross-package addendum),
+ * because `ui/failures`'s own [FailureMapperTest] previously proved (`R_448_asset_swap_signal`,
+ * before WP10's guard existed) that no real signal existed to read at all.
  */
 public object FailureMapper {
 
@@ -138,7 +164,41 @@ public object FailureMapper {
                 StorageHaltViewState(freeLabel = bytesLabel(storage.freeBytes), floorLabel = "100 MB"),
             )
         }
+        // FR-AST-4 (register R-448 follow-up): checked last among takeovers — real, but the least
+        // urgent of the three; an input mismatch or a hard storage floor both outrank a swap that is
+        // simply waiting.
+        signals.stagedActivation?.let { staged ->
+            return FailurePresentation.AssetSwap(assetSwapViewState(staged, signals.stagedActivationActiveLabel))
+        }
         return null
+    }
+
+    /** FR-AST-4: [staged]'s own real facts (asset, version, staged-at time, and the real reason
+     * [ModelsController] itself recorded) become F21's board — never a placeholder. [activeLabel]
+     * reads "not measured" only when [FailureSignalsPolling] genuinely could not read one (never
+     * fabricated). The two options are the two real actions available today: wait (the default —
+     * [staged]'s own [StagedActivation.reason]), or activate now — safe to offer unconditionally
+     * since [ModelsController.activateStaged] itself refuses, with no effect, while a session is
+     * still live (`FailureHost`'s own `onActivateStagedAsset` wiring calls it directly). */
+    private fun assetSwapViewState(staged: StagedActivation, activeLabel: String?): AssetSwapViewState {
+        val assetName = if (staged.assetId == ModelsController.CALLSIGN_LEXICON_ASSET_ID) {
+            "callsign lexicon"
+        } else {
+            ModelId.entries.firstOrNull { it.name == staged.assetId }?.label ?: staged.assetId
+        }
+        return AssetSwapViewState(
+            activeLabel = activeLabel ?: "not measured",
+            stagedLabel = "$assetName ${staged.version} · staged ${clockLabel(staged.stagedAtMillis)}",
+            options = listOf(
+                AssetSwapOption("Wait for the session to end", staged.reason),
+                AssetSwapOption(
+                    "Activate now",
+                    "takes effect only once this session has actually ended — the same real " +
+                        "activation Settings › Assets already runs automatically whenever it opens",
+                ),
+            ),
+            selectedOption = 0,
+        )
     }
 
     /** At most one banner, in `Flow-Degrade.dc.html`'s own story order. */

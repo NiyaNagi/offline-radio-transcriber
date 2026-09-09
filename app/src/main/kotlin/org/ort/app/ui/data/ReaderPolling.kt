@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import org.ort.app.status.StatusViewState
 import org.ort.app.status.StatusViewStateMapper
 import org.ort.app.ui.navigation.DrawerBadgeViewState
+import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
@@ -326,14 +327,25 @@ public object ReaderPolling {
             is RigStatus.State.Stale -> rig.lastKnown.descriptor
         }
 
+        // R-416: `Now-Idle.dc.html`'s meta row beneath "Start capture" ("USB Audio Device ·
+        // TH-D75A · tier 3") — three independent real facts, each honestly absent on its own:
+        // [InputStatus] resets to `None` once capture stops (it is live session state, not a
+        // record — see its own kdoc), so the operator's *chosen* input instead comes from the
+        // setup wizard's own durable record (`SharedPreferencesSetupStore.selectedInputLabel`,
+        // survives idle/capturing cycles unlike `InputStatus`). [tierLabel] reuses the exact same
+        // `MAX_TIER - ShedStatus.currentLevel` formula `ThreadViewData`/`SettingsPolling`/
+        // `FailureMapper` already use for "the tier this phone currently runs at" — the one place
+        // in this codebase already treating that as readable outside a live capture, not a new rule.
+        val setupStore = SharedPreferencesSetupStore(
+            context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE),
+        )
+        val tierLabel = "tier ${(IDLE_MAX_TIER - ShedStatus.currentLevel).coerceIn(0, IDLE_MAX_TIER)}"
+
         return NowViewStateMapper.idle(
             lastSessionSummaryLabel = lastSessionSummaryLabel,
-            // R-036/this package's report: no process-wide input-device holder exists to read from
-            // idle (see CaptureStatusViewState's kdoc for the same gap while capturing) — honestly
-            // omitted rather than guessed.
-            inputLabel = null,
+            inputLabel = setupStore.selectedInputLabel,
             rigLabel = rigLabel,
-            tierLabel = null,
+            tierLabel = tierLabel,
             earlierNights = earlierNights,
             canGetBetter = canGetBetter,
         )
@@ -387,6 +399,11 @@ public object ReaderPolling {
     }
 
     private const val EARLIER_NIGHTS_LIMIT = 3
+
+    /** R-416: same constant/formula `ThreadViewData.currentTier`/`SettingsPolling.currentTierNumber`
+     * already use — kept local rather than shared, matching this codebase's existing precedent of
+     * each caller holding its own copy of this one small formula. */
+    private const val IDLE_MAX_TIER = 3
 
     // -------------------------------------------------------------------------------------------
     // Starting capture from the reader (ui-conformance-plan WP4, R-036: Now-Idle's Start capture).

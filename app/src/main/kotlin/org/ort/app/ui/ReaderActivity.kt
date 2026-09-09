@@ -6,6 +6,9 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.FailureHostActions
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
@@ -148,6 +151,19 @@ public class ReaderActivity : ComponentActivity() {
                         onOpenRetentionSettings = { navigator.openSettings(SettingsScreenId.STORAGE) },
                         onSetFrequencyByHand = { navigator.openSettings(SettingsScreenId.CAPTURE) },
                         onReconnectRig = { navigator.openSettings(SettingsScreenId.RIG) },
+                        // Round 14 (R-448's own report): F14's "‹ Earlier nights" and F21/F22's
+                        // own "‹ Models and lexicon" headers now have a real target — the same
+                        // `navigator.open`/`openSettings` calls every other real recovery action
+                        // above already uses.
+                        onOpenEarlierNights = { navigator.open(ReaderDestination.EARLIER_NIGHTS) },
+                        onOpenModels = { navigator.openSettings(SettingsScreenId.ASSETS) },
+                        // FR-AST-4 (register R-448 follow-up): F21's "Activate now" — the real
+                        // `ModelsController.activateStaged` call, direct, exactly as safe to call
+                        // here as `ModelsContent.kt`'s own `activateStagedOnOpen` (that function's
+                        // own kdoc: "a safe no-op whenever a session is still live").
+                        onActivateStagedAsset = {
+                            lifecycleScope.launch { ModelsController.activateStaged(this@ReaderActivity) }
+                        },
                     ),
                 )
             }

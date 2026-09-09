@@ -27,6 +27,16 @@ import kotlin.math.sqrt
  *   a floor invented from less than a real window of data).
  * - [Snapshot.peakHistoryDbfs] is the last [HISTORY_SECONDS] completed one-second peak buckets,
  *   oldest first — `Level-Meter.dc.html`'s own 60 s history bar.
+ *
+ * **[Snapshot.clippedSamplesTotal] is a monotonic running total, never evicted** (register R-419):
+ * `Level-Meter.dc.html`'s board row is "Clipped samples this session", but
+ * [Snapshot.clipCountLastSecond] is only ever a rolling ~1 s window — summing it tick over tick
+ * would count the same clipped sample roughly once per tick for as long as it stays inside that
+ * window (`onFrame` runs at roughly 10 Hz), wildly overcounting. This field instead accumulates
+ * each frame's own newly-detected clip count directly, unconditionally, for as long as this
+ * [LevelMeter] instance exists — which is exactly one capture session's lifetime (a fresh instance
+ * per [org.ort.capture.android.AudioRecordSource]), so no separate reset is needed here; the
+ * session boundary is the instance boundary.
  */
 public class LevelMeter(private val clock: Clock = SystemClock) {
 
@@ -39,6 +49,7 @@ public class LevelMeter(private val clock: Clock = SystemClock) {
         public val sampleRateHz: Int,
         public val updatedAtMillis: Long,
         public val peakHistoryDbfs: List<Float>,
+        public val clippedSamplesTotal: Long,
     )
 
     /** `null` until [onFrame] has processed at least one sample this session. */
@@ -57,6 +68,10 @@ public class LevelMeter(private val clock: Clock = SystemClock) {
     private val peakHistory = ArrayDeque<Float>(HISTORY_SECONDS)
     private val rmsWindow = ArrayDeque<Float>(NOISE_FLOOR_WINDOW_SECONDS)
     private val clipEvents = ArrayDeque<ClipEvent>()
+
+    /** register R-419: this session's real running total -- see class kdoc. Never evicted, unlike
+     * [clipEvents]' own rolling window. */
+    private var clippedSamplesTotal: Long = 0L
 
     private data class ClipEvent(val atMillis: Double, val count: Int)
 
@@ -79,7 +94,10 @@ public class LevelMeter(private val clock: Clock = SystemClock) {
         val frameStartMillis = audioTimeMillis
         audioTimeMillis += count * MILLIS_PER_SECOND / sampleRateHz.toDouble()
 
-        if (clipCount > 0) clipEvents.addLast(ClipEvent(audioTimeMillis, clipCount))
+        if (clipCount > 0) {
+            clipEvents.addLast(ClipEvent(audioTimeMillis, clipCount))
+            clippedSamplesTotal += clipCount
+        }
         while (clipEvents.isNotEmpty() && clipEvents.first().atMillis < audioTimeMillis - MILLIS_PER_SECOND) {
             clipEvents.removeFirst()
         }
@@ -98,6 +116,7 @@ public class LevelMeter(private val clock: Clock = SystemClock) {
             sampleRateHz = sampleRateHz,
             updatedAtMillis = clock.wallMillis(),
             peakHistoryDbfs = peakHistory.toList(),
+            clippedSamplesTotal = clippedSamplesTotal,
         )
     }
 

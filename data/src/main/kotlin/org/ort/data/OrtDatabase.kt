@@ -44,6 +44,7 @@ import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintEntity
+import org.ort.data.entity.WorkAttemptEntity
 import org.ort.data.entity.WorkQueueItemEntity
 import java.util.concurrent.Executors
 
@@ -59,7 +60,9 @@ import java.util.concurrent.Executors
  * `Undo all` can restore a correction's exact prior attribution, not just its prior callsign,
  * and [LatticeSlotEntity] (register R-320, R-182) so each candidate's per-slot lattice detail
  * and transcript char span are queryable per candidate, not just opaque inside
- * [PhoneticLatticeEntity.unitsBlob].
+ * [PhoneticLatticeEntity.unitsBlob]; v6 adds [WorkAttemptEntity] (register R-426) so
+ * `Fail-Pass.dc.html` can list every failed attempt at a queue item with its own timestamp and
+ * reason, not just the queue item's own `attemptCount`/`lastError` (the latest attempt only).
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -87,6 +90,7 @@ import java.util.concurrent.Executors
         VoiceprintBindingHistoryEntity::class,
         PriorAdjustmentEntity::class,
         LatticeSlotEntity::class,
+        WorkAttemptEntity::class,
     ],
     version = OrtDatabase.SCHEMA_VERSION,
     exportSchema = true,
@@ -107,7 +111,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun stationIdentityDao(): StationIdentityDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 5
+        public const val SCHEMA_VERSION: Int = 6
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -225,10 +229,31 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v5 → v6 (register R-426): adds the `work_attempt` table for [WorkAttemptEntity] — one
+         * row per failed attempt at a [WorkQueueItemEntity], written by
+         * [org.ort.data.WorkQueue.failPass]. No existing table or column is touched or dropped;
+         * every v5 row survives untouched (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
+         */
+        public val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `work_attempt` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `itemId` INTEGER NOT NULL, " +
+                        "`attemptNo` INTEGER NOT NULL, `startedAtMillis` INTEGER NOT NULL, " +
+                        "`finishedAtMillis` INTEGER NOT NULL, `outcome` TEXT NOT NULL, `reason` TEXT NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_work_attempt_itemId_attemptNo` " +
+                        "ON `work_attempt` (`itemId`, `attemptNo`)",
+                )
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> =
-            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 
         private suspend fun PooledConnection.exec(sql: String) {
             usePrepared(sql) { it.step() }
@@ -406,6 +431,49 @@ public abstract class OrtDatabase : RoomDatabase() {
         private val queryExecutor: java.util.concurrent.ExecutorService by lazy { Executors.newCachedThreadPool() }
 
         /**
+         * Test-suite regression, 2026-09-08 (this class's own report): every real `*Polling`
+         * object in `:app` (`ReaderPolling`, `LogPolling`, `DigestPolling`, `CorrectionPolling`,
+         * `SearchPolling`/`ThreadPolling`, `SettingsPolling`, `ImprovePolling`/`ImproveRunner`,
+         * `FailureSignalsPolling`, `LiveBarPolling`, `DrawerCounts`, `ModelsController`, the
+         * diagnostics-bundle producers, `RealTransmissionAudioPlayer`) calls [create] fresh on
+         * every invocation and never closes what it opens — by design, per [ReaderPolling]'s own
+         * kdoc ("this stays a poll for now"), several of these run inside a screen's
+         * `LaunchedEffect(key) { while (true) { ...; delay(2_000) } }` loop (`LogContent.kt`,
+         * `NowContent.kt`, `CaptureStatusContent.kt`, `ThreadContent.kt`, `ImproveContent.kt`,
+         * `ModelsContent.kt`, `OrtNavHost.kt`, `FailureHost.kt`) — every 2 real seconds, forever,
+         * for as long as that screen stays open. `ReaderActivity.kt`'s own kdoc already documents
+         * that such a loop, once started under a Robolectric-driven test, is "never [given] a
+         * chance to cleanly cancel" — a stale `Handler`-posted continuation can keep firing into
+         * *later, unrelated* test classes sharing the same JVM fork, each firing opening one more
+         * never-closed [OrtDatabase] against the same on-disk file. Each new instance re-runs
+         * [applyHandWrittenSchema] through [useWriterConnection] (register R-204) on the shared
+         * [queryExecutor] above, and WAL-mode SQLite serialises writers — enough simultaneously
+         * open instances against one file compound into exactly the "fine alone, catastrophic
+         * combined" slowdown this file's own R-204 fix already diagnosed once for a different
+         * cause. This is also a genuine device-side leak, not just a test artifact: a real capture
+         * session left open for hours would accumulate one native SQLite connection (and file
+         * descriptors) every 2 seconds from every polling screen the operator has visited.
+         *
+         * Fix, at the one place every caller already funnels through: cache a live, non-in-memory
+         * [OrtDatabase] by its on-disk path (matching [Context.getDatabasePath]'s own identity —
+         * every caller passes the same [DATABASE_NAME] in production, and Robolectric gives each
+         * simulated app install its own `filesDir`, so this never conflates two unrelated tests'
+         * data) and hand back the *same* instance instead of opening a new one — turning the
+         * existing "open on every call" idiom into what every caller already assumed it was: cheap
+         * to call repeatedly. [OrtDatabase.close] (only test `@After` blocks call it — no
+         * production call site does, confirmed by search) evicts itself automatically: a cached
+         * instance is only reused while [RoomDatabase.isOpen] is still true, and a test that
+         * deletes the on-disk file first (`context.deleteDatabase(DATABASE_NAME)` — `SearchPollingTest`
+         * and its siblings) is also honoured, since a cache hit is discarded when the file it names
+         * no longer exists. `inMemory` instances are deliberately never cached — each of those is
+         * already a short-lived, intentionally isolated instance (this file's own [queryExecutor]
+         * kdoc already names that pattern as normal), and caching one under a name shared with
+         * every other in-memory caller would silently leak state between unrelated tests instead
+         * of fixing a leak.
+         */
+        private val instances = java.util.concurrent.ConcurrentHashMap<String, OrtDatabase>()
+
+        /**
          * WAL + the hand-written schema (technical design §12.1) + [BundledSQLiteDriver]
          * (register R-204, FR-UI-3) — the production and test factory, and the **only** place a
          * connection is opened, so every caller — the shipped app and every Robolectric/JVM test —
@@ -425,8 +493,27 @@ public abstract class OrtDatabase : RoomDatabase() {
          * `.setQueryExecutor(queryExecutor)` — see [queryExecutor]'s own doc comment for why every
          * `OrtDatabase` instance needs a pool dedicated to this module, not Room's shared default.
          */
-        @Suppress("SpreadOperator") // MIGRATIONS is tiny; addMigrations(vararg) has no non-spread overload.
         public fun create(context: Context, name: String = DATABASE_NAME, inMemory: Boolean = false): OrtDatabase {
+            // See [instances]'s own kdoc: every non-in-memory caller shares one live instance per
+            // on-disk path, reused while it is still open and the file it names still exists.
+            if (!inMemory) {
+                val path = context.applicationContext.getDatabasePath(name).absolutePath
+                instances[path]?.let { cached ->
+                    if (cached.isOpen && java.io.File(path).exists()) return cached
+                    instances.remove(path, cached)
+                }
+                val fresh = buildAndInitialize(context, name, inMemory = false)
+                // Another thread may have raced this one to the same key — `putIfAbsent` keeps
+                // whichever instance wins the race as the single shared one; the loser's own
+                // connection has no other reference once discarded, so nothing leaks by losing.
+                val winner = instances.putIfAbsent(path, fresh) ?: fresh
+                return winner
+            }
+            return buildAndInitialize(context, name, inMemory = true)
+        }
+
+        @Suppress("SpreadOperator") // MIGRATIONS is tiny; addMigrations(vararg) has no non-spread overload.
+        private fun buildAndInitialize(context: Context, name: String, inMemory: Boolean): OrtDatabase {
             val builder = if (inMemory) {
                 Room.inMemoryDatabaseBuilder(context, OrtDatabase::class.java)
             } else {

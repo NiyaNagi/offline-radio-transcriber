@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.referenceLineY
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
@@ -156,5 +157,39 @@ class LevelScreenTest {
         assert(clipTop - noiseTop > 10f) {
             "expected clip 0 to sit well below noise -58 once stacked, got noise top=$noiseTop clip top=$clipTop"
         }
+    }
+
+    // --- R-465 (Reviewer A round 2): the clip line at CHART_CEILING_DBFS (fraction 1.0, canvas
+    // row 0) was device-confirmed invisible -- bisected by/merged into the chart Box's own top
+    // border, not merely faint at capture resolution (`setup-level/S07-level.png`, pixel-sampled:
+    // zero non-background pixels near the expected row). `referenceLineY` (WP4 lifted this fix's
+    // own pure math into the shared `org.ort.app.ui.components.ChartGeometry.kt`, register R-542 --
+    // the identical defect existed in `LevelMeterScreen.kt` too) is exercised directly here at
+    // LevelScreen's own call site, with no Canvas/DrawScope needed. ------------------------------
+
+    @Test
+    fun `R_465 the clip line at the scale's own ceiling no longer lands exactly on the canvas edge`() {
+        // fraction 1.0 is CHART_CEILING_DBFS's own position (LevelViewState) -- yForFraction alone
+        // would put this at y=0 exactly, the defect this fixes.
+        val y = referenceLineY(fraction = 1f, heightPx = 96f, edgeClearancePx = 4f)
+        assert(y > 0f) { "expected the clip line's stroke to sit inside the canvas, not on row 0, got y=$y" }
+        assert(y == 4f) { "expected the clip line inset by the full clearance (4f), got y=$y" }
+    }
+
+    @Test
+    fun `R_465 a noise floor at the scale's own bottom edge is inset the same way, not lost off-canvas`() {
+        // fraction 0.0 is the mirror case at the bottom edge (a noise floor at CHART_FLOOR_DBFS).
+        val y = referenceLineY(fraction = 0f, heightPx = 96f, edgeClearancePx = 4f)
+        assert(y == 92f) { "expected the line inset up from the bottom edge by the full clearance, got y=$y" }
+    }
+
+    @Test
+    fun `R_465 a line already well clear of either edge is unaffected, no regression for the target band`() {
+        // fraction 0.8 (TARGET_BAND_TOP_DBFS's own position on the -60..0 scale) sits nowhere near
+        // either edge -- the inset must be a true no-op here, the same position yForFraction alone
+        // would already give.
+        val plain = 96f * (1f - 0.8f)
+        val inset = referenceLineY(fraction = 0.8f, heightPx = 96f, edgeClearancePx = 4f)
+        assert(inset == plain) { "expected no change away from the edges, plain=$plain inset=$inset" }
     }
 }

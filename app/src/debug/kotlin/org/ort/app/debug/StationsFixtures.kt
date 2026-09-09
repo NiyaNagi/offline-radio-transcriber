@@ -4,6 +4,7 @@ import org.ort.core.AttributionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
+import org.ort.data.entity.LatticeSource
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.VoiceprintEntity
 import java.time.LocalDate
@@ -167,10 +168,14 @@ internal object StationsFixtures {
                 createdAt = ambiguousStart + 500L,
             ),
         )
+        // R-421: TEXT_DERIVED, mirroring `OvernightScenario`'s own identical AMBIGUOUS over — see
+        // that scenario's own comment for why `selected` stays `false` (an AMBIGUOUS over has no
+        // winner to highlight inline; `AmbiguousCandidatesFixtureTest` already establishes this).
         db.catalogDao().insert(
             ScenarioFixtures.lattice(
                 "$ambiguousTxId-lat",
                 ambiguousTxId,
+                source = LatticeSource.TEXT_DERIVED,
                 createdAt =
                 ambiguousStart + 500L,
             ),
@@ -205,6 +210,20 @@ internal object StationsFixtures {
                 selected = false,
             ),
         )
+        // R-421: D03's transcript highlight reads the `selected` candidate's own slots.
+        ScenarioFixtures.latticeSlots(
+            transmissionId = ambiguousTxId,
+            candidateId = "$ambiguousTxId-c1",
+            transcriptText = "kilo echo seven quebec romeo sierra, portable",
+            unitsAndWords = listOf(
+                "K" to "kilo",
+                "E" to "echo",
+                "7" to "seven",
+                "Q" to "quebec",
+                "R" to "romeo",
+                "S" to "sierra",
+            ),
+        ).forEach { db.catalogDao().insert(it) }
         transmissionCount++
 
         // R-272: two real voiceprint clusters bound to SPLIT_STATION, each carrying the exact

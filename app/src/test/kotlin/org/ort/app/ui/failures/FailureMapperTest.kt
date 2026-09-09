@@ -3,6 +3,9 @@ package org.ort.app.ui.failures
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.app.ui.data.ModelId
+import org.ort.app.ui.data.ModelsController
+import org.ort.app.ui.data.StagedActivation
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.data.entity.CaptureGapCause
@@ -45,10 +48,13 @@ class FailureMapperTest {
         sessionTransmissionCount: Int = 0,
         storageForecastHistory: List<StorageForecastSample> = emptyList(),
         backlogHistory: List<BacklogSample> = emptyList(),
+        stagedActivation: StagedActivation? = null,
+        stagedActivationActiveLabel: String? = null,
     ) = FailureSignals(
         captureState, inputStatus, levelStatus, thermalStatus, rigStatus, storageForecast,
         shedLevel, shedBacklog, newestGap, nowMillis, debugOverride,
         sessionStartedAtMillis, sessionTransmissionCount, storageForecastHistory, backlogHistory,
+        stagedActivation, stagedActivationActiveLabel,
     )
 
     @Test
@@ -406,5 +412,86 @@ class FailureMapperTest {
             signals(inputStatus = InputStatus.State.Mismatch(usbDevice, builtInMic), debugOverride = override),
         )
         assertEquals(override, presentation)
+    }
+
+    /**
+     * WP11b follow-up history: this test used to prove F21 (`Fail-Asset-Swap`) had *no* real signal
+     * — [FailureMapper.map] mapped every real [FailureSignals] snapshot to `None`, never
+     * `AssetSwap`, because the underlying asset activation guard (FR-AST-4) did not exist anywhere
+     * in `:lexicon`/`:data`/`:app` (that investigation's own findings — [DebugFailureOverride]'s
+     * class kdoc, `Scenarios.kt`'s `load` doc comment, [FailAssetSwapScreen]'s own kdoc,
+     * [AssetSwapViewState]'s own file section header, `LexiconImportInstaller.installValidated`
+     * activating unconditionally — are unchanged history, not restated here). **WP10's own
+     * `ModelsController.stagedActivation` guard has since landed** (FR-AST-4, register R-448
+     * follow-up), so this is now the real positive case that guard's own kdoc says this package's
+     * mapper is expected to read: a real [StagedActivation] maps to a real
+     * [FailurePresentation.AssetSwap], its `stagedLabel` carrying [StagedActivation]'s own asset
+     * name, version and staged-at time, never invented ones — and the debug-override path (still
+     * the only way the other five ids in that original investigation remain reachable) keeps
+     * working exactly as before, asserted below for completeness.
+     */
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_signal a real staged activation maps to the real AssetSwap presentation`() {
+        val staged = StagedActivation(
+            assetId = ModelsController.CALLSIGN_LEXICON_ASSET_ID,
+            version = "2026.09",
+            stagedAtMillis = 500_000L,
+            reason = "a session is live — activating a new callsign lexicon mid-session would change " +
+                "which callsigns read as usual until this session ends (FR-AST-4)",
+        )
+        val presentation = FailureMapper.map(
+            signals(stagedActivation = staged, stagedActivationActiveLabel = "2026.08 · 41,200 records active"),
+        )
+        assertTrue(presentation is FailurePresentation.AssetSwap, "expected AssetSwap, was $presentation")
+        presentation as FailurePresentation.AssetSwap
+        assertEquals("2026.08 · 41,200 records active", presentation.state.activeLabel)
+        assertEquals(
+            "callsign lexicon 2026.09 · staged ${FailureMapper.clockLabel(500_000L)}",
+            presentation.state.stagedLabel,
+        )
+        assertEquals(2, presentation.state.options.size)
+        assertEquals(staged.reason, presentation.state.options[0].subLine)
+        assertEquals(0, presentation.state.selectedOption)
+    }
+
+    @Test
+    @Requirement("R-448")
+    fun `R_448_asset_swap_signal a staged model uses the model's own label, not the lexicon's`() {
+        val staged = StagedActivation(
+            assetId = ModelId.ASR_TOKENS.name,
+            version = "a1b2c3d4",
+            stagedAtMillis = 500_000L,
+            reason = "a session is live — reprocessing previously failed overs with " +
+                "${ModelId.ASR_TOKENS.label} mid-session would change what this session finds usual (FR-AST-4)",
+        )
+        val presentation = FailureMapper.map(signals(stagedActivation = staged, stagedActivationActiveLabel = null))
+        assertTrue(presentation is FailurePresentation.AssetSwap, "expected AssetSwap, was $presentation")
+        presentation as FailurePresentation.AssetSwap
+        assertEquals("not measured", presentation.state.activeLabel)
+        assertTrue(
+            presentation.state.stagedLabel.startsWith(ModelId.ASR_TOKENS.label),
+            "expected the model's own label, was ${presentation.state.stagedLabel}",
+        )
+    }
+
+    @Test
+    @Requirement("R-448")
+    fun `R_100 a debug override still wins outright, over a real staged activation`() {
+        val staged = StagedActivation(
+            assetId = ModelsController.CALLSIGN_LEXICON_ASSET_ID,
+            version = "2026.09",
+            stagedAtMillis = 500_000L,
+            reason = "a session is live",
+        )
+        val override = FailurePresentation.AssetSwap(
+            AssetSwapViewState(
+                activeLabel = "callsigns-2026.08 · 41,200 entries",
+                stagedLabel = "callsigns-2026.09 · 41,600 entries",
+                options = listOf(AssetSwapOption("Wait for the session to end", "the default · nothing else to do")),
+                selectedOption = 0,
+            ),
+        )
+        assertEquals(override, FailureMapper.map(signals(stagedActivation = staged, debugOverride = override)))
     }
 }

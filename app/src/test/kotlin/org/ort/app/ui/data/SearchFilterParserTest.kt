@@ -110,8 +110,21 @@ public class SearchFilterParserTest {
 
     @Test
     @Requirement("R-064")
-    public fun `a band prose label reads 160M and 1_25M, never the raw enum name`() {
-        assertEquals("160M", Band.HF_160M.prose())
-        assertEquals("1.25M", Band.VHF_1_25M.prose())
+    public fun `R_501 a band prose label reads 160 m and 1_25 m, never the raw enum name`() {
+        assertEquals("160 m", Band.HF_160M.prose())
+        assertEquals("1.25 m", Band.VHF_1_25M.prose())
+    }
+
+    @Test
+    @Requirement("R-501")
+    public fun `R_501 a centimetre band prose label reads 70 cm, lowercase, space-separated`() {
+        assertEquals("70 cm", Band.UHF_70CM.prose())
+    }
+
+    @Test
+    @Requirement("R-500")
+    public fun `R_500 attributionStates defaults to Confirmed and Inferred, never every state`() {
+        val input = SearchFilterInput()
+        assertEquals(setOf(AttributionState.CONFIRMED, AttributionState.INFERRED), input.attributionStates)
     }
 }

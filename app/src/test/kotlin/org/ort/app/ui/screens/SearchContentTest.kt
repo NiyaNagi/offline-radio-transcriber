@@ -1,6 +1,12 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -8,17 +14,23 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.debug.Scenarios
 import org.ort.app.ui.data.RecentSearches
 import org.ort.app.ui.data.SearchFacetCounts
+import org.ort.app.ui.data.SearchFacetFilter
 import org.ort.app.ui.data.SearchFilterInput
+import org.ort.app.ui.data.SearchFilterParser
+import org.ort.app.ui.data.SearchPolling
 import org.ort.app.ui.data.SearchResult
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.AttributionState
+import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
@@ -176,9 +188,75 @@ class SearchContentTest {
 
         // Same real-background-thread-I/O reasoning as the widen-suggestions test above:
         // `SearchPolling.facetCounts` is a genuine Room query, not tracked by `waitForIdle()`.
+        // `PrimaryButton`'s own `clearAndSetSemantics` (`Controls.kt`, WP2's R-373-adjacent fix)
+        // exposes its label only via `contentDescription`, never `Text`/`EditableText`.
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
-            composeTestRule.onAllNodesWithText("Show 3 overs").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithContentDescription("Show 3 overs").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText("Show 3 overs").assertExists()
+        composeTestRule.onNodeWithContentDescription("Show 3 overs").assertExists()
+    }
+
+    // --- Screenshot-tour seam: initialQuery/submitOnStart/initialFiltersOpen ---
+
+    @Test
+    fun R_TOUR_search_initial_query(): Unit = runTest {
+        // The same `search-corpus` debug fixture the register's own validator and `R_371_*`
+        // (`SearchPollingTest.kt`) use — 14 overs across 3 nights, every transcript reading
+        // "...doing a park activation...", so "park" matches all 14.
+        Scenarios.load(context, "search-corpus")
+
+        composeTestRule.setContent {
+            OrtTheme {
+                // A small stand-in for `OrtNavHost`'s own `searchHostState` (`OrtNavHost.kt`) —
+                // `onInputChange`/`onSearch` wired the identical way, so this proves the tour seam
+                // reaches a real `SearchResult` through the *caller's* own real search path, not a
+                // seeded/faked one specific to this test.
+                var input by remember { mutableStateOf(SearchFilterInput()) }
+                var result by remember { mutableStateOf<SearchResult?>(null) }
+                val scope = rememberCoroutineScope()
+                SearchContent(
+                    input = input,
+                    result = result,
+                    onInputChange = { input = it },
+                    onSearch = {
+                        scope.launch {
+                            val params = SearchFilterParser.parse(input, SystemClock.wallMillis())
+                            result = SearchPolling.search(context, params, SearchFacetFilter.from(input))
+                        }
+                    },
+                    onOpen = {},
+                    initialQuery = "park",
+                    submitOnStart = true,
+                )
+            }
+        }
+
+        // Real background-thread Room I/O (`SearchPolling.search`), not tracked by `waitForIdle()`
+        // — the standard polling pattern this file already uses above.
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithText("14 overs", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText("14 overs", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("search-count-line").assertExists()
+        composeTestRule.onNodeWithTag("search-empty-state").assertDoesNotExist()
+    }
+
+    @Test
+    fun R_TOUR_search_filters_open() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SearchContent(
+                    input = SearchFilterInput(),
+                    result = null,
+                    onInputChange = {},
+                    onSearch = {},
+                    onOpen = {},
+                    initialFiltersOpen = true,
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("search-filters-sheet").assertExists()
+        composeTestRule.onNodeWithTag("search-filters-scrim").assertExists()
     }
 }

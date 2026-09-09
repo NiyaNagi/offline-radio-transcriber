@@ -265,6 +265,17 @@ private fun NextDeletionMarker(modifier: Modifier = Modifier) {
  * dividing by the real total) — never dropped from the bar, and its real `0.0 GB` legend entry is
  * unchanged. The legend now draws the board's own 10×10 colour [ColorSwatch] beside each label —
  * text-only before this round.
+ *
+ * R-441 (register, halt, Reviewer D): a *fresh* store (every category genuinely `0` bytes, not
+ * just one among real data) rendered almost full-width solid colour instead of an empty track —
+ * `coerceAtLeast(1L)` on every numerator against a `total` itself coerced to `1L` gave every
+ * category an *equal* share, but Compose's own weighted-`Row` rounding at that many-decimal-place
+ * equal split (confirmed by direct on-device review, not reproducible from the arithmetic alone on
+ * this host) resolved unevenly rather than as four clean quarters. Rather than depend on that
+ * rounding behaving a particular way, a genuinely empty store ([realTotalBytes] `== 0L`) now draws
+ * **no** weighted segments at all — the bar's own [OrtColors.lineChip] track background *is* the
+ * empty state the board calls for, never a coloured fallback standing in for data that does not
+ * exist yet.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -288,15 +299,20 @@ private fun StorageCategoryBreakdown(
                 .testTag(STORAGE_BAR_TEST_TAG),
             horizontalArrangement = Arrangement.spacedBy(1.dp),
         ) {
-            val total = categories.sumOf { it.bytes }.coerceAtLeast(1L)
-            categories.forEach { category ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .weight(category.bytes.coerceAtLeast(1L).toFloat() / total)
-                        .background(categoryColor(category.label))
-                        .testTag(STORAGE_BAR_SEGMENT_TEST_TAG),
-                ) {}
+            // R-441: a genuinely empty store (every category `0`) draws no segments at all — the
+            // track's own background above is the empty state; see this composable's own doc
+            // comment for why an equal-weight fallback is not used instead.
+            val realTotalBytes = categories.sumOf { it.bytes }
+            if (realTotalBytes > 0L) {
+                categories.forEach { category ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(category.bytes.coerceAtLeast(1L).toFloat() / realTotalBytes)
+                            .background(categoryColor(category.label))
+                            .testTag(STORAGE_BAR_SEGMENT_TEST_TAG),
+                    ) {}
+                }
             }
         }
         // R-150/R-251: the legend wrapped "Records / 0.0 / GB" across separate lines at font

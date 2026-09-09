@@ -1,5 +1,8 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.isOff
+import androidx.compose.ui.test.isOn
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -62,7 +65,9 @@ class SearchFiltersSheetTest {
         var current = SearchFilterInput()
         sheet(input = current, onInputChange = { current = it })
 
-        composeTestRule.onNodeWithText("2M").performScrollTo().performClick()
+        // `FilterChip`'s own `clearAndSetSemantics` (`Controls.kt`) exposes its label only via
+        // `contentDescription`, never `Text`/`EditableText` — same throughout this file below.
+        composeTestRule.onNodeWithContentDescription("2 m").performScrollTo().performClick()
 
         assert(current.band == Band.VHF_2M) { "expected VHF_2M but was ${current.band}" }
     }
@@ -72,12 +77,28 @@ class SearchFiltersSheetTest {
         sheet(heardFrequenciesHz = listOf(145_230_000L, 146_960_000L))
 
         // 2m (145.230/146.960) and 70cm both heard in the register's own example — the generic
-        // HF chips (160M, 80M, 60M, ...) this replaced must not render at all.
-        composeTestRule.onNodeWithText("145.230").assertExists()
-        composeTestRule.onNodeWithText("146.960").assertExists()
-        composeTestRule.onNodeWithText("2M").assertExists()
-        composeTestRule.onNodeWithText("160M").assertDoesNotExist()
-        composeTestRule.onNodeWithText("80M").assertDoesNotExist()
+        // HF chips (160 m, 80 m, 60 m, ...) this replaced must not render at all.
+        composeTestRule.onNodeWithContentDescription("145.230").assertExists()
+        composeTestRule.onNodeWithContentDescription("146.960").assertExists()
+        composeTestRule.onNodeWithContentDescription("2 m").assertExists()
+        composeTestRule.onNodeWithContentDescription("160 m").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("80 m").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_501 a band chip reads 2 m, space-separated and lowercase, never the raw enum name 2M`() {
+        sheet(heardFrequenciesHz = listOf(145_230_000L))
+
+        composeTestRule.onNodeWithContentDescription("2 m").assertExists()
+        composeTestRule.onNodeWithContentDescription("2M").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_501 no exact-MHz free-text field renders beneath the frequency-and-band chip row`() {
+        sheet(heardFrequenciesHz = listOf(145_230_000L))
+
+        composeTestRule.onNodeWithContentDescription("Exact frequency filter").assertDoesNotExist()
+        composeTestRule.onNodeWithText("exact MHz").assertDoesNotExist()
     }
 
     @Test
@@ -87,8 +108,8 @@ class SearchFiltersSheetTest {
         // Tagged, not text — the Time section has its own, separate "All" chip
         // (`SearchTimeFilter.ALL.label()` is also literally "All").
         composeTestRule.onNodeWithTag("search-filter-band-all").assertExists()
-        composeTestRule.onNodeWithText("2M").assertDoesNotExist()
-        composeTestRule.onNodeWithText("160M").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("2 m").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("160 m").assertDoesNotExist()
     }
 
     @Test
@@ -96,7 +117,7 @@ class SearchFiltersSheetTest {
         var current = SearchFilterInput(band = Band.UHF_70CM)
         sheet(input = current, heardFrequenciesHz = listOf(145_230_000L), onInputChange = { current = it })
 
-        composeTestRule.onNodeWithText("145.230").performScrollTo().performClick()
+        composeTestRule.onNodeWithContentDescription("145.230").performScrollTo().performClick()
 
         assert(current.frequencyMhz == "145.230") { "expected frequencyMhz 145.230 but was ${current.frequencyMhz}" }
         assert(current.band == null) { "expected band to clear but was ${current.band}" }
@@ -107,7 +128,7 @@ class SearchFiltersSheetTest {
         var current = SearchFilterInput(frequencyMhz = "145.230")
         sheet(input = current, heardFrequenciesHz = listOf(145_230_000L), onInputChange = { current = it })
 
-        composeTestRule.onNodeWithText("2M").performScrollTo().performClick()
+        composeTestRule.onNodeWithContentDescription("2 m").performScrollTo().performClick()
 
         assert(current.band == Band.VHF_2M) { "expected VHF_2M but was ${current.band}" }
         assert(current.frequencyMhz == "") { "expected frequencyMhz to clear but was ${current.frequencyMhz}" }
@@ -118,7 +139,8 @@ class SearchFiltersSheetTest {
         var current = SearchFilterInput()
         sheet(input = current, onInputChange = { current = it })
 
-        composeTestRule.onNodeWithText("Range").performScrollTo().performClick()
+        // `FilterChip`'s own `clearAndSetSemantics` (`Controls.kt`).
+        composeTestRule.onNodeWithContentDescription("Range").performScrollTo().performClick()
 
         assert(current.timeFilter == SearchTimeFilter.RANGE) { "expected RANGE but was ${current.timeFilter}" }
     }
@@ -178,15 +200,30 @@ class SearchFiltersSheetTest {
 
     @Test
     fun `Show N overs reports the exact count the current selection would give, never a fabricated number`() {
+        // R-500: the sheet's own default filter is Confirmed + Inferred (never Unknown/Ambiguous),
+        // so both rows here must be states the default actually includes for "Show 2 overs" to be
+        // the real, honest count of the *default*, un-narrowed selection this test means to prove.
         val counts = SearchFacetCounts(
             listOf(
                 SearchFacetRow(AttributionState.CONFIRMED, false, false),
-                SearchFacetRow(AttributionState.UNKNOWN, false, false),
+                SearchFacetRow(AttributionState.INFERRED, false, false),
             ),
         )
         sheet(facetCounts = counts)
 
-        composeTestRule.onNodeWithText("Show 2 overs").assertExists()
+        // `PrimaryButton`'s own `clearAndSetSemantics` (`Controls.kt`) exposes its label only via
+        // `contentDescription`.
+        composeTestRule.onNodeWithContentDescription("Show 2 overs").assertExists()
+    }
+
+    @Test
+    fun `R_500 Confirmed and Inferred are checked by default, Ambiguous and Unknown are not`() {
+        sheet(input = SearchFilterInput())
+
+        composeTestRule.onNodeWithText("Confirmed").performScrollTo().assert(isOn())
+        composeTestRule.onNodeWithText("Inferred").performScrollTo().assert(isOn())
+        composeTestRule.onNodeWithText("Ambiguous").performScrollTo().assert(isOff())
+        composeTestRule.onNodeWithText("Unknown").performScrollTo().assert(isOff())
     }
 
     @Test
@@ -194,7 +231,7 @@ class SearchFiltersSheetTest {
         var shown = false
         sheet(onShowResults = { shown = true })
 
-        composeTestRule.onNodeWithText("Show 0 overs").performScrollTo().performClick()
+        composeTestRule.onNodeWithContentDescription("Show 0 overs").performScrollTo().performClick()
 
         assert(shown) { "expected Show N overs to invoke onShowResults" }
     }
@@ -204,7 +241,9 @@ class SearchFiltersSheetTest {
         var cleared = false
         sheet(onClearAll = { cleared = true })
 
-        composeTestRule.onNodeWithText("Clear all").performScrollTo().performClick()
+        // `TextAction`'s own `clearAndSetSemantics` (`Controls.kt`) exposes its label only via
+        // `contentDescription`.
+        composeTestRule.onNodeWithContentDescription("Clear all").performScrollTo().performClick()
 
         assert(cleared) { "expected Clear all to invoke onClearAll" }
     }

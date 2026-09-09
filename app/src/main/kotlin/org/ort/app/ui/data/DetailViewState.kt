@@ -20,16 +20,35 @@ import org.ort.core.PassId
  * [org.ort.app.ui.components.ScoreChip] **only** on INFERRED — never a bare number on CONFIRMED —
  * but a confidence value is never *omitted* either: it renders as prose in the header's
  * explanation sentence for every state that carries one. That sentence is what [bodyFor] builds.
+ *
+ * **Register R-423 (design), narrower than the note above.** `Detail.dc.html` itself (INFERRED's
+ * own real board) carries **no** "Confidence 0.82." clause in its explanation sentence at all —
+ * confirmed by reading the board's own markup directly — because the chip already shows that
+ * number beside the callsign; repeating it in prose was a duplicate this package had not checked
+ * the board closely enough to catch. [bodyFor]'s INFERRED branch no longer appends it. CONFIRMED's
+ * own explanation (no chip on that state, per the same board file) is unchanged by this — the
+ * paragraph above still governs it.
  */
 public sealed interface DetailBodyViewState {
     public val explanation: String
 
     public data class Confirmed(override val explanation: String) : DetailBodyViewState
 
-    /** R-053: [sourceTransmissionId] is the real `Attribution.sourceTransmissionId`, non-null only
-     * when Pass B actually recorded one — `onOpenTransmission(sourceTransmissionId)` is the caller's job. */
-    public data class Inferred(override val explanation: String, val sourceTransmissionId: String?) :
-        DetailBodyViewState
+    /**
+     * R-053: [sourceTransmissionId] is the real `Attribution.sourceTransmissionId`, non-null only
+     * when Pass B actually recorded one — `onOpenTransmission(sourceTransmissionId)` is the
+     * caller's job. Register R-423 (design): [sourceOverTimeLabel] (`Detail.dc.html`'s own
+     * "02:14:07") is carried through *structured*, not just baked into [explanation]'s prose, so
+     * [org.ort.app.ui.screens.TransmissionDetailScreen] can make that timestamp itself the tappable
+     * link the board draws it as — a separate `Open the source over` line beneath the sentence is
+     * not what the board shows. `null` when no source id is known yet, the same case [explanation]
+     * already falls back to its generic "Matched by voice." wording for.
+     */
+    public data class Inferred(
+        override val explanation: String,
+        val sourceTransmissionId: String?,
+        val sourceOverTimeLabel: String? = null,
+    ) : DetailBodyViewState
 
     public data class Ambiguous(
         override val explanation: String,
@@ -80,6 +99,19 @@ public data class DetailWhyViewState(
 )
 
 /**
+ * R-426: one real attempt at a failed pass — `:data` schema v6's
+ * [org.ort.data.entity.WorkAttemptEntity], oldest first, exactly the order `Fail-Pass.dc.html`
+ * lists them in. [timeLabel] is the attempt's own real `finishedAtMillis` (when the error or
+ * timeout was recorded, not when the attempt started); [reasonLabel] is the real
+ * `WorkAttemptEntity.reason`, humanized ([org.ort.data.entity.WorkAttemptOutcome.TIMEOUT]'s own
+ * stored reason is always the literal `"timeout"` — the only value
+ * [org.ort.data.WorkQueue.runLeased]'s timeout path ever passes — so this reads "Timed out"
+ * rather than repeating the raw token; a `FAILED` outcome's real message is title-cased the same
+ * way this package's other error text already is).
+ */
+public data class PassAttemptViewState(val timeLabel: String, val reasonLabel: String)
+
+/**
  * R-153, F18 `Fail-Pass.dc.html`, FR-RUN-9: a pass that errored repeatedly and stopped retrying
  * automatically — real per-transmission facts read from `:data`'s
  * [org.ort.data.entity.WorkQueueItemEntity] (`state = FAILED`) by
@@ -87,19 +119,26 @@ public data class DetailWhyViewState(
  * which pass failed in operator terms (guide §9's "pass" vocabulary — "Pass B", not `B_OFFLINE`);
  * [attempts] and [lastError] are the real `attemptCount`/`lastError` columns.
  *
- * **Named schema gap** (this package's brief asked for it to be reported, not invented):
- * `Fail-Pass.dc.html` shows three separately-timestamped attempts, each with its own message and
- * backoff — `WorkQueueItemEntity` keeps only the aggregate [attempts] count and the single most
- * recent [lastError]; every earlier attempt's own timestamp and message is not retained anywhere
- * in `:data` today. [org.ort.app.ui.screens.TransmissionDetailScreen] renders exactly what this
- * class carries — one "what went wrong" line, not a fabricated three-row list — and this package's
- * CHANGELOG names the gap explicitly.
+ * **R-426, schema gap closed (round 12):** `:data` schema v6 added
+ * [org.ort.data.entity.WorkAttemptEntity], one durable row per failed attempt, so [attemptLog]
+ * now carries the real per-attempt timestamp/reason history `Fail-Pass.dc.html` draws — round 11's
+ * single fallback line is kept only for the one case schema v6 cannot retroactively back: a
+ * `FAILED` item whose own attempts predate this table (no `work_attempt` rows exist for it, so
+ * [attemptLog] is honestly empty and [org.ort.app.ui.screens.TransmissionDetailScreen] falls back
+ * to [lastError] alone, never a fabricated per-attempt list for a record that has none).
+ *
+ * **R-470 (design, round 13):** [sessionFailedCount] is the board's own closing "Counted in
+ * tonight's health: N failed." paragraph — the real count of `FAILED` transmissions in this over's
+ * own session, the same fact [org.ort.app.ui.data.ReaderPolling.captureStatus]'s own `failedCount`
+ * already counts for `Capture-Status.dc.html`, never a fabricated "since install" or global total.
  */
 public data class PassFailureViewState(
     val passId: PassId,
     val passLabel: String,
     val lastError: String,
     val attempts: Int,
+    val attemptLog: List<PassAttemptViewState> = emptyList(),
+    val sessionFailedCount: Int = 0,
 )
 
 /**
@@ -165,9 +204,14 @@ public object DetailViewStateMapper {
         // `processingState` is `REJECTED` ([org.ort.app.ui.screens.TransmissionDetailContent]).
         rejected: RejectedViewState? = null,
         transcriptCharSpan: IntRange? = null,
+        // Register R-425: real, per-candidate evidence for the AMBIGUOUS chooser
+        // ([org.ort.app.ui.data.CorrectionPolling.ambiguousCandidateEvidence]) — defaulted to an
+        // empty map so every existing call site compiles unchanged; a caller with no entry for a
+        // given callsign falls back to [ambiguousEvidence]'s own older, coarser evidence line.
+        ambiguousEvidence: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState> = emptyMap(),
     ): DetailViewState = DetailViewState(
         detail = detail,
-        body = bodyFor(detail, sourceOverTimeLabel),
+        body = bodyFor(detail, sourceOverTimeLabel, ambiguousEvidence),
         why = whyFor(detail.inspection),
         passFailure = passFailure,
         rejected = rejected,
@@ -175,7 +219,11 @@ public object DetailViewStateMapper {
         transcriptCharSpan = transcriptCharSpan,
     )
 
-    private fun bodyFor(detail: TransmissionDetailViewState, sourceOverTimeLabel: String? = null): DetailBodyViewState {
+    private fun bodyFor(
+        detail: TransmissionDetailViewState,
+        sourceOverTimeLabel: String? = null,
+        ambiguousEvidence: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState> = emptyMap(),
+    ): DetailBodyViewState {
         val attribution = detail.attribution
         return when (attribution.state) {
             AttributionState.CONFIRMED -> DetailBodyViewState.Confirmed(
@@ -186,22 +234,28 @@ public object DetailViewStateMapper {
 
             AttributionState.INFERRED -> {
                 val sourceId = attribution.sourceTransmissionId?.toString()
-                val confidenceClause = attribution.confidence?.let { " Confidence %.2f.".format(it) }.orEmpty()
                 // R-183: names the source over's real time when it is known, `Detail.dc.html`'s own
                 // wording ("to 02:14:07, where the callsign was heard clearly") — the honest generic
                 // fallback ("to the source over") is kept for a source id whose time this mapper's
                 // caller has not (yet, or cannot) resolved, never a fabricated time.
+                // R-423: no "Confidence 0.82." clause — `Detail.dc.html` carries no such sentence
+                // (confirmed by reading its own markup); the chip beside the callsign already shows
+                // that number (FR-UI-4).
                 val explanation = if (sourceId != null) {
                     val whereClause = sourceOverTimeLabel?.let { "to $it" } ?: "to the source over"
                     "Not heard in this over. Matched by voice $whereClause, where the callsign was " +
-                        "heard clearly.$confidenceClause"
+                        "heard clearly."
                 } else {
-                    "Not heard in this over. Matched by voice.$confidenceClause"
+                    "Not heard in this over. Matched by voice."
                 }
-                DetailBodyViewState.Inferred(explanation = explanation, sourceTransmissionId = sourceId)
+                DetailBodyViewState.Inferred(
+                    explanation = explanation,
+                    sourceTransmissionId = sourceId,
+                    sourceOverTimeLabel = sourceId?.let { sourceOverTimeLabel },
+                )
             }
 
-            AttributionState.AMBIGUOUS -> ambiguousBody(detail.inspection)
+            AttributionState.AMBIGUOUS -> ambiguousBody(detail.inspection, ambiguousEvidence)
 
             AttributionState.UNKNOWN -> DetailBodyViewState.Unknown(
                 explanation = "No callsign heard, and the voice matched no one heard before. Nothing is claimed.",
@@ -210,7 +264,10 @@ public object DetailViewStateMapper {
         }
     }
 
-    private fun ambiguousBody(inspection: InspectionViewState): DetailBodyViewState.Ambiguous {
+    private fun ambiguousBody(
+        inspection: InspectionViewState,
+        evidenceByCallsign: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState>,
+    ): DetailBodyViewState.Ambiguous {
         val topTwo = inspection.candidates.sortedBy { it.rank }.take(2)
         val explanation = if (topTwo.size >= 2) {
             "Two candidates survived and the phonetics do not separate them: " +
@@ -224,7 +281,7 @@ public object DetailViewStateMapper {
             candidates = topTwo.map { candidate ->
                 AmbiguousCandidateViewState(
                     callsign = candidate.callsign,
-                    evidence = ambiguousEvidence(candidate),
+                    evidence = ambiguousEvidence(candidate, evidenceByCallsign[candidate.callsign]),
                     scoreLabel = "%.2f".format(candidate.score),
                 )
             },
@@ -232,15 +289,31 @@ public object DetailViewStateMapper {
     }
 
     /**
-     * R-187: `Detail-Ambiguous.dc.html`'s own evidence line ("heard on this repeater 3 times ·
-     * Oregon" / "never heard before · Oregon") — this mapper cannot honestly back the repeater- or
-     * region-heard-count half (no per-repeater heard-count reaches [CandidateInspectionViewState]),
-     * so [CandidateInspectionViewState.databaseHit] still carries the known/unknown half, joined
-     * with the real ITU country when the candidate has one — never a fabricated count.
+     * Register R-425, `Detail-Ambiguous.dc.html`: real, *distinct* per-candidate evidence — before
+     * this fix, every candidate with a real ITU country (the common case for two candidates one
+     * edit apart) read the identical "a known station · United States", regardless of which one
+     * this device had actually heard before. [real], when the caller has looked it up
+     * ([org.ort.app.ui.data.CorrectionPolling.ambiguousCandidateEvidence]), replaces that with the
+     * real heard-count/last-heard/voice-match facts; `null` (a caller that has not looked it up, or
+     * built before this fix) falls back to the older, coarser known/unknown-plus-country line —
+     * still real, just less specific, never fabricated either way.
      */
-    private fun ambiguousEvidence(candidate: CandidateInspectionViewState): String {
-        val known = if (candidate.databaseHit) "a known station" else "never heard before"
-        return candidate.ituCountry?.let { "$known · $it" } ?: known
+    private fun ambiguousEvidence(
+        candidate: CandidateInspectionViewState,
+        real: CorrectionPolling.AmbiguousCandidateEvidenceViewState?,
+    ): String {
+        if (real == null) {
+            val known = if (candidate.databaseHit) "a known station" else "never heard before"
+            return candidate.ituCountry?.let { "$known · $it" } ?: known
+        }
+        val heardClause = when {
+            real.heardCount == 0 -> "never heard before"
+            real.heardCount == 1 -> "heard once"
+            else -> "heard ${real.heardCount} times"
+        }
+        val lastHeardClause = real.lastHeardLabel?.let { ", last $it" }.orEmpty()
+        val voiceClause = if (real.voiceOnFile) " · voice match" else ""
+        return "$heardClause$lastHeardClause$voiceClause"
     }
 
     /**

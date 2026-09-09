@@ -46,6 +46,20 @@ public data class FailureHostActions(
     public val onRequestUsbPermission: () -> Unit = {},
     public val onSetFrequencyByHand: () -> Unit = {},
     public val onReconnectRig: () -> Unit = {},
+    // Round 14 (ui-conformance-plan WP3, coordinator-directed cross-package addendum — R-448's own
+    // own report named these missing: no callback here navigated to the parent its own new "‹
+    // <parent>" header now names). `onOpenEarlierNights` is new; `onOpenStorageSettings` (F19) and
+    // this new `onOpenModels` (F21/F22 — the same real `SettingsScreenId.ASSETS` route R-139's
+    // "Install a model" and round 12's `Improve-Done` `Install` both already use) are the two
+    // "reuse existing" halves of that report.
+    public val onOpenEarlierNights: () -> Unit = {},
+    public val onOpenModels: () -> Unit = {},
+    /** FR-AST-4 (register R-448 follow-up): F21's "Activate now" option — a direct
+     * [org.ort.app.ui.data.ModelsController.activateStaged] call. Safe to wire unconditionally: that
+     * function itself refuses, with no effect, while a session is still live, so this button does
+     * nothing while F21 is even showing and takes real effect only once the session it was staged
+     * behind has actually ended — never a forced mid-session activation. */
+    public val onActivateStagedAsset: () -> Unit = {},
 )
 
 /**
@@ -89,6 +103,10 @@ public fun FailureHost(
     var dismissedClockLabel by remember(sessionId) { mutableStateOf<String?>(null) }
     var dismissedInterruptedLabel by remember(sessionId) { mutableStateOf<String?>(null) }
     var bannerHeight by remember { mutableStateOf(0.dp) }
+    // FR-AST-4 (register R-448 follow-up): F21's own radio selection — purely local UI state, never
+    // round-tripped through the polled `AssetSwapViewState` (which always maps `selectedOption = 0`,
+    // the honest default every fresh snapshot has no way to remember on its own).
+    var assetSwapSelectedOption by remember { mutableStateOf(0) }
 
     LaunchedEffect(sessionId) {
         pollFailureSignals(context, sessionId) { mapped, newToasts ->
@@ -122,6 +140,8 @@ public fun FailureHost(
             dismiss = dismiss,
             onBannerHeightChanged = { bannerHeight = it },
             viewportHeight = maxHeight,
+            assetSwapSelectedOption = assetSwapSelectedOption,
+            onAssetSwapSelectOption = { assetSwapSelectedOption = it },
         )
 
         ToastSlot(toasts = toasts, onToastShown = { toasts = toasts.drop(1) })
@@ -293,11 +313,13 @@ private fun BoxScope.FailurePresentationOverlay(
     dismiss: FailureDismissState,
     onBannerHeightChanged: (Dp) -> Unit,
     viewportHeight: Dp,
+    assetSwapSelectedOption: Int,
+    onAssetSwapSelectOption: (Int) -> Unit,
 ) {
     if (TAKEOVER_PRESENTATIONS.contains(presentation::class.java)) {
         if (isTakeoverShown(presentation, dismiss)) {
             onBannerHeightChanged(0.dp)
-            TakeoverOrScreen(presentation, actions, dismiss)
+            TakeoverOrScreen(presentation, actions, dismiss, assetSwapSelectedOption, onAssetSwapSelectOption)
         }
         return
     }
@@ -389,6 +411,8 @@ private fun TakeoverOrScreen(
     presentation: FailurePresentation,
     actions: FailureHostActions,
     dismiss: FailureDismissState,
+    assetSwapSelectedOption: Int,
+    onAssetSwapSelectOption: (Int) -> Unit,
 ) {
     when (presentation) {
         is FailurePresentation.Route -> FailRouteScreen(
@@ -406,15 +430,47 @@ private fun TakeoverOrScreen(
             onContinueWithoutRadio = actions.onSetFrequencyByHand,
         )
         is FailurePresentation.Reconcile ->
-            FailReconcileScreen(state = presentation.state, onImport = {}, onLeaveAsIs = {})
+            // R-448 (round 14): the board's own "‹ Storage and retention" header reuses this same
+            // dismiss — its real target is `actions.onOpenStorageSettings`, the same real
+            // `Settings-Storage` route `FailStorageHaltScreen`'s own `onFreeUpSpace` above uses.
+            FailReconcileScreen(state = presentation.state, onImport = {}, onLeaveAsIs = actions.onOpenStorageSettings)
         is FailurePresentation.Migration ->
             FailMigrationScreen(state = presentation.state, onRebuildNow = {}, onSaveDiagnosticBundle = {})
         is FailurePresentation.AssetSwap ->
-            FailAssetSwapScreen(state = presentation.state, onSelectOption = {}, onDone = {})
-        is FailurePresentation.Calibration -> FailCalibrationScreen(state = presentation.state, onInstall = {})
+            // R-448: the board's own "‹ Models and lexicon" header reuses this same dismiss.
+            // FR-AST-4 follow-up: `selectedOption` is overridden with this host's own locally-held
+            // choice (the mapped state always maps `0`, a fresh snapshot's own honest default —
+            // see [FailureHost]'s own `assetSwapSelectedOption` comment); `Done` performs whichever
+            // of the two real actions is currently selected — index 1 ("Activate now") really calls
+            // `ModelsController.activateStaged` (via `actions.onActivateStagedAsset`, safe even
+            // mid-session — see that action's own kdoc), anything else just leaves for Settings ›
+            // Assets exactly as before this follow-up.
+            FailAssetSwapScreen(
+                state = presentation.state.copy(selectedOption = assetSwapSelectedOption),
+                onSelectOption = onAssetSwapSelectOption,
+                onDone = {
+                    if (assetSwapSelectedOption == ASSET_SWAP_ACTIVATE_NOW_OPTION) {
+                        actions.onActivateStagedAsset()
+                    } else {
+                        actions.onOpenModels()
+                    }
+                },
+            )
+        is FailurePresentation.Calibration -> FailCalibrationScreen(
+            state = presentation.state,
+            onInstall = {},
+            // R-448: F22's own new `onBack` — the board's own "‹ Models and lexicon" header.
+            onBack = actions.onOpenModels,
+        )
         is FailurePresentation.Clock -> FailClockScreen(
             state = presentation.state,
-            onContinue = { dismiss.onDismissClock(presentation.state.windowLabel) },
+            // R-448: the board's own "‹ Earlier nights" header reuses this same dismiss — real
+            // navigation added alongside the existing dismiss, not in place of it, since dismissing
+            // the takeover is still correct regardless of where `onOpenEarlierNights` then lands.
+            onContinue = {
+                dismiss.onDismissClock(presentation.state.windowLabel)
+                actions.onOpenEarlierNights()
+            },
         )
         is FailurePresentation.Interrupted -> FailInterruptedScreen(
             state = presentation.state,
@@ -426,3 +482,7 @@ private fun TakeoverOrScreen(
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
 private const val TOAST_VISIBLE_MILLIS = 4_000L
+
+/** FR-AST-4: [assetSwapViewState][FailureMapper]'s own option order — index 1, "Activate now", is
+ * the one real action distinct from the default "wait" (index 0). */
+private const val ASSET_SWAP_ACTIVATE_NOW_OPTION = 1

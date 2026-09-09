@@ -8,15 +8,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -71,6 +69,7 @@ import org.ort.app.ui.data.RankedCandidateViewState
 import org.ort.app.ui.data.RejectedViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.data.TriedStepViewState
+import org.ort.app.ui.failures.FailureActionBarScaffold
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -121,8 +120,30 @@ public fun TransmissionDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     var labelExpanded by remember(state.detail.id) { mutableStateOf(false) }
-    Column(modifier = modifier.fillMaxSize()) {
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+    // R-422: a `Column(weight(1f)) { scroll } + Column(bar)` sibling pair — this screen's own shape
+    // before this fix — is the same "first-frame clipping" class `FailureActionBarScaffold.kt`'s
+    // own doc comment already diagnosed at R-292/R-151: correct once settled, but at a large font
+    // scale the weighted content slot can render blank (or behind the bar) for the first frame(s)
+    // Robolectric cannot see at all. [FailureActionBarScaffold] is the real, already-tested fix — a
+    // genuine `Scaffold`-style layout that measures the bar first and constrains the scrollable
+    // content slot's own height to `viewport − bar`, so content physically cannot occupy the bar's
+    // region at any scroll offset, first frame included — reused here rather than a second,
+    // look-alike scaffold (constitution VII).
+    FailureActionBarScaffold(
+        modifier = modifier,
+        actionBar = {
+            BottomActionBar(
+                state = state,
+                onNotRight = onNotRight,
+                onConfirm = onConfirm,
+                onLeaveAmbiguous = onLeaveAmbiguous,
+                onIKnowWhoThisIs = onIKnowWhoThisIs,
+                onRecordLabel = { labelExpanded = true },
+                onRetryPass = onRetryPass,
+                onKeepPartial = onKeepPartial,
+            )
+        },
+        content = {
             val passFailure = state.passFailure
             val rejected = state.rejected
             when {
@@ -162,18 +183,8 @@ public fun TransmissionDetailScreen(
                 onToggle = { labelExpanded = !labelExpanded },
                 onRecordLabel = onRecordLabel,
             )
-        }
-        BottomActionBar(
-            state = state,
-            onNotRight = onNotRight,
-            onConfirm = onConfirm,
-            onLeaveAmbiguous = onLeaveAmbiguous,
-            onIKnowWhoThisIs = onIKnowWhoThisIs,
-            onRecordLabel = { labelExpanded = true },
-            onRetryPass = onRetryPass,
-            onKeepPartial = onKeepPartial,
-        )
-    }
+        },
+    )
 }
 
 @Composable
@@ -200,21 +211,62 @@ private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -
         if (detail.attribution.corrected) {
             Badge(text = "corrected", kind = BadgeKind.CORRECTED, modifier = Modifier.padding(top = OrtSpacing.xs))
         }
-        Text(
-            text = state.body.explanation,
-            style = OrtType.subtitle,
-            color = OrtColors.textMuted,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
         val inferred = state.body as? DetailBodyViewState.Inferred
         if (inferred?.sourceTransmissionId != null) {
-            TextAction(
-                text = "Open the source over",
-                onClick = { onOpenTransmission(inferred.sourceTransmissionId) },
+            InferredExplanationText(inferred, onOpenTransmission)
+        } else {
+            Text(
+                text = state.body.explanation,
+                style = OrtType.subtitle,
+                color = OrtColors.textMuted,
+                modifier = Modifier.padding(top = OrtSpacing.sm),
             )
         }
         MetaRow(detail)
     }
+}
+
+/** The tag [buildInferredExplanationText]'s own inline link is annotated with. */
+internal const val SOURCE_OVER_LINK_TAG = "source-over"
+
+/**
+ * R-423 (design): `Detail.dc.html`'s own inline link — the source over's real timestamp is itself
+ * the tappable text ("Matched by voice to `02:14:07`, where the callsign was heard clearly."),
+ * styled the board's own accent green — never a separate "Open the source over" line beneath the
+ * sentence, which is not what the board draws. `internal`, not `private` — the same
+ * direct-testability precedent `highlightedTranscript` (R-182) already set in this file, so the
+ * real span/tag/colour can be asserted without Compose.
+ */
+internal fun buildInferredExplanationText(
+    sourceId: String,
+    sourceOverTimeLabel: String?,
+    linkColor: Color,
+): AnnotatedString {
+    val timeLabel = sourceOverTimeLabel ?: "the source over"
+    return buildAnnotatedString {
+        append("Not heard in this over. Matched by voice to ")
+        pushStringAnnotation(tag = SOURCE_OVER_LINK_TAG, annotation = sourceId)
+        withStyle(SpanStyle(color = linkColor)) { append(timeLabel) }
+        pop()
+        append(", where the callsign was heard clearly.")
+    }
+}
+
+/** The real source id at [offset] in [text], if [offset] falls inside the inline link — `internal`
+ * for the same reason [buildInferredExplanationText] is. */
+internal fun sourceIdAtOffset(text: AnnotatedString, offset: Int): String? =
+    text.getStringAnnotations(SOURCE_OVER_LINK_TAG, offset, offset).firstOrNull()?.item
+
+@Composable
+private fun InferredExplanationText(inferred: DetailBodyViewState.Inferred, onOpenTransmission: (String) -> Unit) {
+    val sourceId = inferred.sourceTransmissionId ?: return
+    val annotated = buildInferredExplanationText(sourceId, inferred.sourceOverTimeLabel, OrtColors.accentGreen)
+    ClickableText(
+        text = annotated,
+        style = OrtType.subtitle.copy(color = OrtColors.textMuted),
+        modifier = Modifier.padding(top = OrtSpacing.sm),
+        onClick = { offset -> sourceIdAtOffset(annotated, offset)?.let(onOpenTransmission) },
+    )
 }
 
 /** Shared by [HeaderSection] and [FailedPassHeaderSection] — time/frequency/duration/signal, mono, faint. */
@@ -247,7 +299,12 @@ private fun MetaRow(detail: TransmissionDetailViewState) {
 @Composable
 private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFailure: PassFailureViewState) {
     val attempts = passFailure.attempts
-    val attemptsWord = if (attempts == 1) "1 time" else "$attempts times"
+    // R-426: "errored N times" (the prose sentence) and "N attempts" (the section header) are two
+    // different real phrasings of the same real number — `Fail-Pass.dc.html` itself uses both,
+    // "errored 3 times on this over" in the sentence and "What went wrong · 3 attempts" in the
+    // header — neither is a typo for the other.
+    val attemptsTimesWord = if (attempts == 1) "1 time" else "$attempts times"
+    val attemptsCountWord = if (attempts == 1) "1 attempt" else "$attempts attempts"
     Column(
         modifier = Modifier
             .padding(horizontal = OrtSpacing.lg)
@@ -275,22 +332,51 @@ private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFai
             )
         }
         Text(
-            text = "${passFailure.passLabel} errored $attemptsWord on this over and stopped trying. " +
+            text = "${passFailure.passLabel} errored $attemptsTimesWord on this over and stopped trying. " +
                 "The audio is here; the queue moved on without it.",
             style = OrtType.subtitle,
             color = OrtColors.textMuted,
             modifier = Modifier.padding(top = OrtSpacing.sm),
         )
         MetaRow(detail)
-        SectionHeader(label = "What went wrong · $attemptsWord", modifier = Modifier.padding(top = OrtSpacing.sm))
-        // Named schema gap (see PassFailureViewState's own doc comment): `:data` keeps only the
-        // aggregate attempt count and the single most recent error, not one row per attempt, so
-        // this is one honest line — never the artboard's fabricated three-row attempt list.
+        SectionHeader(
+            label = "What went wrong · $attemptsCountWord",
+            modifier = Modifier.padding(top = OrtSpacing.sm),
+        )
+        // R-426 (round 12): the real per-attempt history from `:data` schema v6's
+        // `WorkAttemptEntity`, oldest first, one line per attempt — `Fail-Pass.dc.html`'s own
+        // "HH:MM:SS · reason" shape. A `FAILED` item whose attempts predate schema v6 has no
+        // `work_attempt` rows at all (`attemptLog` is honestly empty), so it falls back to the one
+        // real fact still available — the aggregate `lastError` — never a fabricated per-attempt
+        // list for a record that has none.
+        if (passFailure.attemptLog.isNotEmpty()) {
+            passFailure.attemptLog.forEachIndexed { index, attempt ->
+                Text(
+                    text = "${attempt.timeLabel} · ${attempt.reasonLabel}",
+                    style = OrtType.cardBody,
+                    color = OrtColors.textFaint,
+                    modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-attempt-$index"),
+                )
+            }
+        } else {
+            Text(
+                text = passFailure.lastError.replaceFirstChar { it.titlecase() },
+                style = OrtType.cardBody,
+                color = OrtColors.textFaint,
+                modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-last-error"),
+            )
+        }
+        // R-426: the board's own closing "retry limit reached" line — real, not fabricated: every
+        // terminally-FAILED `WorkQueueItemEntity` reached this state *because*
+        // `WorkQueue.failPass`'s own `attempts >= maxAttempts` check tripped (`WorkQueue.kt`,
+        // `:data`) — a structural fact about how the pipeline decides "stop retrying", not a
+        // per-instance guess, and [attempts] is that exact real count.
         Text(
-            text = passFailure.lastError.replaceFirstChar { it.titlecase() },
+            text = "Retry limit reached after $attemptsCountWord. Marked failed; the queue continued " +
+                "without it.",
             style = OrtType.cardBody,
             color = OrtColors.textFaint,
-            modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-last-error"),
+            modifier = Modifier.padding(top = OrtSpacing.xs).testTag("pass-failure-retry-limit"),
         )
         // R-195: `Fail-Pass.dc.html`'s own retry-guidance sentence — real (a manual retry is exactly
         // what `Retry now`/`CorrectionPolling.retryFailedPass` does: requeues this one item alone),
@@ -302,6 +388,16 @@ private fun FailedPassHeaderSection(detail: TransmissionDetailViewState, passFai
             style = OrtType.cardBody,
             color = OrtColors.textFaint,
             modifier = Modifier.padding(top = OrtSpacing.xs),
+        )
+        // R-470 (design): `Fail-Pass.dc.html`'s own closing paragraph — the real count of `FAILED`
+        // transmissions in this over's own session ([passFailure.sessionFailedCount], the same fact
+        // `Capture-Status.dc.html`'s own "N failed" already counts), worded exactly.
+        Text(
+            text = "Counted in tonight's health: ${passFailure.sessionFailedCount} failed. A failed " +
+                "pass never blocks the queue and never loses the audio — it just waits for you.",
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = OrtSpacing.md).testTag("pass-failure-session-health"),
         )
     }
 }

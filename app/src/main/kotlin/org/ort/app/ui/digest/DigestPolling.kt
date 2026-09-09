@@ -3,6 +3,8 @@ package org.ort.app.ui.digest
 import android.content.Context
 import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.GapWindow
+import org.ort.app.ui.data.HourActivityBucket
+import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.data.NightlyDeparture
 import org.ort.app.ui.data.SessionWindow
 import org.ort.app.ui.improve.Plurals
@@ -104,11 +106,19 @@ public object DigestPolling {
             endedAtUtc = end,
             gaps = gapEntities.map { GapWindow(startedAt = it.startedAt, endedAt = it.endedAt) },
         )
-        val coverage = ActivityPatternMapper.buildPattern(
-            sessions = listOf(window),
-            matchingTransmissionTimestamps = transmissions.map { it.startedAtUtc },
-            nowMillis = SystemClock.wallMillis(),
-        )
+        // R-449 (register, Reviewer D): `ActivityPatternMapper.buildPattern` folds onto the 24
+        // *hour-of-day* buckets its own doc comment names (correct for `Station`/`Frequencies`'
+        // multi-night patterns, which is what it was written for) — reused here for a *single*
+        // session's own timeline, every hour-of-day this one session never happened to touch (most
+        // of the clock, for a session lasting a few hours) folded to `NOT_LISTENING` by that
+        // function's own honest "never captured at all reads as not-listening" rule, which is
+        // exactly correct for "at 3am, across every night" and exactly wrong for "this session's
+        // own 3-hour span" — the real bug the register's screenshot shows (nearly every bar
+        // hatched for a session that ran continuously). [sessionCoverageBuckets] instead buckets
+        // by *elapsed* hour within this session's own real span — only as many bars as the session
+        // actually ran, each hatched only when a *real*, recorded gap actually covers it, never
+        // because nothing was heard.
+        val coverage = sessionCoverageBuckets(window, transmissions.map { it.startedAtUtc }, SystemClock.wallMillis())
         val notListeningSeconds = gapEntities.sumOf { ((it.endedAt ?: SystemClock.wallMillis()) - it.startedAt) / 1000 }
 
         return SessionDetailViewState(
@@ -130,11 +140,84 @@ public object DigestPolling {
             stationCount = transmissions.mapNotNull { it.stationId }.distinct().size,
             frequencyLabels = transmissions.mapNotNull { it.frequencyHz }.distinct().sorted()
                 .map { "%.3f".format(Locale.ROOT, it / 1_000_000.0) },
-            inputLabel = "see Settings › Input and level",
-            tierLabel = session.deviceTier ?: "current",
+            // R-450 (register, Reviewer D): "see Settings › Input and level" was a redirect, not a
+            // fact — but there is genuinely no per-session input route persisted anywhere in this
+            // schema to redirect *from*: `SessionEntity` carries no input-device/route column at
+            // all (checked before writing this), and `RealCaptureService` itself always writes
+            // `deviceTier = null` for a real session too, so neither field this row could plausibly
+            // read is ever real for a session captured today. Left as the same honest,
+            // no-real-source wording `Models` below already uses (an accepted deviation, reported —
+            // a real per-session input route needs a new `:data` schema column, not a WP10 fix).
+            inputLabel = "not tracked per session in this build",
+            tierLabel = sessionTierLabel(transmissions),
             audioSizeLabel = audioSizeLabel(context, sessionId),
         )
     }
+
+    /** R-450 (register): the real per-transmission [TransmissionEntity.processedTier] (schema v4)
+     * — `SessionEntity.deviceTier` (the previous source) is the *live-capture* tier, which
+     * `RealCaptureService` never actually writes for a real session (`deviceTier = null` on every
+     * insert, checked before writing this), so it read as the placeholder "current" for every real
+     * session regardless of truth. `processedTier` is itself `null` until a reprocess pass first
+     * completes for a transmission (that field's own doc comment) — so a session nothing has ever
+     * reprocessed honestly reads "not yet reprocessed", never a fabricated tier number. */
+    private fun sessionTierLabel(transmissions: List<TransmissionEntity>): String {
+        val processedTiers = transmissions.mapNotNull { it.processedTier }.distinct()
+        return when {
+            processedTiers.isEmpty() -> "not yet reprocessed"
+            processedTiers.size == 1 -> "tier ${processedTiers.single().ordinal}"
+            else -> "mixed · up to tier ${processedTiers.maxOf { it.ordinal }}"
+        }
+    }
+
+    /**
+     * R-449 (register, Reviewer D): `Session`'s own coverage chart, bucketed by *elapsed* hour
+     * within [window]'s own real span — see the doc comment at this function's own call site for
+     * why `ActivityPatternMapper.buildPattern`'s hour-*of-day* folding (correct for `Station`/
+     * `Frequencies`, wrong reused here) hatched nearly every bar. Exactly as many buckets as the
+     * session's own real duration spans (never a fixed 24).
+     *
+     * R-540 (register, Reviewer D, tour run 3): the first fix above (only hatching a bucket the
+     * *majority* of whose span a real gap covered, and only when nothing was heard in it at all)
+     * swallowed a real, recorded 22-minute gap entirely — the bucket also had real overs elsewhere
+     * in the same hour, so `heardCount > 0` always won, and 22 minutes never reached the old ≥50%
+     * floor either way. The board's own rule (`design/canvas/Session.dc.html`'s coverage chart,
+     * cf. its own gap list) is simpler and unconditional: **any** real, recorded
+     * [SessionWindow.gaps] overlap inside an hour hatches that hour's bar — real overs elsewhere in
+     * the same hour never hide it. `ActivityPatternChart` (the shared, out-of-ownership renderer)
+     * draws one of exactly three states per bucket, never a sub-bar split proportional to how much
+     * of the hour the gap actually covered — that honest, hour-granularity limit is unchanged, only
+     * which state wins a real conflict.
+     */
+    private fun sessionCoverageBuckets(
+        window: SessionWindow,
+        matchingTransmissionTimestamps: List<Long>,
+        nowMillis: Long,
+    ): List<HourActivityBucket> {
+        val sessionEnd = window.endedAtUtc ?: nowMillis
+        if (sessionEnd <= window.startedAtUtc) return emptyList()
+        val totalHours = ((sessionEnd - window.startedAtUtc + HOUR_MILLIS - 1) / HOUR_MILLIS)
+            .toInt()
+            .coerceAtLeast(1)
+        return (0 until totalHours).map { hourIndex ->
+            val bucketStart = window.startedAtUtc + hourIndex * HOUR_MILLIS
+            val bucketEnd = minOf(bucketStart + HOUR_MILLIS, sessionEnd)
+            val heardCount = matchingTransmissionTimestamps.count { it in bucketStart until bucketEnd }
+            val hasRealGap = window.gaps.any { gap ->
+                val overlapStart = maxOf(gap.startedAt, bucketStart)
+                val overlapEnd = minOf(gap.endedAt ?: sessionEnd, bucketEnd)
+                overlapEnd > overlapStart
+            }
+            val state = when {
+                hasRealGap -> HourActivityState.NOT_LISTENING
+                heardCount > 0 -> HourActivityState.HEARD
+                else -> HourActivityState.SILENT_WHILE_LISTENING
+            }
+            HourActivityBucket(hourOfDayUtc = hourIndex, state = state, heardCount = heardCount)
+        }
+    }
+
+    private const val HOUR_MILLIS = 3_600_000L
 
     public suspend fun digest(context: Context, sessionId: String): DigestViewState? {
         val db = OrtDatabase.create(context.applicationContext)

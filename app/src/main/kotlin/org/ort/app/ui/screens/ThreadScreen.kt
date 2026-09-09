@@ -3,12 +3,15 @@ package org.ort.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
@@ -27,6 +30,8 @@ import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.rememberCallsignColumnWidth
+import org.ort.app.ui.components.rememberTimeColumnWidth
 import org.ort.app.ui.data.FrequencyMeanwhileEntry
 import org.ort.app.ui.data.ThreadCardViewState
 import org.ort.app.ui.data.ThreadListViewState
@@ -93,47 +98,110 @@ private fun GroupedThreads(state: ThreadListViewState.Grouped, onOpenThread: (St
     }
 }
 
+/**
+ * R-511 (`overnight/T01-threads@2x.png`, both scales): `Threads.dc.html`'s own leading `.t`
+ * column — the thread's first-over time, mono grey, 52dp/`rememberTimeColumnWidth` wide — was
+ * never rendered at all; [card]'s own `timeLabel` (already computed, already what the list sorts
+ * by) simply had no `Text` in this composable. One-line layout puts it beside the kind/title/meta
+ * block, matching the board; at a font scale too narrow for time + the title block's own callsign
+ * floor + the trailing chevron, the whole row stacks — the title block moves to its own full-width
+ * line on top, time (with the chevron) beneath it — the identical "weighted column on its own
+ * line, fixed columns bundled beneath it" rule [LogRow]/[ColumnHeaderRow] already established for
+ * R-373/R-420, applied here rather than a second, competing breakpoint rule invented from scratch.
+ *
+ * `internal`, not `private` (R-511): [org.ort.app.ui.screens.ThreadScreenTest]'s own stacking test
+ * needs to constrain and measure this one row directly, the same way [org.ort.app.ui.components.LogRow]
+ * (a genuinely shared, `public` component) already lets `LogRowResponsiveTest` do — this composable
+ * stays screen-private in every other sense (not exported for reuse elsewhere), module-visible only
+ * so its own test can reach it.
+ */
 @Composable
-private fun ThreadCard(card: ThreadCardViewState, onClick: () -> Unit) {
+internal fun ThreadCard(card: ThreadCardViewState, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val description = buildString {
+        append("${card.timeLabel}. ")
         card.kindLabel?.let { append("$it. ") }
         append("${card.frequencyLabel}, ${card.overCount} overs. ")
         append("${card.titleText}. ${card.metaText}")
     }
-    Row(
-        modifier = Modifier
+    val timeWidth = rememberTimeColumnWidth()
+    val titleFloor = rememberCallsignColumnWidth()
+    val gap = OrtSpacing.md
+    val chevronSlot = 24.dp + gap
+    Box(
+        modifier = modifier
             .fillMaxWidth()
             .background(if (card.ambiguous) OrtColors.bgRowAmbiguous else Color.Transparent)
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
             .semantics(mergeDescendants = true) { contentDescription = description },
-        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            val kindPrefix = card.kindLabel?.let { "$it · " }.orEmpty()
-            Text(
-                text = "$kindPrefix${card.frequencyLabel} · ${card.overCount} overs".uppercase(),
-                style = OrtType.columnHeader,
-                color = OrtColors.textLow,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = card.titleText,
-                    style = OrtType.rowTitle,
-                    color = OrtColors.textHigh,
-                    modifier = Modifier.padding(top = 3.dp),
-                )
-                if (card.isNew) Badge(text = "new", kind = BadgeKind.NEW)
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+        ) {
+            val oneLineWidth = timeWidth + gap + titleFloor + chevronSlot
+            if (maxWidth >= oneLineWidth) {
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    ThreadCardTimeText(card.timeLabel, Modifier.widthIn(min = timeWidth))
+                    ThreadCardBody(card, Modifier.weight(1f))
+                    Icon(imageVector = OrtIcons.chevron, contentDescription = null, tint = OrtColors.textLow)
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    ThreadCardBody(card, Modifier.fillMaxWidth())
+                    Row(
+                        modifier = Modifier.padding(top = 3.dp).fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(gap),
+                    ) {
+                        ThreadCardTimeText(card.timeLabel, Modifier.widthIn(min = timeWidth))
+                        Box(modifier = Modifier.weight(1f))
+                        Icon(imageVector = OrtIcons.chevron, contentDescription = null, tint = OrtColors.textLow)
+                    }
+                }
             }
+        }
+    }
+}
+
+/** [ThreadCard]'s own leading time column — see that composable's R-511 doc comment. */
+@Composable
+private fun ThreadCardTimeText(timeLabel: String, modifier: Modifier = Modifier) {
+    Text(
+        text = timeLabel,
+        style = OrtType.timeFreq,
+        color = OrtColors.textTime,
+        maxLines = 1,
+        softWrap = false,
+        modifier = modifier.padding(top = 1.dp),
+    )
+}
+
+/** [ThreadCard]'s kind/title/meta block, factored out so both the one-line and stacked layouts
+ * render the identical content rather than two copies that could quietly drift apart. */
+@Composable
+private fun ThreadCardBody(card: ThreadCardViewState, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        val kindPrefix = card.kindLabel?.let { "$it · " }.orEmpty()
+        Text(
+            text = "$kindPrefix${card.frequencyLabel} · ${card.overCount} overs".uppercase(),
+            style = OrtType.columnHeader,
+            color = OrtColors.textLow,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                text = card.metaText,
-                style = OrtType.chip,
-                color = OrtColors.textDim,
+                text = card.titleText,
+                style = OrtType.rowTitle,
+                color = OrtColors.textHigh,
                 modifier = Modifier.padding(top = 3.dp),
             )
+            if (card.isNew) Badge(text = "new", kind = BadgeKind.NEW)
         }
-        Icon(imageVector = OrtIcons.chevron, contentDescription = null, tint = OrtColors.textLow)
+        Text(
+            text = card.metaText,
+            style = OrtType.chip,
+            color = OrtColors.textDim,
+            modifier = Modifier.padding(top = 3.dp),
+        )
     }
 }
 
