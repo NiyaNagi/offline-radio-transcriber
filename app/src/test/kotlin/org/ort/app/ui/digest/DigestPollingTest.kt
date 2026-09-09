@@ -5,7 +5,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.data.HourActivityState
 import org.ort.core.AttributionState
+import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
@@ -13,6 +15,7 @@ import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TransmissionEntity
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -132,6 +135,124 @@ class DigestPollingTest {
         assert(detail.gaps.size == 1)
         assert(detail.gaps.single().causeLabel == "incoming call took the microphone")
     }
+
+    @Test
+    @Requirement("R-449")
+    fun `R_449 a continuously run session with only a real recorded gap is not hatched not-listening`(): Unit =
+        runTest {
+            // A 3-hour session, one over per hour so every elapsed-hour bucket is genuinely covered,
+            // plus one real, recorded gap only 5 minutes long inside the first hour — nowhere near half
+            // that hour's own span, so it must not tip that bucket (or any other) to NOT_LISTENING.
+            db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3 * 3_600_000L))
+            db.transmissionDao().insert(transmission("TX1", "S1", startedAtUtc = 100_000L))
+            db.transmissionDao().insert(transmission("TX2", "S1", startedAtUtc = 3_700_000L))
+            db.transmissionDao().insert(transmission("TX3", "S1", startedAtUtc = 7_300_000L))
+            db.captureGapDao().insert(
+                CaptureGapEntity(
+                    id = "G1",
+                    sessionId = "S1",
+                    startedAt = 200_000L,
+                    endedAt = 500_000L,
+                    cause = CaptureGapCause.CALL,
+                    recoveredAutomatically = true,
+                ),
+            )
+
+            val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+            // Old (R-449 register bug): `ActivityPatternMapper.buildPattern`'s hour-of-day folding
+            // hatched nearly every one of the 24 fixed buckets NOT_LISTENING, for a session that ran
+            // continuously — this session's own real span is 3 hours, never 24, and none of them were
+            // genuinely un-listened.
+            assert(detail.coverage.size == 3) {
+                "expected exactly 3 elapsed-hour buckets, got ${detail.coverage.size}"
+            }
+            assert(detail.coverage.none { it.state == HourActivityState.NOT_LISTENING }) {
+                "a 5-minute real gap inside a 3-hour continuously-run session must not hatch any bucket " +
+                    "not-listening, got ${detail.coverage.map { it.state }}"
+            }
+            assert(detail.coverage.all { it.state == HourActivityState.HEARD }) {
+                "every bucket here had a real over land in it, expected all HEARD, got " +
+                    "${detail.coverage.map { it.state }}"
+            }
+        }
+
+    @Test
+    @Requirement("R-449")
+    fun `R_449 an hour a real recorded gap covers at least half of is hatched not-listening`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        // No over at all this hour, and a real gap covering 40 of the 60 minutes — genuinely mostly
+        // un-listened, so this is the one case that must still hatch honestly.
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "G1",
+                sessionId = "S1",
+                startedAt = 0L,
+                endedAt = 2_400_000L,
+                cause = CaptureGapCause.CALL,
+                recoveredAutomatically = true,
+            ),
+        )
+
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+        assert(detail.coverage.size == 1)
+        assert(detail.coverage.single().state == HourActivityState.NOT_LISTENING) {
+            "expected the one bucket, >=50% covered by a real gap, to hatch, got ${detail.coverage.single().state}"
+        }
+    }
+
+    @Test
+    @Requirement("R-450")
+    fun `R_450 tier reads the real processedTier, never the always-null deviceTier`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1").copy(processedTier = Tier.T2))
+        db.transmissionDao().insert(
+            transmission("TX2", "S1", startedAtUtc = 1_000L).copy(processedTier = Tier.T2),
+        )
+
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+        assert(detail.tierLabel == "tier 2") { "expected the real processedTier, got ${detail.tierLabel}" }
+        assert(detail.tierLabel != "current") { "current was the old, always-fake placeholder" }
+    }
+
+    @Test
+    @Requirement("R-450")
+    fun `R_450 nothing reprocessed yet honestly reads not yet reprocessed, never a fabricated tier`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1"))
+
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+        assert(detail.tierLabel == "not yet reprocessed") { "got ${detail.tierLabel}" }
+    }
+
+    @Test
+    @Requirement("R-450")
+    fun `R_450 mixed processedTier names the mix, never picks one tier arbitrarily`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1").copy(processedTier = Tier.T1))
+        db.transmissionDao().insert(
+            transmission("TX2", "S1", startedAtUtc = 1_000L).copy(processedTier = Tier.T3),
+        )
+
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+        assert(detail.tierLabel == "mixed · up to tier 3") { "got ${detail.tierLabel}" }
+    }
+
+    @Test
+    @Requirement("R-450")
+    fun `R_450 Input honestly names no per-session route is tracked, never the old Settings redirect`(): Unit =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+            db.transmissionDao().insert(transmission("TX1", "S1"))
+
+            val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+            assert(detail.inputLabel == "not tracked per session in this build") { "got ${detail.inputLabel}" }
+        }
 
     @Test
     fun `R_092 digest surfaces a station heard for the first time this session, from real history`(): Unit = runTest {
