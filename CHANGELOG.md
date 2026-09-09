@@ -32,6 +32,194 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP3 round 13: NavSeed, a public seam for WP12's screenshot tour)
+
+### 698414c — ui-conformance WP3 round 13 · NavSeed: a public seed for every drill-in OrtNavHost owns
+
+**Scope:** `ui/navigation/**` (new `NavSeed.kt`, `NavSeedTest.kt`; edits to `OrtNavHost.kt`,
+`ReaderNavigator.kt`, `ReaderActivityDestinationSmokeTest.kt`) plus two lead-approved files this
+round explicitly named: `ReaderActivity.kt` (this row's own standing file since round 11) and
+`app/src/debug/.../ScenarioReaderActivity.kt` (WP4's file, a minimal disclosed edit). `main`
+fast-forward merged first, one real `CHANGELOG.md` merge conflict against a concurrent `:data`
+entry resolved by keeping both sections (no other file conflicted) — no rebase, no stash.
+
+**Requirements/ACs:** none new — an infrastructure seam for WP12's screenshot tour
+(`app/src/debug/.../tour`), not a spec requirement itself.
+
+**What changed:**
+- **Constitution Check.** Principle II (Test-Backed Change) governs the whole entry — every
+  `NavSeed` field is proven to land on its own real destination/drill-in, not merely compiled.
+  Principle I (Uncertainty Is Content) governs what is reported rather than silently worked
+  around: two fields the coordinator's own brief asked for conditionally (`Log`/`Search`'s filter
+  sheets) turned out not to be buildable at all, and are named as such, not quietly dropped.
+- **`NavSeed`** (new file): a public, immutable data class carrying every field
+  `NavHostNavState` owned privately before this — `openTransmissionId`, `openStationId`,
+  `openFrequencyHz`, `openThreadId`, `pendingLogFilter`, `openCaptureLevelMeter`,
+  `pendingReviewSessionId`, `frequencyInitialView` (all nullable, `frequencyInitialView`/
+  `openCaptureLevelMeter` included per the coordinator's own explicit ask) plus `settingsScreen`.
+  **`logSheetOpen`/`searchFiltersOpen` are not included** — confirmed by reading both
+  `LogContent.kt` and `SearchContent.kt` before writing this: neither accepts an initial-open
+  parameter today (only `LogContent.initialFilter`, which seeds the filter's own *value*, not
+  whether the sheet shows) — there is nothing to seed them with short of editing those two files,
+  outside this round's own row (WP5's and WP7's respectively). Two internal helpers,
+  `initialDestination()`/`openedFromDestination()`, resolve which `ReaderDestination` each seed
+  implies and which origin a seeded drill-in's own "Back to <X>" header should read (a transmission
+  detail reached by seed reads "Back to Log", matching R-333's own real-tap convention) — the
+  four drill-in ids render regardless of `current` (`NavHostBody`'s own dispatch checks them
+  first), so this exists for the *other* fields and for a coherent drawer-row highlight.
+- **`rememberReaderNavigator`/`OrtNavHost` both gained `seed: NavSeed? = null`** — `null` (the
+  default) changes nothing, so every existing caller keeps compiling and behaving unchanged.
+  `OrtNavHost`'s own `navigator` default now reads `rememberReaderNavigator(seed = seed)`, so a
+  caller handing this composable a `seed` without building its own `navigator` still gets the
+  right destination/Settings-screen. `rememberNavHostNavState` seeds every `rememberSaveable`/
+  `remember` from the matching `NavSeed` field exactly once, on first composition — the same
+  contract a real tap already had for each of these fields.
+- **Extras on `adb shell am start`**: one named extra per `NavSeed` field
+  (`nav_open_transmission_id`, `nav_open_station_id`, `nav_open_frequency_hz`,
+  `nav_open_thread_id`, `nav_log_filter_frequency_hz`/`_from_millis`/`_to_millis`,
+  `nav_open_capture_level_meter`, `nav_pending_review_session_id`, `nav_frequency_initial_view`),
+  plus `settings_screen` — deliberately the *same* key `ReaderActivity.EXTRA_SETTINGS_SCREEN`
+  already uses, not a second name for the same fact. `NavSeed.fromIntent`/`NavSeed.putExtras` are
+  the shared parse/write pair both `ReaderActivity.onCreate` (parses, passes `seed` to both
+  `rememberReaderNavigator` and `OrtNavHost`) and `ScenarioReaderActivity.onCreate` (parses,
+  re-validates, forwards onto `ReaderActivity`'s own launch intent) call — `ScenarioReaderActivity`
+  parses into a real `NavSeed` first rather than blindly copying raw extras, so a malformed value
+  falls back to that field's own default instead of `ReaderActivity` having to re-validate a raw
+  string itself.
+- **A genuine, recurring pitfall, caught again**: `NavSeed.kt`'s own first draft's doc comment
+  contained the prose `` `app/src/debug/.../tour/**` `` — the literal substring "/*" inside
+  "tour/**", which Kotlin's nestable block comments (unlike C/Java) read as opening a *second*
+  comment, cascading "Unclosed comment" to end of file. The same defect shape round 11's own
+  `OrtNavHost.kt` doc comment hit once already — fixed the same way, rephrasing to avoid the
+  literal substring, named here again since it is clearly a recurring, not one-off, hazard this
+  codebase's own prose keeps tripping on.
+
+**Verified:**
+- `NavSeedTest` (new, 11 cases, `createComposeRule()` — the lighter, no-real-`Activity` pattern
+  `OrtNavHostDestinationDispatchTest` already established, one composition per case): every field
+  proven alone — `openTransmissionId`/`openStationId`/`openFrequencyHz`/`openThreadId` each land
+  on their own real drill-in against a real seeded session/transmission/station (the same minimal
+  shape `ReaderActivityDestinationSmokeTest.seedSession` already uses); `frequencyInitialView =
+  Change` lands directly on `Frequency-Change`, not the plain detail root (distinguished by its
+  own `DrillInHeader`'s `parentLabel = state.label`, never `"Frequencies"`); `pendingLogFilter`
+  lands on `Log` with the real frequency quick-filter chip already selected;
+  `openCaptureLevelMeter` lands directly on the level meter; `pendingReviewSessionId` lands
+  directly on the reviewed session's own detail; `settingsScreen` lands directly on
+  `Settings-Storage`, confirmed by its own real title text, not just "some Settings sub-screen";
+  a `null` seed is proven to change nothing. All green.
+- `ReaderActivityDestinationSmokeTest`'s new
+  `NavSeed_extras_on_a_real_activity_open_the_seeded_transmission_detail_directly` — the one
+  end-to-end confirmation that a seed survives the real intent-extras round trip
+  (`destinationIntent`'s new `seed` parameter → `NavSeed.putExtras` → a real `ReaderActivity` →
+  `NavSeed.fromIntent`), not only direct `OrtNavHost(seed = ...)` construction. Green.
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*"` — 41 tests, all green (includes
+  `NavSeedTest`'s own 11, `DrawerContentTest`, `OrtNavHostDestinationDispatchTest`,
+  `StorageFooterViewStateTest`, `DrawerSessionHeaderViewStateTest`). `:app:smokeTestDebugUnitTest`
+  — 22 tests, **21 green, 1 pre-existing failure, unrelated to this round**:
+  `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window` — the same failure
+  round 12's own report already flagged to the coordinator, reproduced here identically (no new
+  regression introduced this round; `R_350`'s own case, also touched by the merge this round
+  brought in from `:pipeline`'s own `R-350` fix, still reads its real "engine threw during
+  transcribe" reason and still passes unchanged).
+- `:app:ktlintCheck :app:detekt` — green (one ktlint fix needed: a single-branch `if` expression
+  body ktlint wanted on one line, not split across two). `dependencyRules platformGuards` — green.
+  `:app:assembleDebug` — green. `python tools/spec-check/spec_check.py` — 8/8 checks pass.
+  `coverageMatrix` then `coverageMatrixCheck`, run as separate invocations (the same unrelated
+  Gradle task-validation ordering gap prior rounds' own entries named) — both green;
+  `results/coverage-matrix.md` regenerated byte-identical, nothing to commit there.
+- Per the coordinator's own scoped-gate instruction this round — `ui.navigation.*` plus smoke —
+  no `:app:testDebugUnitTest` run unscoped and no `build`/`check` run in this commit.
+
+**Left open / not done:**
+- `Log`'s own filter sheet (`LogContent.kt`) and `Search`'s own (`SearchContent.kt`) still cannot
+  be seeded open — neither accepts an initial-open parameter; `NavSeed` deliberately carries no
+  field for either, named above. WP12's tour cannot capture L02/the Search filter sheet directly
+  until one of those two files gains one (WP5's/WP7's own row, not this one).
+- `R_276`'s own pre-existing failure (see "Verified" above) — flagged again, not fixed here; still
+  out of `ui/navigation`'s own file ownership.
+
+---
+
+## 2026-09-08 (ui-conformance WP3 round 12: Improve-Done's Install action wired to Settings-Assets (R-350))
+
+### 55f2ba8 — ui-conformance WP3 round 12 · ImproveContent.onOpenModels wired to Settings-Assets (R-350)
+
+**Scope:** `ui/navigation/OrtNavHost.kt` and `ReaderActivityDestinationSmokeTest.kt` only. `main`
+fast-forward merged first (`git merge main`, this branch already an ancestor of `main`'s prior
+tip, itself including round 11's own R-333/R-334/R-133 work) — no other package's files touched.
+
+**Requirements/ACs:** R-350 (the host-wire half; WP10's own `ImproveContent`/`ImproveDoneScreen`
+changes landed in `94c946c`, not this row's to touch).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs the one real finding this
+  round surfaced (below): reporting a defect that blocks genuine coverage, rather than quietly
+  writing a test that only *looks* like it proves the thing.
+- `ImproveContent` gained `onOpenModels: () -> Unit = {}` (WP10's `94c946c`) for `Improve-Done`'s
+  `Install` action. Wired it in `OrtNavHost.kt`'s `IMPROVE_RECORDS` dispatch to the same, already-
+  real `NavHostCallbacks.onOpenModels` (`navigator.openSettings(SettingsScreenId.ASSETS)`)
+  `NowContent`'s own "Install a model" (R-139) already uses — the exact shape the coordinator
+  asked for. The call itself is extracted into a new private `ImproveRecordsContent` composable,
+  purely to keep `DestinationContent` under detekt's `LongMethod` limit (the same reason
+  `ThreadDetailContent`/`OrtNavHostBackHandler`/`navHostCallbacks` were themselves extracted).
+- **A real, out-of-row defect found while writing this round's smoke test, reported rather than
+  routed around**: driving a genuine reprocess run (seeding a real T1-tier session — below the
+  test env's own default current tier — with a real audio file at the exact path Pass B expects,
+  then tapping `Improve all` for real) to a real *missing-model* failure — the one condition
+  `ImproveScreens.kt`'s own `isMissingModelReason` recognises, the only one that ever shows
+  `Install` at all — turns out to be unreachable through the real pipeline as it exists today.
+  `AsrEngineProvisioning.kt:137`'s `UnavailableAsrEngine.transcribe` throws exactly `"ASR
+  unavailable: $reason"`, but `RejectionPipeline.kt:46-52`'s `catch (t: Throwable) { return
+  PassBOutcome.Failed("engine threw during transcribe", t) }` discards that message string before
+  it ever reaches `ReprocessStatus.Summary.failureReasons` — confirmed directly, by driving the
+  real activity end to end and reading the real `Improve-Done` screen, which shows "1 failed —
+  engine threw during transcribe", never the recognised text. `Install` cannot render for a
+  genuinely-missing model on this build, regardless of what this host wires it to. This is
+  `:pipeline`'s own `asr-api`/`reprocess` finding, not `ui/navigation`'s to fix — reported here and
+  left for those owners.
+
+**Verified:**
+- `:app:smokeTestDebugUnitTest --tests` scoped to the four navigation cases this round and last
+  touch (R-333, R-334, R-133, R-350) — all four green. The new R-350 case
+  (`R_350_improve_done_reflects_a_real_failure_and_offers_no_install_for_a_non_model_reason`)
+  proves what a real run in this environment can honestly prove: a real T1-tier session reaches
+  `Improve-Done` with a real failure summary (the whole chain — `ImprovePolling.root` →
+  `RealImproveRunner` → `:pipeline`'s `ReprocessRunner` → the real, model-less `AsrEngineProvisioning`
+  path — is live, not faked), and, matching `ImproveScreensTest.kt`'s own `R_350 a non-model
+  failure reason ...` case exactly, that `Install` correctly does not render for a reason
+  `isMissingModelReason` does not recognise. `onOpenModels`'s own reachability from `Settings-
+  Assets` rests on the identical, already-proven `NavHostCallbacks.onOpenModels` object R-139's
+  own `NowContent` case already exercises, compiled and type-checked by this change.
+- `:app:smokeTestDebugUnitTest` run in full: **20 of 21 pass; 1 pre-existing failure found,
+  unrelated to this round's own changes** —
+  `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window` (round 9's own
+  case, untouched this round) fails consistently, including run completely alone with
+  `--tests` scoped to only that one case (twice, same result both times) — proving it is not
+  caused by, or interacting with, anything this commit touches. Between this round's own last
+  clean full-suite run (round 11's own report: 20/20 green) and now, `main` absorbed a large,
+  unrelated merge (WP2/WP4/WP5/WP7/WP10/`:data` schema v5, `git merge main`'s own diff:
+  `ui/screens/LogContent.kt`, `ui/data/LogViewData.kt`, `ui/data/ThreadViewData.kt`,
+  `ui/components/Rows.kt`, `ui/components/AttributionMarker.kt` among them) — the most likely
+  origin of a regression in a test that reads `LogContent`'s own real `FREQUENCIES`→`Log` filtered
+  route, none of it this row's own file ownership. Reported to the coordinator directly, not
+  fixed here.
+- `:app:ktlintCheck :app:detekt` — green (after extracting `ImproveRecordsContent`; `DestinationContent`
+  crossed detekt's `LongMethod` limit at 81/82 lines before that split). `dependencyRules
+  platformGuards` — green. `:app:assembleDebug` — green. `python tools/spec-check/spec_check.py` —
+  8/8 checks pass. `coverageMatrix` (regenerated) then `coverageMatrixCheck`, run as separate
+  invocations (same unrelated Gradle task-validation ordering gap round 11's own entry named) —
+  both green.
+- Per the coordinator's own load-policy note this round (a full gate running in the main
+  checkout; builds here may wait on shared cache locks) — no `:app:testDebugUnitTest` run
+  unscoped and no `build`/`check` run in this commit.
+
+**Left open / not done:**
+- `R_276`'s own real, reproducible failure (see "Verified" above) — flagged to the coordinator,
+  not fixed here; out of `ui/navigation`'s own file ownership this round.
+- The `RejectionPipeline`/`AsrEngineProvisioning` message-swallowing defect that keeps R-350's own
+  `Install` action unreachable via a genuine engine failure — named above with exact file:line
+  citations, `:pipeline`'s own `asr-api`/`reprocess` owners' finding to act on.
+
 ## 2026-09-08 (ui-conformance WP11c/d follow-up: R-350 — the real ASR-unavailable reason reaches Improve-Done)
 
 ### (pending) — ui-conformance WP11c/d · a missing-model failure keeps its real reason through RejectionPipeline, so R04's Install action can fire
@@ -118,7 +306,6 @@ restructure below — both reproduced the exact "generic reason" failure), then 
   string with a clean, board-worded phrase ("No transcription model installed") whenever it
   matches, so the raw path is a detection signal `:pipeline` produces internally, never rendered to
   a screen. Flagged in case a future consumer of `failureReasons` renders it more literally.
-
 ---
 
 ## 2026-09-08 (ui-conformance data: dedicated Room query/transaction executor, Compose Flow-idle regression)
@@ -324,7 +511,6 @@ own observation (`DrawerContentTest` 14 tests / 5.6 s alone).
   screens' invalidation-tracker queries the way it did sharing `ArchTaskExecutor`'s pool.
 
 ---
-
 
 ## 2026-09-08 (ui-conformance WP3 round 11: one back handler for the whole app (R-333), the drawer above the banner (R-334), Settings-Storage's Review link (R-133))
 

@@ -82,14 +82,22 @@ public class ReaderNavigator internal constructor(
  * S12's `Install` action (`EXTRA_DESTINATION=SETTINGS` alongside it); only meaningful when
  * [initialDestination] is itself `SETTINGS`, exactly as `SettingsContent.initialScreen` is only
  * consulted while that composable is the one showing.
+ *
+ * [seed] (round 13, WP12's screenshot-tour seam): when non-null and it implies a destination
+ * ([NavSeed.initialDestination]), that destination — and, for `Settings`, [NavSeed.settingsScreen]
+ * — wins over [initialDestination]/[initialSettingsScreen], the same "seeded state takes over
+ * entirely, never merges with the ordinary defaults" contract [OrtNavHost]'s own `seed` uses for
+ * `NavHostNavState`. `null` (the default) changes nothing here — every existing caller keeps
+ * compiling and behaving unchanged.
  */
 @Composable
 public fun rememberReaderNavigator(
     initialDestination: ReaderDestination = ReaderDestination.NOW,
     initialSettingsScreen: SettingsScreenId? = null,
+    seed: NavSeed? = null,
     context: Context = LocalContext.current,
 ): ReaderNavigator {
-    val current = rememberSaveable { mutableStateOf(initialDestination) }
-    val settingsScreen = rememberSaveable { mutableStateOf(initialSettingsScreen) }
+    val current = rememberSaveable { mutableStateOf(seed?.initialDestination() ?: initialDestination) }
+    val settingsScreen = rememberSaveable { mutableStateOf(seed?.settingsScreen ?: initialSettingsScreen) }
     return remember(context) { ReaderNavigator(current, settingsScreen, context) }
 }
