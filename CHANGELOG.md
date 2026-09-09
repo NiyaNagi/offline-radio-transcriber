@@ -11274,6 +11274,89 @@ pipeline (M4) has not shipped one. Principle VII: every new read path lives in t
 
 ## 2026-09-08 (ui-conformance WP6: detail states, inspection surface, correction sheet and propagation, playback, revisions)
 
+### (pending) — ui-conformance WP6 round 13 · R-471 D03's phonetic span for an unselected candidate, R-470 F18's session-health closing line
+
+**Scope:** `:app`, this package's own files — `ui/data/{DetailViewState,CorrectionPolling}.kt`,
+`ui/screens/TransmissionDetailScreen.kt`, and their tests (`CorrectionPollingInspectionTest.kt`,
+`CorrectionPollingPassAndRevisionsTest.kt`, `PassFailureDetailScreenTest.kt`); plus `:data`,
+`CatalogDao.kt`'s own two-line addition, explicitly approved and disclosed by the coordinator's own
+round-13 instruction (and `CatalogDaoTest.kt`, its test). `git merge main`
+(fast-forward, `5027bd7` → `0d85cad`; no conflicts in any file this round touches). **Gate per the
+coordinator's load policy, `ui.data.*` included per round 12's own widening:**
+`:app:testDebugUnitTest --tests` scoped to touched classes plus `org.ort.app.ui.data.*`,
+`:data:testDebugUnitTest --tests "org.ort.data.dao.CatalogDaoTest"`, `:app:ktlintCheck :app:detekt`,
+`:data:ktlintCheck :data:detekt`, `dependencyRules platformGuards`, `:app:assembleDebug`,
+`spec_check.py`, `coverageMatrix` then `coverageMatrixCheck`.
+
+**Requirements/ACs:** R-471 (spec, fixed); R-470 (design, fixed); D03/F18, FR-UI-4; constitution I
+(never fabricate — both rows read a real, already-recorded fact from a different angle than the
+one this package had been reading it from), VI (boundaries are structural — the `:data` addition is
+a strict, disclosed widening of an existing query, not a new capability crossing a module boundary
+that did not already exist).
+
+**Constitution Check.** R-471 is principle I read structurally: an AMBIGUOUS over has no
+`CallsignCandidateEntity.selected` row at all — nothing is chosen yet, by definition of the state —
+so `winningCandidateCharSpan`'s `cc.selected = 1` filter was never going to match one, and D03's
+transcript went unhighlighted not because the lattice lacked a real span but because this package
+was asking the wrong question of it. The fix reads the same real slot data through the question D03
+actually needs answered ("what does the *top-ranked* candidate's lattice anchor to"), never
+inventing a span an unanchored (acoustic) lattice genuinely does not have — that case still returns
+`null`/`null` and still renders no highlight, honestly. The new `CatalogDao.topRankedCandidateCharSpan`
+query is a verbatim structural twin of `winningCandidateCharSpan` (`cc.rank = 0` in place of
+`cc.selected = 1`), the two-line addition the coordinator's own message named and approved — nothing
+about `:app`'s dependency on `:data` changes, and no `:capture-*`/`:asr-*` boundary is touched.
+R-470 is the same principle from the schema-adjacent side: `Fail-Pass.dc.html`'s closing paragraph
+is not a UI flourish this package can shape freely — it names a specific real count
+(`sessionFailedCount`), and `ReaderPolling.captureStatus`'s own `failedCount` already computes the
+identical fact (`FAILED` transmissions in one session) for `Capture-Status.dc.html`; this round
+reads that same real column through a fresh, small `:app`-level query (the established "extra
+`:data` read via `CorrectionPolling`, since `ReaderPolling.kt` is WP4's file" pattern) rather than
+inventing a different definition of "tonight's health" or fabricating a number.
+
+**What changed:**
+
+1. **R-471, fixed.** `CatalogDao.topRankedCandidateCharSpan(transmissionId)` — the same
+   `MIN(charStart)`/`MAX(charEnd)` shape as `winningCandidateCharSpan`, filtered by
+   `cc.\`rank\` = 0` instead of `cc.selected = 1`. `CorrectionPolling.winningCharSpan` now falls
+   back to it whenever the selected-candidate query comes back `null`/`null` — a strict widening:
+   a resolved (CONFIRMED/INFERRED) over's rank-0 candidate is its selected one by construction, so
+   the fallback query returns the identical result there and changes nothing for those states; only
+   AMBIGUOUS (which has no selected candidate at all) newly gets a real span. `TranscriptSection`'s
+   own colour logic (`CONFIRMED → highlightGreen`, everything else → `highlightAmber`) already put
+   AMBIGUOUS on the amber branch — confirmed against `Detail-Ambiguous.dc.html` directly — so no
+   screen-level colour change was needed, only the span itself reaching the screen at all. Tests
+   named `R_471`: `CatalogDaoTest` (the real DAO round trip — a rank-0, unselected candidate's span
+   is read, a rank-1 sibling's span does not leak in), `CorrectionPollingInspectionTest` (the
+   fallback fires only when the selected-candidate query is genuinely empty; an already-resolved
+   over's own selected-candidate span is unaffected).
+2. **R-470, fixed.** New `CorrectionPolling.sessionFailedCount` (private, called from `passFailure`)
+   reads the failed transmission's own `sessionId`, then counts `FAILED` transmissions in
+   `TransmissionDao.listBySession(sessionId)` — the identical real fact
+   `ReaderPolling.captureStatus`'s own `failedCount` already computes for `Capture-Status.dc.html`.
+   `PassFailureViewState` gained `sessionFailedCount: Int = 0` (defaulted, existing call sites
+   unaffected). `FailedPassHeaderSection` renders the board's exact closing sentence — "Counted in
+   tonight's health: N failed. A failed pass never blocks the queue and never loses the audio — it
+   just waits for you." — tagged `pass-failure-session-health`, after the R-195 retry-guidance line
+   (the board's own paragraph order). Tests named `R_470`: `CorrectionPollingPassAndRevisionsTest`
+   (two real `FAILED` transmissions in one session count as `2`; a `FAILED` transmission in a
+   *different* session does not leak into the count), `PassFailureDetailScreenTest` (the exact
+   sentence with a real count of `1`; a distinct count of `4` renders, never hardcoded).
+
+**Verified (scoped gate):** `:app:testDebugUnitTest --tests "org.ort.app.ui.data.*"` plus
+`TransmissionDetailScreenTest`, `PassFailureDetailScreenTest`, `RejectedDetailScreenTest`,
+`TransmissionDetailContentTest` — clean (one transient failure on a combined run,
+`TransmissionDetailContentTest`'s pre-existing `R_052`, confirmed unrelated to this round's changes
+by passing both alone and on an immediate re-run of the same combined set — the known cross-test
+ordering flake a separate background task is already hunting, not a new regression);
+`:data:testDebugUnitTest --tests "org.ort.data.dao.CatalogDaoTest"` (clean);
+`:app:ktlintCheck :app:detekt :data:ktlintCheck :data:detekt` (clean after wrapping four
+newly-added test lines past `MaxLineLength`); `dependencyRules platformGuards` (clean — no new
+cross-module edge, the `:data` change is additive to an existing DAO already read from `:app`);
+`python tools\spec-check\spec_check.py` (`spec-check: OK`); `coverageMatrix` then
+`coverageMatrixCheck` (both clean); `:app:assembleDebug` (clean).
+
+**Left open:** none new this round.
+
 ### (pending) — ui-conformance WP6 round 12 · R-426's per-attempt history (schema v6), R-423/`DetailViewStateMapperTest` reconciliation
 
 **Scope:** `:app`, this package's own files — `ui/data/{DetailViewState,CorrectionPolling}.kt`,

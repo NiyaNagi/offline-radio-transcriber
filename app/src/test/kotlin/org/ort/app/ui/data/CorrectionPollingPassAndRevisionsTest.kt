@@ -186,6 +186,44 @@ class CorrectionPollingPassAndRevisionsTest {
     }
 
     @Test
+    fun R_470_passFailure_counts_the_real_FAILED_transmissions_in_this_overs_own_session(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(
+            transmission("TX1", samplePosition = 0L).copy(processingState = TransmissionState.FAILED),
+        )
+        db.transmissionDao().insert(
+            transmission("TX2", samplePosition = 1_000L).copy(processingState = TransmissionState.FAILED),
+        )
+        // Not FAILED -- must not be counted.
+        db.transmissionDao().insert(
+            transmission("TX3", samplePosition = 2_000L).copy(processingState = TransmissionState.COMPLETE),
+        )
+        db.workQueueDao().insert(workQueueItem("TX1"))
+
+        val failure = CorrectionPolling.passFailure(context, "TX1")
+
+        assertEquals(2, failure?.sessionFailedCount)
+    }
+
+    @Test
+    fun R_470_passFailure_session_failed_count_is_scoped_to_this_session_alone(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.sessionDao().insert(session().copy(id = "S2"))
+        db.transmissionDao().insert(
+            transmission("TX1", samplePosition = 0L).copy(processingState = TransmissionState.FAILED),
+        )
+        db.transmissionDao().insert(
+            transmission("TX-OTHER-SESSION", samplePosition = 0L)
+                .copy(sessionId = "S2", processingState = TransmissionState.FAILED),
+        )
+        db.workQueueDao().insert(workQueueItem("TX1"))
+
+        val failure = CorrectionPolling.passFailure(context, "TX1")
+
+        assertEquals(1, failure?.sessionFailedCount)
+    }
+
+    @Test
     fun R_153_passFailure_is_null_when_no_work_queue_item_is_terminally_failed(): Unit = runTest {
         db.sessionDao().insert(session())
         db.transmissionDao().insert(transmission("TX1"))
