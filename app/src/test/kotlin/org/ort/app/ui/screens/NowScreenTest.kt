@@ -287,6 +287,54 @@ class NowScreenTest {
     }
 
     @Test
+    @Requirement("R-552")
+    fun `R_552 the meta row wraps whole segments onto a second centred line, never one char per line, fontscale-2_0`() {
+        // R-552 (`overnight/N01-now@2x.png`): before the fix, a plain (non-wrapping) `Row`
+        // measured its five children against one shared width budget consumed in order — the
+        // last segment, "tier 3", got whatever sliver was left after "USB Audio Device" · "TH-
+        // D75A" and their separators, collapsing it into a column that wrapped one character per
+        // line ("ti"/"er"/"3"), pinned at the row's right edge. Same host-independent, geometry-
+        // based signal `R_260` above already established: a segment stacked several characters
+        // high measures dramatically taller than the same text rendered with real room, whether
+        // that room comes from fitting on the current line or wrapping, as one whole unit, onto a
+        // fresh one.
+        val idle = NowViewState.Idle(
+            lastSessionSummaryLabel = null,
+            inputLabel = "USB Audio Device",
+            rigLabel = "TH-D75A",
+            tierLabel = "tier 3",
+            earlierNights = emptyList(),
+            canGetBetter = null,
+        )
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(350.dp)) {
+                        NowScreen(state = idle)
+                    }
+                    // The same "tier 3" token, unconstrained, as a reference for one real line's
+                    // height at this font scale.
+                    Text(
+                        text = "tier 3",
+                        style = OrtType.subLine,
+                        softWrap = false,
+                        modifier = Modifier.testTag("tier-reference"),
+                    )
+                }
+            }
+        }
+
+        val referenceHeight = composeTestRule.onNodeWithTag("tier-reference").fetchSemanticsNode().size.height
+        listOf("now-idle-meta-input", "now-idle-meta-rig", "now-idle-meta-tier").forEach { tag ->
+            val realHeight = composeTestRule.onNodeWithTag(tag).fetchSemanticsNode().size.height
+            assert(realHeight <= referenceHeight * 2) {
+                "expected segment '$tag' to render at roughly one line's height (reference " +
+                    "${referenceHeight}px); got ${realHeight}px, consistent with wrapping one character per line"
+            }
+        }
+    }
+
+    @Test
     fun `tapping Start capture invokes the callback`() {
         var started = false
         val idle = NowViewState.Idle(null, null, null, null, emptyList(), null)

@@ -32,6 +32,78 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP4/WP10 round: R-552 Now-Idle meta row wrap, R-551 Settings-Storage retention-order row)
+
+### (pending) — ui-conformance WP4/WP10 · R-552 Now-Idle meta row wraps whole segments via FlowRow; R-551 Settings-Storage retention-order row stacked, never crushed
+
+**Scope:** `:app` — `ui/screens/NowScreen.kt` (WP4) and `ui/settings/SettingsStorageScreen.kt`
+(WP10), plus their tests `ui/screens/NowScreenTest.kt` and `ui/settings/SettingsStorageScreenTest.kt`.
+
+**Requirements/ACs:** R-552 (register, `Now-Idle.dc.html`, cf. R-461); R-551 (register, `Settings-
+Storage.dc.html`, FR-STO-1..8, R-152 class).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content): the operator must never be shown a
+  column of single characters standing in for a real value it could not fit — both fixes exist so a
+  real fact renders honestly wrapped, never silently mangled by a layout that ran out of room.
+- **R-552 — `NowIdleMetaRow`** (`Now-Idle.dc.html`'s meta row beneath "Start capture"): the plain
+  (non-wrapping) `Row` measured its five segments against one shared width budget consumed in
+  declaration order — at font scale 2.0 the first two segments ("USB Audio Device" · "TH-D75A")
+  could consume the whole budget before the last segment ("tier 3") was even measured, leaving it
+  ~0dp wide and forcing it to wrap one character per line, pinned at the row's right edge. Replaced
+  with a `FlowRow` (the same fix already established in this codebase for exactly this class of
+  defect — `EarlierNightMetaLine`'s R-260, `LogRowMarkerLine`'s R-373/R-420 in `ui/components/
+  Rows.kt`): every segment is measured as a whole, atomic unit and, when one does not fit the
+  remaining width on the current line, wraps *whole* onto a new line instead of shrinking.
+  `horizontalArrangement`/`verticalArrangement` keep each line centred, matching the single-line
+  row's look whenever one line is all that's needed. Added `testTag`s (`now-idle-meta-input`,
+  `now-idle-meta-rig`, `now-idle-meta-tier`) for the fix's own proof and for a future validator.
+- **R-551 — `SettingsStorageScreen`'s "Then stop retaining audio, keep capturing text" row**:
+  `KeyValueRow`'s key column has no upper bound (R-152's own fix: `widthIn(min = 96.dp)`, a floor,
+  never a ceiling) — this is the one row where the *key* itself is the long text, not the value, so
+  at font scale 2.0 the key alone consumed the row's whole shared width budget before `KeyValueRow`'s
+  own `weight(1f)` value column was ever reached, crushing it and forcing the sub-line to wrap one
+  character per line. Two alternative fixes were tried and rejected, both disproved with this row's
+  own real, on-host measurements rather than assumed: reassigning `.weight(1f)` to the label side
+  alone reproduces the identical crush with the roles swapped (Compose's non-weighted/weighted
+  budget split is order-sensitive, not "non-weighted always measured first"); a `BoxWithConstraints`
+  real-width gate in the `rememberTimeColumnWidth`/`ColumnHeaderRow` style chooses correctly only if
+  `rememberTextMeasurer` reports trustworthy widths, and on this project's own Robolectric host it
+  does not (confirmed measuring "always" at 6dp regardless of its real rendered size — the same "a
+  rendered pixel isn't reliably verifiable on this host" limit `logRowTranscriptStyle`'s own doc
+  comment already named). Replaced with a new private `RetentionOrderRow` that stacks key, value and
+  sub-line unconditionally, each on its own full-width line — no two of them ever share a `Row`, so
+  none can ever be measured against a shared budget a sibling might claim first, on any host, at any
+  font scale. A deliberate departure from `Settings-Storage.dc.html`'s own side-by-side row for this
+  one row alone, in exchange for a fix that is correct by construction. Added `testTag`s
+  (`settings-storage-retention-order-value`, `settings-storage-retention-order-subline`, both
+  `internal const val`s) for the fix's own proof.
+- Checked every other hand-laid row on `Settings-Storage.dc.html` for the same class of defect:
+  `NextDeletionRow` and WP2's `ToggleRow` already put the growing label+sub-line block on the
+  `weight(1f)` side with the short fixed element (icon/`TextAction`/toggle knob) non-weighted — the
+  correct-for-this-codebase shape — so neither needed a change; the storage-category legend already
+  uses `FlowRow` (R-150/R-251).
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.screens.Now* --tests org.ort.app.ui.settings.*`
+  — 80 tests, all green, including new `R_552 the meta row wraps whole segments onto a second
+  centred line, never one char per line, fontscale-2_0` and `R_551 the retention-order row never
+  crushes its value or sub-line to one char per line at fontscale-2_0`.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+- `.\gradlew.bat dependencyRules platformGuards` — green (17 modules, no forbidden edges, no HTTP
+  client outside `:net`).
+- `.\gradlew.bat :app:assembleDebug` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 checks pass.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  192 of 419 requirements covered, up to date.
+
+**Left open / not done:** neither fix was verified on a real device or emulator (builder policy —
+validators do that after merge); R-551's fix is a deliberate visual departure from the board at font
+scale 1.0 (value stacks below the label instead of beside it) rather than a pixel match, for the
+reasons above — worth a design review if `Settings-Storage.dc.html` itself is revisited for this row.
+
+---
+
 ## 2026-09-09 (ui-conformance WP2 round 2: R-380/381/543 gate-blocking finders, R-505 signal column, R-510 floors — device-verified)
 
 ### (pending) — ui-conformance WP2 round 2 · R-380/381/543 semantics complete; R-505 signal-column gate; R-510 FilterChip/TextAction/PrimaryButton/SecondaryButton/DestructiveButton floors, device-verified on emulator-5554

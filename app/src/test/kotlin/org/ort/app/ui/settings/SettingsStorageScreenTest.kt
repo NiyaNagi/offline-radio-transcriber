@@ -1,7 +1,12 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -18,11 +23,13 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.app.ui.theme.OrtType
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
@@ -248,6 +255,85 @@ class SettingsStorageScreenTest {
             "expected the budget chip row's width ($rowWidth) to equal the padded content width " +
                 "($expectedWidth) — fillMaxWidth() not reaching FilterChipRow (leaving it sized to " +
                 "its own unconstrained content instead) is exactly R-291's bug"
+        }
+    }
+
+    @Test
+    @Requirement("R-551")
+    fun `R_551 the retention-order row never crushes its value or sub-line to one char per line at fontscale-2_0`() {
+        // R-551 (`overnight/CF03-settings-storage@2x-end.png`): before the fix, `KeyValueRow`'s
+        // non-weighted key column consumed the row's whole shared width budget with this row's
+        // unusually long key text ("Then stop retaining audio, keep capturing text"), leaving the
+        // weighted value+sub-line column ~0dp wide — the sub-line then wrapped one character per
+        // line and everything below it scrolled off-screen. [key], [value] and [subLine] now each
+        // render on their own full-width line (no two of them ever share a `Row`), so none of them
+        // can ever be measured against a shared budget a sibling claims first — the direct,
+        // geometry-based proof, the same technique `R_260`/`R_552` above already establish for
+        // this exact class of defect: a token stacked several characters high (one-per-line) measures
+        // dramatically taller than the same text given a real line to itself, whatever a given
+        // host's font metrics report in absolute terms.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(350.dp)) {
+                        SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+                    }
+                    // The same value token, unconstrained, as a reference for one real line's height.
+                    Text(
+                        text = "always",
+                        style = OrtType.control,
+                        softWrap = false,
+                        modifier = Modifier.testTag("value-reference"),
+                    )
+                    // The same sub-line, unconstrained, as a reference for one real line's height.
+                    Text(
+                        text = "the order is fixed: audio goes before transcripts, and capture never stops silently",
+                        style = OrtType.subLine,
+                        softWrap = false,
+                        modifier = Modifier.testTag("subline-reference"),
+                    )
+                }
+            }
+        }
+
+        // Two scrollable nodes exist here (this screen's own vertical scroll, and the budget-chip
+        // row's horizontal one) — matched on the vertical axis specifically, the same idiom the
+        // `R_133_next_deletion_row` test above already establishes. The row's own outer node is a
+        // `mergeDescendants` boundary (its composed content description carries the sub-line text),
+        // so that description — not the inner test tags, hidden from the default merged tree — is
+        // what a scroll-to search can actually find.
+        val verticalScroll = SemanticsMatcher("has vertical scroll axis") {
+            it.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange) != null
+        }
+        composeTestRule
+            .onNode(hasScrollAction().and(verticalScroll))
+            .performScrollToNode(hasContentDescription("the order is fixed", substring = true))
+
+        // `useUnmergedTree = true`: the row's `mergeDescendants` boundary hides these child nodes
+        // from the default merged tree — `ui/components/RowsTest.kt`'s own established idiom for
+        // querying inside exactly this shape of row.
+        val referenceValueLineHeight = composeTestRule.onNodeWithTag("value-reference").fetchSemanticsNode().size.height
+        val realValueHeight = composeTestRule
+            .onNodeWithTag(RETENTION_ORDER_VALUE_TEST_TAG, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .size
+            .height
+        assert(realValueHeight <= referenceValueLineHeight * 2) {
+            "expected the value 'always' to render at roughly one line's height (reference " +
+                "${referenceValueLineHeight}px); got ${realValueHeight}px, consistent with wrapping " +
+                "one character per line"
+        }
+
+        val referenceLineHeight = composeTestRule.onNodeWithTag("subline-reference").fetchSemanticsNode().size.height
+        val realSubLineHeight = composeTestRule
+            .onNodeWithTag(RETENTION_ORDER_SUBLINE_TEST_TAG, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .size
+            .height
+        assert(realSubLineHeight <= referenceLineHeight * 12) {
+            "expected the sub-line to wrap normally across a handful of lines (one-line reference " +
+                "${referenceLineHeight}px); got ${realSubLineHeight}px, consistent with wrapping one " +
+                "character per line"
         }
     }
 
