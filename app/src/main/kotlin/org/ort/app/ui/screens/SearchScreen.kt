@@ -1,6 +1,7 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -33,13 +35,14 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
-import org.ort.app.ui.components.FieldTone
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.LogRow
@@ -49,6 +52,7 @@ import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextField
 import org.ort.app.ui.components.clearedWhileOverlaid
+import org.ort.app.ui.data.DEFAULT_ATTRIBUTION_STATES
 import org.ort.app.ui.data.MatchHighlighter
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.RecentSearchEntry
@@ -222,43 +226,58 @@ private fun SearchHeaderRow(
         )
         val mono = isCallsignLike(input.text) || isFrequencyLike(input.text)
         val notApplied = result?.textSearchUnavailable == true
-        // R-060/R-063 (WP2 follow-up, round two): the shared `TextField` now takes the search
-        // glyph and the clear (×) inside its own bordered box (`leadingIcon`/`trailingAction`, per
-        // `Search.dc.html`), the keyboard's own "search" IME action
-        // (`keyboardOptions`/`keyboardActions`), and its `modifier` lands on the field's own root
-        // node — `Modifier.weight(1f)` below works directly, no `Box` wrapper needed. `errorTone =
-        // FieldTone.Degraded` keeps "the text term was not applied" amber, never the `halt/text`
-        // red constitution reserves for capture actually having stopped.
-        TextField(
-            value = input.text,
-            onValueChange = { onInputChange(input.copy(text = it)) },
-            mono = mono,
-            placeholder = "Search transcripts, callsigns, frequencies",
-            contentDescriptionText = "Search text",
-            leadingIcon = OrtIcons.search,
-            trailingAction = if (input.text.isNotEmpty()) {
-                {
-                    Icon(
-                        imageVector = OrtIcons.dismiss,
-                        contentDescription = "Clear search text",
-                        tint = OrtColors.textFaint,
-                        modifier = Modifier
-                            .width(14.dp)
-                            .height(14.dp)
-                            .clickable(role = Role.Button, onClickLabel = "Clear search text") {
-                                onInputChange(input.copy(text = ""))
-                            },
-                    )
-                }
-            } else {
-                null
-            },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
-            errorText = if (notApplied) "Not applied" else null,
-            errorTone = FieldTone.Degraded,
-            modifier = Modifier.weight(1f).focusRequester(focusRequester),
-        )
+        if (notApplied) {
+            // R-504 (`Search-Unavailable.dc.html`): the query text renders struck through, in a
+            // neutral field — never the shared `TextField`'s own amber-border/"Not applied"-caption
+            // treatment (`FieldTone.Degraded`, R-063's own fix, still correct for every *other*
+            // reason a field's own edit did not take — this is not that; the words are visibly
+            // struck out on the field itself, so a separate caption saying the same thing again is
+            // redundant, and an amber border reads as this specific field's fault when the real
+            // cause is the index). `TextField` has no strikethrough of its own to reuse here — a
+            // small, local, read-only stand-in matching its neutral (non-focused, non-error)
+            // decoration exactly, not a second general-purpose field this package would then have to
+            // keep in sync with `Controls.kt`'s own.
+            StruckThroughQueryField(
+                text = input.text,
+                mono = mono,
+                onClear = { onInputChange(input.copy(text = "")) },
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            // R-060/R-063 (WP2 follow-up, round two): the shared `TextField` now takes the search
+            // glyph and the clear (×) inside its own bordered box (`leadingIcon`/`trailingAction`,
+            // per `Search.dc.html`), the keyboard's own "search" IME action
+            // (`keyboardOptions`/`keyboardActions`), and its `modifier` lands on the field's own
+            // root node — `Modifier.weight(1f)` below works directly, no `Box` wrapper needed.
+            TextField(
+                value = input.text,
+                onValueChange = { onInputChange(input.copy(text = it)) },
+                mono = mono,
+                placeholder = "Search transcripts, callsigns, frequencies",
+                contentDescriptionText = "Search text",
+                leadingIcon = OrtIcons.search,
+                trailingAction = if (input.text.isNotEmpty()) {
+                    {
+                        Icon(
+                            imageVector = OrtIcons.dismiss,
+                            contentDescription = "Clear search text",
+                            tint = OrtColors.textFaint,
+                            modifier = Modifier
+                                .width(14.dp)
+                                .height(14.dp)
+                                .clickable(role = Role.Button, onClickLabel = "Clear search text") {
+                                    onInputChange(input.copy(text = ""))
+                                },
+                        )
+                    }
+                } else {
+                    null
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+                modifier = Modifier.weight(1f).focusRequester(focusRequester),
+            )
+        }
         if (input.text.isNotBlank()) {
             PrimaryButton(
                 text = "Search",
@@ -266,6 +285,50 @@ private fun SearchHeaderRow(
                 modifier = Modifier.testTag("search-run-button").semantics { contentDescription = "Run search" },
             )
         }
+    }
+}
+
+/** R-504: [TextField]'s own neutral (non-focused, non-error) decoration — same 44dp height,
+ * `bgCurrent` ground, `lineStrong` border, 8dp radius, 13dp/9dp padding/gap — with the query text
+ * struck through instead of live-editable, and the same clear (×) affordance. Read-only: the text
+ * that did not apply is shown, not offered for further in-place edits — clearing it (or the back
+ * chevron) is how an operator leaves this state, matching the board's own affordances. */
+@Composable
+private fun StruckThroughQueryField(text: String, mono: Boolean, onClear: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .heightIn(min = 44.dp)
+            .background(OrtColors.bgCurrent, RoundedCornerShape(8.dp))
+            .border(1.dp, OrtColors.lineStrong, RoundedCornerShape(8.dp))
+            .padding(horizontal = 13.dp)
+            .semantics { contentDescription = "Search text — not applied: $text" }
+            .testTag("search-struck-through-query"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Icon(
+            imageVector = OrtIcons.search,
+            contentDescription = null,
+            tint = OrtColors.textDim,
+            modifier = Modifier.size(15.dp),
+        )
+        Text(
+            text = text,
+            style = (if (mono) OrtType.control.copy(fontFamily = FontFamily.Monospace) else OrtType.control)
+                .copy(color = OrtColors.textDim, textDecoration = TextDecoration.LineThrough),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = OrtIcons.dismiss,
+            contentDescription = "Clear search text",
+            tint = OrtColors.textFaint,
+            modifier = Modifier
+                .width(14.dp)
+                .height(14.dp)
+                .clickable(role = Role.Button, onClickLabel = "Clear search text", onClick = onClear),
+        )
     }
 }
 
@@ -329,13 +392,16 @@ private fun appliedFilterChips(input: SearchFilterInput): List<AppliedFilterChip
     if (input.callsign.isNotBlank()) {
         chips += AppliedFilterChip(input.callsign) { it.copy(callsign = "") }
     }
-    if (input.attributionStates != AttributionState.entries.toSet()) {
+    if (input.attributionStates != DEFAULT_ATTRIBUTION_STATES) {
         val label = when (input.attributionStates.size) {
             0 -> "No states"
             1 -> "${input.attributionStates.first().prose()} only"
             else -> "${input.attributionStates.size} states"
         }
-        chips += AppliedFilterChip(label) { it.copy(attributionStates = AttributionState.entries.toSet()) }
+        // R-500: dismissing this chip returns to the board's own default (Confirmed + Inferred),
+        // never "every state" — that would silently turn Ambiguous/Unknown back on, which is not
+        // what removing a narrowing chip means.
+        chips += AppliedFilterChip(label) { it.copy(attributionStates = DEFAULT_ATTRIBUTION_STATES) }
     }
     if (input.includeRejected) {
         chips += AppliedFilterChip("Rejected included") { it.copy(includeRejected = false) }
@@ -603,10 +669,12 @@ private fun EmptyState(
                     onShow = {
                         val updated = when (option.id) {
                             "all_nights" -> input.copy(timeFilter = SearchTimeFilter.ALL)
-                            "include_all_states" -> input.copy(
-                                attributionStates = AttributionState.entries.toSet(),
-                                includeRejected = true,
-                                includeCorrected = true,
+                            // R-503: adds Inferred and Ambiguous to whatever is already selected —
+                            // never a blanket "every state, rejected and corrected" reset, which
+                            // this board-matching option was never meant to be.
+                            "include_inferred_ambiguous" -> input.copy(
+                                attributionStates = input.attributionStates +
+                                    setOf(AttributionState.INFERRED, AttributionState.AMBIGUOUS),
                             )
                             // R-372: "drop each active filter" — the dedicated Filters-sheet
                             // fields clear directly; a free-text callsign/frequency (R-371) has no
@@ -695,11 +763,18 @@ private fun UnavailableState(
             .testTag("search-unavailable-banner"),
     )
     if (result.details.isNotEmpty()) {
-        CountLine(
-            overCount = result.details.size,
-            nightCount = result.details.groupBy { dayLabel(it.startedAtUtcMillis) }.size,
-            stationCount = result.details.mapNotNull { it.attribution.stationId }.toSet().size,
-        )
+        // R-504: "N overs [on <freq/band>] · unfiltered by text" — never the ordinary
+        // `CountLine`'s "N overs · M nights · K stations", which reads as a normal, fully-applied
+        // search rather than the honest "only the filters below applied, the text term didn't"
+        // this state actually is. The "on <freq/band>" clause only appears when one is actually
+        // active (this scenario's own tour step has none set) — never a frequency invented to
+        // match the board's own worked example.
+        val freqOrBandLabel = when {
+            input.frequencyMhz.isNotBlank() -> input.frequencyMhz
+            input.band != null -> input.band.prose()
+            else -> null
+        }
+        UnappliedTextCountLine(overCount = result.details.size, freqOrBandLabel = freqOrBandLabel)
         val entries = result.details.map { ReaderTransmissionViewStateMapper.listEntry(it) }
         result.details.forEachIndexed { index, detail ->
             // query = "" — the text term was never applied here (that is the whole point of this
@@ -707,6 +782,26 @@ private fun UnavailableState(
             LogRow(state = entries[index].toLogRowViewState(query = ""), onClick = { onOpen(detail.id) })
         }
     }
+}
+
+@Composable
+private fun UnappliedTextCountLine(overCount: Int, freqOrBandLabel: String?, modifier: Modifier = Modifier) {
+    val overWord = if (overCount == 1) "over" else "overs"
+    val tail = (freqOrBandLabel?.let { " on $it" } ?: "") + " · unfiltered by text"
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = OrtColors.textHigh, fontWeight = FontWeight.Medium)) {
+                append("$overCount $overWord")
+            }
+            withStyle(SpanStyle(color = OrtColors.textDim)) { append(tail) }
+        },
+        style = OrtType.subtitle,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
+            .semantics { contentDescription = "$overCount $overWord$tail" }
+            .testTag("search-unavailable-count-line"),
+    )
 }
 
 // -------------------------------------------------------------------------------------------
@@ -748,6 +843,10 @@ private fun FiltersSheetOverlay(
                 onDismissFilters()
             },
             onClearAll = {
+                // R-500: "Clear all" returns every field to `SearchFilterInput`'s own real
+                // defaults, `DEFAULT_ATTRIBUTION_STATES` (Confirmed + Inferred) included — never
+                // "every state", which would leave Ambiguous/Unknown on when "clear" should mean
+                // exactly the same un-narrowed filter the screen opens with.
                 onInputChange(
                     input.copy(
                         callsign = "",
@@ -756,7 +855,7 @@ private fun FiltersSheetOverlay(
                         timeFilter = SearchTimeFilter.ALL,
                         rangeFromLocal = "",
                         rangeToLocal = "",
-                        attributionStates = AttributionState.entries.toSet(),
+                        attributionStates = DEFAULT_ATTRIBUTION_STATES,
                         includeRejected = false,
                         includeCorrected = true,
                     ),
