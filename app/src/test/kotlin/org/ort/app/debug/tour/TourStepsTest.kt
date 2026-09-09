@@ -41,8 +41,12 @@ import java.io.File
  * failing test rather than a reviewer's own manual comparison.
  *
  * **Scope, stated plainly rather than silently narrowed**: this class covers every *destination*
- * step (composes the real [OrtNavHost] the same way [ScreenshotTourActivity] does) — 102 of
- * `tour.json`'s 111 steps at the time of writing. The 9 *setup* steps are not covered here:
+ * step (composes the real [OrtNavHost] the same way [ScreenshotTourActivity] does) — 119 of
+ * `tour.json`'s 138 steps at the time of writing (v5, register R-460, added `scroll: "end"`
+ * variants of six existing destination steps plus five setup-only steps — the former are covered
+ * here automatically since they carry the same `destination`/`drillIn` as their non-scrolled
+ * sibling; [TourAccessibilityScroll] itself is exercised only on a real device, this class having
+ * no window to scroll). The 19 *setup* steps are not covered here:
  * `SetupActivity`'s screen rendering is a set of private methods on the `Activity` itself (see
  * `ScreenshotTourActivity`'s own doc comment, confirmed by reading `SetupActivity.kt`), so there is
  * no composable this class can call directly the way it calls `OrtNavHost` — their correctness rests
