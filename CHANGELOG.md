@@ -32,6 +32,134 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP12 v3: parity investigation, F12 step, R-410 fixes, TourParityTest/TourStepsTest, WP9 font-scale + WP5 sheet seams)
+
+### 0df676d — ui-conformance WP12 v3 · R-440/443/446 investigated (no receiver/tour divergence found), R-410 fixes, TourParityTest + TourStepsTest, 111 → 117 steps
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt` (`EXTRA_FONT_SCALE`
+wired into setup-step launches), `app/src/test/kotlin/org/ort/app/debug/tour/{TourParityTest,TourStepsTest}.kt`
+(new), `tools/ui-audit/tour.json` (117 steps: +1 lexicon-corrupt/CF04, +6 setup `@2x`, −1 unreachable
+`S02b` step, 2 renamed to match what they actually capture). `git merge main` twice more during this
+round (7d736f9 then 71b7fb5→…→82b8b39/c6fc7f1 as WP7/WP9/WP5 seams landed) — clean fast-forwards, no
+conflicts.
+
+**Requirements/ACs:** register R-410, R-440, R-443, R-446 (tour-fixture findings, not spec
+requirements). Constitution I (Uncertainty Is Content) governs this entry's central finding.
+
+**What changed:**
+
+*Constitution Check.* I governs the whole round: the register's own diagnosis for R-440/443/446 (a
+receiver-vs-tour code divergence) was investigated empirically — fresh `pm clear`, a genuine
+broadcast through the real `ScenarioReceiver`, a genuine `ReaderActivity` launch — rather than
+assumed correct and "fixed" by a refactor that would not have changed any behaviour. II governs
+`TourParityTest`/`TourStepsTest`, both proven to fail for the right reason before the fix that made
+them pass (the `TourStepsTest` failures below were real, caught by the test as written, not tuned to
+pass).
+
+- **R-440/R-443 investigated, not refactored.** `ScenarioReceiver.onReceive`'s entire body — after
+  its `goAsync`/coroutine scaffolding — is exactly one call, `Scenarios.load(appContext, name)`, the
+  identical function `ScreenshotTourActivity` already calls; there is no second, receiver-only code
+  path. A real-device comparison (`pm clear`, a genuine broadcast, a genuine `ScenarioReaderActivity`
+  launch, force-stopped between each) reproduced the tour's own `overnight` Settings-Capture capture
+  **exactly** — "No input selected", byte-for-byte the same screen — because
+  `OvernightScenario.overnight` never touches `InputStatus`/`RigStatus`/`StorageForecast` on *either*
+  path (confirmed by reading the file: zero references). `model-missing`'s grouped-Whisper-row state
+  (R-443) reproduced identically too, already grouped, via the same real-receiver route. Neither
+  `ScenarioReceiver.kt` nor `Scenarios.kt` is this package's file (WP0's row), so no refactor was made
+  — a `Scenarios.apply` rename would have been a pure alias with no behavioural effect, which is not
+  what "fixed" should mean. `TourParityTest` (new) is the durable regression guard this investigation
+  earns instead: proves `Scenarios.load("overnight")` is deterministic (two calls, identical holder
+  snapshot) and asserts the exact honest-absent values R-440 itself named
+  (`InputStatus.State.None`, `RigStatus.State.Absent`) — a future change that made one call site
+  special would show up here as two different snapshots.
+- **R-446 (F12 on Settings-Assets) — a real, achievable gap, fixed.** Added
+  `lexicon-corrupt/F12-lexicon-assets` (`destination: SETTINGS`, `drillIn.settingsScreen: ASSETS`):
+  `DebugLexiconImportOverride` (the real `LexiconCorruptScenario.run` result, read by
+  `ModelsContent.kt`'s own poll) is a process-wide holder exactly like `InputStatus`, seeded
+  identically by both paths — landing on Settings-Assets after `lexicon-corrupt` now genuinely shows
+  "Import refused", the real checksum/record-count mismatch, and "Callsign lexicon 2026.08 · 1,104,208
+  records" still active — verified on device (screenshot below), closing R-446.
+- **R-410, the three fixable findings**: N06 unseeded (`level-low/N06-level-meter-low`,
+  `level-clip/N06-level-meter-clip`) were the *pre-v2* steps, superseded by v2's already-correctly-
+  seeded `level-low/N06-level-meter-seeded`/`level-clip/N06-level-meter-clip-seeded` (verified working
+  on device — no session required, contrary to the coordinator's own suspicion) — renamed to
+  `N04-capture-status` (what they actually, honestly capture) rather than removed, so the plain-N04
+  state under those two scenarios stays covered. `setup-verified/S02b-mic-denied` removed: confirmed
+  by reading `SetupActivity.onResume()` — `if (step == SetupStep.MICROPHONE_DENIED) refreshStep()`
+  unconditionally redirects away from S02b whenever `RECORD_AUDIO` is actually granted (true for
+  every tour run, since `install.ps1`/this script's own setup grants it) — an OS permission-state
+  requirement no in-process seed can satisfy; reported, not worked around.
+- **R-410/R-411, the two *not* fixable within this package, verified and reported rather than
+  guessed at**: `gap-call/F15-gap-call-now` genuinely lands on the idle `Now` screen on *both* the
+  receiver and tour paths — `FailureMapper.map` requires `CaptureState.State.Capturing` for F15, and
+  `gap-call` (`OvernightScenario.kt`, WP4's file) ends the session rather than marking it live; this
+  package's own README already names this gap ("Known gaps / hygiene"), unchanged by this round.
+  `setup-level/S07-level`'s empty meter reproduced identically via the real receiver + `MainActivity`
+  path too (screenshot taken) — `setupLevel()` (`Scenarios.kt`, WP0's file) seeds the store fields
+  that land the state machine on S07 but never publishes a `LevelStatus` reading for the screen's own
+  live meter to read; a `Scenarios.kt` fix, not a tour one.
+- **`TourStepsTest`** (new): composes the real `OrtNavHost` for all 111 *destination* steps (of
+  117 — the 6 *setup* `@2x` additions this round have no equivalent JVM-composable check; see the
+  class's own scope note) in one `ComposeContentTestRule`/`setContent` (calling `setContent` twice in
+  one test throws — found by actually running it), keyed per step the same way `ScreenshotTourActivity`
+  itself is, and asserts a real `testTag` or title string per destination/drill-in kind. Caught two
+  wrong assumptions in its own first draft before being fixed: drill-in headers read the bare
+  destination label ("Log"), not "Back to Log" as `NavSeed.kt`'s own prose loosely suggested, and
+  `ThreadDetailScreen`'s `thread-detail-overs` tag was not reliably present, so both were changed to
+  text checks against confirmed real captures.
+- **WP9's `SetupActivity.EXTRA_FONT_SCALE`** (landed mid-round, polled via `git log main --oneline`)
+  wired into `renderSetupStep`'s own `Intent` — every setup step now gets a real font-scale seam
+  in-process, no system `font_scale` touched. 6 new `@2x` steps: S01, S03, S04, S07, S08, S12 (S06
+  excluded — same reason `S05`/`S06` were excluded from v1: reachable only as the live result of a
+  real tap-triggered route check, `EXTRA_STEP` cannot substitute for it).
+- **Not yet actionable, polled for and confirmed still unlanded at this round's own close**: WP3's
+  `NavSeed.searchQuery`/`searchSubmit`/`searchFiltersOpen` (WP7's own `SearchContent(initialQuery,
+  submitOnStart, initialFiltersOpen)` landed, but the `NavSeed`/`OrtNavHost` wiring that would let
+  this package reach it without duplicating `OrtNavHost`'s own private `searchHostState()` state
+  management has not — confirmed by reading `OrtNavHost.kt`'s `SEARCH` dispatch site, still un-wired);
+  WP3's `NavSeed.logSheetOpen` (WP5's `LogContent.initialSheetOpen` landed, `NavSeed` wiring has not);
+  WP8's `StationDetailContent.initialSubScreen`/`NavSeed.openStationSubScreen` (confirmed genuinely
+  absent by reading `StationDetailContent.kt`: `var sub by remember(stationId) {
+  mutableStateOf(StationSubScreen.NONE) }` is purely internal, no parameter exists to seed it at
+  all — ST03/ST04 stay unreachable); WP6's `initialRevisionsOpen`/`NavSeed.openRevisions` (D07) and
+  D05's own seam. None of these are duplicated by hand in this package (its own standing rule); each
+  will be picked up in a future round once landed.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — **BUILD SUCCESSFUL**,
+  27 tests, 27 passed (24 from v1/v1.1/v2 plus `TourParityTest`'s 2 plus `TourStepsTest`'s 1, which
+  itself exercises all 111 destination steps in a single run).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL** (one `ktlintFormat` pass and one
+  `CyclomaticComplexMethod` split needed first — `expectedFor` split into `expectedForDrillIn`/
+  `expectedForDestination`; re-checked clean).
+- `.\gradlew.bat dependencyRules platformGuards` — both **OK**. `.\gradlew.bat :app:assembleDebug` —
+  **BUILD SUCCESSFUL**. `python tools\spec-check\spec_check.py` — **OK** (8/8). `coverageMatrix` then
+  `coverageMatrixCheck` (separate) — up to date (191/419), byte-identical `results/coverage-matrix.md`.
+- **Real device, `emulator-5558` (AVD `ort_audit_3`), fresh worktree APK, `pm clear` + permissions,
+  `.\tools\ui-audit\tour.ps1 -Port 5558 -Out .\tmp-tour-out`**: **117/117 steps ok, 0 errors, 106.9s
+  elapsed**. Two of the new captures opened directly with the Read tool and visually confirmed as
+  genuine renders: `lexicon-corrupt/F12-lexicon-assets.png` (the real "Import refused" screen — real
+  checksum mismatch "computed sha256 8c96… does not match", real record counts "read 2 · declared
+  1,122,410", "Callsign lexicon 2026.08 · 1,104,208 records" still active, `Choose another file`/
+  `Done`) and `setup-verified/S12-ready@2x.png` (genuinely larger text, "verified"/"in band" status
+  labels now visible at 2×, top/bottom clipped on first frame — the same known, accepted first-frame-
+  before-scroll shape R-341 already established for this exact screen). `tmp-tour-out/` and three
+  ad hoc diagnostic screenshots (`receiver-cf02.png`, `receiver-cf04b.png`, `n06-test.png`, `s07-test.png`
+  — the real-receiver-path comparisons this investigation's own findings rest on) were scratch, not
+  part of this commit.
+
+**Left open / not done:**
+- Every "not yet actionable" seam named above — this package will add the corresponding `tour.json`
+  steps the round after each one's `NavSeed`/composable wiring lands; polled `git log main --oneline`
+  three times across this round (7d736f9, 71b7fb5, c6fc7f1) rather than guessed at what had landed.
+- `gap-call`'s F15 banner and `setup-level`'s empty meter (R-410/R-411) need changes in `OvernightScenario.kt`/
+  `Scenarios.kt` (WP0's/WP4's files) — named with exact function/field citations above, not this
+  package's to fix.
+- `TourStepsTest` covers destination steps only (111 of 117) — setup-step correctness still rests on
+  the real-device tour runs this entry and the two before it report, not a JVM-side assertion; see
+  the class's own doc comment for why (`SetupActivity`'s screen rendering has no callable composable
+  to test against without a real `Activity`).
+
 ## 2026-09-08 (ui-conformance WP11b: calibration chart colour split, back headers on F14/F19/F21/F22)
 
 ### (pending) — ui-conformance WP11b · R-447 calibration chart colour split; R-448 back headers on F14/F19/F21/F22
@@ -125,7 +253,6 @@ navigation, named above per the review's own instruction.
 ---
 
 ## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
-
 ### ed7b13c — ui-conformance WP12 v2 · drill-in seeding through WP3's NavSeed, TourIds resolves symbolic ids against real fixture data
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourIds.kt` (new), `ScreenshotTourActivity.kt`

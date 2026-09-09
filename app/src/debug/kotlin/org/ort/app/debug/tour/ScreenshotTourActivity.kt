@@ -64,7 +64,8 @@ import java.io.File
  *   itself (confirmed by reading `SetupActivity.kt` before writing this — there is no reusable,
  *   `Context`-free composable to call directly the way [OrtNavHost] is), so a real, separate
  *   `Activity` launch is the only way to reach it without duplicating WP9's own dispatch. Font scale
- *   has no equivalent hook for a setup step — see this package's report.
+ *   (v3) uses [SetupActivity.EXTRA_FONT_SCALE] (WP9's own seam for this tour, added after v2 was
+ *   written — its own doc comment explains why the *system* font-scale setting was never an option).
  *
  * captures a `Bitmap` via [androidx.core.view.drawToBitmap] once composition/polling has had time to
  * settle (see [DESTINATION_SETTLE_MILLIS]'s own doc comment for why that duration, not an arbitrary
@@ -203,7 +204,11 @@ public class ScreenshotTourActivity : ComponentActivity() {
             ?: error("tour step '${step.id}' names unknown setup id '${step.setup}'")
         val deferred = CompletableDeferred<SetupActivity>()
         pendingSetupActivity = deferred
-        startActivity(Intent(this, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, stepName))
+        startActivity(
+            Intent(this, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_STEP, stepName)
+                .putExtra(SetupActivity.EXTRA_FONT_SCALE, step.fontScale),
+        )
         val setupActivity = withTimeout(SETUP_LAUNCH_TIMEOUT_MILLIS) { deferred.await() }
         pendingSetupActivity = null
         delay(DESTINATION_SETTLE_MILLIS)
