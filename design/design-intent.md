@@ -62,8 +62,8 @@ verify state; no step advances on assumption.
 | S07 | `Setup-Level.dc.html` | Set input level against noise, live meter, headroom target | FR-CAP-3, F3 | Level slider. `Test` arms the meter. `Continue` enabled only in range | drawn |
 | S08 | `Setup-Battery.dc.html` | Battery-optimisation exemption. States plainly that the API lies and liveness is proven by heartbeat | FR-PLT-1, F5 | `Open settings` → OS. `Skip` → S09, diagnostic-only, never blocks | drawn |
 | S09 | `Setup-Rig.dc.html` | Optional rig connection, or skip | FR-RIG-1 | `Connect a radio` → S10. `Not now` → S12 | drawn |
-| S10 | `Setup-Rig-Usb.dc.html` | USB device attach + permission grant, with the re-attach warning | FR-PLT-2, F16 | `Grant` → OS prompt → S11. `Back` → S09 | drawn |
-| S11 | `Setup-Rig-Verified.dc.html` | Rig identified, descriptor and verified command set shown | FR-RIG-2, FR-RIG-3 | `Continue` → S12. `Change radio` → S09 | drawn |
+| S10 | `Setup-Rig-Usb.dc.html` | USB device attach + permission grant, with the re-attach warning | FR-PLT-2, F16 | `Grant` → OS prompt → S11. `Back` → S09 | drawn — **built as the honest fallback**: FR-RIG is unbuilt, so every S09 rig row lands on the no-rig-support banner with manual frequency entry (R-285, R-344); the USB attach flow is deferred with FR-RIG |
+| S11 | `Setup-Rig-Verified.dc.html` | Rig identified, descriptor and verified command set shown | FR-RIG-2, FR-RIG-3 | `Continue` → S12. `Change radio` → S09 | drawn — **unreachable in this build** (FR-RIG unbuilt; only the `RigStatus.Stale` "last known" halt renders via the `rig-lost` scenario, R-125) |
 | S12 | `Setup-Done.dc.html` | Summary of what was configured, one action to start | P8 | `Start capture` → N01 | drawn |
 
 ---
@@ -183,14 +183,14 @@ phone, improve it at home.
 |---|---|---|---|---|---|
 | CF01 | `Settings.dc.html` | Root list, grouped | FR-CFG-1 | Each row → its screen | drawn |
 | CF02 | `Settings-Capture.dc.html` | Input device, verified route, level, enhancement | FR-CAP, FR-ENH | Route → re-verify. Level → N06 | drawn |
-| CF03 | `Settings-Storage.dc.html` | Used by category, retention policy, **deletion announced in advance** | **FR-STO-1..8, P9** | Policy controls. `What will be deleted` → preview | drawn |
+| CF03 | `Settings-Storage.dc.html` | Used by category, retention policy, **deletion announced in advance** | **FR-STO-1..8, P9** | Policy controls. `What will be deleted` → preview | drawn — **accepted deviation**: the board's nights-based "Keep audio for N nights" control is replaced by the GB budget chips and auto-prune toggle that FR-STO-3/D26 and FR-STO-3a/AC-124 mandate (R-133); the usage bar, legend and "Next deletion … Review" row are built as drawn (R-351) |
 | CF04 | `Settings-Assets.dc.html` | Models and lexicon: installed, version, checksum, what is missing | FR-AST-1..9, F13 | `Install`. `Verify`. `Replace` (deferred to next session, F21) | drawn |
 | CF05 | `Settings-Tier.dc.html` | Current tier, what this device can do, **what it therefore does not know** | **FR-TIER, P11** | Tier override. Explains recall vs precision | drawn |
 | CF06 | `Settings-Rig.dc.html` | Rig state, descriptor, verified commands, band mapping | FR-RIG-1..12 | `Reconnect`. `Change radio` | drawn |
 | CF07 | `Settings-Export.dc.html` | What can be exported and in what form | FR-EXP-1..6 | Format, scope, `Export` | drawn |
 | CF08 | `Settings-Contribute.dc.html` | Corpus contribution consent. States exactly what never leaves the device | **FR-CON-1..8, constitution III** | Per-category consent. Nothing on by default | drawn |
-| CF09 | `Settings-Diagnostics.dc.html` | Diagnostic bundle contents, shown before it is produced | FR-OBS-1..5a | `Preview bundle`. `Save` | drawn |
-| CF10 | `Settings-About.dc.html` | Version, build, licences, the offline promise | — | — | drawn |
+| CF09 | `Settings-Diagnostics.dc.html` | Diagnostic bundle contents, shown before it is produced | FR-OBS-1..5a | `Preview bundle`. `Save` | drawn — **accepted deviation**: `Preview` is an in-app listing of the bundle entries with real sizes rather than opening each file in an external reader (R-137); `Save` writes the real zip through the system file picker |
+| CF10 | `Settings-About.dc.html` | Version, build, licences, the offline promise | — | — | drawn — **accepted deviation**: no ONNX Runtime or usb-serial-for-android version lines — the runtime ships inside sherpa-onnx and the serial library is not a dependency of this build (R-138) |
 
 ---
 
