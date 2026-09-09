@@ -1,21 +1,24 @@
 # Tour diff
 
-Before: `ce636b9`  After: `results\ui-audit`  Threshold: 6.0
+Before: `f1426e5`  After: `results\ui-audit`  Threshold: 0.5
 
-- new: 7
+- new: 10
 - missing: 0
-- changed: 4
-- unchanged: 106
+- changed: 3
+- unchanged: 114
 
 ## New
 
-- `level-clip/N04-capture-status`
-- `level-low/N04-capture-status`
-- `lexicon-corrupt/F12-lexicon-assets`
-- `setup-level/S07-level@2x`
-- `setup-verified/S01-welcome@2x`
-- `setup-verified/S03-notify@2x`
-- `setup-verified/S04-input@2x`
+- `overnight/L02-filter-sheet`
+- `overnight/L02-filter-sheet@2x`
+- `revisions/D07-revisions-open`
+- `search-corpus/Q02-filters-sheet`
+- `search-corpus/Q02-filters-sheet@2x`
+- `search-corpus/Q03-callsign-ke7qrs`
+- `search-corpus/Q03-results-park`
+- `search-corpus/Q03-results-park@2x`
+- `search-corpus/Q04-empty-ke7qrt`
+- `search-unavailable/Q05-unavailable-park`
 
 ## Missing
 
@@ -23,7 +26,6 @@ Before: `ce636b9`  After: `results\ui-audit`  Threshold: 6.0
 
 ## Changed
 
-- `gap-call/F15-gap-call-now`
-- `overnight-live/N01-now-live`
-- `setup-level/S07-level`
-- `setup-verified/S12-ready@2x`
+- `overnight/L01-log@2x`
+- `rig-lost/CF06-settings-rig`
+- `stations-14-nights/DG04-session-review`
