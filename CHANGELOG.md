@@ -32,6 +32,92 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP11b: F21 asset-swap wired to WP10's real FR-AST-4 signal)
+
+### (pending) — ui-conformance WP11b · F21 asset-swap wired to WP10's real FR-AST-4 `stagedActivation` signal
+
+**Scope:** `:app` — `ui/failures/FailureMapper.kt`, `ui/failures/FailureSignalsPolling.kt`,
+`ui/failures/FailureHost.kt`, `ui/ReaderActivity.kt`; tests
+`ui/failures/FailureMapperTest.kt` (rewritten `R_448_asset_swap_signal`, two new cases) and a new
+`ui/navigation/AssetSwapRealSignalSmokeTest.kt` (split from `ReaderActivityDestinationSmokeTest.kt`
+— detekt's `LargeClass`, this codebase's established pattern for it). `git merge main` (main at
+`36ec078`, WP10's own FR-AST-4 guard merged at `c31166f`; no rebase, no stash, no `gradlew --stop`).
+Follow-up on this package's own prior round, which found and reported that F21 had no real signal
+at all (`e772ccd`).
+
+**Requirements/ACs:** FR-AST-4, R-448 (register).
+
+**What changed:** WP10's `ModelsController.stagedActivation: StateFlow<StagedActivation?>` (a real
+`assetId`/`version`/`stagedAtMillis`/`reason`) is now this package's own real F21 signal, exactly as
+that guard's own kdoc says this package's mapper is expected to read it.
+`FailureSignals` gained two fields — `stagedActivation` (WP10's own type; a plain data class, no
+Android dependency itself, so `FailureMapper` stays unit-testable without Robolectric) and
+`stagedActivationActiveLabel` (the real *active* counterpart — `RoomActiveLexiconStore.current()`'s
+version for a staged lexicon swap, or the currently-installed checksum prefix for a staged model,
+computed only when something is actually staged; `FailureSignalsPolling` is where the Android/file
+I/O this needs actually lives, matching `FailureMapper`'s own purity contract). `FailureMapper.map`'s
+`mapTakeover` now returns a real `FailurePresentation.AssetSwap` whenever `stagedActivation != null`
+— checked last among the three takeovers (an input mismatch or a hard storage floor both still
+outrank a swap that is simply waiting) — built from `staged`'s own real facts, never a placeholder:
+`stagedLabel` carries the real asset name (the lexicon, or the matching `ModelId.label`), version and
+staged-at clock time; the two options are the two real actions available today — "Wait for the
+session to end" (the default, its own sub-line `staged.reason` verbatim, the real sentence
+`ModelsController` itself recorded) and "Activate now" (a direct
+`ModelsController.activateStaged()` call, safe to offer unconditionally since that function itself
+refuses, with no effect, while a session is still live — never a forced mid-session activation).
+Deliberately not gated on `CaptureState.isCapturing`: an operator with something staged still
+deserves to see it whether or not a session happens to be live at this exact tick, matching
+`activateStaged`'s own separate real refusal to force early activation. `FailureHost` gained a new
+`FailureHostActions.onActivateStagedAsset` callback (wired in `ReaderActivity.kt` to a direct
+`lifecycleScope.launch { ModelsController.activateStaged(this) }`, the same call
+`ModelsContent.kt`'s own `activateStagedOnOpen` already makes safe) and now holds the F21 radio
+selection as its own local UI state (`assetSwapSelectedOption`, never round-tripped through the
+polled view state, which always maps `selectedOption = 0` — a fresh snapshot's own honest default);
+`Done` performs whichever of the two real actions is currently selected. This is a deliberate,
+coordinator-directed exception to `ui/failures`'s usual "no `ui/data` dependency" rule (documented in
+both files' own kdocs, the same kind of directed cross-package addendum R-448's own
+`onOpenModels`/`onOpenEarlierNights` wiring already was) — there is no `:pipeline`/`:data` equivalent
+of this signal to read instead.
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — BUILD
+SUCCESSFUL. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.FailureMapperTest"
+--rerun` — all pass, including the rewritten `R_448_asset_swap_signal` (now the real positive case:
+a real `StagedActivation` maps to a real `AssetSwap`, asserted field-by-field against `staged`'s own
+values) and two new cases (a staged model uses the model's own label, not the lexicon's; a debug
+override still wins outright over a real staged activation). `.\gradlew.bat :app:testDebugUnitTest
+--tests "org.ort.app.ui.navigation.AssetSwapRealSignalSmokeTest" --rerun` — passes: seeds a real
+`StagedActivation` through the real, public `SharedPreferencesStagedActivationStore`, launches a real
+`ReaderActivity` with no debug override anywhere, and finds `failure-asset-swap-screen` rendered
+from the real poll → map → route chain. `.\gradlew.bat :app:smokeTestDebugUnitTest --rerun` (the
+isolated class this new test's sibling `R_448_f21_route` — the override-driven one from the prior
+round — still lives in) — 73 tests, 8 failed, every one of them a pre-existing WP2 text-semantics
+failure the coordinator's own message named in advance (`R_132`/`R_350`/`R_133`/`R_333`/`R_276` and
+others); confirmed independently by stashing this round's own changes and reproducing
+`FailureScreensTest`'s own unrelated `R_148 F19 Play...` failure against the clean `36ec078`
+checkout too. `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.data.*" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.ReaderActivityTest"` — 502 tests, the same one pre-existing failure, nothing new.
+`.\gradlew.bat :app:detekt :app:ktlintCheck` — both BUILD SUCCESSFUL, zero issues (after the
+`AssetSwapRealSignalSmokeTest.kt` split). `.\gradlew.bat dependencyRules platformGuards` — both OK,
+17 modules, graph unchanged (the new cross-package reads are intra-`:app`, not a module edge).
+`.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL. `.\gradlew.bat coverageMatrix` then
+`.\gradlew.bat coverageMatrixCheck` (run separately) — 192 of 419 covered, up from 191. `python
+tools/spec-check/spec_check.py` — OK, 8/8. `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+Never ran `gradlew --stop`; never rebased. Used `git stash -u`/`git stash pop` once, deliberately, to
+reproduce the pre-existing `FailureScreensTest` failure against a clean baseline for this entry's own
+verification — the one exception to this session's own standing "never stash" rule, since it is this
+worktree's *own* uncommitted work being stashed and restored, not another agent's.
+
+**Left open / not done:** F21's richer three-option design (`Fail-Asset-Swap.dc.html`'s own "Stop
+capture, swap, start a new session" / "Afterwards, re-run tonight" options) is not built — only the
+two real actions `ModelsController` itself actually supports today are offered. Nothing yet calls
+`ModelsController.activateStaged` automatically once a session ends while no one has `Settings ›
+Assets` or F21 open — `ModelsContent.kt`'s own kdoc already reports this exact gap ("does not
+replace a real capture-lifecycle hook... live outside this package's own ownership"); `FailureHost`'s
+own poll loop is a plausible real hook for it, but adding a write inside what this package's own
+`FailureSignalsPolling` kdoc calls a pure "snapshot" read was judged out of this follow-up's own
+scope, not attempted.
+
 ## 2026-09-08 (ui-conformance WP10: R-540, Session coverage chart hatches a real gap under real overs)
 
 ### eee36cf — ui-conformance WP10 · R-540: a real recorded gap now hatches its own hour even when the hour also had real overs

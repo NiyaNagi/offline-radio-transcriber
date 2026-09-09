@@ -6,6 +6,9 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.FailureHostActions
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
@@ -154,6 +157,13 @@ public class ReaderActivity : ComponentActivity() {
                         // above already uses.
                         onOpenEarlierNights = { navigator.open(ReaderDestination.EARLIER_NIGHTS) },
                         onOpenModels = { navigator.openSettings(SettingsScreenId.ASSETS) },
+                        // FR-AST-4 (register R-448 follow-up): F21's "Activate now" — the real
+                        // `ModelsController.activateStaged` call, direct, exactly as safe to call
+                        // here as `ModelsContent.kt`'s own `activateStagedOnOpen` (that function's
+                        // own kdoc: "a safe no-op whenever a session is still live").
+                        onActivateStagedAsset = {
+                            lifecycleScope.launch { ModelsController.activateStaged(this@ReaderActivity) }
+                        },
                     ),
                 )
             }
