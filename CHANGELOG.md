@@ -32,6 +32,80 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-08 (ui-conformance WP3 round 14: NavSeed's Search and Log-sheet fields; R-350's pipeline fix reflected)
+
+### (pending) — ui-conformance WP3 round 14 · NavSeed search/log-sheet fields; R-350 now real end to end
+
+**Scope:** `ui/navigation/**` (`NavSeed.kt`, `OrtNavHost.kt`, `NavSeedTest.kt`,
+`ReaderActivityDestinationSmokeTest.kt`) only — no other package's files touched this round.
+`main` merged four times as prerequisite commits landed (WP7's `SearchContent` seams, WP5's
+`LogContent.initialSheetOpen`, `:pipeline`'s R-350 fix, WP9's `EXTRA_FONT_SCALE`, WP2's V4 pass —
+all clean fast-forwards, no conflicts, no rebase, no stash).
+
+**Requirements/ACs:** none new — continuing round 13's own infrastructure seam for WP12's
+screenshot tour. R-350 itself: the pipeline half (`:pipeline`'s own fix) is reflected in this
+round's own smoke test update, not re-done here.
+
+**What changed:**
+- **Constitution Check.** Principle II (Test-Backed Change) governs the whole entry — every new
+  field is proven against real seeded data, and the R-350 test is updated to match reality now
+  that the pipeline half is genuinely fixed, rather than left asserting a defect that no longer
+  exists.
+- **`NavSeed` gained `searchQuery: String?`, `searchSubmit: Boolean?`, `searchFiltersOpen:
+  Boolean?`** (after WP7 merged `SearchContent(initialQuery, submitOnStart, initialFiltersOpen)`)
+  — extras `nav_search_query`, `nav_search_submit`, `nav_search_filters_open`. Threaded through a
+  new `SearchHostState.initialQuery`/`submitOnStart`/`initialFiltersOpen`, read once by
+  `SearchContent`'s own first composition. The `SEARCH` dispatch itself is extracted into a new
+  `SearchDestinationContent` composable — the same reason `ImproveRecordsContent` was — to keep
+  `DestinationContent` under detekt's `LongMethod` limit as this round's own new fields pushed it
+  over again.
+- **`NavSeed` gained `logSheetOpen: Boolean?`** (after WP5 merged `LogContent.initialSheetOpen`) —
+  extra `nav_log_sheet_open`. Threaded through a new `DestinationInitialState.logInitialSheetOpen`
+  field, the same shape `logInitialFilter` already has.
+- **R-350's own smoke test, rewritten to match reality**: round 12's own report named a real
+  `RejectionPipeline` defect (a genuine missing-model failure's own specific reason string getting
+  discarded into a generic one before it ever reached a screen) that kept `Improve-Done`'s
+  `Install` action unreachable through a real run. `:pipeline`'s own fix landed on `main` since —
+  confirmed directly: driving the identical real reprocess run this round now reaches
+  `Improve-Done` reading "1 failed — No transcription model installed" (the real, recognised
+  reason), `Install` renders, and tapping it now lands on the real `Settings-Assets`. The test is
+  renamed and rewritten to assert this complete, now-real flow end to end, in place of its former
+  "proves no more than a generic failure and no Install" scope.
+
+**Verified:**
+- `NavSeedTest` — now 14 cases (2 new: `logSheetOpen`, `searchQuery`+`searchSubmit`,
+  `searchFiltersOpen`), all green. The search-fields case reuses the exact `search-corpus` debug
+  fixture (`Scenarios.load`) WP7's own `SearchContentTest.kt` uses — 14 overs, "park" matching all
+  of them — proving the seed reaches a real `SearchResult` through this host's own real search
+  path, not a stand-in. The log-sheet case reuses the same "Filter the log" marker
+  `LogContentBackHandlerTest.kt`'s own `R_TOUR_log_sheet_open` (WP5's) case already established.
+- `ReaderActivityDestinationSmokeTest`'s renamed R-350 case
+  (`R_350_improve_done_install_action_opens_settings_assets_for_a_real_missing_model_failure`) —
+  green, now covering the complete real flow (seed → real reprocess run → real recognised failure
+  → real `Install` → real `Settings-Assets`), not merely the wiring compiling.
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*"` — 41 tests, all green.
+  `:app:smokeTestDebugUnitTest` — full suite, **all green this round, including R_276** (round 12's
+  own flagged, unrelated pre-existing failure — WP5's own separate commit, `544c781`, fixed it;
+  confirmed still green here, not a regression this round could have caused either way).
+- `:app:ktlintCheck :app:detekt` — green (one detekt fix needed: `DestinationContent` crossed
+  `LongMethod` again at the new field count; `SearchDestinationContent` extracted the same way
+  `ImproveRecordsContent` was in round 12). `dependencyRules platformGuards` — green.
+  `:app:assembleDebug` — green. `python tools/spec-check/spec_check.py` — 8/8 checks pass.
+  `coverageMatrix` then `coverageMatrixCheck`, run as separate invocations (the same unrelated
+  Gradle task-validation ordering gap prior rounds' own entries named) — both green;
+  `results/coverage-matrix.md` unchanged, nothing to commit there.
+- Per the coordinator's own scoped-gate instruction this round — no `:app:testDebugUnitTest` run
+  unscoped and no `build`/`check` run in this commit.
+
+**Left open / not done:**
+- The R-432 thread route (`FrequencyDetailContent.onOpenThread`, awaiting WP8's own merge) and the
+  `TransmissionDetailContent` revisions/why/lattice initial-view fields (awaiting WP6's own merge)
+  — both still pending their prerequisite commits landing on `main` as of this one; picked up in
+  a follow-up commit once each lands, per the coordinator's own "start when the prerequisites are
+  on main" instruction.
+
+---
+
 ## 2026-09-08 (ui-conformance WP12 v2: drill-in seeding via NavSeed/TourIds, 18 new steps)
 
 ### ed7b13c — ui-conformance WP12 v2 · drill-in seeding through WP3's NavSeed, TourIds resolves symbolic ids against real fixture data

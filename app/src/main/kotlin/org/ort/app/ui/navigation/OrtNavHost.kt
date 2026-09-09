@@ -229,6 +229,7 @@ public fun OrtNavHost(
                             navState.openCaptureLevelMeter.value,
                             navState.pendingLogFilter.value,
                             navState.pendingReviewSessionId.value,
+                            seed?.logSheetOpen ?: false,
                         ),
                         navState.frequencyInitialView.value,
                     ),
@@ -237,7 +238,7 @@ public fun OrtNavHost(
                     context = context,
                     drawerLive = drawerLive,
                     audioPlayer = audioPlayer,
-                    search = searchHostState(navigator, context, scope, navState),
+                    search = searchHostState(navigator, context, scope, navState, seed),
                 )
             }
         }
@@ -579,6 +580,7 @@ private fun searchHostState(
     context: android.content.Context,
     scope: CoroutineScope,
     navState: NavHostNavState,
+    seed: NavSeed?,
 ): SearchHostState = SearchHostState(
     input = navState.searchInput.value,
     onInputChange = { navState.searchInput.value = it },
@@ -593,6 +595,13 @@ private fun searchHostState(
     // R-200: `SearchContent`'s own back-chevron returns to wherever `Search` was opened from —
     // see `NavHostNavState.searchOpenedFrom`'s own doc comment.
     onBack = { navigator.currentState.value = navState.searchOpenedFrom.value },
+    // Round 14 (WP12's screenshot-tour seam, real now — WP7 merged `SearchContent.initialQuery`/
+    // `submitOnStart`/`initialFiltersOpen`): straight pass-through, read only on `SearchContent`'s
+    // own first composition (its own internal `remember`s), the same "seed once" contract every
+    // other `NavSeed` field already has.
+    initialQuery = seed?.searchQuery,
+    submitOnStart = seed?.searchSubmit ?: false,
+    initialFiltersOpen = seed?.searchFiltersOpen ?: false,
 )
 
 /** [NavHostBody]'s own `modifier` (round 11: no longer `OrtNavHost`'s `Scaffold` inner padding
@@ -618,6 +627,9 @@ private data class DestinationInitialState(
     val openCaptureLevelMeter: Boolean,
     val logInitialFilter: LogFilterSelection?,
     val reviewSessionId: String?,
+    // Round 14 (after WP5 merged `LogContent.initialSheetOpen`) — see `NavSeed.logSheetOpen`'s own
+    // doc comment.
+    val logInitialSheetOpen: Boolean,
 )
 
 /** [NavHostBody]'s destination/drill-in identity, bundled to keep that composable's own parameter count down. */
@@ -665,6 +677,10 @@ private data class SearchHostState(
     val result: SearchResult?,
     val onSearch: () -> Unit,
     val onBack: () -> Unit,
+    // Round 14 — see `searchHostState`'s own construction site.
+    val initialQuery: String?,
+    val submitOnStart: Boolean,
+    val initialFiltersOpen: Boolean,
 )
 
 /**
@@ -899,6 +915,7 @@ private fun DestinationContent(
     val openCaptureLevelMeter = initialState.openCaptureLevelMeter
     val logInitialFilter = initialState.logInitialFilter
     val reviewSessionId = initialState.reviewSessionId
+    val logInitialSheetOpen = initialState.logInitialSheetOpen
     val content = modifier
     val onOpenTransmission = callbacks.onOpenTransmission
     val onOpenStation = callbacks.onOpenStation
@@ -932,17 +949,10 @@ private fun DestinationContent(
             modifier = content,
             onOpenThread = onOpenThread,
             initialFilter = logInitialFilter,
+            initialSheetOpen = logInitialSheetOpen,
         )
 
-        ReaderDestination.SEARCH -> SearchContent(
-            input = search.input,
-            result = search.result,
-            onInputChange = search.onInputChange,
-            onSearch = search.onSearch,
-            onOpen = onOpenTransmission,
-            modifier = content,
-            onBack = search.onBack,
-        )
+        ReaderDestination.SEARCH -> SearchDestinationContent(search, onOpenTransmission, content)
 
         // Round 3: `ThreadContent` gained a real `onOpenThread` too — a thread card now opens the
         // same drill-in.
@@ -1033,6 +1043,26 @@ private fun ImproveRecordsContent(
         onDrawer = onDrawer,
         modifier = modifier,
         onOpenModels = onOpenModels,
+    )
+}
+
+/** [DestinationContent]'s `SEARCH` branch, split out purely to keep that function under detekt's
+ * length limit — the same reason [ImproveRecordsContent] above already was. Round 14:
+ * `initialQuery`/`submitOnStart`/`initialFiltersOpen` real now — WP7 merged them (confirmed by
+ * reading `ui/screens/SearchContent.kt` before wiring this). */
+@Composable
+private fun SearchDestinationContent(search: SearchHostState, onOpen: (String) -> Unit, modifier: Modifier) {
+    SearchContent(
+        input = search.input,
+        result = search.result,
+        onInputChange = search.onInputChange,
+        onSearch = search.onSearch,
+        onOpen = onOpen,
+        modifier = modifier,
+        onBack = search.onBack,
+        initialQuery = search.initialQuery,
+        submitOnStart = search.submitOnStart,
+        initialFiltersOpen = search.initialFiltersOpen,
     )
 }
 

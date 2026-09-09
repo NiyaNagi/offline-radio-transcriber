@@ -541,40 +541,29 @@ class ReaderActivityDestinationSmokeTest {
     }
 
     /**
-     * Register R-350 (round 12, the coordinator's own last-known host wire): `ImproveContent`
-     * gained `onOpenModels` (WP10's `94c946c`), and `OrtNavHost.kt`'s `IMPROVE_RECORDS` dispatch
-     * now passes it the same real `NavHostCallbacks.onOpenModels` `NowContent`'s own "Install a
-     * model" (R-139) already uses — `navigator.openSettings(SettingsScreenId.ASSETS)`.
+     * Register R-350 (round 12's host wire, round 14 updated now that the pipeline half is real
+     * too): `ImproveContent` gained `onOpenModels` (WP10's `94c946c`), and `OrtNavHost.kt`'s
+     * `IMPROVE_RECORDS` dispatch passes it the same real `NavHostCallbacks.onOpenModels`
+     * `NowContent`'s own "Install a model" (R-139) already uses —
+     * `navigator.openSettings(SettingsScreenId.ASSETS)`.
      *
-     * **A real, out-of-row defect found while writing this, reported rather than routed around**:
-     * driving a genuine reprocess run (`RealImproveRunner` → `:pipeline`'s `ReprocessRunner` →
-     * `realPassBFor` → `RejectionPipeline.process`) all the way to a real missing-model failure —
-     * the one condition `ImproveScreens.kt`'s own `isMissingModelReason` recognises and that shows
-     * `Install` at all — turns out to be unreachable through the real pipeline as it exists today.
-     * `AsrEngineProvisioning.kt:137`'s own `UnavailableAsrEngine.transcribe` throws exactly
-     * `"ASR unavailable: $reason"`, but `RejectionPipeline.kt:46-52`'s `catch (t: Throwable) {
-     * return PassBOutcome.Failed("engine threw during transcribe", t) }` discards that message
-     * string (keeping `t` only as an unexposed cause) before it ever reaches
-     * `ReprocessStatus.Summary.failureReasons` — confirmed directly: [seedImproveTierSession] gives
-     * a real T1-tier session (below the test env's own default `T3`, `ShedStatus.currentLevel ==
-     * 0`) a real audio file at the exact path Pass B expects, and driving `Improve all` for real
-     * through this activity lands on `Improve-Done` reading "1 failed — engine threw during
-     * transcribe", never the recognised text — `Install` never renders for a genuinely-missing
-     * model, on this build, regardless of what this host now wires it to. Filed for `:pipeline`'s
-     * own `asr-api`/`reprocess` owners — `ui/navigation`'s own row ends at the host wire, which is
-     * real, correct, and the one thing this test can still prove.
-     *
-     * What this asserts instead, honestly: a real reprocess run against a real, qualifying T1-tier
-     * session reaches `Improve-Done` with a real (if genrically-worded) failure summary — proving
-     * the whole chain up to that screen is live, not faked — and, matching `ImproveScreensTest.kt`'s
-     * own `R_350 a non-model failure reason ...` case exactly, that `Install` correctly does not
-     * render for a reason `isMissingModelReason` does not recognise. `onOpenModels`'s own reachability
-     * from `Settings-Assets`'s real destination is unchanged from, and no less proven than,
-     * `NowContent`'s own already-working "Install a model" (R-139) — this dispatch passes the
-     * identical `NavHostCallbacks.onOpenModels` object, compiled and type-checked by this very file.
+     * **Round 12's own report, now resolved**: driving a genuine reprocess run to a real
+     * missing-model failure used to be unreachable — `RejectionPipeline`'s own catch-all discarded
+     * `AsrUnavailableException`'s real message before it ever reached
+     * `ReprocessStatus.Summary.failureReasons`. `:pipeline`'s own fix (`AsrUnavailableException`
+     * now a special-cased, verbatim-passed-through reason — `RejectionPipeline.kt`'s own doc
+     * comment names exactly why only this one exception type gets that treatment) landed since;
+     * this test now drives the *real*, complete flow end to end: a real T1-tier session
+     * ([seedImproveTierSession], below the test env's own default current tier), a real audio file
+     * at the exact path Pass B expects, a real `Improve all` tap, a real reprocess run that
+     * genuinely fails for the genuine reason (no ASR model installed under this JVM's own
+     * `filesDir`), the real reworded "No transcription model installed" line
+     * (`ImproveScreens.kt`'s own `humanizeFailureReason`), a real `Install` tap, landing on the
+     * real `Settings-Assets` — proving this round's own host wire together with the pipeline fix,
+     * not routing around either.
      */
     @Test
-    fun `R_350_improve_done_reflects_a_real_failure_and_offers_no_install_for_a_non_model_reason`() {
+    fun `R_350_improve_done_install_action_opens_settings_assets_for_a_real_missing_model_failure`() {
         // Belt-and-braces: `ShedStatus` is a process-wide `@Volatile` holder this class's own cases
         // never set, but nothing guarantees another test sharing this JVM worker left it at its
         // `0` default either — reset explicitly so `currentTierOrdinal()` is genuinely `T3` here,
@@ -594,11 +583,14 @@ class ReaderActivityDestinationSmokeTest {
                 rule.onNode(improveAllButton).performClick()
 
                 // A real reprocess run against a real, model-less `filesDir` — generous timeout,
-                // this is genuine queue-drain + pass-attempt work, not a fixed-delay fake. The exact
-                // wording is this build's own real (if generic) failure reason — see this test's own
-                // doc comment for why it is not the more specific "no ASR model installed" text.
-                rule.waitUntilTextExists("1 failed — engine threw during transcribe", timeoutMillis = 30_000)
-                rule.onNode(hasText("Install")).assertDoesNotExist()
+                // this is genuine queue-drain + pass-attempt work, not a fixed-delay fake. The real
+                // reworded text `ImproveScreens.kt`'s own `humanizeFailureReason` now produces,
+                // real end to end since `:pipeline`'s own fix landed.
+                rule.waitUntilTextExists("1 failed — No transcription model installed", timeoutMillis = 30_000)
+                rule.onNode(hasText("Install") and hasClickAction()).performClick()
+
+                rule.waitUntilContentDescriptionExists("Back to Settings")
+                rule.waitUntilTextExists("Models and lexicon")
             }
         } finally {
             ShedStatus.reset()
