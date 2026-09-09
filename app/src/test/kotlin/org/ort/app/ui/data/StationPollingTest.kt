@@ -459,19 +459,30 @@ class StationPollingTest {
         }
 
     @Test
-    fun `R_563 the closing paragraph states the real reason, not a deflection to What made it busy above`(): Unit =
-        runTest {
-            Scenarios.load(context, "frequency-change")
+    fun `R_591 the closing paragraph narrates the real cause, not the raw list text`(): Unit = runTest {
+        // R-563/R-591: real fixture data, `FrequencyPolling.frequencyChange` end to end — the
+        // paragraph must carry the narrated sentence [narrateFrequencyChangeCause] builds for the
+        // fixture's own primary cause, never the raw dotted list-item text R-563's own earlier fix
+        // spliced in instead.
+        Scenarios.load(context, "frequency-change")
 
-            val change = FrequencyPolling.frequencyChange(context, 145_230_000L)
+        val change = FrequencyPolling.frequencyChange(context, 145_230_000L)
+        val primaryCause = change.causes.first()
 
-            assertTrue(
-                "expected the paragraph to name the real primary cause: ${change.explanationParagraph}",
-                change.explanationParagraph.contains(change.causes.first().label),
-            )
-            assertTrue(
-                "must not deflect to a generic pointer the board never says",
-                !change.explanationParagraph.contains("see What made it busy above"),
-            )
-        }
+        assertEquals(FrequencyChangeCauseKind.NEW_STATION, primaryCause.kind)
+        val narrated = narrateFrequencyChangeCause(primaryCause)
+        assertTrue("expected a real narration for: $primaryCause", narrated != null)
+        assertTrue(
+            "expected the paragraph to carry the narrated sentence: ${change.explanationParagraph}",
+            change.explanationParagraph.contains(narrated!!),
+        )
+        assertTrue(
+            "must never splice the raw list-item label mid-sentence",
+            !change.explanationParagraph.contains(primaryCause.label),
+        )
+        assertTrue(
+            "must not deflect to a generic pointer when a real narration exists",
+            !change.explanationParagraph.contains("see What made it busy above"),
+        )
+    }
 }

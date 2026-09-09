@@ -32,6 +32,61 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP8: R-591 FQ03 closing paragraph narrates the cause's kind)
+
+### (pending) — ui-conformance WP8 · R-591: narrate FQ03's cause by kind, never splice the raw list text
+
+**Scope:** `:app` — `ui/data/StationsAndFrequencies.kt`, `ui/data/StationPolling.kt`; tests
+`ui/data/StationsAndFrequenciesTest.kt`, `ui/data/StationPollingTest.kt`. `git merge main` first
+(main past `cbaca66`; fast-forward, no conflicts).
+
+**Requirements/ACs:** R-591 (register, cf. R-563).
+
+**What changed:** Constitution Check — Principle I (uncertainty is content): every narrated
+sentence is honestly scoped to a cause this package can actually justify (`ACTIVATION`/`NET` are
+named but never produced by the real read path today — see point 1 — so they cannot appear
+un-narrated by accident); any cause this package cannot narrate falls back to the plain pointer
+sentence, never a spliced fragment.
+
+1. R-563's own fix (the previous round) made the closing paragraph state the primary cause's raw
+   `label` — "This one has an explanation — KE7QRS · 1 over · first time heard." — a fragment
+   spliced mid-sentence, not prose. New `FrequencyChangeCauseKind` (`ACTIVATION`, `NEW_STATION`,
+   `NET`, `UNKNOWN`) and `FrequencyChangeCause.subjectId` (the one extra fact `NEW_STATION` needs
+   to narrate); new `narrateFrequencyChangeCause(cause): String?` (`StationsAndFrequencies.kt`, a
+   pure function) turns a cause into a real sentence fragment — "an activation pulled the regulars
+   over", "a station heard for the first time, `<id>`, brought the regulars out", "the weekly net
+   ran here" — or `null` when it cannot be narrated honestly (`UNKNOWN` kind, or a `NEW_STATION`
+   missing its `subjectId`).
+2. `FrequencyPolling.frequencyChange`'s own first-time-heard cause now carries
+   `kind = NEW_STATION` and `subjectId = stationId`; the unidentified-voices cause stays `UNKNOWN`
+   (this package has no narrated phrase for it — it now correctly falls back to the pointer
+   sentence rather than a fragment, which R-563's own fix had also spliced for it). `ACTIVATION`
+   and `NET` are not produced anywhere yet — this package's read path still builds neither the
+   thread/session-wide correlation an activation needs nor a per-night net-slot match — named only
+   so a future cause of either kind narrates correctly the moment one exists.
+3. `explanationParagraph` now uses `narrateFrequencyChangeCause(primaryCause)`; falls back to "see
+   What made it busy above" only when a cause exists but cannot be narrated, matching the register's
+   own "unknown kind → keep the honest fallback rather than a fragment." The list itself
+   (`CauseRow` in `FrequencyChangeScreen.kt`) is untouched — it still renders each cause's own
+   dotted `label`, exactly as before; only the closing paragraph's prose changed.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.Station*'
+--tests 'org.ort.app.ui.screens.Frequenc*' --tests 'org.ort.app.ui.data.Station*' --tests
+'org.ort.app.ui.navigation.NavSeedTest'` — BUILD SUCCESSFUL. New `R_591` tests (four, in
+`StationsAndFrequenciesTest.kt`: activation, new-station, net, and the two honest-null cases) plus
+one real-fixture end-to-end test in `StationPollingTest.kt`
+(`R_591 the closing paragraph narrates the real cause, not the raw list text`, which also confirms
+the raw label no longer appears). `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL.
+`.\gradlew.bat dependencyRules platformGuards` — BUILD SUCCESSFUL. `.\gradlew.bat
+:app:assembleDebug` — BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` — all 8 checks
+PASS. `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — both BUILD SUCCESSFUL, no diff.
+
+**Left open / not done:** `ACTIVATION`/`NET` kinds have no real producer yet (named point 2
+above) — a future change that adds either must remember to set `kind` accordingly, nothing enforces
+that structurally today. Did not touch the emulator.
+
+---
+
 ## 2026-09-09 (ui-conformance WP11b: R-562 Fail-Migration closing sentence restored; R-550 investigated, not fixed from this package's row)
 
 ### (pending) — ui-conformance WP11b · R-562 fixed (F20 closing paragraph verbatim); R-550 investigated and reported, no safe fix within this package's row
