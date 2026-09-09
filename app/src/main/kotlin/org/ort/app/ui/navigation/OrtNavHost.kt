@@ -688,6 +688,35 @@ private data class SearchHostState(
     val initialFiltersOpen: Boolean,
 )
 
+/** Round 16, register R-541: mirrors `FailureHost.kt`'s own private `HEADER_HEIGHT` — the guide's
+ * `ScreenHeader`/`DrillInHeader` shared `Box(...).heightIn(min = 44.dp)`, the token that actually
+ * governs their height (cited here rather than silently re-derived, the same reason that file's
+ * own copy gives). See [NavHostBody]'s `bannerClearance` for why this host needs its own copy: the
+ * banner slot's real bottom edge on a headerless destination, not `FailureHost`'s own internal
+ * positioning, which this host has no access to and does not need. */
+private val HOST_HEADER_HEIGHT: Dp = 44.dp
+
+/**
+ * Round 16, register R-541 (halt): `FailureHost`'s own `BannerOverlay` always positions itself
+ * [HOST_HEADER_HEIGHT] below the top of the viewport — it assumes a host `ScreenHeader` already
+ * occupies that space, and reports `contentTopPadding` (`FailureHost`'s own R-178 `bannerHeight`)
+ * as only the *extra* room a banner needs beyond that (see `FailureHost.kt`'s
+ * `BannerOverlay`/`HEADER_HEIGHT` kdoc, read before writing this). That holds whenever
+ * [hostHeaderShown] is `true` — the header really does occupy the first [HOST_HEADER_HEIGHT], so
+ * `contentTopPadding` alone lands the content column right at the banner's real bottom edge. It
+ * silently broke for every destination that owns its own header instead (a drill-in's
+ * `DrillInHeader`, `SearchContent`'s own header, every Settings sub-screen's `DrillInHeader`) —
+ * this host renders *no* header at all above them, so their content started at `contentTopPadding`
+ * alone, [HOST_HEADER_HEIGHT] short of the banner's real bottom edge: `CF06-settings-rig.png`'s
+ * "‹ Settings" row sat clipped under `Fail-Rig`'s banner, unreachable. This restores the missing
+ * [HOST_HEADER_HEIGHT] for exactly those headerless destinations, and only while a banner is
+ * actually showing (`contentTopPadding > 0.dp` — otherwise this would push every headerless
+ * destination's own header down by 44dp for no reason whenever no banner is up, a regression the
+ * existing capture-set would have caught immediately).
+ */
+private fun bannerClearance(hostHeaderShown: Boolean, contentTopPadding: Dp): Dp =
+    if (!hostHeaderShown && contentTopPadding > 0.dp) contentTopPadding + HOST_HEADER_HEIGHT else contentTopPadding
+
 /**
  * The header (R-003/R-004/R-015/R-016), the current destination or drill-in's content, and the
  * live bar (R-022), stacked in one column filling [OrtNavHost]'s `Scaffold`. Extracted out of
@@ -716,8 +745,7 @@ private fun NavHostBody(
     var liveBarHeight by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     Column(modifier = layout.modifier) {
-        val drillInIds = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId)
-        val isDrillIn = drillInIds.any { it != null }
+        val isDrillIn = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId).any { it != null }
         // ui-conformance WP3 round 4 (R-129 smoke coverage found this, real at the time): this host
         // used to skip its own header for `SETTINGS` because `SettingsRootScreen` drew a second,
         // duplicate one — the same double-header defect R-016 already fixed once for the four real
@@ -761,8 +789,11 @@ private fun NavHostBody(
         // already found and fixed once. Round 3: all four now accept a real `backLabel` — this host
         // passes `ids.openedFrom.label`, so the header names the true origin (R-017), e.g. "Back to
         // Search" for a transmission opened from a search result.
-
-        Box(modifier = Modifier.weight(1f).padding(top = layout.contentTopPadding, bottom = liveBarHeight)) {
+        // Round 16, register R-541: see `bannerClearance`'s own doc comment — no `ScreenHeader`
+        // above a drill-in/`SEARCH`/`SETTINGS` (the `if` above) means their content needs the
+        // extra clearance that comment explains.
+        val clearance = bannerClearance(!isDrillIn && !isSearch && !isSettings, layout.contentTopPadding)
+        Box(modifier = Modifier.weight(1f).padding(top = clearance, bottom = liveBarHeight)) {
             when {
                 ids.transmissionId != null -> TransmissionDetailContent(
                     context = context,
