@@ -20,6 +20,7 @@ import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.execRaw
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -347,5 +348,48 @@ class SearchPollingTest {
             result.details.all { it.currentTranscriptText?.contains("KE7QRS") == true },
         )
         assertFalse(result.textSearchUnavailable)
+    }
+
+    // This task (register R-204 follow-up, FR-UI-3): SearchPolling.search/facetCounts and
+    // SearchWidenSuggestions' own countMatching used to decide "fts5 is missing" by catching
+    // SQLException and parsing its message for "fts5"/"transcript_fts" — proven, by a three-run CI
+    // investigation (commit 5a9f53a), to read text that differs by platform for the identical
+    // failure. They now ask OrtDatabase.hasTextSearchIndex() (a positive, schema-level fact)
+    // before running a text query at all — see resolveTextSearch's own doc comment.
+    //
+    // What is NOT tested here, and why: an earlier version of this test tried to simulate a
+    // genuinely fts5-less build by dropping `transcript_fts` (and its sync triggers) on this
+    // class's own `db` handle, on the theory that OrtDatabase.create's self-heal (R-204 —
+    // applyHandWrittenSchema runs on every create() call, and repairs a missing index) would
+    // leave a *different* database instance to see the drop. It does not: this Robolectric host's
+    // SQLite genuinely has fts5 (confirmed directly — see `:data`'s own
+    // FtsCapabilityProbeTest.FR_UI_3_the_probe_itself_reports_fts5_present_on_the_real_driver), so
+    // every OrtDatabase.create() call — including the one inside SearchPolling.search itself —
+    // correctly, honestly rebuilds the index that this test had dropped, exactly as R-204 designed
+    // it to. That is the system working as intended, not a gap in it; it just means schema
+    // tampering cannot stand in for a genuinely fts5-less driver in this environment. The
+    // fts5-absent half of *this* decision is proven instead, for real, by
+    // SearchTextAvailabilityTest against resolveTextSearch — the pure function this file's
+    // SearchPolling/SearchWidenSuggestions now share for exactly this reason — and the
+    // fts5-absent half of the probe underneath it is proven by `:data`'s own
+    // FtsCapabilityProbeTest.FR_UI_3_a_build_without_fts5_opens_honestly_without_the_index_instead_of_throwing
+    // via the test seam OrtDatabase.fts5SupportOverrideForTest introduces for that reason.
+
+    @Test
+    fun `FR_UI_3 a real database error still propagates, not mistaken for missing fts5`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        // transcript_fts is left intact -- hasTextSearchIndex() reports "available" -- so the only
+        // way this can fail is the query itself, against a genuinely broken, unrelated table. That
+        // failure must reach the caller as a real error, never be silently folded into the
+        // missing-fts5 fallback.
+        db.execRaw("DROP TABLE transmission")
+
+        var threw = false
+        try {
+            SearchPolling.search(context, SearchQueryParams(text = "anything"), includeEverything)
+        } catch (e: android.database.SQLException) {
+            threw = true
+        }
+        assertTrue("a real database error (dropped transmission table) must propagate, not be swallowed", threw)
     }
 }

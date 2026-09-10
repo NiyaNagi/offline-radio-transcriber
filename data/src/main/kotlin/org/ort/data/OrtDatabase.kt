@@ -8,6 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.Transactor
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
+import androidx.room.useReaderConnection
 import androidx.room.useWriterConnection
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
@@ -344,31 +345,81 @@ public abstract class OrtDatabase : RoomDatabase() {
         private const val BUSY_TIMEOUT_MILLIS = 10_000L
 
         /**
+         * This task (register R-204 follow-up, FR-UI-3): whether *this process's* SQLite build
+         * actually has the fts5 module, decided **once** by a positive capability probe, never by
+         * parsing a driver exception's message text. The prior version of [createFtsIndex] caught
+         * `android.database.SQLException` from a failed `CREATE VIRTUAL TABLE ... USING fts5(...)`
+         * and swallowed it only `if (e.message?.contains("no such module: fts5") == true)`. A
+         * three-instrumented-run CI investigation (this repository's own `data-msg` commit,
+         * 5a9f53a) proved that message text is not a stable cross-platform signal: the *same*
+         * failed prepare throws with `"Error code: 19, message: UNIQUE constraint failed: ..."` on
+         * Windows and bare `"Error code: "` — no numeric code, no descriptive text at all — on the
+         * Linux CI runner, for a completely unrelated constraint failure. Applied to
+         * `createFtsIndex`'s own substring check, the same platform gap means a genuine
+         * missing-fts5 build could arrive with a message that does not contain the literal English
+         * phrase "no such module: fts5" and get rethrown instead of degrading gracefully — silently
+         * failing to open the database on exactly the platform this fallback exists for. This is
+         * the kind of silent failure constitution I exists to catch, one layer below the product.
+         *
+         * `PRAGMA compile_options` lists every compile-time feature flag the running SQLite build
+         * was compiled with; `ENABLE_FTS5` is fts5's own (https://sqlite.org/compile.html) — a
+         * fact about the build, not a parsed failure message. Cached for the process's lifetime
+         * once known: capability is a property of the driver binary in use, not of any one
+         * [OrtDatabase] instance or connection, so re-probing on every [create] call would just
+         * repeat the same query for the same answer. A racing double computation is harmless —
+         * every racer observes the same driver and therefore computes the same result — so this is
+         * deliberately not synchronized.
+         */
+        @Volatile
+        private var fts5SupportedCache: Boolean? = null
+
+        /**
+         * Test-only seam: when non-null, [isFts5Supported] returns this instead of probing —
+         * `BundledSQLiteDriver` always ships fts5 compiled in, so no build reachable from this
+         * module's own test suite can otherwise exercise the fts5-absent path. Production code
+         * never assigns this; see `FtsCapabilityProbeTest` for the test that does.
+         */
+        @Volatile
+        internal var fts5SupportOverrideForTest: Boolean? = null
+
+        internal suspend fun isFts5Supported(connection: PooledConnection): Boolean {
+            fts5SupportOverrideForTest?.let { return it }
+            fts5SupportedCache?.let { return it }
+            val supported = connection.usePrepared("PRAGMA compile_options") { statement ->
+                var found = false
+                while (statement.step()) {
+                    if (statement.getText(0) == "ENABLE_FTS5") {
+                        found = true
+                        break
+                    }
+                }
+                found
+            }
+            fts5SupportedCache = supported
+            return supported
+        }
+
+        /**
          * FTS5 external-content over the whole transcript table (technical design §12.1) —
          * `content_rowid='rowid'` is SQLite's implicit rowid, valid even though `id` (the
          * declared TEXT primary key) is a separate column.
          *
-         * Returns whether the index was actually built. Before R-204 this module ran on whatever
-         * SQLite the platform (or Robolectric's host-JVM shadow) happened to ship, and some of
-         * those builds have no fts5 module at all — the API 34 reference emulator's among them —
-         * so this used to be a real, silently-accepted fallback. [create] now always installs
-         * [BundledSQLiteDriver], which bundles a SQLite built with fts5, so in practice this catch
-         * is unreachable; it is kept because "assume the platform SQLite has fts5" is exactly the
-         * assumption that was false, and a caller ([ensureFtsIndex]) still needs to know whether it
-         * can safely run the rebuild that depends on the table existing. The driver throws
-         * `android.database.SQLException` (its base Android-compatible type, not always the
-         * `SQLiteException` subclass) for a failed prepare, confirmed from this exact call site.
+         * Returns whether the index was actually built, decided up front by [isFts5Supported] —
+         * see that function's own doc comment for why this is no longer a try/catch around the
+         * `CREATE VIRTUAL TABLE` statement. When [isFts5Supported] says fts5 is absent, this
+         * returns `false` without ever attempting the statement — no exception to parse or
+         * mis-parse. When it says fts5 is present, the statement is expected to succeed; if it
+         * (or either trigger below) throws anyway, that is a **real, unrelated database error**
+         * — corruption, a disk fault, something this function has no business hiding — and it is
+         * deliberately left to propagate uncaught rather than being folded into the "no fts5"
+         * fallback.
          */
         private suspend fun createFtsIndex(connection: PooledConnection): Boolean {
-            try {
-                connection.exec(
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(" +
-                        "text, content='transcript', content_rowid='rowid')",
-                )
-            } catch (e: android.database.SQLException) {
-                if (e.message?.contains("no such module: fts5") != true) throw e
-                return false
-            }
+            if (!isFts5Supported(connection)) return false
+            connection.exec(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(" +
+                    "text, content='transcript', content_rowid='rowid')",
+            )
             connection.exec(
                 "CREATE TRIGGER IF NOT EXISTS transcript_ai AFTER INSERT ON transcript BEGIN " +
                     "INSERT INTO transcript_fts(rowid, text) VALUES (new.rowid, new.text); END",
@@ -533,6 +584,26 @@ public abstract class OrtDatabase : RoomDatabase() {
             }
             return db
         }
+    }
+}
+
+/**
+ * FR-UI-3, this task (register R-204 follow-up): whether this database's `transcript_fts` index
+ * actually exists — the positive, schema-level fact `:app`'s [org.ort.data.OrtDatabase]-backed
+ * search path checks *before* running a text query, instead of inferring "fts5 is missing" from a
+ * caught exception's message text (see [OrtDatabase.createFtsIndex]'s own doc comment for why that
+ * text is not a stable cross-platform signal). [OrtDatabase.applyHandWrittenSchema] runs on every
+ * [OrtDatabase.create] call and builds `transcript_fts` whenever [OrtDatabase.isFts5Supported]
+ * says fts5 is present, so on every supported SQLite build this is already `true` by the time a
+ * caller can observe it; it reads `false` only when this build's SQLite genuinely has no fts5
+ * module — `:data`'s own honest "a text search cannot run here" fact, not a guess from a string.
+ */
+public suspend fun OrtDatabase.hasTextSearchIndex(): Boolean = useReaderConnection { connection ->
+    connection.usePrepared(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'transcript_fts'",
+    ) { statement ->
+        statement.step()
+        statement.getLong(0) > 0L
     }
 }
 

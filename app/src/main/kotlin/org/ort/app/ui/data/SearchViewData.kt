@@ -1,12 +1,12 @@
 package org.ort.app.ui.data
 
 import android.content.Context
-import android.database.SQLException
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.Band
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.hasTextSearchIndex
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -285,6 +285,30 @@ public data class SearchFacetCounts(val rows: List<SearchFacetRow>) {
     }
 }
 
+/**
+ * This task (register R-204 follow-up, FR-UI-3): the exact "should free text run" decision
+ * [SearchPolling.search], [SearchPolling.facetCounts] and [SearchWidenSuggestions]' own
+ * `countMatching` all make from [org.ort.data.hasTextSearchIndex]'s positive, schema-level answer
+ * — factored out as one pure function, deliberately independent of any [org.ort.data.OrtDatabase],
+ * so it can be proven correct in both directions without needing a real (or simulated-absent)
+ * SQLite driver. [SearchPollingTest] proves the fts5-present half end to end, against the real
+ * driver every environment this project's test suite runs on actually has; no build reachable
+ * from this test suite genuinely lacks fts5 to prove the absent half the same way (`:data`'s own
+ * `FtsCapabilityProbeTest` covers that half at the probe itself, via its own test seam) — this
+ * function is the seam that lets the fts5-absent half of *this* decision be proven for real
+ * instead, in `SearchTextAvailabilityTest`.
+ */
+internal data class TextSearchOutcome(val effectiveText: String?, val unavailable: Boolean)
+
+internal fun resolveTextSearch(requestedText: String?, indexAvailable: Boolean): TextSearchOutcome {
+    if (requestedText == null) return TextSearchOutcome(effectiveText = null, unavailable = false)
+    return if (indexAvailable) {
+        TextSearchOutcome(effectiveText = requestedText, unavailable = false)
+    } else {
+        TextSearchOutcome(effectiveText = null, unavailable = true)
+    }
+}
+
 /** The result of one search: the matches, whether free text was actually applied, and the facet breakdown. */
 public data class SearchResult(
     val details: List<TransmissionDetail>,
@@ -371,24 +395,21 @@ public object SearchPolling {
             val entities = rawSearch(db, params, text = null)
             return buildResult(context, entities, facetFilter, textSearchUnavailable = true)
         }
-        return try {
-            val entities = rawSearch(db, params, params.text)
-            buildResult(context, entities, facetFilter, textSearchUnavailable = false)
-        } catch (e: SQLException) {
-            // Only degrade for the specific, known fts5-missing case. Register R-204: on every
-            // supported SQLite build (`OrtDatabase.create` always installs `BundledSQLiteDriver`)
-            // this branch should now be unreachable — kept, not deleted, as the honest fallback
-            // this file has always promised rather than a silent crash if that ever regresses.
-            // `SQLException` (not `SQLiteException`) because the driver throws its base Android-
-            // compatible type for a failed prepare, not always the narrower subclass — confirmed
-            // empirically (see `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`'s `createFtsIndex`).
-            // Any other database error is a real bug and must not be hidden behind a silent fallback.
-            val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
-                e.message?.contains("transcript_fts", ignoreCase = true) == true
-            if (!fts5Missing || params.text == null) throw e
-            val entities = rawSearch(db, params, text = null)
-            buildResult(context, entities, facetFilter, textSearchUnavailable = true)
-        }
+        // This task (register R-204 follow-up, FR-UI-3): decided up front by :data's own positive
+        // capability probe (OrtDatabase.hasTextSearchIndex — see its doc comment), never by parsing
+        // a caught SQLException's message text. That message text was proven, by a three-run CI
+        // investigation (commit 5a9f53a), to differ by platform for the identical failure — a
+        // substring check here would silently rethrow a genuine missing-fts5 condition on a
+        // platform whose message happens to arrive worded differently, or empty, instead of
+        // degrading to the honest Search-Unavailable state. When there is real free text and the
+        // index genuinely is not there, `text` is dropped before the query runs at all — no
+        // exception is thrown or caught for this decision (see resolveTextSearch's own doc comment
+        // for how both directions of this decision are proven). Any exception the query *does*
+        // throw (a real, unrelated database error) is left to propagate uncaught, exactly as before.
+        val indexAvailable = params.text == null || db.hasTextSearchIndex()
+        val outcome = resolveTextSearch(params.text, indexAvailable)
+        val entities = rawSearch(db, params, outcome.effectiveText)
+        return buildResult(context, entities, facetFilter, textSearchUnavailable = outcome.unavailable)
     }
 
     /**
@@ -403,14 +424,11 @@ public object SearchPolling {
      */
     public suspend fun facetCounts(context: Context, params: SearchQueryParams): SearchFacetCounts {
         val db = OrtDatabase.create(context.applicationContext)
-        val entities = try {
-            rawSearch(db, params, params.text)
-        } catch (e: SQLException) {
-            val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
-                e.message?.contains("transcript_fts", ignoreCase = true) == true
-            if (!fts5Missing || params.text == null) throw e
-            rawSearch(db, params, text = null)
-        }
+        // Same positive-probe decision as [search] — see resolveTextSearch's own doc comment for
+        // why this is no longer a try/catch on a driver exception's message text.
+        val indexAvailable = params.text == null || db.hasTextSearchIndex()
+        val outcome = resolveTextSearch(params.text, indexAvailable)
+        val entities = rawSearch(db, params, outcome.effectiveText)
         return SearchFacetCounts(entities.map { it.toFacetRow() })
     }
 
@@ -548,28 +566,18 @@ public object SearchWidenSuggestions {
         facetFilter: SearchFacetFilter,
     ): Int {
         val db = OrtDatabase.create(context.applicationContext)
-        val entities = try {
-            db.searchDao().search(
-                text = params.text,
-                callsign = params.callsign,
-                frequencyHz = params.frequencyHz,
-                fromUtc = params.fromUtcMillis,
-                toUtc = params.toUtcMillis,
-                band = params.band,
-            )
-        } catch (e: SQLException) {
-            val fts5Missing = e.message?.contains("fts5", ignoreCase = true) == true ||
-                e.message?.contains("transcript_fts", ignoreCase = true) == true
-            if (!fts5Missing || params.text == null) throw e
-            db.searchDao().search(
-                text = null,
-                callsign = params.callsign,
-                frequencyHz = params.frequencyHz,
-                fromUtc = params.fromUtcMillis,
-                toUtc = params.toUtcMillis,
-                band = params.band,
-            )
-        }
+        // Same positive-probe decision as [SearchPolling.search] — see resolveTextSearch's own
+        // doc comment for why this is no longer a try/catch on a driver exception's message text.
+        val indexAvailable = params.text == null || db.hasTextSearchIndex()
+        val outcome = resolveTextSearch(params.text, indexAvailable)
+        val entities = db.searchDao().search(
+            text = outcome.effectiveText,
+            callsign = params.callsign,
+            frequencyHz = params.frequencyHz,
+            fromUtc = params.fromUtcMillis,
+            toUtc = params.toUtcMillis,
+            band = params.band,
+        )
         return entities.count { facetFilter.matches(it) }
     }
 
