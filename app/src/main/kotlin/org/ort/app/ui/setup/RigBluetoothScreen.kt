@@ -1,3 +1,5 @@
+@file:Suppress("MatchingDeclarationName") // RigBluetoothViewState is one of several public declarations here.
+
 package org.ort.app.ui.setup
 
 import androidx.compose.foundation.Canvas
@@ -172,12 +174,14 @@ private fun checklistStateFor(linkState: RigLinkState, stage: Int): ChecklistRow
 /** E2-E11/FR-RIG-15: title + body for a dropped/failed/no-permission link — `null` for every
  * in-progress or successful state, which renders no banner at all. */
 private fun bannerFor(linkState: RigLinkState): Pair<String, String>? = when (linkState) {
-    is RigLinkState.Lost -> "The link dropped" to
-        "${linkState.reason}. Pick the device again, or use USB instead — nothing captured is lost."
-    is RigLinkState.Failed -> "Could not connect" to
-        "${linkState.reason}. Check the radio is powered on and paired, then try again."
-    RigLinkState.NoPermission -> "Nearby devices permission is needed" to
-        "Grant it from Settings, or use USB instead."
+    is RigLinkState.Lost ->
+        "The link dropped" to
+            "${linkState.reason}. Pick the device again, or use USB instead — nothing captured is lost."
+    is RigLinkState.Failed ->
+        "Could not connect" to
+            "${linkState.reason}. Check the radio is powered on and paired, then try again."
+    RigLinkState.NoPermission ->
+        "Nearby devices permission is needed" to "Grant it from Settings, or use USB instead."
     else -> null
 }
 

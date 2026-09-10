@@ -59,7 +59,14 @@ class RigTransportScreenTest {
     @Test
     fun `E2_E09 the preset transport is preselected and Connect names it`() {
         composeTestRule.setContent {
-            OrtTheme { RigTransportScreen(state = state(selected = RigTransportKind.BLUETOOTH_SPP), onSelect = {}, onConnect = {}, onBack = {}) }
+            OrtTheme {
+                RigTransportScreen(
+                    state = state(selected = RigTransportKind.BLUETOOTH_SPP),
+                    onSelect = {},
+                    onConnect = {},
+                    onBack = {},
+                )
+            }
         }
 
         composeTestRule.onNodeWithText("Connect over Bluetooth SPP").assertIsDisplayed()
@@ -96,7 +103,14 @@ class RigTransportScreenTest {
     fun `E2_E09 Connect invokes its callback once a transport is selected`() {
         var connected = false
         composeTestRule.setContent {
-            OrtTheme { RigTransportScreen(state = state(), onSelect = {}, onConnect = { connected = true }, onBack = {}) }
+            OrtTheme {
+                RigTransportScreen(
+                    state = state(),
+                    onSelect = {},
+                    onConnect = { connected = true },
+                    onBack = {},
+                )
+            }
         }
 
         composeTestRule.onNodeWithTag("setup-rig-transport-connect").assertIsEnabled().performClick()

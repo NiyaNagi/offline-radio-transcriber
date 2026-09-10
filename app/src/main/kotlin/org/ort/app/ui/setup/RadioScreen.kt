@@ -1,3 +1,5 @@
+@file:Suppress("MatchingDeclarationName") // RadioPickerViewState is one of several public declarations here.
+
 package org.ort.app.ui.setup
 
 import androidx.compose.foundation.layout.Box

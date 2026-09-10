@@ -77,7 +77,11 @@ private fun RadioVerifiedConnected(
     SetupScaffold(
         step = SetupStep.RADIO_VERIFIED,
         title = "${connected.descriptor} connected",
-        subtitle = if (transportLabel != null) "$transportLabel · identified and verified" else "Identified and verified",
+        subtitle = if (transportLabel != null) {
+            "$transportLabel · identified and verified"
+        } else {
+            "Identified and verified"
+        },
         onBack = null,
         bottomActions = {
             PrimaryButton(

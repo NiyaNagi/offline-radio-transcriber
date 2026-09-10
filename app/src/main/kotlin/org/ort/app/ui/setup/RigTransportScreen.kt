@@ -5,7 +5,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectable
@@ -111,7 +110,10 @@ private fun TransportCard(option: RigTransportOption, selected: Boolean, onSelec
             .testTag("setup-rig-transport-option-${option.kind.name.lowercase()}"),
     ) {
         RadioRow(label = option.label, selected = selected, onClick = onSelect, subtitle = option.subLabel)
-        Column(modifier = Modifier.padding(start = 32.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            modifier = Modifier.padding(start = 32.dp, top = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             if (option.capabilities.isNotEmpty()) {
                 Text(
                     text = option.capabilities.joinToString(", ").replaceFirstChar { it.uppercase() },

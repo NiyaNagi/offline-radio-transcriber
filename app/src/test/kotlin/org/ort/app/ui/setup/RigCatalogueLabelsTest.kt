@@ -5,10 +5,10 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.app.ui.setup.RigPickerCatalogue.pickerOrder
-import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
 import org.ort.rig.NullRigModule
 import org.ort.rig.RigCapability
 import org.ort.rig.RigTransportKind
+import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
 
 /**
  * E2-E08 (`spec/e2e-capture-modes-plan.md` WPD) — AC-134/AC-135: S09 is generated from `:rig`'s
@@ -44,7 +44,9 @@ class RigCatalogueLabelsTest {
             schemaVersion = 1,
             id = "acme-9000",
             displayName = "Acme 9000",
-            transports = listOf(org.ort.rig.descriptor.TransportSpec(kind = "usb_serial", capabilities = listOf("FREQUENCY"))),
+            transports = listOf(
+                org.ort.rig.descriptor.TransportSpec(kind = "usb_serial", capabilities = listOf("FREQUENCY")),
+            ),
         )
         val withImport = RigPickerCatalogue.build(setOf(imported)).pickerOrder()
 
@@ -67,8 +69,8 @@ class RigCatalogueLabelsTest {
 
     @Test
     fun `FR_RIG_17 subtitleFor the null module names manual entry, never a fabricated capability`() {
-        val null_ = catalogue.entries().first { it.id == NullRigModule.ID }
-        val subtitle = RigPickerCatalogue.subtitleFor(null_)
+        val nullEntry = catalogue.entries().first { it.id == NullRigModule.ID }
+        val subtitle = RigPickerCatalogue.subtitleFor(nullEntry)
 
         assertEquals("Scanner, a handheld near the phone, or a rig with no data port", subtitle)
     }

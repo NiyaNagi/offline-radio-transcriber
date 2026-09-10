@@ -25,8 +25,11 @@ class RadioScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun state(presetLabel: String? = null, importError: String? = null) =
-        RadioPickerViewState(catalogue = RigPickerCatalogue.build(), presetLabel = presetLabel, importError = importError)
+    private fun state(presetLabel: String? = null, importError: String? = null) = RadioPickerViewState(
+        catalogue = RigPickerCatalogue.build(),
+        presetLabel = presetLabel,
+        importError = importError,
+    )
 
     @Test
     fun `E2_E08 renders one row per catalogue entry, generated from the descriptor set`() {
@@ -40,7 +43,7 @@ class RadioScreenTest {
     }
 
     @Test
-    fun `AC_135 the null module and the generic entry are the last two rows, reachable without scrolling past named rigs`() {
+    fun `AC_135 the null module and the generic entry are the last two rows, reachable without scrolling`() {
         composeTestRule.setContent {
             OrtTheme { RadioScreen(state = state(), onChoose = {}, onImport = {}, onNotNow = {}) }
         }

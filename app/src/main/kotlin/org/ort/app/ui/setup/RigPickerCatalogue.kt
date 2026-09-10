@@ -1,12 +1,12 @@
 package org.ort.app.ui.setup
 
-import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
 import org.ort.rig.NullRigModule
 import org.ort.rig.RigCapability
 import org.ort.rig.RigTransportKind
 import org.ort.rig.catalogue.RigCatalogue
 import org.ort.rig.catalogue.RigCatalogueEntry
 import org.ort.rig.descriptor.BundledDescriptors
+import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
 
 /**
  * FR-RIG-16/17/18 — turns `:rig`'s [RigCatalogue] into what S09/S09b actually render: real,

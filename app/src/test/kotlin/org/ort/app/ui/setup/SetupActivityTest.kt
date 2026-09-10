@@ -227,7 +227,9 @@ class SetupActivityTest {
         deny(Manifest.permission.BLUETOOTH_CONNECT)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> assertEquals(SetupStep.BLUETOOTH_PERMISSION, activity.currentStepForTest) }
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.BLUETOOTH_PERMISSION, activity.currentStepForTest)
+            }
             scenario.onActivity { activity -> activity.onDeclineBluetoothPermission() }
             scenario.onActivity { activity ->
                 assertEquals(SetupStep.NOTIFICATIONS, activity.currentStepForTest)

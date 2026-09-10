@@ -18,16 +18,13 @@ import org.ort.core.capture.RigTransportKind
  */
 class SetupStateMachineTest {
 
-    private fun permissions(
-        recordAudio: Boolean,
-        notifications: Boolean,
-        bluetoothConnect: Boolean = true,
-    ) = PermissionsState(
-        recordAudioGranted = recordAudio,
-        notificationsGranted = notifications,
-        isIgnoringBatteryOptimizationsDiagnosticOnly = false,
-        bluetoothConnectGranted = bluetoothConnect,
-    )
+    private fun permissions(recordAudio: Boolean, notifications: Boolean, bluetoothConnect: Boolean = true) =
+        PermissionsState(
+            recordAudioGranted = recordAudio,
+            notificationsGranted = notifications,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+            bluetoothConnectGranted = bluetoothConnect,
+        )
 
     @Suppress("LongParameterList")
     private fun snapshot(

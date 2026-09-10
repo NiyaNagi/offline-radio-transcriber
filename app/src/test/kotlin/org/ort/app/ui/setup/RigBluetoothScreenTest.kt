@@ -167,7 +167,10 @@ class RigBluetoothScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 RigBluetoothScreen(
-                    state = state(selectedAddress = sppDevice.address, linkState = RigLinkState.Lost("connection dropped")),
+                    state = state(
+                        selectedAddress = sppDevice.address,
+                        linkState = RigLinkState.Lost("connection dropped"),
+                    ),
                     onSelectDevice = {},
                     onPairInSettings = {},
                     onRefresh = {},
@@ -186,7 +189,10 @@ class RigBluetoothScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 RigBluetoothScreen(
-                    state = state(selectedAddress = sppDevice.address, linkState = RigLinkState.Failed("connection refused")),
+                    state = state(
+                        selectedAddress = sppDevice.address,
+                        linkState = RigLinkState.Failed("connection refused"),
+                    ),
                     onSelectDevice = {},
                     onPairInSettings = {},
                     onRefresh = {},

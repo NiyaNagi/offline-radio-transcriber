@@ -34,7 +34,6 @@ import org.ort.capture.android.AndroidAudioIo
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.CaptureModePresets
-import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
@@ -43,6 +42,7 @@ import org.ort.rig.RigTransportKind
 import org.ort.rig.catalogue.RigCatalogue
 import org.ort.rig.catalogue.RigCatalogueEntry
 import org.ort.rig.descriptor.RigDescriptor
+import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
 
 /**
  * The guided setup sequence (build-plan P8; ui-conformance-plan WP9, register R-080..R-084,
@@ -446,7 +446,11 @@ public class SetupActivity : ComponentActivity() {
             navigateForward(SetupStep.RADIO_USB)
             return
         }
-        store.radioChoice = if (entry.displayName.contains("TH-D75A")) RadioChoice.TH_D75A else RadioChoice.OTHER_CAT_RIG
+        store.radioChoice = if (entry.displayName.contains("TH-D75A")) {
+            RadioChoice.TH_D75A
+        } else {
+            RadioChoice.OTHER_CAT_RIG
+        }
         val modePresetKind = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRigTransportKind
         selectedRigTransportKind = modePresetKind?.let(RigPickerCatalogue::fromPresetKind)
             ?: entry.transportCapabilities.keys.firstOrNull { it != RigTransportKind.NONE }
@@ -487,7 +491,11 @@ public class SetupActivity : ComponentActivity() {
             // real transport is not wired to :app, RigLinkPort.kt's own doc comment) skips the
             // honest "no rig support" fallback and goes straight to S11.
             rigStatusSnapshot = RigStatus.state
-            val next = if (rigStatusSnapshot is RigStatus.State.Absent) SetupStep.RADIO_USB else SetupStep.RADIO_VERIFIED
+            val next = if (rigStatusSnapshot is RigStatus.State.Absent) {
+                SetupStep.RADIO_USB
+            } else {
+                SetupStep.RADIO_VERIFIED
+            }
             navigateForward(next)
         }
     }
@@ -692,7 +700,11 @@ public class SetupActivity : ComponentActivity() {
     private fun RenderRadioPicker() {
         val presetLabel = store.captureMode?.operatorLabel?.takeUnless { store.modeOverriddenRig }
         RadioScreen(
-            state = RadioPickerViewState(catalogue = radioCatalogue, presetLabel = presetLabel, importError = radioImportError),
+            state = RadioPickerViewState(
+                catalogue = radioCatalogue,
+                presetLabel = presetLabel,
+                importError = radioImportError,
+            ),
             onChoose = ::onChooseRig,
             onImport = ::onImportRig,
             onNotNow = ::onRadioNotNow,
