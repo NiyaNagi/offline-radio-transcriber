@@ -47,6 +47,19 @@ import java.util.Locale
  * change. Keyed by `context.applicationContext` identity, not just "has one been created" —
  * Robolectric hands each test method a fresh `Application`, and reusing a previous test's instance
  * across that boundary would silently read/write the wrong (disposed) database.
+ *
+ * **Root-cause fix (idle-root task, 2026-09-10): also checks [RoomDatabase.isOpen], not just
+ * context identity, before handing back the cached instance.** `OrtDatabase.create`'s own
+ * path-keyed cache (`data/src/main/kotlin/org/ort/data/OrtDatabase.kt`) already makes this check —
+ * this second, package-local cache did not, so a test that closes its own `OrtDatabase` in
+ * `@After` (several `ui/screens` Compose tests do, to stop leaking a writer across the shared
+ * on-disk `ort.db` — see those files' own doc comments) could leave this object holding the *same*
+ * now-closed instance under the *same* `Application` identity (Robolectric does not always mint a
+ * new `Application` for a class that mixes fixture setup across test methods the way a plain
+ * `@Test` boundary implies), and a later call in that same JVM fork would hand back a database no
+ * caller can use. Falling through to a fresh [OrtDatabase.create] call when the cached instance is
+ * no longer open is exactly [OrtDatabase.create]'s own eviction rule, applied here too so this
+ * cache can never diverge from it.
  */
 private object SharedDatabase {
     @Volatile
@@ -57,9 +70,9 @@ private object SharedDatabase {
 
     fun get(context: Context): OrtDatabase {
         val appContext = context.applicationContext
-        instance?.let { if (cachedContext === appContext) return it }
+        instance?.let { if (cachedContext === appContext && it.isOpen) return it }
         synchronized(this) {
-            instance?.let { if (cachedContext === appContext) return it }
+            instance?.let { if (cachedContext === appContext && it.isOpen) return it }
             return OrtDatabase.create(appContext).also {
                 instance = it
                 cachedContext = appContext

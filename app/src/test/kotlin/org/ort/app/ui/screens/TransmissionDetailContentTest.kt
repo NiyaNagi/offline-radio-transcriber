@@ -14,11 +14,12 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.ort.app.testing.ortComposeTestRule
 import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.AttributionState
@@ -49,27 +50,22 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class TransmissionDetailContentTest {
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    // Not itself a `@Rule` — `ruleChain` below owns its lifecycle; see
+    // `org.ort.app.testing.ortComposeTestRule`'s own doc comment for why the database close below
+    // must run after this rule's own teardown, not before it (idle-root task, 2026-09-10 —
+    // `FrequencyDetailContentTest`, this class's own identical shape, is CI run 34444706036's
+    // confirmed case of the ordering bug this now avoids structurally).
+    private val composeTestRule = createComposeRule()
 
     private lateinit var db: OrtDatabase
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
+    @get:Rule
+    val ruleChain: TestRule = ortComposeTestRule(composeTestRule) { db.close() }
+
     @Before
     fun openDatabase() {
         db = OrtDatabase.create(context)
-    }
-
-    /**
-     * The same fix `CorrectionPollingTest.closeDatabase`'s own doc comment describes in full: every
-     * file-backed-[OrtDatabase] test class that never closes its own `RoomDatabase` leaves a leaked
-     * writer behind for the rest of this Gradle test-worker JVM to contend against (`ort.db` is the
-     * same on-disk file for every test class, not one sandboxed per method). This class was one of
-     * the never-closed instances; closed here the same way.
-     */
-    @After
-    fun closeDatabase() {
-        db.close()
     }
 
     private fun session() = SessionEntity(

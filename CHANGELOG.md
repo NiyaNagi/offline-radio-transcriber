@@ -32,6 +32,147 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (idle-root: CI's AppNotIdleException root-caused to a real ordering bug, not just isolated)
+
+### (pending) — idle-root · closing a real OrtDatabase before ComposeTestRule teardown was the confirmed CI poisoner; fixed structurally, forkEvery now machine-adaptive
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (`ModelsController.resetForTest`),
+`app/src/main/kotlin/org/ort/app/ui/data/StationPolling.kt` (`SharedDatabase.get` `isOpen` check),
+new `app/src/test/kotlin/org/ort/app/testing/OrtComposeTestRule.kt`, six test files routed through
+it (`FrequencyDetailContentTest`, `TransmissionDetailContentTest`, `StationsContentTest`,
+`StationDetailContentTest`, `SearchContentTest`, `SessionsContentTest`), `app/build.gradle.kts`
+(smoke-task membership, `forkEvery`).
+
+**Requirements/ACs:** none new — test-infrastructure health, not product behaviour.
+
+**What changed:**
+
+*Constitution Check.* II (test-backed — every claim below is checked against a real, named CI run
+or a real local run, never asserted). VII (boundaries are structural — the whole point of this
+session was replacing a per-file convention, "remember to close the database after the compose
+rule tears down," with one function every affected test now routes through, so the ordering is
+enforced by the type system rather than by memory).
+
+GitHub Actions run 34444706036 (`NiyaNagi/offline-radio-transcriber`, 2-core Linux runner) failed
+`:app:testDebugUnitTest` with 22 failures — every test in exactly two classes,
+`LogFilterSheetTest` and `LogScreenTest`, all `androidx.test.espresso.AppNotIdleException:
+Compose did not get idle ... in 60 SECONDS`. Both classes are pure `LogScreen`/`LogFilterSheet`
+composable tests — no `Context`, no database, nothing to leak on their own. Two earlier sessions
+("poison hunt," cb1d8cd; "poison hunt 2," 7ac846b) had already chased the same symptom to a
+`jstack` signature (`ComposeIdlingResource.isIdleNow` never resolving) without a single confirmed
+line, and worked around it with per-class JVM isolation (`smokeTestDebugUnitTest`, now 19 classes)
+and a `forkEvery` cut from 40 to 4 — both machine-specific mitigations that this CI failure, on a
+much smaller machine than either session's own workstation, proved insufficient.
+
+**This session's own CI log gave a first, real ordering to check, not just a signature**: the
+Gradle test-result stream shows `FrequencyDetailContentTest`'s one test PASSED at 06:28:43, and
+`LogFilterSheetTest`'s first test FAILED at 06:29:43 — 60.1 seconds later, exactly this fork's own
+idle-check budget — with every later test in that fork failing identically after it. Reading
+`FrequencyDetailContentTest`: a `@get:Rule val composeTestRule = createComposeRule()` alongside a
+bare `@After fun closeDatabase() { db.close() }`. JUnit4 wraps the *entire*
+`@Before`/`@Test`/`@After` sequence inside a `@Rule`'s own `Statement` — a plain `@After` always
+runs as part of that inner sequence, strictly *before* the rule's own teardown. So `db.close()` ran
+while `composeTestRule` still owned a live composition, racing its disposal — closing a database a
+still-alive (if only for a few more scheduler ticks) composition could still reach.
+
+**Fix, structural, in `app/src/test/kotlin/org/ort/app/testing/OrtComposeTestRule.kt`**:
+`ortComposeTestRule(compose, closeDb)` wraps the compose rule in a `RuleChain` with the database
+close (and every other process-lifetime `ui/data` reset this task's own investigation found) as
+the *outer* rule — so the sequence becomes `@Before` opens the database, the test runs, the
+compose rule's own teardown disposes the composition cleanly while the database is still open, and
+only then does the outer rule close it. Six classes now build their `@get:Rule` from this function
+instead of a bare `composeTestRule` field plus a separate `db.close()` `@After`:
+`FrequencyDetailContentTest`, `TransmissionDetailContentTest` (identical shape, never itself
+observed to poison, moved for the same reason `LevelMeterScreenTest`/`FrequencyScreenTest` were
+isolated on shape alone in poison hunt 2), and the four classes poison hunt 2 already isolated for
+the same underlying symptom (`StationsContentTest`, `StationDetailContentTest`, `SearchContentTest`,
+`SessionsContentTest`) — fixed at the source now, not just quarantined.
+
+**Two more real `ui/data` leaks found and fixed while enumerating every long-lived object in this
+package** (the task's own ask): `ModelsController` is a plain Kotlin `object`, so its
+`stagedActivationFlow` `MutableStateFlow` is one instance for the life of a JVM fork, not sandboxed
+per Robolectric `Application` — a test that stages an activation and never drains it left that fact
+readable by an unrelated later test. Added `ModelsController.resetForTest()` (internal, called by
+`ortComposeTestRule`'s own teardown, alongside `DebugSearchOverride.clear()` and
+`DebugLexiconImportOverride.clear()`). `StationPolling.kt`'s own `SharedDatabase` cache — a second,
+package-local cache on top of `OrtDatabase.create`'s own path-keyed one — checked only `Context`
+identity before reusing a cached instance, never `RoomDatabase.isOpen`; a test that closes its own
+`OrtDatabase` could leave this cache handing back a database nothing could use. Fixed to check
+`isOpen` too, matching `OrtDatabase.create`'s own eviction rule.
+
+**`FrequencyDetailContentTest`/`TransmissionDetailContentTest` stay isolated into
+`smokeTestDebugUnitTest` anyway**, on top of the structural fix, not instead of it: a targeted
+local reproduction of the exact `FrequencyDetailContentTest` → `LogFilterSheetTest` →
+`LogScreenTest` fork ordering (`--tests`, forcing all three into one fork) passed both *with and
+without* the ordering fix on this session's own 32-core workstation — the race the fix closes is
+real and well-reasoned from JUnit4's own documented rule-wrapping semantics, but this session could
+not force it to fail locally, on this hardware, to prove the fix is *sufficient* the way the CI log
+proved the bug is *real*. Isolating the one class CI's own log names is the certain fix for the
+reported failure; the ordering fix is kept as a genuine, independently-justified correctness
+improvement that also covers four already-isolated classes and one (`TransmissionDetailContentTest`)
+isolated preventively on shape alone.
+
+**`forkEvery` is now machine-adaptive** (`(Runtime.getRuntime().availableProcessors() / 4).coerceIn(1, 12)`)
+rather than a second fixed guess: the `forkEvery = 4` poison hunt 2 shipped was tuned entirely on
+that session's own many-core workstation and never validated against the 2-core runner CI actually
+gives this job — the exact "a value tuned on a many-core box doesn't survive a smaller one" this
+task was asked to fix. Not restored to the original `forkEvery = 40`: that number predates both
+poison hunt 2's own `ui.screens` growth and this session's own finding, and reasserting a second
+fixed number without a CI run to check it against would repeat the same mistake. `availableProcessors`
+is a real, per-machine fact: this workstation (32 cores) gets `forkEvery = 8` (`32 / 4`, clamped);
+the CI runner (2 cores) gets `forkEvery = 1` (`2 / 4 = 0`, clamped up) — the same maximal isolation
+this file already gives every class it isolates outright, on the machine that just needed it.
+
+**Verified:**
+
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL in 3m 31s**, then a second consecutive
+  run, **BUILD SUCCESSFUL in 3m 32s** (both `--rerun`, forced re-execution, not `UP-TO-DATE`);
+  summed `test-results/testDebugUnitTest` XML both times: **1390 tests, 0 failures, 0 errors**
+  (down from 1405 — the two classes newly moved into `smokeTestDebugUnitTest`). Machine: this
+  session's own 32-core Windows workstation, JDK `17.0.20.101-hotspot`.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` — BUILD FAILED in 2m 40s; summed XML: **125 tests, 2
+  failures** — `ReaderActivityDestinationSmokeTest`'s own `R_432_activation_thread_route` and
+  `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`, both
+  `AssertionError: Failed to inject touch input` on a "Busier than usual" node. Confirmed
+  pre-existing and unrelated to this session: reproduced identically, scoped to just this class
+  (`--tests`), with this session's own `StationPolling.kt`/`ModelsViewData.kt` changes temporarily
+  reverted to their pre-session content. Not fixed here — new to this file's own "left open" list,
+  the same way poison hunt 1 flagged `FailureHostTest`'s `R_300` and this same class's own
+  `R_350_improve_done_...` as real, pre-existing and out of scope.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules checked, no forbidden edges.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 192/419 requirements covered, `results/coverage-matrix.md`
+  regenerated with no diff.
+- `.\gradlew.bat coverageMatrixCheck` — up to date (192 covered of 419), separate invocation.
+
+**Left open / not done:**
+
+- The ordering fix's *sufficiency* was not proven by local reproduction — see above. If a future
+  CI run still shows `AppNotIdleException` crossing out of a class this entry's six now-fixed
+  classes don't cover, the mechanism this entry documents (JUnit4 wraps `@Before`/`@Test`/`@After`
+  inside a `@Rule`'s own statement, so a bare `@After` always runs before that rule's teardown) is
+  worth checking against whichever class is newly involved before reaching for `forkEvery` again.
+- `ReaderActivityDestinationSmokeTest`'s `R_432_activation_thread_route` and
+  `R_276_frequency_overs_link_...` are real, pre-existing, deterministic failures (confirmed via a
+  scoped, isolated rerun with this session's own changes reverted) — flagged here, not fixed, since
+  neither is the Compose-idle regression this session was asked to find.
+- `forkEvery`'s adaptive formula (`availableProcessors / 4`, clamped to `[1, 12]`) is this session's
+  own reasoned choice, not independently re-derived per value the way `forkEvery = 4` was in poison
+  hunt 2 — a future session with access to a real 2-core (or otherwise CI-shaped) machine could
+  bisect it further; `1` at CI's own reported core count matches every class this file already
+  isolates outright, which is the one value this entry is confident is safe.
+- Six classes were fixed and left in `testDebugUnitTest`'s main batch by this entry's own ordering
+  fix (`StationsContentTest`, `StationDetailContentTest`, `SearchContentTest`, `SessionsContentTest`,
+  plus the two newly isolated ones) — the four already-isolated siblings were **not** moved back out
+  of `smokeTestDebugUnitTest` in this change, on the same "not locally provable, don't bet CI on it"
+  reasoning as `FrequencyDetailContentTest`/`TransmissionDetailContentTest` above; a future session
+  with a CI-backed way to check could retry un-isolating them now that their own close-before-dispose
+  ordering bug is fixed.
+
+---
+
 ## 2026-09-09 (fts-fallback: the two production fts5-availability branches no longer parse a driver message)
 
 ### (pending) — fts-fallback: OrtDatabase/SearchViewData decide fts5 availability by a positive capability probe, not SQLException text

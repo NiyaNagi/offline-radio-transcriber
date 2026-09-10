@@ -211,6 +211,49 @@ val composeIdlePoisoningSmokeTestDebugUnitTest = tasks.register<Test>("smokeTest
     include("**/SearchContentTest*")
     include("**/StationDetailContentTest*")
     include("**/StationsContentTest*")
+    // idle-root task (2026-09-10, GitHub Actions run 34444706036 on NiyaNagi/offline-radio-
+    // transcriber, 2-core Linux runner): the first CI failure since poison-hunt-2's own forkEvery=4
+    // cut, and the first time either poison-hunt session had a real, ordered log to point at rather
+    // than a `jstack` signature alone — every test in exactly two classes, `LogFilterSheetTest` and
+    // `LogScreenTest` (neither touches a `Context` or a database at all), failed with
+    // `AppNotIdleException`, and the CI log shows `FrequencyDetailContentTest`'s own lone test
+    // PASSED immediately before the first of them, 60.1 seconds apart (its own timeout).
+    //
+    // **Root cause found and fixed at the source, not just isolated**: `FrequencyDetailContentTest`
+    // (and five sibling classes of the identical shape — `TransmissionDetailContentTest`,
+    // `StationsContentTest`, `StationDetailContentTest`, `SearchContentTest`, `SessionsContentTest`,
+    // already isolated above for the same symptom) declared a bare `@After fun closeDatabase()`
+    // alongside a `composeTestRule` `@Rule`. JUnit4 wraps the *entire* `@Before`/`@Test`/`@After`
+    // sequence inside a `@Rule`'s own statement — a plain `@After` always runs *before* the rule's
+    // own teardown, so `db.close()` ran while `composeTestRule` still owned a live composition,
+    // racing its disposal. `app/src/test/kotlin/org/ort/app/testing/OrtComposeTestRule.kt`
+    // (`ortComposeTestRule`) fixes this structurally: every one of those six classes now closes its
+    // database from a `RuleChain` outer rule, which runs strictly after the compose rule's own
+    // `after()`, so the composition is always fully disposed — its `LaunchedEffect`s cleanly
+    // cancelled — before the database underneath it goes away. The same function also resets
+    // `ModelsController`'s process-lifetime `stagedActivation` `StateFlow` and the
+    // `DebugSearchOverride`/`DebugLexiconImportOverride` one-shot flags after every Compose test
+    // that routes through it, closing three more `ui/data` leaks this task's own investigation
+    // found (see `ModelsController.resetForTest`'s and `StationPolling.kt`'s `SharedDatabase`'s own
+    // doc comments for the rest).
+    //
+    // **`FrequencyDetailContentTest` stays isolated here anyway.** A targeted local reproduction of
+    // the exact `FrequencyDetailContentTest` -> `LogFilterSheetTest` -> `LogScreenTest` fork
+    // ordering CI hit passed both with and without the ordering fix, on this session's own
+    // many-core workstation — the race the fix closes is plausible, not locally provable, and CI's
+    // own 2 cores (a fraction of this machine's own) are the more likely place a race like this
+    // actually loses. Isolating the one class CI's own log names, on that log's own evidence, is
+    // the certain fix for the *reported* failure; the ordering fix is kept as a genuine,
+    // independently-reasoned correctness improvement that also covers `TransmissionDetailContentTest`
+    // below — never proven to be *this* failure's whole story, but real regardless.
+    include("**/FrequencyDetailContentTest*")
+    // idle-root task: carries the identical shape (`composeTestRule` + a real `OrtDatabase` closed
+    // in `@After`, one-shot, non-recurring `LaunchedEffect`s only) as `FrequencyDetailContentTest`
+    // above, confirmed the CI poisoner — never itself observed to poison anything, but isolated on
+    // the same shape-based standard this file already uses elsewhere (`LevelMeterScreenTest`,
+    // `FrequencyScreenTest`) rather than left as the one remaining unconfirmed instance of a shape
+    // just proven to matter.
+    include("**/TransmissionDetailContentTest*")
     forkEvery = 1
 }
 
@@ -243,6 +286,10 @@ afterEvaluate {
     debugUnitTest.exclude("**/SearchContentTest*")
     debugUnitTest.exclude("**/StationDetailContentTest*")
     debugUnitTest.exclude("**/StationsContentTest*")
+    // idle-root task (2026-09-10) — see the smoke task's own KDoc above for the CI evidence and
+    // the structural (`ortComposeTestRule`) fix this pairs with.
+    debugUnitTest.exclude("**/FrequencyDetailContentTest*")
+    debugUnitTest.exclude("**/TransmissionDetailContentTest*")
     // Test-suite regression, 2026-09-08 (this task's own CHANGELOG entry): excluding the two
     // confirmed-poisoning classes above (this file's own KDoc) was not sufficient on its own — the
     // full suite still eventually wedged (confirmed: `ImproveScreensTest`, a file with no
@@ -290,7 +337,28 @@ afterEvaluate {
     // actually finishes. `maxHeapSize` is kept at `2g` regardless — it did not fix this on its own,
     // but a smaller forkEvery means more concurrent Robolectric/Compose class-loading over the life
     // of the whole task, and 512m was already the tightest margin available.
-    debugUnitTest.forkEvery = 4
+    //
+    // idle-root task (2026-09-10): the fixed `forkEvery = 4` above is itself what CI run 34444706036
+    // proved insufficient — tuned entirely on this session's own many-core workstation, where the
+    // whole suite passes in minutes regardless, and never validated against the 2-core Linux runner
+    // CI actually gives this job. Machine-adaptive rather than a second fixed guess: `availableProcessors`
+    // is a real fact about *this* machine, not a magic number carried over from whichever machine last
+    // tuned it. A slower, lower-core machine gets a smaller batch (more frequent JVM recycling, the
+    // structural mitigation this file's own KDoc already relies on, at a higher time cost it can
+    // less afford to skip); a fast many-core machine — this session's own, and presumably every other
+    // contributor's local box — gets a larger one for wall-time's sake, now that
+    // `FrequencyDetailContentTest`/`TransmissionDetailContentTest` (the smoke task's own KDoc above)
+    // are isolated and the underlying close-before-dispose ordering bug they shared with four already-
+    // isolated classes is fixed at the source (`ortComposeTestRule`). Not restored to the original
+    // `forkEvery = 40`: that value predates both the `ui.screens` growth poison-hunt-2 already
+    // diagnosed and this session's own CI-evidenced finding, and re-asserting it without a CI run to
+    // check it against would be exactly the same mistake this comment is fixing — a number that works
+    // on one machine, asserted as safe everywhere. `2` is CI's own reported core count; the runner
+    // that just failed gets the smallest, safest batch this formula produces (`= 1`, matching every
+    // class this file already isolates outright), never a number only this session's own hardware
+    // vouches for.
+    val availableCpuCount = Runtime.getRuntime().availableProcessors()
+    debugUnitTest.forkEvery = (availableCpuCount / 4).coerceIn(1, 12).toLong()
     debugUnitTest.maxHeapSize = "2g"
     composeIdlePoisoningSmokeTestDebugUnitTest.configure {
         testClassesDirs = debugUnitTest.testClassesDirs
