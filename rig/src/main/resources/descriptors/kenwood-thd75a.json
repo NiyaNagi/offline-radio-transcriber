@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "kenwood-thd75a",
+  "displayName": "Kenwood TH-D75A",
+  "verified": true,
+  "transports": [
+    {
+      "kind": "usb_serial",
+      "serial": { "baud": 9600, "dataBits": 8, "stopBits": 1, "parity": "none" },
+      "capabilities": ["FREQUENCY", "SQUELCH_STATE", "SUB_BAND"]
+    },
+    {
+      "kind": "bluetooth_spp",
+      "capabilities": ["FREQUENCY", "SQUELCH_STATE", "SUB_BAND"]
+    }
+  ],
+  "bands": [0, 1],
+  "unsolicited": {
+    "enable": "AI 1",
+    "patterns": [
+      { "expect": "^BY (\\d),(\\d)$", "map": { "band": "$1", "squelchOpen": "$2" } },
+      { "expect": "^FQ (\\d),(\\d{10})$", "map": { "band": "$1", "frequencyHz": "$2" } }
+    ]
+  },
+  "poll": {
+    "intervalMs": 2000,
+    "perBand": [
+      { "send": "FQ {band}", "expect": "^FQ (\\d),(\\d{10})$", "map": { "band": "$1", "frequencyHz": "$2" } },
+      { "send": "BY {band}", "expect": "^BY (\\d),(\\d)$", "map": { "band": "$1", "squelchOpen": "$2" } }
+    ]
+  }
+}

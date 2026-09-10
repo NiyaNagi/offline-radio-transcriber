@@ -1,5 +1,6 @@
 package org.ort.rig.fakes
 
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -8,7 +9,6 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.ort.rig.RigTransportException
 import org.ort.rig.TransportState
-import kotlinx.coroutines.flow.first
 
 /**
  * One test per failure mode [FakeRigTransport] can be told to exhibit (constitution II: "a fake
