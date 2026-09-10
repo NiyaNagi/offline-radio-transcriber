@@ -174,8 +174,8 @@ Memory updated.
 - **Accepted deviations** are recorded in the status cell of `design/design-intent.md`: S10, S11
   (FR-RIG unbuilt), CF03 (GB budget per FR-STO-3/D26; retention-order row stacks at ≥ 1.3 font
   scale), CF09 (bundle preview as a list), CF10 (no third-party version lines), DG04 (Input/Models
-  not tracked per session), F21 (two of three options), Q04 (empty widen categories omitted),
-  ST04 ("stable since" is the cluster's first-seen date).
+  not tracked per session), F21 (two of three options), Search-Empty (widen categories that would
+  add nothing are omitted), Station-Identity ("stable since" is the cluster's first-seen date).
 - **Evidence.** Five in-process tour runs (`tools/ui-audit/tour.json`, 142 steps: every screen
   and failure state at font scale 1.0 and 2.0, scrolled-to-end frames for the long screens, the
   station sub-screens), five parallel capture-review rounds, seven validator sets with up to five
