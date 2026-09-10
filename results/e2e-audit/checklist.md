@@ -44,10 +44,10 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-C01 | FR-RIG-3, FR-PLT-2, F16 | USB serial over CDC-ACM; a lost/absent USB permission is a transport state, never a crash | unit (Robolectric state machine) + hardware H1, H4 | WPB | open |
-| E2-C02 | FR-RIG-14 | Bluetooth SPP over RFCOMM; absent `BLUETOOTH_CONNECT` is a state; paired-device listing filters to SPP-capable devices | unit + hardware H2 | WPB | open |
-| E2-C03 | FR-RIG-15, FR-RIG-7 | A Bluetooth drop → reconnect with backoff, `Stale` reported, capture unaffected | unit (fake drop) + device (`rig-bt-lost`) + hardware H3 | WPB / WPC2 | open |
-| E2-C04 | constitution V | Neither transport module links an HTTP client or declares `INTERNET`; `platformGuards` green | build | WPB | open |
+| E2-C01 | FR-RIG-3, FR-PLT-2, F16 | USB serial over CDC-ACM; a lost/absent USB permission is a transport state, never a crash | unit (`UsbSerialTransportTest`: permission wait, denied twice, lost after re-attach, detach → backoff → reopen, device gone during read) + hardware H1, H4 | WPB | fixed — `91dd929`, gate on main pending |
+| E2-C02 | FR-RIG-14 | Bluetooth SPP over RFCOMM; absent `BLUETOOTH_CONNECT` is a state; paired-device listing filters to SPP-capable devices | unit (`BluetoothSppTransportTest`: RFCOMM connect+read, `pairedDevices` YES/NO/UNKNOWN, missing `BLUETOOTH_CONNECT` as a state) + hardware H2 | WPB | fixed — `91dd929` |
+| E2-C03 | FR-RIG-15, FR-RIG-7 | A Bluetooth drop → reconnect with backoff, `Stale` reported, capture unaffected | unit (`BluetoothSppTransportTest` drop, `TransportParityTest` shared drop/detach — shown to discriminate) + device (`rig-bt-lost`) + hardware H3 | WPB / WPC2 | fixed (transport half) — `91dd929`; the `Stale`/capture-unaffected half is WPC2 |
+| E2-C04 | constitution V | Neither transport module links an HTTP client or declares `INTERNET`; `platformGuards` green | build (`platformGuards: OK`, 20 modules) | WPB | fixed — `91dd929`, gate on main pending |
 
 ## D — Mode plumbing (`:core`, `:capture-android`, `:pipeline`)
 
