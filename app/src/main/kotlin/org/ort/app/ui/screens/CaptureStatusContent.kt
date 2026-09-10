@@ -17,6 +17,8 @@ import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.data.LevelViewStateMapper
 import org.ort.app.ui.data.LiveBarPolling
 import org.ort.app.ui.data.ReaderPolling
+import org.ort.app.ui.data.RoomSessionRouteFactsReader
+import org.ort.app.ui.data.SessionRouteFacts
 import org.ort.core.SystemClock
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
@@ -89,12 +91,27 @@ public fun CaptureStatusContent(
     }
 
     LaunchedEffect(sessionId) {
+        val routeFactsReader = RoomSessionRouteFactsReader(context)
         while (true) {
             val effectiveSessionId = ReaderPolling.effectiveSessionId(sessionId)
-            state = if (effectiveSessionId != null) {
+            val baseState = if (effectiveSessionId != null) {
                 ReaderPolling.captureStatus(context, effectiveSessionId)
             } else {
                 idleCaptureStatus()
+            }
+            // E2-G01 (N04, FR-CAP-13): `ReaderPolling.captureStatus` (WP4's file, out of this
+            // package's row) does not know about the session's own v7 mode/route columns —
+            // re-derive the Input/Radio rows here, against the same live `InputStatus`/`RigStatus`
+            // holders that call already read, once this session's own `SessionRouteFacts` are
+            // known, rather than editing a file outside this package's ownership.
+            val routeFacts = routeFactsReader.forSession(effectiveSessionId)
+            state = if (routeFacts == SessionRouteFacts.NOT_TRACKED) {
+                baseState
+            } else {
+                baseState.copy(
+                    input = CaptureStatusMapper.inputFacts(InputStatus.state, SystemClock.wallMillis(), routeFacts),
+                    radio = CaptureStatusMapper.radioFacts(RigStatus.state, routeFacts),
+                )
             }
             liveBar = if (CaptureState.isCapturing) LiveBarPolling.current(context, effectiveSessionId) else null
             // R-039: read alongside the status, at the same 2 s cadence — LevelStatus is a

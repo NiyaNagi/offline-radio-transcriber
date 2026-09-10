@@ -21,6 +21,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -234,6 +236,38 @@ class CaptureStatusContentTest {
             "expected the title to sit at or below the caller's top inset (${insetPx}px), was ${titleTop}px",
             titleTop >= insetPx - 1f, // sub-pixel rounding tolerance
         )
+    }
+
+    @Test
+    @Requirement("E2-G01", "FR-CAP-13")
+    fun `E2_G01 the Input sub-line names the session's own mode and route from the v7 columns`() {
+        runBlocking {
+            db.sessionDao().insert(
+                session("BT-1").copy(
+                    captureMode = "BLUETOOTH_RADIO",
+                    audioRouteKind = "BLUETOOTH_SCO",
+                    audioRouteLabel = "Handheld BT",
+                    rigTransport = "BLUETOOTH_SPP",
+                ),
+            )
+        }
+        CaptureState.capturing("BT-1")
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT"),
+            nativeRateHz = 16_000,
+            resamplerId = "none",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        RigStatus.connected("TH-D75A", listOf(RigStatus.BandState("A", 145_230_000L, null, squelchOpen = true)))
+
+        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "BT-1") } }
+
+        composeTestRule.waitUntilTextExists("Bluetooth audio")
+        composeTestRule.onNodeWithText("Bluetooth audio", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Bluetooth-connected radio", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Bluetooth SPP", substring = true).assertExists()
     }
 
     @Test

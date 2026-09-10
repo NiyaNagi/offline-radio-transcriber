@@ -1,6 +1,8 @@
 package org.ort.app.ui.data
 
 import org.ort.app.ui.improve.Plurals
+import org.ort.core.capture.AudioRouteKind
+import org.ort.core.capture.RigTransportKind
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -206,6 +208,11 @@ public object CaptureStatusMapper {
         batteryPercent: Int?,
         batteryCharging: Boolean,
         batteryExemptionReportsIgnoring: Boolean,
+        // E2-G01 (N04, FR-CAP-13): the current session's mode/route/transport facts, from the WPF
+        // seam ([SessionRouteFacts]) — defaulted to [SessionRouteFacts.NOT_TRACKED] so every
+        // existing caller (this mapper's own tests included) keeps compiling, and reads exactly as
+        // honestly as before this field existed.
+        routeFacts: SessionRouteFacts = SessionRouteFacts.NOT_TRACKED,
     ): CaptureStatusViewState {
         val isCapturing = captureState is CaptureState.State.Capturing
         val (stateLabel, stateTone) = titleFor(captureState, thermal)
@@ -218,9 +225,9 @@ public object CaptureStatusMapper {
             haltConfirmTitle = "Stop capture?",
             haltConfirmBody = "Audio already captured is kept. Nothing already recorded is lost, and capture " +
                 "can be started again from Now.",
-            input = inputFacts(input, nowMillis),
+            input = inputFacts(input, nowMillis, routeFacts),
             level = levelFacts(level),
-            radio = radioFacts(rig),
+            radio = radioFacts(rig, routeFacts),
             overs = overFacts(transmissionCount, rejectedCount, failedCount, gapCount),
             backlog = backlogFacts(backlog),
             tier = tierFacts(shedLevel, asr, vad),
@@ -231,41 +238,76 @@ public object CaptureStatusMapper {
     }
 
     /**
-     * `Capture-Status.dc.html`'s Input row (R-113): device name, native rate and resampler id from
-     * [InputStatus.State.Opened], "verified" only once [InputStatus.State.Opened.routeVerified]
-     * is actually `true` (constitution IV — never claim a route verified before the OS has
-     * confirmed it), "mismatch — halted" for [InputStatus.State.Mismatch] (capture does not
-     * continue on it — see that state's own kdoc), and "lost Ns ago" for
-     * [InputStatus.State.Lost], computed from [InputStatus.State.Lost.sinceMillis] against the
-     * device's current wall clock at read time.
+     * `Capture-Status.dc.html`'s Input row (R-113, amended for E2-G01/FR-CAP-13): device name,
+     * "<mode label> · <room audio | audio by cable | Bluetooth audio> · <rate> → 16 kHz ·
+     * resampler <id>" from [InputStatus.State.Opened] and [routeFacts], "verified" only once
+     * [InputStatus.State.Opened.routeVerified] is actually `true` (constitution IV — never claim a
+     * route verified before the OS has confirmed it), "mismatch — halted" for
+     * [InputStatus.State.Mismatch] (capture does not continue on it — see that state's own kdoc),
+     * and "lost Ns ago" for [InputStatus.State.Lost], computed from
+     * [InputStatus.State.Lost.sinceMillis] against the device's current wall clock at read time.
+     *
+     * [routeFacts] carries no mode/route for a pre-v7 session or one this build's own [SessionRouteFacts]
+     * seam has not resolved yet ([SessionRouteFacts.NOT_TRACKED]) — [modeAndRouteLabel] then omits
+     * that leading segment entirely rather than rendering an empty one (constitution I: an honest
+     * absence, never a dangling `· ·`). `public` (not `private`): [org.ort.app.ui.screens.CaptureStatusContent]
+     * calls this directly to re-derive the Input row against the live [InputStatus] holder once a
+     * session's own [SessionRouteFacts] are read, without a second, parallel formatting rule.
      */
-    private fun inputFacts(input: InputStatus.State, nowMillis: Long): KeyValueFacts = when (input) {
-        InputStatus.State.None -> KeyValueFacts(value = "Not measured", subLine = "no input opened yet this session")
+    public fun inputFacts(input: InputStatus.State, nowMillis: Long, routeFacts: SessionRouteFacts): KeyValueFacts =
+        when (input) {
+            InputStatus.State.None ->
+                KeyValueFacts(value = "Not measured", subLine = "no input opened yet this session")
 
-        is InputStatus.State.Opened -> KeyValueFacts(
-            value = input.descriptor.label,
-            subLine = "${kHzLabel(input.nativeRateHz)} native · resampler ${input.resamplerId}",
-            trailingDot = if (input.routeVerified && input.routedDeviceMatches) {
-                CaptureStateTone.NOMINAL
-            } else {
-                CaptureStateTone.DEGRADED
-            },
-            trailingText = if (input.routeVerified && input.routedDeviceMatches) "verified" else "verifying…",
-        )
+            is InputStatus.State.Opened -> KeyValueFacts(
+                value = input.descriptor.label,
+                subLine = inputSubLine(routeFacts, input.nativeRateHz, input.resamplerId),
+                trailingDot = if (input.routeVerified && input.routedDeviceMatches) {
+                    CaptureStateTone.NOMINAL
+                } else {
+                    CaptureStateTone.DEGRADED
+                },
+                trailingText = if (input.routeVerified && input.routedDeviceMatches) "verified" else "verifying…",
+            )
 
-        is InputStatus.State.Mismatch -> KeyValueFacts(
-            value = input.expected.label,
-            subLine = "routed to ${input.actual?.label ?: "an unknown device"} instead",
-            trailingDot = CaptureStateTone.HALTED,
-            trailingText = "mismatch — halted",
-        )
+            is InputStatus.State.Mismatch -> KeyValueFacts(
+                value = input.expected.label,
+                subLine = "routed to ${input.actual?.label ?: "an unknown device"} instead",
+                trailingDot = CaptureStateTone.HALTED,
+                trailingText = "mismatch — halted",
+            )
 
-        is InputStatus.State.Lost -> KeyValueFacts(
-            value = input.lastKnown.descriptor.label,
-            subLine = "${kHzLabel(input.lastKnown.nativeRateHz)} native · resampler ${input.lastKnown.resamplerId}",
-            trailingDot = CaptureStateTone.DEGRADED,
-            trailingText = "lost ${secondsAgo(input.sinceMillis, nowMillis)}s ago",
-        )
+            is InputStatus.State.Lost -> KeyValueFacts(
+                value = input.lastKnown.descriptor.label,
+                subLine = inputSubLine(routeFacts, input.lastKnown.nativeRateHz, input.lastKnown.resamplerId),
+                trailingDot = CaptureStateTone.DEGRADED,
+                trailingText = "lost ${secondsAgo(input.sinceMillis, nowMillis)}s ago",
+            )
+        }
+
+    private fun inputSubLine(routeFacts: SessionRouteFacts, nativeRateHz: Int, resamplerId: String): String {
+        val rateLine = "${kHzLabel(nativeRateHz)} → 16 kHz · resampler $resamplerId"
+        return listOfNotNull(modeAndRouteLabel(routeFacts), rateLine).joinToString(" · ")
+    }
+
+    /** E2-G01: "<mode label>" from the closed [org.ort.core.capture.CaptureMode] set (never
+     * invented wording, per that enum's own kdoc), "· <room audio | audio by cable | Bluetooth
+     * audio>" from [routeDisclosureLabel] — `null` when neither is tracked, so [inputSubLine]
+     * omits the segment rather than joining an empty string. */
+    private fun modeAndRouteLabel(routeFacts: SessionRouteFacts): String? {
+        val modeLabel = routeFacts.captureMode?.operatorLabel
+        val routeLabel = routeDisclosureLabel(routeFacts.audioRouteKind)
+        return listOfNotNull(modeLabel, routeLabel).joinToString(" · ").ifEmpty { null }
+    }
+
+    /** FR-CAP-3a/FR-CAP-10/FR-CAP-11: the three real disclosures this app ever shows for an audio
+     * route — never a raw enum name, and never guessed for [AudioRouteKind.UNKNOWN] or an
+     * untracked route. */
+    private fun routeDisclosureLabel(kind: AudioRouteKind?): String? = when (kind) {
+        AudioRouteKind.BUILT_IN_MIC -> "room audio"
+        AudioRouteKind.USB, AudioRouteKind.WIRED_HEADSET -> "audio by cable"
+        AudioRouteKind.BLUETOOTH_SCO -> "Bluetooth audio"
+        AudioRouteKind.UNKNOWN, null -> null
     }
 
     /**
@@ -333,7 +375,10 @@ public object CaptureStatusMapper {
         return "$since$elapsedLabel · $heartbeat"
     }
 
-    private fun radioFacts(rig: RigStatus.State): KeyValueFacts = when (rig) {
+    /** [routeFacts]: `public` for the same reason [inputFacts] is (see its own kdoc) — E2-G01's
+     * "<transport> · A … · B …" Radio sub-line, the transport named from the session's own
+     * `rigTransport` column until WPC2's `RigStatus` itself carries the transport. */
+    public fun radioFacts(rig: RigStatus.State, routeFacts: SessionRouteFacts): KeyValueFacts = when (rig) {
         // R-263: guide §9 — operator copy never carries a spec id. "FR-RIG" named the requirement,
         // not a fact this screen's own operator would recognise; "no radio support in this build
         // yet" says the same real thing (the rig module is genuinely unbuilt — register R-084)
@@ -342,22 +387,38 @@ public object CaptureStatusMapper {
             KeyValueFacts(value = "No rig configured", subLine = "no radio support in this build yet")
         is RigStatus.State.Connected -> KeyValueFacts(
             value = rig.descriptor,
-            subLine = rig.bands.joinToString(" · ") { band ->
-                "${band.band} ${band.frequencyHz?.let { formatFrequencyMHz(it) } ?: "—"} " +
-                    if (band.squelchOpen) "open" else "closed"
-            },
+            subLine = radioSubLine(routeFacts, bandsLabel(rig.bands)),
             trailingDot = CaptureStateTone.NOMINAL,
             trailingText = "connected",
         )
 
         is RigStatus.State.Stale -> KeyValueFacts(
             value = rig.lastKnown.descriptor,
-            subLine = "last known: " + rig.lastKnown.bands.joinToString(" · ") { band ->
-                "${band.band} ${band.frequencyHz?.let { formatFrequencyMHz(it) } ?: "—"}?"
-            },
+            subLine = radioSubLine(
+                routeFacts,
+                "last known: " + rig.lastKnown.bands.joinToString(" · ") { band ->
+                    "${band.band} ${band.frequencyHz?.let { formatFrequencyMHz(it) } ?: "—"}?"
+                },
+            ),
             trailingDot = CaptureStateTone.DEGRADED,
             trailingText = "disconnected",
         )
+    }
+
+    private fun bandsLabel(bands: List<RigStatus.BandState>): String = bands.joinToString(" · ") { band ->
+        "${band.band} ${band.frequencyHz?.let { formatFrequencyMHz(it) } ?: "—"} " +
+            if (band.squelchOpen) "open" else "closed"
+    }
+
+    private fun radioSubLine(routeFacts: SessionRouteFacts, bandsLine: String): String =
+        listOfNotNull(transportLabel(routeFacts.rigTransport), bandsLine).joinToString(" · ")
+
+    /** FR-RIG-14/FR-RIG-15: the two real transports this build ever names — `null` (omitted, never
+     * a dangling separator) when the session's own `rigTransport` column is untracked. */
+    private fun transportLabel(transport: RigTransportKind?): String? = when (transport) {
+        RigTransportKind.USB_SERIAL -> "USB serial"
+        RigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
+        null -> null
     }
 
     // R-301: the shared plural helper (register R-141/R-190/R-212's own class of finding) — never
