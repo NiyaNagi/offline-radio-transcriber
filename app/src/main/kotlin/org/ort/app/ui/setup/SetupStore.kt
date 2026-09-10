@@ -2,17 +2,31 @@ package org.ort.app.ui.setup
 
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.RigTransportKind
 
 /**
- * What the guided setup sequence has configured so far (R-080..R-084) — one property per fact a
- * step records, persisted across process death so "resumed at the first unverified step"
- * (`Flow-Setup.dc.html`) survives the app being killed mid-sequence, not just an in-memory
- * back-navigation.
+ * What the guided setup sequence has configured so far (R-080..R-084; D33/P19 WPD adds the
+ * capture-mode axis) — one property per fact a step records, persisted across process death so
+ * "resumed at the first unverified step" (`Flow-Setup.dc.html`) survives the app being killed
+ * mid-sequence, not just an in-memory back-navigation.
  *
  * [micRequested] carries forward exactly the bookkeeping `MainActivity`'s pre-WP9 flow already
  * established (`shouldShowRequestPermissionRationale` alone cannot distinguish "never asked" from
  * "denied twice, permanently" — see `MicrophoneScreens.kt`'s doc comment for the full reasoning).
+ *
+ * **D33 additions (P19/WPD).** [captureMode] is the S00 axis FR-CAP-8 introduces; [radioChoice]
+ * and [rigId] are two views of the *same* S09 choice kept side by side rather than merged — the
+ * former is the pre-existing coarse bucket (`TH_D75A`/`OTHER_CAT_RIG`/`NONE`) every debug scenario
+ * fixture (`app/src/debug/.../Scenarios.kt`, outside this package's ownership) and
+ * [SetupStateMachine]'s `RADIO` gate already key off unchanged; the latter is the precise
+ * `:rig` `RigCatalogueEntry.id` S09b/S12 need to actually address a specific descriptor (a build
+ * with more than one "other CAT rig" installed cannot be told apart by [radioChoice] alone).
+ * [modeOverriddenAudio]/[modeOverriddenRig] record whether the operator changed a preset axis away
+ * from what [org.ort.core.capture.CaptureModePresets.presetsFor] proposed (FR-CAP-9) — read by S04/S09b
+ * to hide their own preset chip once overridden, and by S12's Mode row to phrase the value line.
  */
+@Suppress("TooManyFunctions")
 public interface SetupStore {
     public var welcomeSeen: Boolean
     public var micRequested: Boolean
@@ -29,15 +43,51 @@ public interface SetupStore {
     public var manualFrequencyHz: Long?
     public var setupComplete: Boolean
 
+    /** D33/FR-CAP-8 — the S00 choice. `null` until S00 is walked. */
+    public var captureMode: CaptureMode?
+
+    /** S02c's "Not now — use USB instead" (Bluetooth mode only) — see [SetupStateMachine]'s own
+     * doc comment for why this sits beside the mode flip rather than replacing it. */
+    public var bluetoothPermissionDeclined: Boolean
+
+    /** The precise `:rig` `RigCatalogueEntry.id` chosen at S09 — see this interface's own doc
+     * comment for why this is not simply folded into [radioChoice]. */
+    public var rigId: String?
+
+    /** The rig-control transport chosen at S09b (FR-RIG-13) — independent of [selectedInputId]'s
+     * audio route by design; `null` until S09b is walked (or when [radioChoice] is
+     * [RadioChoice.NONE], which never reaches S09b at all). */
+    public var rigTransport: RigTransportKind?
+
+    /** The paired-device address chosen at S10b (Bluetooth transport only). */
+    public var rigBluetoothAddress: String?
+
+    /** Whether S10b's open -> identify -> verify checklist has reached
+     * [RigLinkState.Verified] for [rigBluetoothAddress] — the resumable half of "Bluetooth rig
+     * link established" ([SetupStateMachine]'s `RIG_BLUETOOTH` gate clears once this is true). */
+    public var rigBluetoothVerified: Boolean
+
+    /** `true` once the operator has changed [selectedInputId] away from what
+     * [org.ort.core.capture.CaptureModePresets.presetsFor] proposed for [captureMode] (FR-CAP-9). */
+    public var modeOverriddenAudio: Boolean
+
+    /** `true` once the operator has changed [rigTransport] away from what
+     * [org.ort.core.capture.CaptureModePresets.presetsFor] proposed for [captureMode] (FR-CAP-9). */
+    public var modeOverriddenRig: Boolean
+
     /** The immutable view [SetupStateMachine.stepFor] decides against. */
     public fun snapshot(): SetupSnapshot = SetupSnapshot(
         welcomeSeen = welcomeSeen,
+        captureMode = captureMode,
+        bluetoothPermissionDeclined = bluetoothPermissionDeclined,
         notificationsSkipped = notificationsSkipped,
         selectedInputId = selectedInputId,
         inputVerified = inputVerified,
         levelInBand = levelInBand,
         overnightStepSeen = overnightStepSeen,
         radioChoice = radioChoice,
+        rigTransport = rigTransport,
+        rigBluetoothVerified = rigBluetoothVerified,
         setupComplete = setupComplete,
     )
 
@@ -57,6 +107,7 @@ public interface SetupStore {
 /** The real, `SharedPreferences`-backed [SetupStore] — the same preferences file
  * (`org.ort.app.setup`) and mic/notifications keys the pre-WP9 `MainActivity` used, so an
  * in-progress install upgrading into WP9's sequence does not repeat a step it already resolved. */
+@Suppress("TooManyFunctions")
 public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) : SetupStore {
 
     override var welcomeSeen: Boolean by BooleanPref(KEY_WELCOME_SEEN, default = false)
@@ -73,6 +124,14 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
     override var radioChoice: RadioChoice? by EnumPref(KEY_RADIO_CHOICE, RadioChoice::valueOf)
     override var manualFrequencyHz: Long? by LongPref(KEY_MANUAL_FREQUENCY_HZ)
     override var setupComplete: Boolean by BooleanPref(KEY_SETUP_COMPLETE, default = false)
+    override var captureMode: CaptureMode? by EnumPref(KEY_CAPTURE_MODE, CaptureMode::valueOf)
+    override var bluetoothPermissionDeclined: Boolean by BooleanPref(KEY_BLUETOOTH_PERMISSION_DECLINED, default = false)
+    override var rigId: String? by StringPref(KEY_RIG_ID)
+    override var rigTransport: RigTransportKind? by EnumPref(KEY_RIG_TRANSPORT, RigTransportKind::valueOf)
+    override var rigBluetoothAddress: String? by StringPref(KEY_RIG_BLUETOOTH_ADDRESS)
+    override var rigBluetoothVerified: Boolean by BooleanPref(KEY_RIG_BLUETOOTH_VERIFIED, default = false)
+    override var modeOverriddenAudio: Boolean by BooleanPref(KEY_MODE_OVERRIDDEN_AUDIO, default = false)
+    override var modeOverriddenRig: Boolean by BooleanPref(KEY_MODE_OVERRIDDEN_RIG, default = false)
 
     private inner class BooleanPref(val key: String, val default: Boolean) :
         kotlin.properties.ReadWriteProperty<Any?, Boolean> {
@@ -138,6 +197,14 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
         public const val KEY_RADIO_CHOICE: String = "radio_choice"
         public const val KEY_MANUAL_FREQUENCY_HZ: String = "manual_frequency_hz"
         public const val KEY_SETUP_COMPLETE: String = "setup_complete"
+        public const val KEY_CAPTURE_MODE: String = "capture_mode"
+        public const val KEY_BLUETOOTH_PERMISSION_DECLINED: String = "bluetooth_permission_declined"
+        public const val KEY_RIG_ID: String = "rig_id"
+        public const val KEY_RIG_TRANSPORT: String = "rig_transport"
+        public const val KEY_RIG_BLUETOOTH_ADDRESS: String = "rig_bluetooth_address"
+        public const val KEY_RIG_BLUETOOTH_VERIFIED: String = "rig_bluetooth_verified"
+        public const val KEY_MODE_OVERRIDDEN_AUDIO: String = "mode_overridden_audio"
+        public const val KEY_MODE_OVERRIDDEN_RIG: String = "mode_overridden_rig"
     }
 }
 
@@ -162,4 +229,12 @@ public class InMemorySetupStore(
     override var radioChoice: RadioChoice? = null,
     override var manualFrequencyHz: Long? = null,
     override var setupComplete: Boolean = false,
+    override var captureMode: CaptureMode? = null,
+    override var bluetoothPermissionDeclined: Boolean = false,
+    override var rigId: String? = null,
+    override var rigTransport: RigTransportKind? = null,
+    override var rigBluetoothAddress: String? = null,
+    override var rigBluetoothVerified: Boolean = false,
+    override var modeOverriddenAudio: Boolean = false,
+    override var modeOverriddenRig: Boolean = false,
 ) : SetupStore

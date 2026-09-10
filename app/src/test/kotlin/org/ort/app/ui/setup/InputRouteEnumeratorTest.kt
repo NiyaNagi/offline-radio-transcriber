@@ -183,4 +183,61 @@ class InputRouteEnumeratorTest {
 
         assertTrue(InputRouteEnumerator(context, io).list().isEmpty())
     }
+
+    // --- D33 (WPD): routeKind, read by ModeScreen's preset application ---------------------------
+
+    @Test
+    fun `D33 the built-in mic resolves to AudioRouteKind BUILT_IN_MIC`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone")),
+        )
+
+        val routeKind = InputRouteEnumerator(context, io).list().single().routeKind
+
+        assertEquals(org.ort.core.capture.AudioRouteKind.BUILT_IN_MIC, routeKind)
+    }
+
+    @Test
+    fun `D33 a USB device resolves to AudioRouteKind USB`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device")),
+        )
+
+        val routeKind = InputRouteEnumerator(context, io).list().single().routeKind
+
+        assertEquals(org.ort.core.capture.AudioRouteKind.USB, routeKind)
+    }
+
+    @Test
+    fun `D33 a wired headset resolves to AudioRouteKind WIRED_HEADSET`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("wired-1", AudioDeviceKind.WIRED_HEADSET, "Wired headset")),
+        )
+
+        val routeKind = InputRouteEnumerator(context, io).list().single().routeKind
+
+        assertEquals(org.ort.core.capture.AudioRouteKind.WIRED_HEADSET, routeKind)
+    }
+
+    @Test
+    fun `D33 a Bluetooth device resolves to AudioRouteKind BLUETOOTH_SCO`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")),
+        )
+
+        val routeKind = InputRouteEnumerator(context, io).list().single().routeKind
+
+        assertEquals(org.ort.core.capture.AudioRouteKind.BLUETOOTH_SCO, routeKind)
+    }
+
+    @Test
+    fun `D33 an unrecognised device resolves to AudioRouteKind UNKNOWN, never guessed`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("mystery-1", AudioDeviceKind.UNKNOWN, "Mystery device")),
+        )
+
+        val routeKind = InputRouteEnumerator(context, io).list().single().routeKind
+
+        assertEquals(org.ort.core.capture.AudioRouteKind.UNKNOWN, routeKind)
+    }
 }

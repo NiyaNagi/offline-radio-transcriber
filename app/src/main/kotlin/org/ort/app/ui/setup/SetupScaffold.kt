@@ -1,6 +1,7 @@
 package org.ort.app.ui.setup
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -358,6 +359,31 @@ public fun NumberedStep(index: Int, text: String, modifier: Modifier = Modifier)
             modifier = Modifier.size(width = 22.dp, height = 16.dp),
         )
         Text(text = text, style = OrtType.control, color = OrtColors.textBody)
+    }
+}
+
+/**
+ * D33 (FR-CAP-9) — the "preset by <mode>" pill S04 and S09 both draw (`Setup-Input.dc.html`,
+ * `Setup-Rig.dc.html`): a rounded, bordered chip naming the [modeLabel]
+ * ([org.ort.core.capture.CaptureMode.operatorLabel]) that preselected the row below it. The
+ * caller omits this composable entirely once the operator has overridden that axis's preset
+ * (`Setup-Rig-Transport.dc.html`'s own note: "hidden when the operator overrode") — this
+ * composable itself carries no such logic, it only draws the pill it is given.
+ */
+@Composable
+public fun PresetChip(modeLabel: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .border(1.dp, OrtColors.lineDefault, RoundedCornerShape(14.dp))
+            .padding(horizontal = 11.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(text = "preset by", style = OrtType.chip, color = OrtColors.textDim)
+        Text(
+            text = modeLabel,
+            style = OrtType.chip.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+            color = OrtColors.textHigh,
+        )
     }
 }
 

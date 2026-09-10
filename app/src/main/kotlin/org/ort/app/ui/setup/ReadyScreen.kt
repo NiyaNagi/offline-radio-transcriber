@@ -24,6 +24,7 @@ import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
+import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.RigStatus
 
@@ -208,6 +209,9 @@ public data class ReadyActions(
      * [SetupActivity.onInstallModel]'s own doc comment for exactly where it lands and why (Settings'
      * root, not its `Assets` sub-screen directly — no entry point for that exists yet). */
     val onInstallModel: () -> Unit,
+    /** D33/E2-E13 — S12's new leading Mode row's `Change` action, routing to S00
+     * ([SetupActivity.onChangeMode]). */
+    val onChangeMode: () -> Unit,
 )
 
 /**
@@ -222,6 +226,7 @@ public fun readyRowsFor(
     asrState: AsrAvailability.State,
     actions: ReadyActions,
 ): List<ReadyRow> = listOf(
+    modeRow(store, actions.onChangeMode),
     ReadyRow(
         label = "Input",
         value = store.selectedInputLabel ?: "Not set",
@@ -240,8 +245,37 @@ public fun readyRowsFor(
         onAction = actions.onFixOvernight,
     ),
     radioRow(store, rigStatus, actions.onFixRadio, actions.onChangeRadio),
-    modelRow(asrState, actions.onInstallModel),
+    modelsRow(asrState, actions.onInstallModel),
 )
+
+/**
+ * D33/E2-E13 — S12's new leading row (`Setup-Done.dc.html`, redrawn 2026-09-10): the mode chosen
+ * at S00, with `Change` routing back to it. The value line names the mode and, where it says
+ * something the mode's own label does not already say, the audio-route fact next to it
+ * (`"Bluetooth radio · audio by cable"` — the board's own example) — `null`/overridden cases fall
+ * back to the mode's label alone rather than fabricating a segment (constitution I).
+ */
+private fun modeRow(store: SetupStore, onChangeMode: () -> Unit): ReadyRow {
+    val mode = store.captureMode
+    return ReadyRow(
+        label = "Mode",
+        value = mode?.let { modeValueLine(it, store) } ?: "Not set",
+        ok = mode != null,
+        statusText = null,
+        actionLabel = "Change",
+        onAction = onChangeMode,
+    )
+}
+
+private fun modeValueLine(mode: CaptureMode, store: SetupStore): String {
+    val audioSegment = when {
+        store.modeOverriddenAudio -> "audio route changed"
+        mode == CaptureMode.LOCAL_MICROPHONE -> "room audio"
+        mode == CaptureMode.BLUETOOTH_RADIO -> "audio by cable"
+        else -> null
+    }
+    return listOfNotNull(mode.operatorLabel, audioSegment).joinToString(" · ")
+}
 
 /**
  * Validator finding (ui-conformance-plan WP9, register R-120..R-125 follow-up): this row must
@@ -328,16 +362,24 @@ private fun radioRowForCatRig(
     )
 }
 
-private fun modelRow(asrState: AsrAvailability.State, onInstallModel: () -> Unit): ReadyRow = when (asrState) {
+/**
+ * D33/E2-E13: renamed from "Model" to "Models" to match `Setup-Done.dc.html`'s redrawn row
+ * ("4 bundled · checksums verified"). WPG's bundled-asset catalogue (`ModelsController.currentState`,
+ * `spec/e2e-capture-modes-plan.md` WPG) is not yet merged, so this still reads [AsrAvailability] —
+ * the same real, non-fabricated signal it always has — per this program's own WPD/WPG split
+ * ("use AsrAvailability as today ... WPE/WPG may refine"). Left open for WPG to report bundled
+ * count and checksum-verified status once that lands.
+ */
+private fun modelsRow(asrState: AsrAvailability.State, onInstallModel: () -> Unit): ReadyRow = when (asrState) {
     is AsrAvailability.State.Available -> ReadyRow(
-        label = "Model",
+        label = "Models",
         value = asrState.modelRef,
         ok = true,
         statusText = "installed",
         actionLabel = null,
     )
     is AsrAvailability.State.Unavailable, AsrAvailability.State.NotYetChecked -> ReadyRow(
-        label = "Model",
+        label = "Models",
         value = "No transcription model yet",
         ok = false,
         statusText = null,

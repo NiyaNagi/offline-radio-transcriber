@@ -38,7 +38,7 @@ import org.ort.pipeline.capture.RigStatus
  *
  * R-344 (validator pass 4, halt): also the destination for S09's third row ("No radio — I will
  * enter the frequency"), routed here rather than straight to S12 so a real value is actually
- * collected — [SetupActivity.onChooseRadio]'s own doc comment has the full account. The button
+ * collected — [SetupActivity.onChooseRig]'s own doc comment has the full account. The button
  * below is disabled until [parseMegahertzToHz] would accept the current text, so neither entry
  * path can proceed with a blank or unparseable frequency (constitution I: never silently lose a
  * fact) — [SetupActivity.onEnterFrequency] guards the same thing again, belt and suspenders.

@@ -6,6 +6,16 @@
          stuck on that screen (found by on-device testing, not any test suite). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- D33/D34, FR-RIG-14, S02c (`Setup-Bluetooth-Permission.dc.html`) — Bluetooth capture mode's
+         "Nearby devices" ask: read the paired-device list and open a serial link to the chosen
+         rig. `BLUETOOTH_CONNECT` is the dangerous, runtime-requested permission from API 31; below
+         that, the normal-protection legacy `BLUETOOTH` permission (granted at install, never
+         prompted) covers the same RFCOMM socket operations, so it is declared with
+         `maxSdkVersion` rather than left to imply a runtime prompt that platform level never
+         shows. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+
     <application
         android:name=".OrtApplication"
         android:allowBackup="false"

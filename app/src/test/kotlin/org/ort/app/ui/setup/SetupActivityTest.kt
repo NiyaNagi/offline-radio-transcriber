@@ -21,9 +21,12 @@ import org.junit.runners.model.Statement
 import org.ort.app.MainActivity
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.navigation.ReaderDestination
+import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
+import org.ort.rig.NullRigModule
+import org.ort.rig.RigTransportKind
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.GraphicsMode
@@ -89,6 +92,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
             .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
@@ -110,11 +114,129 @@ class SetupActivityTest {
     fun `R_080 once Welcome is seen and the microphone is not granted, resumes on Microphone`() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
+            .apply()
         deny(Manifest.permission.RECORD_AUDIO)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> assertEquals(SetupStep.MICROPHONE, activity.currentStepForTest) }
+        }
+    }
+
+    // --- D33 (WPD): SetupStep.MODE is the very first content gate ------------------------------
+
+    @Test
+    fun `D33 welcome seen but no capture mode chosen lands on Mode, before any permission`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.MODE, activity.currentStepForTest) }
+        }
+    }
+
+    /** AC-127 (one of three, local-microphone lane) — S00 presets both axes and setup completes
+     * end to end with no further route/rig decision needed at all. */
+    @Test
+    fun `AC_127_local_microphone_mode_completes_onboarding_end_to_end`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onChooseMode(CaptureMode.LOCAL_MICROPHONE) }
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.INPUT, activity.currentStepForTest)
+                val store = SharedPreferencesSetupStore(
+                    activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                )
+                assertEquals(CaptureMode.LOCAL_MICROPHONE, store.captureMode)
+                // No rig transport at all for local-microphone mode -- FR-CAP-8's own table.
+                assertEquals(null, store.rigTransport)
+            }
+        }
+    }
+
+    /** AC-127 (USB lane) — choosing USB-connected radio proceeds toward Input with the USB preset
+     * applied to the rig-transport axis, no Bluetooth permission ever asked. */
+    @Test
+    fun `AC_127_usb_radio_mode_presets_usb_serial_and_never_asks_for_bluetooth`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onChooseMode(CaptureMode.USB_RADIO) }
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.INPUT, activity.currentStepForTest)
+                val store = SharedPreferencesSetupStore(
+                    activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                )
+                assertEquals(
+                    org.ort.core.capture.RigTransportKind.USB_SERIAL,
+                    store.rigTransport,
+                )
+            }
+        }
+    }
+
+    /** AC-127 (Bluetooth lane) — choosing Bluetooth-connected radio inserts S02c after the
+     * microphone step and presets Bluetooth SPP for the rig, before Bluetooth permission is even
+     * granted (FR-CAP-9: presetting is independent of the permission ask that follows it). */
+    @Test
+    fun `AC_127_bluetooth_radio_mode_inserts_the_nearby_devices_step_after_microphone`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+        grant(Manifest.permission.RECORD_AUDIO)
+        deny(Manifest.permission.POST_NOTIFICATIONS)
+        deny(Manifest.permission.BLUETOOTH_CONNECT)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onChooseMode(CaptureMode.BLUETOOTH_RADIO) }
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.BLUETOOTH_PERMISSION, activity.currentStepForTest)
+                val store = SharedPreferencesSetupStore(
+                    activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                )
+                assertEquals(
+                    org.ort.core.capture.RigTransportKind.BLUETOOTH_SPP,
+                    store.rigTransport,
+                )
+            }
+        }
+    }
+
+    /** D33/S02c — declining flips the mode to USB and proceeds, never a dead end. */
+    @Test
+    fun `D33 declining Bluetooth permission flips the mode to USB and proceeds to Notifications`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.BLUETOOTH_RADIO.name)
+            .apply()
+        grant(Manifest.permission.RECORD_AUDIO)
+        deny(Manifest.permission.POST_NOTIFICATIONS)
+        deny(Manifest.permission.BLUETOOTH_CONNECT)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.BLUETOOTH_PERMISSION, activity.currentStepForTest) }
+            scenario.onActivity { activity -> activity.onDeclineBluetoothPermission() }
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.NOTIFICATIONS, activity.currentStepForTest)
+                val store = SharedPreferencesSetupStore(
+                    activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                )
+                assertEquals(CaptureMode.USB_RADIO, store.captureMode)
+                assertTrue(store.bluetoothPermissionDeclined)
+            }
         }
     }
 
@@ -124,6 +246,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
         prefs.edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
             .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
@@ -150,6 +273,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
         prefs.edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_MIC_REQUESTED, true)
             .apply()
         deny(Manifest.permission.RECORD_AUDIO)
@@ -195,6 +319,29 @@ class SetupActivityTest {
         }
     }
 
+    /**
+     * E2-E15 (`spec/e2e-capture-modes-plan.md` WPD, FR-CAP-12) — `MainActivity`'s `CF11` re-entry
+     * (`EXTRA_STEP = "MODE"`) opens S00 even once setup has fully completed: [SetupStep.MODE]'s
+     * ordinal sits at or before every gate [SetupStateMachine.stepFor] would otherwise resume at,
+     * and once setup is complete that function returns `null` altogether — [tryOpenAtRequestedStep]'s
+     * `naturalNext != null && ...` guard is then vacuously satisfied for any requested step at all,
+     * which is exactly the mechanism this test pins.
+     */
+    @Test
+    fun `E2_E15 EXTRA_STEP MODE opens S00 even once setup is fully complete`() {
+        storeEverySetupGateExceptComplete()
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true).apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val intent = Intent(context, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, SetupStep.MODE.name)
+        ActivityScenario.launch<SetupActivity>(intent).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.MODE, activity.currentStepForTest) }
+        }
+    }
+
     @Test
     fun `R_080 an unrecognised requested step is ignored, falling back to the ordinary resume`() {
         deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
@@ -228,9 +375,11 @@ class SetupActivityTest {
     /**
      * R-125 (validator finding, register R-120..R-125, halt): [RigStatus.State.Absent] discovered
      * *while already on S11* (this test's `RigStatus.absent()` call, standing in for the rig
-     * dropping out entirely between [SetupActivity.onChooseRadio]'s snapshot and the next
-     * recomposition — `onResume`'s own re-check here) must route back to S09 with a banner, never
-     * leave the operator on the blank screen the validator screenshotted.
+     * dropping out entirely between choosing the USB transport and the next recomposition —
+     * `onResume`'s own re-check here) must route back to S09 with a banner, never leave the
+     * operator on the blank screen the validator screenshotted. D33/P19 extends the walk through
+     * S09b (rig transport is now its own decision, FR-RIG-13) rather than landing on S11 directly
+     * from S09 the way the pre-catalogue three-row screen did.
      */
     @Test
     fun `R_125 an Absent rig discovered on S11 routes back to S09 with a banner, never a blank screen`() {
@@ -239,7 +388,15 @@ class SetupActivityTest {
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> activity.onChooseRadio(RadioChoice.TH_D75A) }
+            scenario.onActivity { activity ->
+                val entry = activity.radioCatalogueForTest.entries().first { it.displayName.contains("TH-D75A") }
+                activity.onChooseRig(entry)
+            }
+            scenario.onActivity { activity -> assertEquals(SetupStep.RIG_TRANSPORT, activity.currentStepForTest) }
+            scenario.onActivity { activity ->
+                activity.onSelectRigTransport(RigTransportKind.USB_SERIAL)
+                activity.onConnectRigTransport()
+            }
             scenario.onActivity { activity -> assertEquals(SetupStep.RADIO_VERIFIED, activity.currentStepForTest) }
 
             RigStatus.absent()
@@ -271,6 +428,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
             .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
@@ -281,7 +439,10 @@ class SetupActivityTest {
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> assertEquals(SetupStep.RADIO, activity.currentStepForTest) }
 
-            scenario.onActivity { activity -> activity.onChooseRadio(RadioChoice.NONE) }
+            scenario.onActivity { activity ->
+                val nullEntry = activity.radioCatalogueForTest.entries().first { it.id == NullRigModule.ID }
+                activity.onChooseRig(nullEntry)
+            }
             scenario.onActivity { activity ->
                 assertEquals(
                     "the row tap alone must not already satisfy the RADIO gate -- S10 collects the value",
@@ -314,7 +475,10 @@ class SetupActivityTest {
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> activity.onChooseRadio(RadioChoice.NONE) }
+            scenario.onActivity { activity ->
+                val nullEntry = activity.radioCatalogueForTest.entries().first { it.id == NullRigModule.ID }
+                activity.onChooseRig(nullEntry)
+            }
             scenario.onActivity { activity -> activity.onEnterFrequency(null) }
             scenario.onActivity { activity -> assertEquals(SetupStep.RADIO_USB, activity.currentStepForTest) }
         }

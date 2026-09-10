@@ -4,12 +4,13 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.RigStatus
 
-/** R-080..R-084 (ui-conformance-plan WP9) — [readyRowsFor] builds S12's five rows from real
- * state only ([SetupStore], live battery-exemption, [RigStatus], [AsrAvailability]), never
- * fabricated. Pure, no Compose, no Context. */
+/** R-080..R-084 (ui-conformance-plan WP9), extended by D33/P19 WPD (E2-E13) — [readyRowsFor]
+ * builds S12's rows from real state only ([SetupStore], live battery-exemption, [RigStatus],
+ * [AsrAvailability]), never fabricated. Pure, no Compose, no Context. */
 class ReadyRowsForTest {
 
     private val noOpActions = ReadyActions(
@@ -19,6 +20,7 @@ class ReadyRowsForTest {
         onFixRadio = {},
         onChangeRadio = {},
         onInstallModel = {},
+        onChangeMode = {},
     )
 
     private fun rows(
@@ -27,6 +29,69 @@ class ReadyRowsForTest {
         rigStatus: RigStatus.State = RigStatus.State.Absent,
         asrState: AsrAvailability.State = AsrAvailability.State.NotYetChecked,
     ) = readyRowsFor(store, batteryExempt, rigStatus, asrState, noOpActions)
+
+    // --- D33/E2-E13: the new leading Mode row ----------------------------------------------------
+
+    @Test
+    fun `E2_E13 the Mode row leads the list`() {
+        val row = rows(InMemorySetupStore(captureMode = CaptureMode.USB_RADIO)).first()
+
+        assertEquals("Mode", row.label)
+    }
+
+    @Test
+    fun `E2_E13 no mode chosen renders Not set, honest rather than fabricated, and is not ok`() {
+        val row = rows(InMemorySetupStore(captureMode = null)).first { it.label == "Mode" }
+
+        assertFalse(row.ok)
+        assertEquals("Not set", row.value)
+    }
+
+    @Test
+    fun `E2_E13 Bluetooth mode not overridden reads Bluetooth-connected radio audio by cable, per the board`() {
+        val store = InMemorySetupStore(captureMode = CaptureMode.BLUETOOTH_RADIO, modeOverriddenAudio = false)
+        val row = rows(store).first { it.label == "Mode" }
+
+        assertTrue(row.ok)
+        assertEquals("Bluetooth-connected radio · audio by cable", row.value)
+    }
+
+    @Test
+    fun `E2_E13 local-microphone mode reads room audio`() {
+        val store = InMemorySetupStore(captureMode = CaptureMode.LOCAL_MICROPHONE)
+        val row = rows(store).first { it.label == "Mode" }
+
+        assertEquals("Local microphone · room audio", row.value)
+    }
+
+    @Test
+    fun `E2_E13 an overridden audio route says so rather than the mode's own default segment`() {
+        val store = InMemorySetupStore(captureMode = CaptureMode.BLUETOOTH_RADIO, modeOverriddenAudio = true)
+        val row = rows(store).first { it.label == "Mode" }
+
+        assertEquals("Bluetooth-connected radio · audio route changed", row.value)
+    }
+
+    @Test
+    fun `E2_E13 Change on the Mode row invokes onChangeMode, routing to S00`() {
+        var changed = false
+        val actions = ReadyActions(
+            onFixInput = {},
+            onFixLevel = {},
+            onFixOvernight = {},
+            onFixRadio = {},
+            onChangeRadio = {},
+            onInstallModel = {},
+            onChangeMode = { changed = true },
+        )
+        val store = InMemorySetupStore(captureMode = CaptureMode.USB_RADIO)
+        val row = readyRowsFor(store, false, RigStatus.State.Absent, AsrAvailability.State.NotYetChecked, actions)
+            .first { it.label == "Mode" }
+
+        assertEquals("Change", row.actionLabel)
+        row.onAction?.invoke()
+        assertTrue(changed)
+    }
 
     @Test
     fun `R_081 an unverified input row is amber and offers Fix`() {
@@ -103,6 +168,7 @@ class ReadyRowsForTest {
             onFixRadio = { fixed = true },
             onChangeRadio = { changed = true },
             onInstallModel = {},
+            onChangeMode = {},
         )
         val store = InMemorySetupStore(radioChoice = RadioChoice.NONE, manualFrequencyHz = 145_230_000L)
         val row = readyRowsFor(store, false, RigStatus.State.Absent, AsrAvailability.State.NotYetChecked, actions)
@@ -150,6 +216,7 @@ class ReadyRowsForTest {
             onFixRadio = { fixed = true },
             onChangeRadio = { changed = true },
             onInstallModel = {},
+            onChangeMode = {},
         )
         val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
         val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
@@ -165,8 +232,8 @@ class ReadyRowsForTest {
     }
 
     @Test
-    fun `no model installed renders amber with an Install action, never a fabricated model name`() {
-        val row = rows(asrState = AsrAvailability.State.NotYetChecked).first { it.label == "Model" }
+    fun `E2_E13 no model installed renders amber with an Install action, never a fabricated model name`() {
+        val row = rows(asrState = AsrAvailability.State.NotYetChecked).first { it.label == "Models" }
 
         assertFalse(row.ok)
         assertEquals("Install", row.actionLabel)
@@ -174,8 +241,8 @@ class ReadyRowsForTest {
     }
 
     @Test
-    fun `an available model renders green with its real model reference`() {
-        val row = rows(asrState = AsrAvailability.State.Available("whisper-tiny-en")).first { it.label == "Model" }
+    fun `E2_E13 an available model renders green with its real model reference`() {
+        val row = rows(asrState = AsrAvailability.State.Available("whisper-tiny-en")).first { it.label == "Models" }
 
         assertTrue(row.ok)
         assertEquals("whisper-tiny-en", row.value)

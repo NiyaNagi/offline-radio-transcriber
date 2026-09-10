@@ -105,4 +105,22 @@ class RadioVerifiedScreenTest {
         composeTestRule.onNodeWithTag("setup-radio-verified-change").performClick()
         assert(changed)
     }
+
+    /** E2-E12 (`spec/e2e-capture-modes-plan.md` WPD) — the subtitle names the transport. */
+    @Test
+    fun `E2_E12 the subtitle names the transport when one is supplied`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(
+                    state = connected,
+                    onContinue = {},
+                    onChangeRadio = {},
+                    onReconnect = {},
+                    transportLabel = "Bluetooth SPP",
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Bluetooth SPP · identified and verified").assertIsDisplayed()
+    }
 }

@@ -20,6 +20,17 @@ public data class PermissionsState(
     val recordAudioGranted: Boolean,
     val notificationsGranted: Boolean,
     val isIgnoringBatteryOptimizationsDiagnosticOnly: Boolean,
+    /**
+     * `BLUETOOTH_CONNECT` (API >= 31) — read by [org.ort.app.ui.setup.SetupStateMachine] to gate
+     * [org.ort.app.ui.setup.SetupStep.BLUETOOTH_PERMISSION] in Bluetooth capture mode (D33,
+     * FR-CAP-8, S02c). Below API 31 the dangerous permission does not exist at all — the legacy
+     * `BLUETOOTH` permission is normal-protection and granted at install — so a caller SHALL
+     * report `true` unconditionally on those platform levels rather than ever asking; this field
+     * says only whether the app currently holds what it needs, never which platform level made
+     * that true. Defaulted `true` so every existing call site (test or production) that predates
+     * D33 continues to mean exactly what it always did: "Bluetooth is not blocking this flow".
+     */
+    val bluetoothConnectGranted: Boolean = true,
 )
 
 public object PermissionsFlow {

@@ -15,6 +15,7 @@ import org.ort.app.ui.components.OrtIcons
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.AudioIo
+import org.ort.core.capture.AudioRouteKind
 
 /**
  * One row S04's list renders (`Setup-Input.dc.html`). [id] is [AudioDeviceDescriptor.id] verbatim
@@ -39,6 +40,10 @@ public data class InputRouteOption(
     public val advisory: RouteAdvisory?,
     public val typeLabel: String,
     public val icon: ImageVector? = null,
+    /** D33/FR-CAP-9: the `:core` route kind this option resolves to — what
+     * [org.ort.core.capture.CaptureModePresets.presetsFor] compares against to find "the first
+     * route of the preset kind" for [ModeScreen]'s preset application (`SetupActivity.onChooseMode`). */
+    public val routeKind: AudioRouteKind = AudioRouteKind.UNKNOWN,
 )
 
 /**
@@ -97,6 +102,7 @@ public class InputRouteEnumerator(private val context: Context, private val io: 
                 advisory = resolved.advisory,
                 typeLabel = resolved.label,
                 icon = resolved.icon,
+                routeKind = resolved.routeKind,
             )
         }
     }
@@ -171,7 +177,12 @@ public class InputRouteEnumerator(private val context: Context, private val io: 
  * device type honestly: a name, the guide §7 icon when one already exists for it (`null` when it
  * does not — a real, reported gap, never a substituted wrong icon), and what choosing it discloses
  * ([RouteAdvisory], `null` for a route with nothing to disclose). */
-internal data class ResolvedDeviceType(val label: String, val icon: ImageVector?, val advisory: RouteAdvisory?)
+internal data class ResolvedDeviceType(
+    val label: String,
+    val icon: ImageVector?,
+    val advisory: RouteAdvisory?,
+    val routeKind: AudioRouteKind = AudioRouteKind.UNKNOWN,
+)
 
 /**
  * R-122 (validator finding, register R-120..R-125): names a device by its real Android type,
@@ -226,23 +237,42 @@ internal object DeviceTypeNaming {
 
     fun forAndroidType(type: Int): ResolvedDeviceType = when (type) {
         AudioDeviceInfo.TYPE_BUILTIN_MIC ->
-            ResolvedDeviceType("Built-in microphone", OrtIcons.builtInMic, RouteAdvisory.ROOM_AUDIO)
+            ResolvedDeviceType(
+                "Built-in microphone",
+                OrtIcons.builtInMic,
+                RouteAdvisory.ROOM_AUDIO,
+                AudioRouteKind.BUILT_IN_MIC,
+            )
         AudioDeviceInfo.TYPE_TELEPHONY ->
-            ResolvedDeviceType("Telephony", OrtIcons.call, RouteAdvisory.NOT_A_CAPTURE_SOURCE)
+            ResolvedDeviceType("Telephony", OrtIcons.call, RouteAdvisory.NOT_A_CAPTURE_SOURCE, AudioRouteKind.UNKNOWN)
         AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_ACCESSORY ->
-            ResolvedDeviceType("USB audio", OrtIcons.usbAudio, null)
-        AudioDeviceInfo.TYPE_WIRED_HEADSET -> ResolvedDeviceType("Wired headset", OrtIcons.headset, null)
+            ResolvedDeviceType("USB audio", OrtIcons.usbAudio, null, AudioRouteKind.USB)
+        AudioDeviceInfo.TYPE_WIRED_HEADSET ->
+            ResolvedDeviceType("Wired headset", OrtIcons.headset, null, AudioRouteKind.WIRED_HEADSET)
         AudioDeviceInfo.TYPE_BLUETOOTH_SCO ->
-            ResolvedDeviceType("Bluetooth", null, RouteAdvisory.BLUETOOTH_DEGRADED)
-        else -> ResolvedDeviceType("Unrecognised device type $type", genericDevice, RouteAdvisory.UNRECOGNISED_TYPE)
+            ResolvedDeviceType("Bluetooth", null, RouteAdvisory.BLUETOOTH_DEGRADED, AudioRouteKind.BLUETOOTH_SCO)
+        else -> ResolvedDeviceType(
+            "Unrecognised device type $type",
+            genericDevice,
+            RouteAdvisory.UNRECOGNISED_TYPE,
+            AudioRouteKind.UNKNOWN,
+        )
     }
 
     fun forKind(kind: AudioDeviceKind): ResolvedDeviceType = when (kind) {
         AudioDeviceKind.BUILT_IN_MIC ->
-            ResolvedDeviceType("Built-in microphone", OrtIcons.builtInMic, RouteAdvisory.ROOM_AUDIO)
-        AudioDeviceKind.USB_DEVICE -> ResolvedDeviceType("USB audio", OrtIcons.usbAudio, null)
-        AudioDeviceKind.WIRED_HEADSET -> ResolvedDeviceType("Wired headset", OrtIcons.headset, null)
-        AudioDeviceKind.BLUETOOTH -> ResolvedDeviceType("Bluetooth", null, RouteAdvisory.BLUETOOTH_DEGRADED)
-        AudioDeviceKind.UNKNOWN -> ResolvedDeviceType("Unknown", genericDevice, RouteAdvisory.UNRECOGNISED_TYPE)
+            ResolvedDeviceType(
+                "Built-in microphone",
+                OrtIcons.builtInMic,
+                RouteAdvisory.ROOM_AUDIO,
+                AudioRouteKind.BUILT_IN_MIC,
+            )
+        AudioDeviceKind.USB_DEVICE -> ResolvedDeviceType("USB audio", OrtIcons.usbAudio, null, AudioRouteKind.USB)
+        AudioDeviceKind.WIRED_HEADSET ->
+            ResolvedDeviceType("Wired headset", OrtIcons.headset, null, AudioRouteKind.WIRED_HEADSET)
+        AudioDeviceKind.BLUETOOTH ->
+            ResolvedDeviceType("Bluetooth", null, RouteAdvisory.BLUETOOTH_DEGRADED, AudioRouteKind.BLUETOOTH_SCO)
+        AudioDeviceKind.UNKNOWN ->
+            ResolvedDeviceType("Unknown", genericDevice, RouteAdvisory.UNRECOGNISED_TYPE, AudioRouteKind.UNKNOWN)
     }
 }

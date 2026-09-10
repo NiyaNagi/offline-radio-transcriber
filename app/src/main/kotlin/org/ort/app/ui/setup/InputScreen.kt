@@ -60,6 +60,7 @@ public fun InputScreen(
             )
         },
     ) {
+        state.presetLabel?.let { PresetChip(modeLabel = it, modifier = Modifier.testTag("setup-input-preset-chip")) }
         if (state.routes.isEmpty()) {
             Text(
                 text = "No input devices were found. Connect the radio's audio adapter and tap Refresh.",
