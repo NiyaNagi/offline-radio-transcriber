@@ -32,6 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (ui-conformance WP10 round: R-760 storage-bar empty-track rounding, R-761 Whisper-family install row collapsed to one part at a time)
+
+### (pending) — ui-conformance WP10 round · R-760 the storage bar's own "is this empty" decision now matches the legend's rounding; R-761 the not-installed Whisper family shows one nested row, not three, and the test that missed it fixed alongside
+
+**Scope:** `:app` — `ui/settings/SettingsStorageScreen.kt`, `ui/screens/ModelsScreen.kt`, and both
+files' tests. `git merge main` (fast-forward to `2abff64`, no conflicts) brought in the
+confirmation sweep that judged every previously-"fixed" register row against current captures and
+found these two still broken.
+
+**Requirements/ACs:** R-760 (register, halt, confirmation sweep — fixed); R-761 (register, design,
+confirmation sweep — fixed); FR-AST-1/FR-AST-4 (asset install rows).
+
+**What changed:**
+- **Constitution Check.** Principle I governs both: R-760 is an empty store's own bar visually
+  claiming the opposite of what every one of its legend entries says; R-761 is a test that read as
+  passing evidence while the real screen it was meant to guard showed something else entirely —
+  silence one level removed, a false "this is covered" signal rather than a false UI claim.
+- **R-760 — `StorageCategoryBreakdown`'s empty-track guard now matches the legend's own rounding.**
+  R-441's own fix (`realTotalBytes > 0L`) checked the raw byte sum, not what the operator actually
+  reads. `overnight/CF03-settings-storage.png` showed a real device with *every* category's own
+  legend entry reading "0.0 GB" still filling the bar almost entirely amber — the real cause: an
+  on-disk SQLite file is never literally zero bytes (page-header overhead alone guarantees a
+  handful of KB) even with nothing written to it, so `Records`' own real byte count was small
+  enough to round to "0.0 GB" in its legend entry but still large enough, next to three genuinely-
+  zero categories each floored to `coerceAtLeast(1L)`, to claim effectively the whole weighted
+  total — one category filling the bar while every legend entry, its own included, claims nothing
+  does. The guard now reads `realTotalBytes.toGigabyteLabel() != "0.0 GB"` instead of a raw byte
+  comparison, so the bar and the legend can never disagree about whether there is anything to show.
+- **R-761 — the not-installed Whisper family row nests one part's actions, not three.** Round 7's
+  own grouping fix (R-140) collapsed the three-part family into one *header* row correctly, but
+  then rendered one full sub-row — two actions each (`Download`, `Install from a file`) — **per
+  still-missing part**: three rows, six buttons, on a clean install
+  (`model-missing/CF04-settings-assets.png`), instead of `Settings-Assets.dc.html`'s own single-
+  row-per-asset shape. The real constraint the board's own mockup never has to show: encoder/
+  decoder/tokens genuinely are three separate files, so no single tap installs all three — but an
+  operator sideloading three files does that three separate times regardless of how many buttons
+  are on screen at once. `GroupedAssetRow` now shows exactly the *next* still-missing part's own
+  actions (`missing.firstOrNull()`), not one nested row per part; `subLine` still honestly names
+  how many parts remain, and the row re-renders with the next part's own actions the moment one
+  fewer is missing.
+- **`R_443_clean_install_groups`'s own premise, fixed.** What it was actually asserting, before
+  this round: only that *no loose, ungrouped per-file row* existed (a literal, standalone
+  `"Whisper tiny.en — encoder not installed. not installed"` description) — true both before and
+  after this fix, so it passed throughout without ever looking at what the grouped row's own
+  *nested* content was. It now also asserts the actual R-761 shape directly: the next-missing
+  part's (`encoder`'s) own actions exist, and decoder's/tokens' do not — the real defect a clean
+  install showed. `R_140 the three Whisper files render as one grouped row…` carried the identical
+  wrong premise (asserted encoder's *and* tokens' actions both existed at once) and is fixed the
+  same way, since it would otherwise now contradict the fix directly.
+- Confirmed both fixes' own discriminating power directly: reverted each change in turn and
+  re-ran its new/updated tests — R-760's `R_760` case failed (0 segments expected, 4 found);
+  R-761's `R_140`/`R_443` cases failed (`assertDoesNotExist` found decoder's own row still
+  rendering) — then restored both and re-ran green.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.settings.SettingsStorageScreenTest` —
+  green, including new `R_760 a store whose real total rounds to the same 0-0 GB the legend shows
+  draws only the empty track` and `R_760 a store with real values that do not round to 0-0 GB still
+  renders its segments`.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.screens.ModelsScreenTest` — green,
+  including the fixed `R_443_clean_install_groups` and `R_140 the three Whisper files render as one
+  grouped row…`.
+- Regression-discrimination checks (temporary reverts, both restored before this commit) — see
+  "What changed" above.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+- `.\gradlew.bat dependencyRules platformGuards` — green.
+- `.\gradlew.bat :app:assembleDebug` — green.
+- `python tools\spec-check\spec_check.py` — 8/8.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — 192/419, up
+  to date.
+
+**Left open / not done:** neither fix re-verified on a real device or emulator this round (no
+device access as a builder — the register's own next validator/recapture pass owns that); R-761's
+fix means the operator now sideloads a not-yet-installed Whisper family's three parts strictly one
+at a time (the row's own actions advance to the next part only once the one before it installs) —
+a deliberate, documented trade-off against showing all three at once, not an oversight.
+
+---
+
 ## 2026-09-10 (ui-conformance WP9: R-612 investigated — the diagnosis was wrong, reported honestly)
 
 ### (pending) — ui-conformance WP9 · R-612: not a header/scroll overlap — a device-verified diagnostic found the real shape of the defect

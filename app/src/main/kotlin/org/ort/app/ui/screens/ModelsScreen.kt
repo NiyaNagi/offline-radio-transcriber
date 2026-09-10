@@ -380,12 +380,27 @@ private fun AssetRow(
     }
 }
 
-/** R-140 (register, round 7 System validator pass 3): a multi-file model family (today, only the
+/**
+ * R-140 (register, round 7 System validator pass 3): a multi-file model family (today, only the
  * Whisper tiny.en encoder/decoder/tokens split) as one row — the board's own
  * `whisper-small-int8`/`whisper-tiny-en-int8` pattern — instead of one full [AssetRow] per file.
  * The family's marker/`active` tag reflect every part together, never claiming installed while a
- * part is still missing (constitution I); each still-missing part keeps its own real action
- * (`Download`/`Install from a file`) nested beneath, so nothing reachable before is now hidden. */
+ * part is still missing (constitution I).
+ *
+ * R-761 (register, design, confirmation sweep): round 7's own fix collapsed the family into one
+ * *header* row but then rendered one full sub-row **per still-missing part** beneath it — three
+ * rows, two actions each, six buttons total on a clean install (`model-missing/CF04-settings-
+ * assets.png`) — instead of `Settings-Assets.dc.html`'s own single-row-per-asset shape (one
+ * marker, its trailing action(s), nothing nested beneath it). The real constraint the board's own
+ * mockup never has to show: encoder/decoder/tokens genuinely are three separate files, so no
+ * single tap can install all three at once the way a true single-file row's own actions can — but
+ * an operator sideloading three files does that three separate times regardless of how many
+ * buttons are on screen at once. [missing]`.firstOrNull()` is what changed: this row now shows
+ * exactly *one* still-missing part's own actions at a time (the same `Download`/`Install from a
+ * file` pair [AssetRow] already offers a single file, just addressed at whichever part is next),
+ * not one nested row per part — [subLine] still honestly names how many parts remain, and the row
+ * itself re-renders with the *next* missing part's actions the moment [parts] reports one fewer.
+ */
 @Composable
 private fun GroupedAssetRow(
     familyLabel: String,
@@ -443,7 +458,9 @@ private fun GroupedAssetRow(
                 StagedBadgeText(staged)
             }
         }
-        missing.forEach { part ->
+        // R-761: exactly one nested row, for the next still-missing part only — see this
+        // composable's own doc comment for why three (one per part) is not shown at once.
+        missing.firstOrNull()?.let { part ->
             Row(
                 modifier = Modifier.padding(top = OrtSpacing.xs, start = MARKER_COLUMN_WIDTH),
                 horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),

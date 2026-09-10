@@ -292,12 +292,24 @@ class ModelsScreenTest {
         composeTestRule.onNodeWithText("Whisper tiny.en (speech to text)").assertExists()
         composeTestRule.onNodeWithText("Silero VAD (voice activity)").assertExists()
         // Never installed as a group — no `active` tag ([org.ort.app.ui.components.Badge] renders
-        // its text uppercased), and the per-part actions this screen could always do stay
-        // reachable, just nested under the one family row rather than three loose ones.
+        // its text uppercased).
         composeTestRule.onNodeWithText("ACTIVE").assertDoesNotExist()
+        // R-761 (register, design, confirmation sweep): the per-part actions used to nest one full
+        // row — two actions each — per still-missing part (three rows, six buttons, on a clean
+        // install), instead of `Settings-Assets.dc.html`'s own single-row-per-asset shape. Only the
+        // *next* missing part's own actions are reachable at a time now — [ModelId.ASR_ENCODER]'s,
+        // first in family order — never a second nested row for [ModelId.ASR_DECODER]/
+        // [ModelId.ASR_TOKENS] while encoder is still missing; each becomes reachable in turn once
+        // the part ahead of it installs.
         composeTestRule.onNodeWithContentDescription("Download Whisper tiny.en — encoder").assertExists()
-        composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — tokens from a file").assertExists()
-        // R-093/FR-AST-1: the checksum-unknown tokens file never offers Download, grouped or not.
+        composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — encoder from a file").assertExists()
+        composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — decoder from a file")
+            .assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — tokens from a file")
+            .assertDoesNotExist()
+        // R-093/FR-AST-1: the checksum-unknown tokens file never offers Download, grouped or not —
+        // moot here (tokens is not the next-missing part), but still real: encoder's own real
+        // checksum status, not a stand-in for the family's.
         composeTestRule.onNodeWithContentDescription("Download Whisper tiny.en — tokens").assertDoesNotExist()
     }
 
@@ -337,6 +349,21 @@ class ModelsScreenTest {
         composeTestRule
             .onAllNodesWithContentDescription("Whisper tiny.en — encoder not installed. not installed")
             .assertCountEquals(0)
+
+        // R-761 (register, design, confirmation sweep): this test's own premise, before this round,
+        // stopped at "no *loose*, ungrouped per-file row exists" — true both before and after this
+        // fix, so it passed throughout, but it never checked what the grouped row's own *nested*
+        // content actually was. What a real clean install showed (`model-missing/CF04-settings-
+        // assets.png`) was the header row correctly proven above, plus one full nested row **per
+        // still-missing part** underneath it — three rows, two actions each, six buttons in total —
+        // instead of `Settings-Assets.dc.html`'s own single-row-per-asset shape. That is the actual
+        // defect this test now also proves fixed: exactly one nested part's actions reachable at a
+        // time (encoder's, first in family order), not three.
+        composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — encoder from a file").assertExists()
+        composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — decoder from a file")
+            .assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — tokens from a file")
+            .assertDoesNotExist()
     }
 
     @Test
