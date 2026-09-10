@@ -32,6 +32,39 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance phase G — close-out)
+
+### (this commit) — ui-conformance · phase G close-out: final gate green at e24b9ef, register 327 rows (202 closed, 121 fixed, 4 not closed), design-intent all drawn + built
+
+**Scope:** `spec/ui-conformance-plan.md` (Phase G close-out record), `design/design-intent.md` (statuses, accepted
+deviations), `results/ui-audit/` (register, tour-manifest, captures), memory. No product code in this commit.
+
+**Requirements/ACs:** none new — this entry records the state every `ui-conformance` entry below adds up to. The
+program's product work cites its ids in those entries (FR-UI-1..12, FR-UI-4 attribution states, FR-A11Y-1..4,
+FR-CAP-2/3, FR-STO-1..8, FR-AST-4/6, FR-RUN-9/12/16, FR-DIG, FR-OBS-1..5a, FR-SPK-10, FR-REP, P4, P7–P11).
+
+**What changed:** the audit that began on 2026-09-07 (design canvas → register → twelve work packages → seven
+validator sets → in-process screenshot tour + parallel capture reviewers) is closed. Every screen and state in
+`design/design-intent.md` is `drawn + built`; nine accepted deviations are recorded in their status cells with the
+register row that decided each. The register holds 327 findings: 202 closed on a device or a committed capture,
+121 fixed and confirmed by a later capture of the same screen, and four not closed — R-220/R-280/R-340 (the ghost
+secondary action on two-button Setup screens, bisected to the AVD's software renderer; needs the reference phone or a
+`-gpu host` AVD) and R-381 (the Search field's own `EditText` node exports an empty description; the child carries the
+label; three device-verified shapes tried, next candidate in WP2's entry below). The final screenshot set is tour
+run 5 (`tools/ui-audit/tour.json`, 142 steps at 1.0 and 2.0 incl. scrolled-to-end frames) plus the `*-vfinal.png`
+interactive evidence.
+
+**Verified:** on main `e24b9ef`, quiet machine: `.\gradlew.bat build dependencyRules platformGuards` → exit 0 in
+479 s (lint, `:app:testDebugUnitTest` 1,365 tests / 0 failures, `:app:smokeTestDebugUnitTest` 110 / 0, every other
+module's suite green); `.\gradlew.bat -p buildSrc test` → exit 0; `python tools\spec-check\spec_check.py` → 8/8;
+`coverageMatrix` then `coverageMatrixCheck` → up to date, 192 of 419 ids covered. Tour run 5 on `emulator-5558`
+(AVD `ort_audit_3`, API 34, swiftshader): 142/142 steps ok. V-final on `emulator-5556`: eight checks, no new finding.
+
+**Left open / not done:** R-220/280/340 hardware check (user); R-381 search-field node; FR-RIG remains unbuilt (S10/S11
+honest fallbacks); `ModelsContent.kt` kdoc still names the staged-swap auto-activation gap when no screen is open;
+`testDebugUnitTest` wall time is ~5 min at `forkEvery = 4` (a larger safe value was not hunted); the three near-identical
+bar scaffolds (Failure/Setup/Welcome) were not consolidated into one WP2 component.
+
 ## 2026-09-09 (poison hunt 2: full-suite gate green again — 1365 tests, 0 failures, 4m 57s)
 
 ### (pending) — poison hunt 2 · four accumulator classes isolated, on-disk ort.db leak closed at three WP8 call sites, forkEvery 40 -> 4

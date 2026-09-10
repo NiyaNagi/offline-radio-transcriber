@@ -157,6 +157,37 @@ Register empty. `CHANGELOG.md` has one entry per merged package. `design-intent.
 `drawn` + `built`. `results/ui-audit/` holds the final screenshot set per screen per scenario.
 Memory updated.
 
+#### Close-out record (2026-09-09, main `e24b9ef`)
+
+- **Gate.** `./gradlew build dependencyRules platformGuards` green in 479 s (lint, `:app`
+  `testDebugUnitTest` 1,365 / 0, `smokeTestDebugUnitTest` 110 / 0), `-p buildSrc test` green,
+  `spec_check.py` 8 / 8, `coverageMatrix` + `coverageMatrixCheck` up to date (192 of 419 ids).
+- **Register** (`results/ui-audit/register.md`): 327 rows — 202 closed on a device or a committed
+  capture, 121 fixed by a builder and confirmed by a later capture of the same screen, 4 not closed:
+  - R-220 / R-280 / R-340 — a faint duplicate of the secondary action below the status bar on
+    two-button Setup screens. Bisected to centred text on the AVD's software renderer; never seen
+    on S01 (single button). **Needs a run on the reference phone or a `-gpu host` AVD** before it
+    is called a product defect.
+  - R-381 (partial) — the Search field's own `EditText` node exports an empty description; its
+    child carries "Search text", which TalkBack reads. Three device-verified shapes failed; the
+    next candidate is recorded in the CHANGELOG.
+- **Accepted deviations** are recorded in the status cell of `design/design-intent.md`: S10, S11
+  (FR-RIG unbuilt), CF03 (GB budget per FR-STO-3/D26; retention-order row stacks at ≥ 1.3 font
+  scale), CF09 (bundle preview as a list), CF10 (no third-party version lines), DG04 (Input/Models
+  not tracked per session), F21 (two of three options), Q04 (empty widen categories omitted),
+  ST04 ("stable since" is the cluster's first-seen date).
+- **Evidence.** Five in-process tour runs (`tools/ui-audit/tour.json`, 142 steps: every screen
+  and failure state at font scale 1.0 and 2.0, scrolled-to-end frames for the long screens, the
+  station sub-screens), five parallel capture-review rounds, seven validator sets with up to five
+  device passes each, one final interactive sweep (`*-vfinal.png`). 797 PNGs under
+  `results/ui-audit/`; the run-5 set (`tour-manifest.json`) is the final screenshot set.
+- **Process lessons** are in the CHANGELOG entries for cb1d8cd and the second poison hunt
+  (`7ac846b`): Compose tests that leave a poller, a file-backed `OrtDatabase` or an
+  `AndroidComposeRule` activity alive poison the shared Robolectric JVM; such classes live in
+  `smokeTestDebugUnitTest` (`forkEvery = 1`), and the main task runs `forkEvery = 4`.
+  `clearAndSetSemantics` on a clickable must also redeclare `text`, or every text matcher and the
+  chip's dismiss node disappear (R-380/R-381/R-543).
+
 ## Concurrency and safety
 
 - **Worktrees.** Every builder runs in `isolation: worktree`. The lead merges to `main` in
