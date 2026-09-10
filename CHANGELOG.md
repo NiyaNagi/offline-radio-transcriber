@@ -32,6 +32,119 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPH part 1: the LLM contract, MediaPipe engine and prose digest gate/generator)
+
+### (pending) — llm: llm-api contract, MediaPipe engine, prose digest gate/generator/store, in-memory pending :data v8
+
+**Scope:** `llm-api/src/**` (new: `LlmEngine`, `LlmState`, `LlmLoadResult`, `LlmRequest`,
+`LlmResult`, `CallsignShapeFilter`, `FakeLlmEngine`), `llm-mediapipe/src/**` (new:
+`MediaPipeLlmEngine`), new `pipeline/src/main/kotlin/org/ort/pipeline/digest/**`
+(`ProseSummary`, `ProseSummaryStore`/`InMemoryProseSummaryStore`/`FakeProseSummaryStore`,
+`ThreadDigestInput`/`TimestampedTranscript`/`ProsePromptBuilder`, `ProseDigestGenerator`,
+`ProseDigestGate`/`ProseDigestDeviceSignals`/`FakeProseDigestDeviceSignals`,
+`ProseDigestSettings`, `ProseDigestReadApi`) and their tests under `pipeline/src/test`;
+`llm-api/build.gradle.kts`, `llm-mediapipe/build.gradle.kts`, `pipeline/build.gradle.kts`
+(test-dependency additions only — `kotlinx-coroutines-test`, `turbine`, `kotlin("reflect")`, the
+Robolectric/JUnit4-vintage set already used elsewhere in the module). Build-plan P21, package WPH.
+
+**Requirements/ACs:** FR-DIG-3, FR-DIG-3a, FR-DIG-3b, FR-DIG-4, FR-DIG-5, FR-DIG-6, FR-DIG-11,
+FR-DIG-12, AC-84, AC-86, AC-87, AC-138, AC-140, R16, D5, D36. Checklist rows E2-I01..I05, E2-I07
+closed this session (unit-tested, listed under Verified); E2-I06 (hardware H11, the real
+on-device MediaPipe load) and E2-A03 (the `prose_summary` table) remain open per their own rows.
+
+**What changed:**
+
+*Constitution Check.* I — every `LlmState`/`LlmResult` is a closed, non-optional sealed type,
+and `CallsignShapeFilter` sacrifices recall (an occasional false-positive refusal, documented
+against a band abbreviation like `20m`) rather than ever letting an invented callsign through.
+II — `FakeLlmEngine` can hang (via `awaitCancellation`, cancelled explicitly in each hang test),
+fail to load, exceed its requested token budget, and deliberately invent a callsign outside the
+allowed set; one test exists per failure mode, plus `FR_DIG_4_filter_rejects_invented_callsign`
+built on the last one, and the filter's rejection was shown to discriminate (see Verified). IV —
+`:llm-api`/`:llm-mediapipe` remain off `:capture-*`'s dependency graph (unchanged from WP0';
+`dependencyRules` still forbids the edge, re-confirmed below). V — the LLM never touches the
+callsign path (D5): `CallsignShapeFilter` runs on already-generated text against an
+already-resolved callsign set, never the reverse, and nothing in this change adds a network call
+anywhere (`:llm-api` and `:llm-mediapipe` link no HTTP client; `platformGuards` green).
+
+- **`:llm-api`**: `LlmEngine` (`load`/`generate`/`release`/`state: StateFlow<LlmState>`),
+  `LlmState` (`Unloaded`/`Loading`/`Ready(residentBytesEstimate)`/`Failed(reason)`),
+  `LlmLoadResult`, `LlmRequest(prompt, maxTokens, allowedCallsigns)`, `LlmResult`
+  (`Text`/`Refused`/`Failed`). **`CallsignShapeFilter`**: `:llm-api` may depend only on `:core`
+  (`ModuleGraph.allowed`), so `:lexicon`'s real callsign grammar is unreachable from here — this
+  implements its own conservative, case-insensitive mirror of `:lexicon`'s
+  `LexiconImportValidator.CALLSIGN_SHAPE` regex (`^[A-Za-z0-9]{1,3}[0-9][A-Za-z]{1,4}$`), stated
+  in its own doc comment as a deliberate non-reuse, not an oversight. **`FakeLlmEngine`**:
+  scriptable `LoadBehavior`/`GenerateBehavior` enums covering hang, fail, exceed-token-budget,
+  invent-callsign, refuse and fail-to-generate.
+- **`:llm-mediapipe`**: `MediaPipeLlmEngine(context, modelPath, maxTokens)` over
+  `com.google.mediapipe.tasks.genai.llminference.LlmInference` — loads lazily on the first
+  `load()` call (never at construction, so a T0/T1/T2 device that never calls it never pays the
+  cost, FR-AST-3a), maps every exception to `LlmState.Failed`/`LlmResult.Failed`, estimates
+  resident bytes from the model file's size on disk (stated as an estimate, not a measurement —
+  constitution VI), and is doubly defensive on `release()` (swallows even `LlmInference.close()`
+  throwing).
+- **`pipeline/digest`**: `ProseSummaryStore` (interface) + `InMemoryProseSummaryStore` (the
+  production stand-in until `:data`'s v8 migration lands) + `FakeProseSummaryStore` (can be told
+  to fail a `store()` call). `ProsePromptBuilder` renders `ThreadDigestInput(threadId,
+  resolvedCallsigns, transcripts)` — FR-DIG-12's closed field list, enforced as a reflection test
+  over the data class's declared properties, not just a behavioural check on the rendered string.
+  `ProseDigestGenerator` produces one summary per thread, runs `CallsignShapeFilter` on every
+  generated text, and stores **only** filtered results (a refusal or engine failure is returned to
+  the caller but never reaches the store). `ProseDigestGate.evaluate` — idle ∧ charging ∧
+  `!isCapturing` (defaulting to the real `CaptureState.isCapturing`) ∧ `tier == T3` ∧ `enabled`,
+  returning every violated conjunct, not just the first. `ProseDigestSettings` — `setEnabled(false,
+  engine)` calls `engine.release()` *before* publishing the new value, so a reader of `enabled`
+  can never observe "disabled" while the engine is still resident. `ProseDigestReadApi` — a
+  read-only `threadId -> ProseSummary` projection for `:app`'s DG05.
+
+**The public API `:app` will read:** `org.ort.llm.LlmState` (via any `LlmEngine.state`),
+`org.ort.pipeline.digest.ProseDigestSettings` (`enabled: StateFlow<Boolean>`, `setEnabled`),
+`org.ort.pipeline.digest.ProseDigestReadApi` (`summaryForThread`, `summariesForThreads`) —
+constructed today as `ProseSummaryStoreReadApi(store)` over whichever `ProseSummaryStore` is
+wired in (`InMemoryProseSummaryStore` until the `:data` migration lands).
+
+**Verified:**
+- `./gradlew :llm-api:test` — **BUILD SUCCESSFUL**, 12 tests green (`FakeLlmEngineTest` ×6,
+  `CallsignShapeFilterTest` ×6, including `FR_DIG_4_filter_rejects_invented_callsign`).
+- `./gradlew :llm-mediapipe:testDebugUnitTest` — **BUILD SUCCESSFUL**, 4 tests green
+  (`E2_I06 missing model path yields Failed state without throwing` plus release/generate/
+  construction guards), on Robolectric.
+- `./gradlew :pipeline:testDebugUnitTest` — **BUILD SUCCESSFUL**, full existing pipeline suite
+  plus 26 new tests in `org.ort.pipeline.digest.*` green, including
+  `AC_140_deterministic_digest_unchanged_with_engine_disabled`,
+  `FR_DIG_12_thread_digest_input_field_list_is_closed`, and every `ProseDigestGate` conjunct
+  falsified individually (`FR_DIG_5_blocked_when_not_idle`/`_not_charging`/`_capturing`,
+  `AC_138_blocked_when_tier_is_below_t3`, `FR_DIG_3b_blocked_when_disabled`).
+- **Discrimination proof (constitution II):** temporarily forced `CallsignShapeFilter.filter`'s
+  offending-token match to `&& false` (never rejecting) and re-ran
+  `:llm-api:test --tests org.ort.llm.CallsignShapeFilterTest` — **3 tests FAILED**,
+  `FR_DIG_4_filter_rejects_invented_callsign` among them, each with the exact
+  `expected: <true> but was: <false>` the disabled rejection predicts. Reverted the `&& false`;
+  the same command then reported all 6 green again.
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 8m 40s** (1088
+  actionable tasks); `dependencyRules: OK` (still forbids every `:capture-* -> :llm-*` edge —
+  unchanged from WP0', re-confirmed by this run rather than re-proved, since this session added
+  no new edge to check) and `platformGuards: OK`.
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 204 covered` (was 196 before this change — 8
+  newly covered: FR-DIG-4, FR-DIG-5, FR-DIG-11, FR-DIG-12, AC-87, AC-138, AC-140, plus one more
+  picked up incidentally). `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** **E2-A03 / the `:data` v8 migration** — `ProseSummaryStore` is
+in-memory only in this commit; the lead confirmed WPC1's v7 schema has since merged to `main`
+(commit `2644c02`), so the `prose_summary` table as migration 7→8, a Room-backed
+`ProseSummaryStore`, and the `MigrationTest` extension to v8 land in the next commit on this
+branch, after merging `main`. **E2-I06 / hardware H11** — the real on-device MediaPipe load
+(a real `.task` file, real generation, measured resident memory against the T3 budget) is the
+operator's hardware protocol; nothing in this session's tests exercises the real native runtime,
+only `MediaPipeLlmEngine`'s guards ahead of it. `ProseDigestGate`'s `ProseDigestDeviceSignals`
+(idle/charging) has no production Android implementation yet — wiring a real one is for whichever
+package owns the settings/status screens (WPE/WPF) that will call `ProseDigestGate.evaluate`.
+
+---
+
 ## 2026-09-10 (WP0': Wave F module scaffolding — llm-api, llm-mediapipe, rig-bluetooth)
 
 ### (pending) — wave F scaffolding · three new modules wired empty for P19/P20's parallel builders

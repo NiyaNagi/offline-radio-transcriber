@@ -38,6 +38,11 @@ dependencies {
     testImplementation(project(":testing"))
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
+    testImplementation(libs.turbine)
+    // WPH (build-plan P21): ProsePromptBuilderTest's FR_DIG_12 closed-field-list check reflects
+    // over ThreadDigestInput's declared properties, the same reason :segment's own build.gradle.kts
+    // already carries this for its AC-94 constructor-signature check.
+    testImplementation(kotlin("reflect"))
     // :data's Room types (OrtDatabase, its DAOs) are used directly in this module's tests
     // (PassDrainRunnerTest, GapPersisterTest) — :data itself only has `implementation` on Room,
     // so it is not on this module's classpath transitively without a matching test dependency.
