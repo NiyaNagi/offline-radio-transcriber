@@ -317,11 +317,40 @@ public class WorkQueueTest {
             // classic framework SQLite driver used — confirmed empirically at this exact call site.
             threw = e.message?.contains("UNIQUE constraint failed") == true
         }
+        // CI cross-platform diagnostic task, this round: does the *identical* duplicate insert
+        // throw when issued as raw SQL straight through the driver, bypassing Room's generated DAO
+        // adapter entirely? Run unconditionally (not just on failure) so this prints on every
+        // platform, including the Windows run this test already passes on, for a direct comparison
+        // against whatever Linux CI reports next. Its own SAVEPOINT/ROLLBACK TO means it never
+        // leaves a row behind for the assertion below.
+        val rawProbe = SqliteDiagnostics.rawDuplicateInsertProbe(
+            db,
+            "WorkQueueTest.the_active_state_index_does_not_restrict...",
+            "INSERT INTO work_queue_item (transmissionId, pass, state, priority, attemptCount, lastError, " +
+                "shedLevel, leaseRunId, deadlineAt, enqueuedAt, startedAt) VALUES ('TX1', 'B_OFFLINE', " +
+                "'LEASED', 0, 0, NULL, 0, NULL, NULL, 3, NULL)",
+        )
+        println(rawProbe)
         // CI cross-platform diagnostic task: on failure, fold the same evidence
         // SqliteDiagnostics.report already printed into the assertion message itself, so the
         // index listing that disproves the constraint travels with the failure, not just the log.
+        // This round adds the decisive question: what is actually in `work_queue_item` for TX1
+        // after the third insert that was supposed to fail? Row count alone distinguishes "three
+        // rows, index not enforcing" from "two rows, the second write replaced rather than
+        // inserted"; typeof(state) catches a binding/affinity difference the row's own value would
+        // hide.
         val evidence = if (!threw) {
-            SqliteDiagnostics.report(db, "FAILURE: the_active_state_index_does_not_restrict...")
+            SqliteDiagnostics.report(db, "FAILURE: the_active_state_index_does_not_restrict...") +
+                SqliteDiagnostics.dumpRows(
+                    db,
+                    label = "FAILURE: the_active_state_index_does_not_restrict...",
+                    table = "work_queue_item",
+                    selectSql = "SELECT rowid, transmissionId, pass, state, typeof(state) FROM work_queue_item " +
+                        "WHERE transmissionId = ?",
+                    transmissionId = "TX1",
+                    columnLabels = listOf("rowid", "transmissionId", "pass", "state", "typeof(state)"),
+                ) +
+                rawProbe
         } else {
             ""
         }
