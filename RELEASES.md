@@ -23,7 +23,14 @@ transcribing works with actual models built in. See `RELEASING.md`.
 
 ## Unreleased
 
-Nothing recorded yet — this section fills in as work lands after v0.1.1.
+Everything in v0.1.1 below, plus the items here. This is what the rolling "latest build"
+prerelease contains.
+
+### Known issues
+
+- The storage bar in Settings draws as almost full when nothing is stored yet, which is the
+  opposite of the truth. A fix is in progress.
+- The model list in Settings shows three rows per transcription model instead of one.
 
 ---
 
@@ -86,8 +93,10 @@ below); what this release proves is the reader you will use once there is.
 
 ### Fixed
 
-- Over 300 differences between the built app and its intended design were found by a full
-  screen-by-screen audit and corrected — duplicate headers, missing icons, broken "back"
+- A full screen-by-screen audit catalogued 338 differences between the built app and its
+  intended design, and 305 of them are fixed and confirmed against a screenshot of the built
+  screen. The rest are listed under Known issues or are waiting on a check we can only do on
+  real hardware. Fixed along the way: duplicate headers, missing icons, broken "back"
   navigation that used to lose your search filters, text colliding at large font sizes, and the
   live-capture status bar overlapping content it should have made room for, among many others.
 - Fixed a bug where reopening the app during a running recording session could show a stale or
@@ -100,9 +109,10 @@ below); what this release proves is the reader you will use once there is.
   recording session yet.
 - Radio/rig support has not been built yet. Setup's rig-connection step falls back to entering
   your frequency by hand instead of reading it from a connected radio.
-- On some emulators, a faint duplicate of the secondary button appears on a couple of the Setup
-  screens. This has only been seen on emulator software rendering so far and is not yet
-  confirmed as a real bug on an actual phone.
+- On emulators, two text-rendering oddities show up on some Setup screens: a faint duplicate of
+  the secondary button below the status bar, and one line of body text rendering distorted after
+  scrolling. Both were traced to how the emulator draws text in software, and neither has been
+  confirmed on a real phone yet.
 - The search box's own accessibility label doesn't reach screen readers correctly — a separate,
   correctly-labelled element next to it does carry the label, so a screen reader still works,
   but the field itself reports an empty description.
