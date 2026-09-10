@@ -349,6 +349,35 @@ public object CorrectionPolling {
     }
 
     /**
+     * Register R-721, `Detail-Unknown.dc.html`: the real facts [UnknownTriedContextViewState]
+     * carries — [org.ort.app.ui.data.ReaderPolling.transmissionDetail]'s own read (WP4's file, not
+     * extended here) carries neither `voiceprintId` nor `threadId` through to
+     * [TransmissionDetailViewState] today, so this is a direct extra `:data` read, the same
+     * "second, small, redundant lookup" trade-off [inspectionWithSlots]/[currentAttribution]
+     * already accept rather than widening `ReaderPolling.kt`'s own signature.
+     *
+     * [stationsHeardTonight] mirrors [sessionFailedCount]'s own real `TransmissionDao.listBySession`
+     * read, distinct `stationId`s instead of a `FAILED` count. [voiceprintExtracted]/[hasThreadId]
+     * are the transmission's own real `voiceprintId`/`threadId` columns, non-null or not — see
+     * [UnknownTriedContextViewState]'s own doc comment for why nothing more specific than these two
+     * booleans is represented. `null` for a transmission id this package cannot find (should not
+     * happen for a real, just-polled over, but never worth a throw over).
+     */
+    public suspend fun unknownTriedContext(context: Context, transmissionId: String): UnknownTriedContextViewState? {
+        val db = OrtDatabase.create(context.applicationContext)
+        val transmission = db.transmissionDao().getById(transmissionId) ?: return null
+        val stationsHeardTonight = db.transmissionDao().listBySession(transmission.sessionId)
+            .mapNotNull { it.stationId }
+            .distinct()
+            .size
+        return UnknownTriedContextViewState(
+            stationsHeardTonight = stationsHeardTonight,
+            voiceprintExtracted = transmission.voiceprintId != null,
+            hasThreadId = transmission.threadId != null,
+        )
+    }
+
+    /**
      * Register R-320 (schema v5), `Detail-Why.dc.html` section 1: [ReaderPolling.transmissionDetail]'s
      * own [InspectionViewState] never carries [org.ort.data.entity.LatticeSlotEntity] rows through
      * (`ReaderPolling.kt` is WP4's file — this package's row does not extend that call) — this

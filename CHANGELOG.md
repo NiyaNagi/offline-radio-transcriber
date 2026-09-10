@@ -32,6 +32,96 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (ui-conformance WP6 round 15: R-720 real per-slot lattice grid wired into the inline preview; R-721 all four Detail-Unknown tried steps, honestly)
+
+### (pending) — ui-conformance WP6 round 15 · R-720 fixed (the inline "Why this callsign" preview never read `why.winningSlots` — a screen bug, not a fixture or mapper gap); R-721 fixed (voice-match/thread-context steps added from real, non-fabricated facts)
+
+**Scope:** `:app` — `ui/data/DetailViewState.kt` (`DetailViewStateMapper`, WP6), `ui/data/CorrectionPolling.kt`
+(WP6), `ui/screens/TransmissionDetailContent.kt` (WP6), `ui/screens/TransmissionDetailScreen.kt`
+(WP6), and their tests (`DetailViewStateMapperTest.kt`, `CorrectionPollingPassAndRevisionsTest.kt`,
+`TransmissionDetailScreenTest.kt`). `git merge main` (main at `2abff64`, the confirmation-sweep
+commit that filed R-720/R-721; fast-forward, no conflicts).
+
+**Requirements/ACs:** R-720 (register, spec — fixed); R-721 (register, design — fixed); FR-UI-8,
+cf. R-051/R-320/R-057.
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs both rows directly: R-720's
+  fix reuses real, already-written `:data` slot rows rather than inventing a placeholder grid, and
+  R-721 adds two board steps using only real counts/booleans this package can read, with an honest
+  disclosed-gap sentence standing in for the board's own fabricated "Nearest was N7XYZ at 0.38"
+  distance and specific frequency/time clause — never a made-up number (`UnknownTriedContextViewState`'s
+  own doc comment names exactly what is and is not represented). Principle VII (module boundaries)
+  governs how both were scoped: R-720's diagnosis needed to establish which layer was actually
+  wrong before touching code (the coordinator's own explicit ask), and R-721's new read stays inside
+  this package's own files (`CorrectionPolling.kt`, a direct extra `:data` read — the same
+  established trade-off `inspectionWithSlots`/`currentAttribution` already accept — rather than
+  widening `TransmissionDetail.kt`, which is WP5's).
+- **R-720 diagnosed, not assumed.** Read the full path before changing anything: the `overnight`
+  fixture (`OvernightScenario.kt`, not `Scenarios.kt` itself) genuinely seeds `LatticeSlotEntity`
+  rows for D01's CONFIRMED opener (`tx1`, 5 slots) and D03's AMBIGUOUS over (`tx3`, 6 slots on `c1`,
+  which `DetailViewStateMapper.whyFor`'s own `chosen = ranked.firstOrNull{selected} ?: ranked.firstOrNull()`
+  fallback correctly picks as the "winning" candidate to show slots for, even though no AMBIGUOUS
+  candidate is ever `selected`). `DetailViewStateMapper.whyFor` already carries those rows through
+  as `DetailWhyViewState.winningSlots`, proven correct by `DetailWhyScreen`'s own `LatticeSection`,
+  which has rendered them correctly since R-320. The true bug was
+  `TransmissionDetailScreen.kt`'s own inline preview (`WhySection`): it never read `why.winningSlots`
+  at all and unconditionally printed "Per-slot detail... is not recorded yet." whenever a lattice
+  summary existed — a screen bug, not a fixture or mapper gap, for D01 and D03. **D02 (the INFERRED
+  over, `tx2`) is a genuine, different, real fixture gap** — `OvernightScenario.kt` never calls
+  `ScenarioFixtures.latticeSlots(...)` for `tx2` at all, so `winningSlots` is honestly empty there;
+  left unfixed and reported to WP4/the lead per the coordinator's own instruction ("if it does not,
+  that is WP4's fixture and you should say so"), not silently patched or worked around.
+- **R-720 fixed.** `WhySection` now renders `why.winningSlots` through the identical
+  `org.ort.app.ui.components.LatticeSlot` row `DetailWhyScreen.LatticeSection` already draws (reused,
+  not a look-alike — constitution VII), falling back to the honest "not recorded yet" line only when
+  `winningSlots` is genuinely empty. The class doc's own stale claim ("per-slot boxes cannot be
+  rendered — the blob has no defined shape") is corrected in place; it predates R-320's real fix and
+  was never true of `DetailWhyScreen`, only of this section.
+- **R-721 fixed.** `Detail-Unknown.dc.html` draws four "what was tried" steps; only two ever
+  rendered ("Callsign grammar", "Kept as an unidentified voice" — both already real). Added
+  `UnknownTriedContextViewState` (`stationsHeardTonight`, `voiceprintExtracted`, `hasThreadId`) and
+  `CorrectionPolling.unknownTriedContext` (a direct `TransmissionDao` read: distinct `stationId`s
+  this session, plus this transmission's own real `voiceprintId`/`threadId` columns — neither
+  reaches `TransmissionDetailViewState` today). `DetailViewStateMapper.triedStepsFor` gained an
+  optional `context` parameter (`null` by default — every existing call site, and any non-UNKNOWN
+  over, keeps the exact two-step shape unchanged) that adds "Voice match against N stations heard
+  tonight" (the real count) with an honest detail line ("No match cleared the confidence floor
+  needed to infer." when a voiceprint was extracted; "No voiceprint could be extracted from this
+  over to compare." when not) and "Thread context" ("Grouped into an ongoing conversation on this
+  frequency."/"No conversation thread recorded for this over." from the real `threadId` presence) —
+  never the board's own fabricated "N7XYZ at 0.38" or "146.960 at 02:16" specifics.
+  `TransmissionDetailContent.pollDetail` looks the context up only when the polled attribution is
+  genuinely `UNKNOWN` (the same state-gating `passFailure`/`ambiguousEvidence` already use), and
+  `TransmissionDetailContent` threads it through to `DetailViewStateMapper.from`. `UnknownTriedSection`
+  (`TransmissionDetailScreen.kt`) needed no change — it already `forEach`s `body.tried`, so the two
+  new steps render automatically.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.PassFailure*' --tests 'org.ort.app.ui.screens.TransmissionDetail*' --tests 'org.ort.app.ui.data.*'` — `BUILD SUCCESSFUL`,
+  every listed test passed, including new `R_720_...` (`TransmissionDetailScreenTest.kt`) and
+  `R_721_...` (`DetailViewStateMapperTest.kt`, `CorrectionPollingPassAndRevisionsTest.kt`) tests.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — `BUILD SUCCESSFUL` (one `MaxLineLength` round-trip
+  fixed before this run).
+- `.\gradlew.bat dependencyRules platformGuards` — `dependencyRules: OK`, `platformGuards: OK`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `coverageMatrix: 419 requirements, 192 covered`; `coverageMatrixCheck: up to date (192 covered of
+  419)`.
+
+**Left open / not done:**
+- **D02's own `lattice_slot` gap (register, per this entry's own R-720 diagnosis) is unfixed** —
+  `OvernightScenario.kt`'s `tx2` (INFERRED) has no seeded slot rows, so its own inline preview still
+  reads the honest "not recorded yet" fallback, correctly, for a record that genuinely has none.
+  This is WP4's fixture to close (or a lead-approved exception, the same shape R-564's
+  `work_attempt` addition used), not touched here.
+- Device confirmation of R-720/R-721 not run this round — Robolectric-only (the scoped gate does
+  not include an emulator pass); the next validator/reviewer pass on `overnight` should re-capture
+  `D01-confirmed.png`/`D02-inferred.png`/`D03-ambiguous.png`/`D04-unknown.png`.
+
+---
+
 ## 2026-09-10 (ui-conformance WP9: R-612 investigated — the diagnosis was wrong, reported honestly)
 
 ### (pending) — ui-conformance WP9 · R-612: not a header/scroll overlap — a device-verified diagnostic found the real shape of the defect

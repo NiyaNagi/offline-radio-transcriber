@@ -409,4 +409,51 @@ class CorrectionPollingPassAndRevisionsTest {
 
         assertEquals(null, CorrectionPolling.currentTranscriptConfidence(context, "TX1"))
     }
+
+    // ---- R-721, `Detail-Unknown.dc.html`: the real "what was tried" voice-match/thread-context facts ----
+
+    @Test
+    fun `R_721_unknownTriedContext_reads_the_real_distinct_station_count_heard_this_session`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        // Three transmissions, only two distinct stationIds (one station heard twice) plus one
+        // unattributed row — the real count must be 2, not 3 (a row per over) and not 0.
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH", samplePosition = 1L))
+        db.transmissionDao().insert(transmission("TX2", stationId = "K7LWH", samplePosition = 2L))
+        db.transmissionDao().insert(transmission("TX3", stationId = "W7NPC", samplePosition = 3L))
+        db.transmissionDao().insert(transmission("TX4", stationId = null, samplePosition = 4L))
+
+        val out = CorrectionPolling.unknownTriedContext(context, "TX4")
+
+        assertEquals(2, out?.stationsHeardTonight)
+    }
+
+    @Test
+    fun `R_721_unknownTriedContext_reflects_the_real_voiceprintId_and_threadId_columns`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(
+            transmission("TX1", stationId = null, voiceprintId = "V9", samplePosition = 1L)
+                .copy(threadId = "THREAD1"),
+        )
+
+        val out = CorrectionPolling.unknownTriedContext(context, "TX1")
+
+        assertTrue(out?.voiceprintExtracted == true)
+        assertTrue(out?.hasThreadId == true)
+    }
+
+    @Test
+    fun `R_721_unknownTriedContext_is_honest_when_neither_a_voiceprint_nor_a_thread_was_recorded`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = null, voiceprintId = null, samplePosition = 1L))
+
+        val out = CorrectionPolling.unknownTriedContext(context, "TX1")
+
+        assertFalse(out?.voiceprintExtracted == true)
+        assertFalse(out?.hasThreadId == true)
+    }
+
+    @Test
+    fun `R_721_unknownTriedContext_is_null_for_a_transmission_id_that_cannot_be_found`(): Unit = runTest {
+        assertEquals(null, CorrectionPolling.unknownTriedContext(context, "NOPE"))
+    }
 }

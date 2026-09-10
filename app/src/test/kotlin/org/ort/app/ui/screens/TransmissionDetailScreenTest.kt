@@ -25,6 +25,7 @@ import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.InspectionViewState
 import org.ort.app.ui.data.LatticeInspectionViewState
 import org.ort.app.ui.data.PriorContributionViewState
+import org.ort.app.ui.data.SlotDetailViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
@@ -434,6 +435,89 @@ class TransmissionDetailScreenTest {
         composeTestRule.onNodeWithText("K7ABC", substring = true).assertExists()
         composeTestRule.onNodeWithText("Full lattice").performClick()
         assert(openedWhy)
+    }
+
+    // ---- R-720 (register): the inline "Why this callsign" preview renders the winning candidate's
+    // real per-slot lattice grid when `:data` recorded one (schema v5, R-320) — before this fix, the
+    // preview always printed the "not recorded yet" fallback regardless of whether real slots
+    // existed, even though the exhaustive `DetailWhyScreen` (same [why]) already rendered them
+    // correctly, proving the gap was this screen's own inline section, not the mapper or fixture. ----
+
+    @Test
+    fun `R_720_the_inline_preview_renders_the_real_per_slot_lattice_grid_when_data_has_one`() {
+        val inspection = InspectionViewState(
+            lattice = LatticeInspectionViewState(
+                source = "TEXT_DERIVED",
+                modelId = "phonetic-lattice-v1",
+                createdAt = 100L,
+            ),
+            candidates = listOf(
+                CandidateInspectionViewState(
+                    callsign = "W7NPC",
+                    rank = 0,
+                    score = 9.4,
+                    grammarValid = true,
+                    databaseHit = true,
+                    selected = true,
+                    priorContributions = emptyList(),
+                    slots = listOf(
+                        SlotDetailViewState("W", 0.97, null, false),
+                        SlotDetailViewState("7", 0.99, null, false),
+                        SlotDetailViewState("N", 0.64, "M", true),
+                    ),
+                ),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(inspection = inspection)),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("W", substring = false).assertExists()
+        composeTestRule.onNodeWithText("7", substring = false).assertExists()
+        // `LatticeSlot`'s own score render strips the leading zero ("0.64" -> ".64").
+        composeTestRule.onNodeWithText(".64").assertExists()
+        composeTestRule.onNodeWithText("M", substring = false).assertExists()
+        // The honest "not recorded yet" fallback must not also render once real slots exist.
+        composeTestRule.onNodeWithText("not recorded", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_720_the_inline_preview_falls_back_to_the_honest_not_recorded_line_with_no_real_slots`() {
+        val inspection = InspectionViewState(
+            lattice = LatticeInspectionViewState(
+                source = "ACOUSTIC",
+                modelId = "phonetic-lattice-v1",
+                createdAt = 100L,
+            ),
+            candidates = listOf(
+                CandidateInspectionViewState(
+                    callsign = "K7LWH",
+                    rank = 0,
+                    score = 8.2,
+                    grammarValid = true,
+                    databaseHit = true,
+                    selected = true,
+                    priorContributions = emptyList(),
+                ),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(inspection = inspection)),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText("Per-slot detail (each unit's score and kept alternate) is not recorded yet.")
+            .assertExists()
     }
 
     @Test

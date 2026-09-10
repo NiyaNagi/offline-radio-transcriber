@@ -39,6 +39,7 @@ import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.RejectedViewState
 import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.data.TransmissionDetail
+import org.ort.app.ui.data.UnknownTriedContextViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.AttributionState
@@ -99,6 +100,7 @@ public fun TransmissionDetailContent(
     var ambiguousEvidence by remember(transmissionId) {
         mutableStateOf<Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState>>(emptyMap())
     }
+    var unknownContext by remember(transmissionId) { mutableStateOf<UnknownTriedContextViewState?>(null) }
     var destination by remember(transmissionId) {
         mutableStateOf<DetailDestination>(
             if (initialRevisionsOpen) DetailDestination.Revisions else DetailDestination.Main,
@@ -116,6 +118,7 @@ public fun TransmissionDetailContent(
         transcriptConfidence = polled.transcriptConfidence
         transcriptCharSpan = polled.transcriptCharSpan
         ambiguousEvidence = polled.ambiguousEvidence
+        unknownContext = polled.unknownContext
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -135,6 +138,7 @@ public fun TransmissionDetailContent(
         rejected = rejectedViewStateFor(current),
         transcriptCharSpan = transcriptCharSpan,
         ambiguousEvidence = ambiguousEvidence,
+        unknownContext = unknownContext,
     )
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
@@ -454,6 +458,7 @@ private data class DetailPollResult(
     val transcriptConfidence: Double?,
     val transcriptCharSpan: IntRange?,
     val ambiguousEvidence: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState>,
+    val unknownContext: UnknownTriedContextViewState?,
 )
 
 /**
@@ -472,7 +477,10 @@ private data class DetailPollResult(
  * it (`ReaderPolling.kt` is WP4's file, not extended here). R-182: the winning candidate's real
  * transcript-highlight character span. R-425: real, per-candidate heard-count/last-heard/voice-
  * match evidence for the AMBIGUOUS chooser's own top two candidates — only looked up when the
- * polled attribution is genuinely AMBIGUOUS, never on every poll.
+ * polled attribution is genuinely AMBIGUOUS, never on every poll. R-721: real "what was tried"
+ * voice-match/thread-context facts for the UNKNOWN state alone — [CorrectionPolling.unknownTriedContext]
+ * only runs when the polled attribution is genuinely UNKNOWN, the same gating [passFailure]/
+ * [ambiguousEvidence] already use for their own state-specific reads.
  */
 private suspend fun pollDetail(context: Context, transmissionId: String): DetailPollResult {
     var fetched = ReaderPolling.transmissionDetail(context, transmissionId)
@@ -499,6 +507,11 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
     } else {
         emptyMap()
     }
+    val unknownContext = if (fetched?.attribution?.state == AttributionState.UNKNOWN) {
+        CorrectionPolling.unknownTriedContext(context, transmissionId)
+    } else {
+        null
+    }
     return DetailPollResult(
         fetched,
         passFailure,
@@ -506,6 +519,7 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
         transcriptConfidence,
         transcriptCharSpan,
         ambiguousEvidence,
+        unknownContext,
     )
 }
 
