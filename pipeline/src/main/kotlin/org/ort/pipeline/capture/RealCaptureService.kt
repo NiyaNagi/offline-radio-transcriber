@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.ort.capture.android.AndroidAudioIo
 import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.AudioIo
 import org.ort.capture.android.AudioRecordSource
 import org.ort.capture.android.GapRecord
@@ -37,6 +38,7 @@ import org.ort.core.SampleClock
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
+import org.ort.core.capture.AudioRouteKind
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.data.dao.WorkQueueDao
@@ -54,6 +56,13 @@ import org.ort.pipeline.passb.RealAsrEngineProvider
 import org.ort.pipeline.passb.UnavailableAsrEngine
 import org.ort.pipeline.reprocess.ReprocessRunner
 import org.ort.pipeline.reprocess.SafePass
+import org.ort.pipeline.rig.CaptureConfiguration
+import org.ort.pipeline.rig.CaptureConfigurationStore
+import org.ort.pipeline.rig.DefaultRigTransportFactory
+import org.ort.pipeline.rig.FrequencyReading
+import org.ort.pipeline.rig.RigSupervisor
+import org.ort.pipeline.rig.RigTransportFactory
+import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 import org.ort.pipeline.shed.AndroidShedSignals
 import org.ort.pipeline.shed.ShedController
 import org.ort.pipeline.shed.ShedEventPersister
@@ -132,6 +141,27 @@ public class RealCaptureService : Service() {
                 ThermalStatus.THERMAL_STATUS_NONE
             }
         },
+        /**
+         * WPC2 (FR-CAP-12, AC-131): where the mode/rig choice for THIS session start is read from
+         * — see [CaptureConfigurationStore]'s own kdoc. The real, `SharedPreferences`-backed store
+         * uses a fixed, well-known preferences file
+         * ([SharedPreferencesCaptureConfigurationStore.PREFS_NAME]) so `:app`'s settings screens
+         * (WPE) can open the *same* file with their own store instance and write to it — this is a
+         * shared, file-backed contract, not an object passed around between modules that cannot
+         * see each other (module graph, constitution VII).
+         */
+        val captureConfigurationStore: (android.content.Context) -> CaptureConfigurationStore = { ctx ->
+            SharedPreferencesCaptureConfigurationStore(
+                ctx.getSharedPreferences(
+                    SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+                    android.content.Context.MODE_PRIVATE,
+                ),
+            )
+        },
+        /** WPC2's [RigTransportFactory] seam (FR-RIG-13/14) — see [RigSupervisor]'s own kdoc. */
+        val rigTransportFactory: (android.content.Context) -> RigTransportFactory = { ctx ->
+            DefaultRigTransportFactory(ctx)
+        },
     )
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -155,6 +185,17 @@ public class RealCaptureService : Service() {
     // fabricated 0L -- the segmenter is the one thing in this class that knows how much audio has
     // actually been fed to it (Segmenter.position(), unchanged in :segment).
     private var segmenter: Segmenter? = null
+
+    // WPC2 (FR-CAP-12/13, AC-129/AC-131): the configuration read ONCE at this session's start via
+    // CaptureConfigurationStore.activateForNewSession() and never re-read until the NEXT session
+    // starts -- a mode/rig change written to the store mid-session must not alter the running
+    // session (see startCapture()'s own comment at the read site).
+    private var activeConfiguration: CaptureConfiguration = CaptureConfiguration.DEFAULT
+
+    // WPC2: builds/owns the live RigModule for this session and republishes RigStatus
+    // (Connected/Stale/Absent) as it changes -- see RigSupervisor's own kdoc for why a rig-link
+    // drop (FR-RIG-15) never touches gapRelay/GapPersister the way an audio-route drop does.
+    private var rigSupervisor: RigSupervisor? = null
 
     // R-113: captured once at open so every InputStatus republish (route change, device loss,
     // resume) reuses the same expected device and open timestamp rather than re-deriving them.
@@ -229,16 +270,27 @@ public class RealCaptureService : Service() {
         val gapPersister = GapPersister(db.captureGapDao(), SystemClock)
         persistUncleanEndGapIfAny(db, gapPersister)
 
-        // R-104/F9: the rig module (FR-RIG) is unbuilt (register R-084) -- this is the one real
-        // producer RigStatus has today. Honest, not a placeholder: there genuinely is no rig.
-        RigStatus.absent()
-        DiagnosticsLog.logRigAbsent()
+        // WPC2 (FR-CAP-12, AC-131): read ONCE, here, before anything about this session is
+        // decided -- activateForNewSession() promotes a pending settings change (written while a
+        // PREVIOUS session was capturing) to current and clears it; the value returned is frozen
+        // for this whole session (assigned to the field, never read from the store again until the
+        // next startCapture() call).
+        activeConfiguration = dependencies.captureConfigurationStore(applicationContext).activateForNewSession()
+
+        // WPC2 (FR-RIG-2/3/4/6/7/13/14/15): builds the chosen rig (or the null module, honestly,
+        // when none is configured) and republishes RigStatus as it connects/drops/reconnects. See
+        // RigSupervisor's own kdoc for why a rig-link drop never opens a CaptureGap.
+        val supervisor = RigSupervisor(dependencies.rigTransportFactory(applicationContext), scope)
+        rigSupervisor = supervisor
+        supervisor.connect(activeConfiguration)
 
         // A real enumerated device — never a fabricated descriptor, which RouteVerifier would
         // (correctly) reject on the first read, halting capture. See defaultInputDevice()'s kdoc.
         val (io, device) = dependencies.audioIo(applicationContext) ?: run {
             CaptureState.failed("no audio input device is available")
             updateNotification(CaptureNotificationContent.State.FAILED)
+            rigSupervisor?.disconnect()
+            rigSupervisor = null
             return
         }
         io.select(device)
@@ -372,6 +424,21 @@ public class RealCaptureService : Service() {
                 terminationReason = null,
                 sourceId = null,
                 schemaVersion = OrtDatabase.SCHEMA_VERSION,
+                // WPC2 (FR-CAP-13, AC-129): every session records its capture mode, audio route
+                // and rig transport at start -- from activeConfiguration (frozen this session
+                // start, FR-CAP-12) and the actual device the OS opened (audioSource.selectedDevice
+                // is not exposed; the device this session actually opened with is captured in
+                // startCapture() as [selectedInputDevice]).
+                captureMode = activeConfiguration.mode.name,
+                audioRouteKind = selectedInputDevice?.let { audioRouteKindFor(it.kind) }?.name,
+                audioRouteLabel = selectedInputDevice?.label,
+                bluetoothProfile = selectedInputDevice?.bluetoothProfile?.name,
+                // NOTE (see this package's report): stored as :rig's RigTransportKind.name, a
+                // superset of :core's own (mirrored) enum -- SessionEntity's kdoc says ":core's
+                // RigTransportKind.name", but :core's type cannot express BLE/NETWORK, which a real
+                // CaptureConfiguration can carry. USB_SERIAL/BLUETOOTH_SPP -- the two values that
+                // exist in both enums -- read identically either way.
+                rigTransport = activeConfiguration.rigTransportKind?.name,
             ),
         )
 
@@ -459,7 +526,21 @@ public class RealCaptureService : Service() {
             anchorUtcOffsetMinutes = startedAtUtcOffsetMinutes,
             sampleRate = FrameSpec.SAMPLE_RATE,
         )
-        val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, segmentConfig) {
+        val sink = RealSegmentSink(
+            filesDir,
+            sessionId,
+            db,
+            queue,
+            sampleClock,
+            segmentConfig,
+            // WPC2 (FR-RIG-6/8/9): every transmission's frequency, with its provenance -- read from
+            // whichever RigSupervisor this session built. `band = null`: band-scoped attribution
+            // (the TH-D75A's dual-receive squelch correlation, D23) is not wired at the
+            // segment/transmission level yet -- see this package's report.
+            frequencyProvider = { startNanos, endNanos ->
+                rigSupervisor?.frequencyForTransmission(band = null, startNanos, endNanos) ?: FrequencyReading.UNKNOWN
+            },
+        ) {
             transmissionCount++
             onHeartbeat()
         }
@@ -643,6 +724,16 @@ public class RealCaptureService : Service() {
     private fun resamplerIdLabel(identity: org.ort.captureapi.ResamplerIdentity?): String =
         identity?.toString() ?: "none (native rate matches output)"
 
+    /** WPC2 (FR-CAP-13): `:capture-android`'s [AudioDeviceKind] mirrored onto `:core`'s
+     * [AudioRouteKind] — the type [SessionEntity.audioRouteKind] is documented against. */
+    private fun audioRouteKindFor(kind: AudioDeviceKind): AudioRouteKind = when (kind) {
+        AudioDeviceKind.BUILT_IN_MIC -> AudioRouteKind.BUILT_IN_MIC
+        AudioDeviceKind.USB_DEVICE -> AudioRouteKind.USB
+        AudioDeviceKind.WIRED_HEADSET -> AudioRouteKind.WIRED_HEADSET
+        AudioDeviceKind.BLUETOOTH -> AudioRouteKind.BLUETOOTH_SCO
+        AudioDeviceKind.UNKNOWN -> AudioRouteKind.UNKNOWN
+    }
+
     /**
      * FR-OBS-1: the encoded duration from `org.ort.capture.android.DroppedSpanCause.encode`'s
      * output, or `null` if [cause] is not one of ours. `:pipeline` cannot reference that object
@@ -742,6 +833,11 @@ public class RealCaptureService : Service() {
         source?.stop()
         source = null
         segmenter = null
+        // WPC2: the rig is a per-session resource same as the audio source -- torn down on every
+        // path that ends a session, clean or unclean, so a stale Connected/Stale reading never
+        // survives into a later Idle screen the way LevelStatus/InputStatus's own reset() prevents.
+        rigSupervisor?.disconnect()
+        rigSupervisor = null
     }
 
     /**
@@ -1184,6 +1280,11 @@ internal class RealSegmentSink(
     private val queue: WorkQueue,
     private val sampleClock: SampleClock,
     private val segmentConfig: SegmentConfig,
+    /** WPC2 (FR-RIG-6/8/9): the frequency reading (with provenance) for the transmission spanning
+     * [startNanos, endNanos] on the session's monotonic timeline. Defaults to always-unknown so
+     * every pre-existing caller/test of this class keeps compiling unchanged. */
+    private val frequencyProvider: (startNanos: Long, endNanos: Long) -> FrequencyReading =
+        { _, _ -> FrequencyReading.UNKNOWN },
     private val onSegmentPersisted: () -> Unit,
 ) : SegmentSink {
 
@@ -1229,6 +1330,14 @@ internal class RealSegmentSink(
                     SegmentOutcome.SPEECH -> TransmissionState.CAPTURED to null
                     SegmentOutcome.REJECTED_TOO_SHORT -> TransmissionState.REJECTED to REJECTION_REASON_TOO_SHORT
                 }
+                // WPC2 (FR-RIG-6/8/9): read once, at close, over this segment's own start/end on
+                // the session's monotonic timeline -- never a fresh "now" read (constitution III's
+                // reasoning for sample-accurate timestamps applies just as much to the rig reading
+                // that describes them).
+                val frequencyReading = frequencyProvider(
+                    sampleClock.monotonicNanosAt(record.startSample),
+                    sampleClock.monotonicNanosAt(record.endSample),
+                )
                 val entity = TransmissionEntity(
                     id = transmissionId,
                     sessionId = sessionId,
@@ -1239,8 +1348,8 @@ internal class RealSegmentSink(
                     audioFormat = "flac/16k/mono",
                     preRollMs = segmentConfig.preRollMs,
                     postRollMs = segmentConfig.postRollMs,
-                    frequencyHz = null,
-                    frequencyProvenance = "unknown",
+                    frequencyHz = frequencyReading.frequencyHz,
+                    frequencyProvenance = frequencyReading.provenance,
                     mode = null,
                     signalStrength = null,
                     channelName = null,

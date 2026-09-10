@@ -5,6 +5,7 @@ import org.ort.capture.android.heartbeat.LivenessChecker
 import org.ort.capture.android.heartbeat.UncleanEndDetector
 import org.ort.capture.android.heartbeat.UncleanEndReport
 import org.ort.core.Clock
+import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.shed.ShedController
 
 /**
@@ -14,6 +15,12 @@ import org.ort.pipeline.shed.ShedController
  * capture state, and re-exports the capture-android types it wraps (`api`, not
  * `implementation`, in this module's `build.gradle.kts`) so `:app` can read them without a new
  * declared edge.
+ *
+ * [pendingConfiguration] (WPC2, FR-CAP-12, AC-131, E2-D05): non-null exactly when
+ * [org.ort.pipeline.rig.CaptureConfigurationStore.pendingConfiguration] is — a mode/rig change
+ * written to the store while this session runs, waiting to apply at the next one. CF11's amber
+ * banner reads this field, never re-deriving it. Trailing and defaulted so every pre-existing call
+ * site — `:app`'s own construction of this class in tests included — keeps compiling unchanged.
  */
 public data class CaptureStatus(
     val sessionId: String,
@@ -25,6 +32,7 @@ public data class CaptureStatus(
     val isAlive: Boolean,
     val lastHeartbeatWallMillis: Long?,
     val uncleanEndFromPreviousLaunch: UncleanEndReport?,
+    val pendingConfiguration: CaptureConfiguration? = null,
 )
 
 /**
@@ -50,6 +58,7 @@ public class CaptureStatusRepository(
         transmissionCount: Int,
         gapCount: Int,
         isIgnoringBatteryOptimizationsDiagnosticOnly: Boolean,
+        pendingConfiguration: CaptureConfiguration? = null,
     ): CaptureStatus {
         val last = heartbeatStore.last()
         val alive = last != null &&
@@ -64,6 +73,7 @@ public class CaptureStatusRepository(
             isAlive = alive,
             lastHeartbeatWallMillis = last?.wallMillis,
             uncleanEndFromPreviousLaunch = null,
+            pendingConfiguration = pendingConfiguration,
         )
     }
 }
