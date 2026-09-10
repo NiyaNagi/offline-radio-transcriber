@@ -163,6 +163,21 @@ val composeIdlePoisoningSmokeTestDebugUnitTest = tasks.register<Test>("smokeTest
     include("**/NavSeedTest*")
     include("**/OrtNavHostDestinationDispatchTest*")
     include("**/ReaderAccessibilityTest*")
+    // R-590 round, coordinator escalation (2026-09-09): a full-gate wedge at `cbaca66` — `jstack`
+    // of the wedged worker showed "Test worker" parked on a `FutureTask` at
+    // `LevelMeterScreenTest.R_542 a clipped reading at the scale's own ceiling renders the chart
+    // without crashing`, while the SDK 34 main thread spun `RUNNABLE` inside
+    // `AbstractMainTestClock.advanceTimeByFrame` <- `ComposeIdlingResource.isIdleNow` <-
+    // `RobolectricIdlingStrategy.runUntilIdle` with 1474s of CPU — the identical "Compose never
+    // reaches idle, so `waitForIdle` spins forever" signature this task's own KDoc already
+    // documents for every class above. Read directly before writing this: unlike the classes
+    // above, `LevelMeterScreen.kt` (WP4-owned) itself carries no `LaunchedEffect`, poll or
+    // animation of its own — this class's real mechanism is not confirmed to be identical to
+    // theirs, only the *symptom* is (a Compose idle-check that never resolves once this class's
+    // tests share a JVM with enough others). Isolated here on the strength of that jstack evidence
+    // alone, the same remedy already proven for the whole set, rather than left in a shared JVM on
+    // an unconfirmed theory of exactly why.
+    include("**/LevelMeterScreenTest*")
     forkEvery = 1
 }
 
@@ -189,6 +204,7 @@ afterEvaluate {
     debugUnitTest.exclude("**/NavSeedTest*")
     debugUnitTest.exclude("**/OrtNavHostDestinationDispatchTest*")
     debugUnitTest.exclude("**/ReaderAccessibilityTest*")
+    debugUnitTest.exclude("**/LevelMeterScreenTest*")
     // Test-suite regression, 2026-09-08 (this task's own CHANGELOG entry): excluding the two
     // confirmed-poisoning classes above (this file's own KDoc) was not sufficient on its own — the
     // full suite still eventually wedged (confirmed: `ImproveScreensTest`, a file with no
