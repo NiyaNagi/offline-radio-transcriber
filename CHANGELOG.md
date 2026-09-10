@@ -32,6 +32,120 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (first-push CI fix: idx_transcript_one_current/idx_wq_active enforced cross-platform, coverage matrix regenerated)
+
+### (pending) — data-ci · exactly one BundledSQLiteDriver artifact on the Robolectric test classpath, WorkQueue.enqueue guards idx_wq_active at the application level, coverage matrix regenerated
+
+**Scope:** `:data` — `data/build.gradle.kts`, `data/src/main/kotlin/org/ort/data/WorkQueue.kt`,
+`data/src/test/kotlin/org/ort/data/WorkQueueTest.kt`; `results/coverage-matrix.md`.
+
+**Requirements/ACs:** AC-31 (`idx_transcript_one_current`, exactly one current transcript),
+FR-RUN-2 → AC-45 (`idx_wq_active`, at most one active queue row per transmission/pass), register
+R-204 (the FTS5/`BundledSQLiteDriver` merge this hazard descends from), constitution Principle VII
+("boundaries are structural, not conventional").
+
+**What changed:**
+- **Constitution Check.** Principle VII governs the fix: two artifacts on one classpath both
+  declaring `BundledSQLiteDriver`, with the winner decided by incidental classpath order, is
+  exactly the kind of rule "a person must remember" the constitution warns will eventually be
+  forgotten — it needed to be made structurally impossible, not documented. Principle II (test-
+  backed change) governs the new `WorkQueueTest` case: written to fail for the right reason first
+  (it throws against the pre-fix `enqueue`, since `idx_wq_active` itself still enforces the
+  invariant on Windows) and pass only once `enqueue` carries its own guard.
+- **Diagnosed the first CI push's two Linux-only `:data` failures**
+  (`TranscriptVersioningTest.two_current_transcripts_for_one_transmission_violate_the_partial_unique_index`,
+  `WorkQueueTest.the_active_state_index_does_not_restrict_a_terminal_failed_duplicate` — both pass
+  on Windows, both failed on Linux CI runs 34439250807/34439250808 by *not* throwing when a
+  duplicate row was inserted). Every other `:data` DB test — migrations, FTS5, ordinary CRUD —
+  passed on both platforms, so `applyHandWrittenSchema`'s `CREATE UNIQUE INDEX` statements
+  themselves are not failing outright (that would abort `OrtDatabase.create` for every test, not
+  two specific assertions); only *constraint enforcement* on a duplicate write differs.
+  `./gradlew :data:dependencies --configuration debugUnitTestRuntimeClasspath` shows the actual
+  mechanism this points to: `data/build.gradle.kts` puts **two** artifacts that each declare
+  `androidx.sqlite.driver.bundled.BundledSQLiteDriver` on the same Robolectric unit-test
+  classpath — `androidx.sqlite:sqlite-bundled:2.5.2` (→ `sqlite-bundled-android`, pulled in
+  transitively via the main `implementation(...)`, which AGP's unit-test classpath resolves to the
+  Android variant even though the test runs on the host JVM) and
+  `androidx.sqlite:sqlite-bundled-jvm:2.5.2` (added explicitly so Robolectric has a native library
+  it can actually load — the existing R-204 comment already documented half of this). Which jar's
+  copy of the driver class the JVM classloader resolves is classpath-order-dependent, and Gradle
+  gives no guarantee that order is stable across machines or cold-vs-warm dependency caches — this
+  was the very first push of this repository to GitHub (620 local commits, zero prior CI runs), so
+  the Linux runner resolved a cold cache while the Windows verification ran against a long-lived
+  local one. This exact shape — a JVM project's unit-test classpath resolving the Android variant
+  of `androidx.sqlite:sqlite-bundled` instead of (or alongside) the JVM one — is an independently
+  documented upstream hazard (Google's own fix for it: b/396148592, b/396184120; the recommended
+  remedy is dependency *substitution*, not addition). **Not reproduced directly on a Linux
+  machine** — none was available to this change — so this is the best-evidenced mechanism rather
+  than a confirmed one; see "Left open" below.
+- **`data/build.gradle.kts`: dependency substitution removes the ambiguity structurally.** Every
+  configuration whose name contains `UnitTest` now substitutes `androidx.sqlite:sqlite-bundled`
+  for `androidx.sqlite:sqlite-bundled-jvm` via `resolutionStrategy.dependencySubstitution`, so
+  exactly one `BundledSQLiteDriver`-providing artifact reaches the Robolectric test classpath on
+  every platform, deterministically, instead of two competing for it.
+- **`WorkQueue.enqueue` (`data/src/main/kotlin/org/ort/data/WorkQueue.kt`): defense in depth for
+  `idx_wq_active` specifically.** Unlike `TranscriptDao.supersede`, which already runs its
+  clear-then-insert as one `@Transaction` against the database's single writer connection (atomic
+  with or without the index — production only ever calls `supersede`, confirmed by search;
+  `TranscriptDao.insert` is called raw only by the test that exists to exercise the index itself,
+  so no equivalent guard was added there), `enqueue` previously inserted unconditionally —
+  `idx_wq_active` was the *only* thing stopping two calls for the same still-active
+  `(transmissionId, pass)` from producing two active rows. `enqueue` now reads for an existing
+  active row (`READY`/`LEASED`/`DEFERRED`, mirroring the index's own `WHERE` exactly) and returns
+  its id unchanged instead of inserting a second one, inside `db.inWriteTransaction { ... }`; a
+  terminal `FAILED` row is still left alone and a fresh `READY` row inserted next to it
+  (`re_enqueueing_a_completed_pass_succeeds` untouched and still green).
+- **New test, `WorkQueueTest.FR_RUN_2_enqueue_does_not_create_a_second_active_row_for_the_same_transmission_and_pass`**
+  — proves the guard through the real `WorkQueue.enqueue` entry point (the existing
+  `the_active_state_index_does_not_restrict_a_terminal_failed_duplicate` test is left exactly as
+  it was: it proves the raw index via a deliberate `WorkQueueDao.insert` bypass, and per this
+  task's brief that test is not weakened). Against the pre-fix `enqueue`, this test throws (the
+  index still enforces the invariant on Windows) rather than silently passing, satisfying strict
+  TDD's "fails for the right reason first."
+- **`results/coverage-matrix.md` regenerated** — the new test added `WorkQueueTest` to `FR-RUN-2`'s
+  row; nothing else changed.
+
+**Verified:**
+- `.\gradlew.bat :data:testDebugUnitTest` — BUILD SUCCESSFUL, all tests green including the two
+  previously-failing-on-Linux-only tests (still pass on Windows, as before) and the new
+  `FR_RUN_2_...` test.
+- `.\gradlew.bat :data:ktlintCheck :data:detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat dependencyRules platformGuards` — OK, `:data -> :core` unchanged, no forbidden
+  edge, no network/telemetry SDK introduced.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` then, as a separate invocation, `.\gradlew.bat
+  coverageMatrixCheck` — regeneration changed only `FR-RUN-2`'s row (confirmed via `git diff
+  --stat`/`git diff results/coverage-matrix.md`); the second, separate invocation reports "up to
+  date (192 covered of 419)".
+- `python -m pytest tools/tests tools/spec-check -q` — 17 passed.
+- Machine: Windows 10, JDK 17.0.20.101 (Temurin), this repository's pinned Gradle/AGP/Kotlin —
+  matches the CI `unit`/`android` jobs' `temurin` 17 but not their `ubuntu-latest` OS, which is
+  exactly the axis this fix targets and exactly what could not be exercised here.
+
+**Left open / not done:**
+- **The Linux mechanism above is reasoned, not directly observed** — this session had no Linux
+  machine and was instructed not to push (so no new CI run could be triggered to confirm the fix
+  either). What is directly confirmed on Windows: (a) both `BundledSQLiteDriver`-declaring
+  artifacts really were present on `:data`'s unit-test classpath before this change (`gradlew
+  :data:dependencies`), which is itself a genuine defect independent of whether it is the *entire*
+  explanation for the Linux failures; (b) after the fix, exactly one is; (c) the full local gate
+  stays green. The next CI run against this branch's eventual merge is the actual confirmation for
+  the classpath fix; the `WorkQueue.enqueue` guard is deliberately platform-independent (an
+  ordinary transactional read-then-write) so it holds regardless of whether the classpath theory
+  turns out to be the complete story.
+- No equivalent DAO-level guard was added for `idx_transcript_one_current` — reasoned above to be
+  unnecessary given `TranscriptDao.supersede` is the only production writer and is already atomic
+  by construction; flagged here in case a future caller adds a second write path to `transcript`
+  that bypasses `supersede`.
+- Did not touch `app/build.gradle.kts` or `pipeline/build.gradle.kts`, which carry the same
+  R-204-era `testImplementation(sqlite-bundled-jvm)` pattern and so likely the same latent
+  classpath duplication — out of this task's `data/**` ownership; worth the same fix if the
+  Linux `android`/`unit` CI jobs (`:net`, `:rig-usb`, `:capture-android`, `:pipeline`, `:app`
+  Robolectric tests) show the same symptom.
+
+
+
 ## 2026-09-10 (ui-conformance WP6 round 15: R-720 real per-slot lattice grid wired into the inline preview; R-721 all four Detail-Unknown tried steps, honestly)
 
 ### (pending) — ui-conformance WP6 round 15 · R-720 fixed (the inline "Why this callsign" preview never read `why.winningSlots` — a screen bug, not a fixture or mapper gap); R-721 fixed (voice-match/thread-context steps added from real, non-fabricated facts)
@@ -122,7 +236,6 @@ cf. R-051/R-320/R-057.
 
 
 ## 2026-09-10 (ui-conformance WP10 round: R-760 storage-bar empty-track rounding, R-761 Whisper-family install row collapsed to one part at a time)
-
 ### (pending) — ui-conformance WP10 round · R-760 the storage bar's own "is this empty" decision now matches the legend's rounding; R-761 the not-installed Whisper family shows one nested row, not three, and the test that missed it fixed alongside
 
 **Scope:** `:app` — `ui/settings/SettingsStorageScreen.kt`, `ui/screens/ModelsScreen.kt`, and both
