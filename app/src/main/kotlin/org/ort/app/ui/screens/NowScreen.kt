@@ -16,10 +16,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -30,6 +32,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -40,6 +43,7 @@ import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.LiveBar
 import org.ort.app.ui.components.LiveBarViewState
+import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.data.EarlierNightRow
@@ -76,6 +80,11 @@ public fun NowScreen(
     // (WP3's `OrtNavHost.kt`) reaches this destination for it.
     onOpenStations: () -> Unit = {},
     onOpenModels: () -> Unit = {},
+    // E2-G02 (N01b): the room-audio chip's own tap target — "the settings Capture-mode screen
+    // through the existing navigator callback bundle". No such callback existed on this screen's
+    // signature yet, so this is the new one, defaulted to a no-op so every existing caller keeps
+    // compiling unchanged until `OrtNavHost.kt` (out of this package's row) wires it.
+    onOpenCaptureMode: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         Column(
@@ -91,6 +100,7 @@ public fun NowScreen(
                     onOpenStation = onOpenStation,
                     onOpenStations = onOpenStations,
                     onOpenModels = onOpenModels,
+                    onOpenCaptureMode = onOpenCaptureMode,
                 )
             }
         }
@@ -310,6 +320,7 @@ private fun ActiveContent(
     onOpenStation: (String) -> Unit,
     onOpenStations: () -> Unit,
     onOpenModels: () -> Unit,
+    onOpenCaptureMode: () -> Unit = {},
 ) {
     Text(
         text = state.sessionTitle,
@@ -323,6 +334,13 @@ private fun ActiveContent(
         color = OrtColors.textDim,
         modifier = Modifier.padding(top = 3.dp).semantics { contentDescription = state.summaryLabel },
     )
+
+    // E2-G02 (N01b, FR-CAP-3a/FR-CAP-10): the persistent room-audio disclosure — a session
+    // recorded from the room is never confusable with one from the radio. Tapping it opens the
+    // settings Capture-mode screen (CF11).
+    if (state.isLocalMicrophone) {
+        RoomAudioChip(onClick = onOpenCaptureMode, modifier = Modifier.padding(top = OrtSpacing.sm))
+    }
 
     if (state.overCount == 0) {
         // R-174: a session seconds old genuinely has not listened through the other ~23 hours of
@@ -373,6 +391,39 @@ private fun ActiveContent(
     }
 
     StationsHeardSection(state = state, onOpenStation = onOpenStation, onOpenStations = onOpenStations)
+}
+
+/**
+ * `Main-Room-Audio.dc.html`'s chip under the session title: [OrtIcons.builtInMic] + "Room audio —
+ * the phone's microphone, not the radio", in `line/chip`/`text/dim` (guide's own outlined-chip
+ * shape). Never the only copy of the fact — the live bar's own `room` mark ([LiveBar]) repeats it
+ * on every destination; this is the one place with room for the full sentence.
+ */
+@Composable
+private fun RoomAudioChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, OrtColors.lineChip, RoundedCornerShape(14.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 6.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Room audio — the phone's microphone, not the radio"
+                onClick(label = "Open Capture mode") {
+                    onClick()
+                    true
+                }
+            },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Icon(imageVector = OrtIcons.builtInMic, contentDescription = null, tint = OrtColors.textDim, modifier = Modifier.size(13.dp))
+        Text(
+            text = "Room audio — the phone's microphone, not the radio",
+            style = OrtType.chip,
+            color = OrtColors.textHigh,
+        )
+    }
 }
 
 /** `Main.dc.html`/`Now-First.dc.html`'s "Stations heard" section — split out of [ActiveContent]

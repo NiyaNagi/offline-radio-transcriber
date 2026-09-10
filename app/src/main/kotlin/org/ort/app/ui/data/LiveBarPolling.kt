@@ -5,6 +5,7 @@ import org.ort.app.ui.components.LiveBarTone
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.CaptureState
@@ -35,6 +36,7 @@ public object LiveBarPolling {
 
     public suspend fun current(context: Context, sessionId: String?): LiveBarViewState {
         val override = failureOverrideLiveBar()
+        val routeFacts = RoomSessionRouteFactsReader(context).forSession(sessionId)
         val (tone, label) = if (override != null) override.tone to override.label else toneAndLabel()
         return LiveBarViewState(
             level = levelBars(),
@@ -42,6 +44,10 @@ public object LiveBarPolling {
             label = label,
             tone = tone,
             meterTone = override?.meterTone,
+            // E2-G02 (N01b, FR-CAP-3a): the one live bar every destination shares carries the
+            // persistent room-audio mark whenever the current session's mode is genuinely
+            // LOCAL_MICROPHONE — never per-destination logic, so every screen agrees.
+            localMicrophone = routeFacts.isLocalMicrophone,
         )
     }
 
@@ -141,13 +147,21 @@ public object LiveBarPolling {
         val shedBacklog = ShedStatus.backlog
         val thermal = ThermalStatus.state
         val level = LevelStatus.state
+        val input = InputStatus.state
         return when {
             captureState !is CaptureState.State.Capturing ->
                 LiveBarTone.HALTED to if (captureState is CaptureState.State.Idle) "Not capturing" else "Halted"
 
             StorageForecast.state is StorageForecast.State.AtFloor -> LiveBarTone.HALTED to "Halted"
 
-            InputStatus.state is InputStatus.State.Lost -> LiveBarTone.DEGRADED to "Gap"
+            // F23 (E2-G05, FR-CAP-5): a Bluetooth-audio drop reads "Input lost", per
+            // `Fail-Bluetooth-Audio.dc.html`'s own footer — the real, live signal is the lost
+            // device's own descriptor kind (WPC1: `AudioDeviceDescriptor.kind`), not the session's
+            // v7 column, so this reads correctly even if `routeFacts` is somehow stale.
+            input is InputStatus.State.Lost && input.lastKnown.descriptor.kind == AudioDeviceKind.BLUETOOTH ->
+                LiveBarTone.DEGRADED to "Input lost"
+
+            input is InputStatus.State.Lost -> LiveBarTone.DEGRADED to "Gap"
 
             level is LevelStatus.State.Measured && level.clipped -> LiveBarTone.DEGRADED to "Hot"
 

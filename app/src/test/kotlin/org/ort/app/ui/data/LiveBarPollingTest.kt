@@ -17,6 +17,8 @@ import org.ort.app.ui.failures.StorageAudioPausedViewState
 import org.ort.app.ui.failures.UsbViewState
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.data.OrtDatabase
+import org.ort.data.entity.SessionEntity
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
@@ -288,6 +290,71 @@ class LiveBarPollingTest {
 
         DebugFailureOverride.show(FailurePresentation.Interrupted(InterruptedViewState(3, "03:12 – 06:48")))
         assertEquals("Live", LiveBarPolling.current(context, null).label)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // E2-G02 (N01b, FR-CAP-3a): the persistent room-audio mark, from the session's own v7 columns.
+    // -----------------------------------------------------------------------------------------
+
+    private fun session(id: String, captureMode: String?) = SessionEntity(
+        id = id,
+        startedAt = 0L,
+        endedAt = null,
+        profileId = null,
+        deviceTier = null,
+        appVersion = "test",
+        terminationReason = null,
+        sourceId = null,
+        schemaVersion = OrtDatabase.SCHEMA_VERSION,
+        captureMode = captureMode,
+    )
+
+    @Test
+    @Requirement("E2-G02", "FR-CAP-3a")
+    fun `E2_G02 a local-microphone session sets the room mark`() = runTest {
+        val db = OrtDatabase.create(context)
+        db.sessionDao().insert(session("ROOM-1", captureMode = "LOCAL_MICROPHONE"))
+        CaptureState.capturing("ROOM-1")
+
+        val state = LiveBarPolling.current(context, "ROOM-1")
+
+        assertEquals(true, state.localMicrophone)
+    }
+
+    @Test
+    @Requirement("E2-G02")
+    fun `E2_G02 a radio session never carries the room mark`() = runTest {
+        val db = OrtDatabase.create(context)
+        db.sessionDao().insert(session("RADIO-1", captureMode = "USB_RADIO"))
+        CaptureState.capturing("RADIO-1")
+
+        val state = LiveBarPolling.current(context, "RADIO-1")
+
+        assertEquals(false, state.localMicrophone)
+    }
+
+    @Test
+    @Requirement("E2-G05", "FR-CAP-5")
+    fun `E2_G05 a Bluetooth-audio input Lost reads Input lost, not the generic Gap`() = runTest {
+        CaptureState.capturing("s1")
+        val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
+        InputStatus.opened(btDevice, 16_000, "none", true, true, 0L)
+        InputStatus.lost(sinceMillis = 0L)
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(LiveBarTone.DEGRADED, state.tone)
+        assertEquals("Input lost", state.label)
+    }
+
+    @Test
+    @Requirement("E2-G02")
+    fun `E2_G02 no session id never carries the room mark, never a fabricated fact`() = runTest {
+        CaptureState.capturing("s1")
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(false, state.localMicrophone)
     }
 
     @Test

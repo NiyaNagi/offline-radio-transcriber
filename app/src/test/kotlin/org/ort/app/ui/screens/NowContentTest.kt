@@ -72,7 +72,7 @@ class NowContentTest {
     // `NowViewStateMapper.active`) walks every real hour between session start and "now" —
     // starting at 1970 against a 2026 clock would iterate roughly half a million hours for no
     // reason this test cares about.
-    private fun session(id: String) = SessionEntity(
+    private fun session(id: String, captureMode: String? = null) = SessionEntity(
         id = id,
         startedAt = SystemClock.wallMillis() - 3_600_000L,
         endedAt = null,
@@ -82,6 +82,7 @@ class NowContentTest {
         terminationReason = null,
         sourceId = null,
         schemaVersion = OrtDatabase.SCHEMA_VERSION,
+        captureMode = captureMode,
     )
 
     private fun transmission(id: String, sessionId: String, samplePosition: Long) = TransmissionEntity(
@@ -132,5 +133,24 @@ class NowContentTest {
         composeTestRule.waitUntilTextExists("2 overs")
         composeTestRule.onNodeWithText("2 overs · 0 stations", substring = true).assertExists()
         composeTestRule.onNodeWithText("1 overs · 0 stations", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("E2-G02", "FR-CAP-3a")
+    fun `E2_G02 a local-microphone session shows the room-audio chip through the real read path`() {
+        runBlocking {
+            db.sessionDao().insert(session("ROOM-1", captureMode = "LOCAL_MICROPHONE"))
+            db.transmissionDao().insert(transmission("ROOM-1-tx1", "ROOM-1", 1L))
+        }
+        CaptureState.capturing("ROOM-1")
+
+        composeTestRule.setContent {
+            OrtTheme {
+                NowContent(context = context, sessionId = "ROOM-1", onOpenTransmission = {}, onOpenStation = {})
+            }
+        }
+
+        composeTestRule.waitUntilTextExists("Room audio")
+        composeTestRule.onNodeWithText("Room audio", substring = true).assertExists()
     }
 }

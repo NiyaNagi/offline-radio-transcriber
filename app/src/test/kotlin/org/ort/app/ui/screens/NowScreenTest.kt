@@ -47,6 +47,7 @@ class NowScreenTest {
         worthKnowing: List<org.ort.app.ui.data.WorthKnowingItem> = emptyList(),
         stations: NowStationsSection = NowStationsSection(0, emptyList(), null, "None yet."),
         axisStartOverride: String? = null,
+        isLocalMicrophone: Boolean = false,
     ) = NowViewState.Active(
         sessionTitle = sessionTitle,
         summaryLabel = summaryLabel,
@@ -58,7 +59,47 @@ class NowScreenTest {
         missingModel = missingModel,
         worthKnowing = worthKnowing,
         stations = stations,
+        isLocalMicrophone = isLocalMicrophone,
     )
+
+    // -----------------------------------------------------------------------------------------
+    // E2-G02 (N01b, FR-CAP-3a/FR-CAP-10): the room-audio disclosure chip.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("E2-G02", "FR-CAP-10")
+    fun `E2_G02 the room-audio chip renders under the title for a local-microphone session`() {
+        composeTestRule.setContent {
+            OrtTheme { NowScreen(state = activeState(isLocalMicrophone = true)) }
+        }
+
+        composeTestRule.onNodeWithText("Room audio", substring = true).assertExists()
+        composeTestRule.onNodeWithText("the phone's microphone, not the radio", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("E2-G02")
+    fun `E2_G02 no chip renders for a radio session`() {
+        composeTestRule.setContent {
+            OrtTheme { NowScreen(state = activeState(isLocalMicrophone = false)) }
+        }
+
+        composeTestRule.onNodeWithText("Room audio", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("E2-G02", "FR-CAP-12")
+    fun `E2_G02 tapping the chip opens the settings Capture-mode screen`() {
+        var opened = false
+        composeTestRule.setContent {
+            OrtTheme {
+                NowScreen(state = activeState(isLocalMicrophone = true), onOpenCaptureMode = { opened = true })
+            }
+        }
+
+        composeTestRule.onNodeWithText("Room audio", substring = true).performClick()
+        assert(opened)
+    }
 
     @Test
     @Requirement("R-033")

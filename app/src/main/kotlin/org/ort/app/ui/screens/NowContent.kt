@@ -13,6 +13,7 @@ import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.data.LiveBarPolling
 import org.ort.app.ui.data.NowViewState
 import org.ort.app.ui.data.ReaderPolling
+import org.ort.app.ui.data.RoomSessionRouteFactsReader
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
 
@@ -46,6 +47,10 @@ public fun NowContent(
     // unchanged, from whatever call site exists in the meantime.
     onOpenStations: () -> Unit = {},
     onOpenModels: () -> Unit = {},
+    // E2-G02 (N01b): the room-audio chip's tap target — the settings Capture-mode screen (CF11).
+    // Defaulted so every existing caller (`OrtNavHost.kt`, out of this package's row) keeps
+    // compiling unchanged until it wires the real navigation.
+    onOpenCaptureMode: () -> Unit = {},
 ) {
     var state by remember { mutableStateOf<NowViewState>(NowViewState.Idle(null, null, null, null, emptyList(), null)) }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
@@ -55,6 +60,7 @@ public fun NowContent(
     var pollGeneration by remember { mutableStateOf(0) }
 
     LaunchedEffect(sessionId, pollGeneration) {
+        val routeFactsReader = RoomSessionRouteFactsReader(context)
         while (true) {
             // Two calls, one resolution: `nowViewState` already resolves `sessionId` through
             // `effectiveSessionId` internally (its own kdoc), so passing the raw, unresolved
@@ -62,7 +68,17 @@ public fun NowContent(
             // locally, only because `LiveBarPolling.current` — unlike `nowViewState` — takes the
             // session id it should read directly and does no resolution of its own.
             val effectiveSessionId = ReaderPolling.effectiveSessionId(sessionId)
-            state = ReaderPolling.nowViewState(context, sessionId)
+            val baseState = ReaderPolling.nowViewState(context, sessionId)
+            // E2-G02 (FR-CAP-3a/FR-CAP-10): `ReaderPolling.nowViewState` (WP4's file, out of this
+            // package's row) does not know about the session's own v7 `captureMode` column —
+            // re-derive `isLocalMicrophone` here from the WPF seam, the same pattern
+            // `CaptureStatusContent` already uses for its own Input/Radio rows.
+            state = if (baseState is NowViewState.Active) {
+                val routeFacts = routeFactsReader.forSession(effectiveSessionId)
+                baseState.copy(isLocalMicrophone = routeFacts.isLocalMicrophone)
+            } else {
+                baseState
+            }
             liveBar = if (state is NowViewState.Active) {
                 LiveBarPolling.current(context, effectiveSessionId)
             } else {
@@ -84,5 +100,6 @@ public fun NowContent(
         onOpenStation = onOpenStation,
         onOpenStations = onOpenStations,
         onOpenModels = onOpenModels,
+        onOpenCaptureMode = onOpenCaptureMode,
     )
 }
