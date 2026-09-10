@@ -32,6 +32,124 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (release engineering: RELEASES.md, RELEASING.md, release_notes.py rewritten, v0.1.1)
+
+### (pending) — release engineering · RELEASES.md/RELEASING.md added, release_notes.py reads RELEASES.md not CHANGELOG.md, versionName 0.1.1/versionCode 2
+
+**Scope:** repo root (`RELEASES.md` new, `RELEASING.md` new), `tools/release_notes.py` (rewritten),
+`tools/tests/test_release_notes.py` (new), `.github/workflows/ci.yml` (one new step),
+`.github/workflows/release.yml` (the notes-extraction step split in two, doc comment updated),
+`buildSrc/src/main/kotlin/ort.android-app.gradle.kts` (version bump only).
+
+**Requirements/ACs:** none new — this is process/release tooling, not product behaviour. Motivated
+by the owner's own complaint that GitHub carries no up-to-date release and that the existing
+notes ("every `## YYYY-MM-DD` changelog section for the newest date") are hard to understand,
+plus the owner's version policy: stay on `0.1.x` until basic transcribing works with real models
+built in — quoted in both new docs, not paraphrased.
+
+**What changed:**
+- **Constitution Check.** VI (numbers carry their fold/machine/provider) is the spirit behind
+  keeping `CHANGELOG.md` exactly as dense as it is — this change does not touch its format or its
+  requirement, it adds a second, deliberately different document for a different reader. IX
+  ("Never delete quietly") bears on `RELEASING.md`'s own procedure: cutting a release renames
+  `## Unreleased` rather than erasing it, and every past `vX.Y.Z` section stays in `RELEASES.md`
+  forever, same as `CHANGELOG.md`'s own entries.
+- **`RELEASES.md`** (new, repo root): the human-readable release history — the counterpart to
+  `CHANGELOG.md`, explicitly not a replacement for it (its own header says so and says why).
+  Newest first: `## Unreleased` (currently empty, a placeholder line) then `## v0.1.1 —
+  2026-09-09`, with only the non-empty headings among `New`/`Improved`/`Fixed`/`Known
+  issues`/`Install`. The v0.1.1 content (28 bullets) was written by reading, not invented:
+  `CHANGELOG.md` from 2026-09-07 onward (the `## ` commit-summary lines across the whole
+  `ui-conformance` program plus the audit-and-remediate run that preceded it),
+  `results/ui-audit/register.md` (332 rows, the shared-components/nav/screen-by-screen findings),
+  and `spec/ui-conformance-plan.md`'s Phase G close-out record (327 register rows, 202 closed /
+  121 fixed / 4 not closed; final gate green at `e24b9ef`). `### Known issues` states plainly:
+  no bundled transcription models yet (the app cannot transcribe real audio), FR-RIG unbuilt so
+  rig steps fall back to manual frequency entry, the register's own R-220/280/340 (unconfirmed on
+  a real device — AVD software-renderer artefact) and R-381 (the Search field's `EditText` node
+  exports an empty description; its child node carries the real label). `### Install` explains
+  sideloading the debug APK and names the debug-only 19-state scenario simulator. No requirement
+  ids, commit hashes, register row numbers or internal package names (`WP4` etc.) appear in the
+  v0.1.1 section — checked by a dedicated test (`test_the_real_releases_file_has_unreleased_and_v0_1_1`
+  in the new test file) that fails if any of `R-`, `FR-`, `AC-`, `WP1`, `WP2`, `WP3` leaks into it.
+- **`RELEASING.md`** (new, repo root): the repeatable procedure — the version policy quoted
+  verbatim, that `RELEASES.md`'s `## Unreleased` is kept current as work lands rather than
+  reconstructed at release time, the exact steps to cut a release (rename `Unreleased`, bump
+  `versionName`/`versionCode` in `buildSrc/.../ort.android-app.gradle.kts`, commit, tag, push the
+  tag), how the workflow's two release shapes differ, and how to verify the result on GitHub
+  afterward (`gh release view`/`gh release list`, and actually sideloading the APK once).
+- **`tools/release_notes.py`** rewritten to read `RELEASES.md` instead of dumping
+  `CHANGELOG.md`'s newest dated section. Contract: no argument → the `## Unreleased` section's
+  body (for the rolling build); one argument (`v0.1.1`) → that version's section body; an unknown
+  version prints every section `RELEASES.md` actually has to stderr and exits 1, so a release can
+  never be cut against notes nobody wrote. Every render appends a footer — `Engineering detail:
+  CHANGELOG.md` plus a `Commit range: <older>..<newer>` line computed by walking to the next
+  (older) heading in `RELEASES.md`'s own newest-first order, so it needs no git subprocess call
+  and works identically before or after the corresponding tag exists. Docstring at the top states
+  the CHANGELOG/RELEASES split and points at `RELEASING.md` for the procedure.
+- **`tools/tests/test_release_notes.py`** (new): no Python test harness existed for loose
+  `tools/*.py` scripts before this (only `tools/spec-check/` and `corpus/` had one) — followed
+  `tools/spec-check/tests/test_spec_check.py`'s own pattern exactly: `sys.path.insert` to import
+  the script directly, one test against the real committed `RELEASES.md` (proves `Unreleased` and
+  `v0.1.1` both resolve and never leak register vocabulary), the rest against a small synthetic
+  `RELEASES.md` string covering: default-is-Unreleased, a versioned section returns only its own
+  body, the commit-range chain across three sections, an unknown version raises
+  `UnknownVersionError` naming every real section, an empty section still renders a footer instead
+  of crashing, and `main()`'s own exit codes/stderr for a bogus version, a normal no-arg run, and a
+  missing `RELEASES.md` file (`monkeypatch.chdir` + `monkeypatch.setattr` on the module's own
+  `RELEASES_PATH`, never touching the real repo file). Wired into `.github/workflows/ci.yml`'s
+  existing `spec` job as a new step, `python -m pytest tools/tests -q`, the same invocation shape
+  as that job's existing `python -m pytest tools/spec-check -q` step, immediately after it.
+- **`.github/workflows/release.yml`**: the single "extract this release's notes from CHANGELOG.md"
+  step is now two `if`-gated steps mirroring the two publish steps already below them — the
+  rolling-build step (`github.ref == 'refs/heads/main'`) runs `python3 tools/release_notes.py`
+  with no argument, the versioned step (`startsWith(github.ref, 'refs/tags/v')`) runs
+  `python3 tools/release_notes.py "${{ github.ref_name }}"`. The top-of-file doc comment is
+  updated to describe the RELEASES.md split instead of "the same detailed, per-commit changelog";
+  nothing else in the workflow (gate, publish steps, concurrency, triggers) was touched.
+- **Version bump**: `versionName = "0.1.1"`, `versionCode = 2` in
+  `buildSrc/src/main/kotlin/ort.android-app.gradle.kts` (was `"0.1.0"` / `1`). Checked every
+  `:app` source/test file that names a version string before touching anything further:
+  `SettingsAboutScreen.kt`'s `appVersionLabel` and `diagnostics/DeviceJsonProducer.kt`'s
+  `appVersionLabel` both read the real `PackageManager` `versionName` at runtime, never a
+  literal; `SettingsAboutScreenTest.kt`'s `"0.1.0 · build 1 · abc1234"` is a fixture literal for
+  an unrelated row-ordering assertion, not compared against the real build version — so no test
+  file needed a change for the version bump itself.
+
+**Verified:**
+- `python tools/release_notes.py` (no arg) — prints the `Unreleased` placeholder plus footer
+  `Commit range: v0.1.1..HEAD`.
+- `python tools/release_notes.py v0.1.1` — prints the full v0.1.1 section (28 New/Improved/
+  Fixed/Known-issues/Install bullets) plus footer `Commit range: up to v0.1.1` (no older tagged
+  version exists yet).
+- `python tools/release_notes.py v9.9.9` — `error: no '## v9.9.9' section in RELEASES.md — known
+  sections: Unreleased, v0.1.1`, exit code 1.
+- `python -m pytest tools/tests -q` — 9 passed.
+- `python -m pytest tools/spec-check -q` — 8 passed (unaffected by this change; run to confirm no
+  regression from touching a sibling `tools/` directory).
+- `.\gradlew.bat :app:testDebugUnitTest --tests '*About*' --tests '*Version*'` — BUILD SUCCESSFUL;
+  both `SettingsAboutScreenTest` cases (`R_138 …`) passed; no `*Version*`-named test class exists
+  in `:app` today.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules checked, no forbidden
+  edges.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` — 419 requirements, 192 covered, `results/coverage-matrix.md`
+  regenerated with no diff (nothing here is requirement-bearing product code).
+- `.\gradlew.bat coverageMatrixCheck` (separate invocation) — up to date, 192 of 419.
+
+**Left open / not done:** the actual `git tag v0.1.1` / `git push origin v0.1.1` / GitHub
+publish is explicitly the lead's own step, not run from this worktree, per this task's own
+briefing — `gh release list`/`gh release view` were not even run read-only, since nothing new
+needs checking against the remote until the lead publishes. `RELEASES.md`'s wording is written
+for lead review before anything ships, per the same briefing. The three still-open register
+findings (R-220/R-280/R-340 hardware check, R-381 search-field node) are named in `### Known
+issues` and left open, not re-attempted here — this is a release-engineering change, not a UI
+fix.
+
+---
+
 ## 2026-09-10 (ui-conformance WP9: R-612 investigated — the diagnosis was wrong, reported honestly)
 
 ### (pending) — ui-conformance WP9 · R-612: not a header/scroll overlap — a device-verified diagnostic found the real shape of the defect
@@ -180,7 +298,6 @@ scale," reconfirmed directly here (`rememberTextMeasurer` reported the identical
 `LogRow`/R-373 already established and this package's own report treats as trustworthy on a real
 device; device confirmation of the exact wrap point at 1.0/2.0 is the same standing caveat R-373's
 own report already carries, not new to this fix.
-
 ## 2026-09-09 (ui-conformance WP4 round: R-613 Capture-Status trailing clearance above the live bar)
 
 ### (pending) — ui-conformance WP4 · R-613 `CaptureStatusScreen`'s scrollable content reserves real trailing clearance above `LiveBar`, per WP11b's own re-diagnosis

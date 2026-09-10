@@ -2,12 +2,15 @@ name: Release
 
 # Two release shapes:
 #  - a rolling "latest-build" prerelease, republished on every push to main, so there is always
-#    exactly one stable link for "download the current build" without cutting a version.
+#    exactly one stable link for "download the current build" without cutting a version. Its
+#    notes are RELEASES.md's own "## Unreleased" section (tools/release_notes.py with no
+#    argument).
 #  - a proper versioned release when a `vX.Y.Z` tag is pushed, for an actual numbered milestone.
-# Both attach the same debug APK CI already builds and verifies (ci.yml's `android` job) and pull
-# their notes from CHANGELOG.md via tools/release_notes.py, so the release notes are the same
-# detailed, per-commit changelog this project already maintains — not a separate summary to keep
-# in sync by hand.
+#    Its notes are that version's own section of RELEASES.md (tools/release_notes.py <tag>).
+# Both attach the same debug APK CI already builds and verifies (ci.yml's `android` job). See
+# RELEASES.md's own header for why release notes come from it and not from CHANGELOG.md (that
+# file stays the dense, per-commit engineering log AGENTS.md requires), and RELEASING.md for the
+# procedure that keeps RELEASES.md current.
 on:
   push:
     branches: [main]
@@ -46,8 +49,13 @@ jobs:
           :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
           :app:assembleDebug dependencyRules
 
-      - name: extract this release's notes from CHANGELOG.md
+      - name: extract the rolling build's notes (RELEASES.md's Unreleased section)
+        if: github.ref == 'refs/heads/main'
         run: python3 tools/release_notes.py > release-notes.md
+
+      - name: extract this version's notes (RELEASES.md's own vX.Y.Z section)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 tools/release_notes.py "${{ github.ref_name }}" > release-notes.md
 
       - name: short commit sha
         id: sha
