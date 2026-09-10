@@ -32,6 +32,130 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPD: setup UI for D33 capture modes, Bluetooth permission, the rig catalogue picker)
+
+### 4f35f96 — WPD · adapt SetupStore facts into WPC2's CaptureConfigurationStore
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/SetupCaptureConfigurationAdapter.kt` (new),
+`SetupActivity.kt` (wiring only).
+**Requirements/ACs:** FR-CAP-12, FR-CAP-13, AC-131, AC-130.
+**What changed:** `SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)` — a pure
+function turning `SetupStore`'s facts into `:pipeline`'s `CaptureConfiguration` (WPC2, merged at
+`e464820`), `null` only before S00 is walked. `SetupActivity` now holds a
+`SharedPreferencesCaptureConfigurationStore` and calls `syncCaptureConfiguration()` after every
+mutation to the mode/route/rig axes (`onChooseMode`, `onStartVerify`, `onChooseRig`,
+`onConnectRigTransport`, `onContinueRigBluetooth`, `onUseUsbInsteadForRig`, `onChangeRadio`,
+`onRadioNotNow`, `onEnterFrequency`). `rigParams` carries only the Bluetooth address S10b's
+checklist verified — USB's `usbVendorId`/`usbProductId` are left absent (no `RigDescriptor` field
+carries them yet and H1 has not verified them); `DefaultRigTransportFactory` fails that connect
+loudly rather than guessing, exactly as its own kdoc specifies.
+**Verified:** `SetupCaptureConfigurationAdapterTest` (5 tests, including
+`AC_130_bluetooth_control_with_wired_audio_arrives_in_the_configuration_unmodified`) green;
+`:app:testDebugUnitTest --tests org.ort.app.ui.setup.*` green; full gate below.
+**Left open / not done:** USB `rigParams` (VID/PID) — no source of truth exists yet; a future
+package must supply them once H1 verifies the TH-D75A's real USB identifiers.
+
+### 8f35645 / 4f35f96 (this package's own commits) — S00, S02c, S09, S09b, S10b built
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**` (`ModeScreen.kt`,
+`BluetoothPermissionScreen.kt`, `RigLinkPort.kt`, `RigPickerCatalogue.kt`, `RigTransportScreen.kt`,
+`RigBluetoothScreen.kt` new; `RadioScreen.kt`, `RadioVerifiedScreen.kt`, `RadioUsbScreen.kt`,
+`ReadyScreen.kt`, `SetupStep.kt`, `SetupStateMachine.kt`, `SetupStore.kt`, `SetupViewStates.kt`,
+`InputScreen.kt`, `InputRouteEnumerator.kt`, `SetupScaffold.kt`, `SetupActivity.kt` changed),
+`app/src/main/kotlin/org/ort/app/permissions/PermissionsFlow.kt`,
+`app/src/main/AndroidManifest.xml` (`BLUETOOTH_CONNECT` + legacy `BLUETOOTH maxSdkVersion="30"`),
+and the matching test files.
+**Requirements/ACs:** FR-CAP-8, FR-CAP-9, FR-CAP-2b, FR-RIG-13, FR-RIG-14, FR-RIG-16, FR-RIG-17,
+FR-RIG-18, FR-RIG-19, D33, D34, AC-127, AC-128 (unchanged, `4fed9de`), AC-130, AC-132 (unchanged),
+AC-133, AC-134, AC-135.
+**What changed:** D33's eight-stage setup sequence. `SetupStep` gains `MODE` (before
+`MICROPHONE`), `BLUETOOTH_PERMISSION` (after `MICROPHONE`, Bluetooth mode only),
+`RIG_TRANSPORT`/`RIG_BLUETOOTH` (after `RADIO`) — `SETUP_TOTAL_STEPS = 8`, `indicatorIndex()`
+remapped per `design-intent.md` §2's stage table. `SetupStateMachine.stepFor` gates on
+`captureMode == null` first (S00), then the Bluetooth-permission gate
+(`captureMode == BLUETOOTH_RADIO && !bluetoothConnectGranted && !bluetoothPermissionDeclined`),
+then (new, resumable, unlike the transient `RADIO_USB`/`RADIO_VERIFIED`) `RIG_TRANSPORT` (a real
+rig chosen, no transport yet) and `RIG_BLUETOOTH` (Bluetooth SPP chosen, not yet verified).
+`SetupStore` gains `captureMode`, `bluetoothPermissionDeclined`, `rigId`, `rigTransport`
+(`:core`'s two-value preset kind), `rigBluetoothAddress`, `rigBluetoothVerified`,
+`modeOverriddenAudio`, `modeOverriddenRig` — `radioChoice` (the pre-existing coarse bucket) is kept
+unchanged for backward compatibility with `app/src/debug/.../Scenarios.kt` (WPI-owned, out of this
+package's scope) and `ReadyScreen`'s radio row.
+`ModeScreen` (S00): the three `NavigationRow`s, exact board copy, `testTag`s
+`setup-mode-local-mic`/`setup-mode-usb`/`setup-mode-bluetooth`. `BluetoothPermissionScreen` (S02c):
+rationale + decline banner, `testTag`s `setup-bt-permission-allow`/`-not-now`/`-decline-banner`.
+`InputRouteEnumerator`/`InputScreen` (S04): `InputRouteOption.routeKind` (`:core`
+`AudioRouteKind`) added so `SetupActivity.onChooseMode` can preselect "the first route of the
+preset kind"; a `PresetChip` ("preset by <mode>") renders when the audio axis has not been
+overridden, `testTag` `setup-input-preset-chip`.
+`RadioScreen` (S09) rewritten: generated from `RigPickerCatalogue.build()` (bundled TH-D75A +
+session-imported descriptors) over `:rig`'s real `RigCatalogue`, never a hardcoded three-row list;
+`RigPickerCatalogue.pickerOrder()` puts named rigs first and the null module strictly last
+(AC-135); `subtitleFor`/`capabilitiesFor`/`transportLabel`/`capabilityLabel` generate every row's
+sub-line from the descriptor's own declared capabilities (FR-RIG-17) — no per-rig board copy
+hardcoded anywhere. `Import it` opens `ActivityResultContracts.OpenDocument()`, validates through
+`RigCatalogue.import`, and renders an inline error on rejection (never silently swallowed).
+`RigTransportScreen` (S09b, new): both declared transports, generated capability bullets, the
+preset marked, `Connect over …` naming the selection. `RigBluetoothScreen` (S10b, new): the paired
+list (SPP-capable selectable, headset-only dim and inert, unknown-capability shown as such and
+still selectable), `Pair a device in system settings`, `Refresh`, and the open → identify → verify
+checklist driven by a new `RigLinkPort` seam (`Opening`/`Open`/`Identified`/`Verified`/`Lost`/
+`NoPermission`/`Failed`) with the `InMemoryRigLinkPort` behavioural fake (can hang, fail, drop,
+deny permission); `Continue` enables only on `Verified`; a `Lost`/`Failed`/`NoPermission` renders a
+banner, never a blank screen. `RadioVerifiedScreen` (S11) now takes a `transportLabel` naming the
+transport in its subtitle. `ReadyScreen` (S12) gains a leading Mode row (`Change` → S00) and
+renames "Model" to "Models" (WPG's `ModelsController` bundled/verified wiring is left to WPE/WPG,
+per this program's own split — this row still reads `AsrAvailability` as before).
+`AndroidManifest.xml`: `BLUETOOTH_CONNECT` + legacy `BLUETOOTH android:maxSdkVersion="30"`.
+**Known, reported architectural gap:** the real `:rig-bluetooth` adapter
+(`BluetoothSppTransport`/`AndroidBluetoothLink`) cannot be wired into `RigLinkPort` from `:app` —
+`buildSrc/.../ModuleGraph.kt`'s `allowed[":app"]` does not include `:rig-bluetooth` (that file is
+outside this package's ownership to change). `RigLinkPort`'s doc comment states this explicitly;
+S10b is proven entirely against `InMemoryRigLinkPort` until either `:pipeline` exposes a bridge or
+the lead amends the module graph.
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*"` — 239 tests, green.
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — 1494 tests, 4 failed
+  (all four in `org.ort.app.debug.ScenariosTest`: `R_264_setup-level`, `R_227_setup-verified` ×2,
+  `R_285_setup-radio` — every one an `expected:<X> but was:<MODE>`, the direct, foreseeable
+  consequence of the new mandatory `MODE` gate landing before three debug scenario fixtures
+  (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, WPI-owned, outside this package's scope)
+  that seed `radioChoice`/`selectedInputId` directly without ever setting `captureMode`. Not a
+  regression in this package's own code — every other test, including the full
+  `SetupStateMachineTest`/`SetupActivityTest`/`SetupStoreTest` suites, is green.
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true --continue build dependencyRules platformGuards`
+  — `dependencyRules`/`platformGuards`/lint/assemble all green; the only red leaf is the same
+  `:app:testDebugUnitTest` (4 known failures above).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix coverageMatrixCheck` — 235 of 450
+  requirements covered, up to date.
+- **Discrimination (AC-127/AC-130):** reverted `onChooseMode`'s
+  `store.rigTransport = preset.preferredRigTransportKind` line to `null`; confirmed
+  `AC_127_usb_radio_mode_presets_usb_serial_and_never_asks_for_bluetooth` and
+  `AC_127_bluetooth_radio_mode_inserts_the_nearby_devices_step_after_microphone` fail for the right
+  reason (`expected:<USB_SERIAL> but was:<null>` / `expected:<BLUETOOTH_SPP> but was:<null>`);
+  restored, both green again.
+**Left open / not done:**
+- The real `:rig-bluetooth` transport behind `RigLinkPort` (see the architectural gap above) —
+  awaits a `:pipeline` bridge or a `ModuleGraph.kt` amendment from the lead.
+- `app/src/debug/.../Scenarios.kt`'s `setup-verified`/`setup-level`/`setup-radio` fixtures need one
+  line each (`store.captureMode = CaptureMode.USB_RADIO`, or the mode the scenario intends) to keep
+  resuming at their documented step now that `SetupStep.MODE` gates first — filed for WPI, not
+  fixed here (outside this package's ownership).
+- S12's Models row still reads `AsrAvailability`, not WPG's newly-merged `ModelsController`
+  bundled/verified state (`ModelRowViewState.bundled`/`tierEligible`) — left for WPE/WPG per this
+  program's own WPD/WPG split; a straightforward follow-up once picked up.
+- No activity-level integration test drives the full S09 → S09b → S10b → S11 Bluetooth path end to
+  end (Robolectric + a real coroutine `delay()`-driven `LaunchedEffect` proved awkward to
+  synchronize reliably in the time available) — the port (`InMemoryRigLinkPortTest`), the screen
+  (`RigBluetoothScreenTest`), and the pure gate logic (`SetupStateMachineTest`'s
+  `RIG_BLUETOOTH`/AC-130 tests) are each proven in isolation instead.
+- USB `rigParams` (VID/PID) for `DefaultRigTransportFactory` — see the adapter entry above.
+
+---
+
 ## 2026-09-10 (WPC2 follow-up: real USB/Bluetooth rig transports wired behind RigTransportFactory)
 
 ### (pending) — DefaultRigTransportFactory now builds real UsbSerialTransport/BluetoothSppTransport; RigSupervisor no longer drives its own reconnect loop
