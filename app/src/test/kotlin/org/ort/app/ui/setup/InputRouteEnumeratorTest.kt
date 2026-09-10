@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,20 +21,45 @@ class InputRouteEnumeratorTest {
 
     private val context get() = ApplicationProvider.getApplicationContext<Application>()
 
+    /**
+     * **AC-128 (FR-CAP-2b, FR-CAP-10).** This test previously asserted the exact opposite — that
+     * the built-in mic row *must* be `refused` and *must* say "capture will refuse this route" —
+     * and it passed, which is why the defect survived: FR-CAP-3a has always said in as many words
+     * that "the built-in mic is a legitimate selection ... what is never acceptable is landing on
+     * it *without having been chosen*". The old test pinned the requirement's inverse. D33 makes
+     * local-microphone capture a named, first-class mode, so what the row carries now is a
+     * **disclosure** ([RouteAdvisory.ROOM_AUDIO]), never a refusal.
+     */
     @Test
-    fun `R_081 the built-in mic is listed and marked refused, never silently hidden`() {
+    fun `AC_128 the built-in mic is offered as a real choice, never refused`() {
         val io = FakeAudioIo(
             devices = listOf(AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone")),
         )
 
-        val routes = InputRouteEnumerator(context, io).list()
+        val route = InputRouteEnumerator(context, io).list().single()
 
-        assertEquals(1, routes.size)
-        assertTrue(routes.single().refused)
-        assertTrue(
-            "expected a refusal warning, got '${routes.single().subtitle}'",
-            routes.single().subtitle.contains("refuse", ignoreCase = true),
+        assertEquals(RouteAdvisory.ROOM_AUDIO, route.advisory)
+        assertFalse(
+            "FR-CAP-3a/FR-CAP-10: the mic is a legitimate selection, got '${route.subtitle}'",
+            route.subtitle.contains("refuse", ignoreCase = true),
         )
+        assertFalse(
+            "FR-CAP-2b: never assert a route is not a radio, got '${route.subtitle}'",
+            route.subtitle.contains("not a radio", ignoreCase = true),
+        )
+    }
+
+    /** AC-129: the disclosure FR-CAP-3a requires is on the row itself, so a session recorded from
+     * the room and one recorded from the radio can never be confused at the point of choosing. */
+    @Test
+    fun `AC_129 the built-in mic row discloses that it captures the room`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone")),
+        )
+
+        val subtitle = InputRouteEnumerator(context, io).list().single().subtitle
+
+        assertTrue("got '$subtitle'", subtitle.contains("room", ignoreCase = true))
     }
 
     // --- R-122 (validator finding, register R-120..R-125): named by real device type ------------
@@ -49,17 +75,42 @@ class InputRouteEnumeratorTest {
         assertTrue("got '$subtitle'", subtitle.startsWith("Built-in microphone"))
     }
 
+    /**
+     * **AC-132 (D34, CON-CAP-1 as amended).** Bluetooth audio is now offered — the constraint no
+     * longer forbids the route, it requires the route to be *marked*. The previous table had this
+     * backwards in the opposite direction from the mic: it passed Bluetooth through as an ordinary
+     * radio-capable source with no advisory at all, while CON-CAP-1 still banned it outright.
+     */
     @Test
-    fun `R_122 an unrecognised device type is refused too, never silently treated as a radio`() {
+    fun `AC_132 the Bluetooth route is offered and discloses its narrowband degradation`() {
+        val io = FakeAudioIo(
+            devices = listOf(AudioDeviceDescriptor("bt-0", AudioDeviceKind.BLUETOOTH, "Handheld BT")),
+        )
+
+        val route = InputRouteEnumerator(context, io).list().single()
+
+        assertEquals(RouteAdvisory.BLUETOOTH_DEGRADED, route.advisory)
+        assertTrue(
+            "CON-CAP-1: the cost must be stated where it is chosen, got '${route.subtitle}'",
+            route.subtitle.contains("narrowband", ignoreCase = true),
+        )
+    }
+
+    /** FR-CAP-2b: an unrecognised type is disclosed *as unrecognised* — the app says it cannot
+     * tell what the device is, which is true, rather than asserting it is not a radio, which it
+     * has no way to know. */
+    @Test
+    fun `FR_CAP_2b an unrecognised device type says so, never that it is not a radio`() {
         val io = FakeAudioIo(
             devices = listOf(AudioDeviceDescriptor("weird-0", AudioDeviceKind.UNKNOWN, "sdk_gphone64_x86_64")),
         )
 
         val route = InputRouteEnumerator(context, io).list().single()
 
-        assertTrue(
-            "an unrecognised type must default to refused, not silently pass as a radio",
-            route.refused,
+        assertEquals(RouteAdvisory.UNRECOGNISED_TYPE, route.advisory)
+        assertFalse(
+            "must not assert what it cannot know, got '${route.subtitle}'",
+            route.subtitle.contains("not a radio", ignoreCase = true),
         )
     }
 
@@ -77,14 +128,14 @@ class InputRouteEnumeratorTest {
     }
 
     @Test
-    fun `R_122 a USB device is not refused and carries the USB audio icon`() {
+    fun `R_122 a USB device carries no advisory at all and shows the USB audio icon`() {
         val io = FakeAudioIo(
             devices = listOf(AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device")),
         )
 
         val route = InputRouteEnumerator(context, io).list().single()
 
-        assertFalse(route.refused)
+        assertNull("the cabled route is the clean one — nothing to disclose", route.advisory)
         assertEquals(org.ort.app.ui.components.OrtIcons.usbAudio, route.icon)
     }
 

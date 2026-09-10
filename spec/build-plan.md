@@ -279,6 +279,72 @@ are individually green.*
   own file, never claimed as "checksum verified". See CHANGELOG.md. No real download or on-device
   install has been run against any of these URLs in any session.
 
+**Wave F — capture modes and bundled assets. Added 2026-09-10 (D33–D36). Both need Wave E.**
+
+- [ ] **P19 · Capture modes and the onboarding mode picker** *(`:app`, `:capture-android`,
+  `:rig-usb`, new `:rig-bluetooth`)* — D33/D34. Turns the two unnamed, sequential setup axes into
+  a named mode chosen up front and changeable afterwards.
+
+  **Read first:** functional spec §7.1a (FR-CAP-8..13), FR-CAP-2b, CON-CAP-1 *as amended*,
+  FR-RIG-13..19, §9.1a, AC-127..135. Constitution I, IV, VII, VIII.
+
+  **Owns:** `app/.../ui/setup/**` (the new `CaptureMode`, mode-picker screen, `SetupStep`/
+  `SetupStateMachine`/`SetupStore` changes), `app/.../ui/settings/SettingsCaptureScreen.kt`
+  (FR-CAP-12's re-entry), the rig catalogue types, and the new Bluetooth transport module.
+  **Must not touch:** the segmenter (Principle III — segmentation takes no mode, exactly as it
+  takes no tier), `:asr-*`, `:lexicon`, `:identity`.
+
+  **Tests first, in this order** — each named for its criterion:
+  1. `AC_127` each of the three modes completes onboarding on hardware offering only that mode.
+  2. `AC_130` a mode presets both axes, and **Bluetooth control + wired audio** is reachable —
+     the combination no mode presets. This is the test that proves FR-RIG-13's independence is
+     real rather than asserted; write it before the picker, because a picker built without it
+     will hard-couple the axes and pass everything else.
+  3. `AC_131` mode changes from settings, takes effect at the next session, never mid-session,
+     and alters no existing record.
+  4. `AC_132`/`AC_133` Bluetooth audio marking, and TH-D75A parity across both transports.
+  5. `AC_134`/`AC_135` the picker is generated from the descriptor set; null and generic ASCII
+     CAT stay reachable without scrolling.
+
+  **Ships with it:** a behavioural fake Bluetooth transport that can be told to fail, hang and
+  drop mid-session (constitution II — a transport fake that only succeeds tests nothing about
+  FR-RIG-15, which is the requirement that matters most for a link that drops more often).
+
+  **Artboards are a prerequisite, not a follow-up (Principle VIII).** The mode picker, the
+  Bluetooth pairing step and the settings re-entry are new screens with **no artboards yet** —
+  `design/canvas/` has `Setup-Rig*.dc.html` but nothing for a mode choice. Add them to
+  `design/design-intent.md` and draw them before building, or the screens ship unverifiable.
+
+  **Done when:** AC-127..135 hold, `dependencyRules` still forbids every `:capture-* -> :asr-*`
+  edge, and a capture started in each mode is distinguishable in the stored record without
+  reading its audio.
+
+- [ ] **P20 · Bundle every asset into the artifact** *(build config, `:app`, `:asr-sherpa`,
+  `:net`)* — D35/D36. Amends the delivery half of P18, not its lifecycle half.
+
+  **Read first:** FR-AST-3, FR-AST-3a, FR-AST-3b, FR-DIG-3a, FR-DIG-3b, AC-136..140, R18.
+  Constitution V and VII.
+
+  **The point of order here:** P18 built acquisition, verification and side-loading through
+  `:net`. D35 removes the *download* from the first-run path; it does **not** remove
+  `ModelAcquisition` — side-load, replacement and roll-back (FR-AST-1) still run through it, and
+  `:net` remains the only module that may link an HTTP client. Deleting the acquisition path
+  because assets now ship bundled would take FR-AST-1's lifecycle with it.
+
+  **Tests first:** `AC_136` (a fresh install with networking disabled reaches full capability —
+  the criterion that makes D35 worth anything), `AC_137` (a corrupted bundled asset fails
+  verification rather than activating — bundling establishes provenance, not integrity),
+  `AC_138` (a T0 device stores the LLM and never loads it, measured against the resident budget),
+  `AC_139`, `AC_140` (the deterministic digest with the LLM **disabled**, replacing AC-84's
+  now-unreachable "absent").
+
+  **Measure and record the real installed size** as soon as the asset set is fixed, under
+  `results/`, with the device and the tier breakdown. R18 is the reason this prompt exists at
+  all, and it cannot be assessed from an estimate.
+
+  **Done when:** AC-136..140 hold, one build variant produces the shipping artifact, and
+  `FR-AST-3a`'s TODO is either still open with a recorded size or closed by a measurement.
+
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not
 decomposed** — M4 can delete Pass C, which changes what several of them contain. (M5 was on this

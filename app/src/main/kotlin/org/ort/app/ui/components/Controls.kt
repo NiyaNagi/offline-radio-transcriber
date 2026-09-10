@@ -516,8 +516,10 @@ public fun RadioRow(
     modifier: Modifier = Modifier,
     count: String? = null,
     // R-081 (`Setup-Input.dc.html`): an explanatory line under the label — device kind/sample
-    // rate normally, the refusal reason ("Not a radio — capture will refuse this route") when
-    // [tone] is [RowTone.Warning]. Both null/Neutral by default, so existing rows are unchanged.
+    // rate, plus the route's advisory where it has one (FR-CAP-2b). [tone] is [RowTone.Warning]
+    // only for a route the app cannot recommend at all, never for a supported-but-disclosed one
+    // such as the built-in mic or Bluetooth — see `InputScreen.dimsTheRow`.
+    // Both null/Neutral by default, so existing rows are unchanged.
     subtitle: String? = null,
     tone: RowTone = RowTone.Neutral,
 ) {

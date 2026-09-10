@@ -34,6 +34,105 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-10 (idle-root: CI's AppNotIdleException root-caused to a real ordering bug, not just isolated)
 
+### (pending) — capturemodes · capture becomes a named mode (local mic, USB radio, Bluetooth radio), Bluetooth audio is permitted with its cost marked, and every asset ships in the artifact
+
+**Scope:** `spec/functional-spec.md` (§3 decisions, §7.1/§7.1a FR-CAP, §7.6 FR-RIG, §9.1a, §7.15
+FR-AST, §7.9 FR-DIG, §14.11/§14.12, §14A risks, §16 traceability); `spec/build-plan.md` (new
+Wave F, P19/P20); `app/src/main/kotlin/org/ort/app/ui/setup/InputRouteEnumerator.kt`,
+`.../setup/InputScreen.kt`, `.../components/Controls.kt` (comment only);
+`app/src/test/kotlin/org/ort/app/ui/setup/InputRouteEnumeratorTest.kt`, `.../InputScreenTest.kt`.
+
+**Requirements/ACs:** **D33** (capture is a mode), **D34** (Bluetooth audio permitted — amends
+CON-CAP-1), **D35** (everything bundled, one build variant — amends FR-AST-3), **D36** (the LLM
+is bundled — revises D10, leaves D5 untouched). New: FR-CAP-2b, FR-CAP-8..13, FR-RIG-13..19,
+FR-AST-3a, FR-AST-3b, FR-DIG-3b, AC-127..140, R17, R18. Amended: CON-CAP-1, FR-CAP-2, FR-AST-3,
+FR-DIG-3a, D10. Implemented here: **AC-128, AC-129, AC-132** and FR-CAP-2b.
+
+**What changed:**
+
+*Constitution Check.* I (uncertainty is content — a route's honest description is a disclosure,
+never an assertion the app cannot support; the unrecognised-type row now says the app cannot
+identify the device rather than claiming it is not a radio). II (test-backed — the replaced test
+asserted the *inverse* of FR-CAP-3a and passed, which is why the defect survived; the new tests
+were shown to fail against the reverted flag, below). IV (a route that is not the selection halts
+capture — unchanged, and this change restores rather than weakens it: the halt condition was
+always *route ≠ selection*, never *route = built-in mic*). VI (a Bluetooth-sourced number is
+reported as its own source, never merged). VII (the boolean that could silently block a supported
+mode is replaced by a type that can only describe one).
+
+**The reported defect, and the two errors behind it.** Onboarding would not let the operator pick
+the local mic. `DeviceTypeNaming` carried one flag per device type, `isRadioCapable`, and it was
+wrong for two of six rows *in opposite directions*: `TYPE_BUILTIN_MIC` was marked incapable — so
+the row rendered amber, subtitled "not a radio, capture will refuse this route" — although
+**FR-CAP-3a permits it by name** ("the built-in mic is a legitimate selection ... what is never
+acceptable is landing on it *without having been chosen*"); and `TYPE_BLUETOOTH_SCO` was marked
+capable although **CON-CAP-1 then banned Bluetooth audio outright**. Neither was reachable from
+any test that only asked whether the list rendered, and the existing test for the first one
+asserted the defect as if it were the requirement.
+
+`refused: Boolean` is replaced by `advisory: RouteAdvisory?` — `ROOM_AUDIO`,
+`BLUETOOTH_DEGRADED`, `UNRECOGNISED_TYPE`, `NOT_A_CAPTURE_SOURCE`, or `null` for a cabled route
+with nothing to disclose. One boolean could not distinguish "a fully supported mode with a
+consequence you should know" from "the app cannot tell what this is", and collapsing them is
+exactly what made a supported mode read as a blocked one. `InputScreen` now dims and warns only
+for the two advisories the app genuinely cannot recommend (`dimsTheRow`); the mic and Bluetooth
+rows are neutral, carrying their consequence in the subtitle, because amber reads as "do not
+choose this". Subtitles now *append* the advisory to the full type-and-native-rate description
+rather than replacing it — the old code discarded the native rate along with the choice.
+
+**Spec amendments, each recorded rather than resolved in code** (constitution Scope And
+Precedence). D33 makes capture a named mode over two axes that were previously walked as
+unrelated steps (S04 Input, S09 Radio) and named nowhere, with FR-CAP-9 presetting both and
+FR-RIG-13 keeping them independently overridable, so Bluetooth-control-with-wired-audio stays
+reachable. D34 permits Bluetooth audio: **CON-CAP-1's technical rationale is unchanged and still
+true** — HFP/mSBC is SBC at 16 kHz mono, bitpool 26 — so the constraint now governs *marking*
+rather than prohibition, and R17 records that the most convenient route may become the one the
+product is judged on. D35 bundles every asset (FR-AST-3), with FR-AST-3b keeping bundled assets
+inside FR-AST-2's integrity check — shipping inside the artifact establishes provenance, which is
+not integrity — and FR-AST-3a recording the accepted size cost plus the asset-pack TODO. D36
+bundles the LLM; **D5 is untouched** (no LLM in the callsign path, ever) and FR-DIG-3a's
+independence requirement is restated against a *disabled* LLM because "absent" is no longer a
+state a bundled build can reach.
+
+FR-RIG-16..19 make the onboarding radio picker generate from the installed descriptor set, with
+per-transport capabilities declared and displayed — the property that makes "extensible to any
+radio" true at the place an operator would look, rather than only in the module contract.
+
+**Verified:**
+
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS (AC ids contiguous through AC-140;
+  D33–D36 each carry a §16 traceability row; no dangling reference). Green before the change too,
+  so the amendments did not repair a pre-existing break.
+- `.\gradlew :app:testDebugUnitTest --tests "...InputRouteEnumeratorTest" --tests
+  "...InputScreenTest"` — 15 tests, all PASSED.
+- `.\gradlew :app:testDebugUnitTest` — full `:app` suite BUILD SUCCESSFUL.
+- `.\gradlew dependencyRules` — 17 modules checked, every edge permitted.
+- `.\gradlew :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL.
+- **Discrimination check (constitution II).** With `AudioDeviceKind.BUILT_IN_MIC` reverted to a
+  refusing advisory, `AC_128 the built-in mic is offered as a real choice, never refused` and
+  `AC_129 the built-in mic row discloses that it captures the room` both FAILED (2 of 11); the
+  flag was restored and both pass. The tests discriminate rather than merely passing.
+
+**Left open / not done:**
+
+- **The mode picker itself is not built.** This change fixes the route enumerator's labelling
+  (AC-128, AC-129, AC-132) and specifies the rest. FR-CAP-8..13's picker, the settings re-entry
+  (FR-CAP-12), the Bluetooth transport (FR-RIG-14) and the generated catalogue (FR-RIG-16) are
+  **P19**; asset bundling is **P20**. AC-127, AC-130, AC-131, AC-133..140 are therefore
+  **specified and unmet**.
+- **No artboards exist for the new screens** (Principle VIII). The mode picker, Bluetooth pairing
+  and settings re-entry are absent from `design/canvas/` and from `design/design-intent.md`. P19
+  names drawing them as a prerequisite; until then those screens have no conformance baseline.
+- **`AudioDeviceKind.BLUETOOTH` has no icon** (`OrtIcons` has none) — the row renders with a null
+  icon rather than a substituted wrong one, the same real gap R-122 already reported.
+- **Bluetooth audio's accuracy cost is unmeasured here.** R17's mitigation calls for a dev-fold
+  delta against the wired path before the mode ships; no such measurement was run in this session
+  and none is claimed.
+- **No install-size measurement.** R18 is recorded on the strength of the §6.2 resident budgets
+  (~2.5 GB at T3) plus an LLM, not on a built artifact. The real number is P20's to produce.
+- Nothing was run on a device or emulator in this session; every result above is a JVM/Robolectric
+  unit-test result on this Windows workstation, not a device gate.
+
 ### (pending) — storagebar · the storage-usage-bar empty-track guard compared a locale-formatted string, silently dividing by zero under a non-English default JVM locale
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsStorageScreen.kt`

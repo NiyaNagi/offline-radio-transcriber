@@ -19,9 +19,9 @@ import org.ort.capture.android.AudioIo
 /**
  * One row S04's list renders (`Setup-Input.dc.html`). [id] is [AudioDeviceDescriptor.id] verbatim
  * — the same id [org.ort.capture.android.RouteVerifier] compares against, so selecting a row and
- * later verifying it are guaranteed to mean the same device. [refused] (validator finding, register
- * R-120..R-125: was `isBuiltInMic`) is true for every source that is never a radio, not only the
- * built-in mic — see [DeviceTypeNaming]. [icon] is `null` when no guide §7 icon exists yet for the
+ * later verifying it are guaranteed to mean the same device. [advisory] (FR-CAP-2b, D33/D34 —
+ * previously `refused`, and before that `isBuiltInMic`) says what choosing this route costs, never
+ * whether it is permitted; see [RouteAdvisory]. [icon] is `null` when no guide §7 icon exists yet for the
  * resolved type (a real, reported gap — see [DeviceTypeNaming]'s doc comment — never a wrong icon
  * standing in for a missing one).
  *
@@ -36,10 +36,41 @@ public data class InputRouteOption(
     public val id: String,
     public val label: String,
     public val subtitle: String,
-    public val refused: Boolean,
+    public val advisory: RouteAdvisory?,
     public val typeLabel: String,
     public val icon: ImageVector? = null,
 )
+
+/**
+ * **FR-CAP-2b: what a route discloses, never whether it is allowed.** Every enumerated input is
+ * selectable; an advisory says what the operator is taking on by choosing it.
+ *
+ * This replaces the earlier `refused: Boolean`, which was wrong in both directions at once — it
+ * refused the built-in mic that FR-CAP-3a explicitly permits, and it waved through the Bluetooth
+ * route that CON-CAP-1 then forbade. One flag could not express the difference between "this is a
+ * fully supported mode with a consequence you must know about" (D33's local-microphone mode),
+ * "this works but costs signal quality" (D34's Bluetooth audio) and "the app genuinely cannot
+ * tell what this is". Collapsing all three into *refused* is what let a legitimate mode read to
+ * the operator as a blocked one.
+ *
+ * `null` — the cabled routes — is the absence of anything to disclose, not a fourth kind.
+ */
+public enum class RouteAdvisory {
+    /** The built-in mic: real audio, but the room's, not the radio's (FR-CAP-3a, FR-CAP-10). */
+    ROOM_AUDIO,
+
+    /** Bluetooth audio: permitted by D34, degraded by HFP/mSBC, marked on every session it
+     * produces so its accuracy never merges into the wired path's (CON-CAP-1, FR-CAP-11). */
+    BLUETOOTH_DEGRADED,
+
+    /** The device type is not one this build recognises. The honest statement is that the app
+     * cannot tell — never an assertion about what the device is not (FR-CAP-2b). */
+    UNRECOGNISED_TYPE,
+
+    /** A route the platform exposes that is not a capture source at all, such as the telephony
+     * path. Declined for a stated, specific reason, as FR-CAP-2b requires. */
+    NOT_A_CAPTURE_SOURCE,
+}
 
 /**
  * S04 (`Setup-Input.dc.html`, R-081) — enumerates real capture routes through `:capture-android`'s
@@ -63,7 +94,7 @@ public class InputRouteEnumerator(private val context: Context, private val io: 
                 id = descriptor.id,
                 label = descriptor.label,
                 subtitle = subtitleFor(resolved, nativeRates[descriptor.id]),
-                refused = !resolved.isRadioCapable,
+                advisory = resolved.advisory,
                 typeLabel = resolved.label,
                 icon = resolved.icon,
             )
@@ -98,13 +129,31 @@ public class InputRouteEnumerator(private val context: Context, private val io: 
         return audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).toList()
     }
 
+    /**
+     * FR-CAP-2b: the type, then the real native rate where one is reported, then the advisory —
+     * in that order, so the row always leads with what the device *is*. An advisory is appended to
+     * a full description rather than replacing it: the operator choosing the built-in mic still
+     * wants to know its native rate, and the old code threw that away along with the choice.
+     */
     private fun subtitleFor(resolved: ResolvedDeviceType, rates: IntArray?): String {
-        if (!resolved.isRadioCapable) {
-            return "${resolved.label} — not a radio, capture will refuse this route"
-        }
         val rateText = rates?.takeIf { it.isNotEmpty() }
             ?.let { hz -> "${formatKhz(hz.min())} kHz native · resampled to $OUTPUT_RATE_KHZ kHz" }
-        return if (rateText != null) "${resolved.label} · $rateText" else resolved.label
+        val head = if (rateText != null) "${resolved.label} · $rateText" else resolved.label
+        val note = when (resolved.advisory) {
+            // FR-CAP-3a/FR-CAP-10: a legitimate, fully supported mode, stated as a consequence
+            // rather than a warning — this is what the operator is choosing, not a reason not to.
+            RouteAdvisory.ROOM_AUDIO ->
+                "captures the room, not the radio — every session is marked as such"
+            // CON-CAP-1 as amended by D34: offered, and never without its cost.
+            RouteAdvisory.BLUETOOTH_DEGRADED ->
+                "narrowband Bluetooth voice link — lower accuracy than a cable, and marked on every session"
+            RouteAdvisory.UNRECOGNISED_TYPE ->
+                "the app cannot identify this device type"
+            RouteAdvisory.NOT_A_CAPTURE_SOURCE ->
+                "the call audio path, not something capture can read"
+            null -> null
+        }
+        return if (note != null) "$head — $note" else head
     }
 
     private fun formatKhz(hz: Int): String {
@@ -120,14 +169,22 @@ public class InputRouteEnumerator(private val context: Context, private val io: 
 
 /** What S04 (and, for the "chosen X · routed Y" line, [RouteMismatchScreen]) needs to describe one
  * device type honestly: a name, the guide §7 icon when one already exists for it (`null` when it
- * does not — a real, reported gap, never a substituted wrong icon), and whether it is plausibly a
- * radio at all. */
-internal data class ResolvedDeviceType(val label: String, val icon: ImageVector?, val isRadioCapable: Boolean)
+ * does not — a real, reported gap, never a substituted wrong icon), and what choosing it discloses
+ * ([RouteAdvisory], `null` for a route with nothing to disclose). */
+internal data class ResolvedDeviceType(val label: String, val icon: ImageVector?, val advisory: RouteAdvisory?)
 
 /**
  * R-122 (validator finding, register R-120..R-125): names a device by its real Android type,
  * `built-in mic` / `telephony` / `USB audio` / `wired headset` / `Bluetooth` per the brief, and
- * refuses every source that is not plausibly an external radio adapter — not only the built-in mic.
+ * attaches the [RouteAdvisory] each type carries.
+ *
+ * **The advisory column is the corrected half (FR-CAP-2b).** It previously held one boolean,
+ * `isRadioCapable`, which was wrong for two of the six rows in opposite directions: the built-in
+ * mic was marked incapable although FR-CAP-3a permits it by name, and Bluetooth was marked capable
+ * although CON-CAP-1 then banned it outright. Both are single-token errors in a lookup table that
+ * no rendering test could see, which is why the replacement encodes *what to say* rather than
+ * *whether to allow* — there is no longer a value here that can silently block a supported mode.
+ *
  * `WP2`'s [OrtIcons] has no Bluetooth icon yet (confirmed by reading `OrtIcons.kt` before writing
  * this) — [forAndroidType]/[forKind]'s `Bluetooth` case returns `icon = null` for it rather than
  * reusing an unrelated icon, a gap this package's own report names explicitly. R-221 (validator
@@ -168,20 +225,24 @@ internal object DeviceTypeNaming {
     }
 
     fun forAndroidType(type: Int): ResolvedDeviceType = when (type) {
-        AudioDeviceInfo.TYPE_BUILTIN_MIC -> ResolvedDeviceType("Built-in microphone", OrtIcons.builtInMic, false)
-        AudioDeviceInfo.TYPE_TELEPHONY -> ResolvedDeviceType("Telephony", OrtIcons.call, false)
+        AudioDeviceInfo.TYPE_BUILTIN_MIC ->
+            ResolvedDeviceType("Built-in microphone", OrtIcons.builtInMic, RouteAdvisory.ROOM_AUDIO)
+        AudioDeviceInfo.TYPE_TELEPHONY ->
+            ResolvedDeviceType("Telephony", OrtIcons.call, RouteAdvisory.NOT_A_CAPTURE_SOURCE)
         AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_ACCESSORY ->
-            ResolvedDeviceType("USB audio", OrtIcons.usbAudio, true)
-        AudioDeviceInfo.TYPE_WIRED_HEADSET -> ResolvedDeviceType("Wired headset", OrtIcons.headset, true)
-        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> ResolvedDeviceType("Bluetooth", null, true)
-        else -> ResolvedDeviceType("Unrecognised device type $type", genericDevice, false)
+            ResolvedDeviceType("USB audio", OrtIcons.usbAudio, null)
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> ResolvedDeviceType("Wired headset", OrtIcons.headset, null)
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO ->
+            ResolvedDeviceType("Bluetooth", null, RouteAdvisory.BLUETOOTH_DEGRADED)
+        else -> ResolvedDeviceType("Unrecognised device type $type", genericDevice, RouteAdvisory.UNRECOGNISED_TYPE)
     }
 
     fun forKind(kind: AudioDeviceKind): ResolvedDeviceType = when (kind) {
-        AudioDeviceKind.BUILT_IN_MIC -> ResolvedDeviceType("Built-in microphone", OrtIcons.builtInMic, false)
-        AudioDeviceKind.USB_DEVICE -> ResolvedDeviceType("USB audio", OrtIcons.usbAudio, true)
-        AudioDeviceKind.WIRED_HEADSET -> ResolvedDeviceType("Wired headset", OrtIcons.headset, true)
-        AudioDeviceKind.BLUETOOTH -> ResolvedDeviceType("Bluetooth", null, true)
-        AudioDeviceKind.UNKNOWN -> ResolvedDeviceType("Unknown", genericDevice, false)
+        AudioDeviceKind.BUILT_IN_MIC ->
+            ResolvedDeviceType("Built-in microphone", OrtIcons.builtInMic, RouteAdvisory.ROOM_AUDIO)
+        AudioDeviceKind.USB_DEVICE -> ResolvedDeviceType("USB audio", OrtIcons.usbAudio, null)
+        AudioDeviceKind.WIRED_HEADSET -> ResolvedDeviceType("Wired headset", OrtIcons.headset, null)
+        AudioDeviceKind.BLUETOOTH -> ResolvedDeviceType("Bluetooth", null, RouteAdvisory.BLUETOOTH_DEGRADED)
+        AudioDeviceKind.UNKNOWN -> ResolvedDeviceType("Unknown", genericDevice, RouteAdvisory.UNRECOGNISED_TYPE)
     }
 }

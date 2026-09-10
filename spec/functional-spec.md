@@ -145,7 +145,7 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D7 | **Attribution confidence is always visible**: confirmed / inferred / unknown. | Goal G4 |
 | D8 | **Lower-tier devices remain fully functional, never a design constraint on the ceiling.** Four tiers, one data shape, and **any record is reprocessable at a higher tier later**. | Explicit product-owner direction. Because every pass is a pure function of retained audio, tier is a property of *processing*, not of the record |
 | D9 | **Audio-only first; modular rig interface extensible to any radio.** TH-D75A first. | Explicit product-owner direction |
-| D10 | **A local LLM is optional and post-hoc.** Digest only. | Product owner: "does not need to be a local LLM, as long as we have fully offline speech transcription with high accuracy" |
+| D10 | **A local LLM is optional and post-hoc.** Digest only. **Revised by D36**: "optional" now means optional *to run*, not possibly absent — the model ships with every install. Post-hoc and digest-only are unchanged. | Product owner: "does not need to be a local LLM, as long as we have fully offline speech transcription with high accuracy" |
 | D11 | **Open source self-build now; Play Store later.** | No decision may foreclose the store path |
 | D12 | **Worldwide callsign support via grammar plus priors**, never a bounded list. | Product owner: "we could hear calls all over the world… think about the most robust and flexible solution" |
 | D13 | **Domain fine-tuning is a first-class part of the product**, not a research aside. | ATC literature: 55.2% → 6.8% WER, and 13.7% from **55 hand-transcribed clips**. It is the largest single lever available and it lifts *every* tier |
@@ -168,6 +168,10 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D24 | **Continuous-archive capture is a first-class, always-available option.** | Product owner. Segmentation is otherwise permanent (CON-SEG-1); this is the only mechanism that makes it reprocessable |
 | D25 | **Corpus contribution is opt-in at onboarding, then automatic.** This **amends FR-OBS-5 and NFR-6**, which forbade automatic transmission in any build. | Product owner direction, taken with the conflict stated. The contribution channel is strictly separate from the capture and processing paths, which remain fully offline, and the app is fully functional with contribution declined. See FR-CON-1..8 and R13 |
 | D20 | **Fine-tune a base model that is already in sherpa-onnx's export list.** | Removes R1 almost entirely. `export-onnx.py --model` accepts a fixed enum, but that enum already includes every `distil-*` variant, and a LoRA merged with `merge_and_unload()` is structurally identical to its base — so the existing export graph applies unchanged |
+| D33 | **Capture is a *mode*, chosen once at onboarding and changeable at any time.** Three in v1: **local microphone**, **USB-connected radio**, **Bluetooth-connected radio**. A mode presets two independent axes — the **audio route** and the **rig-control transport** — and each stays individually overridable. | Product owner. The old flow walked the two axes as unrelated steps (S04 Input, S09 Radio) and named neither, so "how is this thing connected?" had no answer anywhere in the UI. Presetting from a named mode is what makes the common cases one tap; keeping the axes separable is what keeps the uncommon ones (Bluetooth control with cabled audio) reachable at all. See FR-CAP-8..12 |
+| D34 | **Bluetooth audio input is permitted.** This **amends CON-CAP-1**, which forbade it outright. The route is offered, marked on every session it produces, and reported as its own source in every accuracy number. | Product owner direction, taken with the conflict stated. The original rationale is unchanged and still true — HFP/mSBC is SBC at 16 kHz mono, bitpool 26, degrading an already-degraded signal at exactly the rate the model consumes — so the decision is not that the cost is imaginary but that an operator may pay it knowingly. What makes it safe is FR-CAP-11's marking: a Bluetooth-sourced session is never silently averaged into a wired one. See R17 |
+| D35 | **Every asset the app can use ships inside the installed artifact.** One build variant, no first-run download, no asset packs in v1. This **amends FR-AST-3**, whose assets were downloadable on demand and unmetered-by-default. | Product owner: "everything bundled with the app so we have one build variant." An offline product whose first launch requires a network is offline in architecture only. The cost is install size — a T0 device carries models it can never load — which is recorded as R18 and revisited under the packs TODO in FR-AST-3a, not resolved here |
+| D36 | **The LLM is bundled, so it is always present.** It remains **post-hoc and confined to the digest and n-best rescoring**. This revises D10's "optional" to mean *optional to run*, never *possibly absent*. **D5 is untouched**: no LLM in the callsign path, ever. | Product owner: "bundle it and revise the spec." What changes is availability, not role — the deterministic digest is still the one that must hold on its own (FR-DIG-2), and FR-DIG-3a's independence requirement is restated against a *disabled* LLM rather than an absent one, because on a bundled build absence is no longer a state a test can reach |
 
 ---
 
@@ -384,8 +388,20 @@ higher passes to a later reprocess rather than degrading the transcription perma
 **FR-CAP-1 (M)** — Capture 16 kHz mono PCM from a selectable input device.
 
 **FR-CAP-2 (M)** — Enumerate available inputs via `AudioManager.getDevices(GET_DEVICES_INPUTS)`
-and allow explicit selection, filtering for `TYPE_USB_DEVICE`, `TYPE_WIRED_HEADSET`,
-`TYPE_BUILTIN_MIC`.
+and allow explicit selection, filtering for `TYPE_USB_DEVICE`, `TYPE_USB_HEADSET`,
+`TYPE_USB_ACCESSORY`, `TYPE_WIRED_HEADSET`, `TYPE_BLUETOOTH_SCO` (D34) and `TYPE_BUILTIN_MIC`.
+
+**FR-CAP-2b (M)** — Every input in that set is **selectable**, and the UI SHALL NOT refuse,
+disable or warn against a route merely because it is not an external adapter. The built-in
+microphone and the Bluetooth route are legitimate selections (FR-CAP-10, FR-CAP-11); what each
+carries is a **disclosure**, not a refusal. A route the app declines to offer at all SHALL be
+declined for a stated, specific reason — an unrecognised device type is a reason to say the type
+is unrecognised, never to assert it is not a radio.
+
+> This requirement exists because the first implementation got it backwards in both directions
+> at once: it refused the built-in mic that FR-CAP-3a explicitly permits, and it accepted the
+> Bluetooth route that CON-CAP-1 then forbade. Both errors were single flags in one lookup table,
+> and neither was visible from any test that only asked whether the list rendered.
 
 **FR-CAP-2a (M)** — Capture SHALL request 16 kHz mono from the input device, and where the
 device does not offer it — most USB Audio Class adapters expose 44.1 or 48 kHz only — SHALL
@@ -417,9 +433,58 @@ so gain can be set correctly (against open-squelch noise, per the hardware study
 
 **FR-CAP-7 (S)** — Detect and warn on a persistently silent or persistently clipping input.
 
-**CON-CAP-1** — Bluetooth audio input SHALL NOT be offered. A2DP is output-only; mic capture
-forces HFP/mSBC (SBC at 16 kHz mono, bitpool 26), which degrades an already-degraded signal
-at exactly the sample rate the model consumes.
+**CON-CAP-1** — *(Amended by D34. The original text read: "Bluetooth audio input SHALL NOT be
+offered."* The technical rationale below is **unchanged and still holds** — this amendment
+permits the route, it does not claim the cost went away.*)*
+
+Bluetooth audio input SHALL be offered **only under FR-CAP-11's marking regime**, never as an
+unlabelled peer of the wired routes. A2DP is output-only; mic capture forces HFP/mSBC (SBC at
+16 kHz mono, bitpool 26), which degrades an already-degraded signal at exactly the sample rate
+the model consumes. Accordingly the route is permitted, disclosed, recorded on every session it
+produces, and **reported as its own source in every accuracy figure** (FR-TST-8) — so the price
+of the convenience is always measurable rather than absorbed silently into the aggregate.
+
+### 7.1a FR-CAP · Capture modes (D33)
+
+The **audio route** (where the samples come from) and the **rig-control transport** (where
+frequency, mode and squelch come from) are independent. A *capture mode* is a named, familiar
+pairing of the two — it is how the operator is asked the question, not a new coupling between
+the axes.
+
+**FR-CAP-8 (M)** — Capture mode SHALL be a **closed set**, chosen at onboarding:
+
+| Mode | Audio route | Rig transport | For |
+|---|---|---|---|
+| **Local microphone** | Built-in mic | None (manual frequency) | A handheld held near the phone; testing the app with no adapter |
+| **USB-connected radio** | USB audio adapter | USB serial, or none | The reference setup — a cabled rig with a CAT port |
+| **Bluetooth-connected radio** | Bluetooth (D34) *or* a wired route | Bluetooth SPP/BLE | A rig whose data and/or audio arrive wirelessly |
+
+**FR-CAP-9 (M)** — Choosing a mode SHALL **preset both axes** to that row's defaults and then
+present each for confirmation. Both SHALL remain independently overridable, so every
+combination the hardware admits is reachable — including Bluetooth control with wired audio,
+which is the combination that costs nothing and is therefore the one to steer toward
+(FR-RIG-14).
+
+**FR-CAP-10 (M)** — **Local microphone mode is a first-class, fully supported mode**, not a
+fallback and not a test affordance. It SHALL carry the FR-CAP-3a persistent disclosure that the
+session is room audio, and the operator SHALL be told plainly what it costs: everything the
+room contributes is in the recording, and no frequency, mode or squelch is available.
+
+**FR-CAP-11 (M)** — A session captured over Bluetooth SHALL record the **negotiated profile and
+codec** alongside the resampler identity (FR-CAP-2a), the mode SHALL disclose the degradation
+before it is chosen, and the UI SHALL offer the wired-audio alternative at the point of choice
+rather than burying it in settings.
+
+**FR-CAP-12 (M)** — Capture mode SHALL be **changeable at any time** from settings, by the same
+screens onboarding used, without reinstalling, re-onboarding or losing a single record. A mode
+change SHALL NOT take effect mid-session: it applies at the next session, exactly as an asset
+activation does (FR-AST-4), because a session whose audio route changed underneath it is not one
+record.
+
+**FR-CAP-13 (M)** — Every session SHALL record its capture mode, audio route type and route
+provenance, and accuracy figures SHALL be reportable **per mode** (FR-TST-8). A number that
+averages acoustically-coupled audio, Bluetooth audio and a cabled adapter into one figure
+describes no configuration anyone actually runs.
 
 ### 7.2 FR-SEG · Segmentation
 
@@ -1013,6 +1078,23 @@ and SHALL take precedence, recorded with provenance `manual`.
 **FR-RIG-10 (C)** — Voice-derived frequency ("tuning to fourteen one five zero") resolved by
 Pass D, used only when no better source exists, and always marked `voice`.
 
+**FR-RIG-13 (M)** — **The rig transport is independent of the audio route** (D33). Any
+`RigModule` transport SHALL be combinable with any audio route the device offers, and neither
+selection SHALL constrain the other. The pairing named by a capture mode (FR-CAP-8) is a
+default, never a restriction — nothing in the rig layer may assume that USB control implies USB
+audio.
+
+**FR-RIG-14 (M)** — **Bluetooth SHALL be a first-class rig transport** (`BLE` and Bluetooth
+Classic SPP), and the TH-D75A module SHALL be reachable over **either USB serial or Bluetooth
+SPP** with an identical command set and identical capabilities. This is the transport that
+carries D34's convenience at no signal cost: the CAT data is lossless over Bluetooth in a way
+the audio is not, so an operator who wants a wireless rig should be steered here first and to
+Bluetooth *audio* only if they also want to cut the audio cable.
+
+**FR-RIG-15 (M)** — Rig disconnection over Bluetooth SHALL be treated exactly as FR-RIG-7
+treats a USB disconnection — degrade to the last known frequency, marked stale, capture
+unaffected. A transport that drops more often SHALL NOT become a transport that drops capture.
+
 ### 7.7 FR-STO · Storage and retention
 
 **FR-STO-1 (M)** — Persist all records in SQLite with FTS5 full-text indexing over
@@ -1157,11 +1239,19 @@ does (P9).
 **FR-DIG-2c (M)** — The reason an item was surfaced SHALL be visible — "first time heard",
 "unusually long thread" — because an unexplained ranking cannot be trusted or corrected (P2).
 
-**FR-DIG-3a (M)** — FR-DIG-3 is **conditionally Must**: the requirement binds the *behaviour*
-if the feature is built, and does not require the feature to be built. §1.5 places a
-default-on LLM digest out of scope for v1, and Q7 may delete FR-DIG-3 entirely — if the
-deterministic digest is what the operator actually reads, the LLM adds nothing. Shipping v1
-with no LLM present is a conforming build, and AC-84 is the criterion that proves it.
+**FR-DIG-3a (M)** — *(Amended by D36; the LLM is now bundled, so "absent" is no longer a state a
+build can be in.)* FR-DIG-3 remains **conditionally Must**: it binds the *behaviour* if the
+feature runs, and does not require it to run. The independence requirement is unchanged and is
+now stated against a **disabled** LLM rather than an absent one — **the deterministic digest
+SHALL generate completely with the LLM disabled, evicted or refusing to load**, and AC-84 is
+still the criterion that proves it. §1.5 keeps a default-on LLM digest out of scope for v1, and
+Q7 may still delete FR-DIG-3 — bundling the model settles *availability*, not whether the prose
+digest earns its place.
+
+**FR-DIG-3b (M)** — The LLM SHALL be **disableable outright**, and disabling it SHALL free its
+resident memory rather than merely hiding its output. D36 makes the model present on every
+device; it does not make it resident, and a T0 device SHALL never load it (FR-AST-3a,
+FR-TIER-8's resident budget).
 
 **FR-DIG-4 (M)** — The LLM SHALL be given already-resolved entities and SHALL NOT be
 permitted to emit a callsign. Enforce with grammar-constrained decoding where the runtime
@@ -1516,9 +1606,42 @@ with a common lifecycle: install, verify, activate, roll back, remove.
 **FR-AST-2 (M)** — Every asset SHALL be integrity-verified (checksum, and size and format
 validation) before activation. A failed verification SHALL leave the previous version active.
 
-**FR-AST-3 (M)** — Large assets SHALL be downloadable on demand, with progress, resumability,
-and a **default to unmetered networks only**. The app SHALL be usable while a download is
-pending, at whatever tier the currently-installed assets support.
+**FR-AST-3 (M)** — *(Amended by D35; previously these assets were downloadable on demand.)*
+**Every asset the app can use SHALL ship inside the installed artifact** — ASR models at every
+tier, the VAD, speaker embeddings, the Pass C acoustic model, the LLM (D36), lexicon data and
+calibration parameters. There SHALL be **one build variant**, no first-run download, and no
+network dependency of any kind between installing the app and capturing with it. A fresh install
+on a device that has never had a network connection SHALL reach full capability for its detected
+tier.
+
+> This is the requirement that makes "entirely offline" true at the moment it is most likely to
+> be false. An app that must fetch a 900 MB model before it can transcribe is one whose central
+> promise is deferred to a network — and the operator most likely to want this product is the one
+> setting it up somewhere without one.
+
+**FR-AST-3a (M)** — **The size cost is accepted and bounded, not ignored.** The install carries
+assets for tiers the device may never enter (R18). Consequently: the installed size SHALL be
+stated before install where the distribution channel allows it, the app SHALL report per-asset
+sizes in settings (`Settings-Assets`), and a **tier-ineligible model SHALL never be loaded**,
+only stored. Storage pressure from bundled assets SHALL NOT count against the operator's
+retention budget (FR-STO-3) — it is not their recording, and presenting it as if it were would
+make the budget lie.
+
+> **TODO — reconsider split delivery (D35, R18).** Install-time asset packs would let a T0 device
+> skip what it cannot run and would relieve the single-artifact size ceiling, at the cost of a
+> second build variant and a second verification path. Deliberately **not** taken in v1: one
+> variant is worth more than the megabytes while the app is self-distributed (D11). Revisit when
+> either the Play path is taken up or a measured install size makes the ceiling real rather than
+> theoretical. Nothing in FR-AST-1..2's lifecycle forecloses it — a packed asset installs and
+> verifies through the same path a bundled one does, which is why this stays a delivery question
+> rather than an architectural one.
+
+**FR-AST-3b (M)** — **A bundled asset is still an asset.** It SHALL pass the same FR-AST-2
+integrity verification before activation as a side-loaded one, and SHALL be replaceable and
+roll-back-able by the FR-AST-1 lifecycle. Shipping inside the artifact establishes *provenance*,
+which is not the same as integrity: the file still has to be the one the manifest names, and a
+build that trusts its own assets unverified has removed the check exactly where it is cheapest
+to keep.
 
 **FR-AST-4 (M)** — An asset in use by a running session SHALL NOT be deleted or replaced
 mid-session. Activation of a new version SHALL take effect at the next session or the next
@@ -1729,6 +1852,35 @@ contract; the technical design fills in transport specifics.
 | **2 — Code module** | Implements `RigModule` in-tree | Binary protocols: Icom CI-V, Uniden SDS remote | App rebuild |
 | **3 — Manual** | The null module | Anything, including receivers with no data interface | Nothing |
 
+### 9.1a The catalogue, and how onboarding grows
+
+D9's "extensible to any radio" is only true if adding a radio also adds it to the place an
+operator would look for it. A descriptor that exists but that onboarding never offers is an
+extension point in name only.
+
+**FR-RIG-16 (M)** — The onboarding radio picker SHALL be **generated from the installed
+descriptor set**, not from a hardcoded list. Adding a level-1 descriptor SHALL add its radio to
+onboarding with no code change and no UI change — this is the property that makes FR-RIG-4 worth
+having, and it is the sense in which the picker eventually covers "a whole host of radios".
+
+**FR-RIG-17 (M)** — Each catalogue entry SHALL declare, and the picker SHALL display, **which
+transports that radio supports and which capabilities it yields on each** — because they differ:
+a rig may report squelch over one transport and not another. The operator chooses a radio and
+sees what they will actually get from it, rather than discovering the gap after a night's
+capture.
+
+**FR-RIG-18 (M)** — The catalogue SHALL always contain the two entries that make it complete
+regardless of what else is installed: the **null module** (FR-RIG-2, manual frequency entry) and
+a **generic ASCII CAT** entry for a rig whose family is known but whose descriptor is not. Both
+SHALL be reachable without scrolling past a long list of radios the operator does not own.
+
+**FR-RIG-19 (S)** — Descriptors SHALL be importable from a file (FR-AST-7 governs versioning),
+so a radio can be added by an operator, and contributed back, without waiting for a release.
+
+The v1 catalogue is deliberately small and honest about it: **TH-D75A** (verified, §9.3, both
+transports per FR-RIG-14), **generic ASCII CAT**, and **null**. Every other radio arrives as a
+descriptor, which is exactly the point of the three-level design.
+
 ### 9.2 Descriptor sketch
 
 Illustrative of the shape required, not final syntax:
@@ -1736,9 +1888,14 @@ Illustrative of the shape required, not final syntax:
 ```yaml
 id: kenwood-thd75a
 displayName: Kenwood TH-D75A
-transport: usb_serial
-serial: { baud: 9600, dataBits: 8, stopBits: 1, parity: none }
-capabilities: [FREQUENCY, MODE, SQUELCH_STATE]
+# FR-RIG-14/FR-RIG-17: transports are a list, and capabilities are declared per transport
+# because they genuinely differ between them.
+transports:
+  - kind: usb_serial
+    serial: { baud: 9600, dataBits: 8, stopBits: 1, parity: none }
+    capabilities: [FREQUENCY, MODE, SQUELCH_STATE, SUB_BAND, POSITION]
+  - kind: bluetooth_spp
+    capabilities: [FREQUENCY, MODE, SQUELCH_STATE, SUB_BAND, POSITION]
 poll:
   intervalMs: 500
   commands:
@@ -2420,6 +2577,53 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
 - **AC-103** At each tier, the sum of concurrently resident model memory is measured and falls
   within that tier's resident budget (FR-TIER-8, §6.2).
 
+### 14.11 Capture modes and onboarding (D33, D34)
+
+- **AC-127** Onboarding presents the three capture modes of FR-CAP-8 and completes end to end
+  for **each** of them, on a device that has only that mode's hardware attached (FR-CAP-8,
+  FR-CAP-9).
+- **AC-128** Selecting **local microphone** mode reaches a capturing state, and the built-in mic
+  is offered without a refusal, a disabled control or a "not a radio" warning (FR-CAP-2b,
+  FR-CAP-10). *This is the criterion the first implementation failed: the row existed and was
+  labelled as refused.*
+- **AC-129** A session captured in local-microphone mode carries the FR-CAP-3a persistent
+  disclosure everywhere the session is shown, and is distinguishable from a radio-captured
+  session in the stored record without reading its audio (FR-CAP-10, FR-CAP-13).
+- **AC-130** Choosing a mode presets both the audio route and the rig transport, and each can
+  then be changed to any value the hardware offers without leaving the flow — verified by
+  reaching **Bluetooth control with wired audio**, which no mode presets (FR-CAP-9, FR-RIG-13).
+- **AC-131** Capture mode is changed from settings after setup completes, the change takes
+  effect at the next session and not mid-session, and no existing record is altered or lost
+  (FR-CAP-12).
+- **AC-132** A Bluetooth-captured session records its negotiated profile and codec, and the
+  accuracy harness reports Bluetooth-sourced audio as its own source rather than merged into the
+  aggregate (FR-CAP-11, FR-CAP-13, CON-CAP-1, FR-TST-8).
+- **AC-133** The TH-D75A module yields the same capabilities over Bluetooth SPP as over USB
+  serial, and a Bluetooth rig disconnection degrades to a stale frequency without stopping
+  capture (FR-RIG-14, FR-RIG-15).
+- **AC-134** Adding a level-1 rig descriptor to the installed set makes that radio appear in the
+  onboarding picker with its declared transports and per-transport capabilities, with **no code
+  change** (FR-RIG-16, FR-RIG-17).
+- **AC-135** The null module and the generic ASCII CAT entry are reachable in the picker without
+  scrolling past the radio list (FR-RIG-18).
+
+### 14.12 Bundled assets (D35, D36)
+
+- **AC-136** A fresh install on a device with **networking disabled at the OS level** reaches
+  full capability for its detected tier — capture, every pass that tier runs, lexicon resolution
+  and the deterministic digest — with no download and no degraded-asset state (FR-AST-3).
+- **AC-137** Every bundled asset is integrity-verified before activation, and a deliberately
+  corrupted bundled asset fails verification and leaves the app in a stated, recoverable state
+  rather than activating (FR-AST-2, FR-AST-3b).
+- **AC-138** On a T0 device, tier-ineligible bundled models — the LLM among them — are present
+  on disk and **never loaded**, verified by measured resident memory against the T0 budget
+  (FR-AST-3a, FR-DIG-3b, FR-TIER-8).
+- **AC-139** Bundled asset storage is excluded from the operator's retention budget and is shown
+  separately in settings (FR-AST-3a, FR-STO-3).
+- **AC-140** The deterministic digest generates completely with the LLM **disabled**, covering
+  the same content AC-84 requires, and disabling the LLM releases its resident memory
+  (FR-DIG-3a, FR-DIG-3b).
+
 ---
 
 ## 14A. Project risk register
@@ -2444,6 +2648,8 @@ Distinct from §12, which enumerates *runtime* failures. These are risks to the 
 | R13 | **Synthetic-to-real gap** — a system tuned on TTS-derived callsign audio scores well on synthetic and poorly on real traffic | **High** — this is the expected failure mode of D21/D22, not a tail risk | Medium–High: accuracy claims collapse if not caught | Per-source metrics (FR-TST-8), synthetic barred from eval (FR-TST-9), real-speech splicing rather than pure TTS (D22), and the ~1 h real validation set exists precisely to catch this | M0 / M3 |
 | R14 | **Contributed audio carries third-party voices and callsigns** whose owners never consented, in a product that may be open-sourced | Medium | Medium–High — reputational and possibly legal, and irreversible once published | Access-controlled by default, no republication without a separate decision, corrections-without-audio preferred (FR-CON-6, FR-CON-7), jurisdiction notice (NFR-6c). Q17 must close before contribution is switched on | Before contribution ships |
 | R12 | An English-only base model (`distil-small.en`, per D20) meets worldwide DX traffic (D12) — accented English and non-English speech | Medium | Medium — recall drops on exactly the HF/DX material the eval fold is loaded with | Measure DX separately from local traffic; the grammar path (FR-LEX-8) does not depend on the prose being right; a multilingual base remains selectable per profile (FR-ASR-11) | M0a / M4 |
+| R17 | **Bluetooth audio (D34) degrades accuracy below the §10.1 targets**, and because it is the most convenient route it becomes the one people actually use — so the product is judged on its worst signal path | **High where the route is offered** — HFP/mSBC's damage is known in principle and unmeasured here | Medium–High: the targets are met on the wired path and missed in the field, with no way to tell which from an aggregate number | Marked on every session and reported as its own source, never merged (FR-CAP-11, FR-CAP-13, CON-CAP-1, AC-132); the wired alternative offered at the point of choice, not buried; **Bluetooth *control* with wired audio steered to first** (FR-RIG-14), which is the same convenience at no signal cost. Measure the delta on the dev fold before the mode ships | Before the Bluetooth mode ships |
+| R18 | **Bundling every asset (D35, D36) makes the install too large to distribute or install** — a T0 phone carries an LLM and a `large-v3-turbo` it can never load | Medium — depends entirely on the final asset set, which is not yet fixed | Medium — the mitigation is known and costs a build variant, so this is expensive rather than dangerous | Sizes reported per asset and excluded from the retention budget (FR-AST-3a); tier-ineligible models stored but never loaded (AC-138); the install-time asset-pack path kept open by keeping delivery out of the asset lifecycle (FR-AST-3a's TODO, FR-AST-3b). Measure the real installed size as soon as the asset set is fixed and revisit if it exceeds what the distribution channel allows | When the asset set is fixed |
 
 **R5 is now the top risk**, because the reference device was chosen for its accuracy ceiling
 and carries the worst background-execution behaviour on the market. It is also the earliest
@@ -2727,7 +2933,7 @@ product; all of them are what make the reference experience world-class.
 | G2 Find a conversation | FR-STO-1, FR-UI-3, FR-UI-5, FR-UI-9, FR-UI-10 |
 | G3 Capture callsigns | FR-LEX-1..16, FR-EXP-1..6 |
 | G4 Trust the record | FR-SPK-10, FR-UI-4, FR-UI-8, FR-ASR-6, FR-LEX-12, FR-EXP-4, P1, P2 |
-| G5 Set it up once | FR-CAP-2..6, FR-SVC-1..8, FR-CFG-1, P8 |
+| G5 Set it up once | FR-CAP-2..6, FR-CAP-8..13, FR-SVC-1..8, FR-CFG-1, FR-RIG-16..19, P8 |
 
 | Decision | Requirements |
 |---|---|
@@ -2763,6 +2969,10 @@ product; all of them are what make the reference experience world-class.
 | D30 Net detection in v1 | FR-SPK-27..30, AC-123 |
 | D31 Contributed audio never published | FR-CON-6, R14, Q17 |
 | D32 Tiered correction | FR-UI-6, FR-SPK-7, FR-SPK-23, Q8 |
+| D33 Capture is a mode | FR-CAP-8..13, FR-CAP-2b, FR-RIG-13, AC-127..131, G5 |
+| D34 Bluetooth audio permitted | CON-CAP-1 (amended), FR-CAP-11, FR-CAP-13, FR-RIG-14, R17, AC-132, AC-133 |
+| D35 Everything bundled, one variant | FR-AST-3, FR-AST-3a, FR-AST-3b, NFR-6, R18, AC-136..139 |
+| D36 LLM bundled, still post-hoc | FR-DIG-3a, FR-DIG-3b, D5 (untouched), FR-AST-3, R18, AC-138, AC-140 |
 
 Requirement groups added in drafts 3 and 3.2, mapped to the goal or property they serve:
 

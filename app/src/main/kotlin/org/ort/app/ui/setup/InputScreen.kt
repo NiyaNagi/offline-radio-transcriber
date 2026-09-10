@@ -21,8 +21,10 @@ import org.ort.app.ui.theme.OrtType
 
 /**
  * S04 (`Setup-Input.dc.html`, R-081) — every real route [InputRouteEnumerator] found, each as a
- * WP2 [RadioRow] using its `subtitle` (real device type · native rate, or the refusal reason) and
- * `tone = RowTone.Warning` for a refused, non-radio source (WP2's own follow-up closed the earlier
+ * WP2 [RadioRow] using its `subtitle` (real device type · native rate, plus the route's advisory
+ * where it has one) and `tone = RowTone.Warning` only where [dimsTheRow] says the app genuinely
+ * cannot recommend the route — never for the built-in mic or Bluetooth, both of which are
+ * supported capture modes under D33/D34 (WP2's own follow-up closed the earlier
  * gap this screen used to work around — `RadioRow` had no subtitle slot or colour override; it
  * has both now). `Refresh` sits beside the title (guide's title-trailing action), `Verify this
  * input` is disabled until a route is chosen.
@@ -72,7 +74,7 @@ public fun InputScreen(
                         Icon(
                             imageVector = it,
                             contentDescription = null,
-                            tint = if (route.refused) OrtColors.textIconDim else OrtColors.textIcon,
+                            tint = if (route.advisory.dimsTheRow()) OrtColors.textIconDim else OrtColors.textIcon,
                             modifier = Modifier.padding(end = 11.dp).size(18.dp),
                         )
                     }
@@ -81,7 +83,7 @@ public fun InputScreen(
                         selected = route.id == state.selectedId,
                         onClick = { onSelect(route.id) },
                         subtitle = route.subtitle,
-                        tone = if (route.refused) RowTone.Warning else RowTone.Neutral,
+                        tone = if (route.advisory.dimsTheRow()) RowTone.Warning else RowTone.Neutral,
                         modifier = Modifier.weight(1f).testTag("setup-input-route-${route.id}"),
                     )
                 }
@@ -94,4 +96,21 @@ public fun InputScreen(
             color = OrtColors.textDim,
         )
     }
+}
+
+/**
+ * **FR-CAP-2b: which advisories are a caution and which are simply a fact.**
+ *
+ * [RouteAdvisory.ROOM_AUDIO] and [RouteAdvisory.BLUETOOTH_DEGRADED] are *supported modes* (D33,
+ * D34) — the operator picking the built-in mic or a Bluetooth link is choosing a thing the product
+ * does, not overriding a guard, so the row stays in [RowTone.Neutral] and the consequence is
+ * carried by the subtitle. Amber here would read as "do not choose this", which is exactly the
+ * signal that made the mic look blocked when FR-CAP-3a had permitted it all along.
+ *
+ * The two that do dim are the two the app genuinely cannot recommend: a device type it could not
+ * identify, and a platform route that is not a capture source at all.
+ */
+private fun RouteAdvisory?.dimsTheRow(): Boolean = when (this) {
+    RouteAdvisory.UNRECOGNISED_TYPE, RouteAdvisory.NOT_A_CAPTURE_SOURCE -> true
+    RouteAdvisory.ROOM_AUDIO, RouteAdvisory.BLUETOOTH_DEGRADED, null -> false
 }
