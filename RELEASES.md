@@ -26,11 +26,9 @@ transcribing works with actual models built in. See `RELEASING.md`.
 Everything in v0.1.1 below, plus the items here. This is what the rolling "latest build"
 prerelease contains.
 
-### Known issues
-
-- The storage bar in Settings draws as almost full when nothing is stored yet, which is the
-  opposite of the truth. A fix is in progress.
-- The model list in Settings shows three rows per transcription model instead of one.
+Nothing user-facing yet. Changes since v0.1.1 are internal: the project's binding principles and
+test plan now describe how the interface is checked against its designs, and there is a written
+procedure for continuing that work from real device testing.
 
 ---
 
@@ -101,6 +99,15 @@ below); what this release proves is the reader you will use once there is.
   live-capture status bar overlapping content it should have made room for, among many others.
 - Fixed a bug where reopening the app during a running recording session could show a stale or
   wrong session's status instead of the one actually recording.
+- The storage bar in Settings drew as almost full when nothing was stored yet — the opposite of
+  the truth. It had two separate causes: an empty store was not recognised as empty, and the
+  check that decided this compared a number formatted for your phone's language, so on any
+  language that writes decimals with a comma it never matched at all.
+- The model list in Settings showed three rows per transcription model instead of one.
+- The interface no longer shrinks on large phones. Every screen was designed at a fixed width,
+  so on a wider display everything used to occupy less of the screen than intended; the app now
+  lays out at the design's own width and scales up to fit, while your system text-size setting
+  still applies on top.
 
 ### Known issues
 
