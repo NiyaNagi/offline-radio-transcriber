@@ -1,11 +1,18 @@
 package org.ort.app.ui.settings
 
+import org.ort.core.capture.CaptureMode
+
 /**
  * WP10 (register R-090, FR-CFG-1): every view-state the `Settings` root and its nine sub-screens
  * render. Every screen composable in this package is a pure function of one of these — polling and
  * `Context` stay in [SettingsPolling], never in a screen (ui-conformance-plan's builder rule).
+ *
+ * [MODE] (WPE, `spec/e2e-capture-modes-plan.md`, CF11/`Settings-Mode.dc.html`, FR-CAP-8/9/12/13,
+ * AC-131) — the settings re-entry into the capture mode picker, reachable from CF02's `Change`.
  */
-public enum class SettingsScreenId { CAPTURE, RIG, TIER, STORAGE, ASSETS, EXPORT, CONTRIBUTE, DIAGNOSTICS, ABOUT }
+public enum class SettingsScreenId {
+    CAPTURE, RIG, TIER, STORAGE, ASSETS, EXPORT, CONTRIBUTE, DIAGNOSTICS, ABOUT, MODE,
+}
 
 public data class SettingsRowViewState(val label: String, val subLine: String, val screen: SettingsScreenId)
 public data class SettingsSectionViewState(val label: String, val rows: List<SettingsRowViewState>)
@@ -37,6 +44,12 @@ public data class SettingsCaptureToggleActions(
     val onToggleBandPass: (Boolean) -> Unit,
 )
 
+/**
+ * CF02 (`Settings-Capture.dc.html`, amended 2026-09-10): [modeLabel]/[modeSubLine] back the new
+ * leading Capture-mode row (FR-CAP-12) — see [org.ort.app.ui.data.CaptureModeFacts] for where
+ * [modeLabel] comes from. `null` reads as "not yet set" (a fresh install with no session yet),
+ * never a fabricated default (constitution I).
+ */
 public data class SettingsCaptureViewState(
     val inputLabel: String,
     val inputSubLine: String,
@@ -46,6 +59,33 @@ public data class SettingsCaptureViewState(
     val noiseReductionEnabled: Boolean,
     val bandPassEnabled: Boolean,
     val manualFrequencyMhz: String?,
+    val mode: CaptureMode? = null,
+    val modeLabel: String = "Not yet set",
+    val modeSubLine: String = "complete setup to record a mode",
+)
+
+/** CF11 (`Settings-Mode.dc.html`, FR-CAP-8, FR-CAP-9, FR-CAP-12, FR-CAP-13, AC-131) — one radio row
+ * of the three-mode picker. [current] marks the mode [org.ort.app.ui.data.CaptureModeFacts]
+ * reports right now (or the mode the operator has picked in this composition, before it is saved). */
+public data class SettingsModeRowViewState(
+    val mode: CaptureMode,
+    val descriptionLabel: String,
+    val current: Boolean,
+    /** [SettingsStore.pendingCaptureModeName] names this mode — picked while a session was live,
+     * not yet the session-recorded [current] mode. See that property's own doc comment. */
+    val pending: Boolean = false,
+)
+
+/** CF11's "What the mode set" section — each row real from `InputStatus`/`RigStatus` where those
+ * facts exist today, honestly absent where they do not (WPC2 has not landed the rig-transport
+ * facts `RigStatus` will eventually carry — see [SettingsRigViewState]'s own doc comment). */
+public data class SettingsModeSetRowViewState(val label: String, val subLine: String)
+
+public data class SettingsModeViewState(
+    val rows: List<SettingsModeRowViewState>,
+    val sessionLive: Boolean,
+    val audioRoute: SettingsModeSetRowViewState,
+    val rigLink: SettingsModeSetRowViewState,
 )
 
 public data class SettingsRigBandViewState(
@@ -55,13 +95,22 @@ public data class SettingsRigBandViewState(
     val squelchOpen: Boolean,
 )
 
-/** `Settings-Rig.dc.html`. [connected] is `false` for both `Absent` and `Stale` — [staleSinceLabel]
- * distinguishes them (`null` when [connected] is `true` or the rig has never connected at all). */
+/** `Settings-Rig.dc.html` (amended 2026-09-10, FR-RIG-14/15). [connected] is `false` for both
+ * `Absent` and `Stale` — [staleSinceLabel] distinguishes them (`null` when [connected] is `true` or
+ * the rig has never connected at all).
+ *
+ * [transportLabel]/[linkAddressLabel] are `null` today: `RigStatus` (`:pipeline`) does not yet carry
+ * a transport kind or a device address/VID:PID — that is WPC2's still-in-flight addition (see this
+ * package's own `spec/e2e-capture-modes-plan.md` seam note). The screen renders that absence
+ * honestly rather than a guess (constitution I); wiring the two real fields through is a one-file
+ * follow-up once WPC2 merges. */
 public data class SettingsRigViewState(
     val descriptorLabel: String,
     val connected: Boolean,
     val staleSinceLabel: String?,
     val bands: List<SettingsRigBandViewState>,
+    val transportLabel: String? = null,
+    val linkAddressLabel: String? = null,
 )
 
 public data class SettingsTierViewState(

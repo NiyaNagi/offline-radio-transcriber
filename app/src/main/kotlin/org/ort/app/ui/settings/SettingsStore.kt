@@ -44,6 +44,17 @@ public interface SettingsStore {
     public var bandPassFilterEnabled: Boolean
     public var levelWarnEnabled: Boolean
     public var manualFrequencyMhz: String?
+
+    /**
+     * CF11 (`Settings-Mode.dc.html`, FR-CAP-12, AC-131): [org.ort.core.capture.CaptureMode.name]
+     * the operator picked while a session was live — recorded here, honestly, as a real but
+     * **not yet enforced** fact (constitution I: a provisional record must never be presented as
+     * more than it is), pending WPC2's `CaptureConfigurationStore` (`spec/e2e-capture-modes-plan.md`
+     * §"Seam for the package still in flight"), which is what will actually apply it to the next
+     * session. `null` when nothing is pending — the ordinary case, and always the case while idle
+     * (idle picks re-enter setup directly rather than staging anything).
+     */
+    public var pendingCaptureModeName: String?
 }
 
 /** The real, `SharedPreferences`-backed [SettingsStore]. */
@@ -65,6 +76,7 @@ public class SharedPreferencesSettingsStore(private val prefs: SharedPreferences
     override var bandPassFilterEnabled: Boolean by BooleanPref(KEY_BAND_PASS, default = false)
     override var levelWarnEnabled: Boolean by BooleanPref(KEY_LEVEL_WARN, default = true)
     override var manualFrequencyMhz: String? by StringPref(KEY_MANUAL_FREQUENCY_MHZ)
+    override var pendingCaptureModeName: String? by StringPref(KEY_PENDING_CAPTURE_MODE)
 
     private inner class BooleanPref(val key: String, val default: Boolean) :
         kotlin.properties.ReadWriteProperty<Any?, Boolean> {
@@ -103,6 +115,7 @@ public class SharedPreferencesSettingsStore(private val prefs: SharedPreferences
         public const val KEY_BAND_PASS: String = "band_pass_enabled"
         public const val KEY_LEVEL_WARN: String = "level_warn_enabled"
         public const val KEY_MANUAL_FREQUENCY_MHZ: String = "manual_frequency_mhz"
+        public const val KEY_PENDING_CAPTURE_MODE: String = "pending_capture_mode"
     }
 }
 
@@ -123,4 +136,5 @@ public class InMemorySettingsStore(
     override var bandPassFilterEnabled: Boolean = false,
     override var levelWarnEnabled: Boolean = true,
     override var manualFrequencyMhz: String? = null,
+    override var pendingCaptureModeName: String? = null,
 ) : SettingsStore

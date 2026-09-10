@@ -2,9 +2,15 @@ package org.ort.app.ui.settings
 
 import android.content.Context
 import org.ort.app.BuildConfig
+import org.ort.app.ui.data.CaptureModeFacts
+import org.ort.app.ui.data.RealCaptureModeFacts
 import org.ort.app.ui.navigation.StorageFooterViewState
 import org.ort.app.ui.navigation.toGigabyteLabel
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.SystemClock
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.CaptureModePresets
+import org.ort.core.capture.RigTransportKind
 import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -142,12 +148,31 @@ public object SettingsPolling {
 
     private fun currentTierNumber(): Int = (MAX_TIER - ShedStatus.currentLevel).coerceIn(0, MAX_TIER)
 
-    public fun capture(store: SettingsStore): SettingsCaptureViewState {
+    /**
+     * CF02 (amended 2026-09-10, FR-CAP-12): `suspend` now — the leading Capture-mode row's
+     * [SettingsCaptureViewState.modeLabel]/[modeSubLine] read through [modeFacts]
+     * ([org.ort.app.ui.data.CaptureModeFacts]), which queries `:data` for the most recent session's
+     * recorded mode (see that interface's own doc comment for exactly what it reads and why).
+     * [context] is new for the same reason. The Input row's own sub-line now names "room audio" or
+     * "radio audio" from the routed device's real [AudioDeviceKind] (FR-CAP-10, FR-CAP-3a) — the
+     * built-in mic is the one device kind that is ever the room, never the radio.
+     */
+    public suspend fun capture(
+        context: Context,
+        store: SettingsStore,
+        modeFacts: CaptureModeFacts = RealCaptureModeFacts(context),
+    ): SettingsCaptureViewState {
         val (inputLabel, inputSub) = when (val state = InputStatus.state) {
             InputStatus.State.None -> "No input selected" to "select an input to capture"
             is InputStatus.State.Opened -> {
                 val verified = if (state.routeVerified) "verified" else "not verified"
-                state.descriptor.label to "$verified · ${state.nativeRateHz} Hz native · ${state.resamplerId}"
+                val audioKindNote = if (state.descriptor.kind == AudioDeviceKind.BUILT_IN_MIC) {
+                    "room audio"
+                } else {
+                    "radio audio"
+                }
+                state.descriptor.label to
+                    "$verified · ${state.nativeRateHz} Hz native · ${state.resamplerId} · $audioKindNote"
             }
             is InputStatus.State.Lost -> state.lastKnown.descriptor.label to "input lost since ${state.sinceMillis}"
             is InputStatus.State.Mismatch -> (state.actual?.label ?: "unknown device") to
@@ -159,6 +184,7 @@ public object SettingsPolling {
                 "noise floor ${state.noiseFloorDbfs?.let { "%.0f".format(Locale.ROOT, it) } ?: "not measured"} dBFS" +
                 if (state.clipped) " · clipping" else ""
         }
+        val mode = modeFacts.currentMode()
         return SettingsCaptureViewState(
             inputLabel = inputLabel,
             inputSubLine = inputSub,
@@ -168,7 +194,89 @@ public object SettingsPolling {
             noiseReductionEnabled = store.noiseReductionEnabled,
             bandPassEnabled = store.bandPassFilterEnabled,
             manualFrequencyMhz = store.manualFrequencyMhz,
+            mode = mode,
+            modeLabel = mode?.operatorLabel ?: "Not yet set",
+            modeSubLine = mode?.let { modeSubLine(it) } ?: "complete setup to record a mode",
         )
+    }
+
+    /**
+     * CF02/CF11's per-mode sub-line, e.g. "audio by cable · rig link over Bluetooth · a change
+     * applies at the next session" (`Settings-Capture.dc.html`'s own Bluetooth-mode example,
+     * matched verbatim by this formula) — derived from [CaptureModePresets.presetsFor], never a
+     * second, hand-written copy of the pairing FR-CAP-8's table already states once.
+     */
+    internal fun modeSubLine(mode: CaptureMode): String {
+        val preset = CaptureModePresets.presetsFor(mode)
+        val audioClause = when (preset.preferredRouteKind) {
+            org.ort.core.capture.AudioRouteKind.BUILT_IN_MIC -> "room audio"
+            org.ort.core.capture.AudioRouteKind.BLUETOOTH_SCO -> "audio over Bluetooth"
+            else -> "audio by cable"
+        }
+        val rigClause = when (preset.preferredRigTransportKind) {
+            null -> "frequency by hand"
+            RigTransportKind.USB_SERIAL -> "rig link on the same cable"
+            RigTransportKind.BLUETOOTH_SPP -> "rig link over Bluetooth"
+        }
+        return "$audioClause · $rigClause · a change applies at the next session"
+    }
+
+    /**
+     * CF11 (`Settings-Mode.dc.html`): the three-mode picker, the current one marked from
+     * [modeFacts], the live-session banner from [CaptureModeFacts.isSessionLive], and "what the
+     * mode set" from the same real [InputStatus]/[RigStatus] facts CF02/CF06 read — never a second,
+     * differently-sourced copy of either fact.
+     */
+    public suspend fun modeScreen(
+        context: Context,
+        store: SettingsStore,
+        modeFacts: CaptureModeFacts = RealCaptureModeFacts(context),
+    ): SettingsModeViewState {
+        val current = modeFacts.currentMode()
+        val pending = store.pendingCaptureModeName?.let { name -> CaptureMode.entries.firstOrNull { it.name == name } }
+        val rows = CaptureMode.entries.map { mode ->
+            SettingsModeRowViewState(
+                mode = mode,
+                descriptionLabel = modeRowDescription(mode),
+                current = mode == current,
+                pending = mode == pending,
+            )
+        }
+        val audioRoute = when (val state = InputStatus.state) {
+            InputStatus.State.None -> SettingsModeSetRowViewState("Audio route", "not yet selected")
+            is InputStatus.State.Opened -> {
+                val verified = if (state.routeVerified) "verified" else "not verified"
+                val kindNote = if (state.descriptor.kind == AudioDeviceKind.BUILT_IN_MIC) {
+                    "room audio, not the radio"
+                } else {
+                    "radio audio, not the room"
+                }
+                SettingsModeSetRowViewState("Audio route", "${state.descriptor.label} · $verified · $kindNote")
+            }
+            is InputStatus.State.Lost ->
+                SettingsModeSetRowViewState("Audio route", "${state.lastKnown.descriptor.label} · input lost")
+            is InputStatus.State.Mismatch -> SettingsModeSetRowViewState("Audio route", "route mismatch")
+        }
+        val rigLink = when (val state = RigStatus.state) {
+            RigStatus.State.Absent -> SettingsModeSetRowViewState("Rig link", "no radio configured")
+            is RigStatus.State.Connected ->
+                SettingsModeSetRowViewState("Rig link", "${state.descriptor} · connected")
+            is RigStatus.State.Stale ->
+                SettingsModeSetRowViewState("Rig link", "${state.lastKnown.descriptor} · stale since ${state.sinceMillis}")
+        }
+        return SettingsModeViewState(
+            rows = rows,
+            sessionLive = modeFacts.isSessionLive(),
+            audioRoute = audioRoute,
+            rigLink = rigLink,
+        )
+    }
+
+    /** CF11's top-list per-mode description (`Settings-Mode.dc.html` verbatim). */
+    private fun modeRowDescription(mode: CaptureMode): String = when (mode) {
+        CaptureMode.LOCAL_MICROPHONE -> "room audio · frequency by hand"
+        CaptureMode.USB_RADIO -> "audio adapter and CAT on the cable"
+        CaptureMode.BLUETOOTH_RADIO -> "CAT over Bluetooth · audio by cable or Bluetooth"
     }
 
     public fun rig(): SettingsRigViewState = when (val state = RigStatus.state) {
