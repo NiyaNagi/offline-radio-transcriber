@@ -30,6 +30,11 @@ env:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    # WPG (spec/e2e-capture-modes-plan.md, FR-AST-3, D35/D36): assembleDebug depends on
+    # fetchBundledAssets, which needs HF_TOKEN for the gated Gemma 3 1B model — a shipped release
+    # is never built with the -PortAllowMissingBundledAssets escape hatch (AC-136).
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 

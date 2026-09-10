@@ -369,6 +369,138 @@ boundary, only within the same method body as the gated call.
 **Left open / not done:** unchanged from the previous entry — hardware rows H1–H4 for the real
 adapters, and the `usb-serial-for-android` version pinned one minor below newest pending a
 `compileSdk` bump outside this package's ownership. Not merged to `main` — left on this branch.
+## 2026-09-10 (WPH follow-up: ProseDigestGate's production inputs — signals, WorkManager runner, persisted settings)
+
+### (pending) — llm: AndroidProseDigestDeviceSignals, ProseDigestRunner over WorkManager, SharedPreferences-backed ProseDigestSettings
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/digest/{AndroidProseDigestDeviceSignals,
+ThreadDigestSource, ProseDigestWorkRunner, LlmModelLocator, ProseDigestRunner}.kt`; rewrote
+`ProseDigestSettings.kt` to add `ProseDigestSettingsStore` / `InMemoryProseDigestSettingsStore` /
+`SharedPreferencesProseDigestSettingsStore` and back `ProseDigestSettings` by a store rather than
+a raw boolean; updated `ProseDigestSettingsTest.kt` and `AC140DeterministicDigestUnaffectedTest.kt`
+for the new constructor; `gradle/libs.versions.toml` (new `androidxWork` entry + two library
+aliases) and `pipeline/build.gradle.kts` (the first real `androidx.work` dependency in this
+project); nine new test files under `pipeline/src/test/kotlin/org/ort/pipeline/digest/`.
+
+**Requirements/ACs:** FR-DIG-5, AC-87, FR-DIG-3b, D36. Constitution IV (never
+`isIgnoringBatteryOptimizations()`).
+
+**What changed:**
+
+*Constitution Check.* IV bears directly — [`AndroidProseDigestDeviceSignals`] never calls
+`isIgnoringBatteryOptimizations()`; charging comes from `BatteryManager.isCharging()` and idle
+from *either* `PowerManager.isDeviceIdleMode()` (a real Doze window) *or* no recorded foreground
+activity for 5 minutes (`ForegroundActivityTracker`, a process-wide holder — the same shape
+`CaptureState`/`ShedStatus` already use) — the second half exists because Doze windows are rare
+and OEM-delayed on exactly the reference device (ColorOS), so the OS signal alone would almost
+never let this run there. I/II — `ProseDigestWorkRunner` re-evaluates the gate before starting
+and again before every thread (AC-87's "never during capture" plus "stops if the gate flips
+mid-run"), and a mid-run stop releases the engine itself as a second, independent guarantee
+alongside whatever already called `ProseDigestSettings.setEnabled` (FR-DIG-3b) — tested by
+flipping `isCapturing` as a side effect of the first thread's own storage, proving the *per-thread*
+recheck fires, not only the pre-flight one.
+
+- **`AndroidProseDigestDeviceSignals`** (production `ProseDigestDeviceSignals`): `isCharging()`
+  reads `BatteryManager.isCharging()`, `false` on any failure (conservative — never "assume
+  charging"). `isDeviceIdle()` — the rule, stated once in its own doc comment — `PowerManager
+  .isDeviceIdleMode() OR no ForegroundActivityTracker activity for idleAfterMillis (default 5
+  min)`. Takes an injected `org.ort.core.Clock` for the foreground-gap half, so tests never wait
+  real minutes.
+- **`ThreadDigestSource`**: the real "which threads need a summary" query — ended sessions only
+  (`session.endedAt != null`), threads `ProseSummaryStore` has no row for yet, callsigns resolved
+  only from `CONFIRMED`/`INFERRED` attributions (never `AMBIGUOUS`/`UNKNOWN`). Reads only through
+  DAOs `:data` already exposes — no new query added to any DAO outside this package's ownership.
+- **`ProseDigestWorkRunner`**: the pure, WorkManager-free decision/run loop — evaluates the gate,
+  loads the engine only if pending threads exist, generates each via `ProseDigestGenerator`,
+  re-checks the gate before every thread, and releases the engine on any mid-run stop.
+  `ProseDigestRunOutcome` (`NotEligible` / `Completed` / `StoppedMidRun` / `EngineLoadFailed`) —
+  never silently nothing.
+- **`LlmModelLocator`**: mirrors `org.ort.pipeline.passb.AsrModelLocator`'s exact pattern — a
+  fixed, documented `filesDir/models/gemma3-1b-it-int4/gemma3-1b-it-int4.task` path, `null` when
+  absent, never fabricated.
+- **`ProseDigestRunner`** (`androidx.work.CoroutineWorker`): the thin real-Android adapter.
+  **Scheduling**: a self-rescheduling chain of **unique one-time work** (`"prose-digest"`), not
+  `PeriodicWorkRequest` — `schedule()` enqueues the first run (`ExistingWorkPolicy.KEEP`, safe to
+  call from every app launch); `doWork()` re-enqueues the next run one hour later
+  (`ExistingWorkPolicy.REPLACE`) in a `finally` block regardless of outcome. Chosen over
+  `PeriodicWorkRequest` specifically to sidestep its 15-minute floor and avoid any doubt about
+  constraint-combination support — `OneTimeWorkRequest` places no restriction on combining
+  `setRequiresCharging(true)` with `setRequiresDeviceIdle(true)`. `cancel()` stops the chain
+  outright. A missing bundled model is `Result.success()` — nothing to do yet, never a failure.
+- **`ProseDigestSettingsStore`** (interface) + **`InMemoryProseDigestSettingsStore`** (the fake,
+  process-lifetime only) + **`SharedPreferencesProseDigestSettingsStore`** (production, one
+  boolean, prefs name `prose_digest_settings`, key `enabled`, default `true` per D36/FR-DIG-3b).
+  `ProseDigestSettings`'s constructor now takes a `ProseDigestSettingsStore` (default
+  `InMemoryProseDigestSettingsStore()`, so the no-arg case behaves exactly as before) and both
+  seeds its `StateFlow` from the store and persists every `setEnabled` call through it — so
+  `ProseDigestRunner`, constructed fresh in a possibly-new process, sees the same value WPE's CF04
+  toggle last wrote, never a reset-to-default in-memory guess.
+- **`gradle/libs.versions.toml`**: `androidxWork = "2.9.1"` — the newest *stable* release at
+  `https://dl.google.com/dl/android/maven2/androidx/work/work-runtime-ktx/maven-metadata.xml`
+  (fetched 2026-09-10) is 2.11.2, but 2.10.0 and later declare `minCompileSdk = 35` in their AAR
+  metadata (confirmed directly: `:pipeline:checkDebugUnitTestAarMetadata` failed naming exactly
+  that requirement against 2.11.2), and this project's shared `ort.android-library` convention
+  plugin — outside this follow-up's ownership — pins `compileSdk 34`, the same shape WPB's
+  `usbSerialForAndroid` pin already documents. 2.9.1 is the newest release with no floor above 34;
+  confirmed by the same check passing once pinned there. `androidx-work-runtime-ktx` (main) and
+  `androidx-work-testing` (test, for `TestListenableWorkerBuilder`/`WorkManagerTestInitHelper`)
+  added as library aliases. **Not previously a project dependency anywhere** (confirmed by search
+  before adding, despite AGENTS.md's Stack line naming WorkManager) — this is the first module to
+  actually link it.
+
+**The scheduler's constraints, exactly:** `Constraints.Builder().setRequiresCharging(true)
+.setRequiresDeviceIdle(true).build()`, applied to every enqueue (first and rescheduled alike) of
+unique one-time work named `"prose-digest"`.
+
+**The settings store API, exactly:**
+```kotlin
+interface ProseDigestSettingsStore {
+    fun isEnabled(): Boolean
+    fun setEnabled(enabled: Boolean)
+}
+// production: SharedPreferencesProseDigestSettingsStore(context) — prefs "prose_digest_settings", key "enabled", default true
+// fake:       InMemoryProseDigestSettingsStore(initiallyEnabled = true)
+```
+`ProseDigestSettings(store: ProseDigestSettingsStore = InMemoryProseDigestSettingsStore())` is
+what WPE's CF04 toggle constructs (with the `SharedPreferences`-backed store) to read `.enabled:
+StateFlow<Boolean>` and call `.setEnabled(value, engine)`.
+
+**Verified:**
+- `git merge --no-edit main` — clean fast-forward to `e55e465` (this branch's own two prior
+  commits were already merged into `main` as `9cc543d`); no conflicts.
+- `./gradlew :pipeline:dependencies --configuration debugRuntimeClasspath` — confirmed
+  `androidx.work:work-runtime-ktx:2.9.1` resolves with no transitive HTTP client or analytics
+  coordinate.
+- `./gradlew :llm-api:test :llm-mediapipe:testDebugUnitTest :pipeline:testDebugUnitTest` —
+  **BUILD SUCCESSFUL**; `org.ort.pipeline.digest.*` alone is 55 tests green, including
+  `AndroidProseDigestDeviceSignalsTest` (6, Robolectric shadows for `BatteryManager`/
+  `PowerManager`), `ThreadDigestSourceTest` (3, real in-memory `OrtDatabase`), 9
+  `ProseDigestWorkRunnerTest` cases (the signals fake driving the gate, `AC_87_the_runner_refuses_
+  while_capturing`, `FR_DIG_3b_disabling_mid_run_releases_the_engine`, the mid-run-flip stop, an
+  engine load failure, empty-pending-threads, a below-T3 tier), 4 `ProseDigestRunnerTest` cases
+  (real `WorkManagerTestInitHelper`/`TestListenableWorkerBuilder`), `SharedPreferencesProseDigest
+  SettingsStoreTest` (3), `LlmModelLocatorTest` (2).
+- `./gradlew build dependencyRules platformGuards -x :rig-bluetooth:lintDebug` — **BUILD
+  SUCCESSFUL in 8m 5s** (1102 actionable tasks); excluded exactly the one pre-existing failure the
+  lead named as a WPB fix already in flight on `main`, nothing else. `dependencyRules: OK` — the
+  printed edge list still has no `:capture-android`/`:capture-api` row naming `:llm-api` or
+  `:llm-mediapipe`. `platformGuards: OK` — 20 modules, no analytics/HTTP-client coordinate, only
+  `:net` declares `INTERNET` (androidx.work declares none).
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 225 covered` (was 210 before this commit — +15,
+  this session's own new fixture coverage). `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** `ProseDigestRunner.schedule()`/`.cancel()` are not yet called from
+anywhere real — wiring them into `Application.onCreate` (schedule) and the CF04 toggle's disable
+path (cancel, alongside `ProseDigestSettings.setEnabled`) is `:app`'s job (WPE), out of this
+package's ownership. `ForegroundActivityTracker.markActive()` likewise has no real caller yet —
+WPE/WPF's screen-lifecycle owner must call it (a `DisposableEffect` on `LocalLifecycleOwner`, or
+`Activity.onResume`, is the natural hook) or the idle-after-N-minutes half of the rule never
+actually fires on a real device. E2-I06 (hardware H11, the real on-device MediaPipe load) remains
+for the operator, unchanged from the previous entry.
+
+---
 
 ## 2026-09-10 (WPB: the two rig transports — USB serial and Bluetooth SPP)
 
@@ -682,6 +814,174 @@ only `MediaPipeLlmEngine`'s guards ahead of it. `ProseDigestGate`'s `ProseDigest
 package owns the settings/status screens (WPE/WPF) that will call `ProseDigestGate.evaluate`.
 
 ---
+## 2026-09-10 (WPG: bundled assets — build-time fetch, first-launch verify, catalogue, storage accounting)
+
+### (pending) — bundled assets: one build-time fetch task, a generated catalogue, first-launch install, storage accounting excludes them
+
+**Scope:** new `bundled-assets.json` (repo root, the single source of truth); new
+`buildSrc/src/main/kotlin/org/ort/gradle/FetchBundledAssetsTask.kt` (+ its buildSrc test); the
+task's wiring plus a new `generateBundledAssetCatalog` codegen task in
+`buildSrc/src/main/kotlin/ort.android-app.gradle.kts`; new `app/src/main/kotlin/org/ort/app/assets/`
+(`BundledAssetInstaller.kt` + its test); `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`
+(+ its two test files); `app/src/main/kotlin/org/ort/app/OrtApplication.kt` (the first-launch call);
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/StorageAccounting.kt` (+ its test);
+`.gitignore`; `README.md`; `.github/workflows/{ci,release,emulator}.yml`;
+`results/e2e-audit/installed-size.md` (new). One line each in
+`app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`'s `familyOf` — see "Boundary crossing"
+below; this file is otherwise WPE's row.
+
+**Requirements/ACs:** D35, D36, FR-AST-1, FR-AST-2, FR-AST-3, FR-AST-3a, FR-AST-3b, FR-AST-4,
+FR-STO-3, AC-136, AC-137, AC-138 (the tier-eligibility half; the LLM-never-loads half is WPH's),
+AC-139, R18. Constitution I (a stated, recoverable failure, never a silent activation), II (strict
+TDD throughout; every test shown to discriminate where the checklist asks), V (`:net` remains the
+only HTTP-client module — buildSrc's fetch is build tooling, not the shipped app), VII (the asset
+lifecycle — install/verify/activate/roll back — holds for a bundled asset exactly as for a
+downloaded one).
+
+**What changed:**
+
+*Constitution Check.* I bears on `BundledAssetState` (`Installed`/`Failed`/`NotBundledInThisBuild`
+is a closed set, never conflating "corrupt" with "not part of this build"). II bears throughout —
+every new path (digest mismatch, missing token, escape hatch, corruption, idempotent reinstall) is
+tested first, and the AC-137 guard was reverted and restored to prove its test discriminates (see
+Verified). V bears on keeping `fetchBundledAssets` inside buildSrc (build tooling, exempt from the
+capture/processing network ban) while leaving `:net`'s `ModelAcquisition` as the only *shipped-app*
+HTTP path, for side-load and replacement. VII bears on `ModelCatalogEntry.bundled`/`tiers` being
+real typed fields a caller reads, not a comment.
+
+1. **The manifest.** `bundled-assets.json` (root): the four existing catalogue entries (their
+   published digests carried over unchanged) plus `LLM_GEMMA3_1B` (gated, `tiers: ["T3"]`,
+   sha256 `e3d981c0…9dee`, 554,661,243 bytes). `ASR_TOKENS`'s entry is no longer
+   `"trust-on-first-fetch"`: its real digest
+   (`306cd27f03c1a714eca7108e03d66b7dc042abe8c258b44c199a7ed9838dd930`) was obtained by an actual
+   fetch of the published URL in this session (recorded, with the date and method, in the
+   manifest's own `_sha256Note` field) — HuggingFace still publishes no externally-verifiable
+   digest for this specific non-LFS file, but D35 makes that moot: the app never downloads it
+   itself, so the build's own first fetch is the provenance, and the pinned value is now checked on
+   every later build. `silero_vad.onnx`'s size (previously "not confirmed" in `asr-sherpa/README.md`)
+   is now recorded for real: 643,854 bytes.
+
+2. **`FetchBundledAssetsTask` (buildSrc).** A thin `DefaultTask` wrapper; all real logic lives in
+   `BundledAssetFetcher` (deliberately Gradle-type-free, so it is unit-testable directly — matching
+   `PlatformGuardsTask`/`ModuleGraph`'s own established split) and `BundledAssetManifest` (a
+   hand-rolled, dependency-free JSON reader/writer — buildSrc carries no JSON library, and one file
+   read does not justify adding one). Per entry: resolve from
+   `$GRADLE_USER_HOME/ort-bundled-assets/<sha256-or-id>/` (shared across worktrees, never
+   `build/`), verify sha256, copy into `app/src/main/assets/bundled/` (gitignored) alongside a
+   generated `bundled/manifest.json` (id/destination/sha256/sizeBytes/tiers/`missing`). A digest
+   mismatch or download failure fails the build **naming the file** (FR-AST-2); a gated entry with
+   no `HF_TOKEN` fails with exactly one line telling the developer what to do. The one escape hatch,
+   `-PortAllowMissingBundledAssets=true` / `ORT_ALLOW_MISSING_BUNDLED_ASSETS=1` (local development
+   only, never CI — `.github/workflows/*.yml` sets `HF_TOKEN` instead), packages what it can and
+   marks the rest `missing`, with a loud warning. A `trust-on-first-fetch` entry (none committed
+   today, but the mechanism is real and tested) gets its real digest pinned back into
+   `bundled-assets.json` in place, by a targeted textual substitution — not a full reserialize,
+   which would reformat the file's own hand-written commentary on every run.
+
+3. **`generateBundledAssetCatalog` (buildSrc, in `ort.android-app.gradle.kts`).** Reads
+   `bundled-assets.json` (no network) and emits `GeneratedBundledAssetManifest.kt` under
+   `app/build/generated/ort/bundledAssetCatalog/kotlin`, wired as an extra Kotlin source dir for
+   `:app`'s main source set. **Chosen over a runtime resource read** (`ModelCatalog` parsing an
+   asset via `Context.getAssets()`): every existing call site
+   (`ModelCatalog.entries`/`.entry(id)`/`.specFor(id, filesDir)`) is a plain, `Context`-free API a
+   dozen files outside this package call already — a runtime read would need a `Context` at every
+   one of them, while a generated object keeps that surface identical and needs no I/O to compile
+   or test against. `ModelCatalog.entries` is now built by mapping
+   `GeneratedBundledAssetManifest.entries` into `ModelCatalogEntry` (which gained `sizeBytes`,
+   `tiers`, `licence`, `gated`, `bundled` — all real, manifest-sourced fields, `bundled` defaulting
+   `true`). `ModelId` gained `LLM_GEMMA3_1B`.
+
+4. **`BundledAssetInstaller` (`app/.../assets/`).** `installAll`/`reinstall` over a
+   `BundledAssetSource` seam (`AndroidBundledAssetSource` real, `FakeBundledAssetSource` the
+   behavioural fake — an in-memory map, no `Context`/`AssetManager` anywhere in the tests). Copies
+   each bundled asset to a `.part` file first, hashes it, and only renames it over the real
+   destination on a match — a mismatch deletes the `.part` file and leaves whatever was previously
+   at the destination completely untouched, with no marker written (AC-137: never activates a
+   corrupt file, in a stated, recoverable `Failed` state). Writes the identical `.sha256` marker
+   `ModelAcquisition` writes, so `ModelsController.rowFor` reports `INSTALLED` through the one
+   existing code path. Idempotent (an already-verified asset is reported `Installed` without being
+   re-copied, checked by its own test with a source that has no bytes to copy — if it tried, the
+   test would throw). Also writes `bundled_assets.manifest` (sorted, deterministic) — the plain-text
+   filesystem contract `StorageAccounting` reads, since `:pipeline` has no compile dependency on
+   `:app`.
+
+5. **`OrtApplication.onCreate()`** now launches `BundledAssetInstaller.installAll` on
+   `Dispatchers.IO`, off the main thread, on every launch (not gated behind a "first run" flag —
+   idempotency makes that unnecessary and self-repairing). **Robolectric-guarded**
+   (`Build.FINGERPRINT.contains("robolectric")`): `OrtApplication` is every Robolectric test's own
+   `Application` (declared `android:name` in the manifest), so an unconditional install here would
+   have silently made an unrelated test's "nothing is on disk yet" assumption depend on a real,
+   racy, off-thread filesystem copy — found the hard way, mid-session, when
+   `ModelsControllerTest`'s `renders not installed honestly when nothing is on disk` test started
+   failing only *after* a real `assembleDebug` had populated `app/src/main/assets/bundled/` on this
+   machine (see Verified).
+
+6. **`StorageAccounting`** gained `bundledBytes` (excluded from `totalBytes`, the operator's
+   retention budget figure — AC-139), read from `bundled_assets.manifest`; `modelBytes` now
+   subtracts whatever of that figure falls under `models/`, so a bundled file is never
+   double-counted as both "bundled" and "the operator's own model storage".
+
+7. **`ModelsController.download`** now refuses unconditionally for a bundled entry (`isBundled`
+   seam, mirroring `specFor`'s own pattern) with a message that side-load remains available — D35
+   means the app itself never downloads anything anymore. The pre-D35 fetch-through-the-fake
+   mechanism (still real code behind `sideload`/staging/requeue) stays tested via `isBundled = {
+   false }` on the existing tests, each commented with why.
+
+8. **Boundary crossing, reported, not hidden.** `ModelsScreen.kt`'s `familyOf(id: ModelId)` is a
+   deliberately exhaustive `when` with no `else` (its own doc comment: "so a future asset added to
+   that enum fails to compile here rather than silently landing in the wrong group") — adding
+   `ModelId.LLM_GEMMA3_1B` forced exactly that compile failure. This file is WPE's row per
+   `spec/e2e-capture-modes-plan.md`'s partition; the one-line fix
+   (`ModelId.LLM_GEMMA3_1B -> "Gemma 3 1B int4 (prose digest)"`) was made anyway because leaving the
+   build broken is worse than a one-line, mechanical, clearly-commented crossing — flagged here for
+   the lead to confirm or reassign.
+
+9. **Measured, not estimated.** `results/e2e-audit/installed-size.md`: a real `assembleDebug` (this
+   machine has no `HF_TOKEN`, so via the escape hatch — recorded explicitly) installed on
+   `emulator-5556` and launched. APK 204,558,738 bytes (≈195 MB); installed data after first launch
+   100 MB (four real model files, verified, at their exact expected paths, with matching `.sha256`
+   markers and a `bundled_assets.manifest` listing exactly those four). Gemma (≈529 MB) is absent
+   from this measurement for the stated reason; the file gives both the measured baseline and an
+   arithmetic projection for the complete (Gemma-included) install, and says which is which.
+
+**Verified:**
+- `./gradlew -p buildSrc test` — green (`BundledAssetManifest` parse/rewrite,
+  `BundledAssetFetcher` success/mismatch/missing-token/escape-hatch, all against `file://` sources
+  or a tiny in-process `HttpServer`, never the real network).
+- `./gradlew :app:testDebugUnitTest :pipeline:testDebugUnitTest` — green, full suite (confirms the
+  Robolectric-guard fix: this run was also confirmed green *before* any real bundled asset existed
+  on disk, and again *after*, per item 5 above).
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green.
+  `dependencyRules`: 20 modules checked, no violation. `platformGuards`: OK, no analytics/HTTP-
+  client/`INTERNET` violation, MediaPipe AAR included. `fetchBundledAssets`: 4/5 verified,
+  1 (`LLM_GEMMA3_1B`) marked `missing` with a loud warning naming the exact fix (`HF_TOKEN`).
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — regenerated and confirmed up to date
+  (450 requirements, 201 covered).
+- `python tools/spec-check/spec_check.py` — 8/8 checks pass (no spec file touched).
+- **Discrimination (AC-137):** commented out the post-copy digest comparison in
+  `BundledAssetInstaller.installOne` (`if (false && gotSha256 != entry.sha256)`), reran
+  `BundledAssetInstallerTest` — both `AC_137 a corrupted bundled asset is refused...` and
+  `reinstall recovers...` failed exactly as expected (`expected Failed, got Installed`); restored
+  the guard, reran, both green again.
+- Real device: `emulator-5556`, API 34, `x86_64` — `adb install -r`, launched, confirmed via
+  `run-as org.ort.app find .../files` that all four non-gated assets landed at their real
+  locators' paths with matching `.sha256` markers, and `bundled_assets.manifest` lists exactly
+  those four (see `results/e2e-audit/installed-size.md` for the full transcript).
+
+**Left open / not done:**
+- **`HF_TOKEN` was never available on this machine.** Every gate above ran with the local-only
+  escape hatch; the Gemma path (the fetch itself, the corrupt-Gemma and gated-token-present
+  buildSrc scenarios beyond the mocked `HttpServer` test, and the true complete installed-size
+  measurement) needs a session with a real token to confirm end to end. CI has `HF_TOKEN` as a
+  secret and will exercise the real path on its next push.
+- **E2-H05/E2-H06/E2-H11** (device-level: airplane-mode fresh install reaching full capability;
+  measured resident memory for a stored-not-loaded T0 LLM) are hardware/device rows this package
+  does not close — WPG's own scope is the fetch/verify/install/accounting mechanism, not the device
+  protocol runs `hardware-checklist.md` names.
+- **The `familyOf` boundary crossing** (item 8) needs the lead's confirmation — flagged, not
+  silently absorbed into WPE's row.
+- Did not touch `ModelsScreen.kt`/`ModelsContent.kt` beyond that one required line, `:net`, or any
+  spec file, per this package's ownership.
 
 ## 2026-09-10 (WP0': Wave F module scaffolding — llm-api, llm-mediapipe, rig-bluetooth)
 
@@ -27344,6 +27644,8 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
+
 
 
 

@@ -37,8 +37,21 @@ public data class StorageAccounting(
     public val modelBytes: Long,
     public val recordBytes: Long,
     public val lexiconBytes: Long,
+    /**
+     * WPG (FR-AST-3a, AC-139): the real, on-disk size of every asset
+     * `org.ort.app.assets.BundledAssetInstaller` verified as shipped inside the artifact — deliberately
+     * **excluded** from [totalBytes] and reported as its own figure, per FR-AST-3a ("storage
+     * pressure from bundled assets SHALL NOT count against the operator's retention budget — it is
+     * not their recording, and presenting it as if it were would make the budget lie"). Before
+     * WPG, every file under `models/` was something the operator explicitly downloaded or
+     * side-loaded, so [modelBytes] counting it against the budget was correct; after WPG most of
+     * that directory is bundled, so this figure is subtracted out of [modelBytes] rather than left
+     * double-reported.
+     */
+    public val bundledBytes: Long,
     public val measuredAtMillis: Long,
 ) {
+    /** The operator's own retention budget figure — deliberately excludes [bundledBytes] (AC-139). */
     public val totalBytes: Long get() = audioBytes + modelBytes + recordBytes + lexiconBytes
 }
 
@@ -82,11 +95,18 @@ public suspend fun measureStorageAccounting(
     databaseFiles: List<File>,
     clock: Clock = SystemClock,
 ): StorageAccounting = withContext(Dispatchers.IO) {
+    val modelsDir = File(filesDir, "models")
+    val bundled = bundledDestinations(filesDir).filter { it.isFile }
+    val bundledBytes = bundled.sumOf { it.length() }
+    val bundledUnderModels = bundled
+        .filter { it.toPath().normalize().startsWith(modelsDir.toPath().normalize()) }
+        .sumOf { it.length() }
     StorageAccounting(
         audioBytes = measureDirectoryBytes(File(filesDir, "audio")),
-        modelBytes = measureDirectoryBytes(File(filesDir, "models")),
+        modelBytes = measureDirectoryBytes(modelsDir) - bundledUnderModels,
         recordBytes = databaseFiles.filter { it.isFile }.sumOf { it.length() },
         lexiconBytes = measureDirectoryBytes(File(filesDir, "lexicon")),
+        bundledBytes = bundledBytes,
         measuredAtMillis = clock.wallMillis(),
     )
 }
@@ -94,6 +114,25 @@ public suspend fun measureStorageAccounting(
 /** `0L` for a directory that does not exist — never a fabricated non-zero figure (constitution I). */
 public fun measureDirectoryBytes(dir: File): Long =
     if (dir.isDirectory) dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } else 0L
+
+/**
+ * WPG (FR-AST-3a, AC-139): the relative paths `org.ort.app.assets.BundledAssetInstaller` recorded
+ * (in [BUNDLED_ASSETS_MANIFEST_FILENAME], under [filesDir]) as bundled-asset destinations it
+ * actually verified and installed. Duplicated filename constant, not a shared import: `:pipeline`
+ * has no compile dependency on `:app` (technical design §2, `dependencyRules`) — the filesystem
+ * itself is the contract, the same way [org.ort.pipeline.passb.AsrModelLocator]'s fixed path is
+ * the contract between `:net`'s fetch and `:pipeline`'s own model lookup. A missing manifest (a
+ * build before WPG landed, or a fresh device where nothing has installed yet) reads as "no bundled
+ * bytes to exclude", never a crash — constitution I's honest-absence, not a fabricated zero hiding
+ * a real problem, since an absent manifest genuinely means no bundled asset has verified yet.
+ */
+private fun bundledDestinations(filesDir: File): List<File> {
+    val manifest = File(filesDir, BUNDLED_ASSETS_MANIFEST_FILENAME)
+    if (!manifest.isFile) return emptyList()
+    return manifest.readLines().map { it.trim() }.filter { it.isNotEmpty() }.map { File(filesDir, it) }
+}
+
+private const val BUNDLED_ASSETS_MANIFEST_FILENAME = "bundled_assets.manifest"
 
 /**
  * FR-STO-5/D26: every session with retained audio, oldest-first (`SessionEntity.startedAt`

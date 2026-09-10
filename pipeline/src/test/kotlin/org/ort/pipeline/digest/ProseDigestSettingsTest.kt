@@ -14,7 +14,7 @@ class ProseDigestSettingsTest {
         engine.loadBehavior = FakeLlmEngine.LoadBehavior.SUCCEED
         // Simulate an already-resident engine the way a real Ready state would look.
         engine.residentBytesOnReady = 500_000_000L
-        val settings = ProseDigestSettings(initiallyEnabled = true)
+        val settings = ProseDigestSettings(InMemoryProseDigestSettingsStore(initiallyEnabled = true))
 
         settings.setEnabled(false, engine)
 
@@ -26,7 +26,7 @@ class ProseDigestSettingsTest {
     @Test
     fun `enabling again does not itself load the engine`() {
         val engine = FakeLlmEngine()
-        val settings = ProseDigestSettings(initiallyEnabled = false)
+        val settings = ProseDigestSettings(InMemoryProseDigestSettingsStore(initiallyEnabled = false))
 
         settings.setEnabled(true, engine)
 
@@ -37,7 +37,25 @@ class ProseDigestSettingsTest {
 
     @Test
     fun `enabled starts at the constructor value`() {
-        assertTrue(ProseDigestSettings(initiallyEnabled = true).enabled.value)
-        assertEquals(false, ProseDigestSettings(initiallyEnabled = false).enabled.value)
+        assertTrue(ProseDigestSettings(InMemoryProseDigestSettingsStore(initiallyEnabled = true)).enabled.value)
+        assertEquals(
+            false,
+            ProseDigestSettings(InMemoryProseDigestSettingsStore(initiallyEnabled = false)).enabled.value,
+        )
+    }
+
+    @Test
+    fun `disabling persists through the store, so a later ProseDigestSettings sees it`() {
+        val engine = FakeLlmEngine()
+        val store = InMemoryProseDigestSettingsStore(initiallyEnabled = true)
+
+        ProseDigestSettings(store).setEnabled(false, engine)
+
+        assertEquals(false, ProseDigestSettings(store).enabled.value)
+    }
+
+    @Test
+    fun `default no-arg construction is enabled, matching D36 and FR-DIG-3b`() {
+        assertTrue(ProseDigestSettings().enabled.value)
     }
 }

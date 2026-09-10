@@ -51,7 +51,7 @@ class AC140DeterministicDigestUnaffectedTest {
 
         // Run 2: the LLM disabled outright (FR-DIG-3b) — the gate refuses, so the generator is
         // never invoked at all, and the engine's resident memory is released.
-        val settings = ProseDigestSettings(initiallyEnabled = true)
+        val settings = ProseDigestSettings(InMemoryProseDigestSettingsStore(initiallyEnabled = true))
         val disabledEngine = FakeLlmEngine()
         settings.setEnabled(false, disabledEngine)
         val disabledStore = FakeProseSummaryStore()
