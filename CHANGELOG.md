@@ -546,6 +546,174 @@ only `MediaPipeLlmEngine`'s guards ahead of it. `ProseDigestGate`'s `ProseDigest
 package owns the settings/status screens (WPE/WPF) that will call `ProseDigestGate.evaluate`.
 
 ---
+## 2026-09-10 (WPG: bundled assets — build-time fetch, first-launch verify, catalogue, storage accounting)
+
+### (pending) — bundled assets: one build-time fetch task, a generated catalogue, first-launch install, storage accounting excludes them
+
+**Scope:** new `bundled-assets.json` (repo root, the single source of truth); new
+`buildSrc/src/main/kotlin/org/ort/gradle/FetchBundledAssetsTask.kt` (+ its buildSrc test); the
+task's wiring plus a new `generateBundledAssetCatalog` codegen task in
+`buildSrc/src/main/kotlin/ort.android-app.gradle.kts`; new `app/src/main/kotlin/org/ort/app/assets/`
+(`BundledAssetInstaller.kt` + its test); `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`
+(+ its two test files); `app/src/main/kotlin/org/ort/app/OrtApplication.kt` (the first-launch call);
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/StorageAccounting.kt` (+ its test);
+`.gitignore`; `README.md`; `.github/workflows/{ci,release,emulator}.yml`;
+`results/e2e-audit/installed-size.md` (new). One line each in
+`app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`'s `familyOf` — see "Boundary crossing"
+below; this file is otherwise WPE's row.
+
+**Requirements/ACs:** D35, D36, FR-AST-1, FR-AST-2, FR-AST-3, FR-AST-3a, FR-AST-3b, FR-AST-4,
+FR-STO-3, AC-136, AC-137, AC-138 (the tier-eligibility half; the LLM-never-loads half is WPH's),
+AC-139, R18. Constitution I (a stated, recoverable failure, never a silent activation), II (strict
+TDD throughout; every test shown to discriminate where the checklist asks), V (`:net` remains the
+only HTTP-client module — buildSrc's fetch is build tooling, not the shipped app), VII (the asset
+lifecycle — install/verify/activate/roll back — holds for a bundled asset exactly as for a
+downloaded one).
+
+**What changed:**
+
+*Constitution Check.* I bears on `BundledAssetState` (`Installed`/`Failed`/`NotBundledInThisBuild`
+is a closed set, never conflating "corrupt" with "not part of this build"). II bears throughout —
+every new path (digest mismatch, missing token, escape hatch, corruption, idempotent reinstall) is
+tested first, and the AC-137 guard was reverted and restored to prove its test discriminates (see
+Verified). V bears on keeping `fetchBundledAssets` inside buildSrc (build tooling, exempt from the
+capture/processing network ban) while leaving `:net`'s `ModelAcquisition` as the only *shipped-app*
+HTTP path, for side-load and replacement. VII bears on `ModelCatalogEntry.bundled`/`tiers` being
+real typed fields a caller reads, not a comment.
+
+1. **The manifest.** `bundled-assets.json` (root): the four existing catalogue entries (their
+   published digests carried over unchanged) plus `LLM_GEMMA3_1B` (gated, `tiers: ["T3"]`,
+   sha256 `e3d981c0…9dee`, 554,661,243 bytes). `ASR_TOKENS`'s entry is no longer
+   `"trust-on-first-fetch"`: its real digest
+   (`306cd27f03c1a714eca7108e03d66b7dc042abe8c258b44c199a7ed9838dd930`) was obtained by an actual
+   fetch of the published URL in this session (recorded, with the date and method, in the
+   manifest's own `_sha256Note` field) — HuggingFace still publishes no externally-verifiable
+   digest for this specific non-LFS file, but D35 makes that moot: the app never downloads it
+   itself, so the build's own first fetch is the provenance, and the pinned value is now checked on
+   every later build. `silero_vad.onnx`'s size (previously "not confirmed" in `asr-sherpa/README.md`)
+   is now recorded for real: 643,854 bytes.
+
+2. **`FetchBundledAssetsTask` (buildSrc).** A thin `DefaultTask` wrapper; all real logic lives in
+   `BundledAssetFetcher` (deliberately Gradle-type-free, so it is unit-testable directly — matching
+   `PlatformGuardsTask`/`ModuleGraph`'s own established split) and `BundledAssetManifest` (a
+   hand-rolled, dependency-free JSON reader/writer — buildSrc carries no JSON library, and one file
+   read does not justify adding one). Per entry: resolve from
+   `$GRADLE_USER_HOME/ort-bundled-assets/<sha256-or-id>/` (shared across worktrees, never
+   `build/`), verify sha256, copy into `app/src/main/assets/bundled/` (gitignored) alongside a
+   generated `bundled/manifest.json` (id/destination/sha256/sizeBytes/tiers/`missing`). A digest
+   mismatch or download failure fails the build **naming the file** (FR-AST-2); a gated entry with
+   no `HF_TOKEN` fails with exactly one line telling the developer what to do. The one escape hatch,
+   `-PortAllowMissingBundledAssets=true` / `ORT_ALLOW_MISSING_BUNDLED_ASSETS=1` (local development
+   only, never CI — `.github/workflows/*.yml` sets `HF_TOKEN` instead), packages what it can and
+   marks the rest `missing`, with a loud warning. A `trust-on-first-fetch` entry (none committed
+   today, but the mechanism is real and tested) gets its real digest pinned back into
+   `bundled-assets.json` in place, by a targeted textual substitution — not a full reserialize,
+   which would reformat the file's own hand-written commentary on every run.
+
+3. **`generateBundledAssetCatalog` (buildSrc, in `ort.android-app.gradle.kts`).** Reads
+   `bundled-assets.json` (no network) and emits `GeneratedBundledAssetManifest.kt` under
+   `app/build/generated/ort/bundledAssetCatalog/kotlin`, wired as an extra Kotlin source dir for
+   `:app`'s main source set. **Chosen over a runtime resource read** (`ModelCatalog` parsing an
+   asset via `Context.getAssets()`): every existing call site
+   (`ModelCatalog.entries`/`.entry(id)`/`.specFor(id, filesDir)`) is a plain, `Context`-free API a
+   dozen files outside this package call already — a runtime read would need a `Context` at every
+   one of them, while a generated object keeps that surface identical and needs no I/O to compile
+   or test against. `ModelCatalog.entries` is now built by mapping
+   `GeneratedBundledAssetManifest.entries` into `ModelCatalogEntry` (which gained `sizeBytes`,
+   `tiers`, `licence`, `gated`, `bundled` — all real, manifest-sourced fields, `bundled` defaulting
+   `true`). `ModelId` gained `LLM_GEMMA3_1B`.
+
+4. **`BundledAssetInstaller` (`app/.../assets/`).** `installAll`/`reinstall` over a
+   `BundledAssetSource` seam (`AndroidBundledAssetSource` real, `FakeBundledAssetSource` the
+   behavioural fake — an in-memory map, no `Context`/`AssetManager` anywhere in the tests). Copies
+   each bundled asset to a `.part` file first, hashes it, and only renames it over the real
+   destination on a match — a mismatch deletes the `.part` file and leaves whatever was previously
+   at the destination completely untouched, with no marker written (AC-137: never activates a
+   corrupt file, in a stated, recoverable `Failed` state). Writes the identical `.sha256` marker
+   `ModelAcquisition` writes, so `ModelsController.rowFor` reports `INSTALLED` through the one
+   existing code path. Idempotent (an already-verified asset is reported `Installed` without being
+   re-copied, checked by its own test with a source that has no bytes to copy — if it tried, the
+   test would throw). Also writes `bundled_assets.manifest` (sorted, deterministic) — the plain-text
+   filesystem contract `StorageAccounting` reads, since `:pipeline` has no compile dependency on
+   `:app`.
+
+5. **`OrtApplication.onCreate()`** now launches `BundledAssetInstaller.installAll` on
+   `Dispatchers.IO`, off the main thread, on every launch (not gated behind a "first run" flag —
+   idempotency makes that unnecessary and self-repairing). **Robolectric-guarded**
+   (`Build.FINGERPRINT.contains("robolectric")`): `OrtApplication` is every Robolectric test's own
+   `Application` (declared `android:name` in the manifest), so an unconditional install here would
+   have silently made an unrelated test's "nothing is on disk yet" assumption depend on a real,
+   racy, off-thread filesystem copy — found the hard way, mid-session, when
+   `ModelsControllerTest`'s `renders not installed honestly when nothing is on disk` test started
+   failing only *after* a real `assembleDebug` had populated `app/src/main/assets/bundled/` on this
+   machine (see Verified).
+
+6. **`StorageAccounting`** gained `bundledBytes` (excluded from `totalBytes`, the operator's
+   retention budget figure — AC-139), read from `bundled_assets.manifest`; `modelBytes` now
+   subtracts whatever of that figure falls under `models/`, so a bundled file is never
+   double-counted as both "bundled" and "the operator's own model storage".
+
+7. **`ModelsController.download`** now refuses unconditionally for a bundled entry (`isBundled`
+   seam, mirroring `specFor`'s own pattern) with a message that side-load remains available — D35
+   means the app itself never downloads anything anymore. The pre-D35 fetch-through-the-fake
+   mechanism (still real code behind `sideload`/staging/requeue) stays tested via `isBundled = {
+   false }` on the existing tests, each commented with why.
+
+8. **Boundary crossing, reported, not hidden.** `ModelsScreen.kt`'s `familyOf(id: ModelId)` is a
+   deliberately exhaustive `when` with no `else` (its own doc comment: "so a future asset added to
+   that enum fails to compile here rather than silently landing in the wrong group") — adding
+   `ModelId.LLM_GEMMA3_1B` forced exactly that compile failure. This file is WPE's row per
+   `spec/e2e-capture-modes-plan.md`'s partition; the one-line fix
+   (`ModelId.LLM_GEMMA3_1B -> "Gemma 3 1B int4 (prose digest)"`) was made anyway because leaving the
+   build broken is worse than a one-line, mechanical, clearly-commented crossing — flagged here for
+   the lead to confirm or reassign.
+
+9. **Measured, not estimated.** `results/e2e-audit/installed-size.md`: a real `assembleDebug` (this
+   machine has no `HF_TOKEN`, so via the escape hatch — recorded explicitly) installed on
+   `emulator-5556` and launched. APK 204,558,738 bytes (≈195 MB); installed data after first launch
+   100 MB (four real model files, verified, at their exact expected paths, with matching `.sha256`
+   markers and a `bundled_assets.manifest` listing exactly those four). Gemma (≈529 MB) is absent
+   from this measurement for the stated reason; the file gives both the measured baseline and an
+   arithmetic projection for the complete (Gemma-included) install, and says which is which.
+
+**Verified:**
+- `./gradlew -p buildSrc test` — green (`BundledAssetManifest` parse/rewrite,
+  `BundledAssetFetcher` success/mismatch/missing-token/escape-hatch, all against `file://` sources
+  or a tiny in-process `HttpServer`, never the real network).
+- `./gradlew :app:testDebugUnitTest :pipeline:testDebugUnitTest` — green, full suite (confirms the
+  Robolectric-guard fix: this run was also confirmed green *before* any real bundled asset existed
+  on disk, and again *after*, per item 5 above).
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green.
+  `dependencyRules`: 20 modules checked, no violation. `platformGuards`: OK, no analytics/HTTP-
+  client/`INTERNET` violation, MediaPipe AAR included. `fetchBundledAssets`: 4/5 verified,
+  1 (`LLM_GEMMA3_1B`) marked `missing` with a loud warning naming the exact fix (`HF_TOKEN`).
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — regenerated and confirmed up to date
+  (450 requirements, 201 covered).
+- `python tools/spec-check/spec_check.py` — 8/8 checks pass (no spec file touched).
+- **Discrimination (AC-137):** commented out the post-copy digest comparison in
+  `BundledAssetInstaller.installOne` (`if (false && gotSha256 != entry.sha256)`), reran
+  `BundledAssetInstallerTest` — both `AC_137 a corrupted bundled asset is refused...` and
+  `reinstall recovers...` failed exactly as expected (`expected Failed, got Installed`); restored
+  the guard, reran, both green again.
+- Real device: `emulator-5556`, API 34, `x86_64` — `adb install -r`, launched, confirmed via
+  `run-as org.ort.app find .../files` that all four non-gated assets landed at their real
+  locators' paths with matching `.sha256` markers, and `bundled_assets.manifest` lists exactly
+  those four (see `results/e2e-audit/installed-size.md` for the full transcript).
+
+**Left open / not done:**
+- **`HF_TOKEN` was never available on this machine.** Every gate above ran with the local-only
+  escape hatch; the Gemma path (the fetch itself, the corrupt-Gemma and gated-token-present
+  buildSrc scenarios beyond the mocked `HttpServer` test, and the true complete installed-size
+  measurement) needs a session with a real token to confirm end to end. CI has `HF_TOKEN` as a
+  secret and will exercise the real path on its next push.
+- **E2-H05/E2-H06/E2-H11** (device-level: airplane-mode fresh install reaching full capability;
+  measured resident memory for a stored-not-loaded T0 LLM) are hardware/device rows this package
+  does not close — WPG's own scope is the fetch/verify/install/accounting mechanism, not the device
+  protocol runs `hardware-checklist.md` names.
+- **The `familyOf` boundary crossing** (item 8) needs the lead's confirmation — flagged, not
+  silently absorbed into WPE's row.
+- Did not touch `ModelsScreen.kt`/`ModelsContent.kt` beyond that one required line, `:net`, or any
+  spec file, per this package's ownership.
 
 ## 2026-09-10 (WP0': Wave F module scaffolding — llm-api, llm-mediapipe, rig-bluetooth)
 
@@ -27208,6 +27376,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

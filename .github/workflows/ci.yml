@@ -97,6 +97,12 @@ jobs:
   android:
     name: android — Robolectric + assemble
     runs-on: ubuntu-latest
+    # WPG (spec/e2e-capture-modes-plan.md, FR-AST-3, D35/D36): assembleDebug depends on
+    # fetchBundledAssets, which needs HF_TOKEN to fetch the gated Gemma 3 1B model — never the
+    # -PortAllowMissingBundledAssets escape hatch here (that is local-development-only; a CI or
+    # release build must be a real, complete offline install, AC-136).
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -110,7 +116,7 @@ jobs:
           ./gradlew
           :data:testDebugUnitTest :net:testDebugUnitTest :rig-usb:testDebugUnitTest
           :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
-      - name: assemble debug APK
+      - name: assemble debug APK (fetches and verifies every bundled asset — WPG)
         run: ./gradlew :app:assembleDebug
       - name: AC-93 / NFR-5 — the APK targets the minimum supported API level
         run: |

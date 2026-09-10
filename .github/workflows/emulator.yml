@@ -14,6 +14,10 @@ jobs:
     name: install and run on API 26
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    # WPG (spec/e2e-capture-modes-plan.md, FR-AST-3): connectedDebugAndroidTest installs the real
+    # debug APK, which needs fetchBundledAssets' output — HF_TOKEN fetches the gated Gemma model.
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

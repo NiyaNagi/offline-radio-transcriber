@@ -41,11 +41,22 @@ import java.security.MessageDigest
  * checksum they can actually satisfy, to prove the *mechanism* (fetch through the fake, verify,
  * install, report, requeue) end to end, exactly as [ModelsController.currentState]/`download`/
  * `sideload`'s own doc comments describe that seam existing for.
+ *
+ * **WPG follow-up (D35, FR-AST-1): every real catalog entry now ships bundled**, so
+ * [ModelsController.download] refuses unconditionally before it would ever reach
+ * [org.ort.net.ModelAcquisition]. The tests below that exist to prove the underlying
+ * fetch-through-the-fake mechanism (still real code — `sideload`, replacement, staging on
+ * `FR-AST-4` all route through it) now pass `isBundled = { false }` explicitly, mirroring
+ * [ModelsController.download]'s own `specFor` seam, so they keep proving that mechanism without
+ * needing a hypothetical non-bundled catalog entry to do it. New tests prove the real,
+ * bundled-refuses-immediately behavior against the actual default. The old
+ * `FR_AST_1 download refuses ... for an unknown-checksum entry` and
+ * `R_267 the tokens row's not-installed detail ...` tests are removed: `ASR_TOKENS` is no longer
+ * an unknown-checksum entry after WPG's trust-on-first-fetch pinning (`ModelCatalogTest`'s own
+ * `WPG`/`R_267` tests now cover the same reason-formatting contract directly against
+ * [ModelCatalog.checksumStateFor], since no real [ModelId] is left in that state to drive it
+ * through [ModelsController.currentState] at all).
  */
-/** R-267: a generous single-line budget for [ModelRowViewState.detail] — well under a full sentence,
- * let alone the multi-paragraph maintainer note this bug used to surface verbatim. */
-private const val R_267_MAX_DETAIL_LENGTH = 60
-
 @RunWith(RobolectricTestRunner::class)
 class ModelsControllerTest {
 
@@ -99,6 +110,7 @@ class ModelsControllerTest {
                 ModelId.VAD,
                 client = FakeHttpRangeClient(body),
                 specFor = spec,
+                isBundled = { false }, // proving the fetch-through-the-fake mechanism, see class KDoc
             )
 
             assertTrue("expected a Success, got $result", result is ModelActionResult.Success)
@@ -121,6 +133,7 @@ class ModelsControllerTest {
             ModelId.ASR_ENCODER,
             client = FakeHttpRangeClient(corruptBody),
             specFor = spec,
+            isBundled = { false }, // proving the fetch-through-the-fake mechanism, see class KDoc
         )
 
         assertTrue("expected a Failure, got $result", result is ModelActionResult.Failure)
@@ -147,6 +160,7 @@ class ModelsControllerTest {
             ModelId.VAD,
             client = FakeHttpRangeClient(body),
             specFor = specFor(goodChecksum),
+            isBundled = { false }, // proving the fetch-through-the-fake mechanism, see class KDoc
         )
 
         val success = result as ModelActionResult.Success
@@ -170,80 +184,58 @@ class ModelsControllerTest {
     }
 
     @Test
-    @Requirement("FR-AST-1")
-    fun `FR_AST_1 download refuses with no network call at all for an unknown-checksum entry`(): Unit = runTest {
-        // A client that throws if it is ever invoked — proves ModelAcquisition.fetch (and
-        // therefore the network) is never reached for ASR_TOKENS, whose catalog checksum is
-        // ChecksumState.UnknownSideloadOnly, using the REAL ModelCatalog::specFor default.
-        val neverCalled = object : org.ort.net.HttpRangeClient {
-            override fun get(url: String, rangeStart: Long): org.ort.net.HttpRangeResult =
-                error("download() must never make a network call for an unknown-checksum entry")
+    @Requirement("D35", "FR-AST-1")
+    fun `WPG download refuses with no network call at all for a bundled entry, using the real default`(): Unit =
+        runTest {
+            // A client that throws if it is ever invoked — proves ModelAcquisition.fetch (and
+            // therefore the network) is never reached, using the REAL ModelCatalog-backed
+            // isBundled default (every entry ships bundled today, D35).
+            val neverCalled = object : org.ort.net.HttpRangeClient {
+                override fun get(url: String, rangeStart: Long): org.ort.net.HttpRangeResult =
+                    error("download() must never make a network call for a bundled entry")
+            }
+
+            val result = ModelsController.download(context, ModelId.VAD, client = neverCalled)
+
+            assertTrue("expected a Failure, got $result", result is ModelActionResult.Failure)
+            assertTrue(
+                (result as ModelActionResult.Failure).reason.contains("ships bundled"),
+            )
         }
-
-        val result = ModelsController.download(context, ModelId.ASR_TOKENS, client = neverCalled)
-
-        assertTrue("expected a Failure, got $result", result is ModelActionResult.Failure)
-        assertTrue(
-            (result as ModelActionResult.Failure).reason.contains("no published checksum"),
-        )
-    }
 
     @Test
     @Requirement("FR-AST-1")
-    fun `FR_AST_1 sideloading an unknown-checksum entry installs it unverified, never claiming verified`(): Unit =
+    fun `FR_AST_1 sideloading with no verifiable spec installs it unverified, never claiming verified`(): Unit =
         runTest {
-            // Real ModelCatalog::specFor default (ASR_TOKENS has no known checksum) with a real
-            // temp filesDir so ModelCatalog.entry's own destination function is exercised.
+            // Every real ModelId is ChecksumState.Known today (WPG's trust-on-first-fetch pinning
+            // — see ModelCatalogTest's own WPG-tagged tests), so this injects specFor = { null }
+            // — the same seam `download` uses — to exercise sideload's own trust-on-first-use
+            // branch (unverifiedSpecFor) directly, rather than needing a hypothetical
+            // unknown-checksum catalog entry to reach it. sideload's own logic never touches
+            // checksumState at all (only url/destination), so this injection is safe.
             val tempFilesDir = Files.createTempDirectory("models-controller-tofu-test").toFile()
             val fakeContext = object : android.content.ContextWrapper(context) {
                 override fun getFilesDir(): File = tempFilesDir
             }
             val sourceFile = File(tempFilesDir, "user-picked-tokens.txt")
             sourceFile.writeBytes(body)
+            val noSpec: (ModelId, File) -> ModelFetchSpec? = { _, _ -> null }
 
-            val before = ModelsController.currentState(fakeContext)
+            val before = ModelsController.currentState(fakeContext, specFor = noSpec)
             assertEquals(
                 ModelRowStatus.NOT_INSTALLED,
                 before.rows.first { it.id == ModelId.ASR_TOKENS }.status,
             )
             assertFalse(before.rows.first { it.id == ModelId.ASR_TOKENS }.checksumKnown)
 
-            val result = ModelsController.sideload(fakeContext, ModelId.ASR_TOKENS, sourceFile)
+            val result = ModelsController.sideload(fakeContext, ModelId.ASR_TOKENS, sourceFile, specFor = noSpec)
 
             assertTrue("expected a Success, got $result", result is ModelActionResult.Success)
-            val after = ModelsController.currentState(fakeContext)
+            val after = ModelsController.currentState(fakeContext, specFor = noSpec)
             val row = after.rows.first { it.id == ModelId.ASR_TOKENS }
             assertEquals(ModelRowStatus.INSTALLED_UNVERIFIED, row.status)
             assertFalse(row.checksumKnown)
         }
-
-    @Test
-    @Requirement("R-267")
-    fun `R_267 the tokens row's not-installed detail is short, never the maintainer's research trail`() = runTest {
-        val tempFilesDir = Files.createTempDirectory("models-controller-r267-test").toFile()
-        val fakeContext = object : android.content.ContextWrapper(context) {
-            override fun getFilesDir(): File = tempFilesDir
-        }
-
-        val row = ModelsController.currentState(fakeContext).rows.first { it.id == ModelId.ASR_TOKENS }
-
-        val detail = row.detail
-        assertTrue("expected a detail string, got null", detail != null)
-        checkNotNull(detail)
-        // `Settings-Assets.dc.html`'s row shape (size · checksum prefix · tier, guide §9) has no
-        // room for a paragraph — one line, no embedded newline, and short enough it cannot be one.
-        assertFalse("detail must not wrap onto a second line: $detail", detail.contains('\n'))
-        assertTrue(
-            "expected a short operator fact (<= $R_267_MAX_DETAIL_LENGTH chars), got ${detail.length}: $detail",
-            detail.length <= R_267_MAX_DETAIL_LENGTH,
-        )
-        // The maintainer's research trail (git blob SHA-1 vs SHA-256, which HuggingFace/sherpa-onnx
-        // endpoints were checked, the date checked) belongs in `ModelCatalog`'s own doc comment,
-        // never read aloud to the operator deciding whether to sideload a file.
-        assertFalse(detail.contains("HuggingFace"))
-        assertFalse(detail.contains("SHA-1"))
-        assertFalse(detail.contains("checked 2026"))
-    }
 
     @Test
     @Requirement("FR-AST-4")
@@ -261,6 +253,7 @@ class ModelsControllerTest {
             ModelId.VAD,
             client = FakeHttpRangeClient(body),
             specFor = specFor(goodChecksum),
+            isBundled = { false }, // proving the fetch-through-the-fake mechanism, see class KDoc
         )
 
         val success = result as ModelActionResult.Success
@@ -296,6 +289,7 @@ class ModelsControllerTest {
             ModelId.VAD,
             client = FakeHttpRangeClient(body),
             specFor = specFor(goodChecksum),
+            isBundled = { false }, // proving the fetch-through-the-fake mechanism, see class KDoc
         )
         CaptureState.idle(clearSession = true)
 
@@ -324,6 +318,7 @@ class ModelsControllerTest {
             ModelId.VAD,
             client = FakeHttpRangeClient(body),
             specFor = specFor(goodChecksum),
+            isBundled = { false }, // proving the fetch-through-the-fake mechanism, see class KDoc
         )
 
         assertEquals(1, (result as ModelActionResult.Success).requeuedCount)
@@ -336,6 +331,30 @@ class ModelsControllerTest {
         val activated = ModelsController.activateStaged(context)
 
         assertNull(activated)
+    }
+
+    @Test
+    @Requirement("D35", "FR-AST-1")
+    fun `WPG every row reports bundled true, matching the real catalog`() {
+        val state = ModelsController.currentState(context)
+
+        state.rows.forEach { row -> assertTrue("${row.id} must report bundled", row.bundled) }
+    }
+
+    @Test
+    @Requirement("FR-AST-3a", "AC-138")
+    fun `WPG a tier-3-only bundled asset reports tierEligible false below tier 3, true at tier 3`() {
+        val gemmaAtT0 = ModelsController.currentState(context, currentTierLabel = { "T0" })
+            .rows.first { it.id == ModelId.LLM_GEMMA3_1B }
+        assertFalse("Gemma is tier-3-only; must not be eligible at tier 0", gemmaAtT0.tierEligible)
+
+        val vadAtT0 = ModelsController.currentState(context, currentTierLabel = { "T0" })
+            .rows.first { it.id == ModelId.VAD }
+        assertTrue("VAD ships for every tier; must remain eligible at tier 0", vadAtT0.tierEligible)
+
+        val gemmaAtT3 = ModelsController.currentState(context, currentTierLabel = { "T3" })
+            .rows.first { it.id == ModelId.LLM_GEMMA3_1B }
+        assertTrue("Gemma must be eligible at tier 3", gemmaAtT3.tierEligible)
     }
 
     private fun session(id: String) = SessionEntity(

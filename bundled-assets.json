@@ -1,0 +1,85 @@
+{
+  "$schema": "this file has no external schema — see FetchBundledAssetsTask.kt's doc comment for the shape a parser accepts",
+  "note": [
+    "Single source of truth for every asset the app ships bundled (D35, D36; FR-AST-3/3a/3b).",
+    "buildSrc's FetchBundledAssetsTask reads this file at build time to fetch, verify and package",
+    "app/src/main/assets/bundled/ (gitignored). app's ModelCatalog (ModelsViewData.kt) is generated",
+    "from this same file at build time (see ort.android-app.gradle.kts's generateBundledAssetCatalog",
+    "task) so the app and the build agree by construction — see WPG's build report for why a",
+    "generated Kotlin object was chosen over a runtime resource read.",
+    "",
+    "destination is the path under the app's private filesDir the existing locators already read",
+    "(AsrModelLocator.modelsDir, SileroVadLocator.modelFile) — copied verbatim from those, not",
+    "reinvented here, so nothing drifts.",
+    "",
+    "sha256 is either a genuine, sourced 64-hex digest, or the literal string",
+    "'trust-on-first-fetch' for an asset with no published digest anywhere (see tiny.en-tokens.txt's",
+    "history below) — FetchBundledAssetsTask computes the real digest on first fetch and rewrites",
+    "this field in place, so every later build verifies against a real, pinned value. That already",
+    "happened once for tiny.en-tokens.txt (see its own comment) — no entry below still reads",
+    "'trust-on-first-fetch' as committed, but the task supports encountering one.",
+    "",
+    "tiers lists which device tiers (core/PassId.kt's Tier: T0..T3) may ever load this asset — every",
+    "asset still ships on every install (FR-AST-3: one build variant), tiers only governs whether",
+    "ModelsController reports a row as tierEligible so the UI can say 'stored, not loaded' honestly",
+    "(FR-AST-3a, AC-138) — it is never used to skip packaging an asset.",
+    "",
+    "gated: true means the source repository requires accepting a licence on HuggingFace and an",
+    "Authorization: Bearer <HF_TOKEN> header to fetch — FetchBundledAssetsTask fails the build",
+    "naming the one-line fix when HF_TOKEN is absent for such an entry, unless the local-dev-only",
+    "escape hatch is set (see that task's doc comment)."
+  ],
+  "assets": [
+    {
+      "id": "ASR_ENCODER",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-encoder.int8.onnx",
+      "sha256": "0ce578b827c94a961aacb8fa14b02f096504b337e5c94be37c36238cbe3e8bc6",
+      "sizeBytes": 12937772,
+      "destination": "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx",
+      "tiers": ["T0", "T1", "T2", "T3"],
+      "licence": "MIT (OpenAI Whisper weights, sherpa-onnx ONNX export)",
+      "gated": false
+    },
+    {
+      "id": "ASR_DECODER",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-decoder.int8.onnx",
+      "sha256": "06c0e6ff6348d427e51839219d1c886c18cfdf411e629e33f5e1679bff9c1527",
+      "sizeBytes": 89853865,
+      "destination": "models/whisper-tiny-en-int8/tiny.en-decoder.int8.onnx",
+      "tiers": ["T0", "T1", "T2", "T3"],
+      "licence": "MIT (OpenAI Whisper weights, sherpa-onnx ONNX export)",
+      "gated": false
+    },
+    {
+      "id": "ASR_TOKENS",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-tokens.txt",
+      "sha256": "306cd27f03c1a714eca7108e03d66b7dc042abe8c258b44c199a7ed9838dd930",
+      "_sha256Note": "Computed 2026-09-10 by WPG (buildSrc/FetchBundledAssetsTask's own build report) from a real fetch of this exact URL — unlike the other entries' digests, which were read from published metadata without downloading. HuggingFace publishes no sha256 for this specific, non-LFS-tracked file (ModelsViewData.kt's ModelCatalog KDoc has the full account) — this is the trust-on-first-fetch value FetchBundledAssetsTask would have pinned itself the first time it ran; obtaining it directly here avoids every future build needing network access for one small text file whose upstream bytes are static.",
+      "sizeBytes": 835554,
+      "destination": "models/whisper-tiny-en-int8/tiny.en-tokens.txt",
+      "tiers": ["T0", "T1", "T2", "T3"],
+      "licence": "MIT (OpenAI Whisper weights, sherpa-onnx ONNX export)",
+      "gated": false
+    },
+    {
+      "id": "VAD",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "sizeBytes": 643854,
+      "destination": "models/silero-vad/silero_vad.onnx",
+      "tiers": ["T0", "T1", "T2", "T3"],
+      "licence": "MIT (Silero VAD)",
+      "gated": false
+    },
+    {
+      "id": "LLM_GEMMA3_1B",
+      "url": "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
+      "sha256": "e3d981c01aeaaac69a84ffa0d4be13281b3176731063f1bea1c9fe6887bd9dee",
+      "sizeBytes": 554661243,
+      "destination": "models/llm/gemma3-1b-it-int4.task",
+      "tiers": ["T3"],
+      "licence": "gemma",
+      "gated": true
+    }
+  ]
+}
