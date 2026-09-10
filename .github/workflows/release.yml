@@ -49,6 +49,22 @@ jobs:
           :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
           :app:assembleDebug dependencyRules
 
+      # A release that fails its own tests must leave behind enough to diagnose it. Without this,
+      # a failure's console log carries only the first of a multi-cause exception's stacks, and the
+      # rest is unrecoverable — exactly what happened chasing the v0.1.1 tag build's
+      # ArrayIndexOutOfBoundsException (2026-09-10), where the console printed the timeout but not
+      # the array error's own frames. `ci.yml`'s jobs already upload theirs.
+      - name: keep the test reports even when the build failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.run_id }}
+          path: |
+            **/build/reports/tests/**
+            **/build/test-results/**
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: extract the rolling build's notes (RELEASES.md's Unreleased section)
         if: github.ref == 'refs/heads/main'
         run: python3 tools/release_notes.py > release-notes.md
