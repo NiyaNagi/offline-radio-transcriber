@@ -63,7 +63,10 @@ import java.util.concurrent.Executors
  * and transcript char span are queryable per candidate, not just opaque inside
  * [PhoneticLatticeEntity.unitsBlob]; v6 adds [WorkAttemptEntity] (register R-426) so
  * `Fail-Pass.dc.html` can list every failed attempt at a queue item with its own timestamp and
- * reason, not just the queue item's own `attemptCount`/`lastError` (the latest attempt only).
+ * reason, not just the queue item's own `attemptCount`/`lastError` (the latest attempt only);
+ * v7 adds [SessionEntity.captureMode] and its four siblings (FR-CAP-13, AC-129) so a session
+ * records which capture mode, audio route and rig transport produced it — see that entity's own
+ * doc comment for why all five are nullable.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -112,7 +115,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun stationIdentityDao(): StationIdentityDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 6
+        public const val SCHEMA_VERSION: Int = 7
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -251,10 +254,27 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v6 → v7 (FR-CAP-13, AC-129): adds `session.captureMode`, `.audioRouteKind`,
+         * `.audioRouteLabel`, `.bluetoothProfile` and `.rigTransport` — see [SessionEntity]'s own
+         * doc comment for why all five are nullable `TEXT` columns rather than the `:core` enum
+         * types directly. No existing table or column is touched or dropped; every v6 row survives
+         * untouched, all five new columns `NULL` (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
+         */
+        public val MIGRATION_6_7: Migration = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `session` ADD COLUMN `captureMode` TEXT")
+                db.execSQL("ALTER TABLE `session` ADD COLUMN `audioRouteKind` TEXT")
+                db.execSQL("ALTER TABLE `session` ADD COLUMN `audioRouteLabel` TEXT")
+                db.execSQL("ALTER TABLE `session` ADD COLUMN `bluetoothProfile` TEXT")
+                db.execSQL("ALTER TABLE `session` ADD COLUMN `rigTransport` TEXT")
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> =
-            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
 
         private suspend fun PooledConnection.exec(sql: String) {
             usePrepared(sql) { it.step() }

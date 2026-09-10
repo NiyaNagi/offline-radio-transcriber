@@ -21,10 +21,10 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
 | E2-A01 | D33–D36, FR-CAP-8..13, FR-RIG-13..19, FR-AST-3a/3b, FR-DIG-3b, AC-127..140, R17, R18 | Recorded in `spec/functional-spec.md`; `spec_check.py` 8/8 | build | lead | closed — `4fed9de`, spec-check OK |
-| E2-A02 | FR-CAP-13 | `SessionEntity` carries `captureMode`, `audioRouteKind`, `audioRouteLabel`, `bluetoothProfile`, `rigTransport`; migration 6→7 preserves every v6 fixture row | unit (`MIGRATION_6_7` test against every prior fixture, FR-AST-5) | WPC1 | open |
+| E2-A02 | FR-CAP-13 | `SessionEntity` carries `captureMode`, `audioRouteKind`, `audioRouteLabel`, `bluetoothProfile`, `rigTransport`; migration 6→7 preserves every v6 fixture row | unit (`MigrationTest.migration_from_v6_to_v7_preserves_existing_rows_and_adds_the_capture_mode_columns`, `…every_prior_fixture_from_v1_to_v6_migrates_forward_to_v7…`) | WPC1 | fixed — `50bfc07`, gate on main pending |
 | E2-A03 | FR-DIG-11 | `prose_summary` table stores each summary with the over ids it came from; migration 7→8 | unit | WPH | open |
-| E2-A04 | constitution VII | `:llm-api`, `:llm-mediapipe`, `:rig-bluetooth` in `ModuleGraph`; `:capture-*` → `:llm-*` forbidden and shown to fail `dependencyRules` | build (the discrimination run in WP0''s report) | WP0' | building |
-| E2-A05 | technical design §2 | Allowed-edges table names the three modules and the new forbidden edges | review | WP0' | building |
+| E2-A04 | constitution VII | `:llm-api`, `:llm-mediapipe`, `:rig-bluetooth` in `ModuleGraph`; `:capture-*` → `:llm-*` forbidden and shown to fail `dependencyRules` | build (WP0' report: `:capture-android -> :llm-api (explicitly forbidden…)` then OK; gate on main `d30cb02` green, 20 modules) | WP0' | closed |
+| E2-A05 | technical design §2 | Allowed-edges table names the three modules and the new forbidden edges | review (lead read the merged §2) | WP0' | closed |
 
 ## B — Rig core (`:rig`)
 
@@ -53,16 +53,16 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-D01 | FR-CAP-8 | `CaptureMode` is a closed set in `:core`, no Android dependency | unit | WPC1 | open |
-| E2-D02 | FR-CAP-11, D34 | `AndroidAudioIo` opens a `TYPE_BLUETOOTH_SCO` route, reports the negotiated profile/codec; `FakeAudioIo` can present one and drop it | unit (fake) + hardware H5 | WPC1 | open |
-| E2-D03 | FR-CAP-3, FR-CAP-3a | Route verification treats Bluetooth and the built-in mic as ordinary selections: halt only on route ≠ selection | unit (`AC_2`-family: a Bluetooth selection routed to the mic halts; the mic selected and routed passes) | WPC1 | open |
+| E2-D01 | FR-CAP-8 | `CaptureMode` is a closed set in `:core`, no Android dependency | unit (`CaptureModeTest.FR_CAP_8_capture_mode_is_a_closed_set_of_exactly_three_values`, `NoAndroidDependencyTest`) | WPC1 | fixed — `50bfc07` |
+| E2-D02 | FR-CAP-11, D34 | `AndroidAudioIo` opens a `TYPE_BLUETOOTH_SCO` route, reports the negotiated profile/codec; `FakeAudioIo` can present one and drop it | unit (`AndroidAudioIoBluetoothTest`, `FakeAudioIoTest.FR_CAP_11_dropping_the_device_mid-read…`) + hardware H5 (the real codec: `detectNegotiatedBluetoothProfile` is a best-effort hint, `UNKNOWN` otherwise) | WPC1 | fixed — `50bfc07`; codec proof stays hardware |
+| E2-D03 | FR-CAP-3, FR-CAP-3a | Route verification treats Bluetooth and the built-in mic as ordinary selections: halt only on route ≠ selection | unit (`RouteVerifierTest.E2_D03_*` ×3 — shown to discriminate: verifier sabotaged → 4 failures, restored → green) | WPC1 | fixed — `50bfc07` |
 | E2-D04 | FR-CAP-13, AC-129 | `RealCaptureService` writes mode, route, profile, transport on the session at start | unit (`AC_129_session_records_mode`) | WPC2 | open |
 | E2-D05 | FR-CAP-12, AC-131 | A mode change during a session is stored for the next session; the running session's row is unchanged; the next session uses the new mode | unit (`AC_131`) + device (`mode-change-pending`) + hardware H8 | WPC2 | open |
 | E2-D06 | FR-RIG-8, FR-RIG-9 | Frequency provenance `rig` while connected, `manual` on override, stale on drop; every frequency carries provenance | unit | WPC2 | open |
 | E2-D07 | FR-CAP-5, F23 | A Bluetooth audio drop → `InputStatus.Lost` + a `CaptureGap`, retry ladder, recovery announced; never captures nothing silently | unit (fake drop) + device (`bt-audio-dropped`) + hardware H7 | WPC2 | open |
 | E2-D08 | FR-RIG-15 | A Bluetooth control drop → `RigStatus.Stale` with the transport named, **no** gap | unit + device (`rig-bt-lost`) | WPC2 | open |
 | E2-D09 | constitution III | The segmenter still accepts no mode and no tier (a compile-time check: its signature is unchanged) | build | WPC2 | open |
-| E2-D10 | constitution IV | `:capture-android` has no edge to `:rig*`, `:llm*`, `:asr*` after this wave | build (`dependencyRules`) | WP0' / WPC1 | open |
+| E2-D10 | constitution IV | `:capture-android` has no edge to `:rig*`, `:llm*`, `:asr*` after this wave | build (`dependencyRules`: `:capture-android -> :capture-api, :core`) | WP0' / WPC1 | fixed — re-check at every later merge |
 
 ## E — Setup UI (`app/ui/setup`)
 
