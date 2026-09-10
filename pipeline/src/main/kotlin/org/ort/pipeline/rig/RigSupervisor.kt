@@ -2,18 +2,13 @@ package org.ort.pipeline.rig
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import org.ort.capture.android.BackoffLadder
 import org.ort.core.Clock
 import org.ort.core.SystemClock
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.diagnostics.DiagnosticsLog
 import org.ort.rig.NullRigModule
 import org.ort.rig.RigBand
-import org.ort.rig.RigHealth
-import org.ort.rig.RigHealthIssue
 import org.ort.rig.RigModule
 import org.ort.rig.RigState
 import org.ort.rig.RigStateConfidence
@@ -74,9 +69,17 @@ public fun bundledDescriptorById(rigId: String): RigDescriptor? = when (rigId) {
  * be independent. [org.ort.pipeline.capture.RealCaptureService] is the only caller that could ever
  * connect the two, and it does not.
  *
- * Reconnects on [BackoffLadder] — the same ladder [org.ort.capture.android.AudioRecordSource] uses
- * for the audio route (FR-RIG-15: "a transport that drops more often SHALL NOT become a transport
- * that drops capture") — retrying forever, never giving up, until [disconnect] is called.
+ * **Reconnection is the transport's own responsibility, not this class's.** `UsbSerialTransport`
+ * and `BluetoothSppTransport` (WPB) each run their own internal supervisor loop on the same
+ * backoff-ladder policy `:capture-android`'s `AudioRecordSource` uses for the audio route
+ * (`UsbReconnectBackoff`/`BluetoothReconnectBackoff` — duplicated rather than shared, since
+ * `:rig-usb`/`:rig-bluetooth` may not depend on `:capture-android`), retrying forever from the one
+ * [org.ort.rig.RigTransport.open] call [connect] makes — see each class's own kdoc. This class
+ * therefore calls the [transportFactory] and connects **once** per session and never re-invokes
+ * either; a `RigTransport` whose kind has no such self-healing (`:rig`'s own bare
+ * `FakeRigTransport`, built for scripting failure modes, not for modelling a full reconnect state
+ * machine) simply stays [RigStatus.State.Stale] until an external caller reopens it — an honest
+ * reflection of what that transport actually does, not a gap this class papers over.
  */
 public class RigSupervisor(
     private val transportFactory: RigTransportFactory,
@@ -88,11 +91,8 @@ public class RigSupervisor(
     private var descriptorRigModule: DescriptorRigModule? = null
     private var activeTransportKind: RigTransportKind = RigTransportKind.NONE
     private var activeDescriptorId: String = NullRigModule.ID
-    private var activeParams: Map<String, String> = emptyMap()
 
     private var observeJob: Job? = null
-    private var healthJob: Job? = null
-    private var reconnectJob: Job? = null
 
     private val perBandState = java.util.Collections.synchronizedMap(LinkedHashMap<RigBand?, RigState>())
 
@@ -146,20 +146,17 @@ public class RigSupervisor(
         descriptorRigModule = built
         activeTransportKind = transportKind
         activeDescriptorId = descriptor.id
-        activeParams = config.rigParams
         perBandState.clear()
         watch(built)
     }
 
-    /** Cancels every job, disconnects the underlying module (if any) and reports [RigStatus.absent]. */
+    /** Cancels every job, disconnects the underlying module (if any), releases whatever
+     * [transportFactory] allocated ([RigTransportFactory.dispose]) and reports [RigStatus.absent]. */
     public fun disconnect() {
         observeJob?.cancel()
         observeJob = null
-        healthJob?.cancel()
-        healthJob = null
-        reconnectJob?.cancel()
-        reconnectJob = null
         module.disconnect()
+        transportFactory.dispose()
         module = NullRigModule()
         descriptorRigModule = null
         activeTransportKind = RigTransportKind.NONE
@@ -192,14 +189,12 @@ public class RigSupervisor(
         descriptorRigModule = null
         activeTransportKind = RigTransportKind.NONE
         activeDescriptorId = NullRigModule.ID
-        activeParams = emptyMap()
         RigStatus.absent()
         DiagnosticsLog.logRigAbsent()
     }
 
     private fun watch(built: DescriptorRigModule) {
         observeJob = scope.launch { built.observe().collect(::onRigState) }
-        healthJob = scope.launch { built.health().collect(::onHealth) }
     }
 
     private fun onRigState(state: RigState) {
@@ -242,40 +237,6 @@ public class RigSupervisor(
                 val sinceMillis = clock.wallMillis()
                 RigStatus.stale(base, sinceMillis)
                 DiagnosticsLog.logRigStale(sinceMillis)
-            }
-        }
-    }
-
-    /** FR-RIG-7/FR-RIG-15: a lost transport never stops capture and never opens a CaptureGap (see
-     * class kdoc) — it only starts the reconnect loop. [onRigState] above has already (via
-     * [DescriptorRigModule]'s own `markAllStale`) published the stale reading by the time this
-     * fires; this method's only job is getting the link open again. */
-    private fun onHealth(health: RigHealth) {
-        if (health is RigHealth.Degraded && health.issue == RigHealthIssue.TRANSPORT_LOST) {
-            startReconnectLoop()
-        }
-    }
-
-    private fun startReconnectLoop() {
-        if (reconnectJob?.isActive == true) return
-        val descriptorModule = descriptorRigModule ?: return
-        val transportKind = activeTransportKind
-        val params = activeParams
-        reconnectJob = scope.launch {
-            var attempt = 1
-            while (isActive) {
-                delay(BackoffLadder.delayMillisFor(attempt))
-                attempt++
-                descriptorModule.disconnect()
-                val result = descriptorModule.connect(transportKind, params)
-                if (result.isSuccess) {
-                    // Recovery is announced by the next FRESH RigState the reconnected transport
-                    // produces, through the same observe()/health() collectors [watch] already
-                    // started — descriptorModule's own Flow instances are stable across its
-                    // disconnect()/connect() cycles (they are constructor-created fields, never
-                    // replaced), so no re-subscription is needed here.
-                    return@launch
-                }
             }
         }
     }

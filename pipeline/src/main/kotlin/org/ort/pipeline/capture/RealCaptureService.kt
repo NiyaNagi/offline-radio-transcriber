@@ -159,7 +159,9 @@ public class RealCaptureService : Service() {
             )
         },
         /** WPC2's [RigTransportFactory] seam (FR-RIG-13/14) — see [RigSupervisor]'s own kdoc. */
-        val rigTransportFactory: () -> RigTransportFactory = { DefaultRigTransportFactory() },
+        val rigTransportFactory: (android.content.Context) -> RigTransportFactory = { ctx ->
+            DefaultRigTransportFactory(ctx)
+        },
     )
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -278,7 +280,7 @@ public class RealCaptureService : Service() {
         // WPC2 (FR-RIG-2/3/4/6/7/13/14/15): builds the chosen rig (or the null module, honestly,
         // when none is configured) and republishes RigStatus as it connects/drops/reconnects. See
         // RigSupervisor's own kdoc for why a rig-link drop never opens a CaptureGap.
-        val supervisor = RigSupervisor(dependencies.rigTransportFactory(), scope)
+        val supervisor = RigSupervisor(dependencies.rigTransportFactory(applicationContext), scope)
         rigSupervisor = supervisor
         supervisor.connect(activeConfiguration)
 

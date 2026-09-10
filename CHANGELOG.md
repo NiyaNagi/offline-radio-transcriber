@@ -32,6 +32,87 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPC2 follow-up: real USB/Bluetooth rig transports wired behind RigTransportFactory)
+
+### (pending) — DefaultRigTransportFactory now builds real UsbSerialTransport/BluetoothSppTransport; RigSupervisor no longer drives its own reconnect loop
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/rig/{DefaultRigTransportFactory,RigSupervisor,RigTransportFactory}.kt`,
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt` (the `rigTransportFactory`
+dependency's signature only), tests under `pipeline/src/test/**`. Follow-up to the WPC2 entry above,
+after merging `main` (`5a2b134`, WPB's real `:rig-usb`/`:rig-bluetooth` transports) per the
+coordinator's instruction.
+
+**Requirements/ACs:** FR-RIG-3, FR-RIG-7, FR-RIG-13, FR-RIG-14, FR-RIG-15.
+
+**What changed:**
+
+*Constitution Check.* I (a required connection parameter this package cannot safely default —
+VID/PID, the line terminator — fails loudly rather than guessing; guessing a line terminator is
+exactly the silent failure `UsbSerialLineConfig`'s own kdoc calls out). II (every new class/behaviour
+change ships tests in the same commit, against WPB's own real fakes). IV (reconnection is left to
+the transport that already implements it correctly — removing a redundant, conflicting driver is a
+correctness fix, not a feature cut). VII (`RigSupervisor` still depends only on `RigTransportFactory`
+— swapping in the real transports touched exactly one class, `DefaultRigTransportFactory`, confirming
+the seam did its job).
+
+1. **A design correction, discovered while wiring the real transports:** `UsbSerialTransport` and
+   `BluetoothSppTransport` (WPB) each run their **own internal supervisor loop** with the same
+   backoff-ladder policy `AudioRecordSource` uses for the audio route, retrying forever from one
+   `open()` call. `RigSupervisor`'s original reconnect loop (built against `:rig`'s bare
+   `FakeRigTransport`, which has no such self-healing) would have torn down and rebuilt a real,
+   already-retrying transport on every `TRANSPORT_LOST` health event via a fresh `transportFactory`
+   call — redundant at best, and compounding two independent backoff schedules at worst.
+   `RigSupervisor.startReconnectLoop`/`onHealth`/`healthJob`/`reconnectJob` are removed; reconnection
+   is now entirely the transport's own responsibility, exactly matching what WPB already built.
+   `RigSupervisorTest`'s Bluetooth-drop test updated accordingly (drop → `Stale`, no reconnect
+   assertion against the bare fake); recovery itself is proven at the correct level in (3) below.
+
+2. **`DefaultRigTransportFactory`** now builds real transports: `RigTransportKind.USB_SERIAL` →
+   `UsbSerialTransport` over a fresh `AndroidUsbSerialLink`; `RigTransportKind.BLUETOOTH_SPP` →
+   `BluetoothSppTransport` over a fresh `AndroidBluetoothLink`. Neither VID/PID nor a line terminator
+   exist on `RigDescriptor` yet (VID/PID are hardware facts, not protocol facts; `:rig-usb` itself
+   never defaults the terminator — see its own kdoc), so both are read from
+   `CaptureConfiguration.rigParams` by the key names in the new `DefaultRigTransportFactory.ParamKeys`
+   object (`usbVendorId`, `usbProductId`, `lineTerminator`, `bluetoothAddress`); a missing or
+   unparsable required key fails the `create()` call loudly (`error(...)`), caught by
+   `RigSupervisor.connect`'s existing `runCatching` and treated identically to a failed connect —
+   never blocks capture. `baud`/`dataBits`/`stopBits`/`parity` fall back to the RS-232 defaults both
+   bundled descriptors already declare (9600 8N1) — not a new assumption. `RigTransportFactory`
+   gained a `dispose()` default method (no-op) so a factory that allocates OS resources beyond the
+   `RigTransport` itself (`AndroidUsbSerialLink`'s broadcast receivers, per its own kdoc) can release
+   them; `RigSupervisor.disconnect()` calls it. `RealCaptureService.Dependencies.rigTransportFactory`
+   changed from `() -> RigTransportFactory` to `(Context) -> RigTransportFactory` to supply it.
+
+3. **New tests** (`RigSupervisorRealTransportTest`, one per transport kind) prove `RigSupervisor`
+   reaches `Connected` and degrades to `Stale` on a drop through the **real** `UsbSerialTransport`/
+   `BluetoothSppTransport` classes, each over its own fake link (`FakeUsbSerialPort`/
+   `FakeBluetoothLink`) — the level the coordinator asked for, and the level actual reconnection
+   should be exercised at (not re-proven here; `UsbSerialTransportTest`/`BluetoothSppTransportTest`
+   already do, in their own modules). `DefaultRigTransportFactoryTest` covers the param
+   validation/defaulting and the `UnsupportedRigTransportException` path for every other kind.
+
+**Verified:**
+- `./gradlew :pipeline:testDebugUnitTest` — all green (238 tests), no regressions.
+- `./gradlew :pipeline:ktlintMainSourceSetCheck :pipeline:ktlintTestSourceSetCheck :pipeline:detekt` —
+  green (two real issues found and fixed along the way: a nested-block-comment bug from a literal
+  `/*` inside a KDoc path reference — Kotlin's block comments nest, unlike Java/C — and an
+  `isBlank()` check that wrongly rejected a legitimate whitespace line terminator; both fixed, not
+  suppressed).
+- Full monorepo `build dependencyRules platformGuards`, `-p buildSrc test`, `spec_check.py`,
+  `coverageMatrix`/`coverageMatrixCheck` re-run after this commit — see the closing report.
+
+**Left open / not done:**
+- **VID/PID and the line terminator have no home in `RigDescriptor` yet.** They are read from
+  `CaptureConfiguration.rigParams` instead (documented in `DefaultRigTransportFactory.ParamKeys`).
+  The exact addition this package would make in `:rig` (not touched): a `usbVendorId`/`usbProductId`
+  pair and a `lineTerminator` field on `TransportSpec`, populated once H1 verifies the TH-D75A's own
+  values (`docs/reference/th-d75a-cat.md` still marks both "to verify").
+- WPD's setup UI and WPE's settings screen are the callers that must actually populate
+  `rigParams` with these keys when a USB/Bluetooth rig is chosen — out of this package's ownership.
+- Not merged to `main` — commit left on this worktree's branch per instructions.
+
+---
+
 ## 2026-09-10 (WPC2: pipeline wiring — rig supervision, session facts, mode changes, Bluetooth drops)
 
 ### (pending) — pipeline modes: `CaptureConfigurationStore`, `RigSupervisor`, session facts on start, a frozen mid-session mode, the two kinds of Bluetooth drop

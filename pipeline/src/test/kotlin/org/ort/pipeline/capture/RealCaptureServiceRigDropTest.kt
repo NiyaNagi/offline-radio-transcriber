@@ -25,11 +25,15 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 
 /**
- * FR-RIG-15, FR-RIG-7, E2-D08: a rig **control** drop degrades to [RigStatus.State.Stale] and
- * reconnects — the audio route is entirely unaffected, and in particular **no**
+ * FR-RIG-15, FR-RIG-7, E2-D08: a rig **control** drop degrades to [RigStatus.State.Stale] — the
+ * audio route is entirely unaffected, and in particular **no**
  * [org.ort.data.entity.CaptureGapEntity] row is ever produced for it. This is the discriminating
  * claim: the audio path (device, `FakeAudioIo`) is never touched by this test at all, only the
- * rig's own transport ([FakeRigTransport]) is dropped.
+ * rig's own transport ([FakeRigTransport]) is dropped. Reconnection itself (FR-RIG-15's other half)
+ * is the transport's own responsibility, not `RigSupervisor`'s — see [RigSupervisor]'s class kdoc —
+ * and is proven against the real `UsbSerialTransport`/`BluetoothSppTransport` fakes in
+ * `org.ort.pipeline.rig.RigSupervisorRealTransportTest`, not here: `FakeRigTransport` (`:rig`) has
+ * no self-healing state machine of its own to exercise that with.
  */
 @RunWith(RobolectricTestRunner::class)
 public class RealCaptureServiceRigDropTest {
@@ -74,7 +78,7 @@ public class RealCaptureServiceRigDropTest {
             asrEngine = { AsrEngineAvailability.Unavailable("no model in this test") },
             shedSignals = { _, _, _ -> FakeShedSignals() },
             captureConfigurationStore = { InMemoryCaptureConfigurationStore(initial = config) },
-            rigTransportFactory = { RigTransportFactory { _, _ -> rigTransport } },
+            rigTransportFactory = { _ -> RigTransportFactory { _, _ -> rigTransport } },
         )
 
         try {
@@ -100,11 +104,6 @@ public class RealCaptureServiceRigDropTest {
             Thread.sleep(500)
             val gaps = runBlocking { db.captureGapDao().listBySession(sessionId) }
             assertTrue("a rig control drop must never produce a CaptureGap row (FR-RIG-15)", gaps.isEmpty())
-
-            // FR-RIG-15: reconnects with the same backoff ladder, recovery announced by Connected
-            // again -- the same transport instance re-opens successfully (see FakeRigTransport's
-            // own kdoc: a fresh open() clears the dropped flag, mirroring a real re-plug).
-            waitUntil(5_000) { RigStatus.state is RigStatus.State.Connected }
         } finally {
             controller.destroy()
         }

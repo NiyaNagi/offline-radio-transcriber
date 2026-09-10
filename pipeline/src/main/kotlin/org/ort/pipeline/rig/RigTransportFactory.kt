@@ -16,6 +16,17 @@ import org.ort.rig.RigTransportKind
  */
 public fun interface RigTransportFactory {
     public fun create(kind: RigTransportKind, params: Map<String, String>): RigTransport
+
+    /**
+     * Releases anything [create] allocated outside the [RigTransport] instances themselves — real
+     * Android links register broadcast receivers ([org.ort.rig.usb.AndroidUsbSerialLink.dispose]),
+     * which [org.ort.rig.RigTransport.close] does not unregister (closing a port and tearing down
+     * the whole link are different lifecycles). Called once, by [RigSupervisor.disconnect], at the
+     * end of the session that connected through this factory. The default no-op is correct for any
+     * factory (a plain lambda included) whose transports need no such teardown — [FakeRigTransport]
+     * and this package's own fakes among them.
+     */
+    public fun dispose() {}
 }
 
 /**
