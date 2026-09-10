@@ -69,21 +69,21 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-E01 | FR-CAP-8, S00 | S00 renders three modes with the artboard's copy; counter `1 of 8` | unit + tour (`setup-mode/S00-mode`, `@2x`) | WPD | open |
-| E2-E02 | FR-CAP-9, AC-127 | Choosing each mode completes onboarding end to end on a device offering only that mode's hardware (fakes) | unit (`AC_127` ×3) + device V8 | WPD | open |
-| E2-E03 | FR-CAP-9, FR-RIG-13, AC-130 | Bluetooth control with wired audio is reachable: mode Bluetooth, S04 wired route kept, S09b Bluetooth kept | unit (`AC_130`, written before the picker) + device V8 | WPD | open |
-| E2-E04 | FR-CAP-2b, FR-CAP-10, AC-128 | S04 offers the built-in mic as a real choice, neutral tone, room-audio disclosure; `Verify` unlocks | unit (closed at `4fed9de`) + tour (`setup-mode/S04-input-mic`) | WPD | fixed — enumerator closed, screen capture pending |
-| E2-E05 | FR-CAP-11, AC-132 | S04 lists the Bluetooth route with its narrowband disclosure; choosing it proceeds to verify | unit (closed at `4fed9de`) + tour | WPD | fixed — enumerator closed, screen capture pending |
-| E2-E06 | FR-CAP-9 | S04 and S09 show the preset chip naming the mode; the preset is preselected; any other row is selectable | unit + tour | WPD | open |
-| E2-E07 | S02c | Bluetooth mode inserts the Nearby-devices step; denying falls back to USB mode and says so; USB and mic modes never show it | unit (state machine) + tour (`setup-bt-permission/S02c`) + device V8 | WPD | open |
-| E2-E08 | FR-RIG-16, AC-134, AC-135 | S09 is generated from the catalogue; null and generic reachable without scrolling; `Import it` present | unit (`AC_134`, `AC_135`) + tour | WPD | open |
-| E2-E09 | FR-RIG-17, S09b | S09b shows both transports with per-transport capabilities, the mode's preset selected, the cost lines | unit + tour (`setup-rig-transport/S09b`) | WPD | open |
+| E2-E01 | FR-CAP-8, S00 | S00 renders three modes with the artboard's copy; counter `1 of 8` | unit (`ModeScreenTest`) + tour (`setup-mode/S00-mode`, `@2x`) | WPD | fixed (unit) — `98a13ea`, gate on main pending; tour open |
+| E2-E02 | FR-CAP-9, AC-127 | Choosing each mode completes onboarding end to end on a device offering only that mode's hardware (fakes) | unit (`SetupActivityTest.AC_127_*` ×3 — shown to discriminate by reverting the rig-transport preset) + device V8 | WPD | fixed (unit) — `98a13ea`; device open |
+| E2-E03 | FR-CAP-9, FR-RIG-13, AC-130 | Bluetooth control with wired audio is reachable: mode Bluetooth, S04 wired route kept, S09b Bluetooth kept | unit (`SetupStateMachineTest.AC_130_bluetooth_control_with_wired_audio_is_reachable`, `SetupCaptureConfigurationAdapterTest.AC_130_*`) + device V8 | WPD | fixed (unit) — `98a13ea`; device open |
+| E2-E04 | FR-CAP-2b, FR-CAP-10, AC-128 | S04 offers the built-in mic as a real choice, neutral tone, room-audio disclosure; `Verify` unlocks | unit (closed at `4fed9de`) + tour (`setup-mode/S04-input-mic`) | WPD | fixed — enumerator closed at `4fed9de`; screen capture pending (tour) |
+| E2-E05 | FR-CAP-11, AC-132 | S04 lists the Bluetooth route with its narrowband disclosure; choosing it proceeds to verify | unit (closed at `4fed9de`) + tour | WPD | fixed — enumerator closed at `4fed9de`; screen capture pending (tour) |
+| E2-E06 | FR-CAP-9 | S04 and S09 show the preset chip naming the mode; the preset is preselected; any other row is selectable | unit (`InputScreenTest`/`RadioScreenTest` preset-chip tests) + tour | WPD | fixed (unit) — `98a13ea`; tour open |
+| E2-E07 | S02c | Bluetooth mode inserts the Nearby-devices step; denying falls back to USB mode and says so; USB and mic modes never show it | unit (`BluetoothPermissionScreenTest`, state-machine gates) + tour (`setup-bt-permission/S02c`) + device V8 | WPD | fixed (unit) — `98a13ea` |
+| E2-E08 | FR-RIG-16, AC-134, AC-135 | S09 is generated from the catalogue; null and generic reachable without scrolling; `Import it` present | unit (`RadioScreenTest`, `RigCatalogueLabelsTest`) + tour | WPD | fixed (unit) — `98a13ea` |
+| E2-E09 | FR-RIG-17, S09b | S09b shows both transports with per-transport capabilities, the mode's preset selected, the cost lines | unit (`RigTransportScreenTest`) + tour (`setup-rig-transport/S09b`) | WPD | fixed (unit) — `98a13ea` |
 | E2-E10 | FR-RIG-14, S10b | S10b lists paired devices (SPP-capable selectable, headset-only not), `Pair in system settings`, the open→identify→verify checklist; `Continue` only after verify | unit (`RigBluetoothScreenTest` over `InMemoryRigLinkPort`) + tour (`setup-rig-bluetooth/S10b-*` per state) + device V8 — **real link blocked by design**: `:app` may not depend on `:rig-bluetooth` (ModuleGraph, VII); WPC3 adds a `:pipeline` `RigLinkBridge`, WPD then adapts `RigLinkPort` over it | WPD / WPC3 | fixed (fake-backed) — WPD branch; bridge open |
-| E2-E11 | FR-RIG-15, S10b | A drop during S10b verification is shown, not a blank screen; `Use USB instead` works | unit + device V8 | WPD | open |
-| E2-E12 | S11 | S11 names the transport in the subtitle | tour | WPD | open |
-| E2-E13 | FR-CAP-12, S12 | S12 leads with the Mode row (`Change` → S00) and the Models row reads bundled/verified | unit + tour (`setup-verified/S12-ready`) | WPD / WPG | open |
-| E2-E14 | design guide §6.10 | Every setup board reads `n of 8` with eight segments | tour (all S-ids) | WPD | open |
-| E2-E15 | FR-CAP-12 | `MainActivity` re-entry at `EXTRA_STEP = MODE` from CF11 lands on S00 with the current mode marked | unit + device V9 | WPD / WPE | open |
+| E2-E11 | FR-RIG-15, S10b | A drop during S10b verification is shown, not a blank screen; `Use USB instead` works | unit (`RigBluetoothScreenTest` lost-banner case) + device V8 | WPD | fixed (unit) — `98a13ea` |
+| E2-E12 | S11 | S11 names the transport in the subtitle | unit (`RadioVerifiedScreenTest.E2_E12_*`) + tour | WPD | fixed (unit) — `98a13ea` |
+| E2-E13 | FR-CAP-12, S12 | S12 leads with the Mode row (`Change` → S00) and the Models row reads bundled/verified | unit (`ReadyRowsForTest.E2_E13_*` — reads `ModelsController.currentState`) + tour (`setup-verified/S12-ready`) | WPD / WPG | fixed (unit) — `be0fcc8` |
+| E2-E14 | design guide §6.10 | Every setup board reads `n of 8` with eight segments | unit (every screen test asserts its `n of 8`) + tour (all S-ids) | WPD | fixed (unit) — `98a13ea`; tour open |
+| E2-E15 | FR-CAP-12 | `MainActivity` re-entry at `EXTRA_STEP = MODE` from CF11 lands on S00 with the current mode marked | unit (`SetupActivityTest.E2_E15_*`) + device V9 | WPD / WPE | fixed (unit) — `98a13ea` |
 
 ## F — Settings UI (`app/ui/settings`, `ui/navigation`)
 
