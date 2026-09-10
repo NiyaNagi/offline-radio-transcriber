@@ -34,7 +34,100 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-10 (idle-root: CI's AppNotIdleException root-caused to a real ordering bug, not just isolated)
 
-### (pending) — idle-root · closing a real OrtDatabase before ComposeTestRule teardown was the confirmed CI poisoner; fixed structurally, forkEvery now machine-adaptive
+### (pending) — storagebar · the storage-usage-bar empty-track guard compared a locale-formatted string, silently dividing by zero under a non-English default JVM locale
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsStorageScreen.kt`
+(`StorageCategoryBreakdown`, new `roundsToZeroGb`), `app/src/test/kotlin/org/ort/app/ui/settings/SettingsStorageScreenTest.kt`.
+
+**Requirements/ACs:** FR-STO-3 (the storage-budget screen this bar belongs to); R-441, R-760
+(register — this is the same guard those two rounds already hardened, carried one step further).
+
+**What changed:**
+
+*Constitution Check.* II (test-backed — the old guard's failure mode is pinned by a test that
+fails against the pre-fix code, confirmed directly below, not just asserted fixed). VII
+(boundaries are structural — a formatted-string comparison against a hardcoded literal is exactly
+the kind of "rule a person must remember" (that `String.format` follows the *JVM's* default
+locale, not the Robolectric-simulated one) principle VII's own rationale warns will eventually be
+forgotten; the fix replaces it with arithmetic that cannot disagree with itself across hosts).
+
+Investigated CI run 34454049354 (`NiyaNagi/offline-radio-transcriber`, `v0.1.1` tag build):
+`SettingsContentTest > R_090 initialScreen STORAGE lands directly on Storage, never rendering the
+root section labels` failed with a paired `ComposeTimeoutException` / `ArrayIndexOutOfBoundsException:
+Index -71 out of bounds for length 640`; the identical commit passed the parallel `main` run
+minutes earlier (non-deterministic). Full investigation: pulled the CI log directly
+(`gh run view 34454049354 --log-failed`; console output only carries the first of the two
+`DefaultMultiCauseException` failures' stack, so the AIOOBE's own frames were never recovered — the
+release workflow that failed does not upload a test-results artifact for this job, so that trace is
+gone). Tried to reproduce locally: `SettingsContentTest` alone, the full `SettingsStorageScreenTest`
+suite, and the full unfiltered `:app:testDebugUnitTest` (twice) all passed clean on this host — the
+non-determinism did not reproduce here, consistent with either a genuinely rare CI-host-only
+condition or (this session's finding) an environment difference (default JVM locale) this host
+happens to share with `main`'s en-US default.
+
+Read every width/offset computation on `Settings-Storage.dc.html`'s usage bar
+(`StorageCategoryBreakdown`) and the scaled-density path (`ui/theme/Theme.kt`'s `ortScaledDensity`,
+R-600) it composes under. Found a real, locale-dependent bug at the empty-track guard R-760 wrote:
+`realTotalBytes.toGigabyteLabel() != "0.0 GB"` compares against a hardcoded, period-decimal
+literal, but `Long.toGigabyteLabel()` builds that string with Kotlin's `String.format`, which
+resolves `java.util.Locale.getDefault()` — the **JVM process's own default locale**, never pinned
+to `Locale.ROOT` and never influenced by Robolectric's simulated `Configuration` locale. Under any
+default locale whose decimal separator is not `.` (most of Europe among others), formatting a
+genuinely-zero total renders e.g. `"0,0 GB"`, which never equals the hardcoded `"0.0 GB"` — the
+guard then reads a real, exactly-zero `realTotalBytes` as "not zero," enters the segment loop with
+a `0L` denominator, and `category.bytes.coerceAtLeast(1L).toFloat() / realTotalBytes` (`Float`
+divided by a zero `Long`, IEEE-754 float division, never throws) silently produces
+`Float.POSITIVE_INFINITY` for every segment's `weight()` — a value Compose's own `weight() > 0`
+check accepts (infinity is greater than zero) but that cannot become a finite pixel width. Confirmed
+this is real, not theoretical, by temporarily reverting the guard to the old string comparison and
+re-running the new locale test below against it: it failed (wrong segment count, not the empty
+track) exactly as predicted, then passed again once the guard was restored — the direct, TDD-order
+proof this fix closes a real defect, independent of whether it is CI run 34454049354's own whole
+story. Also checked and ruled in/out: the R-600 scaled-density path itself (`ortScaleFor`) always
+clamps to `[1.0, 1.35]`, never negative or zero, and the bar's real track width at every config this
+screen renders at (a full 390-600dp device width minus content padding) is never remotely narrow
+enough for `Arrangement.spacedBy(1.dp)`'s own gap subtraction to go negative on its own — pinned
+directly by the new narrow-track (4dp) and R-600-boundary-width tests below, all passing.
+
+Fixed by replacing the string comparison with `roundsToZeroGb` (new, `internal`) — the identical
+one-decimal-place-GB rounding `"%.1f"` performs, computed directly on the `Long`/`Double` value
+with no `Locale` or string formatting anywhere in the check, so it cannot disagree with itself
+between hosts, JVMs or locales. The outer guard now also checks `realTotalBytes > 0L` explicitly,
+so the per-segment `weight()` division is unreachable with a zero or negative denominator **by
+construction**, not merely because the rounding check happens to agree with it.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.settings.*'` — BUILD SUCCESSFUL,
+  all green, including the two locale-regression tests and the R-600-boundary-width tests.
+- Confirmed the locale regression tests are load-bearing: reverted the guard to the pre-fix string
+  comparison, re-ran the same `--tests` filter — `a near-zero total under a non-English locale
+  still draws only the empty track, never a real segment` and `the empty-track guard survives a
+  non-English default JVM locale, the actual CI-failure mechanism` both FAILED
+  (`java.lang.AssertionError: Failed to assert count of nodes`, real segments drawn instead of the
+  empty track) — then restored the fix and re-ran clean.
+- `.\gradlew.bat :app:testDebugUnitTest --rerun --console=plain` (full, unfiltered, forced) —
+  BUILD SUCCESSFUL in 3m 38s, 1415 tests, zero failures (up from ~1390 — the seven new tests this
+  entry adds), including `SettingsContentTest > R_090 initialScreen STORAGE …` itself.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat dependencyRules platformGuards` — both `OK`.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — `spec-check: OK` (all 8 checks PASS).
+- `.\gradlew.bat coverageMatrix` — `419 requirements, 192 covered` (unchanged; no new requirement
+  ids, this is a bug fix); `.\gradlew.bat coverageMatrixCheck` — `up to date`.
+
+**Left open / not done:** The exact `ArrayIndexOutOfBoundsException: Index -71 out of bounds for
+length 640` was never reproduced locally, and its own stack trace was not recoverable from the CI
+run (no test-results artifact uploaded by the release workflow for this job). The locale mechanism
+found and fixed here is a real, demonstrated defect in the guard R-760 wrote and is the most
+plausible explanation this investigation found for a paired timeout-plus-corrupt-layout symptom on
+a test that renders exactly this bar — but it is not proven to be CI run 34454049354's literal
+mechanism. If `SettingsContentTest > R_090 initialScreen STORAGE …` fails again on CI with the same
+signature after this fix ships, that would rule this mechanism out and point elsewhere (most likely
+this project's own well-documented class of Robolectric/Compose JVM-fork state leakage —
+`app/build.gradle.kts`'s own extensive `forkEvery`/isolation history); worth requesting the CI job
+upload `**/build/reports/tests/**`/`**/build/test-results/**` as an artifact (like `ci.yml`'s
+`unit`/`android` jobs already do) so a recurrence carries its full stack trace next time.
+
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (`ModelsController.resetForTest`),
 `app/src/main/kotlin/org/ort/app/ui/data/StationPolling.kt` (`SharedDatabase.get` `isOpen` check),
