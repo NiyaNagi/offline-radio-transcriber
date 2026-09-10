@@ -32,6 +32,132 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (data-diag: evidence for the Linux partial-unique-index failure — not another blind fix)
+
+### (pending) — data-diag: SqliteDiagnostics evidence for the Linux idx_transcript_one_current/idx_wq_active failure
+
+**Scope:** `data/**` only. `data/build.gradle.kts` (adds `showStandardStreams = true` for `:data`'s
+own `Test` tasks only — the shared `ort.common.gradle.kts` convention plugin is untouched), new
+`data/src/test/kotlin/org/ort/data/SqliteDiagnostics.kt`, and
+`data/src/test/kotlin/org/ort/data/{TranscriptVersioningTest.kt,WorkQueueTest.kt}` (their own
+`@Before` and their one failing test each).
+
+**Requirements/ACs:** AC-31, FR-RUN-2, AC-45, register R-204. No new requirement coverage — this
+is diagnostics for an existing failure, not new behaviour — so `coverageMatrix` regenerated
+`results/coverage-matrix.md` with no diff (confirmed: `git status --short` shows the file
+untouched after running it).
+
+**Constitution Check:** Principle II ("a session that cannot meet its exit criteria stops and
+says so") governs this round directly — the task was evidence, not a second blind repair, after
+commit cd46109's dependency-substitution fix (merged, believed to address a two-jar
+`BundledSQLiteDriver` classpath collision) did not change the outcome on the very next CI run
+(34440826468 failed identically to 34439250807). Principle VI ("no number without its fold,
+machine and provider") is why every diagnostic line below is labelled with what platform produced
+it, not asserted as universal. Neither failing test was weakened, skipped, or `@Ignore`d.
+
+**What changed:**
+
+1. **`SqliteDiagnostics.kt`** (new): `SqliteDiagnostics.report(db, label)`, an always-on,
+   print-only helper (no assertions, changes no production behaviour) that queries the *exact*
+   `OrtDatabase` instance passed to it for: `SELECT sqlite_version()`; the full
+   `SELECT name, sql FROM sqlite_master WHERE type = 'index'` listing; `os.name`/`os.arch`;
+   whether the native library answered (inferred from the version query succeeding, since no
+   public API exposes native-load state directly); `BundledSQLiteDriver::class.java
+   .protectionDomain.codeSource.location` (the class [OrtDatabase.create] hardcodes via
+   `.setDriver(BundledSQLiteDriver())`); and every `sqlite`-named entry on
+   `java.class.path` (a fallback for the codeSource line — see Left open). Every query is wrapped
+   in its own `runCatching` so a failing probe reports its own exception instead of losing the
+   rest of the report or crashing the test.
+2. **`TranscriptVersioningTest`/`WorkQueueTest`**: each `@Before` now calls
+   `SqliteDiagnostics.report(db, "<ClassName>.openDatabase")` on the same `db` the test body goes
+   on to use — printed for every test in both classes, pass or fail, not just the two that
+   currently fail on Linux. Each of the two failing tests
+   (`two_current_transcripts_for_one_transmission_violate_the_partial_unique_index`,
+   `the_active_state_index_does_not_restrict_a_terminal_failed_duplicate`) now also calls
+   `SqliteDiagnostics.report` again on the failure branch and folds its text into the
+   `assertTrue` message itself, so a CI failure's own message carries the index listing rather
+   than just "must violate" — no need to go hunting for a separate diagnostic line in the log.
+3. **`data/build.gradle.kts`**: `tasks.withType<Test>().configureEach { testLogging {
+   showStandardStreams = true } }`, scoped to `:data` only. Without this, every `println` above —
+   this module's `ort.common.gradle.kts` `Test` config does not set it — is captured only into
+   this module's HTML/XML report, never the console, so it would never have reached the GitHub
+   Actions workflow log the task asked for regardless of what the diagnostic itself printed.
+
+**Verified** (Windows, this worktree, `worktree-data-diag` on `e178b1d`):
+
+- `.\gradlew.bat :data:testDebugUnitTest` — `BUILD SUCCESSFUL`, all `:data` tests including both
+  previously-flagged-as-cross-platform-risky ones pass; the new diagnostic block prints for every
+  test in both files (confirmed by inspecting captured stdout directly, not just the exit code).
+  Observed on Windows, this machine, for every printed instance across both classes:
+  `sqlite_version() = 3.46.0`; `os.name = Windows 10, os.arch = amd64`; `native library loaded =
+  yes (inferred: sqlite_version() answered)`; `BundledSQLiteDriver class loaded from = unknown
+  (null)` (Robolectric's `AndroidSandbox$SdkSandboxClassLoader` reports a null `CodeSource` for
+  sandboxed classes — an observed Robolectric property, not a build artifact, so this line is
+  expected to also read "unknown (null)" on Linux CI and is not by itself evidence of anything);
+  6 `sqlite`-named classpath entries, exactly one of which provides `BundledSQLiteDriver`
+  (`sqlite-bundled-jvm-2.5.2.jar`) — no `sqlite-bundled-android` present; both
+  `idx_transcript_one_current` and `idx_wq_active` exist in `sqlite_master`, `sql` columns
+  matching [OrtDatabase.applyHandWrittenSchema] verbatim, among 37 total indexes.
+- `.\gradlew.bat :data:ktlintCheck :data:detekt` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat dependencyRules platformGuards` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL`.
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (two invocations) —
+  both `BUILD SUCCESSFUL`; `results/coverage-matrix.md` unchanged.
+- Also confirmed directly, separately from the diagnostic code itself: `.\gradlew.bat
+  :data:dependencies --configuration debugUnitTestRuntimeClasspath` shows exactly one
+  `BundledSQLiteDriver`-providing artifact (`androidx.sqlite:sqlite-bundled-jvm:2.5.2`; the
+  Android-variant `androidx.sqlite:sqlite-bundled` is substituted to it, matching commit
+  cd46109's fix), and the resolved `sqlite-bundled-jvm-2.5.2.jar` bundles native binaries for
+  every target platform inside one jar (`natives/{linux_arm64,linux_x64,osx_arm64,osx_x64,
+  windows_x64}/…`) rather than being resolved per-platform by Gradle — so this jar's identity
+  should not itself vary between the Windows and Linux runners.
+
+**Hypothesis (inferred, not observed on Linux — labelled as such deliberately):** the classpath
+inspection above is evidence *against* the previous round's own theory surviving as the
+mechanism, at least for `:data`'s own resolved graph: this worktree's `debugUnitTestRuntimeClasspath`
+already contains exactly one driver-providing jar, self-selecting its native binary by
+`os.name`/`os.arch` rather than by Gradle variant resolution, so a second Linux run of the *same*
+dependency graph should resolve identically. That the fix nonetheless made no observed difference
+on CI is consistent with two non-exclusive possibilities this round could not distinguish without
+a Linux run: (a) the real mechanism was never the two-jar classpath collision at all, and the
+partial-unique-index enforcement gap is a genuine platform difference somewhere inside
+`sqlite-bundled-jvm`'s own `natives/linux_x64/libsqliteJni.so` (a real SQLite build difference
+between platforms, not a JVM classpath difference) — the diagnostic's `sqlite_version()` line
+will at least confirm whether Linux CI is running the same reported SQLite version as this
+observation; or (b) CI's actual resolved graph is not what a local, already-populated dependency
+cache reproduces (a stale lock file, a fresh-checkout-only resolution path, or something specific
+to the `gradle/actions/setup-gradle@v4` cache CI uses) — the diagnostic's classpath-jar listing
+and the `WorkQueue.enqueue` application-level guard (already in place from cd46109, proven
+separately by `FR_RUN_2_enqueue_does_not_create_a_second_active_row...`) both stay as defense in
+depth either way. No fix is attempted in this change beyond the diagnostics themselves, per this
+task's own instruction.
+
+**Left open / not done:**
+
+- Not run on Linux — this worktree has no Linux machine available; every "observed" figure above
+  is Windows-only and labelled as such. The next CI run is what turns this round's hypothesis
+  into evidence either way.
+- `BundledSQLiteDriver::class.java.protectionDomain.codeSource.location` reports `unknown (null)`
+  under Robolectric on Windows (see Verified) and is expected to do the same on Linux — this is a
+  genuine limitation of the requested diagnostic under `RobolectricTestRunner`, not a bug in this
+  change; the `java.class.path` jar listing is the report's real fallback for "which jar provided
+  the driver", and is what the next CI run's log should be read against.
+- `app/build.gradle.kts` and `pipeline/build.gradle.kts` carry the same
+  `implementation(...sqlite.bundled)` (transitively, via `:data`) +
+  `testImplementation(...sqlite.bundled.jvm)` shape `:data` had before cd46109, with no
+  equivalent `dependencySubstitution` block — confirmed by reading both files. Neither module's
+  own unit tests assert against `idx_transcript_one_current`/`idx_wq_active` directly (searched
+  both trees for the index names and for `UNIQUE constraint failed`; the only hit was
+  `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, production debug-scenario code, not a
+  test), so this task's own two failing tests would not currently be duplicated there even if the
+  same mechanism is latent in both — out of scope for this change (`data/**` only) and not fixed
+  here.
+- No fix applied beyond the diagnostics themselves (per this task's brief); if the next CI run's
+  report shows a genuine one-line cause, that is a follow-up change, not this one.
+
+---
+
 ## 2026-09-09 (ui-conformance WP12d: screenshot tour — the drawer (N00) and every other never-captured screen R-770 could reach)
 
 ### (pending) — ui-conformance WP12d · R-010..R-014/R-334/R-770: N00 drawer, T03, F04, S05, CF04/DG04 @2x now in the tour; the rest reported unreachable
