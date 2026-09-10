@@ -52,6 +52,46 @@ class StorageAccountingTest {
         assertEquals("lexicon: one file", 25L, accounting.lexiconBytes)
         assertEquals(5_000L, accounting.measuredAtMillis)
         assertEquals(150L + 400L + 230L + 25L, accounting.totalBytes)
+        assertEquals("no bundled_assets.manifest written — nothing bundled to exclude", 0L, accounting.bundledBytes)
+    }
+
+    @Test
+    @Requirement("AC-139", "FR-AST-3a")
+    fun `AC_139 bundled assets do not count against the budget and are reported separately`() {
+        val filesDir = Files.createTempDirectory("storage-accounting-bundled-test").toFile()
+        // A bundled model (per the manifest below) and a genuinely side-loaded one the operator
+        // added themselves — both physically under models/, only one of them is bundled.
+        writeFile(File(filesDir, "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx"), 1_000)
+        writeFile(File(filesDir, "models/side-loaded/replacement.onnx"), 300)
+        File(filesDir, "bundled_assets.manifest").writeText(
+            "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx\n",
+        )
+
+        val accounting = runBlocking { measureStorageAccounting(filesDir, emptyList()) }
+
+        assertEquals("only the genuinely side-loaded file counts toward the budget", 300L, accounting.modelBytes)
+        assertEquals(
+            "the bundled file is reported on its own, not folded into modelBytes",
+            1_000L,
+            accounting.bundledBytes,
+        )
+        assertEquals(
+            "totalBytes (the retention budget figure) must exclude bundledBytes entirely",
+            300L,
+            accounting.totalBytes,
+        )
+    }
+
+    @Test
+    @Requirement("AC-139", "FR-AST-3a")
+    fun `AC_139 a listed bundled destination that does not exist on disk contributes nothing`() {
+        val filesDir = Files.createTempDirectory("storage-accounting-bundled-missing-test").toFile()
+        File(filesDir, "bundled_assets.manifest").writeText("models/never-actually-installed.onnx\n")
+
+        val accounting = runBlocking { measureStorageAccounting(filesDir, emptyList()) }
+
+        assertEquals(0L, accounting.bundledBytes)
+        assertEquals(0L, accounting.modelBytes)
     }
 
     @Test

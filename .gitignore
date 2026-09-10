@@ -36,3 +36,9 @@ venv/
 /corpus/downloads/
 *.flac
 !**/src/test/resources/**/*.flac
+
+# WPG (spec/e2e-capture-modes-plan.md, FR-AST-3): bundled assets are fetched and verified by the
+# fetchBundledAssets Gradle task (buildSrc/FetchBundledAssetsTask.kt) from bundled-assets.json —
+# that manifest is the source-controlled fact; these hundreds of megabytes of binaries, and the
+# generated manifest.json describing what actually landed here, are not.
+/app/src/main/assets/bundled/

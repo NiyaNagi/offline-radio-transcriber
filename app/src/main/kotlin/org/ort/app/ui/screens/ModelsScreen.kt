@@ -726,6 +726,11 @@ private fun FilledCheckBadge(background: Color, icon: ImageVector, iconTint: Col
 private fun familyOf(id: ModelId): String = when (id) {
     ModelId.ASR_ENCODER, ModelId.ASR_DECODER, ModelId.ASR_TOKENS -> "Whisper tiny.en (speech to text)"
     ModelId.VAD -> "Silero VAD (voice activity)"
+    // WPG (D36): minimal, mechanical addition forced by this when's own documented design (no
+    // `else`, so a new ModelId fails to compile here) — this file is otherwise WPE's row per
+    // spec/e2e-capture-modes-plan.md; the crossing is reported in WPG's own build report rather
+    // than left as a silent compile fix.
+    ModelId.LLM_GEMMA3_1B -> "Gemma 3 1B int4 (prose digest)"
 }
 
 private data class AssetGroup(val familyLabel: String, val parts: List<ModelRowViewState>)
