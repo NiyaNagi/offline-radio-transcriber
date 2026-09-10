@@ -68,6 +68,28 @@ public data class AmbiguousCandidateViewState(val callsign: String, val evidence
  * "kept as an unidentified voice" step distinctly from the attempts that did not resolve. */
 public data class TriedStepViewState(val title: String, val detail: String?, val resolved: Boolean)
 
+/**
+ * Register R-721, `Detail-Unknown.dc.html`: the real facts behind the two "what was tried" steps
+ * this mapper previously could not build at all (the board's own "Voice match against N stations
+ * heard tonight" and "Thread context" rows) — read directly by
+ * [org.ort.app.ui.data.CorrectionPolling.unknownTriedContext], never fabricated.
+ *
+ * [stationsHeardTonight] is the real distinct-station count for this over's own session (the same
+ * `TransmissionDao.listBySession` read [org.ort.app.ui.data.CorrectionPolling.sessionFailedCount]'s
+ * own R-470 fix already established the pattern for). [voiceprintExtracted]/[hasThreadId] are this
+ * transmission's own real `transmission.voiceprintId`/`transmission.threadId` columns, non-null or
+ * not — **not** the board's own fabricated "Nearest was N7XYZ at 0.38" distance or "no QSO in
+ * progress on 146.960 at 02:16" clause: no `:data` table retains a per-candidate embedding distance
+ * for an over that matched no one, and this mapper has no honest way to say more than the bare
+ * booleans these two columns already are (constitution I — precision over recall, never assert a
+ * number the schema does not carry).
+ */
+public data class UnknownTriedContextViewState(
+    val stationsHeardTonight: Int,
+    val voiceprintExtracted: Boolean,
+    val hasThreadId: Boolean,
+)
+
 /** One ranked candidate row, reused by the inline preview and [org.ort.app.ui.screens.DetailWhyScreen]. */
 public data class RankedCandidateViewState(val callsign: String, val scoreLabel: String, val chosen: Boolean)
 
@@ -209,9 +231,14 @@ public object DetailViewStateMapper {
         // empty map so every existing call site compiles unchanged; a caller with no entry for a
         // given callsign falls back to [ambiguousEvidence]'s own older, coarser evidence line.
         ambiguousEvidence: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState> = emptyMap(),
+        // Register R-721: real facts for the two previously-unbuildable "what was tried" steps —
+        // defaulted to `null` so every existing call site compiles unchanged, and a `null` context
+        // (a caller that has not looked it up, or a non-UNKNOWN over that never will) keeps the
+        // honest two-step shape this mapper always had, never four fabricated steps.
+        unknownContext: UnknownTriedContextViewState? = null,
     ): DetailViewState = DetailViewState(
         detail = detail,
-        body = bodyFor(detail, sourceOverTimeLabel, ambiguousEvidence),
+        body = bodyFor(detail, sourceOverTimeLabel, ambiguousEvidence, unknownContext),
         why = whyFor(detail.inspection),
         passFailure = passFailure,
         rejected = rejected,
@@ -223,6 +250,7 @@ public object DetailViewStateMapper {
         detail: TransmissionDetailViewState,
         sourceOverTimeLabel: String? = null,
         ambiguousEvidence: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState> = emptyMap(),
+        unknownContext: UnknownTriedContextViewState? = null,
     ): DetailBodyViewState {
         val attribution = detail.attribution
         return when (attribution.state) {
@@ -259,7 +287,7 @@ public object DetailViewStateMapper {
 
             AttributionState.UNKNOWN -> DetailBodyViewState.Unknown(
                 explanation = "No callsign heard, and the voice matched no one heard before. Nothing is claimed.",
-                tried = triedStepsFor(detail.inspection),
+                tried = triedStepsFor(detail.inspection, unknownContext),
             )
         }
     }
@@ -317,13 +345,21 @@ public object DetailViewStateMapper {
     }
 
     /**
-     * `Detail-Unknown.dc.html`'s "what was tried". Only the grammar step and the always-true
-     * "kept as an unidentified voice" step are built from data this mapper actually has — a
-     * "nearest voice match" and "thread context" step are named in the artboard but no real figure
-     * for either reaches [TransmissionDetailViewState] yet (see this file's class doc); adding them
-     * honestly needs a `:data` read this package does not own.
+     * `Detail-Unknown.dc.html`'s "what was tried". The grammar step and the always-true "kept as
+     * an unidentified voice" step are built from data this mapper always had.
+     *
+     * Register R-721, closed: [context], when supplied, adds the two remaining board steps —
+     * "voice match against N stations heard tonight" and "thread context" — from
+     * [UnknownTriedContextViewState]'s own real, non-fabricated facts (see that class's doc
+     * comment for exactly what is and is not represented: a real station count and two real
+     * booleans, never the board's own invented "Nearest was N7XYZ at 0.38" distance or specific
+     * frequency/time clause). `null` (every call site built before this fix, or a caller that has
+     * not looked the facts up) keeps the honest two-step shape unchanged.
      */
-    private fun triedStepsFor(inspection: InspectionViewState): List<TriedStepViewState> {
+    private fun triedStepsFor(
+        inspection: InspectionViewState,
+        context: UnknownTriedContextViewState? = null,
+    ): List<TriedStepViewState> {
         val best = inspection.candidates.maxByOrNull { it.score }
         val grammarStep = if (best != null) {
             TriedStepViewState(
@@ -338,13 +374,36 @@ public object DetailViewStateMapper {
                 resolved = false,
             )
         }
+        val voiceStep = context?.let {
+            val stationWord = if (it.stationsHeardTonight == 1) "1 station" else "${it.stationsHeardTonight} stations"
+            TriedStepViewState(
+                title = "Voice match against $stationWord heard tonight",
+                detail = if (it.voiceprintExtracted) {
+                    "No match cleared the confidence floor needed to infer."
+                } else {
+                    "No voiceprint could be extracted from this over to compare."
+                },
+                resolved = false,
+            )
+        }
+        val threadStep = context?.let {
+            TriedStepViewState(
+                title = "Thread context",
+                detail = if (it.hasThreadId) {
+                    "Grouped into an ongoing conversation on this frequency."
+                } else {
+                    "No conversation thread recorded for this over."
+                },
+                resolved = false,
+            )
+        }
         val keptStep = TriedStepViewState(
             title = "Kept as an unidentified voice",
             detail = "If this voice is heard again with a callsign, this over will be re-attributed by " +
                 "inference and marked as such.",
             resolved = true,
         )
-        return listOf(grammarStep, keptStep)
+        return listOfNotNull(grammarStep, voiceStep, threadStep, keptStep)
     }
 
     private fun whyFor(inspection: InspectionViewState): DetailWhyViewState {

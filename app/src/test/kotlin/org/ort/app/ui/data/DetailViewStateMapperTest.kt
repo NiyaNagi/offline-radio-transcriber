@@ -117,6 +117,72 @@ class DetailViewStateMapperTest {
         assertTrue(grammarStep.detail.orEmpty().contains("0.31"), grammarStep.detail.orEmpty())
     }
 
+    // ---- R-721 (register): `Detail-Unknown.dc.html` draws four "what was tried" steps — before
+    // this fix, only "grammar" and "kept as an unidentified voice" ever rendered; "voice match
+    // against N stations heard tonight" and "thread context" never did, because no caller passed
+    // [DetailViewStateMapper.from] the real facts to build them with. With no
+    // [UnknownTriedContextViewState] supplied (every call site built before this fix), the two-step
+    // shape is unchanged — never four fabricated steps standing in for data this mapper does not
+    // have. ----
+
+    @Test
+    fun `R_721 UNKNOWN with no context supplied still renders only the two steps this mapper always had`() {
+        val body = DetailViewStateMapper.from(detail(Attribution.unknown())).body
+        check(body is DetailBodyViewState.Unknown)
+        assertEquals(2, body.tried.size)
+    }
+
+    @Test
+    fun `R_721 UNKNOWN with a real context renders all four steps, each with a real not fabricated outcome`() {
+        val context = UnknownTriedContextViewState(
+            stationsHeardTonight = 19,
+            voiceprintExtracted = true,
+            hasThreadId = false,
+        )
+        val body = DetailViewStateMapper.from(detail(Attribution.unknown()), unknownContext = context).body
+        check(body is DetailBodyViewState.Unknown)
+        assertEquals(4, body.tried.size)
+        assertTrue(body.tried.any { it.title.contains("grammar", ignoreCase = true) })
+        val voiceStep = body.tried.first { it.title.contains("voice match", ignoreCase = true) }
+        // The real count, never a hardcoded placeholder — `Detail-Unknown.dc.html`'s own worked
+        // example reads "19", but this must be [context]'s own number, not that literal.
+        assertTrue(voiceStep.title.contains("19"), voiceStep.title)
+        assertTrue(voiceStep.title.contains("stations heard tonight"), voiceStep.title)
+        // Honest, not a fabricated nearest-candidate distance (constitution I) — no `:data` query
+        // this mapper can reach returns a per-candidate embedding distance for an unmatched voice.
+        assertFalse(voiceStep.detail.orEmpty().contains("N7XYZ"))
+        assertTrue(voiceStep.detail.orEmpty().contains("confidence floor"), voiceStep.detail.orEmpty())
+        val threadStep = body.tried.first { it.title.equals("Thread context", ignoreCase = true) }
+        assertTrue(threadStep.detail.orEmpty().contains("No conversation thread"), threadStep.detail.orEmpty())
+        assertTrue(body.tried.any { it.title.contains("unidentified voice", ignoreCase = true) })
+    }
+
+    @Test
+    fun `R_721 UNKNOWN with no voiceprint extracted at all says so, never a fabricated floor miss`() {
+        val context = UnknownTriedContextViewState(
+            stationsHeardTonight = 0,
+            voiceprintExtracted = false,
+            hasThreadId = false,
+        )
+        val body = DetailViewStateMapper.from(detail(Attribution.unknown()), unknownContext = context).body
+        check(body is DetailBodyViewState.Unknown)
+        val voiceStep = body.tried.first { it.title.contains("voice match", ignoreCase = true) }
+        assertTrue(voiceStep.detail.orEmpty().contains("No voiceprint could be extracted"), voiceStep.detail.orEmpty())
+    }
+
+    @Test
+    fun `R_721 UNKNOWN carrying a real threadId reads as grouped, not a fabricated no-thread line`() {
+        val context = UnknownTriedContextViewState(
+            stationsHeardTonight = 3,
+            voiceprintExtracted = true,
+            hasThreadId = true,
+        )
+        val body = DetailViewStateMapper.from(detail(Attribution.unknown()), unknownContext = context).body
+        check(body is DetailBodyViewState.Unknown)
+        val threadStep = body.tried.first { it.title.equals("Thread context", ignoreCase = true) }
+        assertTrue(threadStep.detail.orEmpty().contains("ongoing conversation"), threadStep.detail.orEmpty())
+    }
+
     // ---- R-051/FR-UI-8: the "why this callsign" surface, built from real data only ----
 
     @Test

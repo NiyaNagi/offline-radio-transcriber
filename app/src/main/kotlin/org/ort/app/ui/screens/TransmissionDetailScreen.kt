@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,6 +47,8 @@ import org.ort.app.ui.audio.WaveformSummary
 import org.ort.app.ui.components.ActionBar
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
+import org.ort.app.ui.components.LatticeSlot
+import org.ort.app.ui.components.LatticeSlotViewState
 import org.ort.app.ui.components.MARKER_TITLE_SIZE
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.PriorBar
@@ -844,12 +847,15 @@ private fun UnknownTriedSection(body: DetailBodyViewState) {
  * the preview and the exhaustive screen read as one system), and every [PriorBar] name is guide
  * §9 prose from [DetailViewStateMapper]'s own translation table, not the raw stored key.
  *
- * **Honest gap, unchanged from this package's earlier revision:** `Detail-Why.dc.html`'s per-slot
- * phonetic-lattice boxes (`K .96`, `7 .99`, ...) cannot be rendered — `:data`'s
- * [org.ort.data.entity.PhoneticLatticeEntity.unitsBlob] is an opaque blob with no defined per-unit
- * shape yet (that entity's own doc comment), so [WP2's LatticeSlot][org.ort.app.ui.components.LatticeSlot]
- * has no real per-letter score to draw from. [why.latticeSummary] (source + model) is shown instead,
- * with an explicit line saying per-slot detail is not recorded — never a fabricated slot.
+ * **Register R-720, fixed.** This section's own doc comment used to say the per-slot
+ * phonetic-lattice grid "cannot be rendered" — stale: register R-320 (schema v5) closed that gap
+ * with [org.ort.data.entity.LatticeSlotEntity] and [why.winningSlots] has carried the real per-slot
+ * data through ever since (proven by [DetailWhyScreen]'s own `LatticeSection`, which has rendered it
+ * correctly all along). The true bug was here — this inline preview never read [why.winningSlots]
+ * at all and always printed the "not recorded" fallback regardless. Fixed by reusing the identical
+ * [org.ort.app.ui.components.LatticeSlot] row [DetailWhyScreen.LatticeSection] already draws (not a
+ * look-alike), so the fallback line now shows only when [why.winningSlots] is genuinely empty (a
+ * record with no slot rows at all — pre-schema-v5, or a lattice that was never text-anchored).
  */
 @Composable
 private fun WhySection(state: DetailViewState, onOpenWhy: () -> Unit) {
@@ -877,6 +883,25 @@ private fun WhySection(state: DetailViewState, onOpenWhy: () -> Unit) {
                 color = OrtColors.textFaint,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
             )
+        }
+        if (why.winningSlots.isNotEmpty()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs),
+                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm, bottom = OrtSpacing.sm),
+            ) {
+                why.winningSlots.forEach { slot ->
+                    LatticeSlot(
+                        state = LatticeSlotViewState(
+                            unit = slot.unit,
+                            score = slot.score,
+                            alternate = slot.keptAlternate,
+                            belowThreshold = slot.belowThreshold,
+                        ),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        } else if (why.latticeSummary != null) {
             Text(
                 text = "Per-slot detail (each unit's score and kept alternate) is not recorded yet.",
                 style = OrtType.subLine,
