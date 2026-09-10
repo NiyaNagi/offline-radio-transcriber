@@ -7,6 +7,8 @@ import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.annotation.RequiresPermission
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -36,34 +38,76 @@ public class AndroidBluetoothLink(private val context: Context) : BluetoothLink 
     @Volatile
     private var connectedAddress: String? = null
 
-    override fun hasConnectPermission(): Boolean {
-        if (Build.VERSION.SDK_INT < 31) return true
-        return context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
-            PackageManager.PERMISSION_GRANTED
-    }
+    /**
+     * FR-PLT-2's Bluetooth equivalent, checked structurally before every stack call below
+     * (constitution IV: a permission race is a transport state, never a thrown
+     * `SecurityException`). Below API 31 `BLUETOOTH_CONNECT` does not exist as a runtime concept
+     * — the legacy `BLUETOOTH` permission (`AndroidManifest.xml`, `maxSdkVersion="30"`) covers
+     * those platforms at install time, so this is unconditionally true there.
+     *
+     * This exact expression — not a call to some other wrapping function — is repeated inline at
+     * every call site below (rather than shared through this one method) because Android Lint's
+     * `MissingPermission` check only recognises a `checkSelfPermission` guard in the same method
+     * body as the call it protects; routing it through a helper leaves the real platform calls
+     * unguarded as far as lint's flow analysis is concerned.
+     */
+    override fun hasConnectPermission(): Boolean = Build.VERSION.SDK_INT < 31 ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+        PackageManager.PERMISSION_GRANTED
 
     override fun pairedDevices(): List<PairedBluetoothDevice> {
-        if (!hasConnectPermission()) return emptyList()
-        val bonded = runCatching { adapter?.bondedDevices }.getOrNull().orEmpty()
-        return bonded.map { device ->
-            PairedBluetoothDevice(
-                address = device.address,
-                name = runCatching { device.name }.getOrNull(),
-                advertisesSpp = device.sppSupport(),
-            )
+        val bonded = if (
+            Build.VERSION.SDK_INT < 31 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { adapter?.bondedDevices }.getOrNull().orEmpty()
+        } else {
+            emptySet()
         }
+        return bonded.map { device -> device.toPairedDevice() }
+    }
+
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    private fun BluetoothDevice.toPairedDevice(): PairedBluetoothDevice {
+        val deviceName = if (
+            Build.VERSION.SDK_INT < 31 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { name }.getOrNull()
+        } else {
+            null
+        }
+        return PairedBluetoothDevice(address = address, name = deviceName, advertisesSpp = sppSupport())
     }
 
     /** Never assume `NO` from an absent answer — some stacks report no UUIDs at all for a
      * bonded device until it has been connected once (constitution I). */
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     private fun BluetoothDevice.sppSupport(): SppSupport {
-        val uuids = runCatching { uuids }.getOrNull()
+        val uuids = if (
+            Build.VERSION.SDK_INT < 31 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { uuids }.getOrNull()
+        } else {
+            null
+        }
         if (uuids.isNullOrEmpty()) return SppSupport.UNKNOWN
         return if (uuids.any { it.uuid == SPP_SERVICE_UUID }) SppSupport.YES else SppSupport.NO
     }
 
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     override fun connect(address: String) {
-        if (!hasConnectPermission()) throw BluetoothLinkException("BLUETOOTH_CONNECT not granted")
+        if (
+            Build.VERSION.SDK_INT >= 31 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            throw BluetoothLinkException("BLUETOOTH_CONNECT not granted")
+        }
         val device = adapter?.getRemoteDevice(address)
             ?: throw BluetoothLinkException("no Bluetooth adapter available")
         val newSocket = try {
@@ -71,10 +115,9 @@ public class AndroidBluetoothLink(private val context: Context) : BluetoothLink 
         } catch (e: IOException) {
             throw BluetoothLinkException("connect failed to $address", e)
         } catch (e: SecurityException) {
-            // hasConnectPermission() is the structural guard above; this catch exists only for
-            // the platform's own race (permission revoked between the check and the call) so it
-            // never becomes an uncaught SecurityException in capture (FR-PLT-2's Bluetooth
-            // equivalent).
+            // The structural guard above is the primary path; this catch exists only for the
+            // platform's own race (permission revoked between the check and the call) so it
+            // never becomes an uncaught SecurityException in capture (FR-PLT-2's equivalent).
             throw BluetoothLinkException("BLUETOOTH_CONNECT denied by the platform", e)
         }
         socket = newSocket

@@ -15,6 +15,11 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":rig"))
     implementation(libs.kotlinx.coroutines.core)
+    // androidx.core (ContextCompat.checkSelfPermission) so AndroidBluetoothLink's permission
+    // guards are inline, single-expression checks Android Lint's MissingPermission analysis can
+    // see at each call site; androidx.annotation's @RequiresPermission (used to document the two
+    // BluetoothDevice extension helpers below) comes transitively from the same artifact.
+    implementation(libs.androidx.core.ktx)
 
     testImplementation(project(":testing"))
     testImplementation(project(":rig"))
@@ -23,4 +28,10 @@ dependencies {
     testImplementation(libs.turbine)
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
+    // AndroidBluetoothLink's permission gating (FR-PLT-2) needs a real Context to shadow —
+    // Robolectric, on the same JUnit4-via-vintage-engine pattern capture-android already uses.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.androidx.test.core)
+    testRuntimeOnly(libs.junit.vintage.engine)
 }

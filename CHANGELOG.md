@@ -32,6 +32,208 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPB follow-up: rig-bluetooth lint fix — MissingPermission on the real BluetoothLink adapter)
+
+### (pending) — rig transports: AndroidBluetoothLink's five BLUETOOTH_CONNECT call sites now carry an inline lint-visible guard
+
+**Scope:** `rig-bluetooth/src/main/AndroidManifest.xml`,
+`rig-bluetooth/src/main/kotlin/org/ort/rig/bluetooth/AndroidBluetoothLink.kt`,
+`rig-bluetooth/build.gradle.kts` (Robolectric + `androidx-core-ktx` test/main deps), new
+`rig-bluetooth/src/test/kotlin/org/ort/rig/bluetooth/AndroidBluetoothLinkPermissionTest.kt`.
+Merged `main` (`b588b03`, fast-forward — WPA's descriptor engine and WPC1's mode plumbing landed;
+the pre-existing `:rig` ktlint import-order issue reported in the previous entry was already
+fixed there) before starting this fix, per the coordinator's instruction.
+
+**Requirements/ACs:** FR-PLT-2 (Bluetooth equivalent — permission absence is a structural state,
+never a thrown `SecurityException`), FR-RIG-14, constitution IV, constitution V (no lint baseline
+or suppression used to get around the check).
+
+**What changed:** `./gradlew build` on `main` (`898b8b6`) got further than it did in this
+worktree and failed on `:rig-bluetooth:lintDebug`: Android Lint's `MissingPermission` check
+flagged `AndroidBluetoothLink`'s `bondedDevices`, `device.name` and `uuids` reads (lines 47, 51,
+60) because the existing `hasConnectPermission()` guard was a call to a separate, unannotated
+method — lint's flow analysis does not trace a `checkSelfPermission` guard across a function
+boundary, only within the same method body as the gated call.
+
+- **`AndroidManifest.xml`** now declares `android.permission.BLUETOOTH_CONNECT` (no
+  `maxSdkVersion` — it is the API 31+ runtime permission) and the legacy
+  `android.permission.BLUETOOTH` with `android:maxSdkVersion="30"` for install-time coverage
+  below that. Needed a `xmlns:android` namespace declaration the file didn't have before (an
+  empty `<manifest />` never needed one).
+- **`AndroidBluetoothLink.kt`**: every one of the four platform calls the permission gates
+  (`bondedDevices`, `device.name`, `uuids`, `createRfcommSocketToServiceRecord` +
+  `BluetoothSocket.connect()`) now has the exact expression
+  `Build.VERSION.SDK_INT < 31 || ContextCompat.checkSelfPermission(context,
+  Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED` inline in its own
+  method body — not routed through a shared helper, precisely because that indirection is what
+  lint could not see through. `hasConnectPermission()` (the `BluetoothLink` interface method,
+  still used by `BluetoothSppTransport`'s own gating) carries the same expression as its body.
+  `toPairedDevice()` and `sppSupport()` (private `BluetoothDevice` extensions) are annotated
+  `@RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)` for documentation; `connect()`
+  gained the same inline guard even though lint did not flag it in this run (`hasConnectPermission
+  ()`'s early-throw was apparently already recognised there), matching the coordinator's "before
+  every stack call" instruction defensively. `implementation(libs.androidx.core.ktx)` added to
+  `rig-bluetooth/build.gradle.kts` for `ContextCompat`/`@RequiresPermission`; no new
+  `libs.versions.toml` line needed (`androidx-core-ktx` already existed for `capture-android`).
+- **`AndroidBluetoothLinkPermissionTest.kt`** (new, Robolectric — `androidx-test-core` +
+  `robolectric` + JUnit4-via-vintage added to the module's test dependencies, same pattern as
+  `capture-android`): three tests pinned to API 31 asserting `pairedDevices()` returns empty,
+  `connect()` throws `BluetoothLinkException` (never `SecurityException`), and
+  `hasConnectPermission()` tracks a Robolectric shadow's granted/denied state — written and run
+  **before** touching `AndroidBluetoothLink.kt`'s body, against the pre-existing (already
+  correct) `hasConnectPermission()`-gated code, to confirm no behavioural regression before the
+  lint-driven restructuring; re-run afterward, still green. No baseline, no suppression.
+
+**Verified:**
+- `./gradlew :rig-bluetooth:testDebugUnitTest :rig-usb:testDebugUnitTest --rerun` — 17/17 tests
+  PASSED (the 3 new `AndroidBluetoothLinkPermissionTest` cases plus the 14 from the prior entry).
+- `./gradlew :rig-bluetooth:lintDebug --rerun` — green (was 3 `MissingPermission` errors at lines
+  47/51/60 before the fix).
+- `./gradlew :rig-bluetooth:detekt :rig-bluetooth:ktlintMainSourceSetCheck
+  :rig-bluetooth:ktlintTestSourceSetCheck` — green.
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 9m 28s**, full
+  repo, zero failures (the pre-existing `:rig` ktlint issue from the previous entry is gone —
+  fixed on `main` by WPA's final commit before this merge).
+- `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — all 8 `[PASS]`.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — 450 requirements, 216 covered (up from
+  202 before the `main` merge brought WPA/WPC1's own tests in), matrix up to date.
+
+**Left open / not done:** unchanged from the previous entry — hardware rows H1–H4 for the real
+adapters, and the `usb-serial-for-android` version pinned one minor below newest pending a
+`compileSdk` bump outside this package's ownership. Not merged to `main` — left on this branch.
+## 2026-09-10 (WPH follow-up: ProseDigestGate's production inputs — signals, WorkManager runner, persisted settings)
+
+### (pending) — llm: AndroidProseDigestDeviceSignals, ProseDigestRunner over WorkManager, SharedPreferences-backed ProseDigestSettings
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/digest/{AndroidProseDigestDeviceSignals,
+ThreadDigestSource, ProseDigestWorkRunner, LlmModelLocator, ProseDigestRunner}.kt`; rewrote
+`ProseDigestSettings.kt` to add `ProseDigestSettingsStore` / `InMemoryProseDigestSettingsStore` /
+`SharedPreferencesProseDigestSettingsStore` and back `ProseDigestSettings` by a store rather than
+a raw boolean; updated `ProseDigestSettingsTest.kt` and `AC140DeterministicDigestUnaffectedTest.kt`
+for the new constructor; `gradle/libs.versions.toml` (new `androidxWork` entry + two library
+aliases) and `pipeline/build.gradle.kts` (the first real `androidx.work` dependency in this
+project); nine new test files under `pipeline/src/test/kotlin/org/ort/pipeline/digest/`.
+
+**Requirements/ACs:** FR-DIG-5, AC-87, FR-DIG-3b, D36. Constitution IV (never
+`isIgnoringBatteryOptimizations()`).
+
+**What changed:**
+
+*Constitution Check.* IV bears directly — [`AndroidProseDigestDeviceSignals`] never calls
+`isIgnoringBatteryOptimizations()`; charging comes from `BatteryManager.isCharging()` and idle
+from *either* `PowerManager.isDeviceIdleMode()` (a real Doze window) *or* no recorded foreground
+activity for 5 minutes (`ForegroundActivityTracker`, a process-wide holder — the same shape
+`CaptureState`/`ShedStatus` already use) — the second half exists because Doze windows are rare
+and OEM-delayed on exactly the reference device (ColorOS), so the OS signal alone would almost
+never let this run there. I/II — `ProseDigestWorkRunner` re-evaluates the gate before starting
+and again before every thread (AC-87's "never during capture" plus "stops if the gate flips
+mid-run"), and a mid-run stop releases the engine itself as a second, independent guarantee
+alongside whatever already called `ProseDigestSettings.setEnabled` (FR-DIG-3b) — tested by
+flipping `isCapturing` as a side effect of the first thread's own storage, proving the *per-thread*
+recheck fires, not only the pre-flight one.
+
+- **`AndroidProseDigestDeviceSignals`** (production `ProseDigestDeviceSignals`): `isCharging()`
+  reads `BatteryManager.isCharging()`, `false` on any failure (conservative — never "assume
+  charging"). `isDeviceIdle()` — the rule, stated once in its own doc comment — `PowerManager
+  .isDeviceIdleMode() OR no ForegroundActivityTracker activity for idleAfterMillis (default 5
+  min)`. Takes an injected `org.ort.core.Clock` for the foreground-gap half, so tests never wait
+  real minutes.
+- **`ThreadDigestSource`**: the real "which threads need a summary" query — ended sessions only
+  (`session.endedAt != null`), threads `ProseSummaryStore` has no row for yet, callsigns resolved
+  only from `CONFIRMED`/`INFERRED` attributions (never `AMBIGUOUS`/`UNKNOWN`). Reads only through
+  DAOs `:data` already exposes — no new query added to any DAO outside this package's ownership.
+- **`ProseDigestWorkRunner`**: the pure, WorkManager-free decision/run loop — evaluates the gate,
+  loads the engine only if pending threads exist, generates each via `ProseDigestGenerator`,
+  re-checks the gate before every thread, and releases the engine on any mid-run stop.
+  `ProseDigestRunOutcome` (`NotEligible` / `Completed` / `StoppedMidRun` / `EngineLoadFailed`) —
+  never silently nothing.
+- **`LlmModelLocator`**: mirrors `org.ort.pipeline.passb.AsrModelLocator`'s exact pattern — a
+  fixed, documented `filesDir/models/gemma3-1b-it-int4/gemma3-1b-it-int4.task` path, `null` when
+  absent, never fabricated.
+- **`ProseDigestRunner`** (`androidx.work.CoroutineWorker`): the thin real-Android adapter.
+  **Scheduling**: a self-rescheduling chain of **unique one-time work** (`"prose-digest"`), not
+  `PeriodicWorkRequest` — `schedule()` enqueues the first run (`ExistingWorkPolicy.KEEP`, safe to
+  call from every app launch); `doWork()` re-enqueues the next run one hour later
+  (`ExistingWorkPolicy.REPLACE`) in a `finally` block regardless of outcome. Chosen over
+  `PeriodicWorkRequest` specifically to sidestep its 15-minute floor and avoid any doubt about
+  constraint-combination support — `OneTimeWorkRequest` places no restriction on combining
+  `setRequiresCharging(true)` with `setRequiresDeviceIdle(true)`. `cancel()` stops the chain
+  outright. A missing bundled model is `Result.success()` — nothing to do yet, never a failure.
+- **`ProseDigestSettingsStore`** (interface) + **`InMemoryProseDigestSettingsStore`** (the fake,
+  process-lifetime only) + **`SharedPreferencesProseDigestSettingsStore`** (production, one
+  boolean, prefs name `prose_digest_settings`, key `enabled`, default `true` per D36/FR-DIG-3b).
+  `ProseDigestSettings`'s constructor now takes a `ProseDigestSettingsStore` (default
+  `InMemoryProseDigestSettingsStore()`, so the no-arg case behaves exactly as before) and both
+  seeds its `StateFlow` from the store and persists every `setEnabled` call through it — so
+  `ProseDigestRunner`, constructed fresh in a possibly-new process, sees the same value WPE's CF04
+  toggle last wrote, never a reset-to-default in-memory guess.
+- **`gradle/libs.versions.toml`**: `androidxWork = "2.9.1"` — the newest *stable* release at
+  `https://dl.google.com/dl/android/maven2/androidx/work/work-runtime-ktx/maven-metadata.xml`
+  (fetched 2026-09-10) is 2.11.2, but 2.10.0 and later declare `minCompileSdk = 35` in their AAR
+  metadata (confirmed directly: `:pipeline:checkDebugUnitTestAarMetadata` failed naming exactly
+  that requirement against 2.11.2), and this project's shared `ort.android-library` convention
+  plugin — outside this follow-up's ownership — pins `compileSdk 34`, the same shape WPB's
+  `usbSerialForAndroid` pin already documents. 2.9.1 is the newest release with no floor above 34;
+  confirmed by the same check passing once pinned there. `androidx-work-runtime-ktx` (main) and
+  `androidx-work-testing` (test, for `TestListenableWorkerBuilder`/`WorkManagerTestInitHelper`)
+  added as library aliases. **Not previously a project dependency anywhere** (confirmed by search
+  before adding, despite AGENTS.md's Stack line naming WorkManager) — this is the first module to
+  actually link it.
+
+**The scheduler's constraints, exactly:** `Constraints.Builder().setRequiresCharging(true)
+.setRequiresDeviceIdle(true).build()`, applied to every enqueue (first and rescheduled alike) of
+unique one-time work named `"prose-digest"`.
+
+**The settings store API, exactly:**
+```kotlin
+interface ProseDigestSettingsStore {
+    fun isEnabled(): Boolean
+    fun setEnabled(enabled: Boolean)
+}
+// production: SharedPreferencesProseDigestSettingsStore(context) — prefs "prose_digest_settings", key "enabled", default true
+// fake:       InMemoryProseDigestSettingsStore(initiallyEnabled = true)
+```
+`ProseDigestSettings(store: ProseDigestSettingsStore = InMemoryProseDigestSettingsStore())` is
+what WPE's CF04 toggle constructs (with the `SharedPreferences`-backed store) to read `.enabled:
+StateFlow<Boolean>` and call `.setEnabled(value, engine)`.
+
+**Verified:**
+- `git merge --no-edit main` — clean fast-forward to `e55e465` (this branch's own two prior
+  commits were already merged into `main` as `9cc543d`); no conflicts.
+- `./gradlew :pipeline:dependencies --configuration debugRuntimeClasspath` — confirmed
+  `androidx.work:work-runtime-ktx:2.9.1` resolves with no transitive HTTP client or analytics
+  coordinate.
+- `./gradlew :llm-api:test :llm-mediapipe:testDebugUnitTest :pipeline:testDebugUnitTest` —
+  **BUILD SUCCESSFUL**; `org.ort.pipeline.digest.*` alone is 55 tests green, including
+  `AndroidProseDigestDeviceSignalsTest` (6, Robolectric shadows for `BatteryManager`/
+  `PowerManager`), `ThreadDigestSourceTest` (3, real in-memory `OrtDatabase`), 9
+  `ProseDigestWorkRunnerTest` cases (the signals fake driving the gate, `AC_87_the_runner_refuses_
+  while_capturing`, `FR_DIG_3b_disabling_mid_run_releases_the_engine`, the mid-run-flip stop, an
+  engine load failure, empty-pending-threads, a below-T3 tier), 4 `ProseDigestRunnerTest` cases
+  (real `WorkManagerTestInitHelper`/`TestListenableWorkerBuilder`), `SharedPreferencesProseDigest
+  SettingsStoreTest` (3), `LlmModelLocatorTest` (2).
+- `./gradlew build dependencyRules platformGuards -x :rig-bluetooth:lintDebug` — **BUILD
+  SUCCESSFUL in 8m 5s** (1102 actionable tasks); excluded exactly the one pre-existing failure the
+  lead named as a WPB fix already in flight on `main`, nothing else. `dependencyRules: OK` — the
+  printed edge list still has no `:capture-android`/`:capture-api` row naming `:llm-api` or
+  `:llm-mediapipe`. `platformGuards: OK` — 20 modules, no analytics/HTTP-client coordinate, only
+  `:net` declares `INTERNET` (androidx.work declares none).
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 225 covered` (was 210 before this commit — +15,
+  this session's own new fixture coverage). `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** `ProseDigestRunner.schedule()`/`.cancel()` are not yet called from
+anywhere real — wiring them into `Application.onCreate` (schedule) and the CF04 toggle's disable
+path (cancel, alongside `ProseDigestSettings.setEnabled`) is `:app`'s job (WPE), out of this
+package's ownership. `ForegroundActivityTracker.markActive()` likewise has no real caller yet —
+WPE/WPF's screen-lifecycle owner must call it (a `DisposableEffect` on `LocalLifecycleOwner`, or
+`Activity.onResume`, is the natural hook) or the idle-after-N-minutes half of the rule never
+actually fires on a real device. E2-I06 (hardware H11, the real on-device MediaPipe load) remains
+for the operator, unchanged from the previous entry.
+
+---
+
 ## 2026-09-10 (WPB: the two rig transports — USB serial and Bluetooth SPP)
 
 ### (pending) — rig transports: UsbSerialTransport, BluetoothSppTransport, their fakes, and the transport-parity test
@@ -156,6 +358,194 @@ client or declares `INTERNET` (confirmed by `platformGuards`).
   of the project's current `compileSdk = 34` ceiling — revisit when that moves to ≥ 35 (a WP0'
   /build-infra decision, not this package's).
 - Not merged to `main` — left on this branch (`rig transports:` prefix) per the brief.
+## 2026-09-10 (WPH part 2: the prose_summary table, schema v8, RoomProseSummaryStore)
+
+### (pending) — llm: prose_summary as data migration 7-8, RoomProseSummaryStore over it
+
+**Scope:** `data/src/main/kotlin/org/ort/data/entity/ProseSummaryEntity.kt` (new),
+`data/src/main/kotlin/org/ort/data/dao/ProseSummaryDao.kt` (new), `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`
+(`ProseSummaryEntity` in the entity list, `proseSummaryDao()`, `SCHEMA_VERSION` 7→8,
+`MIGRATION_7_8`), `data/schemas/org.ort.data.OrtDatabase/8.json` (generated),
+`data/src/test/kotlin/org/ort/data/MigrationTest.kt` (v7→v8 test, the "every prior fixture"
+test extended to walk v1..v7 to v8), new `pipeline/src/main/kotlin/org/ort/pipeline/digest/RoomProseSummaryStore.kt`
+and its test. Merged `main` first (`2644c02`/`dbeddcf`) to pick up WPC1's v7 schema, per the
+lead's go-ahead — this is the follow-up the previous entry on this branch left open.
+
+**Requirements/ACs:** FR-DIG-3, FR-DIG-11, FR-AST-5, FR-AST-6, AC-53 (migration discipline).
+Closes checklist row E2-A03.
+
+**What changed:**
+
+*Constitution Check.* II — `MigrationTest`'s "every prior fixture" test now proves every
+previously released schema (v1 through v7, not just v7 itself) walks the *entire* chain to v8
+without losing a row, the same discipline every earlier migration in this file already carries.
+III/VII unaffected — no capture, segmentation or module-boundary change in this commit.
+
+- **`ProseSummaryEntity`** (`@Entity(tableName = "prose_summary")`): `threadId` (`@PrimaryKey`),
+  `text`, `sourceTransmissionIds: List<String>` (via `:data`'s existing `Converters` list
+  converter — the same non-null-`List<String>`-via-converter shape `StationSummaryEntity` already
+  uses), `generatedAtMillis`, `modelId`. One row per thread — an upsert (`OnConflictStrategy.REPLACE`)
+  replaces rather than accumulates, matching `ProseSummaryStore`'s own contract. Distinct from the
+  pre-existing `StationSummaryEntity`/`station_summary` (D29's per-*station*, cross-session
+  accumulation) — this table is the per-*thread*, single-session digest prose from D36/P21.
+- **`ProseSummaryDao`**: `upsert`, `getByThreadId`, `getByThreadIds`, `listAll`.
+- **`OrtDatabase`**: `SCHEMA_VERSION = 8`; `MIGRATION_7_8` creates `prose_summary` with exactly
+  the columns KSP's own generated `8.json` records (`threadId TEXT NOT NULL, text TEXT NOT NULL,
+  sourceTransmissionIds TEXT NOT NULL, generatedAtMillis INTEGER NOT NULL, modelId TEXT NOT NULL,
+  PRIMARY KEY(threadId)`) — hand-written SQL checked byte-for-byte against the generated schema
+  before committing, not assumed to match.
+- **`RoomProseSummaryStore`**: the production `ProseSummaryStore`, mapping `ProseSummary` to/from
+  `ProseSummaryEntity` over `OrtDatabase.proseSummaryDao()`. `InMemoryProseSummaryStore` is no
+  longer described as a production stand-in — its doc comment (and `ProseSummaryStore`'s own) now
+  says it is the fake/test double only; `FakeProseSummaryStore` (which wraps it for scriptable
+  failure) is unchanged.
+
+**The v8 column list, exactly** (as recorded by KSP's generated `8.json` and byte-matched by
+`MIGRATION_7_8`): `prose_summary(threadId TEXT NOT NULL PRIMARY KEY, text TEXT NOT NULL,
+sourceTransmissionIds TEXT NOT NULL, generatedAtMillis INTEGER NOT NULL, modelId TEXT NOT NULL)`.
+No other table's schema changed.
+
+**Verified:**
+- `./gradlew :data:kspDebugKotlin` generated `data/schemas/org.ort.data.OrtDatabase/8.json`;
+  its `prose_summary` `createSql` compared directly against `MIGRATION_7_8`'s hand-written SQL —
+  identical.
+- `./gradlew :data:testDebugUnitTest` — **BUILD SUCCESSFUL**, full `:data` suite green including
+  `MigrationTest`'s new `migration_from_v7_to_v8_preserves_existing_rows_and_adds_the_prose_summary_table`
+  and the extended `every_prior_fixture_from_v1_to_v7_migrates_forward_to_v8_preserving_its_session_row`
+  (loops fixture versions 1..7, each asserting its `session` row survives and `prose_summary` is
+  queryable at head).
+- `./gradlew :pipeline:testDebugUnitTest --tests org.ort.pipeline.digest.*` — **BUILD SUCCESSFUL**,
+  30 tests green, including the 4 new `RoomProseSummaryStoreTest` cases (round-trip through a real
+  in-memory `OrtDatabase`, replace-not-accumulate, `forThreads` filtering, `forThread` null case).
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 8m 39s** (1088
+  actionable tasks); `dependencyRules: OK`, `platformGuards: OK`.
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 210 covered` (204 before this commit, measured
+  on the previous commit on this branch pre-merge; the delta includes both this commit's own new
+  fixture-coverage tests and whatever `main`'s merged-in tests already named).
+  `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** E2-I06 (hardware H11, the real on-device MediaPipe load) remains for
+the operator. `ProseDigestDeviceSignals`' production Android implementation (idle/charging) is
+still for whichever package wires `ProseDigestGate` into a real schedule (WPE/WPF/a WorkManager
+job) — this session ships the gate's decision logic and the persistence it needs, not the
+scheduler that calls it. `:app`'s CF04 toggle and DG05 rendering are unbuilt (WPE/WPF's own rows).
+
+---
+
+## 2026-09-10 (WPH part 1: the LLM contract, MediaPipe engine and prose digest gate/generator)
+
+### (pending) — llm: llm-api contract, MediaPipe engine, prose digest gate/generator/store, in-memory pending :data v8
+
+**Scope:** `llm-api/src/**` (new: `LlmEngine`, `LlmState`, `LlmLoadResult`, `LlmRequest`,
+`LlmResult`, `CallsignShapeFilter`, `FakeLlmEngine`), `llm-mediapipe/src/**` (new:
+`MediaPipeLlmEngine`), new `pipeline/src/main/kotlin/org/ort/pipeline/digest/**`
+(`ProseSummary`, `ProseSummaryStore`/`InMemoryProseSummaryStore`/`FakeProseSummaryStore`,
+`ThreadDigestInput`/`TimestampedTranscript`/`ProsePromptBuilder`, `ProseDigestGenerator`,
+`ProseDigestGate`/`ProseDigestDeviceSignals`/`FakeProseDigestDeviceSignals`,
+`ProseDigestSettings`, `ProseDigestReadApi`) and their tests under `pipeline/src/test`;
+`llm-api/build.gradle.kts`, `llm-mediapipe/build.gradle.kts`, `pipeline/build.gradle.kts`
+(test-dependency additions only — `kotlinx-coroutines-test`, `turbine`, `kotlin("reflect")`, the
+Robolectric/JUnit4-vintage set already used elsewhere in the module). Build-plan P21, package WPH.
+
+**Requirements/ACs:** FR-DIG-3, FR-DIG-3a, FR-DIG-3b, FR-DIG-4, FR-DIG-5, FR-DIG-6, FR-DIG-11,
+FR-DIG-12, AC-84, AC-86, AC-87, AC-138, AC-140, R16, D5, D36. Checklist rows E2-I01..I05, E2-I07
+closed this session (unit-tested, listed under Verified); E2-I06 (hardware H11, the real
+on-device MediaPipe load) and E2-A03 (the `prose_summary` table) remain open per their own rows.
+
+**What changed:**
+
+*Constitution Check.* I — every `LlmState`/`LlmResult` is a closed, non-optional sealed type,
+and `CallsignShapeFilter` sacrifices recall (an occasional false-positive refusal, documented
+against a band abbreviation like `20m`) rather than ever letting an invented callsign through.
+II — `FakeLlmEngine` can hang (via `awaitCancellation`, cancelled explicitly in each hang test),
+fail to load, exceed its requested token budget, and deliberately invent a callsign outside the
+allowed set; one test exists per failure mode, plus `FR_DIG_4_filter_rejects_invented_callsign`
+built on the last one, and the filter's rejection was shown to discriminate (see Verified). IV —
+`:llm-api`/`:llm-mediapipe` remain off `:capture-*`'s dependency graph (unchanged from WP0';
+`dependencyRules` still forbids the edge, re-confirmed below). V — the LLM never touches the
+callsign path (D5): `CallsignShapeFilter` runs on already-generated text against an
+already-resolved callsign set, never the reverse, and nothing in this change adds a network call
+anywhere (`:llm-api` and `:llm-mediapipe` link no HTTP client; `platformGuards` green).
+
+- **`:llm-api`**: `LlmEngine` (`load`/`generate`/`release`/`state: StateFlow<LlmState>`),
+  `LlmState` (`Unloaded`/`Loading`/`Ready(residentBytesEstimate)`/`Failed(reason)`),
+  `LlmLoadResult`, `LlmRequest(prompt, maxTokens, allowedCallsigns)`, `LlmResult`
+  (`Text`/`Refused`/`Failed`). **`CallsignShapeFilter`**: `:llm-api` may depend only on `:core`
+  (`ModuleGraph.allowed`), so `:lexicon`'s real callsign grammar is unreachable from here — this
+  implements its own conservative, case-insensitive mirror of `:lexicon`'s
+  `LexiconImportValidator.CALLSIGN_SHAPE` regex (`^[A-Za-z0-9]{1,3}[0-9][A-Za-z]{1,4}$`), stated
+  in its own doc comment as a deliberate non-reuse, not an oversight. **`FakeLlmEngine`**:
+  scriptable `LoadBehavior`/`GenerateBehavior` enums covering hang, fail, exceed-token-budget,
+  invent-callsign, refuse and fail-to-generate.
+- **`:llm-mediapipe`**: `MediaPipeLlmEngine(context, modelPath, maxTokens)` over
+  `com.google.mediapipe.tasks.genai.llminference.LlmInference` — loads lazily on the first
+  `load()` call (never at construction, so a T0/T1/T2 device that never calls it never pays the
+  cost, FR-AST-3a), maps every exception to `LlmState.Failed`/`LlmResult.Failed`, estimates
+  resident bytes from the model file's size on disk (stated as an estimate, not a measurement —
+  constitution VI), and is doubly defensive on `release()` (swallows even `LlmInference.close()`
+  throwing).
+- **`pipeline/digest`**: `ProseSummaryStore` (interface) + `InMemoryProseSummaryStore` (the
+  production stand-in until `:data`'s v8 migration lands) + `FakeProseSummaryStore` (can be told
+  to fail a `store()` call). `ProsePromptBuilder` renders `ThreadDigestInput(threadId,
+  resolvedCallsigns, transcripts)` — FR-DIG-12's closed field list, enforced as a reflection test
+  over the data class's declared properties, not just a behavioural check on the rendered string.
+  `ProseDigestGenerator` produces one summary per thread, runs `CallsignShapeFilter` on every
+  generated text, and stores **only** filtered results (a refusal or engine failure is returned to
+  the caller but never reaches the store). `ProseDigestGate.evaluate` — idle ∧ charging ∧
+  `!isCapturing` (defaulting to the real `CaptureState.isCapturing`) ∧ `tier == T3` ∧ `enabled`,
+  returning every violated conjunct, not just the first. `ProseDigestSettings` — `setEnabled(false,
+  engine)` calls `engine.release()` *before* publishing the new value, so a reader of `enabled`
+  can never observe "disabled" while the engine is still resident. `ProseDigestReadApi` — a
+  read-only `threadId -> ProseSummary` projection for `:app`'s DG05.
+
+**The public API `:app` will read:** `org.ort.llm.LlmState` (via any `LlmEngine.state`),
+`org.ort.pipeline.digest.ProseDigestSettings` (`enabled: StateFlow<Boolean>`, `setEnabled`),
+`org.ort.pipeline.digest.ProseDigestReadApi` (`summaryForThread`, `summariesForThreads`) —
+constructed today as `ProseSummaryStoreReadApi(store)` over whichever `ProseSummaryStore` is
+wired in (`InMemoryProseSummaryStore` until the `:data` migration lands).
+
+**Verified:**
+- `./gradlew :llm-api:test` — **BUILD SUCCESSFUL**, 12 tests green (`FakeLlmEngineTest` ×6,
+  `CallsignShapeFilterTest` ×6, including `FR_DIG_4_filter_rejects_invented_callsign`).
+- `./gradlew :llm-mediapipe:testDebugUnitTest` — **BUILD SUCCESSFUL**, 4 tests green
+  (`E2_I06 missing model path yields Failed state without throwing` plus release/generate/
+  construction guards), on Robolectric.
+- `./gradlew :pipeline:testDebugUnitTest` — **BUILD SUCCESSFUL**, full existing pipeline suite
+  plus 26 new tests in `org.ort.pipeline.digest.*` green, including
+  `AC_140_deterministic_digest_unchanged_with_engine_disabled`,
+  `FR_DIG_12_thread_digest_input_field_list_is_closed`, and every `ProseDigestGate` conjunct
+  falsified individually (`FR_DIG_5_blocked_when_not_idle`/`_not_charging`/`_capturing`,
+  `AC_138_blocked_when_tier_is_below_t3`, `FR_DIG_3b_blocked_when_disabled`).
+- **Discrimination proof (constitution II):** temporarily forced `CallsignShapeFilter.filter`'s
+  offending-token match to `&& false` (never rejecting) and re-ran
+  `:llm-api:test --tests org.ort.llm.CallsignShapeFilterTest` — **3 tests FAILED**,
+  `FR_DIG_4_filter_rejects_invented_callsign` among them, each with the exact
+  `expected: <true> but was: <false>` the disabled rejection predicts. Reverted the `&& false`;
+  the same command then reported all 6 green again.
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 8m 40s** (1088
+  actionable tasks); `dependencyRules: OK` (still forbids every `:capture-* -> :llm-*` edge —
+  unchanged from WP0', re-confirmed by this run rather than re-proved, since this session added
+  no new edge to check) and `platformGuards: OK`.
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 204 covered` (was 196 before this change — 8
+  newly covered: FR-DIG-4, FR-DIG-5, FR-DIG-11, FR-DIG-12, AC-87, AC-138, AC-140, plus one more
+  picked up incidentally). `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** **E2-A03 / the `:data` v8 migration** — `ProseSummaryStore` is
+in-memory only in this commit; the lead confirmed WPC1's v7 schema has since merged to `main`
+(commit `2644c02`), so the `prose_summary` table as migration 7→8, a Room-backed
+`ProseSummaryStore`, and the `MigrationTest` extension to v8 land in the next commit on this
+branch, after merging `main`. **E2-I06 / hardware H11** — the real on-device MediaPipe load
+(a real `.task` file, real generation, measured resident memory against the T3 budget) is the
+operator's hardware protocol; nothing in this session's tests exercises the real native runtime,
+only `MediaPipeLlmEngine`'s guards ahead of it. `ProseDigestGate`'s `ProseDigestDeviceSignals`
+(idle/charging) has no production Android implementation yet — wiring a real one is for whichever
+package owns the settings/status screens (WPE/WPF) that will call `ProseDigestGate.evaluate`.
+
+---
 
 ## 2026-09-10 (WP0': Wave F module scaffolding — llm-api, llm-mediapipe, rig-bluetooth)
 
@@ -26818,5 +27208,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
+
 
 
