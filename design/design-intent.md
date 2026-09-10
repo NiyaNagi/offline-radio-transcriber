@@ -10,7 +10,7 @@ exist; a row here with no artboard is not yet designed.
 requirement ids — a screen with no citation is decoration and should be cut. `Interactions`
 enumerates every control on the screen and what it does; this is the list an audit walks.
 
-Status: `drawn` (artboard exists) · `planned` (in this inventory, not yet drawn).
+Status: `drawn` (artboard exists) · `drawn + built` (the built screen matches the artboard per `results/ui-audit/register.md`; accepted deviations are noted in the cell) · `planned` (in this inventory, not yet drawn).
 
 ---
 
@@ -36,7 +36,7 @@ The system itself, drawn so it can be checked rather than described.
 | C01 | `Tokens.dc.html` | Colour ramp: surfaces, lines, nine text steps, both accent families, with the OKLCH value printed beside each swatch | FR-A11Y-4 | drawn + built |
 | C02 | `Type.dc.html` | The type ramp in place — every role from §4 of the guide at real size, sans/mono split shown | FR-A11Y-3 | drawn + built |
 | C03 | `Grid.dc.html` | Page margin, vertical rhythm, log row column widths, touch-target overlay at 44px | FR-A11Y-2 | drawn + built |
-| C04 | `States.dc.html` | The four attribution states + greyscale proof | FR-UI-4, AC-62, FR-A11Y-1 | **drawn** |
+| C04 | `States.dc.html` | The four attribution states + greyscale proof | FR-UI-4, AC-62, FR-A11Y-1 | **drawn + built** |
 | C05 | `Controls.dc.html` | Buttons, text actions, chips, fields, toggles — each in default/pressed/disabled | FR-A11Y-2 | drawn + built |
 | C06 | `Rows.dc.html` | Every log row variant: normal, group header, gap, rejected, ambiguous, partial | FR-UI-1, P7, P9 | drawn + built |
 | C07 | `Feedback.dc.html` | Banner, toast, dialog, empty, loading, failed — the six feedback treatments | P10 | drawn + built |
@@ -72,8 +72,8 @@ verify state; no step advances on assumption.
 
 | # | Artboard | Purpose | Serves | Interactions | Status |
 |---|---|---|---|---|---|
-| N00 | `Menu.dc.html` | The drawer: session header, ten destinations with icons and counts, a divider before the trailing group, the storage footer | D26, canvas `integrated` note | Row → that destination. Storage footer → CF03 | **drawn** |
-| N01 | `Main.dc.html` | The home: header, session title + counts, activity chart, Worth knowing, Stations heard, live bar | FR-UI-1, FR-DIG-1, FR-UI-11 | Drawer. Search icon → Q01. Elapsed → N04. Chart bar → L01 filtered to that hour. Digest item → its subject. `All 19` → ST01. Station row → ST02. Live bar → N04 | **drawn** |
+| N00 | `Menu.dc.html` | The drawer: session header, ten destinations with icons and counts, a divider before the trailing group, the storage footer | D26, canvas `integrated` note | Row → that destination. Storage footer → CF03 | **drawn + built** |
+| N01 | `Main.dc.html` | The home: header, session title + counts, activity chart, Worth knowing, Stations heard, live bar | FR-UI-1, FR-DIG-1, FR-UI-11 | Drawer. Search icon → Q01. Elapsed → N04. Chart bar → L01 filtered to that hour. Digest item → its subject. `All 19` → ST01. Station row → ST02. Live bar → N04 | **drawn + built** |
 | N02 | `Now-Idle.dc.html` | No session running. Not an empty state — an idle instrument | P4 | `Start capture` → N01. Prior sessions listed → DG03 | drawn + built |
 | N03 | `Now-First.dc.html` | Session running, nothing heard yet. Says so without looking broken | P4, P11 | As N01, with empty Worth knowing / Stations heard | drawn + built |
 | N04 | `Capture-Status.dc.html` | **The** status surface. Running state, elapsed, input device + verified route, rig state, transmissions, backlog depth, current tier, storage used, battery | **FR-UI-7**, P4 | `Stop capture` (confirm). `Input` → CF02. `Rig` → CF06. `Storage` → CF03. `Tier` → CF05. Backlog → R01 | drawn + built |
@@ -88,7 +88,7 @@ P7: scanned, not read.
 
 | # | Artboard | Purpose | Serves | Interactions | Status |
 |---|---|---|---|---|---|
-| L01 | `Log.dc.html` | The dense table: QSO group headers, rows, gap row, rejected row, NEW badge, alternates, signal column | FR-UI-1, P7, P9 | Row → D01. `Filter` → L02. Chip → toggles filter. Group header → T02. Gap row → explains the gap | **drawn** |
+| L01 | `Log.dc.html` | The dense table: QSO group headers, rows, gap row, rejected row, NEW badge, alternates, signal column | FR-UI-1, P7, P9 | Row → D01. `Filter` → L02. Chip → toggles filter. Group header → T02. Gap row → explains the gap | **drawn + built** |
 | L02 | `Log-Filter.dc.html` | The filter sheet: frequency, band, station, attribution state, accepted/rejected, time range | FR-UI-3 | Each filter sets a chip. `Apply`. `Clear all` | drawn + built |
 | L03 | `Log-Partial.dc.html` | Pass A partials in the list, and the legible swap to Pass B | **FR-UI-1, P5** | Partial rows are italic/dim, no marker. Swap animates once, leaves a `revised` mark | drawn + built |
 | L04 | `Log-Empty.dc.html` | Session running, no transmissions yet | P4 | — | drawn + built |
@@ -113,7 +113,7 @@ P2: every machine conclusion inspectable in one tap.
 | # | Artboard | Purpose | Serves | Interactions | Status |
 |---|---|---|---|---|---|
 | D01 | `Detail-Confirmed.dc.html` | Confirmed attribution: header, playback, transcript with the callsign span, why, correct | FR-UI-4, FR-UI-5 | `Back`. `Play`. `Full lattice` → D05. `Not right?` → D08. `Record a label` → label sheet | drawn + built |
-| D02 | `Detail.dc.html` | Inferred: score + **link to the transmission that confirmed it** | **FR-UI-4** | `02:14:07` → that over. `Not right?` → D08. `Confirm` records agreement. Otherwise as D01 | **drawn** |
+| D02 | `Detail.dc.html` | Inferred: score + **link to the transmission that confirmed it** | **FR-UI-4** | `02:14:07` → that over. `Not right?` → D08. `Confirm` records agreement. Otherwise as D01 | **drawn + built** |
 | D03 | `Detail-Ambiguous.dc.html` | Candidates with separation shown, tappable to choose | FR-UI-4, §4.1 | Candidate → applies as a correction (Tier A) | drawn + built |
 | D04 | `Detail-Unknown.dc.html` | Nothing claimed. Says what was tried | P1, P11 | `Correct` → D09/D10 | drawn + built |
 | D05 | `Detail-Why.dc.html` | **The inspection surface**: phonetic lattice with per-slot alternates, ranked candidates, per-prior contribution with cold-start distinguished from argued-against | **FR-UI-8, P2, F11** | Lattice slot → alternates. Prior → what it is | drawn + built |
