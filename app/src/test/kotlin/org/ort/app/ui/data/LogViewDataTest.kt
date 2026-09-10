@@ -233,6 +233,43 @@ class LogViewDataTest {
         assertTrue(LogItemsMapper.gapLabel(g).startsWith("not listening · ongoing"))
     }
 
+    // -- E2-G04 (F23, FR-CAP-13): the `bt audio` row/gap-row marks ----------------------------
+
+    @Test
+    fun `E2_G04 toRowState carries the bt audio mark when told to, never by default`() {
+        val d = detail()
+
+        assertTrue(LogItemsMapper.toRowState(d, isFirstHeard = false, btAudioMark = true).btAudioMark)
+        assertTrue(!LogItemsMapper.toRowState(d, isFirstHeard = false).btAudioMark)
+    }
+
+    @Test
+    fun `E2_G04 an ongoing Bluetooth-session INPUT_LOST gap reads and-counting, Bluetooth audio dropped`() {
+        val g = gap(startedAt = 100_000L, endedAt = null, cause = CaptureGapCause.INPUT_LOST)
+
+        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L, bluetoothAudioDropped = true)
+
+        assertEquals("not listening · 1 m 40 s and counting · Bluetooth audio dropped", label)
+    }
+
+    @Test
+    fun `E2_G04 a closed gap is never rewritten as Bluetooth audio dropped, only an ongoing one is`() {
+        val g = gap(startedAt = 0L, endedAt = 38_000L, cause = CaptureGapCause.INPUT_LOST)
+
+        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L, bluetoothAudioDropped = true)
+
+        assertEquals("not listening · 38 s · input lost", label)
+    }
+
+    @Test
+    fun `E2_G04 a non-Bluetooth session never reads Bluetooth audio dropped, even for the same cause`() {
+        val g = gap(startedAt = 100_000L, endedAt = null, cause = CaptureGapCause.INPUT_LOST)
+
+        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L, bluetoothAudioDropped = false)
+
+        assertTrue(label.startsWith("not listening · ongoing"))
+    }
+
     @Test
     fun `R_106_gap_causes every real CaptureGapCause reads the board's own prose, not a raw enum name`() {
         // Every phrase read verbatim from a real board before this test was written: CALL from

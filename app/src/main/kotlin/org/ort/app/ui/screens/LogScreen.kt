@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import org.ort.app.ui.components.ColumnHeaderRow
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FilterChip
@@ -89,10 +90,11 @@ public fun LogScreen(
                 subMessage = emptyState.subMessage,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg),
             )
+            BluetoothAudioFootnote(state.bluetoothAudioFootnote)
             return@Column
         }
 
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
             items(state.items, key = { it.key }) { item ->
                 LogListItemRow(
                     item = item,
@@ -102,6 +104,26 @@ public fun LogScreen(
                 )
             }
         }
+
+        BluetoothAudioFootnote(state.bluetoothAudioFootnote)
+    }
+}
+
+/** E2-G04 (F23, FR-CAP-13, `Fail-Bluetooth-Audio.dc.html`'s own footnote): present exactly when
+ * this session's audio route is Bluetooth SCO — never the only copy of the fact (the row mark,
+ * N04's Input sub-line and DG04's own facts all say so too). */
+@Composable
+private fun BluetoothAudioFootnote(footnote: String?) {
+    footnote?.let {
+        Text(
+            text = it,
+            style = OrtType.subLine,
+            color = OrtColors.textDim,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
+                .testTag("log-bluetooth-audio-footnote"),
+        )
     }
 }
 
