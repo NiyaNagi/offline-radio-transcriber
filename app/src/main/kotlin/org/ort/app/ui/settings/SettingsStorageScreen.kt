@@ -412,10 +412,25 @@ private fun NextDeletionMarker(modifier: Modifier = Modifier) {
  * category an *equal* share, but Compose's own weighted-`Row` rounding at that many-decimal-place
  * equal split (confirmed by direct on-device review, not reproducible from the arithmetic alone on
  * this host) resolved unevenly rather than as four clean quarters. Rather than depend on that
- * rounding behaving a particular way, a genuinely empty store ([realTotalBytes] `== 0L`) now draws
- * **no** weighted segments at all — the bar's own [OrtColors.lineChip] track background *is* the
- * empty state the board calls for, never a coloured fallback standing in for data that does not
- * exist yet.
+ * rounding behaving a particular way, a genuinely empty store drew **no** weighted segments at
+ * all instead — the bar's own [OrtColors.lineChip] track background *is* the empty state the
+ * board calls for, never a coloured fallback standing in for data that does not exist yet.
+ *
+ * R-760 (register, halt, confirmation sweep): R-441's own guard (`realTotalBytes > 0L`) checked
+ * the raw byte sum, not what the operator actually reads — `overnight/CF03-settings-storage.png`
+ * showed a real device with every category's own legend entry reading "0.0 GB" (the *display*
+ * [SettingsStorageCategoryViewState.bytes]`.toGigabyteLabel()` already rounds to) still filling
+ * the bar almost entirely amber. The real cause: an on-disk SQLite file is never *literally* zero
+ * bytes (page-header overhead alone guarantees a handful of KB) even with no rows ever written,
+ * so `Records`' own real byte count was small enough to round to "0.0 GB" in the legend but still
+ * large enough, next to three *genuinely* zero categories each floored to `coerceAtLeast(1L)`, to
+ * claim effectively the entire weighted total — one category filling the bar while its own legend
+ * entry, and every sibling's, claims nothing does: the opposite of the fact, not a rounding
+ * curiosity. The guard now checks the same rounding precision the legend already commits to
+ * ([realTotalBytes]`.toGigabyteLabel() != "0.0 GB"`) instead of a raw byte comparison, so the bar
+ * and the legend can never disagree about whether there is anything here to show — real,
+ * substantial values still render as real segments exactly as before; anything the legend itself
+ * would call "0.0 GB" everywhere draws the plain empty track instead.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -439,11 +454,13 @@ private fun StorageCategoryBreakdown(
                 .testTag(STORAGE_BAR_TEST_TAG),
             horizontalArrangement = Arrangement.spacedBy(1.dp),
         ) {
-            // R-441: a genuinely empty store (every category `0`) draws no segments at all — the
-            // track's own background above is the empty state; see this composable's own doc
-            // comment for why an equal-weight fallback is not used instead.
+            // R-441/R-760: a store whose real total rounds to the same "0.0 GB" the legend below
+            // already displays draws no segments at all — the track's own background above is the
+            // empty state; see this composable's own doc comment for why a raw `> 0L` byte check
+            // is not used instead (it let a small but nonzero total, invisible in every category's
+            // own rounded legend entry, still fill the bar almost entirely).
             val realTotalBytes = categories.sumOf { it.bytes }
-            if (realTotalBytes > 0L) {
+            if (realTotalBytes.toGigabyteLabel() != "0.0 GB") {
                 categories.forEach { category ->
                     Row(
                         modifier = Modifier

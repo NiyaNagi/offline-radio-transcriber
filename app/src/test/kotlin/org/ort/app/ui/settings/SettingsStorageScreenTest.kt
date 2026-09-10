@@ -125,6 +125,52 @@ class SettingsStorageScreenTest {
     }
 
     @Test
+    @Requirement("R-760")
+    fun `R_760 a store whose real total rounds to the same 0-0 GB the legend shows draws only the empty track`() {
+        // R-760 (register, halt, confirmation sweep, `overnight/CF03-settings-storage.png`):
+        // R-441's own guard checked the raw byte sum (`> 0L`), not what the operator actually
+        // reads. A real on-disk SQLite file is never *literally* zero bytes (page-header overhead
+        // alone guarantees a handful of KB) even with nothing ever written to it — Audio/Models/
+        // Lexicon here are genuinely `0`, but Records carries a small, real, nonzero byte count
+        // that still rounds to "0.0 GB" in its own legend entry (`toGigabyteLabel()`'s own `%.1f`
+        // precision). Before the fix, `coerceAtLeast(1L)` floored the three genuinely-empty
+        // categories while Records' own real bytes dominated the weighted total, filling the bar
+        // almost entirely amber — every legend entry reading "0.0 GB" while the bar itself claimed
+        // the opposite. This is the actual, real-device shape of the bug; the literal-all-`0L`
+        // case above (`R_441`) was already correct and stays that way.
+        val nearZeroStore = state().copy(
+            categories = listOf(
+                SettingsStorageCategoryViewState("Audio", 0L),
+                SettingsStorageCategoryViewState("Models", 0L),
+                SettingsStorageCategoryViewState("Records", 40_000_000L), // 0.04 GB, rounds to "0.0 GB"
+                SettingsStorageCategoryViewState("Lexicon", 0L),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsStorageScreen(state = nearZeroStore, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+            }
+        }
+
+        composeTestRule.onNodeWithText("Records 0.0 GB").assertExists()
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(0)
+    }
+
+    @Test
+    @Requirement("R-760")
+    fun `R_760 a store with real values that do not round to 0-0 GB still renders its segments`() {
+        // R-760's other half, per the coordinator's own instruction: the fix must not turn into a
+        // blanket "never show the bar" — real, substantial usage (this suite's own default
+        // `state()`, whose categories sum well past "0.0 GB") still renders one segment per
+        // category, exactly as `R_133_bar`/`R_351` above already establish.
+        composeTestRule.setContent {
+            OrtTheme { SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {}) }
+        }
+
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(4)
+    }
+
+    @Test
     @Requirement("R-133")
     fun `R_133_next_deletion_row names the real session, over count and size, and Review opens it`() {
         var reviewed: String? = null
