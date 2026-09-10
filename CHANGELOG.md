@@ -32,6 +32,122 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (poison hunt 2: full-suite gate green again — 1365 tests, 0 failures, 4m 57s)
+
+### (pending) — poison hunt 2 · four accumulator classes isolated, on-disk ort.db leak closed at three WP8 call sites, forkEvery 40 -> 4
+
+**Scope:** `app/build.gradle.kts` (test-task config); `app/src/test/kotlin/org/ort/app/ui/screens/StationsContentTest.kt`,
+`StationDetailContentTest.kt`, `FrequencyDetailContentTest.kt`, `SearchContentTest.kt` (each: `@After` close +
+`context.deleteDatabase(...)` in `@Before`).
+
+**Requirements/ACs:** none new — test-infrastructure health, not product behaviour.
+
+**What changed:**
+
+*Constitution Check.* II (test-backed change — the exit criterion this session worked to was the whole suite
+completing, proven by a full, uninterrupted `:app:testDebugUnitTest` run, not a scoped one). VII (boundaries are
+structural — `app/build.gradle.kts`'s own `smokeTestDebugUnitTest`/`forkEvery`/`maxHeapSize` machinery is exactly
+the kind of build-level enforcement this principle asks for, applied one layer further after the first poison hunt
+already established it).
+
+Since the last confirmed-green full gate (63024db, 2026-09-08, 1675 tests in 6 min), ten waves of `ui-conformance`
+work — WP2 rounds, WP3 r15–19, WP4 x3, WP5 x2, WP6 x2, WP7 (`SearchScreenTest` and 8 sibling classes), WP8 x3
+(`StationsContentTest` against a real `OrtDatabase`, `StationPollingTest`, a `FrequencyScreenTest` scroll change),
+WP9 x2, WP10 x2, WP11b x2, WP12 v4–v6 — merged into `:app`'s test tree, all landing disproportionately in
+`org.ort.app.ui.screens`, which went from a handful of classes to ~33. Two coordinator escalations already
+diagnosed and isolated `LevelMeterScreenTest` (register, 2026-09-09) on the same symptom this entry chases
+further: a full run wedging inside `RobolectricIdlingStrategy.runUntilIdle`/`ComposeIdlingResource.isIdleNow`,
+the "SDK 34 Main Thread" genuinely `RUNNABLE` and CPU-bound (never `BLOCKED`/`WAITING`) for minutes on one
+`setContent`, for whatever Compose test happens to run after a growing concentration of real
+`OrtDatabase`-backed/`createAndroidComposeRule`-hosted classes.
+
+**Method.** Bisected with `--tests 'org.ort.app.ui.screens.*'` (and progressively narrower explicit `--tests`
+lists) rather than the full suite, timing every run and `jstack`-ing the `Gradle Test Executor` process (found
+via `Get-CimInstance Win32_Process -Filter "Name='java.exe'"`, matched on `Gradle Test Executor` and this
+worktree's own path to rule out another worktree's concurrent build, which was genuinely running for part of
+this session) whenever a run exceeded a few minutes. Wedged runs were ended by stopping the tool call driving
+them (`TaskStop`), never `gradlew --stop`.
+
+**Findings, in the order they were ruled in or out:**
+
+1. **`FrequencyDetailContentTest`/`StationDetailContentTest`/`StationsContentTest` (WP8) never closed the real
+   `OrtDatabase` they open in `@Before`.** `OrtDatabase.kt`'s own doc comment (first poison hunt) already
+   established `ort.db` as *the same on-disk file for every test class in one JVM, not sandboxed per class or
+   method* — `SearchContentTest`/`SearchPollingTest`/`SearchWidenSuggestionsTest` (WP7) already work around this
+   with `context.deleteDatabase(OrtDatabase.DATABASE_NAME)` in their own `@Before`; the three WP8 files never
+   picked up the same fix. Closed at the source: `@After { db.close() }` plus `context.deleteDatabase(...)`
+   before every `OrtDatabase.create(...)` in these three files' `@Before`, matching WP7's own precedent exactly
+   (`SearchContentTest`'s single `OrtDatabase`-opening test method was changed the same way, reusing the class's
+   existing `@Before` delete). A real, worthwhile fix — but proven **not sufficient alone**: the full
+   `ui.screens.*` reproduction still wedged after applying it, at a different class each time.
+2. **`SearchContentBackHandlerTest` (WP7) hosts `SearchContent` inside `createAndroidComposeRule<ComponentActivity>()`**
+   — the identical pattern `LogAndThreadContentActivityTest`/`LogContentBackHandlerTest` are already isolated
+   for. Bisection (explicit `--tests` combinations) established that removing any *one* of
+   `SearchContentTest`/`SearchFiltersSheetTest`/`SearchScreenTest`/`SearchContentBackHandlerTest` from an
+   otherwise-wedging Search+Station+`ThreadDetailScreenTest` set made that run clean — no single class among
+   the four is independently guilty, the *combination* is. `forkEvery` reduction alone (tried at 15, 10 and 6)
+   did not reliably prevent it either, including at values below the smallest confirmed-wedging combination
+   (8 real classes), and isolating the victim class alone (`ThreadDetailScreenTest`) only moved the wedge to
+   the very next class in file order (`ThreadScreenTest`) once the run reached that far — confirmed directly,
+   twice, ruling out "isolate whichever victim shows up" as a fix that converges.
+3. **`FrequencyScreenTest`, separately:** 100% reproducible at the exact same test
+   (`frequency detail with no regulars shows an honest empty state`) whenever the full `ui.screens.*` run
+   reaches it, unaffected by every fix above, by `forkEvery` down to 6, and by raising `maxHeapSize` to `2g`
+   (ruling out plain GC/heap pressure as the mechanism here). Always green alone (14/14 in ~8s, confirmed
+   repeatedly) and always failing at `setContent` itself once it follows `FrequencyDetailContentTest` in the
+   same JVM.
+
+**Fix landed:** isolated the four confirmed accumulators (`SearchContentBackHandlerTest`, `SearchContentTest`,
+`StationDetailContentTest`, `StationsContentTest`) plus the separately-confirmed `FrequencyScreenTest` into
+`smokeTestDebugUnitTest` (now 15 classes, `forkEvery = 1`, unchanged shape) alongside the ten already there —
+the same proven remedy, applied on the same jstack-evidence standard, rather than continuing to isolate
+whichever class the wedge lands on next. **And** lowered `testDebugUnitTest.forkEvery` from 40 to 4 — smaller
+than the smallest confirmed-wedging combination this session found (8 real Compose/Robolectric classes sharing
+one un-recycled JVM), so no remaining batch, wherever its boundary falls, can accumulate as much as a wedge
+needs; `maxHeapSize` raised to `2g` alongside it (AGP's own default of `512m`, confirmed from the worker
+process's own command line, was the tightest remaining margin once forks are more frequent). Neither the
+isolation nor the `forkEvery` cut alone reproduced a clean full run in this session's own testing — both
+together did, twice (the `ui.screens.*`-scoped reproduction, then the true full suite).
+
+**Verified:**
+
+- `.\gradlew.bat :app:testDebugUnitTest` — **BUILD SUCCESSFUL in 4m 57s**; summed `test-results/testDebugUnitTest`
+  XML: **1365 tests, 0 failures, 0 errors**. (Machine: this session's own worktree host, JDK
+  `17.0.20.101-hotspot`, Robolectric/Compose-on-JVM, no device.)
+- `.\gradlew.bat :app:smokeTestDebugUnitTest` — **BUILD SUCCESSFUL in 2m 35s**; summed
+  `test-results/smokeTestDebugUnitTest` XML: **110 tests, 0 failures, 0 errors** (the 15 isolated classes).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules checked, no forbidden edges.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew.bat coverageMatrix` — 192/419 requirements covered, `results/coverage-matrix.md` regenerated (no
+  diff — nothing this session touched is requirement-bearing product code).
+- `.\gradlew.bat coverageMatrixCheck` — up to date (192 covered of 419), separate invocation.
+
+**Left open / not done:**
+
+- The *exact* mechanism (why these specific classes, why this specific symptom) was not root-caused to a
+  single line, matching the first poison hunt's own admission for the `while(true)`-poll classes it isolated —
+  this entry adds jstack evidence and a converging fix, not a final explanation. In particular: why
+  `forkEvery` reduction alone (tried at 15/10/6, always still reproducing the identical wedge at
+  `ThreadDetailScreenTest`/`ThreadScreenTest`/`FrequencyScreenTest` depending on value) did not reliably help
+  the way it did for the original `OrtDatabase`-connection-accumulation finding, until combined with removing
+  the specific accumulator cluster, was not explained past "this class of Robolectric/Compose JVM-sharing
+  failure resists exact root-causing" (the same finding the first poison hunt already recorded).
+- `testDebugUnitTest`'s wall time regressed from the ~2-3 minute range the coordinator's own brief cited as
+  healthy to 4m 57s — the direct cost of `forkEvery = 4` (far more, individually cheap JVM forks over the same
+  ~1365 tests). A smaller cut that still holds (something between 4 and 40) was not hunted for further given
+  this session's own time budget; the ten pre-existing isolated classes plus the five new ones already carry
+  the worst individual offenders, so a future session revisiting `forkEvery` upward has a narrower set of
+  classes to re-bisect against, not the whole suite.
+- Another worktree (`agent-a168048e4c3de3efe`) ran its own Gradle build concurrently for part of this session,
+  contrary to this task's own briefing that the machine was exclusive — noted because it coincided with one of
+  this session's `jstack` captures (a different worktree's own "Gradle Test Executor", correctly excluded from
+  that capture by matching the process command line's own path) and is worth the coordinator knowing, not
+  because it changed any finding above (the deterministic, 100%-reproducible failures this entry fixes were
+  each also reproduced with no other worktree's build running).
+---
+
 ## 2026-09-09 (ui-conformance WP4/WP10 round 2: R-590 RetentionOrderRow font-scale gate; LevelMeterScreenTest isolated into smokeTestDebugUnitTest)
 
 ### (pending) — ui-conformance WP4/WP10 round 2 · R-590 side-by-side below fontScale 1.3, stacked at/above it; LevelMeterScreenTest moved into the isolated smoke-test task per the coordinator's own jstack-confirmed wedge

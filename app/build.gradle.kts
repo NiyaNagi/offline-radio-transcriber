@@ -178,6 +178,39 @@ val composeIdlePoisoningSmokeTestDebugUnitTest = tasks.register<Test>("smokeTest
     // alone, the same remedy already proven for the whole set, rather than left in a shared JVM on
     // an unconfirmed theory of exactly why.
     include("**/LevelMeterScreenTest*")
+    // Poison-hunt-2 (register, full-suite gate): `FrequencyScreenTest` — 100% reproducible at the
+    // exact same test (`frequency detail with no regulars shows an honest empty state`) whenever the
+    // full `--tests 'org.ort.app.ui.screens.*'` run reaches it, unaffected by every accumulation fix
+    // tried in this session (closing/deleting the on-disk `ort.db` the WP8 `*ContentTest` classes
+    // leaked, `forkEvery` down to 6, `maxHeapSize` up to 2g) — ruling out the general JVM/file
+    // accumulation this file's own KDoc documents elsewhere as the mechanism *here* specifically.
+    // Always green alone (14/14 in ~8s, confirmed repeatedly) and always failing at `setContent`
+    // itself once it follows `FrequencyDetailContentTest` in the same JVM (`jstack`: the identical
+    // never-reaches-idle `ComposeIdlingResource.isIdleNow` signature). Isolated on that same
+    // evidence standard as the classes above, still unconfirmed to a single line.
+    include("**/FrequencyScreenTest*")
+    // Poison-hunt-2 (register, full-suite gate): the four classes below are this session's own
+    // confirmed accumulators, not victims — bisection (`--tests`, varying combinations, `jstack`)
+    // found that removing any *one* of `SearchContentTest`/`SearchFiltersSheetTest`/
+    // `SearchScreenTest`/`SearchContentBackHandlerTest` from a set otherwise wedging
+    // `ThreadDetailScreenTest` made that run clean, yet no single upstream class, preceding-class
+    // count, `forkEvery` value (down to 6) or on-disk-`ort.db` fix (closing/deleting it, the fix
+    // this file already carries for `StationsContentTest`/`StationDetailContentTest`/
+    // `FrequencyDetailContentTest` above) made the combination reliably clean either — isolating the
+    // *victim* only moved the wedge to the next class in file order (`ThreadDetailScreenTest` ->
+    // `ThreadScreenTest`, confirmed directly). `SearchContentBackHandlerTest` carries the one
+    // structural difference the other three don't: `createAndroidComposeRule<ComponentActivity>()`,
+    // the exact pattern `LogAndThreadContentActivityTest`/`LogContentBackHandlerTest` above are
+    // already isolated for. `SearchContentTest`/`StationDetailContentTest`/`StationsContentTest`
+    // each open a real `OrtDatabase` against the shared on-disk file the same way the already-
+    // isolated `*ContentTest` classes above do. Isolating this whole cluster — the same "isolate the
+    // whole set once the shape is established, rather than re-bisect each remaining crossing one at
+    // a time" call this file's own KDoc already made for the nine `*ContentTest` classes above —
+    // rather than the victim it produces, whichever class that turns out to be.
+    include("**/SearchContentBackHandlerTest*")
+    include("**/SearchContentTest*")
+    include("**/StationDetailContentTest*")
+    include("**/StationsContentTest*")
     forkEvery = 1
 }
 
@@ -205,6 +238,11 @@ afterEvaluate {
     debugUnitTest.exclude("**/OrtNavHostDestinationDispatchTest*")
     debugUnitTest.exclude("**/ReaderAccessibilityTest*")
     debugUnitTest.exclude("**/LevelMeterScreenTest*")
+    debugUnitTest.exclude("**/FrequencyScreenTest*")
+    debugUnitTest.exclude("**/SearchContentBackHandlerTest*")
+    debugUnitTest.exclude("**/SearchContentTest*")
+    debugUnitTest.exclude("**/StationDetailContentTest*")
+    debugUnitTest.exclude("**/StationsContentTest*")
     // Test-suite regression, 2026-09-08 (this task's own CHANGELOG entry): excluding the two
     // confirmed-poisoning classes above (this file's own KDoc) was not sufficient on its own — the
     // full suite still eventually wedged (confirmed: `ImproveScreensTest`, a file with no
@@ -225,7 +263,35 @@ afterEvaluate {
     // (a fresh JVM, a fresh Robolectric sandbox, a fresh `queryExecutor`) periodically, bounding the
     // *worst case* to what one batch can accumulate regardless of which classes are in it, without
     // forking every single class the way the confirmed-poisoning tasks above must.
-    debugUnitTest.forkEvery = 40
+    //
+    // Poison-hunt-2 (register, full-suite gate, 2026-09-09): a full, unfiltered
+    // `:app:testDebugUnitTest` — and the narrower `--tests 'org.ort.app.ui.screens.*'` reproduction
+    // this session's own bisection used to investigate it faster — kept wedging at whichever Compose
+    // test happened to run after `ui.screens`'s now much larger concentration of real
+    // `OrtDatabase`-backed/`createAndroidComposeRule`-hosted `*ContentTest` classes (WP7/WP8), always
+    // the identical `jstack` signature this comment already documents
+    // (`ComposeIdlingResource.isIdleNow` <- `advanceTimeByFrame`, CPU-bound `RUNNABLE`, never
+    // `BLOCKED`/`WAITING`). None of the following, tried individually, made it reliably reproduce
+    // clean: isolating the victim class alone (the wedge simply moved to the next class in file
+    // order once the run reached that far — confirmed directly, twice); closing/deleting the shared
+    // on-disk `ort.db` the WP7/WP8 `*ContentTest` classes left open (`StationsContentTest`/
+    // `StationDetailContentTest`/`FrequencyDetailContentTest`/`SearchContentTest`'s own `@Before`,
+    // above — a real leak, worth keeping, but not sufficient alone); raising `maxHeapSize` (tried up
+    // to `2g`, ruling out plain GC pressure as the mechanism). What did produce a clean, repeated,
+    // full `:app:testDebugUnitTest` and a clean full `--tests 'org.ort.app.ui.screens.*'`, together:
+    // isolating the confirmed accumulator cluster below (`SearchContentBackHandlerTest`/
+    // `SearchContentTest`/`StationDetailContentTest`/`StationsContentTest`, plus `FrequencyScreenTest`
+    // as a separately-confirmed case) **and** lowering `forkEvery` from 40 to 4 — a smaller number of
+    // classes than the smallest confirmed-wedging combination this session's own bisection found (8
+    // real Compose/Robolectric classes sharing one JVM), so no batch, wherever its boundary falls,
+    // can accumulate as much as a wedge needs. `forkEvery = 40` alone (the entire point of this
+    // comment's own prior paragraph) is no longer a large enough safety margin now that `ui.screens`
+    // alone holds ~29 such classes; the trade is more, individually cheap JVM forks for a suite that
+    // actually finishes. `maxHeapSize` is kept at `2g` regardless — it did not fix this on its own,
+    // but a smaller forkEvery means more concurrent Robolectric/Compose class-loading over the life
+    // of the whole task, and 512m was already the tightest margin available.
+    debugUnitTest.forkEvery = 4
+    debugUnitTest.maxHeapSize = "2g"
     composeIdlePoisoningSmokeTestDebugUnitTest.configure {
         testClassesDirs = debugUnitTest.testClassesDirs
         classpath = debugUnitTest.classpath
