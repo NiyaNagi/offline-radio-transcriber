@@ -427,6 +427,28 @@ class CaptureStatusMapperTest {
     }
 
     @Test
+    @Requirement("E2-G01", "FR-RIG-14")
+    fun `E2_G01 RigStatus own live transportKind (WPC2) wins over the session column fallback`() {
+        val connected = RigStatus.State.Connected(
+            "TH-D75A",
+            listOf(RigStatus.BandState("A", 145_230_000L, null, squelchOpen = true)),
+            transportKind = org.ort.rig.RigTransportKind.USB_SERIAL,
+        )
+        val view = state(
+            rig = connected,
+            // The session column says Bluetooth — the live RigStatus signal must win regardless.
+            routeFacts = SessionRouteFacts(
+                captureMode = CaptureMode.BLUETOOTH_RADIO,
+                audioRouteKind = AudioRouteKind.WIRED_HEADSET,
+                audioRouteLabel = null,
+                bluetoothProfile = null,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP,
+            ),
+        )
+        assertEquals("USB serial · A 145.230 open", view.radio.subLine)
+    }
+
+    @Test
     @Requirement("E2-G01")
     fun `E2_G01 with no transport tracked the Radio sub-line falls back to the band states alone`() {
         val connected = RigStatus.State.Connected(

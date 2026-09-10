@@ -375,9 +375,14 @@ public object CaptureStatusMapper {
         return "$since$elapsedLabel · $heartbeat"
     }
 
-    /** [routeFacts]: `public` for the same reason [inputFacts] is (see its own kdoc) — E2-G01's
-     * "<transport> · A … · B …" Radio sub-line, the transport named from the session's own
-     * `rigTransport` column until WPC2's `RigStatus` itself carries the transport. */
+    /**
+     * [routeFacts]: `public` for the same reason [inputFacts] is (see its own kdoc) — E2-G01's
+     * "<transport> · A … · B …" Radio sub-line. WPC2 landed `RigStatus.State.Connected.transportKind`
+     * (`org.ort.rig.RigTransportKind`, the live signal) — that wins whenever the current
+     * [RigStatus.State] actually carries one; [routeFacts]'s session-column `rigTransport`
+     * (`org.ort.core.capture.RigTransportKind`) is the fallback for a caller that predates WPC2
+     * (a debug scenario, a screen-level test) or a past session's own [RigStatus]-less `DG04` read.
+     */
     public fun radioFacts(rig: RigStatus.State, routeFacts: SessionRouteFacts): KeyValueFacts = when (rig) {
         // R-263: guide §9 — operator copy never carries a spec id. "FR-RIG" named the requirement,
         // not a fact this screen's own operator would recognise; "no radio support in this build
@@ -387,7 +392,7 @@ public object CaptureStatusMapper {
             KeyValueFacts(value = "No rig configured", subLine = "no radio support in this build yet")
         is RigStatus.State.Connected -> KeyValueFacts(
             value = rig.descriptor,
-            subLine = radioSubLine(routeFacts, bandsLabel(rig.bands)),
+            subLine = radioSubLine(rig.transportKind, routeFacts, bandsLabel(rig.bands)),
             trailingDot = CaptureStateTone.NOMINAL,
             trailingText = "connected",
         )
@@ -395,6 +400,7 @@ public object CaptureStatusMapper {
         is RigStatus.State.Stale -> KeyValueFacts(
             value = rig.lastKnown.descriptor,
             subLine = radioSubLine(
+                rig.lastKnown.transportKind,
                 routeFacts,
                 "last known: " + rig.lastKnown.bands.joinToString(" · ") { band ->
                     "${band.band} ${band.frequencyHz?.let { formatFrequencyMHz(it) } ?: "—"}?"
@@ -410,12 +416,28 @@ public object CaptureStatusMapper {
             if (band.squelchOpen) "open" else "closed"
     }
 
-    private fun radioSubLine(routeFacts: SessionRouteFacts, bandsLine: String): String =
-        listOfNotNull(transportLabel(routeFacts.rigTransport), bandsLine).joinToString(" · ")
+    private fun radioSubLine(
+        liveTransport: org.ort.rig.RigTransportKind?,
+        routeFacts: SessionRouteFacts,
+        bandsLine: String,
+    ): String {
+        val transport = transportLabel(liveTransport) ?: sessionTransportLabel(routeFacts.rigTransport)
+        return listOfNotNull(transport, bandsLine).joinToString(" · ")
+    }
 
-    /** FR-RIG-14/FR-RIG-15: the two real transports this build ever names — `null` (omitted, never
-     * a dangling separator) when the session's own `rigTransport` column is untracked. */
-    private fun transportLabel(transport: RigTransportKind?): String? = when (transport) {
+    /** FR-RIG-14/FR-RIG-15: the live `:rig` transport kind WPC2's `RigSupervisor` now publishes —
+     * `null` (omitted, never a dangling separator) for [org.ort.rig.RigTransportKind.NONE]/`null`
+     * (a caller that predates WPC2). */
+    private fun transportLabel(transport: org.ort.rig.RigTransportKind?): String? = when (transport) {
+        org.ort.rig.RigTransportKind.USB_SERIAL -> "USB serial"
+        org.ort.rig.RigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
+        org.ort.rig.RigTransportKind.BLE -> "Bluetooth LE"
+        org.ort.rig.RigTransportKind.NETWORK -> "Network"
+        org.ort.rig.RigTransportKind.NONE, null -> null
+    }
+
+    /** The session-column fallback — the same two transports [CaptureModePresets] ever presets. */
+    private fun sessionTransportLabel(transport: RigTransportKind?): String? = when (transport) {
         RigTransportKind.USB_SERIAL -> "USB serial"
         RigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
         null -> null
