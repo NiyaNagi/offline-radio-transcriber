@@ -8,11 +8,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
-import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.ort.app.testing.ortComposeTestRule
 import org.ort.app.ui.data.StationSubScreen
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
@@ -32,11 +33,17 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class StationDetailContentTest {
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    // Not itself a `@Rule` — `ruleChain` below owns its lifecycle, closing the database only after
+    // this rule's own teardown has disposed the composition (idle-root task, 2026-09-10 — see
+    // `org.ort.app.testing.ortComposeTestRule`'s own doc comment for the `AppNotIdleException`
+    // mechanism this ordering avoids).
+    private val composeTestRule = createComposeRule()
 
     private lateinit var db: OrtDatabase
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    @get:Rule
+    val ruleChain: TestRule = ortComposeTestRule(composeTestRule) { db.close() }
 
     @Before
     fun openDatabase() {
@@ -48,17 +55,6 @@ class StationDetailContentTest {
         // test class left behind, rather than only closing the connection afterward.
         context.deleteDatabase(OrtDatabase.DATABASE_NAME)
         db = OrtDatabase.create(context)
-    }
-
-    // Poison-hunt-2 (register, full-suite gate): this class's own `OrtDatabase.create(context)`
-    // was never closed — a leaked writer against `ort.db` for the rest of this Gradle test-worker
-    // JVM to contend against, the same shape `CorrectionPollingTest`'s own doc comment already
-    // established and `TransmissionDetailContentTest`/`NowContentTest`/`CaptureStatusContentTest`
-    // already fixed the same way. Closed here so this class stops being one of the never-closed
-    // instances the jstack-confirmed `ThreadDetailScreenTest` wedge traced back to.
-    @After
-    fun closeDatabase() {
-        db.close()
     }
 
     private fun session() = SessionEntity(

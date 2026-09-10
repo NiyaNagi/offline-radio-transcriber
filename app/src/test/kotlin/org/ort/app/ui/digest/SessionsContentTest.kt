@@ -15,7 +15,9 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.ort.app.testing.ortComposeTestRule
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
@@ -42,11 +44,18 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class SessionsContentTest {
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    // Not itself a `@Rule` — `ruleChain` below owns its lifecycle, closing the database only after
+    // this rule's own teardown has disposed the composition (idle-root task, 2026-09-10 — see
+    // `org.ort.app.testing.ortComposeTestRule`'s own doc comment for the `AppNotIdleException`
+    // mechanism this ordering avoids; this class was already isolated into `smokeTestDebugUnitTest`
+    // for the same symptom, by the earlier "poison hunt" session that could not root-cause it).
+    private val composeTestRule = createComposeRule()
 
     private lateinit var db: OrtDatabase
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    @get:Rule
+    val ruleChain: TestRule = ortComposeTestRule(composeTestRule) { db.close() }
 
     @Before
     fun setUp() {
@@ -57,7 +66,6 @@ class SessionsContentTest {
     @After
     fun tearDown() {
         CaptureState.idle(clearSession = true)
-        db.close()
     }
 
     private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 5_000) {

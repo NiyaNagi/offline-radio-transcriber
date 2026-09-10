@@ -504,6 +504,21 @@ public object ModelsController {
      * whatever [StagedActivationStore] persisted from an earlier run. */
     public val stagedActivation: StateFlow<StagedActivation?> = stagedActivationFlow.asStateFlow()
 
+    /**
+     * Test-only reset (see `org.ort.app.testing.ortComposeTestRule` in `app/src/test` — the one
+     * place every Compose test in `:app` must route its teardown through): this object is a plain
+     * Kotlin `object`, so [stagedActivationFlow] is a single, process-lifetime instance shared by
+     * every test that runs in the same JVM fork, not sandboxed per test the way a fresh Robolectric
+     * `Application` is. A test that stages an activation (directly, or through a real
+     * [installLexicon]/[download]/[sideload] call while [org.ort.pipeline.capture.CaptureState] is
+     * capturing) and never drains it left that fact readable by whichever unrelated test happens to
+     * read [stagedActivation] next in the same fork — production code never calls this; a fresh
+     * process already starts with [stagedActivationFlow] at `null`.
+     */
+    internal fun resetForTest() {
+        stagedActivationFlow.value = null
+    }
+
     /** Re-reads the persisted staged activation into [stagedActivation] — [currentState] already
      * does this as a side effect of its own read, so a caller that only needs this fact refreshed
      * (never the whole [ModelsViewState]) can reach for this instead. */

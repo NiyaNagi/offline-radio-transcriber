@@ -16,12 +16,13 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import org.ort.app.debug.Scenarios
+import org.ort.app.testing.ortComposeTestRule
 import org.ort.app.ui.data.RecentSearches
 import org.ort.app.ui.data.SearchFacetCounts
 import org.ort.app.ui.data.SearchFacetFilter
@@ -47,15 +48,21 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class SearchContentTest {
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    // Not itself a `@Rule` — `ruleChain` below owns its lifecycle, closing the database only after
+    // this rule's own teardown has disposed the composition (idle-root task, 2026-09-10 — see
+    // `org.ort.app.testing.ortComposeTestRule`'s own doc comment for the `AppNotIdleException`
+    // mechanism this ordering avoids).
+    private val composeTestRule = createComposeRule()
 
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
     // Poison-hunt-2 (register, full-suite gate): only one test method below opens a real
-    // `OrtDatabase` (the R_202 seeding below) — nullable rather than `lateinit` so `closeDatabase`
+    // `OrtDatabase` (the R_202 seeding below) — nullable rather than `lateinit` so the close below
     // is a safe no-op for every other test in this class.
     private var db: OrtDatabase? = null
+
+    @get:Rule
+    val ruleChain: TestRule = ortComposeTestRule(composeTestRule) { db?.close() }
 
     @Before
     fun openDatabase() {
@@ -65,17 +72,6 @@ class SearchContentTest {
         // process left behind, matching `SearchPollingTest`/`SearchWidenSuggestionsTest`'s own
         // `@Before` for the same reason (that file's own doc comment explains it).
         context.deleteDatabase(OrtDatabase.DATABASE_NAME)
-    }
-
-    // Poison-hunt-2 (register, full-suite gate): this class's own `OrtDatabase.create(context)`
-    // (R_202 below) was never closed — a leaked writer against `ort.db` for the rest of this
-    // Gradle test-worker JVM to contend against, the same shape `CorrectionPollingTest`'s own doc
-    // comment already established and `TransmissionDetailContentTest`/`NowContentTest`/
-    // `CaptureStatusContentTest` already fixed the same way. Closed here so this class stops being
-    // one of the never-closed instances.
-    @After
-    fun closeDatabase() {
-        db?.close()
     }
 
     @Test
