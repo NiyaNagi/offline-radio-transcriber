@@ -31,7 +31,13 @@ import org.json.JSONObject
  * lists no `Station-Split.dc.html` board — its "Split cluster" action reached from ST04 opens
  * `F10`/`Fail-Cluster.dc.html` instead, a different, already-independent screen id, not a Station
  * sub-screen this key's own three-value [org.ort.app.ui.data.StationSubScreen] enum needs a fourth
- * tour step for. A step naming a [drillIn] key outside this set fails loudly (recorded as one
+ * tour step for. **v7** (register R-010..R-014/R-334, R-770 — the confirmation sweep's own finding
+ * that N00 `Menu.dc.html` had never been in the tour's capture set): `openDrawer` (`true`) opens the
+ * drawer over whichever [destination] the step names — a companion to `NavSeed.openDrawer`, this
+ * round's own one-field seam, not a `station`/`transmission`/etc. drill-in, since the drawer is not
+ * itself a destination. `transmission` also gained a fifth symbolic value this round, `"rejected"`
+ * (F04 `Fail-Hallucination.dc.html`'s own detail) — see [TourIds.resolveSeed]'s own doc comment. A
+ * step naming a [drillIn] key outside this set fails loudly (recorded as one
  * `error` line in the manifest, per
  * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
  * aborted tour) rather than being silently ignored.
@@ -96,6 +102,7 @@ public data class TourStep(
             "searchFiltersOpen",
             "logSheetOpen",
             "revisionsOpen",
+            "openDrawer",
         )
     }
 }

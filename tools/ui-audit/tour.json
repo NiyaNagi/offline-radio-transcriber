@@ -1,6 +1,9 @@
 {
-  "_comment": "spec/ui-conformance-plan.md WP12 - tools/ui-audit/tour.ps1's step list. Every id follows the existing results/ui-audit/<scenario>/<screen>.png naming (README.md). v1 can only seed a ReaderDestination root (OrtNavHost's own public rememberReaderNavigator(initialDestination=...)), a Settings sub-screen (initialSettingsScreen=...), or a real cold/EXTRA_STEP launch of SetupActivity - never a transmission/station/frequency/thread drill-in, an open sheet, or a live search result (see design/design-intent.md's D*, T02/T03, ST02-04, FQ02-03, Q02-05, L02, N06 rows and this package's report for exactly what that leaves out).",
+  "_comment": "spec/ui-conformance-plan.md WP12 - tools/ui-audit/tour.ps1's step list. Every id follows the existing results/ui-audit/<scenario>/<screen>.png naming (README.md). v1 can only seed a ReaderDestination root (OrtNavHost's own public rememberReaderNavigator(initialDestination=...)), a Settings sub-screen (initialSettingsScreen=...), or a real cold/EXTRA_STEP launch of SetupActivity - never a transmission/station/frequency/thread drill-in, an open sheet, or a live search result (see design/design-intent.md's D*, T02/T03, ST02-04, FQ02-03, Q02-05, L02, N06 rows and this package's report for exactly what that leaves out). v7 (register R-010..R-014/R-334/R-770): N00 (the drawer, via NavSeed.openDrawer), T03 (Threads-Ungrouped, via field-tier1 - a real current session whose overs never carry a threadId; stations-14-nights renders Empty instead, since its own transmissions belong to no single current session ThreadPolling reads), F04 (the rejected-transmission detail, via transmission:'rejected'), S05 (Setup-Verify), and @2x variants of CF04/DG04. Still not reachable by any seed in this build (report to the register rather than faked here): S02b (permission-state redirect on SetupActivity.onResume), S06 (Setup-Route-Mismatch's own verifyState is private in-memory, only set by a live RealRouteCheck run), D05 (Detail-Why has no initialWhyOpen seam), D08-D11 (the correction sheets - genuinely interaction-only), R02-R04 (Improve-Select/Running/Done - ImproveContent's page is unseeded local state), DG01/DG02 (Digest/Digest-Item - SessionsContent.initialSessionId stops at Session detail), L05's own dedicated Rejected quick-chip view (LogContent.initialFilter only derives Frequency/All), and F02/F10/F11 (no scenario/FailurePresentation exists for any of the three).",
   "steps": [
+    { "id": "overnight/N00-drawer", "scenario": "overnight", "destination": "NOW", "drillIn": { "openDrawer": "true" } },
+    { "id": "overnight/N00-drawer@2x", "scenario": "overnight", "destination": "NOW", "drillIn": { "openDrawer": "true" }, "fontScale": 2.0 },
+    { "id": "storage-warn/N00-drawer", "scenario": "storage-warn", "destination": "NOW", "drillIn": { "openDrawer": "true" } },
     { "id": "empty/N01-now-idle", "scenario": "empty", "destination": "NOW" },
     { "id": "first-session/N01-now-first", "scenario": "first-session", "destination": "NOW" },
     { "id": "overnight/N01-now", "scenario": "overnight", "destination": "NOW" },
@@ -61,6 +64,7 @@
     { "id": "overnight/T01-threads@2x", "scenario": "overnight", "destination": "THREADS", "fontScale": 2.0 },
     { "id": "stations-14-nights/T01-threads", "scenario": "stations-14-nights", "destination": "THREADS" },
     { "id": "empty/T01-threads-empty", "scenario": "empty", "destination": "THREADS" },
+    { "id": "field-tier1/T03-threads-ungrouped", "scenario": "field-tier1", "destination": "THREADS", "waitMillis": 2000 },
 
     { "id": "stations-14-nights/ST01-stations", "scenario": "stations-14-nights", "destination": "STATIONS" },
     { "id": "stations-14-nights/ST01-stations@2x", "scenario": "stations-14-nights", "destination": "STATIONS", "fontScale": 2.0 },
@@ -101,6 +105,7 @@
     { "id": "overnight/CF03-settings-storage@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "STORAGE" }, "fontScale": 2.0 },
     { "id": "overnight/CF03-settings-storage@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "STORAGE" }, "fontScale": 2.0, "scroll": "end" },
     { "id": "model-missing/CF04-settings-assets", "scenario": "model-missing", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
+    { "id": "model-missing/CF04-settings-assets@2x", "scenario": "model-missing", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" }, "fontScale": 2.0 },
     { "id": "overnight/CF05-settings-tier", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "TIER" } },
     { "id": "overnight/CF06-settings-rig", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
     { "id": "rig-lost/CF06-settings-rig", "scenario": "rig-lost", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
@@ -115,6 +120,7 @@
     { "id": "overnight/D02-inferred@2x-end", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "inferred" }, "fontScale": 2.0, "scroll": "end" },
     { "id": "overnight/D03-ambiguous", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "ambiguous" } },
     { "id": "overnight/D04-unknown", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "unknown" } },
+    { "id": "overnight/F04-rejected-detail", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "rejected" } },
     { "id": "no-audio/D06-no-audio", "scenario": "no-audio", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
     { "id": "revisions/D07-revisions", "scenario": "revisions", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
     { "id": "revisions/D07-revisions-open", "scenario": "revisions", "destination": "LOG", "drillIn": { "transmission": "confirmed", "revisionsOpen": "true" } },
@@ -140,11 +146,13 @@
     { "id": "overnight/L01-log-filtered-frequency", "scenario": "overnight", "destination": "LOG", "drillIn": { "logFilterFrequency": "145230000" } },
 
     { "id": "stations-14-nights/DG04-session-review", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" } },
+    { "id": "stations-14-nights/DG04-session-review@2x", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" }, "fontScale": 2.0 },
 
     { "id": "setup-verified/S01-welcome", "setup": "S01", "scenario": "setup-verified" },
     { "id": "setup-verified/S02-mic", "setup": "S02", "scenario": "setup-verified" },
     { "id": "setup-verified/S03-notify", "setup": "S03", "scenario": "setup-verified" },
     { "id": "setup-verified/S04-input", "setup": "S04", "scenario": "setup-verified" },
+    { "id": "setup-verified/S05-verify", "setup": "S05", "scenario": "setup-verified" },
     { "id": "setup-level/S07-level", "setup": "S07", "scenario": "setup-level" },
     { "id": "setup-verified/S08-battery", "setup": "S08", "scenario": "setup-verified" },
     { "id": "setup-radio/S09-radio", "setup": "S09", "scenario": "setup-radio" },

@@ -4,9 +4,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -90,6 +92,15 @@ class TourStepsTest {
         data class Tag(val tag: String) : Expected
         data class AnyTag(val tags: Set<String>) : Expected
         data class Text(val text: String) : Expected
+
+        /** v7 (register R-010..R-014/R-334/R-770): [Tag] alone only proves a node with this tag
+         * exists *somewhere* in the tree - `ModalNavigationDrawer`'s own `drawerContent` is always
+         * composed, open or closed (confirmed directly: [TourDrawerSeedTest]'s own closed case finds
+         * `drawer-rows` present but off-screen), so a bare [Tag] check on it would pass even if
+         * `openDrawer` silently did nothing. This variant additionally requires the node's own
+         * bounds to actually be on-screen, the same distinction [TourDrawerSeedTest] uses.
+         */
+        data class DisplayedTag(val tag: String) : Expected
     }
 
     /** R-017: a drill-in's own header names its origin destination as the back label
@@ -105,6 +116,15 @@ class TourStepsTest {
         // so these two check the sheet's own content, never the destination root underneath it.
         drillIn["searchFiltersOpen"] == "true" -> Expected.Tag("search-filters-sheet")
         drillIn["logSheetOpen"] == "true" -> Expected.Text("Filter the log")
+        // v7 (register R-010..R-014/R-334/R-770): the drawer's own scrollable row list, required to
+        // be genuinely on-screen (`Expected.DisplayedTag`'s own doc comment) - checked before the
+        // generic destination branch below so a drawer step is proven to land on the open drawer
+        // itself, never merely on the destination it was opened over.
+        drillIn["openDrawer"] == "true" -> Expected.DisplayedTag("drawer-rows")
+        // v7 (register R-770): F04's own detail - `TransmissionDetailScreen.kt`'s
+        // `RejectedHeaderSection`, real `testTag`, checked before the generic `transmission` branch
+        // below so this is proven to be the rejected detail, not merely any transmission detail.
+        drillIn["transmission"] == "rejected" -> Expected.Tag("rejected-section")
         drillIn.containsKey("transmission") -> Expected.Text("Log")
         // ST03/ST04 (WP8's `initialSubScreen` seam): checked before the bare `station` branch
         // below - `Station-Pattern`/`Station-Identity` draw their own `DrillInHeader` with
@@ -143,8 +163,25 @@ class TourStepsTest {
         else -> error("TourStepsTest has no expected marker for destination '$destination'")
     }
 
-    private fun expectedFor(step: TourStep): Expected =
-        expectedForDrillIn(step.drillIn) ?: expectedForDestination(requireNotNull(step.destination))
+    /** A handful of steps share a `destination`/`drillIn` shape with a sibling step that lands on a
+     * genuinely different real state (v7, register R-770) — [expectedForDestination]/
+     * [expectedForDrillIn] alone cannot tell them apart, since both are keyed on shape, not id. Real
+     * strings only, the same rule the two functions above already follow. */
+    private fun expectedForStepId(id: String): Expected? = when (id) {
+        // `ThreadListMapper.listState`: no transmission `field-tier1` seeds ever carries a
+        // `threadId` (only `OvernightScenario` sets one), and `field-tier1` (unlike
+        // `stations-14-nights`, confirmed empirically on-device before switching to this scenario -
+        // its own transmissions belong to no single "current" session `ThreadPolling` reads, so it
+        // renders the *Empty* state instead) has one real, current session's worth of real overs -
+        // `UngroupedThreads`' own real prose, the fact that distinguishes T03
+        // (`Threads-Ungrouped.dc.html`) from both Empty and a T01 `Grouped` card list.
+        "field-tier1/T03-threads-ungrouped" -> Expected.Text("Conversations are not built on this phone yet")
+        else -> null
+    }
+
+    private fun expectedFor(step: TourStep): Expected = expectedForStepId(step.id)
+        ?: expectedForDrillIn(step.drillIn)
+        ?: expectedForDestination(requireNotNull(step.destination))
 
     private data class Resolved(
         val id: String,
@@ -199,6 +236,12 @@ class TourStepsTest {
                 }
                 is Expected.Text -> composeTestRule.onAllNodes(hasText(expected.text, substring = true))
                     .fetchSemanticsNodes().isNotEmpty()
+                is Expected.DisplayedTag -> try {
+                    composeTestRule.onNodeWithTag(expected.tag).assertIsDisplayed()
+                    true
+                } catch (notDisplayed: AssertionError) {
+                    false
+                }
             }
             // Some states (a sheet whose own content waits on a nested poll, e.g. Log's filter
             // sheet's facet counts) are not necessarily settled by one `waitForIdle` - retry with

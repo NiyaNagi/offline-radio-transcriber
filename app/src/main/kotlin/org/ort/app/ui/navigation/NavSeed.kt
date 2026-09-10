@@ -66,6 +66,13 @@ public data class NavSeed(
     // this one seam, no sibling why/lattice flag). Only meaningful alongside [openTransmissionId],
     // the same companion relationship [frequencyInitialView] already has to [openFrequencyHz].
     val openTransmissionRevisions: Boolean? = null,
+    // WP12 (screenshot-tour gap, register R-010..R-014/R-334: N00 `Menu.dc.html` had no tour step
+    // at all — every other designed screen did) — `true` opens the drawer on first composition,
+    // over whichever [destination] the step's own `ReaderDestination` names (`OrtNavHost`'s own
+    // `rememberDrawerState` initial value, not a synthesised tap on the header's drawer icon,
+    // which this seam exists precisely to avoid). `null`/`false` (every existing caller) changes
+    // nothing — same "unseeded behaviour by default" contract every other field here already has.
+    val openDrawer: Boolean? = null,
 ) {
     /**
      * The [ReaderDestination] this seed's own state is actually read under. The four drill-in ids
@@ -126,6 +133,7 @@ public data class NavSeed(
         searchFiltersOpen?.let { intent.putExtra(EXTRA_SEARCH_FILTERS_OPEN, it) }
         logSheetOpen?.let { intent.putExtra(EXTRA_LOG_SHEET_OPEN, it) }
         openTransmissionRevisions?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_REVISIONS, it) }
+        openDrawer?.let { intent.putExtra(EXTRA_OPEN_DRAWER, it) }
     }
 
     public companion object {
@@ -164,6 +172,9 @@ public data class NavSeed(
 
         // Round 14 — see [openTransmissionRevisions]'s own doc comment.
         public const val EXTRA_OPEN_TRANSMISSION_REVISIONS: String = "nav_open_transmission_revisions"
+
+        // WP12 — see [openDrawer]'s own doc comment.
+        public const val EXTRA_OPEN_DRAWER: String = "nav_open_drawer"
 
         /**
          * Parses [intent]'s own seed extras (any subset, including none) into a [NavSeed] — `null`
@@ -207,6 +218,7 @@ public data class NavSeed(
                 searchFiltersOpen = intent.getBooleanExtraOrNull(EXTRA_SEARCH_FILTERS_OPEN),
                 logSheetOpen = intent.getBooleanExtraOrNull(EXTRA_LOG_SHEET_OPEN),
                 openTransmissionRevisions = intent.getBooleanExtraOrNull(EXTRA_OPEN_TRANSMISSION_REVISIONS),
+                openDrawer = intent.getBooleanExtraOrNull(EXTRA_OPEN_DRAWER),
             )
             return if (seed == NavSeed()) null else seed
         }

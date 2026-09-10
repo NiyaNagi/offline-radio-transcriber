@@ -88,6 +88,23 @@ class TourIdsTest {
         }
 
     @Test
+    fun `R_TOUR_IDS_TRANSMISSION_REJECTED resolves to a real REJECTED-processingState row`() = runTest {
+        val result = Scenarios.load(context, "overnight")
+        val sessionId = requireNotNull(result.primarySessionId)
+        val db = OrtDatabase.create(context)
+
+        val seed = TourIds.resolveSeed(context, sessionId, mapOf("transmission" to "rejected"))
+
+        val transmissionId = requireNotNull(seed?.openTransmissionId) { "no id resolved for 'rejected'" }
+        val row = db.transmissionDao().getById(transmissionId)
+        assertEquals(
+            "'rejected' should resolve to a real REJECTED-processingState row",
+            org.ort.core.TransmissionState.REJECTED,
+            row?.processingState,
+        )
+    }
+
+    @Test
     fun `R_TOUR_IDS_STATION_CALLSIGN a callsign resolves to that station's real database id`() = runTest {
         Scenarios.load(context, "stations-14-nights")
         val db = OrtDatabase.create(context)
