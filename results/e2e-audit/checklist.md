@@ -30,15 +30,15 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-B01 | FR-RIG-1 | `RigModule` contract exactly as §7.6; `RigState` timestamped with `sourceConfidence` | unit | WPA | open |
-| E2-B02 | FR-RIG-2, FR-RIG-18 | Null module with `capabilities = {}` and manual frequency; always in the catalogue | unit | WPA | open |
-| E2-B03 | FR-RIG-4, FR-RIG-11 | Descriptor loader + validator; an invalid descriptor falls back to null with a stated error, never blocks | unit (a corrupt descriptor, a descriptor with an unknown transport, a newer version — FR-AST-7) | WPA | open |
-| E2-B04 | FR-RIG-3, FR-RIG-14, D23 | TH-D75A descriptor: `FQ`/`BY`/`FO`/`AI`/`BL` per `docs/reference/th-d75a-cat.md`, both bands, `AI` push, **both transports with identical capabilities** | unit (`AC_133_parity`: the capability set is equal across transports) | WPA | open |
-| E2-B05 | FR-RIG-14 | Generic ASCII CAT descriptor: frequency and mode, both transports | unit | WPA | open |
-| E2-B06 | FR-RIG-16, FR-RIG-17 | Catalogue generated from the descriptor set; adding a descriptor adds an entry with per-transport capabilities, no code change | unit (`AC_134`: a descriptor dropped into the set appears with its transports) | WPA | open |
-| E2-B07 | FR-RIG-19 | Descriptor import from a file validates through the same validator | unit | WPA | open |
-| E2-B08 | constitution II | `FakeRigTransport` can hang, fail to open, drop mid-stream, return garbage; `FakeRigModule` exists | unit (each failure mode has a test that uses it) | WPA | open |
-| E2-B09 | FR-RIG-6 | Rig state correlated to transmissions by time; a mid-transmission change recorded at start and flagged | unit | WPA / WPC2 | open |
+| E2-B01 | FR-RIG-1 | `RigModule` contract exactly as §7.6; `RigState` timestamped with `sourceConfidence` | unit (`FakeRigModuleTest`, `FakeRigTransportTest`) | WPA | fixed — `fdbe146`/`3bed6da`, gate on main pending |
+| E2-B02 | FR-RIG-2, FR-RIG-18 | Null module with `capabilities = {}` and manual frequency; always in the catalogue | unit (`NullRigModuleTest`, `RigCatalogueTest.AC_135_*`) | WPA | fixed — `3bed6da` |
+| E2-B03 | FR-RIG-4, FR-RIG-11 | Descriptor loader + validator; an invalid descriptor falls back to null with a stated error, never blocks | unit (`DescriptorValidatorTest` ×8 incl. `FR_AST_7_*`, `DescriptorLoaderTest` ×4) | WPA | fixed — `3bed6da` |
+| E2-B04 | FR-RIG-3, FR-RIG-14, D23 | TH-D75A descriptor: `FQ`/`BY`/`FO`/`AI`/`BL` per `docs/reference/th-d75a-cat.md`, both bands, `AI` push, **both transports with identical capabilities** | unit (`ThD75aDescriptorTest.AC_133_parity`, `D23 a BY change on band B…`) — **`MODE` deliberately not claimed**: `docs/reference/th-d75a-cat.md` marks the `FO` field position unverified, so the descriptor asserts FREQUENCY/SQUELCH_STATE/SUB_BAND only (Principle I). H1 verifies `FO` on the radio; then `MODE` is added and FR-RIG-3's minimum is met | WPA | fixed for what is verifiable — `3bed6da`; `MODE` waits on H1 |
+| E2-B05 | FR-RIG-14 | Generic ASCII CAT descriptor: frequency and mode, both transports | unit (`BundledDescriptors`/`RigCatalogueTest`) | WPA | fixed — `3bed6da` |
+| E2-B06 | FR-RIG-16, FR-RIG-17 | Catalogue generated from the descriptor set; adding a descriptor adds an entry with per-transport capabilities, no code change | unit (`RigCatalogueTest.AC_134_*`) | WPA | fixed — `3bed6da` |
+| E2-B07 | FR-RIG-19 | Descriptor import from a file validates through the same validator | unit (`RigCatalogueTest.FR_RIG_19_*`) | WPA | fixed — `3bed6da` |
+| E2-B08 | constitution II | `FakeRigTransport` can hang, fail to open, drop mid-stream, return garbage; `FakeRigModule` exists | unit (`FakeRigTransportTest` — hang, open failure, drop, garbage, push) | WPA | fixed — `3bed6da` |
+| E2-B09 | FR-RIG-6 | Rig state correlated to transmissions by time; a mid-transmission change recorded at start and flagged | unit (`DescriptorRigModuleTest.FR_RIG_6_*`; the session-side correlation is WPC2) | WPA / WPC2 | fixed (rig half) — `3bed6da` |
 
 ## C — Transports (`:rig-usb`, `:rig-bluetooth`)
 
