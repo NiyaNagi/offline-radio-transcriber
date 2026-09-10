@@ -1,5 +1,6 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
@@ -49,6 +50,7 @@ public fun NotificationsScreen(onAllow: () -> Unit, onSkip: () -> Unit, onBack: 
             text = stringResource(R.string.setup_notify_body),
             style = OrtType.bodyProse,
             color = OrtColors.textSecondary,
+            modifier = Modifier.background(androidx.compose.ui.graphics.Color.Magenta),
         )
         // Setup-Notify.dc.html's own illustrative reading -- the same figures the pre-WP2-follow-up
         // markup showed, now through the shared component `Capture-Notification.dc.html` names.
