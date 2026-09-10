@@ -6,6 +6,20 @@ import androidx.room.Query
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TerminationReason
 
+/**
+ * FR-CAP-13, AC-129 (schema v7): the minimal shape a later reader (WPC2's `RealCaptureService`,
+ * WPE's settings screens, WPF's status/digest surfaces) needs to distinguish a session's capture
+ * mode and route without loading the whole [SessionEntity] — see [SessionDao.getCaptureInfo].
+ */
+public data class SessionCaptureInfo(
+    val id: String,
+    val captureMode: String?,
+    val audioRouteKind: String?,
+    val audioRouteLabel: String?,
+    val bluetoothProfile: String?,
+    val rigTransport: String?,
+)
+
 @Dao
 public interface SessionDao {
 
@@ -39,4 +53,14 @@ public interface SessionDao {
             "WHERE id = :id AND endedAt IS NULL",
     )
     public suspend fun closeIfStillOpen(id: String, endedAt: Long, terminationReason: TerminationReason?)
+
+    /**
+     * FR-CAP-13, AC-129: the fields that distinguish room audio from a radio session, without
+     * reading anything else about it — never reads audio, matching AC-129's own criterion.
+     */
+    @Query(
+        "SELECT id, captureMode, audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport " +
+            "FROM session WHERE id = :id",
+    )
+    public suspend fun getCaptureInfo(id: String): SessionCaptureInfo?
 }

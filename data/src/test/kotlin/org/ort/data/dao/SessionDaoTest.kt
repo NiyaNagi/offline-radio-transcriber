@@ -3,6 +3,7 @@ package org.ort.data.dao
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -88,5 +89,48 @@ public class SessionDaoTest {
         val session = db.sessionDao().getById("S1")
         assertNull(session?.endedAt)
         assertNull(session?.terminationReason)
+    }
+
+    /**
+     * FR-CAP-13, AC-129: a session row distinguishes room audio from a radio session — readable
+     * back distinctly through [org.ort.data.dao.SessionDao.getCaptureInfo], without touching any
+     * audio at all (this test inserts no transmission, no transcript, nothing but the session row).
+     */
+    @Test
+    @Requirement("AC-129", "FR-CAP-13")
+    public fun AC_129_session_row_distinguishes_room_from_radio(): Unit = runTest {
+        db.sessionDao().insert(
+            TestFixtures.session("ROOM-1").copy(
+                captureMode = "LOCAL_MICROPHONE",
+                audioRouteKind = "BUILT_IN_MIC",
+                audioRouteLabel = "Built-in Microphone",
+                bluetoothProfile = null,
+                rigTransport = null,
+            ),
+        )
+        db.sessionDao().insert(
+            TestFixtures.session("RADIO-1").copy(
+                captureMode = "USB_RADIO",
+                audioRouteKind = "USB",
+                audioRouteLabel = "USB Audio Adapter",
+                bluetoothProfile = null,
+                rigTransport = "USB_SERIAL",
+            ),
+        )
+
+        val room = db.sessionDao().getCaptureInfo("ROOM-1")
+        val radio = db.sessionDao().getCaptureInfo("RADIO-1")
+
+        assertEquals("LOCAL_MICROPHONE", room?.captureMode)
+        assertEquals("BUILT_IN_MIC", room?.audioRouteKind)
+        assertNull(room?.rigTransport)
+
+        assertEquals("USB_RADIO", radio?.captureMode)
+        assertEquals("USB", radio?.audioRouteKind)
+        assertEquals("USB_SERIAL", radio?.rigTransport)
+
+        // Distinctly readable, not merely both non-null: they never collide with each other.
+        assertNotEquals(room?.captureMode, radio?.captureMode)
+        assertNotEquals(room?.audioRouteKind, radio?.audioRouteKind)
     }
 }
