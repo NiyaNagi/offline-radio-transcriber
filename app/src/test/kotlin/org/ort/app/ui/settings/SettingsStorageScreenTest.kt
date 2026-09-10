@@ -32,6 +32,8 @@ import org.ort.app.ui.theme.OrtTheme
 import org.ort.app.ui.theme.OrtType
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import java.util.Locale
 
 /**
  * R-133/R-150/R-251 (register, rounds 4 and 6 System validator): the storage screen's new "when
@@ -496,5 +498,204 @@ class SettingsStorageScreenTest {
         // to "Reco"/"U" with no way to reach the rest; a `FlowRow` wraps the whole entry onto its
         // own line instead of clipping or splitting it.
         composeTestRule.onNodeWithText("Records 0.0 GB").assertExists()
+    }
+
+    // CI non-determinism fix (2026-09-10, GitHub Actions run 34454049354 on the `v0.1.1` tag
+    // build, `SettingsContentTest > R_090 initialScreen STORAGE …`): the tests below pin the
+    // arithmetic [StorageCategoryBreakdown] and [roundsToZeroGb] must hold regardless of default
+    // JVM locale, category shape, or the real container widths this screen renders at (the same
+    // boundaries `OrtThemeScaleTest` establishes for R-600's own scaled density) — see
+    // [StorageCategoryBreakdown]'s own doc comment for the full mechanism this closes.
+
+    @Test
+    fun `roundsToZeroGb pins the exact tenth-of-a-GB boundary the legend's own percent-point-1f rounds to`() {
+        // Below 0.05 GB (50_000_000 bytes) rounds down to "0.0 GB"; at or above it, "%.1f" rounds
+        // up to "0.1 GB" or higher — the direct, numeric proof of the boundary this function must
+        // agree with the legend's own `toGigabyteLabel()` formatting on, without going through any
+        // string formatting (or its locale) to check it.
+        assert(roundsToZeroGb(0L)) { "expected exactly zero bytes to round to zero GB" }
+        assert(roundsToZeroGb(49_999_999L)) { "expected just under the 0.05 GB boundary to round to zero GB" }
+        assert(!roundsToZeroGb(50_000_000L)) {
+            "expected exactly 0.05 GB (the half-up rounding boundary) to NOT round to zero GB"
+        }
+        assert(!roundsToZeroGb(1_000_000_000L)) { "expected a real 1.0 GB total to not round to zero GB" }
+        // Defensive: a negative total (never produced by real accounting — bytes are always summed
+        // non-negative — but never trusted blindly either) always reads as "zero," never as a
+        // negative division source for the caller.
+        assert(roundsToZeroGb(-1L)) { "expected a negative byte total to round to zero GB defensively" }
+    }
+
+    @Test
+    @Requirement("R-760")
+    fun `the empty-track guard survives a non-English default JVM locale, the actual CI-failure mechanism`() {
+        // This is the direct regression test for the root cause found investigating CI run
+        // 34454049354: `Long.toGigabyteLabel()` formats with `String.format`, which resolves
+        // `java.util.Locale.getDefault()` — the JVM process's own default locale, never pinned to
+        // `Locale.ROOT` and never influenced by Robolectric's simulated `Configuration` locale. A
+        // guard that compared against the hardcoded, period-decimal literal `"0.0 GB"` could read a
+        // genuinely-zero total as "not zero" under any default locale whose decimal separator is
+        // not `.` — entering the segment loop with a `0L` denominator and producing an infinite
+        // weight for every segment. `roundsToZeroGb` never formats a string at all, so this must
+        // hold under every locale, not just the host's own.
+        val previousLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.GERMANY)
+            val allZeroStore = state().copy(
+                categories = listOf(
+                    SettingsStorageCategoryViewState("Audio", 0L),
+                    SettingsStorageCategoryViewState("Models", 0L),
+                    SettingsStorageCategoryViewState("Records", 0L),
+                    SettingsStorageCategoryViewState("Lexicon", 0L),
+                ),
+            )
+            composeTestRule.setContent {
+                OrtTheme {
+                    SettingsStorageScreen(state = allZeroStore, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+                }
+            }
+
+            // The direct proof: still the empty track, zero coloured segments — never an exception
+            // during composition (which would fail this test on its own) and never a full-bar fill.
+            val barHeight = composeTestRule.onNodeWithTag(STORAGE_BAR_TEST_TAG).fetchSemanticsNode().size.height
+            assert(barHeight > 0) { "expected the empty track itself to still render, got ${barHeight}px" }
+            composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(0)
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
+    }
+
+    @Test
+    @Requirement("R-760")
+    fun `a near-zero total under a non-English locale still draws only the empty track, never a real segment`() {
+        // R-760's own real-device shape (one small-but-nonzero category, three genuinely zero)
+        // combined with the locale regression above — the two edge cases compound, since a comma-
+        // decimal locale changes what `toGigabyteLabel()` itself would have printed for the small
+        // nonzero category too, not just for an all-zero store.
+        val previousLocale = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.GERMANY)
+            val nearZeroStore = state().copy(
+                categories = listOf(
+                    SettingsStorageCategoryViewState("Audio", 0L),
+                    SettingsStorageCategoryViewState("Models", 0L),
+                    SettingsStorageCategoryViewState("Records", 40_000_000L),
+                    SettingsStorageCategoryViewState("Lexicon", 0L),
+                ),
+            )
+            composeTestRule.setContent {
+                OrtTheme {
+                    SettingsStorageScreen(
+                        state = nearZeroStore,
+                        onBack = {},
+                        onSetBudgetGb = {},
+                        onToggleAutoPrune = {},
+                    )
+                }
+            }
+
+            composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(0)
+        } finally {
+            Locale.setDefault(previousLocale)
+        }
+    }
+
+    @Test
+    @Requirement("R-441")
+    fun `a single real category among three zero ones still draws all four segments, none infinite or negative`() {
+        // One-category-store boundary: only "Records" carries real bytes, the other three are
+        // genuinely zero and rely on the `coerceAtLeast(1L)` floor — every one of the four must
+        // still measure to a finite, positive weight (a crash here, not a wrong count, is the
+        // direct proof a non-finite weight was ever computed).
+        val oneCategoryStore = state().copy(
+            categories = listOf(
+                SettingsStorageCategoryViewState("Audio", 0L),
+                SettingsStorageCategoryViewState("Models", 0L),
+                SettingsStorageCategoryViewState("Records", 500_000_000L),
+                SettingsStorageCategoryViewState("Lexicon", 0L),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsStorageScreen(state = oneCategoryStore, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+            }
+        }
+
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(4)
+    }
+
+    @Test
+    fun `the usage bar renders without crashing at a very narrow track width, all-zero data`() {
+        // A track far narrower than any real device gives the empty-track branch (never entered
+        // here, since the store is all-zero, so no weighted segment is ever measured against this
+        // width) — the direct proof the guard's own correctness does not depend on how much real
+        // width the bar has to divide.
+        val allZeroStore = state().copy(
+            categories = listOf(
+                SettingsStorageCategoryViewState("Audio", 0L),
+                SettingsStorageCategoryViewState("Models", 0L),
+                SettingsStorageCategoryViewState("Records", 0L),
+                SettingsStorageCategoryViewState("Lexicon", 0L),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                Box(modifier = Modifier.width(4.dp)) {
+                    SettingsStorageScreen(state = allZeroStore, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+                }
+            }
+        }
+
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(0)
+    }
+
+    @Test
+    fun `the usage bar renders four finite segments at a very narrow track width, real data`() {
+        // The narrow-track counterpart with real, substantial categories — every segment's weight
+        // is still a finite, positive share of the total regardless of how few real pixels the
+        // track itself has to divide among them.
+        composeTestRule.setContent {
+            OrtTheme {
+                Box(modifier = Modifier.width(4.dp)) {
+                    SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+                }
+            }
+        }
+
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(4)
+    }
+
+    @Test
+    @Config(qualifiers = "w390dp-h844dp-xhdpi")
+    fun `R_600 at the board's own 390dp width, an all-zero store still draws only the empty track`() {
+        // The exact width `OrtThemeScaleTest`'s own R-600 boundary establishes as scale 1.0 —
+        // confirms the guard holds at the width R-600's scaling was built around, not only at
+        // whatever this host's own default Robolectric config happens to simulate.
+        val allZeroStore = state().copy(
+            categories = listOf(
+                SettingsStorageCategoryViewState("Audio", 0L),
+                SettingsStorageCategoryViewState("Models", 0L),
+                SettingsStorageCategoryViewState("Records", 0L),
+                SettingsStorageCategoryViewState("Lexicon", 0L),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsStorageScreen(state = allZeroStore, onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+            }
+        }
+
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(0)
+    }
+
+    @Test
+    @Config(qualifiers = "w600dp-h800dp-mdpi")
+    fun `R_600 at the 600dp clamp width, real data still renders four finite segments`() {
+        // The exact width `OrtThemeScaleTest`'s own R-600 boundary establishes as the 1.35 scale
+        // clamp — the widest real density multiplier this screen ever lays out at.
+        composeTestRule.setContent {
+            OrtTheme { SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {}) }
+        }
+
+        composeTestRule.onAllNodesWithTag(STORAGE_BAR_SEGMENT_TEST_TAG).assertCountEquals(4)
     }
 }

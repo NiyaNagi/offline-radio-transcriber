@@ -426,11 +426,45 @@ private fun NextDeletionMarker(modifier: Modifier = Modifier) {
  * large enough, next to three *genuinely* zero categories each floored to `coerceAtLeast(1L)`, to
  * claim effectively the entire weighted total — one category filling the bar while its own legend
  * entry, and every sibling's, claims nothing does: the opposite of the fact, not a rounding
- * curiosity. The guard now checks the same rounding precision the legend already commits to
- * ([realTotalBytes]`.toGigabyteLabel() != "0.0 GB"`) instead of a raw byte comparison, so the bar
- * and the legend can never disagree about whether there is anything here to show — real,
- * substantial values still render as real segments exactly as before; anything the legend itself
- * would call "0.0 GB" everywhere draws the plain empty track instead.
+ * curiosity. The guard checks the same rounding precision the legend already commits to
+ * ([roundsToZeroGb]) instead of a raw byte comparison, so the bar and the legend can never
+ * disagree about whether there is anything here to show — real, substantial values still render as
+ * real segments exactly as before; anything the legend itself would call "0.0 GB" everywhere draws
+ * the plain empty track instead.
+ *
+ * CI non-determinism fix (2026-09-10, GitHub Actions run 34454049354 on the `v0.1.1` tag build,
+ * `SettingsContentTest > R_090 initialScreen STORAGE …`; identical commit passed the parallel
+ * `main` run, `ComposeTimeoutException` paired with `ArrayIndexOutOfBoundsException: Index -71 out
+ * of bounds for length 640`): R-760's own fix, on this exact line, originally spelled the "rounds
+ * to zero" check as `realTotalBytes.toGigabyteLabel() != "0.0 GB"` — a comparison against a
+ * hardcoded, period-decimal literal, but [Long.toGigabyteLabel] builds that string with Kotlin's
+ * `String.format`, which formats using the **JVM process's own default [java.util.Locale]**
+ * ([java.util.Locale.getDefault]), never [org.ort.app.ui.settings]'s Robolectric-simulated
+ * `Configuration` locale and never pinned to [java.util.Locale.ROOT] — under any default locale
+ * whose decimal separator is not `.` (most of Europe, among others), formatting a genuinely-zero
+ * total renders e.g. `"0,0 GB"`, which never equals the hardcoded `"0.0 GB"` the guard compared
+ * against. The guard would then read a real, exactly-zero `realTotalBytes` as "not zero," entering
+ * the segment loop with a `0L` denominator: `category.bytes.coerceAtLeast(1L).toFloat() /
+ * realTotalBytes` (a `Float` divided by a zero `Long`) is IEEE-754 float division, not integer
+ * division — it does not throw, it silently produces [Float.POSITIVE_INFINITY] for every category,
+ * a weight [androidx.compose.foundation.layout.RowScope.weight]'s own `> 0` check accepts (infinity
+ * *is* greater than zero) but Compose's weighted-`Row` measurement cannot turn into a finite pixel
+ * width — exactly the class of corrupt, non-finite layout arithmetic that a downstream array-sized
+ * drawing/measurement buffer indexed with a garbage offset (this run's own `Index -71` into a
+ * `length 640` buffer) is consistent with, and that would leave composition never reaching a
+ * consistent idle state (this run's own paired `ComposeTimeoutException`, from `waitUntil` polling
+ * a composition that can never settle). Not confirmed to a single reproduced stack trace on this
+ * host — a genuinely non-English default JVM locale on the exact CI runner that failed, one run
+ * only, was not itself reproducible after the fact — but real regardless of whether it is *this*
+ * run's whole story: [Long.toGigabyteLabel]'s `String.format` was never guaranteed to render `.`,
+ * and a formatted-string comparison is not how a numeric "is this exactly/effectively zero" check
+ * belongs written. Fixed by replacing the string comparison with [roundsToZeroGb] — the identical
+ * one-decimal-place rounding arithmetic `%.1f` performs, done directly on the `Double` value with
+ * no [java.util.Locale] or string formatting involved anywhere in the guard, so it cannot
+ * disagree with itself between hosts, JVMs, or locales the way the string comparison could. The
+ * per-segment `weight()` call is now unreachable with a zero or negative denominator by
+ * construction (the outer `if` excludes every `realTotalBytes <= 0L` case before the loop runs at
+ * all), so the division can never again produce an infinite or `NaN` weight.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -454,18 +488,27 @@ private fun StorageCategoryBreakdown(
                 .testTag(STORAGE_BAR_TEST_TAG),
             horizontalArrangement = Arrangement.spacedBy(1.dp),
         ) {
-            // R-441/R-760: a store whose real total rounds to the same "0.0 GB" the legend below
-            // already displays draws no segments at all — the track's own background above is the
-            // empty state; see this composable's own doc comment for why a raw `> 0L` byte check
-            // is not used instead (it let a small but nonzero total, invisible in every category's
-            // own rounded legend entry, still fill the bar almost entirely).
+            // R-441/R-760/CI non-determinism fix (2026-09-10): a store whose real total rounds to
+            // the same "0.0 GB" the legend below already displays draws no segments at all — the
+            // track's own background above is the empty state; see this composable's own doc
+            // comment for why a raw `> 0L` byte check is not used instead (it let a small but
+            // nonzero total, invisible in every category's own rounded legend entry, still fill
+            // the bar almost entirely), and for why this is [roundsToZeroGb] on the raw `Double`
+            // rather than a `.toGigabyteLabel() != "0.0 GB"` string comparison (locale-fragile —
+            // `String.format` renders a non-`.` decimal separator under a non-English default
+            // JVM locale, so the string comparison could silently fail to recognise an exactly-zero
+            // total and let the loop below divide by that zero denominator). `realTotalBytes > 0L`
+            // is the same guarantee [roundsToZeroGb] already gives for every real input (bytes are
+            // never negative), kept explicit so the per-segment `weight()` division a few lines
+            // down is *unreachable* with a zero or negative denominator by construction, not just
+            // by the rounding check happening to agree with it.
             val realTotalBytes = categories.sumOf { it.bytes }
-            if (realTotalBytes.toGigabyteLabel() != "0.0 GB") {
+            if (realTotalBytes > 0L && !roundsToZeroGb(realTotalBytes)) {
                 categories.forEach { category ->
                     Row(
                         modifier = Modifier
                             .fillMaxHeight()
-                            .weight(category.bytes.coerceAtLeast(1L).toFloat() / realTotalBytes)
+                            .weight(category.bytes.coerceAtLeast(1L).toFloat() / realTotalBytes.toFloat())
                             .background(categoryColor(category.label))
                             .testTag(STORAGE_BAR_SEGMENT_TEST_TAG),
                     ) {}
@@ -504,6 +547,18 @@ private fun StorageCategoryBreakdown(
 private fun ColorSwatch(color: Color, modifier: Modifier = Modifier) {
     Box(modifier = modifier.size(STORAGE_SWATCH_SIZE).background(color, RoundedCornerShape(2.dp)))
 }
+
+/**
+ * CI non-determinism fix (2026-09-10): the exact one-decimal-place-GB rounding
+ * [Long.toGigabyteLabel]'s `"%.1f"` performs (round-half-up against the tenth-of-a-GB boundary),
+ * done directly on the numeric value with no [java.util.Locale] or string formatting anywhere in
+ * the computation — see [StorageCategoryBreakdown]'s own doc comment for why the two must never
+ * again disagree the way a `.toGigabyteLabel() != "0.0 GB"` string comparison could under a
+ * non-English default JVM locale. `bytes <= 0L` (never negative for a real total, but checked
+ * directly rather than assumed) always rounds to zero without going through floating-point
+ * rounding at all.
+ */
+internal fun roundsToZeroGb(bytes: Long): Boolean = bytes <= 0L || Math.round(bytes / 1_000_000_000.0 * 10.0) == 0L
 
 private val STORAGE_BAR_HEIGHT = 8.dp
 private val STORAGE_BAR_CORNER_RADIUS = 4.dp
