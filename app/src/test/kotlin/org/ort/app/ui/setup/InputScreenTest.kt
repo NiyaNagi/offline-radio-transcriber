@@ -130,4 +130,42 @@ class InputScreenTest {
         composeTestRule.onNodeWithTag("setup-input-refresh").performClick()
         assert(refreshed)
     }
+
+    // --- D33/E2-E06 (spec/e2e-capture-modes-plan.md WPD): the preset chip -----------------------
+
+    @Test
+    fun `E2_E06 a non-null presetLabel renders the preset chip naming the mode`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                InputScreen(
+                    state = InputViewState(
+                        routes = listOf(usb),
+                        selectedId = "usb-1",
+                        presetLabel = "USB-connected radio",
+                    ),
+                    onSelect = {},
+                    onRefresh = {},
+                    onVerify = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-input-preset-chip").assertExists()
+    }
+
+    @Test
+    fun `E2_E06 a null presetLabel omits the chip entirely, eg once the operator has overridden it`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                InputScreen(
+                    state = InputViewState(routes = listOf(usb), selectedId = "usb-1", presetLabel = null),
+                    onSelect = {},
+                    onRefresh = {},
+                    onVerify = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-input-preset-chip").assertDoesNotExist()
+    }
 }

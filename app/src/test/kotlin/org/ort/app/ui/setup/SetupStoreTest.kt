@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.RigTransportKind
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -37,6 +39,14 @@ class SetupStoreTest {
         assert(store.radioChoice == null)
         assert(store.manualFrequencyHz == null)
         assert(!store.setupComplete)
+        assert(store.captureMode == null)
+        assert(!store.bluetoothPermissionDeclined)
+        assert(store.rigId == null)
+        assert(store.rigTransport == null)
+        assert(store.rigBluetoothAddress == null)
+        assert(!store.rigBluetoothVerified)
+        assert(!store.modeOverriddenAudio)
+        assert(!store.modeOverriddenRig)
     }
 
     @Test
@@ -56,6 +66,14 @@ class SetupStoreTest {
         store.radioChoice = RadioChoice.TH_D75A
         store.manualFrequencyHz = 145_230_000L
         store.setupComplete = true
+        store.captureMode = CaptureMode.BLUETOOTH_RADIO
+        store.bluetoothPermissionDeclined = true
+        store.rigId = "kenwood-thd75a"
+        store.rigTransport = RigTransportKind.BLUETOOTH_SPP
+        store.rigBluetoothAddress = "AA:BB:CC:DD:EE:FF"
+        store.rigBluetoothVerified = true
+        store.modeOverriddenAudio = true
+        store.modeOverriddenRig = true
 
         val reread = SharedPreferencesSetupStore(
             ApplicationProvider.getApplicationContext<Application>()
@@ -76,6 +94,14 @@ class SetupStoreTest {
         assert(reread.radioChoice == RadioChoice.TH_D75A)
         assert(reread.manualFrequencyHz == 145_230_000L)
         assert(reread.setupComplete)
+        assert(reread.captureMode == CaptureMode.BLUETOOTH_RADIO)
+        assert(reread.bluetoothPermissionDeclined)
+        assert(reread.rigId == "kenwood-thd75a")
+        assert(reread.rigTransport == RigTransportKind.BLUETOOTH_SPP)
+        assert(reread.rigBluetoothAddress == "AA:BB:CC:DD:EE:FF")
+        assert(reread.rigBluetoothVerified)
+        assert(reread.modeOverriddenAudio)
+        assert(reread.modeOverriddenRig)
     }
 
     @Test
@@ -127,5 +153,24 @@ class SetupStoreTest {
         assert(snapshot.overnightStepSeen)
         assert(snapshot.radioChoice == RadioChoice.NONE)
         assert(!snapshot.setupComplete)
+    }
+
+    @Test
+    fun `D33 snapshot mirrors the capture-mode and rig-transport axes too`() {
+        val store = InMemorySetupStore(
+            welcomeSeen = true,
+            captureMode = CaptureMode.BLUETOOTH_RADIO,
+            bluetoothPermissionDeclined = true,
+            radioChoice = RadioChoice.TH_D75A,
+            rigTransport = RigTransportKind.BLUETOOTH_SPP,
+            rigBluetoothVerified = true,
+        )
+
+        val snapshot = store.snapshot()
+
+        assert(snapshot.captureMode == CaptureMode.BLUETOOTH_RADIO)
+        assert(snapshot.bluetoothPermissionDeclined)
+        assert(snapshot.rigTransport == RigTransportKind.BLUETOOTH_SPP)
+        assert(snapshot.rigBluetoothVerified)
     }
 }

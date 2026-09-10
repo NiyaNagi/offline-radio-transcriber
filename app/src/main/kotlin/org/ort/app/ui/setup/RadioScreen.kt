@@ -1,7 +1,10 @@
+@file:Suppress("MatchingDeclarationName") // RadioPickerViewState is one of several public declarations here.
+
 package org.ort.app.ui.setup
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -12,30 +15,45 @@ import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.setup.RigPickerCatalogue.pickerOrder
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
+import org.ort.rig.NullRigModule
+import org.ort.rig.catalogue.RigCatalogue
+import org.ort.rig.catalogue.RigCatalogueEntry
+
+/** S09's whole view-state (`Setup-Rig.dc.html`, D33/FR-RIG-16). [presetLabel] is `null` once the
+ * operator has overridden the rig-transport preset ([SetupStore.modeOverriddenRig]). [importError]
+ * is the message from a rejected `Import it` attempt (FR-RIG-19), cleared on the next successful
+ * pick. */
+public data class RadioPickerViewState(
+    val catalogue: RigCatalogue,
+    val presetLabel: String? = null,
+    val importError: String? = null,
+)
 
 /**
- * S09 (`Setup-Rig.dc.html`, R-084) — the three [RadioChoice]s as [NavigationRow]s (guide §6.11's
- * "closed set is a visible list", each navigating on tap rather than a separate `Continue`; the
- * board itself has no filled button, only `Not now`). Selecting TH-D75A or another CAT rig moves
- * to [RadioUsbScreen]/[RadioVerifiedScreen] depending on [org.ort.pipeline.capture.RigStatus] —
- * see [SetupActivity] for that dispatch, which this screen does not know about.
- *
- * [banner] (register R-120..R-125 follow-up): non-null when [SetupActivity] has just routed back
- * here after an S11 verification found [org.ort.pipeline.capture.RigStatus.State.Absent]
- * unexpectedly — "routes back to S09 with a banner, never a blank screen" (the validator finding's
- * own words). `null` on every ordinary visit to this step.
+ * S09 (`Setup-Rig.dc.html`, D33, FR-RIG-1/16/17/18/19) — generated from `:rig`'s [RigCatalogue]
+ * (via [RigPickerCatalogue]), never a hardcoded three-row list. Every entry is a [NavigationRow]
+ * with the catalogue's own generated capability sub-line; the null module and the generic entry
+ * are the picker's last two rows (AC-135), immediately above `Import it`. Choosing a real rig
+ * moves to S09b ([SetupStep.RIG_TRANSPORT]); choosing the null module ("No radio") or the bottom
+ * `Not now` both mean the same thing S09 has always meant for that choice — manual frequency entry
+ * (R-344's fix, unchanged).
  */
 @Composable
-public fun RadioScreen(onChoose: (RadioChoice) -> Unit, onNotNow: () -> Unit, banner: String? = null) {
+public fun RadioScreen(
+    state: RadioPickerViewState,
+    onChoose: (RigCatalogueEntry) -> Unit,
+    onImport: () -> Unit,
+    onNotNow: () -> Unit,
+    banner: String? = null,
+) {
     SetupScaffold(
         step = SetupStep.RADIO,
         title = "Radio",
         subtitle = "Read the frequency and squelch from the rig itself",
         onBack = null,
-        // R-343: `Setup-Rig.dc.html`'s own "optional" tag beside the title -- the one step in the
-        // sequence a radio genuinely is optional (S09's own third row, "No radio").
         titleOptional = true,
         bottomActions = {
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -63,27 +81,32 @@ public fun RadioScreen(onChoose: (RadioChoice) -> Unit, onNotNow: () -> Unit, ba
             style = OrtType.bodyProse,
             color = OrtColors.textSecondary,
         )
+        state.presetLabel?.let { PresetChip(modeLabel = it, modifier = Modifier.testTag("setup-radio-preset-chip")) }
         Column {
-            NavigationRow(
-                title = "Kenwood TH-D75A",
-                subtitle = "USB serial · verified command set · both bands",
-                onClick = { onChoose(RadioChoice.TH_D75A) },
-                modifier = Modifier.testTag("setup-radio-th-d75a"),
-                icon = OrtIcons.rig,
+            state.catalogue.pickerOrder().forEach { entry ->
+                NavigationRow(
+                    title = entry.displayName,
+                    subtitle = RigPickerCatalogue.subtitleFor(entry),
+                    onClick = { onChoose(entry) },
+                    modifier = Modifier.testTag("setup-radio-entry-${entry.id}"),
+                    icon = if (entry.id == NullRigModule.ID) OrtIcons.frequencies else OrtIcons.rig,
+                )
+            }
+        }
+        Row(modifier = Modifier.testTag("setup-radio-import-row")) {
+            Text(
+                text = "Have a descriptor file for another rig?",
+                style = OrtType.cardBody,
+                color = OrtColors.textDim,
             )
-            NavigationRow(
-                title = "Another rig with a serial CAT interface",
-                subtitle = "Needs a rig module · frequency only unless the module says more",
-                onClick = { onChoose(RadioChoice.OTHER_CAT_RIG) },
-                modifier = Modifier.testTag("setup-radio-other-rig"),
-                icon = OrtIcons.rig,
-            )
-            NavigationRow(
-                title = "No radio — I will enter the frequency",
-                subtitle = "Scanner, or a rig with no CAT port",
-                onClick = { onChoose(RadioChoice.NONE) },
-                modifier = Modifier.testTag("setup-radio-none"),
-                icon = OrtIcons.frequencies,
+            TextAction(text = "Import it", onClick = onImport, modifier = Modifier.testTag("setup-radio-import"))
+        }
+        state.importError?.let {
+            Text(
+                text = it,
+                style = OrtType.cardBody,
+                color = OrtColors.accentAmberText,
+                modifier = Modifier.testTag("setup-radio-import-error"),
             )
         }
     }

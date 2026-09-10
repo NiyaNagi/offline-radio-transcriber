@@ -22,9 +22,11 @@ import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.data.ModelRowStatus
+import org.ort.app.ui.data.ModelsViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
-import org.ort.pipeline.capture.AsrAvailability
+import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.RigStatus
 
 /** One `Setup-Done.dc.html` summary row — real, not fabricated: every field below is read from
@@ -208,6 +210,9 @@ public data class ReadyActions(
      * [SetupActivity.onInstallModel]'s own doc comment for exactly where it lands and why (Settings'
      * root, not its `Assets` sub-screen directly — no entry point for that exists yet). */
     val onInstallModel: () -> Unit,
+    /** D33/E2-E13 — S12's new leading Mode row's `Change` action, routing to S00
+     * ([SetupActivity.onChangeMode]). */
+    val onChangeMode: () -> Unit,
 )
 
 /**
@@ -219,9 +224,10 @@ public fun readyRowsFor(
     store: SetupStore,
     batteryExempt: Boolean,
     rigStatus: RigStatus.State,
-    asrState: AsrAvailability.State,
+    modelsState: ModelsViewState,
     actions: ReadyActions,
 ): List<ReadyRow> = listOf(
+    modeRow(store, actions.onChangeMode),
     ReadyRow(
         label = "Input",
         value = store.selectedInputLabel ?: "Not set",
@@ -240,8 +246,37 @@ public fun readyRowsFor(
         onAction = actions.onFixOvernight,
     ),
     radioRow(store, rigStatus, actions.onFixRadio, actions.onChangeRadio),
-    modelRow(asrState, actions.onInstallModel),
+    modelsRow(modelsState, actions.onInstallModel),
 )
+
+/**
+ * D33/E2-E13 — S12's new leading row (`Setup-Done.dc.html`, redrawn 2026-09-10): the mode chosen
+ * at S00, with `Change` routing back to it. The value line names the mode and, where it says
+ * something the mode's own label does not already say, the audio-route fact next to it
+ * (`"Bluetooth radio · audio by cable"` — the board's own example) — `null`/overridden cases fall
+ * back to the mode's label alone rather than fabricating a segment (constitution I).
+ */
+private fun modeRow(store: SetupStore, onChangeMode: () -> Unit): ReadyRow {
+    val mode = store.captureMode
+    return ReadyRow(
+        label = "Mode",
+        value = mode?.let { modeValueLine(it, store) } ?: "Not set",
+        ok = mode != null,
+        statusText = null,
+        actionLabel = "Change",
+        onAction = onChangeMode,
+    )
+}
+
+private fun modeValueLine(mode: CaptureMode, store: SetupStore): String {
+    val audioSegment = when {
+        store.modeOverriddenAudio -> "audio route changed"
+        mode == CaptureMode.LOCAL_MICROPHONE -> "room audio"
+        mode == CaptureMode.BLUETOOTH_RADIO -> "audio by cable"
+        else -> null
+    }
+    return listOfNotNull(mode.operatorLabel, audioSegment).joinToString(" · ")
+}
 
 /**
  * Validator finding (ui-conformance-plan WP9, register R-120..R-125 follow-up): this row must
@@ -328,20 +363,34 @@ private fun radioRowForCatRig(
     )
 }
 
-private fun modelRow(asrState: AsrAvailability.State, onInstallModel: () -> Unit): ReadyRow = when (asrState) {
-    is AsrAvailability.State.Available -> ReadyRow(
-        label = "Model",
-        value = asrState.modelRef,
-        ok = true,
-        statusText = "installed",
-        actionLabel = null,
-    )
-    is AsrAvailability.State.Unavailable, AsrAvailability.State.NotYetChecked -> ReadyRow(
-        label = "Model",
-        value = "No transcription model yet",
-        ok = false,
-        statusText = null,
-        actionLabel = "Install",
-        onAction = onInstallModel,
-    )
+/**
+ * D33/E2-E13, WPG follow-up: "Models" (renamed from "Model") reads WPG's real bundled-asset state
+ * (`ModelsController.currentState`, `app/.../ui/data/ModelsViewData.kt`) — [modelsState] is built by
+ * [SetupActivity] (the one place allowed to touch `Context`) and handed in here as plain data, per
+ * this file's own established pattern for every other row. Every row bundled and verified
+ * ([org.ort.app.ui.data.ModelRowStatus.INSTALLED]) is `Setup-Done.dc.html`'s "N bundled · checksums
+ * verified" green row; anything short of that (not yet installed, a failed verification, or a
+ * genuinely non-bundled entry not yet fetched) is the amber `Install` row, exactly as before.
+ */
+private fun modelsRow(modelsState: ModelsViewState, onInstallModel: () -> Unit): ReadyRow {
+    val rows = modelsState.rows
+    val allBundledAndVerified = rows.isNotEmpty() && rows.all { it.bundled && it.status == ModelRowStatus.INSTALLED }
+    return if (allBundledAndVerified) {
+        ReadyRow(
+            label = "Models",
+            value = "${rows.size} bundled · checksums verified",
+            ok = true,
+            statusText = "ready",
+            actionLabel = null,
+        )
+    } else {
+        ReadyRow(
+            label = "Models",
+            value = "No transcription model yet",
+            ok = false,
+            statusText = null,
+            actionLabel = "Install",
+            onAction = onInstallModel,
+        )
+    }
 }

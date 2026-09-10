@@ -32,6 +32,8 @@ import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.RigTransportKind
 import org.ort.data.OrtDatabase
 import org.ort.data.dao.CorrectionDao
 import org.ort.data.entity.CaptureGapCause
@@ -1345,6 +1347,7 @@ public object Scenarios {
         store.levelPeakDbfs = -14.0
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.NONE
+        store.rigTransport = RigTransportKind.USB_SERIAL
         store.manualFrequencyHz = 145_230_000L
         store.setupComplete = false
         return LoadResult(0, 0, null)
@@ -1431,6 +1434,7 @@ public object Scenarios {
         val store = verifiedInputStore(context)
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.NONE
+        store.rigTransport = RigTransportKind.USB_SERIAL
         store.manualFrequencyHz = 145_230_000L
         store.setupComplete = true
         val settingsPrefs = context.applicationContext.getSharedPreferences(
@@ -1472,6 +1476,10 @@ public object Scenarios {
         )
         val store = SharedPreferencesSetupStore(prefs)
         store.welcomeSeen = true
+        // D33/P19 (WPD): SetupStateMachine.stepFor now gates on captureMode before anything else
+        // -- USB_RADIO matches the "usb-1" input fixture every caller of this shared base seeds
+        // below, so each scenario's own documented resume point is reached again.
+        store.captureMode = CaptureMode.USB_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "usb-1"
         store.selectedInputLabel = "USB Audio Device"

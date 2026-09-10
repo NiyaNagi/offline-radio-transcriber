@@ -57,7 +57,7 @@ class SetupScaffoldTest {
     fun `R_120 the step counter renders exactly once, never doubled above the segment row`() {
         renderScaffold()
 
-        composeTestRule.onAllNodesWithText("1 of 7").assertCountEquals(1)
+        composeTestRule.onAllNodesWithText("2 of 8").assertCountEquals(1)
     }
 
     /** Matches `FailureScreensTest`'s/`ReaderAccessibilityTest`'s own V7 font-scale pattern — a

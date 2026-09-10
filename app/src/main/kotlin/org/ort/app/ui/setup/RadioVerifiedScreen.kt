@@ -49,9 +49,15 @@ public fun RadioVerifiedScreen(
     onContinue: () -> Unit,
     onChangeRadio: () -> Unit,
     onReconnect: () -> Unit,
+    /** D33/E2-E12/FR-RIG-14 — the transport this rig is connected over ("USB serial"/"Bluetooth
+     * SPP"), named in the subtitle so S11 never leaves the operator to guess which link this
+     * verified session is actually reading from. `null` only for a caller with nothing real to
+     * report yet (never reachable through [SetupActivity]'s own dispatch, which always knows
+     * [SetupStore.rigTransport] by the time this screen renders). */
+    transportLabel: String? = null,
 ) {
     when (state) {
-        is RigStatus.State.Connected -> RadioVerifiedConnected(state, onContinue, onChangeRadio)
+        is RigStatus.State.Connected -> RadioVerifiedConnected(state, transportLabel, onContinue, onChangeRadio)
         is RigStatus.State.Stale -> RadioVerifiedStale(state, onReconnect, onChangeRadio)
         is RigStatus.State.Absent -> {
             // See this file's own doc comment: the caller routes Absent away before ever
@@ -64,13 +70,18 @@ public fun RadioVerifiedScreen(
 @Composable
 private fun RadioVerifiedConnected(
     connected: RigStatus.State.Connected,
+    transportLabel: String?,
     onContinue: () -> Unit,
     onChangeRadio: () -> Unit,
 ) {
     SetupScaffold(
         step = SetupStep.RADIO_VERIFIED,
         title = "${connected.descriptor} connected",
-        subtitle = "Identified and verified",
+        subtitle = if (transportLabel != null) {
+            "$transportLabel · identified and verified"
+        } else {
+            "Identified and verified"
+        },
         onBack = null,
         bottomActions = {
             PrimaryButton(

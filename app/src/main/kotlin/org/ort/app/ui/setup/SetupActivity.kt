@@ -11,6 +11,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -26,14 +27,24 @@ import kotlinx.coroutines.flow.collect
 import org.ort.app.MainActivity
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.capture.android.AndroidAudioIo
 import org.ort.capture.android.AudioDeviceDescriptor
-import org.ort.pipeline.capture.AsrAvailability
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.CaptureModePresets
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.rig.CaptureConfigurationStore
+import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
+import org.ort.rig.NullRigModule
+import org.ort.rig.RigTransportKind
+import org.ort.rig.catalogue.RigCatalogue
+import org.ort.rig.catalogue.RigCatalogueEntry
+import org.ort.rig.descriptor.RigDescriptor
+import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
 
 /**
  * The guided setup sequence (build-plan P8; ui-conformance-plan WP9, register R-080..R-084,
@@ -82,6 +93,12 @@ public class SetupActivity : ComponentActivity() {
     private lateinit var store: SetupStore
     private lateinit var audioIo: AndroidAudioIo
 
+    /** WPC2's contract (`:pipeline`) — what `RealCaptureService` actually reads at session start
+     * (FR-CAP-12/13, AC-131). [syncCaptureConfiguration] pushes [store]'s current facts through
+     * this on every mutation to the mode/route/rig axes; [SetupCaptureConfigurationAdapter] is the
+     * pure translation. */
+    private lateinit var captureConfigStore: CaptureConfigurationStore
+
     private var step by mutableStateOf<SetupStep?>(null)
     private val backStack = ArrayDeque<SetupStep>()
 
@@ -99,17 +116,79 @@ public class SetupActivity : ComponentActivity() {
 
     /** Set just before [RenderRadioVerified] routes an unexpected [RigStatus.State.Absent] back to
      * S09 — see that function's doc comment. Cleared the moment the operator acts on S09 again
-     * ([onChooseRadio]/[onRadioNotNow]/[onChangeRadio]), never left stale on a later, unrelated
+     * ([onChooseRig]/[onRadioNotNow]/[onChangeRadio]), never left stale on a later, unrelated
      * visit to S09. */
     private var radioAbsentBanner by mutableStateOf<String?>(null)
 
+    // --- D33/P19 (WPD): the rig catalogue, S09b/S10b state ---------------------------------------
+
+    /** Descriptors accepted this session via S09's `Import it` (FR-RIG-19) — kept in-memory only;
+     * persisting an imported descriptor across process death is `:rig`'s own asset-lifecycle
+     * concern (FR-AST-7), not this screen's. */
+    private var importedRigDescriptors by mutableStateOf<Set<RigDescriptor>>(emptySet())
+    private var radioImportError by mutableStateOf<String?>(null)
+    private var selectedRigTransportKind by mutableStateOf<RigTransportKind?>(null)
+    private var rigBluetoothDevices by mutableStateOf<List<PairedDevice>>(emptyList())
+    private var rigBluetoothSelectedAddress by mutableStateOf<String?>(null)
+    private var rigLinkState by mutableStateOf<RigLinkState?>(null)
+    private var rigLinkRunToken by mutableStateOf(0)
+
+    /** WPD's own `:app`-local seam (`RigLinkPort.kt`'s doc comment has the full account of why the
+     * real `:rig-bluetooth` adapter cannot yet be wired in here — `:app` is not on `ModuleGraph`'s
+     * allowed-edges list for `:rig-bluetooth`). An empty [InMemoryRigLinkPort] reports no paired
+     * devices at all, honestly, rather than fabricating any. */
+    private val rigLinkPort: RigLinkPort = InMemoryRigLinkPort()
+
+    private val openDescriptorLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val text = runCatching { contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }
+            .getOrNull()
+        if (text == null) {
+            radioImportError = "Could not read that file."
+            return@registerForActivityResult
+        }
+        RigCatalogue.import(text).fold(
+            onSuccess = { descriptor ->
+                importedRigDescriptors = importedRigDescriptors + descriptor
+                radioImportError = null
+            },
+            onFailure = { error -> radioImportError = error.message ?: "That file is not a valid rig descriptor." },
+        )
+    }
+
+    private val radioCatalogue: RigCatalogue get() = RigPickerCatalogue.build(importedRigDescriptors)
+
+    /** WPC2: pushes [store]'s current mode/route/rig facts through [captureConfigStore] — the
+     * contract `RealCaptureService` actually reads at session start. Called after every mutation
+     * to those axes; a no-op before S00 is walked ([SetupCaptureConfigurationAdapter] returns
+     * `null` until [SetupStore.captureMode] is set). [CaptureConfigurationStore.update] itself
+     * decides pending-vs-immediate from whether capture is running (FR-CAP-12) — this call site
+     * never needs to know which. */
+    private fun syncCaptureConfiguration() {
+        SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)?.let(captureConfigStore::update)
+    }
+
+    /** The chosen rig's [RigCatalogueEntry], recovered from [SetupStore.rigId] rather than kept as
+     * its own in-memory field — so a process death between S09 and S09b/S10b resumes correctly
+     * ([SetupStateMachine]'s `RIG_TRANSPORT`/`RIG_BLUETOOTH` gates are resumable, unlike
+     * [SetupStep.RADIO_USB]/[SetupStep.RADIO_VERIFIED]). */
+    private fun currentRigEntry(): RigCatalogueEntry? = radioCatalogue.entries().firstOrNull { it.id == store.rigId }
+
     /** Test-only window into [step] — see `MainActivity.currentScreenForTest`'s identical pattern. */
     internal val currentStepForTest: SetupStep? get() = step
+
+    /** Test-only window into [radioCatalogue] — a real `Activity`-level test cannot otherwise reach
+     * a [RigCatalogueEntry] to hand to [onChooseRig] without duplicating [RigPickerCatalogue.build]
+     * itself. */
+    internal val radioCatalogueForTest: RigCatalogue get() = radioCatalogue
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
         store = SharedPreferencesSetupStore(getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, MODE_PRIVATE))
+        captureConfigStore = SharedPreferencesCaptureConfigurationStore(
+            getSharedPreferences(SharedPreferencesCaptureConfigurationStore.PREFS_NAME, MODE_PRIVATE),
+        )
         audioIo = AndroidAudioIo(this)
         selectedInputId = store.selectedInputId
         selectedInputLabel = store.selectedInputLabel
@@ -198,6 +277,54 @@ public class SetupActivity : ComponentActivity() {
         refreshStep(pushCurrent = true)
     }
 
+    // --- S00 Mode (D33, FR-CAP-8/FR-CAP-9) --------------------------------------------------------
+
+    /**
+     * Choosing a mode presets both independent axes (FR-CAP-9): the audio route to the first
+     * enumerated route of [CaptureModePresets.presetsFor]'s preferred [org.ort.core.capture.AudioRouteKind]
+     * (present, not yet verified — S04 still walks and shows it preselected, per the board), and
+     * the rig-control transport to the preset's [org.ort.core.capture.CapturePreset.preferredRigTransportKind].
+     * Both override flags reset — a fresh mode choice starts with nothing overridden yet.
+     */
+    internal fun onChooseMode(mode: CaptureMode) {
+        store.captureMode = mode
+        val preset = CaptureModePresets.presetsFor(mode)
+        if (inputRoutes.isEmpty()) refreshInputRoutes()
+        inputRoutes.firstOrNull { it.routeKind == preset.preferredRouteKind }?.let { route ->
+            selectedInputId = route.id
+            selectedInputLabel = route.label
+            store.selectedInputId = route.id
+            store.selectedInputLabel = route.label
+        }
+        store.modeOverriddenAudio = false
+        store.rigTransport = preset.preferredRigTransportKind
+        store.modeOverriddenRig = false
+        syncCaptureConfiguration()
+        refreshStep(pushCurrent = true)
+    }
+
+    // --- S02c Bluetooth permission (D33, FR-RIG-14) -----------------------------------------------
+
+    internal fun requestBluetoothConnect() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQUEST_CODE)
+        } else {
+            // Below API 31 there is no dangerous BLUETOOTH_CONNECT permission to request at all —
+            // the legacy BLUETOOTH permission is normal-protection and already granted.
+            refreshStep()
+        }
+    }
+
+    /** S02c's "Not now — use USB instead": the mode flip itself is what stops
+     * [SetupStateMachine]'s `BLUETOOTH_PERMISSION` gate from firing again; [SetupStore
+     * .bluetoothPermissionDeclined] records the decline defensively on top of that (that state
+     * machine's own doc comment explains why both exist). Set *after* [onChooseMode] so the fresh
+     * USB-mode preset does not reset it back to `false` the instant it is written. */
+    internal fun onDeclineBluetoothPermission() {
+        onChooseMode(CaptureMode.USB_RADIO)
+        store.bluetoothPermissionDeclined = true
+    }
+
     // --- S02/S02b Microphone --------------------------------------------------------------------
 
     internal fun requestRecordAudio() {
@@ -244,6 +371,7 @@ public class SetupActivity : ComponentActivity() {
         store.selectedInputId = id
         store.selectedInputLabel = selectedInputLabel
         store.clearInputVerification()
+        syncCaptureConfiguration()
         verifyState = null
         verifyRunToken += 1
         navigateForward(SetupStep.VERIFY)
@@ -316,43 +444,130 @@ public class SetupActivity : ComponentActivity() {
         refreshStep(pushCurrent = true)
     }
 
-    // --- S09-S11 Radio --------------------------------------------------------------------------
+    // --- S09 Radio picker (D33/P19 WPD: generated from :rig's RigCatalogue) -----------------------
 
     /**
-     * R-344 (validator pass 4, halt): the third row ("No radio — I will enter the frequency") used
-     * to write [SetupStore.radioChoice] and call [refreshStep] immediately, the same instant as the
-     * tap — since that alone satisfies [SetupStateMachine.stepFor]'s `radioChoice == null -> RADIO`
-     * gate, setup advanced straight past S12 with `manualFrequencyHz` still `null`, having never
-     * asked for a frequency at all (confirmed reproduced 3× by the validator). Routed to the same
-     * frequency-entry screen ([RadioUsbScreen], S10) the CAT-rig-with-no-support fallback already
-     * uses instead — [store] is deliberately **not** written here for [RadioChoice.NONE]; only
+     * R-344 (validator pass 4, halt), extended by D33/P19: the null module ("No radio — I will
+     * enter the frequency") used to write [SetupStore.radioChoice] and call [refreshStep]
+     * immediately, the same instant as the tap — since that alone satisfies
+     * [SetupStateMachine.stepFor]'s `radioChoice == null -> RADIO` gate, setup advanced straight
+     * past S12 with `manualFrequencyHz` still `null`, having never asked for a frequency at all
+     * (confirmed reproduced 3× by the validator). Routed to the same frequency-entry screen
+     * ([RadioUsbScreen], S10) the CAT-rig-with-no-support fallback already uses instead —
+     * [SetupStore.radioChoice] is deliberately **not** written here for the null module; only
      * [onEnterFrequency] writes it, and only once a real value is confirmed, the same gate that
-     * already protects the CAT-rig fallback path.
+     * already protects the CAT-rig fallback path. A real rig moves to S09b ([SetupStep.RIG_TRANSPORT])
+     * — never straight to S10/S11 the way the pre-catalogue three-row screen did, since which
+     * transport to use is now its own decision (FR-RIG-13).
      */
-    internal fun onChooseRadio(choice: RadioChoice) {
+    internal fun onChooseRig(entry: RigCatalogueEntry) {
         radioAbsentBanner = null
-        when (choice) {
-            RadioChoice.NONE -> {
-                rigStatusSnapshot = RigStatus.state
-                navigateForward(SetupStep.RADIO_USB)
-            }
-            RadioChoice.TH_D75A, RadioChoice.OTHER_CAT_RIG -> {
-                store.radioChoice = choice
-                rigStatusSnapshot = RigStatus.state
-                val next = if (rigStatusSnapshot is RigStatus.State.Absent) {
-                    SetupStep.RADIO_USB
-                } else {
-                    SetupStep.RADIO_VERIFIED
-                }
-                navigateForward(next)
-            }
+        radioImportError = null
+        store.rigId = entry.id
+        if (entry.id == NullRigModule.ID) {
+            store.rigTransport = null
+            syncCaptureConfiguration()
+            rigStatusSnapshot = RigStatus.state
+            navigateForward(SetupStep.RADIO_USB)
+            return
         }
+        store.radioChoice = if (entry.displayName.contains("TH-D75A")) {
+            RadioChoice.TH_D75A
+        } else {
+            RadioChoice.OTHER_CAT_RIG
+        }
+        val modePresetKind = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRigTransportKind
+        selectedRigTransportKind = modePresetKind?.let(RigPickerCatalogue::fromPresetKind)
+            ?: entry.transportCapabilities.keys.firstOrNull { it != RigTransportKind.NONE }
+        syncCaptureConfiguration()
+        navigateForward(SetupStep.RIG_TRANSPORT)
+    }
+
+    internal fun onImportRig() {
+        openDescriptorLauncher.launch(arrayOf("application/json", "*/*"))
     }
 
     internal fun onRadioNotNow() {
         store.radioChoice = RadioChoice.NONE
+        store.rigId = NullRigModule.ID
+        store.rigTransport = null
         radioAbsentBanner = null
+        syncCaptureConfiguration()
         refreshStep(pushCurrent = true)
+    }
+
+    // --- S09b Rig transport (D33, FR-RIG-13/14/17) -------------------------------------------------
+
+    internal fun onSelectRigTransport(kind: RigTransportKind) {
+        selectedRigTransportKind = kind
+    }
+
+    internal fun onConnectRigTransport() {
+        val kind = selectedRigTransportKind ?: return
+        val presetKind = RigPickerCatalogue.toPresetKind(kind)
+        store.rigTransport = presetKind
+        val modePresetKind = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRigTransportKind
+        store.modeOverriddenRig = presetKind != modePresetKind
+        syncCaptureConfiguration()
+        if (kind == RigTransportKind.BLUETOOTH_SPP) {
+            rigLinkState = null
+            rigBluetoothSelectedAddress = null
+            rigBluetoothDevices = rigLinkPort.pairedDevices()
+            navigateForward(SetupStep.RIG_BLUETOOTH)
+        } else {
+            // Matches the pre-catalogue onChooseRadio's own dispatch: a genuinely Connected
+            // RigStatus (today, only ever produced by the debug scenario simulator -- :rig-usb's
+            // real transport is not wired to :app, RigLinkPort.kt's own doc comment) skips the
+            // honest "no rig support" fallback and goes straight to S11.
+            rigStatusSnapshot = RigStatus.state
+            val next = if (rigStatusSnapshot is RigStatus.State.Absent) {
+                SetupStep.RADIO_USB
+            } else {
+                SetupStep.RADIO_VERIFIED
+            }
+            navigateForward(next)
+        }
+    }
+
+    internal fun onRigTransportBack() {
+        step = SetupStep.RADIO
+    }
+
+    // --- S10b Rig Bluetooth link (D33/D34, FR-RIG-14/15) --------------------------------------------
+
+    internal fun onSelectRigBluetoothDevice(address: String) {
+        rigBluetoothSelectedAddress = address
+        rigLinkState = null
+        rigLinkRunToken += 1
+    }
+
+    internal fun onRefreshRigBluetoothDevices() {
+        rigBluetoothDevices = rigLinkPort.pairedDevices()
+    }
+
+    internal fun onPairRigBluetoothInSettings() {
+        startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+    }
+
+    internal fun onContinueRigBluetooth() {
+        val address = rigBluetoothSelectedAddress ?: return
+        if (rigLinkState !is RigLinkState.Verified) return
+        store.rigBluetoothAddress = address
+        store.rigBluetoothVerified = true
+        val entry = currentRigEntry()
+        // Honest, not fabricated: no live per-band reading exists yet (the real DescriptorRigModule
+        // poll loop cannot run from :app — RigLinkPort.kt's own doc comment). An empty band list,
+        // never an invented one, is what S11 renders until a live session actually reports bands.
+        rigStatusSnapshot = RigStatus.State.Connected(descriptor = entry?.displayName ?: "Rig", bands = emptyList())
+        syncCaptureConfiguration()
+        navigateForward(SetupStep.RADIO_VERIFIED)
+    }
+
+    internal fun onUseUsbInsteadForRig() {
+        store.rigTransport = PresetRigTransportKind.USB_SERIAL
+        rigStatusSnapshot = RigStatus.state
+        syncCaptureConfiguration()
+        navigateForward(SetupStep.RADIO_USB)
     }
 
     /**
@@ -367,6 +582,7 @@ public class SetupActivity : ComponentActivity() {
         if (hz == null) return
         store.radioChoice = RadioChoice.NONE
         store.manualFrequencyHz = hz
+        syncCaptureConfiguration()
         refreshStep(pushCurrent = true)
     }
 
@@ -376,7 +592,12 @@ public class SetupActivity : ComponentActivity() {
 
     internal fun onChangeRadio() {
         store.radioChoice = null
+        store.rigId = null
+        store.rigTransport = null
+        store.rigBluetoothAddress = null
+        store.rigBluetoothVerified = false
         radioAbsentBanner = null
+        syncCaptureConfiguration()
         step = SetupStep.RADIO
     }
 
@@ -431,6 +652,12 @@ public class SetupActivity : ComponentActivity() {
                 granted(Manifest.permission.POST_NOTIFICATIONS) ||
                 store.notificationsSkipped,
             isIgnoringBatteryOptimizationsDiagnosticOnly = pm.isIgnoringBatteryOptimizations(packageName),
+            // D33/S02c: below API 31 there is no dangerous BLUETOOTH_CONNECT permission at all --
+            // the legacy BLUETOOTH permission is normal-protection and granted at install, so this
+            // reports true unconditionally rather than ever prompting (PermissionsState's own doc
+            // comment).
+            bluetoothConnectGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                granted(Manifest.permission.BLUETOOTH_CONNECT),
         )
     }
 
@@ -453,11 +680,16 @@ public class SetupActivity : ComponentActivity() {
     private fun RenderStep() {
         when (step) {
             SetupStep.WELCOME -> WelcomeScreen(onBegin = ::onBegin)
+            SetupStep.MODE -> ModeScreen(onChoose = ::onChooseMode)
             SetupStep.MICROPHONE -> MicrophoneScreen(onAllow = ::requestRecordAudio, onBack = ::onBack)
             SetupStep.MICROPHONE_DENIED -> MicrophoneDeniedScreen(
                 onOpenSettings = ::openAppSettings,
                 onCheckAgain = ::checkMicAgain,
                 onBack = ::onBack,
+            )
+            SetupStep.BLUETOOTH_PERMISSION -> BluetoothPermissionScreen(
+                onAllow = ::requestBluetoothConnect,
+                onNotNow = ::onDeclineBluetoothPermission,
             )
             SetupStep.NOTIFICATIONS ->
                 NotificationsScreen(onAllow = ::requestNotifications, onSkip = ::skipNotifications, onBack = ::onBack)
@@ -466,16 +698,14 @@ public class SetupActivity : ComponentActivity() {
             SetupStep.ROUTE_MISMATCH -> RenderRouteMismatch()
             SetupStep.LEVEL -> RenderLevel()
             SetupStep.OVERNIGHT -> OvernightScreen(onOpenSetting = ::onOpenBatterySetting, onSkip = ::onSkipOvernight)
-            SetupStep.RADIO -> RadioScreen(
-                onChoose = ::onChooseRadio,
-                onNotNow = ::onRadioNotNow,
-                banner = radioAbsentBanner,
-            )
+            SetupStep.RADIO -> RenderRadioPicker()
+            SetupStep.RIG_TRANSPORT -> RenderRigTransport()
             SetupStep.RADIO_USB -> RadioUsbScreen(
                 rigStatus = rigStatusSnapshot,
                 onBack = ::onBack,
                 onEnterFrequency = ::onEnterFrequency,
             )
+            SetupStep.RIG_BLUETOOTH -> RenderRigBluetooth()
             SetupStep.RADIO_VERIFIED -> RenderRadioVerified()
             SetupStep.READY -> RenderReady()
             null -> {}
@@ -484,12 +714,84 @@ public class SetupActivity : ComponentActivity() {
 
     @Composable
     private fun RenderInput() {
+        val presetLabel = store.captureMode?.operatorLabel?.takeUnless { store.modeOverriddenAudio }
+        val presetRouteId = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRouteKind
+            ?.let { kind -> inputRoutes.firstOrNull { it.routeKind == kind }?.id }
         InputScreen(
-            state = InputViewState(routes = inputRoutes, selectedId = selectedInputId),
-            onSelect = ::onSelectInput,
+            state = InputViewState(routes = inputRoutes, selectedId = selectedInputId, presetLabel = presetLabel),
+            onSelect = {
+                if (presetRouteId != null && it != presetRouteId) store.modeOverriddenAudio = true
+                onSelectInput(it)
+            },
             onRefresh = ::refreshInputRoutes,
             onVerify = ::onStartVerify,
             onBack = ::onBack,
+        )
+    }
+
+    @Composable
+    private fun RenderRadioPicker() {
+        val presetLabel = store.captureMode?.operatorLabel?.takeUnless { store.modeOverriddenRig }
+        RadioScreen(
+            state = RadioPickerViewState(
+                catalogue = radioCatalogue,
+                presetLabel = presetLabel,
+                importError = radioImportError,
+            ),
+            onChoose = ::onChooseRig,
+            onImport = ::onImportRig,
+            onNotNow = ::onRadioNotNow,
+            banner = radioAbsentBanner,
+        )
+    }
+
+    @Composable
+    private fun RenderRigTransport() {
+        val entry = currentRigEntry() ?: return
+        val modePresetKind = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRigTransportKind
+        val options = entry.transportCapabilities.keys
+            .filter { it != RigTransportKind.NONE }
+            .sortedBy { if (it == RigTransportKind.BLUETOOTH_SPP) 0 else 1 }
+            .map { kind ->
+                val isPreset = modePresetKind != null && RigPickerCatalogue.toPresetKind(kind) == modePresetKind
+                RigTransportOption(
+                    kind = kind,
+                    label = RigPickerCatalogue.transportLabel(kind),
+                    subLabel = rigTransportSubLabel(kind, isPreset),
+                    capabilities = RigPickerCatalogue.capabilitiesFor(entry, kind),
+                    costLine = rigTransportCostLine(kind),
+                    isPreset = isPreset,
+                )
+            }
+        RigTransportScreen(
+            state = RigTransportViewState(entry.displayName, options, selectedRigTransportKind),
+            onSelect = ::onSelectRigTransport,
+            onConnect = ::onConnectRigTransport,
+            onBack = ::onRigTransportBack,
+        )
+    }
+
+    @Composable
+    private fun RenderRigBluetooth() {
+        val entry = currentRigEntry()
+        val address = rigBluetoothSelectedAddress
+        if (address != null) {
+            LaunchedEffect(rigLinkRunToken, address) {
+                rigLinkPort.connect(address, entry?.id ?: "").collect { rigLinkState = it }
+            }
+        }
+        RigBluetoothScreen(
+            state = RigBluetoothViewState(
+                rigDisplayName = entry?.displayName ?: "the rig",
+                devices = rigBluetoothDevices,
+                selectedAddress = rigBluetoothSelectedAddress,
+                linkState = rigLinkState,
+            ),
+            onSelectDevice = ::onSelectRigBluetoothDevice,
+            onPairInSettings = ::onPairRigBluetoothInSettings,
+            onRefresh = ::onRefreshRigBluetoothDevices,
+            onContinue = ::onContinueRigBluetooth,
+            onUseUsbInstead = ::onUseUsbInsteadForRig,
         )
     }
 
@@ -592,6 +894,12 @@ public class SetupActivity : ComponentActivity() {
             onContinue = ::onRadioVerifiedContinue,
             onChangeRadio = ::onChangeRadio,
             onReconnect = ::onReconnectRadio,
+            transportLabel = store.rigTransport?.let {
+                when (it) {
+                    PresetRigTransportKind.USB_SERIAL -> "USB serial"
+                    PresetRigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
+                }
+            },
         )
     }
 
@@ -607,9 +915,28 @@ public class SetupActivity : ComponentActivity() {
             // `ok`, not broken, so a stray leftover `radioAbsentBanner` must not appear on S09.
             onChangeRadio = ::onChangeRadio,
             onInstallModel = ::onInstallModel,
+            onChangeMode = { step = SetupStep.MODE },
         )
-        val rows = readyRowsFor(store, batteryExempt(), rigStatusSnapshot, AsrAvailability.state, actions)
+        val modelsState = ModelsController.currentState(this)
+        val rows = readyRowsFor(store, batteryExempt(), rigStatusSnapshot, modelsState, actions)
         ReadyScreen(state = ReadyViewState(rows), onStartCapture = ::onStartCapture)
+    }
+
+    /** S09b's per-transport sub-line (`Setup-Rig-Transport.dc.html`) — the preset case names it
+     * generically ("preset by your mode") since S09b has no knowledge of the specific mode's own
+     * board copy; the non-preset case names the physical connection. */
+    private fun rigTransportSubLabel(kind: RigTransportKind, isPreset: Boolean): String = when {
+        isPreset && kind == RigTransportKind.BLUETOOTH_SPP -> "preset by your mode · pair in system settings first"
+        isPreset -> "preset by your mode"
+        kind == RigTransportKind.BLUETOOTH_SPP -> "pair in system settings first"
+        kind == RigTransportKind.USB_SERIAL -> "USB-C to the radio's data port · CDC, no driver"
+        else -> ""
+    }
+
+    private fun rigTransportCostLine(kind: RigTransportKind): String = when (kind) {
+        RigTransportKind.BLUETOOTH_SPP -> "Drops more often than a cable — capture continues, frequency marked stale"
+        RigTransportKind.USB_SERIAL -> "USB permission does not survive a re-plug"
+        else -> ""
     }
 
     internal companion object {

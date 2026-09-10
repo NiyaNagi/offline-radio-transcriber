@@ -6,41 +6,52 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.app.permissions.PermissionsState
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.RigTransportKind
 
 /**
- * R-080 (ui-conformance-plan WP9): the pure decision half of the guided setup sequence — which
- * [SetupStep] to show given the real permission state and what has been configured so far
- * ([SetupSnapshot]), with no `Context`/`Activity` at all (the same split
- * `org.ort.app.SetupScreenSelectionTest` established for the pre-WP9 flow, which this file
- * replaces — that flow's three screens are now steps 1-2 of this one, MICROPHONE/MICROPHONE_DENIED/
- * NOTIFICATIONS below). Every branch of `Flow-Setup.dc.html`'s linear sequence and its one halt
- * (S06, reached only live from S05 — never resumed into, per [SetupStep]'s own doc comment).
+ * R-080 (ui-conformance-plan WP9), extended by D33/P19 WPD: the pure decision half of the guided
+ * setup sequence — which [SetupStep] to show given the real permission state and what has been
+ * configured so far ([SetupSnapshot]), with no `Context`/`Activity` at all. Every branch of
+ * `Flow-Setup.dc.html`/`Flow-Mode.dc.html`'s sequence and its one halt (S06, reached only live
+ * from S05 — never resumed into, per [SetupStep]'s own doc comment).
  */
 class SetupStateMachineTest {
 
-    private fun permissions(recordAudio: Boolean, notifications: Boolean) = PermissionsState(
-        recordAudioGranted = recordAudio,
-        notificationsGranted = notifications,
-        isIgnoringBatteryOptimizationsDiagnosticOnly = false,
-    )
+    private fun permissions(recordAudio: Boolean, notifications: Boolean, bluetoothConnect: Boolean = true) =
+        PermissionsState(
+            recordAudioGranted = recordAudio,
+            notificationsGranted = notifications,
+            isIgnoringBatteryOptimizationsDiagnosticOnly = false,
+            bluetoothConnectGranted = bluetoothConnect,
+        )
 
+    @Suppress("LongParameterList")
     private fun snapshot(
         welcomeSeen: Boolean = true,
+        captureMode: CaptureMode? = CaptureMode.USB_RADIO,
+        bluetoothPermissionDeclined: Boolean = false,
         notificationsSkipped: Boolean = false,
         selectedInputId: String? = "usb-1",
         inputVerified: Boolean = true,
         levelInBand: Boolean = true,
         overnightStepSeen: Boolean = true,
         radioChoice: RadioChoice? = RadioChoice.NONE,
+        rigTransport: RigTransportKind? = null,
+        rigBluetoothVerified: Boolean = false,
         setupComplete: Boolean = false,
     ) = SetupSnapshot(
         welcomeSeen = welcomeSeen,
+        captureMode = captureMode,
+        bluetoothPermissionDeclined = bluetoothPermissionDeclined,
         notificationsSkipped = notificationsSkipped,
         selectedInputId = selectedInputId,
         inputVerified = inputVerified,
         levelInBand = levelInBand,
         overnightStepSeen = overnightStepSeen,
         radioChoice = radioChoice,
+        rigTransport = rigTransport,
+        rigBluetoothVerified = rigBluetoothVerified,
         setupComplete = setupComplete,
     )
 
@@ -52,6 +63,28 @@ class SetupStateMachineTest {
             snapshot(welcomeSeen = false),
         )
         assertEquals(SetupStep.WELCOME, step)
+    }
+
+    // --- D33: SetupStep.MODE ---------------------------------------------------------------
+
+    @Test
+    fun `D33 welcome seen but no capture mode chosen shows Mode, before any permission`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(recordAudio = false, notifications = false),
+            micPermanentlyDenied = false,
+            snapshot(captureMode = null),
+        )
+        assertEquals(SetupStep.MODE, step)
+    }
+
+    @Test
+    fun `D33 a chosen capture mode proceeds past Mode to the permission gates`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(recordAudio = false, notifications = false),
+            micPermanentlyDenied = false,
+            snapshot(captureMode = CaptureMode.LOCAL_MICROPHONE),
+        )
+        assertEquals(SetupStep.MICROPHONE, step)
     }
 
     @Test
@@ -82,6 +115,55 @@ class SetupStateMachineTest {
             snapshot(),
         )
         assertEquals(SetupStep.NOTIFICATIONS, step)
+    }
+
+    // --- D33: SetupStep.BLUETOOTH_PERMISSION -------------------------------------------------
+
+    @Test
+    fun `D33 Bluetooth mode with BLUETOOTH_CONNECT ungranted and not declined shows BluetoothPermission`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(recordAudio = true, notifications = false, bluetoothConnect = false),
+            micPermanentlyDenied = false,
+            snapshot(captureMode = CaptureMode.BLUETOOTH_RADIO),
+        )
+        assertEquals(SetupStep.BLUETOOTH_PERMISSION, step)
+    }
+
+    @Test
+    fun `D33 Bluetooth mode with BLUETOOTH_CONNECT granted skips BluetoothPermission`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(recordAudio = true, notifications = false, bluetoothConnect = true),
+            micPermanentlyDenied = false,
+            snapshot(captureMode = CaptureMode.BLUETOOTH_RADIO),
+        )
+        assertEquals(SetupStep.NOTIFICATIONS, step)
+    }
+
+    @Test
+    fun `D33 declining Bluetooth permission never returns to BluetoothPermission again`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(recordAudio = true, notifications = false, bluetoothConnect = false),
+            micPermanentlyDenied = false,
+            // S02c's own "Not now" flips the mode to USB and records the decline (belt + braces).
+            snapshot(captureMode = CaptureMode.USB_RADIO, bluetoothPermissionDeclined = true),
+        )
+        assertEquals(SetupStep.NOTIFICATIONS, step)
+    }
+
+    @Test
+    fun `D33 USB and local-microphone modes never show BluetoothPermission regardless of the OS grant`() {
+        val usbStep = SetupStateMachine.stepFor(
+            permissions(recordAudio = true, notifications = false, bluetoothConnect = false),
+            micPermanentlyDenied = false,
+            snapshot(captureMode = CaptureMode.USB_RADIO),
+        )
+        val micStep = SetupStateMachine.stepFor(
+            permissions(recordAudio = true, notifications = false, bluetoothConnect = false),
+            micPermanentlyDenied = false,
+            snapshot(captureMode = CaptureMode.LOCAL_MICROPHONE),
+        )
+        assertEquals(SetupStep.NOTIFICATIONS, usbStep)
+        assertEquals(SetupStep.NOTIFICATIONS, micStep)
     }
 
     @Test
@@ -152,6 +234,104 @@ class SetupStateMachineTest {
             snapshot(radioChoice = null),
         )
         assertEquals(SetupStep.RADIO, step)
+    }
+
+    // --- D33: SetupStep.RIG_TRANSPORT / RIG_BLUETOOTH ----------------------------------------
+
+    @Test
+    fun `D33 a real rig chosen with no transport yet shows RigTransport`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(radioChoice = RadioChoice.TH_D75A, rigTransport = null),
+        )
+        assertEquals(SetupStep.RIG_TRANSPORT, step)
+    }
+
+    @Test
+    fun `D33 choosing no radio never routes through RigTransport at all`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(radioChoice = RadioChoice.NONE, rigTransport = null, setupComplete = false),
+        )
+        assertEquals(SetupStep.READY, step)
+    }
+
+    @Test
+    fun `D33 USB transport chosen for a real rig proceeds straight through to Ready`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(
+                radioChoice = RadioChoice.TH_D75A,
+                rigTransport = RigTransportKind.USB_SERIAL,
+                setupComplete = false,
+            ),
+        )
+        assertEquals(SetupStep.READY, step)
+    }
+
+    @Test
+    fun `D33 Bluetooth transport chosen but not yet verified shows RigBluetooth`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(
+                radioChoice = RadioChoice.TH_D75A,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP,
+                rigBluetoothVerified = false,
+            ),
+        )
+        assertEquals(SetupStep.RIG_BLUETOOTH, step)
+    }
+
+    @Test
+    fun `D33 Bluetooth transport verified proceeds straight through to Ready`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(
+                radioChoice = RadioChoice.TH_D75A,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP,
+                rigBluetoothVerified = true,
+                setupComplete = false,
+            ),
+        )
+        assertEquals(SetupStep.READY, step)
+    }
+
+    /**
+     * AC-130 (FR-CAP-9, FR-RIG-13) — written before S00's picker existed, per
+     * `spec/e2e-capture-modes-plan.md` WPD's own instruction ("a picker built without it
+     * hard-couples the axes and passes everything else"). Choosing Bluetooth mode presets
+     * Bluetooth SPP for the rig and a wired route for audio (`CaptureModePresets.presetsFor`);
+     * this test proves the **opposite** combination — Bluetooth *rig control* with **wired**
+     * audio, the one combination no mode names by default — is still fully reachable by
+     * overriding nothing about the rig axis and everything about the fact that a preset is not an
+     * enforcement: [SetupStateMachine] never refuses `audioRouteKind = USB` (a route kind, not
+     * [AudioRouteKind.WIRED_HEADSET], chosen here to prove the axis truly does not constrain the
+     * other one at all — any override is admissible) alongside `rigTransport = BLUETOOTH_SPP`.
+     */
+    @Test
+    fun `AC_130_bluetooth_control_with_wired_audio_is_reachable`() {
+        // Mode chosen: Bluetooth. The operator then overrides the audio route to plain USB
+        // (still not the mode's own Bluetooth-audio route) while keeping the rig's own
+        // Bluetooth-SPP preset — the combination FR-RIG-13 says must never be blocked.
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true, bluetoothConnect = true),
+            micPermanentlyDenied = false,
+            snapshot(
+                captureMode = CaptureMode.BLUETOOTH_RADIO,
+                selectedInputId = "usb-1",
+                inputVerified = true,
+                radioChoice = RadioChoice.TH_D75A,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP,
+                rigBluetoothVerified = true,
+                setupComplete = false,
+            ),
+        )
+        assertEquals(SetupStep.READY, step)
     }
 
     @Test
