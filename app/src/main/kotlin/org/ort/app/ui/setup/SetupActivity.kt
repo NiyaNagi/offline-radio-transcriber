@@ -37,6 +37,8 @@ import org.ort.core.capture.CaptureModePresets
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.rig.CaptureConfigurationStore
+import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 import org.ort.rig.NullRigModule
 import org.ort.rig.RigTransportKind
 import org.ort.rig.catalogue.RigCatalogue
@@ -90,6 +92,12 @@ public class SetupActivity : ComponentActivity() {
 
     private lateinit var store: SetupStore
     private lateinit var audioIo: AndroidAudioIo
+
+    /** WPC2's contract (`:pipeline`) — what `RealCaptureService` actually reads at session start
+     * (FR-CAP-12/13, AC-131). [syncCaptureConfiguration] pushes [store]'s current facts through
+     * this on every mutation to the mode/route/rig axes; [SetupCaptureConfigurationAdapter] is the
+     * pure translation. */
+    private lateinit var captureConfigStore: CaptureConfigurationStore
 
     private var step by mutableStateOf<SetupStep?>(null)
     private val backStack = ArrayDeque<SetupStep>()
@@ -150,6 +158,16 @@ public class SetupActivity : ComponentActivity() {
 
     private val radioCatalogue: RigCatalogue get() = RigPickerCatalogue.build(importedRigDescriptors)
 
+    /** WPC2: pushes [store]'s current mode/route/rig facts through [captureConfigStore] — the
+     * contract `RealCaptureService` actually reads at session start. Called after every mutation
+     * to those axes; a no-op before S00 is walked ([SetupCaptureConfigurationAdapter] returns
+     * `null` until [SetupStore.captureMode] is set). [CaptureConfigurationStore.update] itself
+     * decides pending-vs-immediate from whether capture is running (FR-CAP-12) — this call site
+     * never needs to know which. */
+    private fun syncCaptureConfiguration() {
+        SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)?.let(captureConfigStore::update)
+    }
+
     /** The chosen rig's [RigCatalogueEntry], recovered from [SetupStore.rigId] rather than kept as
      * its own in-memory field — so a process death between S09 and S09b/S10b resumes correctly
      * ([SetupStateMachine]'s `RIG_TRANSPORT`/`RIG_BLUETOOTH` gates are resumable, unlike
@@ -168,6 +186,9 @@ public class SetupActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
         store = SharedPreferencesSetupStore(getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, MODE_PRIVATE))
+        captureConfigStore = SharedPreferencesCaptureConfigurationStore(
+            getSharedPreferences(SharedPreferencesCaptureConfigurationStore.PREFS_NAME, MODE_PRIVATE),
+        )
         audioIo = AndroidAudioIo(this)
         selectedInputId = store.selectedInputId
         selectedInputLabel = store.selectedInputLabel
@@ -278,6 +299,7 @@ public class SetupActivity : ComponentActivity() {
         store.modeOverriddenAudio = false
         store.rigTransport = preset.preferredRigTransportKind
         store.modeOverriddenRig = false
+        syncCaptureConfiguration()
         refreshStep(pushCurrent = true)
     }
 
@@ -349,6 +371,7 @@ public class SetupActivity : ComponentActivity() {
         store.selectedInputId = id
         store.selectedInputLabel = selectedInputLabel
         store.clearInputVerification()
+        syncCaptureConfiguration()
         verifyState = null
         verifyRunToken += 1
         navigateForward(SetupStep.VERIFY)
@@ -442,6 +465,8 @@ public class SetupActivity : ComponentActivity() {
         radioImportError = null
         store.rigId = entry.id
         if (entry.id == NullRigModule.ID) {
+            store.rigTransport = null
+            syncCaptureConfiguration()
             rigStatusSnapshot = RigStatus.state
             navigateForward(SetupStep.RADIO_USB)
             return
@@ -454,6 +479,7 @@ public class SetupActivity : ComponentActivity() {
         val modePresetKind = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRigTransportKind
         selectedRigTransportKind = modePresetKind?.let(RigPickerCatalogue::fromPresetKind)
             ?: entry.transportCapabilities.keys.firstOrNull { it != RigTransportKind.NONE }
+        syncCaptureConfiguration()
         navigateForward(SetupStep.RIG_TRANSPORT)
     }
 
@@ -464,7 +490,9 @@ public class SetupActivity : ComponentActivity() {
     internal fun onRadioNotNow() {
         store.radioChoice = RadioChoice.NONE
         store.rigId = NullRigModule.ID
+        store.rigTransport = null
         radioAbsentBanner = null
+        syncCaptureConfiguration()
         refreshStep(pushCurrent = true)
     }
 
@@ -480,6 +508,7 @@ public class SetupActivity : ComponentActivity() {
         store.rigTransport = presetKind
         val modePresetKind = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRigTransportKind
         store.modeOverriddenRig = presetKind != modePresetKind
+        syncCaptureConfiguration()
         if (kind == RigTransportKind.BLUETOOTH_SPP) {
             rigLinkState = null
             rigBluetoothSelectedAddress = null
@@ -530,12 +559,14 @@ public class SetupActivity : ComponentActivity() {
         // poll loop cannot run from :app — RigLinkPort.kt's own doc comment). An empty band list,
         // never an invented one, is what S11 renders until a live session actually reports bands.
         rigStatusSnapshot = RigStatus.State.Connected(descriptor = entry?.displayName ?: "Rig", bands = emptyList())
+        syncCaptureConfiguration()
         navigateForward(SetupStep.RADIO_VERIFIED)
     }
 
     internal fun onUseUsbInsteadForRig() {
         store.rigTransport = PresetRigTransportKind.USB_SERIAL
         rigStatusSnapshot = RigStatus.state
+        syncCaptureConfiguration()
         navigateForward(SetupStep.RADIO_USB)
     }
 
@@ -551,6 +582,7 @@ public class SetupActivity : ComponentActivity() {
         if (hz == null) return
         store.radioChoice = RadioChoice.NONE
         store.manualFrequencyHz = hz
+        syncCaptureConfiguration()
         refreshStep(pushCurrent = true)
     }
 
@@ -565,6 +597,7 @@ public class SetupActivity : ComponentActivity() {
         store.rigBluetoothAddress = null
         store.rigBluetoothVerified = false
         radioAbsentBanner = null
+        syncCaptureConfiguration()
         step = SetupStep.RADIO
     }
 
