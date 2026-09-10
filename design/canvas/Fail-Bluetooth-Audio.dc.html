@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .row { display: flex; gap: 10px; padding: 8px 20px 9px; border-top: 1px solid oklch(0.215 0.010 250); }
+    .t { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 52px; padding-top: 1px; flex-shrink: 0; }
+    .f { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.60 0.008 250); width: 56px; padding-top: 1px; flex-shrink: 0; }
+    .s { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.008 250); padding-top: 2px; }
+    .cs { font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; }
+    .tx { font-size: 13px; line-height: 1.35; color: oklch(0.76 0.006 250); margin-top: 3px; text-wrap: pretty; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <div style="width: 7px; height: 7px; border-radius: 50%; background: oklch(0.78 0.13 75);"></div>
+      <div class="m" style="font-size: 12px; color: oklch(0.68 0.008 250);">3:51</div>
+    </div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+  </div>
+
+  <div style="display: flex; align-items: baseline; padding: 10px 20px 10px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; flex-grow: 1;">Log</div>
+    <div style="font-size: 13px; color: oklch(0.72 0.14 150);">Filter</div>
+  </div>
+
+  <div style="padding: 0 20px 12px;">
+    <div style="border-radius: 8px; background: oklch(0.185 0.012 60); border: 1px solid oklch(0.38 0.06 60); padding: 11px 14px; display: flex; gap: 11px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.74 0.09 60)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 1px;"><path d="M7 7l10 10-5 5V2l5 5L7 17"></path></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">Bluetooth audio dropped at 03:49 — reconnecting</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">Handheld BT went out of range or was switched off. Nothing is being heard until it is back: this gap is recorded, not papered over. Retry 3 of 8, next in 20 s. The rig link over Bluetooth is separate and still up.</div>
+        <div style="display: flex; align-items: center; gap: 18px;">
+          <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75);">Retry now</div></div>
+          <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75);">Switch to a wired input</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 10px; padding: 0 20px 6px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: oklch(0.46 0.008 250);">
+    <div style="width: 52px;">time</div>
+    <div style="width: 56px;">freq</div>
+    <div style="flex-grow: 1;">station</div>
+    <div>sig</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 7px 20px; border-top: 1px solid oklch(0.26 0.010 250); background: oklch(0.185 0.012 60);">
+      <div class="m" style="font-size: 11px; color: oklch(0.70 0.09 60); width: 52px;">03:49:2</div>
+      <div style="display: flex; align-items: center; gap: 6px; flex-grow: 1;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="oklch(0.70 0.09 60)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10-5 5V2l5 5L7 17"></path><path d="M4 4l16 16"></path></svg>
+        <div style="font-size: 11.5px; color: oklch(0.74 0.07 60);">not listening · 1 m 40 s and counting · Bluetooth audio dropped</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="t">03:47:12</div>
+      <div class="f">145.230</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="cs">W7NPC</div>
+          <div class="m" style="font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: oklch(0.62 0.008 250); border: 1px solid oklch(0.30 0.010 250); border-radius: 3px; padding: 0 5px;">bt audio</div>
+        </div>
+        <div class="tx">yeah copy that, I'll be on the machine till about four</div>
+      </div>
+      <div class="s">S6</div>
+    </div>
+    <div class="row">
+      <div class="t">03:46:40</div>
+      <div class="f">145.230</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="cs" style="color: oklch(0.86 0.006 250);">K7LWH</div>
+          <div class="m" style="font-size: 10.5px; color: oklch(0.58 0.008 250); background: oklch(0.24 0.010 250); padding: 1px 5px; border-radius: 3px;">0.71</div>
+          <div class="m" style="font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: oklch(0.62 0.008 250); border: 1px solid oklch(0.30 0.010 250); border-radius: 3px; padding: 0 5px;">bt audio</div>
+        </div>
+        <div class="tx">roger, catch you on the next one</div>
+      </div>
+      <div class="s">S4</div>
+    </div>
+  </div>
+
+  <div style="padding: 8px 20px 10px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.45;">Every over captured over Bluetooth carries the <span class="m">bt audio</span> mark. Its accuracy is reported separately from cabled audio, never averaged in.</div>
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.38 0.06 60); background: oklch(0.185 0.012 60); padding: 10px 20px 14px; display: flex; align-items: center; gap: 11px;">
+    <div style="display: flex; gap: 2px; align-items: flex-end; height: 14px;">
+      <div style="width: 2px; height: 2px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 2px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 2px; background: oklch(0.62 0.10 60);"></div>
+      <div style="width: 2px; height: 2px; background: oklch(0.62 0.10 60);"></div>
+    </div>
+    <div style="font-size: 13px; color: oklch(0.74 0.07 60); flex-grow: 1; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">no audio — reconnecting to Handheld BT</div>
+    <div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75);">Input lost</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

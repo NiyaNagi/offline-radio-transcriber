@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .card { width: 150px; height: 180px; background: oklch(0.185 0.009 250); border-radius: 10px; border: 1px solid oklch(0.26 0.010 250); padding: 12px 13px; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+    .id { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.52 0.008 250); }
+    .ttl { font-size: 13.5px; font-weight: 600; color: oklch(0.94 0.006 250); line-height: 1.25; }
+    .sum { font-size: 11px; color: oklch(0.62 0.008 250); line-height: 1.4; flex-grow: 1; }
+    .act { font-size: 11px; color: oklch(0.72 0.14 150); font-weight: 500; }
+    .arr { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 60px; flex-shrink: 0; gap: 4px; }
+    .al { font-size: 10px; color: oklch(0.62 0.008 250); text-align: center; line-height: 1.3; }
+    .ln { width: 100%; height: 1px; background: oklch(0.40 0.010 250); position: relative; }
+    .ln::after { content: ""; position: absolute; right: 0; top: -3px; width: 0; height: 0; border-left: 6px solid oklch(0.40 0.010 250); border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; }
+    .lane { display: flex; align-items: flex-start; }
+    .lanelbl { width: 150px; flex-shrink: 0; padding-top: 14px; }
+    .ll { font-size: 13px; font-weight: 600; color: oklch(0.94 0.006 250); }
+    .ls { font-size: 11px; color: oklch(0.62 0.008 250); margin-top: 3px; line-height: 1.4; }
+    .preset { border-color: oklch(0.34 0.06 150); }
+  </style>
+</helmet>
+
+<div style="width: 1560px; height: 900px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); padding: 30px 34px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px;">
+
+  <div>
+    <div style="font-size: 19px; font-weight: 600; letter-spacing: -0.01em;">Capture modes — one question, three lanes</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 5px; max-width: 900px; line-height: 1.5;">S00 asks how the radio is connected. The answer presets the audio route (S04) and the rig link (S09b); a green-bordered card is a preset, and every preset can be changed in place. The lanes share every other step. Settings › Input and level › Capture mode re-enters the same screens later; a change applies at the next session, never mid-capture.</div>
+  </div>
+
+  <div class="lane">
+    <div class="lanelbl"><div class="ll">Local microphone</div><div class="ls">a handheld near the phone · room audio · frequency by hand</div></div>
+    <div class="card"><div class="id">S00 · 1 of 8</div><div class="ttl">Mode</div><div class="sum">Three modes, each stating what it presets and what it costs</div><div class="act">Local microphone →</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card"><div class="id">S02 · S03</div><div class="ttl">Mic, notifications</div><div class="sum">Unchanged</div><div class="act">Allow →</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card preset"><div class="id">S04 · 4 of 8</div><div class="ttl">Input — mic preset</div><div class="sum">Built-in microphone preselected, sub-line says it captures the room. Any other route still choosable</div><div class="act">Verify this input →</div></div>
+    <div class="arr"><div class="al">S05 · S07 · S08</div><div class="ln"></div></div>
+    <div class="card preset"><div class="id">S09 · 7 of 8</div><div class="ttl">Radio — none preset</div><div class="sum">"No radio" preselected; the TH-D75A rows stay available</div><div class="act">Enter frequency → S10</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card" style="border-color: oklch(0.34 0.06 150);"><div class="id">S12 · 8 of 8</div><div class="ttl">Ready</div><div class="sum">Mode row: Local microphone · room audio. N01 and every screen carry the room-audio mark</div><div class="act">Start capture → N01b</div></div>
+  </div>
+
+  <div class="lane">
+    <div class="lanelbl"><div class="ll">USB-connected radio</div><div class="ls">audio adapter and CAT on the cable · the reference setup</div></div>
+    <div class="card"><div class="id">S00</div><div class="ttl">Mode</div><div class="sum"></div><div class="act">USB-connected radio →</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card"><div class="id">S02 · S03</div><div class="ttl">Mic, notifications</div><div class="sum">Unchanged</div><div class="act">Allow →</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card preset"><div class="id">S04</div><div class="ttl">Input — USB preset</div><div class="sum">First USB audio route preselected; verify runs as before</div><div class="act">Verify this input →</div></div>
+    <div class="arr"><div class="al">S05 · S07 · S08</div><div class="ln"></div></div>
+    <div class="card preset"><div class="id">S09 → S09b</div><div class="ttl">Radio, USB serial preset</div><div class="sum">Pick the rig from the catalogue; S09b shows both links with USB preselected and the capabilities of each</div><div class="act">Connect over USB → S10</div></div>
+    <div class="arr"><div class="al">S10 → S11</div><div class="ln"></div></div>
+    <div class="card" style="border-color: oklch(0.34 0.06 150);"><div class="id">S12</div><div class="ttl">Ready</div><div class="sum">Mode row: USB radio. Radio row: TH-D75A · USB serial · verified</div><div class="act">Start capture → N01</div></div>
+  </div>
+
+  <div class="lane">
+    <div class="lanelbl"><div class="ll">Bluetooth-connected radio</div><div class="ls">CAT over Bluetooth · audio by cable or Bluetooth · one extra permission</div></div>
+    <div class="card"><div class="id">S00</div><div class="ttl">Mode</div><div class="sum"></div><div class="act">Bluetooth-connected radio →</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card"><div class="id">S02 · S02c · S03</div><div class="ttl">Mic, nearby devices, notifications</div><div class="sum">S02c asks for Nearby devices. Denying falls back to the USB lane and says so</div><div class="act">Allow →</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card preset"><div class="id">S04</div><div class="ttl">Input — cable preset</div><div class="sum">A wired route preselected. The Bluetooth headset-class route is listed with its cost; choosing it marks every session</div><div class="act">Verify this input →</div></div>
+    <div class="arr"><div class="al">S05 · S07 · S08</div><div class="ln"></div></div>
+    <div class="card preset"><div class="id">S09 → S09b</div><div class="ttl">Radio, Bluetooth SPP preset</div><div class="sum">S09b shows both links with Bluetooth preselected; S10b lists paired devices and opens the serial link</div><div class="act">Connect over Bluetooth → S10b → S11</div></div>
+    <div class="arr"><div class="al"></div><div class="ln"></div></div>
+    <div class="card" style="border-color: oklch(0.34 0.06 150);"><div class="id">S12</div><div class="ttl">Ready</div><div class="sum">Mode row: Bluetooth radio · audio by cable. Radio row: TH-D75A · Bluetooth SPP · verified</div><div class="act">Start capture → N01</div></div>
+  </div>
+
+  <div style="display: flex; gap: 40px; margin-top: 4px;">
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 480px;"><span style="color: oklch(0.86 0.006 250);">Changing later</span> — CF02 Input and level › Capture mode → CF11, the same three rows with the current one marked; Change on the Audio route or Rig link rows reopens S04 or S09b directly. With a session live, CF11 carries the amber "applies when it ends" banner.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 480px;"><span style="color: oklch(0.86 0.006 250);">Independence</span> — a preset is a default, not a coupling. Bluetooth control with cabled audio is the combination no lane names by default and the one S09b steers toward: the CAT data is lossless over Bluetooth, the audio is not.</div>
+    <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; max-width: 480px;"><span style="color: oklch(0.86 0.006 250);">Failures</span> — Bluetooth audio dropping mid-session is F23; the rig link dropping is F9 with the transport named. Both keep capturing; only the audio drop records a gap.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

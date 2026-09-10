@@ -34,6 +34,74 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-10 (idle-root: CI's AppNotIdleException root-caused to a real ordering bug, not just isolated)
 
+### (pending) — e2e-design · the capture-mode, Bluetooth, bundled-asset and prose-digest screens designed, inventoried and planned; the end-to-end program and its burn-down created
+
+**Scope:** `design/canvas/` (9 new artboards: `Setup-Mode`, `Setup-Bluetooth-Permission`,
+`Setup-Rig-Transport`, `Setup-Rig-Bluetooth`, `Settings-Mode`, `Main-Room-Audio`, `Digest-Prose`,
+`Fail-Bluetooth-Audio`, `Flow-Mode`; 4 rewritten: `Setup-Input`, `Setup-Rig`, `Setup-Done`,
+`Settings-Assets`; 7 amended: `Setup-Rig-Verified`, `Settings-Capture`, `Settings-Tier`,
+`Settings-Rig`, `Capture-Status`, `Session`, `Flow-Setup`; 8 renumbered to eight stages;
+`canvas.json`), `design/design-intent.md` (§2, §3, §9, §11, §12, §13, new §15),
+`spec/e2e-capture-modes-plan.md` (new), `results/e2e-audit/checklist.md` and
+`hardware-checklist.md` (new), `results/ui-audit/register.md` (E2 section, R-800),
+`spec/build-plan.md` (Wave F points at the plan; P21 added), `spec/test-plan.md` §7 (D19–D24).
+
+**Requirements/ACs:** D33–D36; FR-CAP-2b, FR-CAP-8..13; FR-RIG-13..19; FR-AST-3/3a/3b;
+FR-DIG-3/3b/4/6/11; AC-127..140; R17, R18; constitution VIII (artboards before code).
+
+**What changed:**
+
+*Constitution Check.* VIII — every screen the wave will build now has an artboard and an
+inventory row before a builder touches it, so nothing can ship unverifiable; the four new setup
+boards and the renumbered counter (`n of 8`) are what P19's captures will be judged against.
+I — the disclosures are drawn as content: the room-audio chip and live-bar `room` mark (N01b),
+the Bluetooth sub-line on S04, the `bt audio` row mark (F23), the `generated` badge on DG05.
+II — the hardware rows carry a prediction recorded before any test, H6's being the one that says
+the D75A will *not* appear as a Bluetooth audio source on stock Android. VII — the plan's first
+package puts the three new modules into the dependency graph before any code exists.
+
+*Design.* S00 is the mode picker (stage 1 of 8); it presets the audio route (S04's preset chip)
+and the rig link (S09b) and both stay editable in place — the independence rule FR-RIG-13
+requires is drawn on FL7 as the lane no mode names by default. S02c is the Nearby-devices
+permission, Bluetooth mode only, with denial falling back to USB and saying so. S09 is now the
+catalogue (FR-RIG-16..18): per-transport capabilities, null and generic always present,
+`Import it`. S10b pairs a Bluetooth rig (paired list, SPP-capable vs headset-only, open →
+identify → verify). CF11 is the settings re-entry with the "applies when it ends" banner
+(FR-CAP-12). CF04 is redrawn for bundling: every row bundled · verified · size, the Gemma row
+with "stored, loaded only at tier 3 while idle and charging", the prose toggle, the Space row
+excluding bundled assets from the retention budget (FR-AST-3a). DG05 draws the prose block
+visibly apart (FR-DIG-6) and attributed (FR-DIG-11). F23 is the Bluetooth audio drop: a gap
+from the drop, the retry ladder, the rig link stated as separate.
+
+*Program.* `spec/e2e-capture-modes-plan.md` partitions the work into WP0', WPA–WPI by file
+ownership with the binding detail per package, the merge order, four validation sets (V8–V11)
+and reviewer/validator id bases. `results/e2e-audit/checklist.md` is the burn-down: 90 rows
+across spec/data, rig core, transports, plumbing, setup, settings, status/digest, assets, LLM,
+scenarios, validation rounds and hardware, each naming its verification. `hardware-checklist.md`
+gives the operator H1–H13 with steps and predictions and a result-file template.
+
+**Verified:**
+
+- `renumber-setup.ps1` (scratchpad): 8 boards renumbered from `n of 7` to `n+1 of 8` with an
+  eighth segment; every `Setup-*.dc.html` now reads `n of 8` (listing pasted in the session).
+- `seed-canvas.mjs --check`: `ok`, 117 artboards, 118 files, title unchanged.
+- `seed-canvas.mjs --extract` of the live artifact vs `design/canvas/`: 19 boards differ — exactly
+  the set edited this session — 9 repo-only (the new boards), 0 live-only. No GUI edit had been
+  saved since the last publish, so the repo remained the base.
+- `python tools\spec-check\spec_check.py`: 8/8 PASS after the build-plan and test-plan edits.
+- Not verified: no board has been rendered in a browser this session; the first tour run is what
+  judges them (R-800).
+
+**Left open / not done:**
+
+- **Nothing here is built.** WP0' (scaffolding), WPA (`:rig` core) and WPC1 (mode plumbing)
+  were started as worktree builders; WPB, WPC2, WPD–WPI follow in the plan's merge order.
+- `Setup-Welcome` has no counter and was not changed; whether S01 should sit before S00 is a
+  builder-visible question the plan settles as S01 → S00.
+- The MediaPipe `tasks-genai` version is pinned by WP0' from the group index; not known here.
+- The published canvas's `canvas.json` was not diffed against the live one (only the artboards
+  were); the launch page now opens on Setup.
+
 ### (pending) — capturemodes · capture becomes a named mode (local mic, USB radio, Bluetooth radio), Bluetooth audio is permitted with its cost marked, and every asset ships in the artifact
 
 **Scope:** `spec/functional-spec.md` (§3 decisions, §7.1/§7.1a FR-CAP, §7.6 FR-RIG, §9.1a, §7.15

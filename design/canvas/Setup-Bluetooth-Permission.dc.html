@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="padding: 10px 20px 0; display: flex; align-items: center; gap: 14px;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">2 of 8</div>
+  </div>
+  <div style="display: flex; gap: 4px; padding: 14px 20px 0;">
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+  </div>
+
+  <div style="padding: 26px 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.2;">Nearby devices</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Bluetooth mode needs one more permission</div>
+  </div>
+
+  <div style="padding: 22px 20px 0; display: flex; flex-direction: column; gap: 16px;">
+    <div style="font-size: 15px; line-height: 1.45; color: oklch(0.76 0.006 250); text-wrap: pretty;">Android calls it "Nearby devices". It lets the app see which radios are paired and open a serial link to the one you choose. Nothing is scanned for, nothing is advertised, and the app never pairs anything itself — pairing stays in the system Bluetooth settings.</div>
+
+    <div style="display: flex; flex-direction: column;">
+      <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+        <div style="flex-grow: 1;"><div style="font-size: 14px;">Read the paired-device list</div><div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px;">so the rig can be picked by name</div></div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+        <div style="flex-grow: 1;"><div style="font-size: 14px;">Open a serial link to it</div><div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px;">the same CAT commands the USB cable carries</div></div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250);">
+        <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+        <div style="flex-grow: 1;"><div style="font-size: 14px;">Use a Bluetooth headset-class device as the input</div><div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px;">only if you choose it on the Input step</div></div>
+      </div>
+    </div>
+
+    <div style="border-radius: 8px; background: oklch(0.185 0.012 60); border: 1px solid oklch(0.38 0.06 60); padding: 13px 14px; display: flex; gap: 11px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.74 0.09 60)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px;"><path d="M12 8v5M12 16.5v.5"></path><circle cx="12" cy="12" r="9"></circle></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; font-weight: 500; color: oklch(0.94 0.006 250);">Denying it keeps the USB path working</div>
+        <div style="font-size: 12.5px; color: oklch(0.76 0.006 250); line-height: 1.45; margin-top: 4px; text-wrap: pretty;">Without this permission the Bluetooth rows on the next steps are shown but cannot be chosen, and the mode falls back to USB. Nothing else changes.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Allow nearby devices</div></div>
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 44px;"><div style="font-size: 13.5px; color: oklch(0.66 0.008 250);">Not now — use USB instead</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

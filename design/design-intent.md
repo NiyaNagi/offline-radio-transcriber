@@ -48,23 +48,30 @@ The system itself, drawn so it can be checked rather than described.
 ## 2. Setup — the guided sequence
 
 P8: "Setup is a guided sequence, once. Each step verifiable before proceeding." Every step has a
-verify state; no step advances on assumption.
+verify state; no step advances on assumption. **Eight stages since 2026-09-10** (D33): the first
+chooses the capture mode and presets the Input and Radio steps; the counter reads `n of 8`.
+Rows marked `drawn` below with a P19 note were redrawn or added for D33/D34 and are the
+subject of `spec/e2e-capture-modes-plan.md`; `results/e2e-audit/checklist.md` is their burn-down.
 
 | # | Artboard | Purpose | Serves | Interactions | Status |
 |---|---|---|---|---|---|
-| S01 | `Setup-Welcome.dc.html` | What this app does, offline promise, what it will ask for | FR-PLT-1 | `Begin` → S02. `What is captured?` → privacy sheet | drawn + built |
-| S02 | `Setup-Mic.dc.html` | Microphone rationale before the OS prompt | FR-CAP-1 | `Allow microphone` → OS prompt → S03. Denied → S02-denied | drawn + built |
-| S02b | `Setup-Mic-Denied.dc.html` | Microphone refused twice — the OS prompt is gone. Halting, with the settings path | FR-CAP-1, F1 | `Open app settings` → OS. `Check again` re-reads the grant; auto-advances to S03 when granted | drawn + built |
-| S03 | `Setup-Notify.dc.html` | Notification rationale — the persistent capture notification | FR-SVC-1, FR-PLT-1 | `Allow notifications` → S04. `Skip` → S04, with a warning noted | drawn + built |
-| S04 | `Setup-Input.dc.html` | Choose the audio input. Lists every route with its type | FR-CAP-2 | Tap a route → S05 verify. `Refresh` re-enumerates | drawn + built |
-| S05 | `Setup-Verify.dc.html` | Verified-route check in progress, then pass | FR-CAP-2a, F1 | Auto-advances on pass → S06. `Retry` on fail | drawn + built |
-| S06 | `Setup-Route-Mismatch.dc.html` | The route resolved to the built-in mic. **Halt.** | F1, FR-CAP-2a | `Choose another input` → S04. No "continue anyway" | drawn + built |
-| S07 | `Setup-Level.dc.html` | Set input level against noise, live meter, headroom target | FR-CAP-3, F3 | Level slider. `Test` arms the meter. `Continue` enabled only in range | drawn + built |
-| S08 | `Setup-Battery.dc.html` | Battery-optimisation exemption. States plainly that the API lies and liveness is proven by heartbeat | FR-PLT-1, F5 | `Open settings` → OS. `Skip` → S09, diagnostic-only, never blocks | drawn + built |
-| S09 | `Setup-Rig.dc.html` | Optional rig connection, or skip | FR-RIG-1 | `Connect a radio` → S10. `Not now` → S12 | drawn + built |
-| S10 | `Setup-Rig-Usb.dc.html` | USB device attach + permission grant, with the re-attach warning | FR-PLT-2, F16 | `Grant` → OS prompt → S11. `Back` → S09 | drawn — **built as the honest fallback**: FR-RIG is unbuilt, so every S09 rig row lands on the no-rig-support banner with manual frequency entry (R-285, R-344); the USB attach flow is deferred with FR-RIG |
-| S11 | `Setup-Rig-Verified.dc.html` | Rig identified, descriptor and verified command set shown | FR-RIG-2, FR-RIG-3 | `Continue` → S12. `Change radio` → S09 | drawn — **unreachable in this build** (FR-RIG unbuilt; only the `RigStatus.Stale` "last known" halt renders via the `rig-lost` scenario, R-125) |
-| S12 | `Setup-Done.dc.html` | Summary of what was configured, one action to start | P8 | `Start capture` → N01 | drawn + built |
+| S00 | `Setup-Mode.dc.html` | **How is the radio connected?** Three capture modes — local microphone, USB-connected radio, Bluetooth-connected radio — each stating what it presets (audio route, rig link) and what it costs. Stage 1 of 8 | **FR-CAP-8, FR-CAP-9**, D33 | Tap a mode → S02 (Bluetooth mode inserts S02c after S02). Footer states a change applies at the next session (FR-CAP-12) | drawn — built by P19 (WPD) |
+| S01 | `Setup-Welcome.dc.html` | What this app does, offline promise, what it will ask for | FR-PLT-1 | `Begin` → S00. `What is captured?` → privacy sheet | drawn + built |
+| S02 | `Setup-Mic.dc.html` | Microphone rationale before the OS prompt | FR-CAP-1 | `Allow microphone` → OS prompt → S03 (or S02c in Bluetooth mode). Denied → S02-denied | drawn + built — counter now `2 of 8` (P19 re-verifies) |
+| S02b | `Setup-Mic-Denied.dc.html` | Microphone refused twice — the OS prompt is gone. Halting, with the settings path | FR-CAP-1, F1 | `Open app settings` → OS. `Check again` re-reads the grant; auto-advances to S03 when granted | drawn + built — counter now `2 of 8` |
+| S02c | `Setup-Bluetooth-Permission.dc.html` | **Nearby devices** — the `BLUETOOTH_CONNECT` rationale, Bluetooth mode only. Says what it is used for (paired list, serial link, optional headset-class input) and what denying does (falls back to the USB lane, says so) | FR-CAP-8, FR-RIG-14, FR-PLT-1 | `Allow nearby devices` → OS prompt → S03. `Not now — use USB instead` → mode becomes USB, S03 | drawn — built by P19 (WPD) |
+| S03 | `Setup-Notify.dc.html` | Notification rationale — the persistent capture notification | FR-SVC-1, FR-PLT-1 | `Allow notifications` → S04. `Skip` → S04, with a warning noted | drawn + built — counter now `3 of 8` |
+| S04 | `Setup-Input.dc.html` | Choose the audio input. Lists every route with its type and native rate; a **preset chip** names the mode that preselected one; **every route is selectable** — the built-in mic and Bluetooth rows carry a disclosure sub-line, never a refusal; an unrecognised type says the app cannot identify it | FR-CAP-2, **FR-CAP-2b, FR-CAP-9, FR-CAP-10, FR-CAP-11**, CON-CAP-1 | Tap a route → selects. `Verify this input` → S05. `Refresh` re-enumerates | drawn — redrawn 2026-09-10; enumerator half built (AC-128/129/132, `4fed9de`), preset chip and Bluetooth route by P19 |
+| S05 | `Setup-Verify.dc.html` | Verified-route check in progress, then pass | FR-CAP-2a, F1 | Auto-advances on pass → S07. `Retry` on fail | drawn + built — counter now `4 of 8` |
+| S06 | `Setup-Route-Mismatch.dc.html` | The route resolved to a device other than the selection. **Halt.** | F1, FR-CAP-3, FR-CAP-3a | `Choose another input` → S04. No "continue anyway" | drawn + built — counter now `4 of 8` |
+| S07 | `Setup-Level.dc.html` | Set input level against noise, live meter, headroom target | FR-CAP-3, F3 | Level slider. `Test` arms the meter. `Continue` enabled only in range | drawn + built — counter now `5 of 8` |
+| S08 | `Setup-Battery.dc.html` | Battery-optimisation exemption. States plainly that the API lies and liveness is proven by heartbeat | FR-PLT-1, F5 | `Open settings` → OS. `Skip` → S09, diagnostic-only, never blocks | drawn + built — counter now `6 of 8` |
+| S09 | `Setup-Rig.dc.html` | The rig **catalogue**, generated from the installed descriptor set: each entry names its transports and per-transport capabilities; the null module and generic ASCII CAT are always present; a preset chip names the mode; `Import it` for a descriptor file | FR-RIG-1, **FR-RIG-16, FR-RIG-17, FR-RIG-18, FR-RIG-19** | Tap a rig → S09b. `No radio` → S10 (frequency entry). `Import it` → file picker → S09. `Not now` → S12 | drawn — redrawn 2026-09-10; built by P19 (WPD over WPA's catalogue) |
+| S09b | `Setup-Rig-Transport.dc.html` | **How is the rig linked?** Both transports for the chosen rig with the capabilities of each, the mode's preset selected, the cost of each stated (Bluetooth drops more often; USB permission does not survive a re-plug) | **FR-RIG-13, FR-RIG-14, FR-RIG-17**, FR-CAP-9 | Pick a transport. `Connect over …` → S10 (USB) or S10b (Bluetooth). `Back` → S09 | drawn — built by P19 (WPD) |
+| S10 | `Setup-Rig-Usb.dc.html` | USB device attach + permission grant, with the re-attach warning | FR-PLT-2, F16 | `Grant` → OS prompt → S11. `Back` → S09b | drawn — counter now `7 of 8`; **built as the honest fallback** until P19: FR-RIG was unbuilt, so every S09 rig row landed on the no-rig-support banner with manual frequency entry (R-285, R-344) |
+| S10b | `Setup-Rig-Bluetooth.dc.html` | **Bluetooth rig**: the paired-device list (serial-port devices selectable, headset-only devices listed but not a rig link), `Pair a device in system settings`, then the open-link → identify → verify checklist | **FR-RIG-14, FR-RIG-15**, FR-RIG-11 | Pick a device. `Continue` enabled once verified → S11. `Use USB instead` → S10. `Refresh` re-reads the paired list | drawn — built by P19 (WPD over WPB's transport) |
+| S11 | `Setup-Rig-Verified.dc.html` | Rig identified, transport named, descriptor and verified command set shown | FR-RIG-2, FR-RIG-3, FR-RIG-14 | `Continue` → S12. `Change radio` → S09 | drawn — counter now `7 of 8`, subtitle names the transport; **unreachable until P19** (only the `RigStatus.Stale` halt renders via `rig-lost`, R-125) |
+| S12 | `Setup-Done.dc.html` | Summary of what was configured, one action to start. Now leads with the **Mode** row (`Change` → S00) and reports **Models** as bundled and verified rather than "no model yet" | P8, FR-CAP-12, FR-AST-3 | `Start capture` → N01. `Change` on Mode → S00. `Fix` rows as before | drawn — redrawn 2026-09-10; built by P19 (WPD) and P20 (WPG for the Models row) |
 
 ---
 
@@ -79,6 +86,8 @@ verify state; no step advances on assumption.
 | N04 | `Capture-Status.dc.html` | **The** status surface. Running state, elapsed, input device + verified route, rig state, transmissions, backlog depth, current tier, storage used, battery | **FR-UI-7**, P4 | `Stop capture` (confirm). `Input` → CF02. `Rig` → CF06. `Storage` → CF03. `Tier` → CF05. Backlog → R01 | drawn + built |
 | N05 | `Capture-Notification.dc.html` | The persistent notification, collapsed and expanded | FR-SVC-1, FR-PLT-1 | `Stop`. `Open`. Expanded shows elapsed + count | drawn + built |
 | N06 | `Level-Meter.dc.html` | Live level with noise floor, headroom, clip indication | FR-CAP-3, F3 | `Adjust` → CF02. Auto-warns on low/clipping | drawn + built |
+| N01b | `Main-Room-Audio.dc.html` | N01 in **local-microphone mode**: the persistent room-audio disclosure — a chip under the session title and a `room` mark in the live bar — so a session recorded from the room is never confusable with one from the radio, on any screen | **FR-CAP-3a, FR-CAP-10, AC-129** | As N01. The chip → CF11 | drawn — built by P19 (WPF: live bar + Now header) |
+| N04 | `Capture-Status.dc.html` | *(row amended 2026-09-10)* Input sub-line names the capture mode and audio route; Radio sub-line names the rig transport | FR-UI-7, FR-CAP-13, FR-RIG-14 | As before | drawn — amended; built by P19 (WPF) |
 
 ---
 
@@ -159,7 +168,8 @@ P2: every machine conclusion inspectable in one tap.
 | DG01 | `Digest.dc.html` | The night's digest: what was notable and why | FR-DIG-1..6 | Item → its subject. `Full log` → L01 | drawn + built |
 | DG02 | `Digest-Item.dc.html` | One digest finding expanded, with its evidence | FR-DIG-2a, P2 | `Why this is notable`. `The 6 overs` → L01 | drawn + built |
 | DG03 | `Sessions.dc.html` | Earlier nights, each with span, counts, gaps | FR-UI-1, FR-RUN-12 | Session → DG04 | drawn + built |
-| DG04 | `Session.dc.html` | One past session: span, coverage, gaps, unclean end if any | FR-RUN-12, FR-RUN-16 | `Log` → L01 for that session. Gap → explains | drawn + built — **accepted deviation**: the Input and Models fact rows read an honest "not tracked per session" line — no per-session input route or model set is recorded in the schema (R-450); Tier comes from the transmissions' recorded `processedTier` |
+| DG04 | `Session.dc.html` | One past session: span, coverage, gaps, unclean end if any. *(Amended 2026-09-10)* **Mode**, **Input** (route, type, room/radio audio, Bluetooth profile where applicable) and **Rig link** (transport, stale spans) fact rows are now real per-session facts | FR-RUN-12, FR-RUN-16, **FR-CAP-13** | `Log` → L01 for that session. Gap → explains | drawn — the R-450 deviation ("not tracked per session") is **retired** for Input by FR-CAP-13's schema columns (P19 WPC1/WPF); Models stays as it was |
+| DG05 | `Digest-Prose.dc.html` | The digest with the **LLM prose block**: an "In their words" section, badged `generated`, one card per thread in italic, each citing the overs it came from with a `Read the overs` action, and a footnote stating the model never names a station the log did not | **FR-DIG-3, FR-DIG-4, FR-DIG-6, FR-DIG-11**, D36 | `Read the overs` → L01 filtered to the thread. Off in CF04 | drawn — built by P21 (WPH generator, WPF screen) |
 
 ---
 
@@ -182,11 +192,12 @@ phone, improve it at home.
 | # | Artboard | Purpose | Serves | Interactions | Status |
 |---|---|---|---|---|---|
 | CF01 | `Settings.dc.html` | Root list, grouped | FR-CFG-1 | Each row → its screen | drawn + built |
-| CF02 | `Settings-Capture.dc.html` | Input device, verified route, level, enhancement | FR-CAP, FR-ENH | Route → re-verify. Level → N06 | drawn + built |
+| CF02 | `Settings-Capture.dc.html` | Input device, verified route, level, enhancement. *(Amended 2026-09-10)* leads with a **Capture mode** row | FR-CAP, FR-ENH, **FR-CAP-12** | Mode `Change` → CF11. Route → re-verify. Level → N06 | drawn — amended; built by P19 (WPE) |
+| CF11 | `Settings-Mode.dc.html` | **Capture mode**, the settings re-entry: the same three modes as S00 with the current one marked, the two rows the mode set (audio route, rig link) each with `Change`, and — while a session is live — the amber "applies when it ends" banner | **FR-CAP-8, FR-CAP-9, FR-CAP-12, FR-CAP-13, AC-131** | Pick a mode → presets the two rows. Audio route `Change` → S04. Rig link `Change` → S09b | drawn — built by P19 (WPE) |
 | CF03 | `Settings-Storage.dc.html` | Used by category, retention policy, **deletion announced in advance** | **FR-STO-1..8, P9** | Policy controls. `What will be deleted` → preview | drawn — **accepted deviation**: the board's nights-based "Keep audio for N nights" control is replaced by the GB budget chips and auto-prune toggle that FR-STO-3/D26 and FR-STO-3a/AC-124 mandate (R-133); the usage bar, legend and "Next deletion … Review" row are built as drawn (R-351); the "Then stop retaining audio" row stacks its value under the label at font scale ≥ 1.3 and sits beside it below that (R-551, R-590) |
-| CF04 | `Settings-Assets.dc.html` | Models and lexicon: installed, version, checksum, what is missing | FR-AST-1..9, F13 | `Install`. `Verify`. `Replace` (deferred to next session, F21) | drawn + built |
-| CF05 | `Settings-Tier.dc.html` | Current tier, what this device can do, **what it therefore does not know** | **FR-TIER, P11** | Tier override. Explains recall vs precision | drawn + built |
-| CF06 | `Settings-Rig.dc.html` | Rig state, descriptor, verified commands, band mapping | FR-RIG-1..12 | `Reconnect`. `Change radio` | drawn + built |
+| CF04 | `Settings-Assets.dc.html` | Models and lexicon. *(Redrawn 2026-09-10, D35/D36)* every model row reads **bundled · verified · size**; a **Prose digest** section with the Gemma row ("stored, loaded only at tier 3 while idle and charging") and the `Write prose summaries` toggle; a **Space** row stating bundled assets are not counted against the recording budget; `Install from a file` retained for replacement | **FR-AST-3, FR-AST-3a, FR-AST-3b, FR-DIG-3b**, FR-AST-1..2, F13 | Toggle prose. `Install from a file`. `Replace` (deferred to next session, F21) | drawn — redrawn; built by P20 (WPG data, WPE screen) and P21 |
+| CF05 | `Settings-Tier.dc.html` | Current tier, what this device can do, **what it therefore does not know**. *(Amended)* tier 3 names the prose-digest capability; the ramp says only tier 3 loads the language model, never for callsigns | **FR-TIER, P11**, FR-DIG-3b, D5 | Tier override. Explains recall vs precision | drawn — amended; built by P21 (WPE) |
+| CF06 | `Settings-Rig.dc.html` | Rig state, descriptor, verified commands, band mapping. *(Amended)* the **Link** row names the transport and address with a `Switch` action; the disconnect row mentions the retry ladder | FR-RIG-1..12, **FR-RIG-14, FR-RIG-15** | `Reconnect`. `Change radio`. `Switch` → S09b | drawn — amended; built by P19 (WPE) |
 | CF07 | `Settings-Export.dc.html` | What can be exported and in what form | FR-EXP-1..6 | Format, scope, `Export` | drawn + built |
 | CF08 | `Settings-Contribute.dc.html` | Corpus contribution consent. States exactly what never leaves the device | **FR-CON-1..8, constitution III** | Per-category consent. Nothing on by default | drawn + built |
 | CF09 | `Settings-Diagnostics.dc.html` | Diagnostic bundle contents, shown before it is produced | FR-OBS-1..5a | `Preview bundle`. `Save` | drawn + built — **accepted deviation**: `Preview` is an in-app listing of the bundle entries with real sizes rather than opening each file in an external reader (R-137); `Save` writes the real zip through the system file picker |
@@ -223,6 +234,7 @@ did about it, and carries the recovery action. None of these is a bare error.
 | F20 | `Fail-Migration.dc.html` | F20 migration failed | Audio and superseded transcripts preserved, records marked for reprocessing | FR-AST-6 | drawn + built |
 | F21 | `Fail-Asset-Swap.dc.html` | F21 asset replaced mid-session | Activation deferred to next session, or reprocess | FR-AST-4 | drawn + built — **accepted deviation**: two options are offered (wait for the next session, activate now) — the ones `ModelsController` can honour; the board's third, "stop capture, swap, start a new session", needs a capture-service restart seam FR-AST-4 does not require (R-544). The screen maps from the real `StagedActivation` signal (WP10/WP11b) |
 | F22 | `Fail-Calibration.dc.html` | F22 confidence drift after model change | Refit calibration; versioned asset, no app release | FR-LEX-18 | drawn + built |
+| F23 | `Fail-Bluetooth-Audio.dc.html` | **Bluetooth audio link dropped mid-session** (D34). The F2 response with the transport named: a gap is recorded from the moment of the drop, the retry ladder is shown, the rig link is stated as separate; every Bluetooth-captured row carries the `bt audio` mark | FR-CAP-5, **FR-CAP-11, FR-CAP-13**, FR-RUN-12 | `Retry now`. `Switch to a wired input` → S04 | drawn — built by P19 (WPF failures + row mark; WPC2 signal) |
 
 ---
 
@@ -239,6 +251,7 @@ transitions labelled.
 | FL4 | `Flow-Search.dc.html` | Search → filters → results → detail → back with filters intact | FR-UI-3 | drawn + built |
 | FL5 | `Flow-Improve.dc.html` | Field capture on a weak device → home → improve → diff | **P12** | drawn + built |
 | FL6 | `Flow-Degrade.dc.html` | Nominal → thermal → tier drop → backlog → recovery, and what is announced at each step | P10, P11 | drawn + built |
+| FL7 | `Flow-Mode.dc.html` | **The three capture-mode lanes**: S00 → the shared steps with each lane's presets marked → S12, plus the settings re-entry and the independence rule (Bluetooth control with cabled audio) | **D33, FR-CAP-8, FR-CAP-9, FR-RIG-13** | drawn — built by P19 |
 
 ---
 
@@ -260,3 +273,25 @@ The twelve reader requirements, and where each is designed. This table is the au
 | FR-UI-10 frequency view | FQ01, FQ02 |
 | FR-UI-11 activity patterns | ST03, FQ02, FQ03, N01, C09 |
 | FR-UI-12 not heard vs not listening | ST03, C09, F15, DG04 |
+
+## 15. Coverage against D33–D36 (added 2026-09-10)
+
+The capture-mode, Bluetooth, bundling and LLM decisions, and where each is designed. This table
+is the audit's first check for `spec/e2e-capture-modes-plan.md`.
+
+| Requirement | Designed in |
+|---|---|
+| FR-CAP-8 closed set of modes | S00, CF11, FL7 |
+| FR-CAP-9 presets both axes, each overridable | S00, S04 (preset chip), S09 (preset chip), S09b, CF11, FL7 |
+| FR-CAP-10 local microphone first-class, room-audio disclosure | S04, N01b, S12 |
+| FR-CAP-11 Bluetooth audio disclosed, profile recorded | S04, F23, DG04 |
+| FR-CAP-12 changeable later, applies next session | S00 footer, S12, CF02, CF11 |
+| FR-CAP-13 mode and route recorded per session | DG04, N04, F23 (row mark) |
+| FR-CAP-2b every route selectable, disclosure not refusal | S04 |
+| FR-RIG-13 transport independent of audio route | S09b, CF11, FL7 |
+| FR-RIG-14 Bluetooth transport, TH-D75A parity | S09, S09b, S10b, S11, CF06, N04 |
+| FR-RIG-15 Bluetooth drop degrades like USB | S09b, S10b, CF06, F9 |
+| FR-RIG-16..19 catalogue-generated picker, capabilities, always-present entries, import | S09 |
+| FR-AST-3, 3a, 3b bundled, sized, excluded from budget, verified | CF04, S12 |
+| FR-DIG-3, 3b, 4, 6, 11 prose digest, disableable, marked, no callsign | DG05, CF04, CF05 |
+| S02c Bluetooth permission | S02c, FL7 |

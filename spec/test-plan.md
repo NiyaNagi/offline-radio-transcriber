@@ -192,6 +192,15 @@ from M10.
 | D16 | Squelch fusion overrides VAD | AC-68 | M7 |
 | D17 | Measured endurance published | AC-76, NFR-7 | M2/M10 |
 | D18 | T0 on a 2 GB device | AC-26, AC-37 | M10 |
+| D19 | TH-D75A over Bluetooth SPP: same command set and capabilities as USB; link drop degrades to stale and reconnects | AC-133, FR-RIG-14, FR-RIG-15 | Wave F (H2, H3) |
+| D20 | Bluetooth audio from a headset-class device: profile recorded, rows marked; drop → gap, F23, recovery | AC-132, FR-CAP-11, FR-CAP-5 | Wave F (H5, H7) |
+| D21 | **TH-D75A as the phone's Bluetooth audio source** — prediction recorded: not offered by stock Android | D34 note, FR-CAP-11 | Wave F (H6) |
+| D22 | Mode change while capturing applies at the next session, never mid-session | AC-131 | Wave F (H8) |
+| D23 | Fresh install with no network reaches full capability for its tier; a corrupted bundled asset is refused | AC-136, AC-137 | Wave F (H9, H10) |
+| D24 | LLM at tier 3 only while idle and charging; disable releases memory; no invented callsign; stored-not-loaded below T3 | AC-87, AC-138, AC-140 | Wave F (H11) |
+
+The Wave F rows carry their step-by-step protocol, prediction and result path in
+[`results/e2e-audit/hardware-checklist.md`](../results/e2e-audit/hardware-checklist.md).
 
 **D4 is the project's single most important test** and it takes eight hours plus setup. Run it
 early, run it more than once, and run D8 first — the whole point of the "prove it" test is that

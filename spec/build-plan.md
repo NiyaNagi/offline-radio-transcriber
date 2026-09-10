@@ -279,11 +279,18 @@ are individually green.*
   own file, never claimed as "checksum verified". See CHANGELOG.md. No real download or on-device
   install has been run against any of these URLs in any session.
 
-**Wave F — capture modes and bundled assets. Added 2026-09-10 (D33–D36). Both need Wave E.**
+**Wave F — capture modes and bundled assets. Added 2026-09-10 (D33–D36). All need Wave E.**
+**The working contract for this wave is [`e2e-capture-modes-plan.md`](e2e-capture-modes-plan.md)**
+(work packages by file ownership, scenario sets, merge order); the burn-down is
+`results/e2e-audit/checklist.md`; the artboards are inventoried in `design/design-intent.md` §15.
+The prompts below are the summaries; the plan is authoritative where they differ.
 
-- [ ] **P19 · Capture modes and the onboarding mode picker** *(`:app`, `:capture-android`,
-  `:rig-usb`, new `:rig-bluetooth`)* — D33/D34. Turns the two unnamed, sequential setup axes into
-  a named mode chosen up front and changeable afterwards.
+- [ ] **P19 · Capture modes and the onboarding mode picker** *(`:app`, `:core`, `:data`,
+  `:capture-android`, `:pipeline`, `:rig`, `:rig-usb`, new `:rig-bluetooth`)* — D33/D34. Turns
+  the two unnamed, sequential setup axes into a named mode chosen up front and changeable
+  afterwards. Packages WPA, WPB, WPC1, WPC2, WPD, WPE, WPF in the plan. **Artboards drawn
+  2026-09-10** (S00, S02c, S09b, S10b, N01b, CF11, F23, FL7; S04/S09/S11/S12/CF02/CF06/N04/DG04
+  redrawn) — the Principle VIII prerequisite below is met.
 
   **Read first:** functional spec §7.1a (FR-CAP-8..13), FR-CAP-2b, CON-CAP-1 *as amended*,
   FR-RIG-13..19, §9.1a, AC-127..135. Constitution I, IV, VII, VIII.
@@ -344,6 +351,31 @@ are individually green.*
 
   **Done when:** AC-136..140 hold, one build variant produces the shipping artifact, and
   `FR-AST-3a`'s TODO is either still open with a recorded size or closed by a measurement.
+  Package WPG in the plan. **Asset set fixed 2026-09-10:** the four current catalogue entries
+  plus Gemma 3 1B int4 (`litert-community/Gemma3-1B-IT`, sha256 `e3d981c0…9dee`,
+  554,661,243 bytes, gated — the build needs `HF_TOKEN`). Larger-tier ASR models join the
+  manifest when the tier system selects them (P11/M10), not before.
+
+- [ ] **P21 · The LLM — contract, fake, MediaPipe engine, prose digest** *(new `:llm-api`,
+  new `:llm-mediapipe`, `:pipeline/digest`, `:data` v8, `:app` digest and settings)* — D36.
+  Packages WPH (with WPE/WPF for the screens) in the plan.
+
+  **Read first:** FR-DIG-3, FR-DIG-3a, FR-DIG-3b, FR-DIG-4, FR-DIG-5, FR-DIG-6, FR-DIG-11,
+  FR-DIG-12, FR-ASR-15/16 (deferred — rescoring is not in this prompt), AC-84, AC-86, AC-87,
+  AC-138, AC-140, R16. **D5 is untouched: no LLM in the callsign path, ever.** Constitution I, V.
+
+  **Tests first:** the `CallsignShapeFilter` against a fake that deliberately invents a callsign
+  (FR-DIG-4 — MediaPipe has no grammar-constrained decoding, so the post-filter is the guard);
+  the gate's five conjuncts falsified one at a time (FR-DIG-5, AC-87); `AC_140` (deterministic
+  digest unchanged with the engine disabled, memory released); `AC_138` (below tier 3 the model
+  is never loaded); the prompt builder's closed field list (FR-DIG-12 — no station knowledge,
+  no names, no location).
+
+  **Ships with it:** `FakeLlmEngine` that can hang, fail to load, over-run and hallucinate.
+
+  **Done when:** DG05 renders real stored summaries badged `generated` and attributed to their
+  overs; CF04's toggle disables and releases; the digest with the engine off is byte-identical to
+  today's; `dependencyRules` still forbids `:capture-*` → `:llm-*`.
 
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not

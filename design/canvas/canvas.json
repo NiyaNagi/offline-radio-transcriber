@@ -245,6 +245,42 @@
       "page": "page-2"
     },
     {
+      "file": "Setup-Mode.dc.html",
+      "x": 490,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "S00 Capture mode",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Bluetooth-Permission.dc.html",
+      "x": 980,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "S02c Nearby devices",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Rig-Transport.dc.html",
+      "x": 1470,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "S09b Rig link",
+      "page": "page-2"
+    },
+    {
+      "file": "Setup-Rig-Bluetooth.dc.html",
+      "x": 1960,
+      "y": 1968,
+      "w": 390,
+      "h": 844,
+      "title": "S10b Bluetooth rig",
+      "page": "page-2"
+    },
+    {
       "file": "Menu.dc.html",
       "x": 0,
       "y": 0,
@@ -305,6 +341,15 @@
       "w": 390,
       "h": 844,
       "title": "N06 Level meter",
+      "page": "page-3"
+    },
+    {
+      "file": "Main-Room-Audio.dc.html",
+      "x": 490,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "N01b Now — local microphone",
       "page": "page-3"
     },
     {
@@ -659,6 +704,15 @@
       "page": "page-7"
     },
     {
+      "file": "Digest-Prose.dc.html",
+      "x": 980,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "DG05 Digest with prose",
+      "page": "page-7"
+    },
+    {
       "file": "Settings.dc.html",
       "x": 0,
       "y": 0,
@@ -746,6 +800,15 @@
       "w": 390,
       "h": 844,
       "title": "CF10 About",
+      "page": "page-8"
+    },
+    {
+      "file": "Settings-Mode.dc.html",
+      "x": 1960,
+      "y": 984,
+      "w": 390,
+      "h": 844,
+      "title": "CF11 Capture mode",
       "page": "page-8"
     },
     {
@@ -947,6 +1010,15 @@
       "page": "page-9"
     },
     {
+      "file": "Fail-Bluetooth-Audio.dc.html",
+      "x": 1960,
+      "y": 2952,
+      "w": 390,
+      "h": 844,
+      "title": "F23 Bluetooth audio dropped",
+      "page": "page-9"
+    },
+    {
       "file": "Flow-Setup.dc.html",
       "x": 0,
       "y": 0,
@@ -1001,6 +1073,15 @@
       "page": "page-10"
     },
     {
+      "file": "Flow-Mode.dc.html",
+      "x": 0,
+      "y": 4280,
+      "w": 1560,
+      "h": 900,
+      "title": "FL7 Capture modes",
+      "page": "page-10"
+    },
+    {
       "file": "Editorial.dc.html",
       "x": 0,
       "y": 0,
@@ -1034,7 +1115,15 @@
       "y": -150,
       "w": 520,
       "page": "page-2",
-      "text": "Seven steps, each with a verify state. No step advances on assumption. The route mismatch is the one halt — there is no continue-anyway."
+      "text": "Eight steps, each with a verify state. No step advances on assumption. The route mismatch is the one halt — there is no continue-anyway.\n\nNew 2026-09-10 (D33/D34): S00 chooses the capture mode and presets the Input and Radio steps; S02c is the Bluetooth permission; S09b picks the rig link; S10b pairs a Bluetooth rig. The three lanes are drawn on FL7. Every route on S04 is selectable — the mic and Bluetooth rows carry a disclosure, never a refusal."
+    },
+    {
+      "id": "modes-note",
+      "x": 490,
+      "y": 2880,
+      "w": 560,
+      "page": "page-2",
+      "text": "Bottom row: the four new setup boards. Not built yet — build-plan P19 owns them; results/e2e-audit/checklist.md is the burn-down."
     },
     {
       "id": "integrated",
@@ -1071,6 +1160,6 @@
   ],
   "launch": {
     "view": "canvas",
-    "page": "page-3"
+    "page": "page-2"
   }
 }

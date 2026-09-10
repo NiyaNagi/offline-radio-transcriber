@@ -33,7 +33,7 @@
       <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
       <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">TH-D75A</div>
     </div>
-    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Connected · USB serial · reading both bands unpolled</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Connected · Bluetooth SPP · reading both bands unpolled</div>
   </div>
 
   <div style="padding: 14px 20px 0;">
@@ -69,7 +69,8 @@
       <div style="flex-grow: 1;"><div class="n">Rig module</div><div class="s">th-d75a · built in · verified command set <span class="m">FQ BY FO BC MR ME AI BL</span></div></div>
     </div>
     <div class="r">
-      <div style="flex-grow: 1;"><div class="n">Serial</div><div class="s"><span class="m">vid 0x0451 pid 0x16a8</span> · 9600 8N1 · USB permission granted, not persistent</div></div>
+      <div style="flex-grow: 1;"><div class="n">Link</div><div class="s">Bluetooth SPP · <span class="m">D8:3A:DD:41:0C:7F</span> · paired in system settings · USB serial also supported, <span class="m">vid 0x0451 pid 0x16a8</span></div></div>
+      <div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">Switch</div>
     </div>
     <div class="r">
       <div style="flex-grow: 1;"><div class="n">Auto-information, <span class="m">AI 1</span></div><div class="s">changes arrive without polling · fallback poll every 2 s if it stops</div></div>
@@ -82,7 +83,7 @@
     <div class="lbl">If it disconnects</div>
     <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
       <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0;"></div>
-      <div style="flex-grow: 1;"><div class="n">Capture continues on the last-known frequency, marked stale</div><div class="s">every over logged meanwhile carries a stale mark · you are told loudly, and again when it is back</div></div>
+      <div style="flex-grow: 1;"><div class="n">Capture continues on the last-known frequency, marked stale</div><div class="s">every over logged meanwhile carries a stale mark · the link is retried with backoff · you are told loudly, and again when it is back</div></div>
     </div>
 
     <div style="padding: 16px 20px 0; display: flex; gap: 9px;">

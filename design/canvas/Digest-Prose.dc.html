@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .item { display: flex; gap: 12px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+    .main { font-size: 15px; line-height: 1.4; text-wrap: pretty; }
+    .sub { font-size: 12.5px; color: oklch(0.58 0.008 250); margin-top: 3px; }
+    .m { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+    .badge { font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: oklch(0.62 0.008 250); border: 1px solid oklch(0.30 0.010 250); border-radius: 3px; padding: 0 5px; line-height: 16px; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Earlier nights</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 6px;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Overnight, Mon 7 Sep</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">23:32 – 06:14 · 412 overs · 19 stations · 2 bands · 1 gap of 38 s</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div style="padding: 16px 20px 11px;"><div class="lbl">Worth knowing</div></div>
+    <div style="padding: 0 20px 16px; display: flex; flex-direction: column; gap: 14px;">
+      <div class="item">
+        <div class="dot" style="background: oklch(0.72 0.14 150);"></div>
+        <div style="flex-grow: 1;">
+          <div class="main"><span class="m">WA7HJR</span> activated <span class="m" style="font-weight: 500;">K-4412</span> on 146.960</div>
+          <div class="sub">first time heard · 02:17 · 6 overs · 5 hunters</div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="dot" style="background: oklch(0.72 0.14 150);"></div>
+        <div style="flex-grow: 1;">
+          <div class="main">The Tuesday net ran 41 minutes with <span style="font-weight: 600;">14 check-ins</span></div>
+          <div class="sub">unusually long · 145.230 · 19:00 · usual is 28 min, 9 check-ins</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="height: 1px; background: oklch(0.24 0.010 250); margin: 0 20px;"></div>
+
+    <div style="display: flex; align-items: center; gap: 9px; padding: 16px 20px 10px;">
+      <div class="lbl">In their words</div>
+      <div class="badge">generated</div>
+    </div>
+    <div style="padding: 0 20px 16px; display: flex; flex-direction: column; gap: 10px;">
+      <div style="background: oklch(0.195 0.009 250); border-radius: 10px; border: 1px solid oklch(0.26 0.010 250); padding: 13px 14px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="m" style="font-size: 13px;">WA7HJR</div>
+          <div style="font-size: 12px; color: oklch(0.58 0.008 250);">·</div>
+          <div style="font-size: 12px; color: oklch(0.58 0.008 250);">K-4412 activation, 6 overs</div>
+        </div>
+        <div style="font-size: 14px; line-height: 1.45; color: oklch(0.80 0.006 250); font-style: italic; margin-top: 7px; text-wrap: pretty;">Reported running low power from the park with a wire antenna, thanked each hunter by name as they called in, and said the band was closing as it went dark.</div>
+        <div style="display: flex; align-items: center; gap: 14px; margin-top: 8px;">
+          <div style="font-size: 11.5px; color: oklch(0.58 0.008 250);">from overs 02:17 – 02:41</div>
+          <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">Read the overs</div></div>
+        </div>
+      </div>
+      <div style="background: oklch(0.195 0.009 250); border-radius: 10px; border: 1px solid oklch(0.26 0.010 250); padding: 13px 14px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="m" style="font-size: 13px;">Tuesday net</div>
+          <div style="font-size: 12px; color: oklch(0.58 0.008 250);">·</div>
+          <div style="font-size: 12px; color: oklch(0.58 0.008 250);">14 check-ins, 41 min</div>
+        </div>
+        <div style="font-size: 14px; line-height: 1.45; color: oklch(0.80 0.006 250); font-style: italic; margin-top: 7px; text-wrap: pretty;">Control asked for weather reports first; two stations described ice on the pass road and the net closed with a reminder about the Saturday swap meet.</div>
+        <div style="display: flex; align-items: center; gap: 14px; margin-top: 8px;">
+          <div style="font-size: 11.5px; color: oklch(0.58 0.008 250);">from overs 19:00 – 19:41</div>
+          <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">Read the overs</div></div>
+        </div>
+      </div>
+      <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.45; text-wrap: pretty;">Written on this phone by the bundled language model from the resolved overs only. It never names a station the log did not — every callsign above was heard or inferred by the deterministic pass, and the summary can still be wrong. Off in Settings › Models.</div>
+    </div>
+
+    <div style="height: 1px; background: oklch(0.24 0.010 250); margin: 0 20px;"></div>
+
+    <div style="display: flex; align-items: baseline; padding: 16px 20px 10px;">
+      <div class="lbl" style="flex-grow: 1;">By the numbers</div>
+    </div>
+    <div style="padding: 0 20px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+      <div style="background: oklch(0.195 0.009 250); border-radius: 8px; padding: 10px 12px;"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600;">412</div><div style="font-size: 11px; color: oklch(0.58 0.008 250); margin-top: 2px;">overs</div></div>
+      <div style="background: oklch(0.195 0.009 250); border-radius: 8px; padding: 10px 12px;"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600;">91%</div><div style="font-size: 11px; color: oklch(0.58 0.008 250); margin-top: 2px;">attributed</div></div>
+      <div style="background: oklch(0.195 0.009 250); border-radius: 8px; padding: 10px 12px;"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600;">6</div><div style="font-size: 11px; color: oklch(0.58 0.008 250); margin-top: 2px;">rejected</div></div>
+    </div>
+
+  </div>
+
+  <div style="border-top: 1px solid oklch(0.26 0.010 250); padding: 12px 16px 16px; display: flex; gap: 9px;">
+    <div style="flex-grow: 1; background: oklch(0.24 0.010 250); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 500;">Full log</div>
+    <div style="flex-grow: 1; background: oklch(0.24 0.010 250); border-radius: 9px; padding: 12px 0; text-align: center; font-size: 14px; font-weight: 500;">Export this night</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
