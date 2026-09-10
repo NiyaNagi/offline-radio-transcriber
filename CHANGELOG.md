@@ -32,6 +32,100 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP2 round 4: R-381, device-driven — three candidates tried, none closed it)
+
+### (pending) — ui-conformance WP2 round 4 · R-381 search field, device iteration: candidate (1) kept, (2) and (3) tried and reverted
+
+**Scope:** `:app` — `ui/components/Controls.kt` (`TextField`) and `ControlsTest.kt`. `git merge
+main` first (main at `8891504`+, this branch fast-forwarded to `7d32874`; no conflicts, no files
+this package owns touched). Continues the same day's own prior WP2 rounds.
+
+**Requirements/ACs:** R-381 (register, the last open half of this package's own accessibility
+round — the search field's own `EditText` node).
+
+**What changed:**
+- **Constitution Check.** Principle I (Uncertainty Is Content) governs this entire round: three
+  device-verified candidates are reported by exactly what each one did and did not change, and the
+  final state is the *least-regressive* of the three, not the "best-sounding" one — nothing here is
+  written up as fixed.
+- Reproduced today's own V-final dump first, before changing anything: `emulator-5554`, Search
+  opened via the `overnight` scenario, `<node class="android.widget.EditText" content-desc=""
+  ...><node class="android.view.View" content-desc="Search text" .../></node>` — confirmed
+  identical to the register's own reading.
+- **Candidate (1)** — `contentDescription` directly on `BasicTextField`'s own `modifier` parameter
+  (already the shape in place; made `mergeDescendants = true` explicit rather than the implicit
+  default). Rebuilt (`:app:assembleDebug`, confirmed non-stale), reinstalled, redumped: the
+  `EditText` node's own `content-desc` stayed exactly `""`. No change.
+- **Candidate (2)** — added `this.text = AnnotatedString(desc)` alongside `contentDescription`, the
+  same "carry both" pattern that closed R-380 for every *clickable* control in this package.
+  Rebuilt, reinstalled, redumped: **regressed** — the node's own exported class changed from
+  `android.widget.EditText` to a generic `android.widget.TextView` (both `content-desc` and `text`
+  still `""`), consistent with `BasicTextField`'s own internal, currently-empty `EditableText`
+  state overwriting mine on merge, in the wrong direction from what R-380's pattern assumed.
+  Reverted immediately — a fourth candidate was not attempted with this class regression left in
+  place.
+- **Candidate (3)** — wrapped `BasicTextField` in an outer `Box`, moved `.semantics(mergeDescendants
+  = true) { contentDescription = … }` to the wrapper, left `BasicTextField`'s own modifier bare
+  (`Modifier.fillMaxWidth()`only). Rebuilt, reinstalled, redumped: the *wrapper's own* exported node
+  also showed `content-desc=""` (so the property is not reliably surviving on **any** ancestor
+  tried, wrapper or field-owned alike), and the inner field gained `uiautomator`'s own `NAF="true"`
+  ("not accessibility friendly") marker it did not carry before. Reverted.
+- **Kept:** candidate (1) — the only one of the three that does not additionally break the node's
+  own real `EditText` classification or introduce a new `NAF` marker; changes nothing observable on
+  device beyond making `mergeDescendants = true` explicit (previously the implicit default of the
+  same call). "Clear"/"Back" — already independently labelled, real, separate nodes, unaffected by
+  any of the three candidates — were not touched, per the instruction.
+- New test `R_381_search_field_node` (`ControlsTest.kt`): on the *unmerged* tree, the one physical
+  node carrying `SemanticsActions.SetText` (the real, framework-owned editable-text action) also
+  carries `SemanticsProperties.ContentDescription` — this is true in Compose's own semantics tree
+  (confirmed green) even though the platform bridge that exports it to a real device's own
+  accessibility tree does not yet reflect it — the gap this whole round's own device iteration
+  documents, not assumed away by a passing Robolectric test.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.components.ControlsTest"` — BUILD
+  SUCCESSFUL, all green, including the new `R_381_search_field_node`.
+- `.\gradlew.bat :app:testDebugUnitTest` (full) — BUILD SUCCESSFUL, **1396 tests, 0 failures, 0
+  errors, 0 skipped across 153 classes** (XML summed directly), completed this round (unlike the
+  prior two rounds' own repeated contention).
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL, zero issues.
+- `.\gradlew.bat dependencyRules platformGuards` — both OK, 17 modules, graph unchanged.
+- `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` — OK, 8/8.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  192 of 419, unchanged; no diff in `results/coverage-matrix.md`.
+- **Device (`emulator-5554`, `overnight` scenario, Search opened via the header search icon,
+  `uiautomator dump` after each of the four installs — baseline plus one per candidate):** every
+  dump's own `EditText` line is quoted in full above, in "What changed", for whoever picks this up
+  next; the **final, kept state's own dump line** —
+  `<node index="1" text="" resource-id="" class="android.widget.EditText" package="org.ort.app"
+  content-desc="" checkable="false" checked="false" clickable="true" enabled="true"
+  focusable="true" focused="true" scrollable="false" long-clickable="true" password="false"
+  selected="false" bounds="[127,829][1027,843]">` (with the same `content-desc="Search text"` child
+  as the baseline) — is identical to the pre-existing, still-open defect.
+
+**Left open / not done:**
+- **R-381 remains open.** Three principled candidates were tried and none closed it; two are now
+  ruled out with specific, observed side effects (candidate (2)'s class regression, candidate (3)'s
+  `NAF` marker and empty wrapper). What was not tried this round, for lack of time, and is the most
+  promising next step given what's now known: `clearAndSetSemantics` on `BasicTextField`'s own
+  modifier, explicitly redeclaring only `RequestFocus` (needed for a screen-reader user to focus
+  it) rather than the full internal action set this composable's own doc comment originally
+  worried about — real typing does not route through `SemanticsActions.SetText` for a sighted or
+  tap-to-focus-then-type user (that is IME input, handled by the underlying Android `View`
+  directly, independent of Compose's semantics tree); `SetText` matters only to accessibility
+  *tooling* (Voice Access, automated test drivers) invoking it programmatically, a real but
+  narrower cost than assumed. This was not attempted this round because it needs its own careful
+  on-device verification (does tap-to-focus still work, does the IME still attach, does typing
+  still report through `onValueChange`) that this round's own time budget did not allow rushing.
+- The observed regression in candidate (2) — `BasicTextField`'s own internal `EditableText`
+  overwriting an explicitly-set `text` semantics property on merge, in the *opposite* direction
+  R-380's "carry both" pattern assumed for clickable controls — is itself a small, real finding
+  about how this Compose version merges semantics for editable fields specifically, worth keeping
+  in mind for any future attempt on this same node.
+
+---
+
 ## 2026-09-09 (ui-conformance WP4/WP10 round 3: R-590 fixed for real — device-confirmed regression from round 2's own `SpaceBetween`-without-weights attempt)
 
 ### (pending) — ui-conformance WP4/WP10 round 3 · R-590's below-threshold branch rebuilt on `KeyValueRow`'s own proven weight(label)/fixed(value) shape, after round 2's un-weighted `SpaceBetween` attempt read safe under Robolectric but crushed the value on a real device

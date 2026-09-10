@@ -733,6 +733,18 @@ public fun TextField(
     }
     val textStyle = (if (mono) OrtType.control.copy(fontFamily = FontFamily.Monospace) else OrtType.control)
         .copy(color = OrtColors.textHigh)
+    // R-381 device iteration (round 2, `emulator-5554`), all three candidates tried in the order
+    // given, all confirmed via a fresh `uiautomator dump` after each, none closed it — the finding
+    // is written up in full in this round's own `CHANGELOG.md` entry, not repeated here at length:
+    // (1) `contentDescription` alone directly on this modifier — the field's own exported `EditText`
+    // node still showed `content-desc=""`, unchanged from the pre-existing defect. (2) adding
+    // `this.text = …` alongside it — still `content-desc=""`/`text=""`, and the node's own exported
+    // class changed from `EditText` to a generic `TextView`, a regression this round reverted rather
+    // than kept. (3) wrapping in an outer `Box` and moving semantics there — the *wrapper's own*
+    // node also exported empty, and the inner field gained `NAF="true"` (`uiautomator`'s own
+    // "not accessibility friendly" marker). This round settled on (1), the least-regressive of the
+    // three (preserves the real `EditText` classification, changes nothing else observably), and
+    // stops rather than risk a fourth device-unverified guess.
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -743,7 +755,7 @@ public fun TextField(
         keyboardActions = keyboardActions,
         modifier = modifier
             .fillMaxWidth()
-            .semantics {
+            .semantics(mergeDescendants = true) {
                 contentDescription = contentDescriptionText ?: label ?: placeholder.orEmpty()
             },
         decorationBox = { innerTextField ->
