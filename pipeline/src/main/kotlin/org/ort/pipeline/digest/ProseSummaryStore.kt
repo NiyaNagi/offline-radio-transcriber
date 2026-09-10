@@ -7,11 +7,12 @@ import java.util.concurrent.ConcurrentHashMap
  * thread replaces its previous summary rather than accumulating a history, matching FR-DIG-3's
  * "an addition to the deterministic digest", not a log of every draft ever produced.
  *
- * **Not `:data` in this round.** WPH owns `:data`'s `prose_summary` table only as migration 7→8,
- * and only after WPC1's v7 schema has merged (the lead's call, per the build package's file
- * ownership) — until then, [InMemoryProseSummaryStore] is the production stand-in wired wherever
- * a real store would go. Swapping it for a Room-backed implementation later needs no change to
- * [ProseDigestGenerator] or [ProseDigestReadApi], which both depend on this interface only.
+ * **Now backed by `:data`.** [RoomProseSummaryStore] over the `prose_summary` table (migration
+ * 7→8, landed once WPC1's v7 schema merged) is the production implementation;
+ * [InMemoryProseSummaryStore] now serves only as the fake/test double every test in this package
+ * runs against, and [FakeProseSummaryStore] wraps it to add scriptable failure. Swapping which
+ * implementation is wired in needs no change to [ProseDigestGenerator] or [ProseDigestReadApi],
+ * which both depend on this interface only.
  */
 public interface ProseSummaryStore {
     public suspend fun store(summary: ProseSummary)
@@ -20,7 +21,7 @@ public interface ProseSummaryStore {
     public suspend fun all(): List<ProseSummary>
 }
 
-/** The production stand-in until the `:data` v8 migration lands (see the interface's own doc comment). */
+/** The fake/test double (see the interface's own doc comment) — not wired into production since `:data` v8 landed. */
 public class InMemoryProseSummaryStore : ProseSummaryStore {
     private val byThreadId = ConcurrentHashMap<String, ProseSummary>()
 

@@ -32,6 +32,82 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPH part 2: the prose_summary table, schema v8, RoomProseSummaryStore)
+
+### (pending) — llm: prose_summary as data migration 7-8, RoomProseSummaryStore over it
+
+**Scope:** `data/src/main/kotlin/org/ort/data/entity/ProseSummaryEntity.kt` (new),
+`data/src/main/kotlin/org/ort/data/dao/ProseSummaryDao.kt` (new), `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`
+(`ProseSummaryEntity` in the entity list, `proseSummaryDao()`, `SCHEMA_VERSION` 7→8,
+`MIGRATION_7_8`), `data/schemas/org.ort.data.OrtDatabase/8.json` (generated),
+`data/src/test/kotlin/org/ort/data/MigrationTest.kt` (v7→v8 test, the "every prior fixture"
+test extended to walk v1..v7 to v8), new `pipeline/src/main/kotlin/org/ort/pipeline/digest/RoomProseSummaryStore.kt`
+and its test. Merged `main` first (`2644c02`/`dbeddcf`) to pick up WPC1's v7 schema, per the
+lead's go-ahead — this is the follow-up the previous entry on this branch left open.
+
+**Requirements/ACs:** FR-DIG-3, FR-DIG-11, FR-AST-5, FR-AST-6, AC-53 (migration discipline).
+Closes checklist row E2-A03.
+
+**What changed:**
+
+*Constitution Check.* II — `MigrationTest`'s "every prior fixture" test now proves every
+previously released schema (v1 through v7, not just v7 itself) walks the *entire* chain to v8
+without losing a row, the same discipline every earlier migration in this file already carries.
+III/VII unaffected — no capture, segmentation or module-boundary change in this commit.
+
+- **`ProseSummaryEntity`** (`@Entity(tableName = "prose_summary")`): `threadId` (`@PrimaryKey`),
+  `text`, `sourceTransmissionIds: List<String>` (via `:data`'s existing `Converters` list
+  converter — the same non-null-`List<String>`-via-converter shape `StationSummaryEntity` already
+  uses), `generatedAtMillis`, `modelId`. One row per thread — an upsert (`OnConflictStrategy.REPLACE`)
+  replaces rather than accumulates, matching `ProseSummaryStore`'s own contract. Distinct from the
+  pre-existing `StationSummaryEntity`/`station_summary` (D29's per-*station*, cross-session
+  accumulation) — this table is the per-*thread*, single-session digest prose from D36/P21.
+- **`ProseSummaryDao`**: `upsert`, `getByThreadId`, `getByThreadIds`, `listAll`.
+- **`OrtDatabase`**: `SCHEMA_VERSION = 8`; `MIGRATION_7_8` creates `prose_summary` with exactly
+  the columns KSP's own generated `8.json` records (`threadId TEXT NOT NULL, text TEXT NOT NULL,
+  sourceTransmissionIds TEXT NOT NULL, generatedAtMillis INTEGER NOT NULL, modelId TEXT NOT NULL,
+  PRIMARY KEY(threadId)`) — hand-written SQL checked byte-for-byte against the generated schema
+  before committing, not assumed to match.
+- **`RoomProseSummaryStore`**: the production `ProseSummaryStore`, mapping `ProseSummary` to/from
+  `ProseSummaryEntity` over `OrtDatabase.proseSummaryDao()`. `InMemoryProseSummaryStore` is no
+  longer described as a production stand-in — its doc comment (and `ProseSummaryStore`'s own) now
+  says it is the fake/test double only; `FakeProseSummaryStore` (which wraps it for scriptable
+  failure) is unchanged.
+
+**The v8 column list, exactly** (as recorded by KSP's generated `8.json` and byte-matched by
+`MIGRATION_7_8`): `prose_summary(threadId TEXT NOT NULL PRIMARY KEY, text TEXT NOT NULL,
+sourceTransmissionIds TEXT NOT NULL, generatedAtMillis INTEGER NOT NULL, modelId TEXT NOT NULL)`.
+No other table's schema changed.
+
+**Verified:**
+- `./gradlew :data:kspDebugKotlin` generated `data/schemas/org.ort.data.OrtDatabase/8.json`;
+  its `prose_summary` `createSql` compared directly against `MIGRATION_7_8`'s hand-written SQL —
+  identical.
+- `./gradlew :data:testDebugUnitTest` — **BUILD SUCCESSFUL**, full `:data` suite green including
+  `MigrationTest`'s new `migration_from_v7_to_v8_preserves_existing_rows_and_adds_the_prose_summary_table`
+  and the extended `every_prior_fixture_from_v1_to_v7_migrates_forward_to_v8_preserving_its_session_row`
+  (loops fixture versions 1..7, each asserting its `session` row survives and `prose_summary` is
+  queryable at head).
+- `./gradlew :pipeline:testDebugUnitTest --tests org.ort.pipeline.digest.*` — **BUILD SUCCESSFUL**,
+  30 tests green, including the 4 new `RoomProseSummaryStoreTest` cases (round-trip through a real
+  in-memory `OrtDatabase`, replace-not-accumulate, `forThreads` filtering, `forThread` null case).
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 8m 39s** (1088
+  actionable tasks); `dependencyRules: OK`, `platformGuards: OK`.
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 210 covered` (204 before this commit, measured
+  on the previous commit on this branch pre-merge; the delta includes both this commit's own new
+  fixture-coverage tests and whatever `main`'s merged-in tests already named).
+  `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** E2-I06 (hardware H11, the real on-device MediaPipe load) remains for
+the operator. `ProseDigestDeviceSignals`' production Android implementation (idle/charging) is
+still for whichever package wires `ProseDigestGate` into a real schedule (WPE/WPF/a WorkManager
+job) — this session ships the gate's decision logic and the persistence it needs, not the
+scheduler that calls it. `:app`'s CF04 toggle and DG05 rendering are unbuilt (WPE/WPF's own rows).
+
+---
+
 ## 2026-09-10 (WPH part 1: the LLM contract, MediaPipe engine and prose digest gate/generator)
 
 ### (pending) — llm: llm-api contract, MediaPipe engine, prose digest gate/generator/store, in-memory pending :data v8
