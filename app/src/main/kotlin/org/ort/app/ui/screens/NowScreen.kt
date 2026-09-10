@@ -2,6 +2,7 @@ package org.ort.app.ui.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,6 +67,7 @@ import org.ort.core.AttributionState
  * [org.ort.app.ui.screens.CaptureStatusScreen] (R-033) — this screen shows the session, not the
  * capture machinery.
  */
+@Suppress("LongParameterList") // every parameter is an independent, optional callback/state slot.
 @Composable
 public fun NowScreen(
     state: NowViewState,
@@ -417,7 +418,12 @@ private fun RoomAudioChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        Icon(imageVector = OrtIcons.builtInMic, contentDescription = null, tint = OrtColors.textDim, modifier = Modifier.size(13.dp))
+        Icon(
+            imageVector = OrtIcons.builtInMic,
+            contentDescription = null,
+            tint = OrtColors.textDim,
+            modifier = Modifier.size(13.dp),
+        )
         Text(
             text = "Room audio — the phone's microphone, not the radio",
             style = OrtType.chip,

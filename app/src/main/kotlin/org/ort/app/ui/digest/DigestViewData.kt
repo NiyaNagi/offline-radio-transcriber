@@ -99,10 +99,7 @@ public data class DigestProseCardViewState(
 /** E2-G07: the whole "In their words" section — `null` on [DigestViewState.prose] entirely
  * (FR-DIG-3a) when [org.ort.pipeline.digest.ProseDigestSettings] is disabled or there is nothing
  * generated yet, never an empty section shown anyway. */
-public data class DigestProseSectionViewState(
-    val cards: List<DigestProseCardViewState>,
-    val footnote: String,
-)
+public data class DigestProseSectionViewState(val cards: List<DigestProseCardViewState>, val footnote: String)
 
 public data class DigestViewState(
     val sessionId: String,

@@ -96,7 +96,10 @@ class DigestScreensTest {
                     onBack = {},
                     onOpenItem = {},
                     onFullLog = {},
-                    onReadOvers = { from, to -> seededFrom = from; seededTo = to },
+                    onReadOvers = { from, to ->
+                        seededFrom = from
+                        seededTo = to
+                    },
                 )
             }
         }

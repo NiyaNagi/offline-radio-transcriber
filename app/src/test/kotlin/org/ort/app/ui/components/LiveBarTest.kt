@@ -209,7 +209,9 @@ class LiveBarTest {
             localMicrophone = true,
         )
 
-        composeTestRule.setContent { OrtTheme { LiveBar(state = state, onClick = {}, modifier = Modifier.testTag("bar")) } }
+        composeTestRule.setContent {
+            OrtTheme { LiveBar(state = state, onClick = {}, modifier = Modifier.testTag("bar")) }
+        }
 
         composeTestRule.onNodeWithText("room", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("bar").assert(hasContentDescription("room", substring = true))

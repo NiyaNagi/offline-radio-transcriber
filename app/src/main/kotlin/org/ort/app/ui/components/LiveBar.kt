@@ -137,7 +137,12 @@ private fun RoomAudioMark(modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Icon(imageVector = OrtIcons.builtInMic, contentDescription = null, tint = OrtColors.textDim, modifier = Modifier.size(12.dp))
+        Icon(
+            imageVector = OrtIcons.builtInMic,
+            contentDescription = null,
+            tint = OrtColors.textDim,
+            modifier = Modifier.size(12.dp),
+        )
         Text(text = "room", style = OrtType.chip, color = OrtColors.textDim)
     }
 }

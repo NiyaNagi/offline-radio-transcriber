@@ -7,6 +7,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.core.capture.AudioRouteKind
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.RigTransportKind
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -15,9 +18,6 @@ import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
-import org.ort.core.capture.AudioRouteKind
-import org.ort.core.capture.CaptureMode
-import org.ort.core.capture.RigTransportKind
 import org.ort.testing.Requirement
 
 /**
