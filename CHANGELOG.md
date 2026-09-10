@@ -2874,6 +2874,78 @@ FR-A11Y-2 (44dp target).
 - Register rows not touched this round beyond R-380/381/505/510/543 — R-544 (F21 third option) and
   every other open row stay exactly as the register already has them.
 
+## 2026-09-10 (ui-conformance WP3 round 20: R_432/R_276 diagnosis, prose matchers hardened)
+
+### (pending) — ui-conformance WP3 round 20 · R_432/R_276 diagnosed (not reproducible here), hardened anyway
+
+**Scope:** `:app` — `ui/navigation/ReaderActivityDestinationSmokeTest.kt` (three matcher changes,
+no assertion-of-fact or flow changes).
+
+**Requirements/ACs:** none new — test-robustness fix (constitution II).
+
+**What changed:** Constitution Check — Principle II (test-backed change): a test whose matcher
+happens to still work by an implementation coincidence (see below) is not the same guarantee as one
+that matches a structural contract; this round moves the remaining fragile ones onto the latter.
+
+`git merge main` first (main at `a6c9a4c`) — fast-forwarded cleanly, pulling in a large batch of
+other rounds' work, including the theme's new density scaling (`Theme.kt`'s `ortScaledDensity`)
+the coordinator named as a suspect.
+
+**Diagnosis — could not reproduce.** `R_432_activation_thread_route` and
+`R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window` both pass, repeatedly,
+on this main: alone, as the whole class, and with `--rerun --info` (build-cache bypassed, forcing a
+genuine fresh execution) — no failure surfaced under any of these. Ruled out each of the
+coordinator's three named suspects directly against the current source, not by assumption:
+- **R-591** (`narrateFrequencyChangeCause`): lives in `FrequencyChangeScreen`'s own closing
+  paragraph — neither test asserts on that paragraph's text at all.
+- **R-433** (FQ02's bare-frequency title): that title belongs to `FrequencyDetailScreen`'s own
+  root, a sub-screen neither test's own flow visits (both go straight from the Frequencies list row
+  to `FrequencyChangeScreen` via "Busier than usual" — confirmed by reading
+  `FrequencyDetailContent.kt`'s dispatch before writing this) — neither test's own matchers name
+  that title string.
+- **R-430** (Stations' default filter): a different destination entirely, never opened by either
+  test.
+- **Density scaling** (`Theme.kt`): reads `LocalConfiguration.current.screenWidthDp` — Robolectric's
+  own simulated device width, fixed per its config rather than the host machine's real display, so
+  it should not vary machine to machine for an unconfigured `@Config`; neither test's own flow relies
+  on scroll-triggered lazy composition either (`FrequencyChangeScreen`'s content is a plain `Column`
+  in `verticalScroll`, not a `LazyColumn` — every child is composed regardless of scroll position, so
+  `performClick()` on an off-screen node still fires).
+
+A genuine, separate explanation was found for why `R_276`'s own `hasText("Busier than usual", ...)`
+matcher — the exact shape round 17's own report found broken by WP2's R-380 `clearAndSetSemantics`
+fix — passes again today: `Controls.kt`'s `TextAction`/`SecondaryButton`/`PrimaryButton` now
+redeclare `this.text = AnnotatedString(text)` *inside* the same `clearAndSetSemantics` block
+alongside `contentDescription`, specifically so `hasText(...)` keeps matching too (that file's own
+doc comment: "keeps both routes working"). This is an implementation detail those three composables
+happen to preserve today, not a contract either test should depend on again — hardened all three of
+`R_276`'s remaining `hasText(...) and hasClickAction()` matchers ("Busier than usual", "The N
+overs", "Filter") to `hasContentDescription(...) and hasClickAction()`, the structural half of that
+same block every `TextAction`/`SecondaryButton` call unconditionally carries, matching `R_432`'s own
+already-hardened style and the coordinator's own stated preference ("a test tag or a structural
+fact over prose wherever you reasonably can") — done even though nothing reproducibly failed, since
+the fragility class is real and this removes it from two of the three remaining occurrences in this
+test at no behavioural cost.
+
+**Verified:** `.\gradlew.bat :app:smokeTestDebugUnitTest --tests
+'org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest'` — green, alone and with `--rerun
+--info`. `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.navigation.*'` — green.
+`.\gradlew.bat :app:smokeTestDebugUnitTest --tests 'org.ort.app.ui.navigation.*' --tests
+'org.ort.app.ui.ReaderAccessibilityTest'` — green, 0 failures (the two Improve-related failures
+round 18's own entry named are gone — WP4/WP10's `d36a2ce`, already on this main, fixed them).
+`.\gradlew.bat :app:ktlintCheck :app:detekt` — green. `.\gradlew.bat dependencyRules platformGuards`
+— green. `.\gradlew.bat :app:assembleDebug` — green. `python tools\spec-check\spec_check.py` —
+`spec-check: OK`. `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` — both
+green, no `results/coverage-matrix.md` diff (no new requirement id introduced).
+
+**Left open / not done:** the coordinator's report of a deterministic, reproducible failure on
+another builder's own run is not explained by anything found here — every named cause was checked
+directly against the current source and ruled out, and the exact commit this round merged to
+(`a6c9a4c`) passes repeatedly, including under `--rerun` with the build cache bypassed. If it
+recurs, the next data point worth having is that other builder's own `--info` log (or, short of
+that, their exact working-tree diff against `a6c9a4c` at the moment of failure) rather than a
+further guess from this side.
+
 ## 2026-09-09 (ui-conformance WP3 round 19: mojibake repair, ReaderActivityDestinationSmokeTest.kt)
 
 ### (pending) — ui-conformance WP3 round 19 · mojibake repair in ReaderActivityDestinationSmokeTest.kt
