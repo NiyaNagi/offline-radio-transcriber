@@ -1,1 +1,8 @@
-<manifest />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- FR-RIG-14/FR-PLT-2's Bluetooth equivalent. BLUETOOTH_CONNECT (API 31+) is the runtime
+         permission AndroidBluetoothLink checks before every stack call it gates; the legacy
+         BLUETOOTH permission below it is install-time only and covers API 30 and earlier, where
+         BLUETOOTH_CONNECT does not exist as a concept. The app module merges both in. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+</manifest>
