@@ -4,13 +4,16 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.app.ui.data.ModelId
+import org.ort.app.ui.data.ModelRowStatus
+import org.ort.app.ui.data.ModelRowViewState
+import org.ort.app.ui.data.ModelsViewState
 import org.ort.core.capture.CaptureMode
-import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.RigStatus
 
 /** R-080..R-084 (ui-conformance-plan WP9), extended by D33/P19 WPD (E2-E13) — [readyRowsFor]
  * builds S12's rows from real state only ([SetupStore], live battery-exemption, [RigStatus],
- * [AsrAvailability]), never fabricated. Pure, no Compose, no Context. */
+ * WPG's [ModelsViewState]), never fabricated. Pure, no Compose, no Context. */
 class ReadyRowsForTest {
 
     private val noOpActions = ReadyActions(
@@ -27,8 +30,8 @@ class ReadyRowsForTest {
         store: SetupStore = InMemorySetupStore(),
         batteryExempt: Boolean = false,
         rigStatus: RigStatus.State = RigStatus.State.Absent,
-        asrState: AsrAvailability.State = AsrAvailability.State.NotYetChecked,
-    ) = readyRowsFor(store, batteryExempt, rigStatus, asrState, noOpActions)
+        modelsState: ModelsViewState = ModelsViewState(emptyList()),
+    ) = readyRowsFor(store, batteryExempt, rigStatus, modelsState, noOpActions)
 
     // --- D33/E2-E13: the new leading Mode row ----------------------------------------------------
 
@@ -85,7 +88,7 @@ class ReadyRowsForTest {
             onChangeMode = { changed = true },
         )
         val store = InMemorySetupStore(captureMode = CaptureMode.USB_RADIO)
-        val row = readyRowsFor(store, false, RigStatus.State.Absent, AsrAvailability.State.NotYetChecked, actions)
+        val row = readyRowsFor(store, false, RigStatus.State.Absent, ModelsViewState(emptyList()), actions)
             .first { it.label == "Mode" }
 
         assertEquals("Change", row.actionLabel)
@@ -171,7 +174,7 @@ class ReadyRowsForTest {
             onChangeMode = {},
         )
         val store = InMemorySetupStore(radioChoice = RadioChoice.NONE, manualFrequencyHz = 145_230_000L)
-        val row = readyRowsFor(store, false, RigStatus.State.Absent, AsrAvailability.State.NotYetChecked, actions)
+        val row = readyRowsFor(store, false, RigStatus.State.Absent, ModelsViewState(emptyList()), actions)
             .first { it.label == "Radio" }
 
         assertEquals("Change", row.actionLabel)
@@ -221,7 +224,7 @@ class ReadyRowsForTest {
         val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
         val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
         val connected = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band))
-        val row = readyRowsFor(store, false, connected, AsrAvailability.State.NotYetChecked, actions)
+        val row = readyRowsFor(store, false, connected, ModelsViewState(emptyList()), actions)
             .first { it.label == "Radio" }
 
         assertEquals("verified", row.statusText)
@@ -233,7 +236,7 @@ class ReadyRowsForTest {
 
     @Test
     fun `E2_E13 no model installed renders amber with an Install action, never a fabricated model name`() {
-        val row = rows(asrState = AsrAvailability.State.NotYetChecked).first { it.label == "Models" }
+        val row = rows(modelsState = ModelsViewState(emptyList())).first { it.label == "Models" }
 
         assertFalse(row.ok)
         assertEquals("Install", row.actionLabel)
@@ -241,10 +244,40 @@ class ReadyRowsForTest {
     }
 
     @Test
-    fun `E2_E13 an available model renders green with its real model reference`() {
-        val row = rows(asrState = AsrAvailability.State.Available("whisper-tiny-en")).first { it.label == "Models" }
+    fun `E2_E13 every model bundled and verified renders green with N bundled checksums verified`() {
+        val installed = ModelRowViewState(
+            id = ModelId.ASR_ENCODER,
+            label = ModelId.ASR_ENCODER.label,
+            status = ModelRowStatus.INSTALLED,
+            detail = null,
+            bundled = true,
+        )
+        val row = rows(modelsState = ModelsViewState(listOf(installed))).first { it.label == "Models" }
 
         assertTrue(row.ok)
-        assertEquals("whisper-tiny-en", row.value)
+        assertEquals("ready", row.statusText)
+        assertEquals("1 bundled · checksums verified", row.value)
+    }
+
+    @Test
+    fun `E2_E13 a not-yet-installed row among otherwise-bundled ones still reads amber, never partially ready`() {
+        val installed = ModelRowViewState(
+            id = ModelId.ASR_ENCODER,
+            label = ModelId.ASR_ENCODER.label,
+            status = ModelRowStatus.INSTALLED,
+            detail = null,
+            bundled = true,
+        )
+        val notInstalled = ModelRowViewState(
+            id = ModelId.ASR_DECODER,
+            label = ModelId.ASR_DECODER.label,
+            status = ModelRowStatus.NOT_INSTALLED,
+            detail = null,
+            bundled = true,
+        )
+        val row = rows(modelsState = ModelsViewState(listOf(installed, notInstalled))).first { it.label == "Models" }
+
+        assertFalse(row.ok)
+        assertEquals("Install", row.actionLabel)
     }
 }

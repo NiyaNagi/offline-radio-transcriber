@@ -22,10 +22,11 @@ import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.data.ModelRowStatus
+import org.ort.app.ui.data.ModelsViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.capture.CaptureMode
-import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.RigStatus
 
 /** One `Setup-Done.dc.html` summary row — real, not fabricated: every field below is read from
@@ -223,7 +224,7 @@ public fun readyRowsFor(
     store: SetupStore,
     batteryExempt: Boolean,
     rigStatus: RigStatus.State,
-    asrState: AsrAvailability.State,
+    modelsState: ModelsViewState,
     actions: ReadyActions,
 ): List<ReadyRow> = listOf(
     modeRow(store, actions.onChangeMode),
@@ -245,7 +246,7 @@ public fun readyRowsFor(
         onAction = actions.onFixOvernight,
     ),
     radioRow(store, rigStatus, actions.onFixRadio, actions.onChangeRadio),
-    modelsRow(asrState, actions.onInstallModel),
+    modelsRow(modelsState, actions.onInstallModel),
 )
 
 /**
@@ -363,27 +364,33 @@ private fun radioRowForCatRig(
 }
 
 /**
- * D33/E2-E13: renamed from "Model" to "Models" to match `Setup-Done.dc.html`'s redrawn row
- * ("4 bundled · checksums verified"). WPG's bundled-asset catalogue (`ModelsController.currentState`,
- * `spec/e2e-capture-modes-plan.md` WPG) is not yet merged, so this still reads [AsrAvailability] —
- * the same real, non-fabricated signal it always has — per this program's own WPD/WPG split
- * ("use AsrAvailability as today ... WPE/WPG may refine"). Left open for WPG to report bundled
- * count and checksum-verified status once that lands.
+ * D33/E2-E13, WPG follow-up: "Models" (renamed from "Model") reads WPG's real bundled-asset state
+ * (`ModelsController.currentState`, `app/.../ui/data/ModelsViewData.kt`) — [modelsState] is built by
+ * [SetupActivity] (the one place allowed to touch `Context`) and handed in here as plain data, per
+ * this file's own established pattern for every other row. Every row bundled and verified
+ * ([org.ort.app.ui.data.ModelRowStatus.INSTALLED]) is `Setup-Done.dc.html`'s "N bundled · checksums
+ * verified" green row; anything short of that (not yet installed, a failed verification, or a
+ * genuinely non-bundled entry not yet fetched) is the amber `Install` row, exactly as before.
  */
-private fun modelsRow(asrState: AsrAvailability.State, onInstallModel: () -> Unit): ReadyRow = when (asrState) {
-    is AsrAvailability.State.Available -> ReadyRow(
-        label = "Models",
-        value = asrState.modelRef,
-        ok = true,
-        statusText = "installed",
-        actionLabel = null,
-    )
-    is AsrAvailability.State.Unavailable, AsrAvailability.State.NotYetChecked -> ReadyRow(
-        label = "Models",
-        value = "No transcription model yet",
-        ok = false,
-        statusText = null,
-        actionLabel = "Install",
-        onAction = onInstallModel,
-    )
+private fun modelsRow(modelsState: ModelsViewState, onInstallModel: () -> Unit): ReadyRow {
+    val rows = modelsState.rows
+    val allBundledAndVerified = rows.isNotEmpty() && rows.all { it.bundled && it.status == ModelRowStatus.INSTALLED }
+    return if (allBundledAndVerified) {
+        ReadyRow(
+            label = "Models",
+            value = "${rows.size} bundled · checksums verified",
+            ok = true,
+            statusText = "ready",
+            actionLabel = null,
+        )
+    } else {
+        ReadyRow(
+            label = "Models",
+            value = "No transcription model yet",
+            ok = false,
+            statusText = null,
+            actionLabel = "Install",
+            onAction = onInstallModel,
+        )
+    }
 }

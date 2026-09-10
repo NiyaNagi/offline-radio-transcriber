@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.collect
 import org.ort.app.MainActivity
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
@@ -34,7 +35,6 @@ import org.ort.capture.android.AndroidAudioIo
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.CaptureModePresets
-import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.rig.CaptureConfigurationStore
@@ -917,7 +917,8 @@ public class SetupActivity : ComponentActivity() {
             onInstallModel = ::onInstallModel,
             onChangeMode = { step = SetupStep.MODE },
         )
-        val rows = readyRowsFor(store, batteryExempt(), rigStatusSnapshot, AsrAvailability.state, actions)
+        val modelsState = ModelsController.currentState(this)
+        val rows = readyRowsFor(store, batteryExempt(), rigStatusSnapshot, modelsState, actions)
         ReadyScreen(state = ReadyViewState(rows), onStartCapture = ::onStartCapture)
     }
 
