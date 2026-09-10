@@ -66,23 +66,44 @@ object CoverageMatrix {
     fun requirementsFrom(specDir: File): List<String> {
         if (!specDir.isDirectory) return emptyList()
         val ids = sortedSetOf<String>(comparator())
-        specDir.walkTopDown().filter { it.isFile && it.extension == "md" }.forEach { md ->
-            REQUIREMENT.findAll(md.readText()).forEach { ids += normalise(it.value) }
-        }
+        specDir.walkTopDown().filter { it.isFile && it.extension == "md" }
+            .sortedByPath()
+            .forEach { md -> REQUIREMENT.findAll(md.readText()).forEach { ids += normalise(it.value) } }
         return ids.toList()
     }
 
+    /**
+     * `File.walkTopDown()` enumerates a directory in whatever order the underlying filesystem
+     * returns entries, which is not a JVM guarantee — NTFS and the Linux CI runner's filesystem
+     * legitimately disagree. Left unsorted, the per-requirement test list below ends up in walk
+     * order, so two platforms scanning identical sources render different bytes and
+     * `coverageMatrixCheck`'s gate (F-014) fails on pure ordering noise even though nothing is
+     * stale. Every collection that reaches [render] — the walk itself, and the finished test
+     * list per requirement — is therefore sorted with a stable, locale-independent comparator
+     * (path/string natural order, never [File.compareTo], which is itself platform-dependent:
+     * case-insensitive on Windows, case-sensitive on Unix).
+     */
     fun testsByRequirement(testRoots: Collection<File>): Map<String, MutableList<String>> {
         val map = sortedMapOf<String, MutableList<String>>(comparator())
-        testRoots.filter { it.isDirectory }.forEach { root ->
+        testRoots.filter { it.isDirectory }.sortedByPath().forEach { root ->
             root.walkTopDown()
                 .filter { it.isFile && (it.extension == "kt" || it.extension == "py") }
+                .sortedByPath()
                 .forEach { file ->
                     if (file.extension == "kt") scanKotlinTest(file, map) else scanPythonTest(file, map)
                 }
         }
-        return map.mapValues { it.value.distinct().toMutableList() }.toSortedMap(comparator())
+        return map.mapValues { it.value.distinct().sorted().toMutableList() }.toSortedMap(comparator())
     }
+
+    /**
+     * Sorts by the file's path as a plain string (forward-slash separators, ordinal comparison)
+     * rather than by [File] itself or [File.getName] alone — [File.compareTo] delegates to the
+     * platform filesystem's own comparison (case-insensitive on Windows, case-sensitive on
+     * Unix), which reintroduces exactly the cross-platform nondeterminism this fix removes.
+     */
+    private fun Iterable<File>.sortedByPath(): List<File> = sortedBy { it.invariantSeparatorsPath }
+    private fun Sequence<File>.sortedByPath(): List<File> = sortedBy { it.invariantSeparatorsPath }.toList()
 
     private fun scanKotlinTest(kt: File, map: MutableMap<String, MutableList<String>>) {
         val text = kt.readText()

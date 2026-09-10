@@ -266,6 +266,134 @@ task's own instruction.
 
 ---
 
+## 2026-09-09 (buildSrc: coverage-matrix determinism — the cross-platform ordering bug the data-probe round flagged)
+
+### (pending) — buildSrc: CoverageMatrix test lists sorted, walk order fixed, so the matrix is byte-identical regardless of filesystem enumeration order
+
+**Scope:** `buildSrc/**` only — `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt` and
+`buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt`. Also `results/coverage-matrix.md`
+(regenerated; content changed — see below).
+
+**Requirements/ACs:** F-014 (the coverage-matrix delta gate this bug was defeating). No new
+requirement coverage — this is a tooling-determinism fix, not new product behaviour; `192 covered
+of 419` is unchanged before and after.
+
+**Constitution Check:** Principle VII ("module dependency rules are enforced by the build, not by
+review... a rule a person must remember is a rule that will eventually be forgotten") bears
+directly — the fix makes the matrix's byte output a structural property of sorted collections, not
+a convention an author has to remember to uphold. Principle VI ("determinism is bounded and the
+bound is stated... byte-identical output holds within a fixed machine/provider and not across
+them") is what this bug violated in spirit: the *intent* of `coverageMatrixCheck` is that identical
+coverage facts render identical bytes on any machine; filesystem enumeration order is not a bound
+anyone stated or wanted. Principle II ("test written and failing for the right reason, then the
+code") — the new determinism test was run before the fix (see Verified) and failed for the
+expected reason (list order differed with roots reversed) before `CoverageMatrix.kt` was changed.
+
+**What changed:**
+
+1. **Root cause** (confirmed by reading the generator, corroborating the prior round's hypothesis
+   at CHANGELOG:108-126): `CoverageMatrix.testsByRequirement` built each requirement's test list by
+   `File.walkTopDown()` over the test source roots, appending in raw traversal order and never
+   sorting — only de-duplicating. Directory-entry enumeration order is a filesystem property, not a
+   JVM guarantee, so NTFS (this machine) and the Linux CI runner's filesystem legitimately produce
+   different orders for the same directory contents. `coverageMatrixCheck`'s `contentMatches` only
+   normalises line endings and the trailing newline, never list order, so a pure ordering
+   difference failed the gate as if the file were stale, even though no test gained or lost
+   coverage.
+2. **Fix, `CoverageMatrix.kt`:** added a private `sortedByPath()` extension (on both `Iterable<File>`
+   and `Sequence<File>`) that sorts by `File.invariantSeparatorsPath` — a plain string, ordinal,
+   locale-independent comparison — deliberately *not* `File.compareTo`, which itself delegates to
+   the platform filesystem's own comparison (case-insensitive on Windows, case-sensitive on Unix)
+   and would silently reintroduce the same class of bug. Applied it to: the directory list in
+   `testsByRequirement` before visiting each root, the file list from each root's `walkTopDown()`
+   before scanning, and the `.md` file list in `requirementsFrom` before reading. Then, the actual
+   fix for the reported symptom: each requirement's finished test list is now `.sorted()` (plain
+   `String` natural order) before being stored, so `testsByRequirement`'s output is
+   walk-order-independent even if some future caller feeds it an unsorted root collection.
+3. **Read the whole file for other order-dependent output** (per the brief): `requirementsFrom`
+   already collected into a `sortedSetOf(comparator())`, so its output was already deterministic
+   regardless of walk order — sorted the walk anyway for defence-in-depth and consistency, not
+   because it changed output. `Coverage.orphanTests` / `crossReferencedTests` filter a map that was
+   already a `sortedMapOf(comparator())` by key, and `render()` re-sorts both explicitly with
+   `.toSortedMap(comparator())` before iterating — key order was never the bug; only the
+   *value* lists (the per-requirement test names) were unsorted, and are now fixed by the same
+   `.sorted()` call. `render()`'s "Not yet covered" section already called
+   `coverage.uncovered.sortedWith(comparator())` explicitly. No other collection reaches `render()`
+   without passing through one of these now-sorted paths.
+4. **New determinism test**, `CoverageMatrixTest.kt`: `` `rendered matrix is byte-identical
+   regardless of file discovery order` `` feeds `CoverageMatrix.analyse` (and, separately,
+   `testsByRequirement` directly) two test-root orderings — `listOf(rootA, rootB)` and
+   `listOf(rootB, rootA)` — where `rootA` and `rootB` each define a test naming the *same*
+   requirement id, so which root is visited first controls the list order absent the fix. Asserts
+   `render(analyse(spec, [rootA, rootB]))` is string-equal to `render(analyse(spec, [rootB,
+   rootA]))`, and separately that `testsByRequirement` returns equal maps either way with the
+   shared requirement's test list in a fixed (alphabetical) order. This does not depend on forcing
+   actual filesystem enumeration order (not controllable from a JUnit test); it isolates the same
+   effect by varying which root the generator visits first. Following the existing `F-029` fixture
+   convention in this file (see its comment at CoverageMatrixTest.kt:80-90), the fake requirement
+   ids and function names are assembled by string interpolation/concatenation at runtime
+   (`"AC" + "_97001"`), not written as one contiguous literal — otherwise this test's own source
+   text would contain a `fun \`AC_97001_...\`(`-shaped string, which the real `coverageMatrix` task
+   would pick up when it scans `buildSrc/src/test/kotlin` (one of its real roots) and silently
+   leak a fake entry into the committed matrix. Verified this concern is real and pre-existing,
+   not introduced here: the *existing* `` `a test is linked to its requirement by name and by
+   annotation` `` fixture in this same file already does this (it writes a literal
+   `` `AC_47_killing_process_mid_pass_completes_identically` `` test name), and
+   `results/coverage-matrix.md`'s `AC-47` row already listed `CoverageMatrixTest.AC_47_...` before
+   this change (confirmed via `git show HEAD:results/coverage-matrix.md`) — an existing, unrelated
+   quirk, left as is since it is out of this task's scope.
+5. **`results/coverage-matrix.md`** regenerated with `coverageMatrix`. 419 requirements, 192
+   covered — unchanged counts. 110 of the matrix's ~140 requirement rows changed (110
+   insertions/110 deletions in `git diff --stat`): every row whose test list had more than one
+   entry moved to alphabetical order (e.g. `AC-31`'s list, called out by the brief, now reads
+   `CaptureProcessingLoopTest, RealCaptureServiceTest, RealCaptureServiceTest.AC_31_...,
+   TranscriptSeriesTest, TranscriptVersioningTest` instead of the previous walk-order
+   `TranscriptSeriesTest, TranscriptVersioningTest, RealCaptureServiceTest, ...,
+   CaptureProcessingLoopTest`). No requirement gained, lost, or changed which tests cover it — only
+   presentation order changed.
+
+**Verified** (Windows, this worktree, `worktree-matrix-order` on `7b72f6b`):
+
+- `.\gradlew.bat -p buildSrc test`: first run (before the `.sorted()` fix, with only the new test
+  added) — `FAILED`, `rendered matrix is byte-identical regardless of file discovery order`
+  failed on the `assertEquals(coverageInOrder, coverageReordered)` line with the shared
+  requirement's list in `[Aaa..., Zzz...]` vs `[Zzz..., Aaa...]` order, confirming the test fails
+  for the right reason. After the fix — `BUILD SUCCESSFUL`, all tests in `CoverageMatrixTest`
+  green (12 actionable tasks, `:test` executed).
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (two separate
+  invocations) — both `BUILD SUCCESSFUL`; `coverageMatrix: 419 requirements, 192 covered ->
+  results\coverage-matrix.md`; `coverageMatrixCheck: up to date (192 covered of 419)`. Ran
+  `coverageMatrix` twice in a row and diffed: second run produced byte-identical output to the
+  first (idempotent on this machine, as expected — the open question is cross-platform agreement,
+  which this worktree cannot exercise directly; that is what CI's next run confirms).
+- `git diff --stat -- results/coverage-matrix.md` — `1 file changed, 110 insertions(+), 110
+  deletions(-)`; spot-checked `AC-31`'s row is now alphabetically ordered (see above); confirmed
+  no `97001`/`97002`/`AaaTest`/`ZzzTest` strings (the new test's fixture ids) leaked into the
+  committed file.
+- `.\gradlew.bat dependencyRules platformGuards` — `BUILD SUCCESSFUL`; 17 modules checked, no
+  forbidden edge, no stray HTTP client or `INTERNET` permission outside `:net`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL` (163 actionable tasks, 151 executed, 3
+  from cache, 9 up-to-date, 35s).
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `python -m pytest tools/tests tools/spec-check -q` — `17 passed`.
+
+**Left open / not done:**
+
+- This fixes the mechanism, not a Linux-confirmed outcome: nothing in this worktree can force NTFS
+  to enumerate a directory in the same order as the CI runner's filesystem, so the claim that the
+  *original* bug was walk-order divergence remains a strong, corroborated hypothesis (now
+  corroborated twice, by two independent readings of the code) rather than something reproduced on
+  Linux. What this change does prove, deterministically, on this machine: two different discovery
+  orders for the same inputs now render identical output — the actual mechanism that would let
+  platform-dependent enumeration produce platform-dependent bytes is closed, regardless of whether
+  that was the exact failure CI hit.
+- `:app:testDebugUnitTest` was not run (out of scope per the gate note — this change touches no
+  `:app` production code).
+- The next CI run on this branch/PR is what confirms `coverageMatrixCheck` now passes there with
+  the regenerated file; not observable from this worktree.
+
+---
+
 ## 2026-09-09 (ui-conformance WP12d: screenshot tour — the drawer (N00) and every other never-captured screen R-770 could reach)
 
 ### (pending) — ui-conformance WP12d · R-010..R-014/R-334/R-770: N00 drawer, T03, F04, S05, CF04/DG04 @2x now in the tour; the rest reported unreachable
