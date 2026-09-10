@@ -360,14 +360,23 @@ class ReaderActivityDestinationSmokeTest {
             // `FrequencyHeaderSection.kt`'s `TextAction(text = "Busier than usual — see what
             // changed", onClick = onOpenChange)` — only rendered while `busierThanUsual` holds,
             // which `seedFrequencyOversPattern`'s real multi-night pattern makes true.
-            rule.onNode(hasText("Busier than usual", substring = true) and hasClickAction()).performClick()
+            // `hasContentDescription`, not `hasText`: `TextAction`'s `clearAndSetSemantics` block
+            // (`Controls.kt`, R-380) is the structural guarantee — it always carries
+            // `contentDescription = text` on the clickable node itself. That block also currently
+            // redeclares `text = AnnotatedString(text)` so `hasText` still matches too (round-18
+            // WP2 fix, `Controls.kt`'s own doc comment: "keeps both routes working"), but that
+            // second property exists only to not break *other* callers' older `hasText` matchers —
+            // it is not this test's own contract to depend on again.
+            rule.onNode(hasContentDescription("Busier than usual", substring = true) and hasClickAction())
+                .performClick()
             // `FrequencyChangeScreen`'s own `DrillInHeader(parentLabel = state.label, ...)` —
             // `state.label` is the frequency's own label, `OVERS_FREQUENCY_LABEL`.
             rule.waitUntilContentDescriptionExists("Back to $OVERS_FREQUENCY_LABEL")
 
             // `FrequencyChangeScreen.kt`'s own `TextAction(text = "The ${pluralize(state.overCount,
-            // "over")}", onClick = { onOpenOvers(state.frequencyHz, state.window) })`.
-            rule.onNode(hasText("The $TONIGHT_OVER_COUNT overs") and hasClickAction()).performClick()
+            // "over")}", onClick = { onOpenOvers(state.frequencyHz, state.window) })` —
+            // `hasContentDescription`, not `hasText`, same reasoning as "Busier than usual" above.
+            rule.onNode(hasContentDescription("The $TONIGHT_OVER_COUNT overs") and hasClickAction()).performClick()
 
             // `Log` is a normal destination — the host's own `ScreenHeader` renders for it (unlike
             // `SETTINGS`/`SEARCH`, round 7/5's own exceptions), immediately, before its own
@@ -383,7 +392,9 @@ class ReaderActivityDestinationSmokeTest {
             // `matchingCount` — narrowed to the frequency *and* tonight's window, not the whole
             // corpus (see this test's own doc comment on why `TONIGHT_OVER_COUNT` alone, not
             // `TONIGHT_OVER_COUNT + 3`, is what proves the window, not just the frequency, applied).
-            rule.onNode(hasText("Filter") and hasClickAction()).performClick()
+            // `LogScreen.kt`'s own `TextAction(text = "Filter", onClick = onFilterClick)` —
+            // `hasContentDescription`, not `hasText`, same reasoning as above.
+            rule.onNode(hasContentDescription("Filter") and hasClickAction()).performClick()
             rule.waitUntilTextExists("Show $TONIGHT_OVER_COUNT overs")
 
             rule.activityRule.scenario.recreate()
