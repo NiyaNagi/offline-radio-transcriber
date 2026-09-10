@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.capture.android.fake.FakeAudioIo
 import org.ort.captureapi.CaptureEvent
+import org.ort.core.capture.BluetoothAudioProfile
 import org.ort.testing.Requirement
 import org.ort.testing.TestClock
 
@@ -18,6 +19,12 @@ class AudioRecordSourceTest {
 
     private val usb = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Adapter")
     private val builtIn = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in Microphone")
+    private val bluetooth = AudioDeviceDescriptor(
+        id = "bt-1",
+        kind = AudioDeviceKind.BLUETOOTH,
+        label = "Bluetooth Headset",
+        bluetoothProfile = BluetoothAudioProfile.HFP_MSBC,
+    )
 
     private fun tone(n: Int): ShortArray = ShortArray(n) { (it % 100).toShort() }
 
@@ -280,6 +287,57 @@ class AudioRecordSourceTest {
             1,
             collected.count { it is CaptureEvent.Frames },
             "no frames must be recorded from the mismatched route after the change",
+        )
+    }
+
+    /**
+     * FR-CAP-11, FR-RIG-15: a Bluetooth audio drop mid-stream is surfaced as an interruption —
+     * never as a silent loss and never distinguished from any other device's disconnect at this
+     * layer (mode-specific handling — gap vs. stale-only — is WPC2's `RealCaptureService`
+     * concern, not `AudioRecordSource`'s). Uses [FakeAudioIo.dropDeviceMidRead] rather than an
+     * explicit [org.ort.capture.android.AudioIoEvent], mirroring the real device's own minimal
+     * behaviour (`AndroidAudioIo`'s doc comment).
+     */
+    @Test
+    @Requirement("FR-CAP-11", "FR-CAP-5", "FR-RIG-15")
+    fun `FR_CAP_11 a bluetooth device dropped mid-read is surfaced as an interruption, not silent loss`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.enqueueFrames(tone(160))
+        io.forceRoutedDevice(bluetooth)
+        val source = AudioRecordSource(io, selection = bluetooth)
+
+        val collected = mutableListOf<CaptureEvent>()
+        val job = this.launch {
+            source.start().collect { ev ->
+                collected.add(ev)
+                if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 1) {
+                    io.dropDeviceMidRead()
+                }
+                if (ev is CaptureEvent.Interrupted) {
+                    // Recovery: the OS reconnects, io.open() succeeds, and the route matches again.
+                    io.openSucceeds = true
+                    io.forceRoutedDevice(bluetooth)
+                    io.enqueueFrames(tone(160))
+                }
+                if (ev is CaptureEvent.Frames && collected.count { it is CaptureEvent.Frames } == 2) {
+                    source.stop()
+                }
+            }
+        }
+        advanceUntilIdle()
+        job.join()
+
+        assertTrue(
+            collected.any { it is CaptureEvent.Interrupted },
+            "a Bluetooth drop must be surfaced as an interruption, never silently",
+        )
+        assertTrue(
+            collected.any { it is CaptureEvent.Resumed },
+            "capture must resume once the Bluetooth link is reconnected",
+        )
+        assertFalse(
+            collected.any { it is CaptureEvent.Failed },
+            "a transient Bluetooth drop must never end the session outright",
         )
     }
 }

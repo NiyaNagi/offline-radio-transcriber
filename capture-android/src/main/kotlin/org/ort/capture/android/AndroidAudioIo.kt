@@ -7,17 +7,21 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import org.ort.core.capture.BluetoothAudioProfile
 
 /**
  * The real, device-touching [AudioIo] (technical design §5.1–§5.2): everything [AudioRecordSource]
  * is policy over, this is the one place that actually calls `android.media.AudioRecord`.
  *
- * **Not yet exercised by any Robolectric test** — this is the one seam the project's own test
- * strategy (test-plan §3) deliberately leaves to the physical device, same as `RouteVerifier`'s
- * real counterpart in every other Android SDK wrapper here. [AudioRecordSource]'s policy (route
- * verification, interruption handling, backoff) is what P8 tested exhaustively against
- * [org.ort.capture.android.fake.FakeAudioIo]; this class's only job is to satisfy the same
- * contract with real hardware underneath it.
+ * Most of this class's behaviour is still the physical device's alone to prove — this is the one
+ * seam the project's own test strategy (test-plan §3) deliberately leaves there, same as
+ * `RouteVerifier`'s real counterpart in every other Android SDK wrapper here. [AudioRecordSource]'s
+ * policy (route verification, interruption handling, backoff) is what P8 tested exhaustively
+ * against [org.ort.capture.android.fake.FakeAudioIo]; this class's job is to satisfy the same
+ * contract with real hardware underneath it. The Bluetooth SCO activation added for FR-CAP-11
+ * (D34) is Robolectric-tested (`AndroidAudioIoBluetoothTest`) for the state transitions a shadow
+ * `AudioManager` can observe; the negotiated codec it reports is a best-effort hint (see
+ * [detectNegotiatedBluetoothProfile]) that only hardware row H5 actually proves.
  *
  * Route-change and interruption detection are intentionally minimal here (no
  * `AudioDeviceCallback`/`AudioManager.OnAudioFocusChangeListener` wiring yet) — a v0 sufficient
@@ -34,6 +38,10 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
     private var record: AudioRecord? = null
     private var listener: ((AudioIoEvent) -> Unit)? = null
     private var selected: AudioDeviceDescriptor? = null
+
+    /** Whether *this instance* activated Bluetooth SCO — so [close] only ever undoes what it did. */
+    private var bluetoothScoActivatedByThisInstance = false
+    private var negotiatedBluetoothProfile: BluetoothAudioProfile? = null
 
     override val deviceSampleRate: Int = sampleRateHz
 
@@ -72,9 +80,12 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
             target?.let { audioRecord.setPreferredDevice(it) }
         }
 
+        if (selected?.kind == AudioDeviceKind.BLUETOOTH) activateBluetoothSco()
+
         audioRecord.startRecording()
         if (audioRecord.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
             audioRecord.release()
+            deactivateBluetoothSco()
             return false
         }
         record = audioRecord
@@ -83,8 +94,14 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
 
     override fun routedDevice(): AudioDeviceDescriptor? {
         val r = record ?: return null
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return selected
-        return r.routedDevice?.toDescriptor() ?: selected
+        val base = if (Build.VERSION.SDK_INT <
+            Build.VERSION_CODES.N
+        ) {
+            selected
+        } else {
+            (r.routedDevice?.toDescriptor() ?: selected)
+        }
+        return base?.withNegotiatedBluetoothProfile()
     }
 
     override fun read(buffer: ShortArray): Int {
@@ -101,7 +118,67 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
             }
         }
         record = null
+        deactivateBluetoothSco()
     }
+
+    /**
+     * FR-CAP-11, D34: activates the Bluetooth SCO link for mic capture — `setCommunicationDevice`
+     * on API ≥ 31 (the modern, non-deprecated path), `startBluetoothSco` + `setBluetoothScoOn`
+     * below it. [RouteVerifier] treats the outcome exactly as any other selection (FR-CAP-3,
+     * FR-CAP-3a): activation failing here does not fabricate success — the next `routedDevice()`
+     * simply will not report the Bluetooth device, so verification halts precisely as a genuine
+     * mismatch would.
+     */
+    private fun activateBluetoothSco() {
+        val activated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val device = selected?.let { matchingDeviceInfo(it) }
+            device != null && audioManager.setCommunicationDevice(device)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.startBluetoothSco()
+            @Suppress("DEPRECATION")
+            audioManager.isBluetoothScoOn = true
+            true
+        }
+        bluetoothScoActivatedByThisInstance = activated
+        negotiatedBluetoothProfile = if (activated) detectNegotiatedBluetoothProfile() else null
+    }
+
+    /** Undoes exactly what [activateBluetoothSco] did — a no-op if this instance never activated it. */
+    private fun deactivateBluetoothSco() {
+        if (!bluetoothScoActivatedByThisInstance) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            audioManager.clearCommunicationDevice()
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.isBluetoothScoOn = false
+            @Suppress("DEPRECATION")
+            audioManager.stopBluetoothSco()
+        }
+        bluetoothScoActivatedByThisInstance = false
+        negotiatedBluetoothProfile = null
+    }
+
+    /**
+     * FR-CAP-11: best-effort only. No stable public Android API exposes which HFP codec was
+     * actually negotiated; `bt_wbs` is a long-standing, undocumented `AudioManager` parameter
+     * several stacks honour ("on"/"off" for wideband speech). Treated as a hint, never a fact
+     * asserted past what it can support — anything else, including a stack that rejects the
+     * parameter entirely, is reported as [BluetoothAudioProfile.UNKNOWN] rather than guessed
+     * (constitution I). Hardware row H5 is what actually proves this on the reference device.
+     */
+    private fun detectNegotiatedBluetoothProfile(): BluetoothAudioProfile = try {
+        when (audioManager.getParameters("bt_wbs")?.substringAfter('=')?.trim()?.lowercase()) {
+            "on" -> BluetoothAudioProfile.HFP_MSBC
+            "off" -> BluetoothAudioProfile.HFP_CVSD
+            else -> BluetoothAudioProfile.UNKNOWN
+        }
+    } catch (_: RuntimeException) {
+        BluetoothAudioProfile.UNKNOWN
+    }
+
+    private fun AudioDeviceDescriptor.withNegotiatedBluetoothProfile(): AudioDeviceDescriptor =
+        if (kind == AudioDeviceKind.BLUETOOTH) copy(bluetoothProfile = negotiatedBluetoothProfile) else this
 
     override fun setEventListener(listener: (AudioIoEvent) -> Unit) {
         this.listener = listener

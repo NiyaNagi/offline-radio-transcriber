@@ -132,6 +132,102 @@ explicitly deferred with it, per constitution II's "ships in the same change [as
 transport]" — there is no real transport yet for it to ship alongside. The `mediapipe-tasks-genai`
 pin will need revisiting if a later session finds a newer release; this session recorded where
 and when 0.10.35 was read so that check is possible without re-deriving it.
+## 2026-09-10 (capture modes plumbing: WPC1 — capture-mode types, session schema v7, Bluetooth SCO route)
+
+### (pending) — capture modes plumbing: `:core` capture-mode types, `:data` schema v7 (captureMode/audioRouteKind/rigTransport columns), `:capture-android` Bluetooth SCO route and negotiated-profile reporting
+
+**Scope:** `core/src/main/kotlin/org/ort/core/capture/**` (+ tests under `core/src/test`), `data/src/**`
+(`SessionEntity` v7 columns, `MIGRATION_6_7`, `SessionDao`, migration tests, the v7 schema fixture),
+`capture-android/src/**` (`AudioDeviceDescriptor`, `AndroidAudioIo`'s Bluetooth SCO activation,
+`FakeAudioIo`'s mid-read drop, `RouteVerifier`/`AudioRecordSource` tests). WPC1 of
+[`spec/e2e-capture-modes-plan.md`](spec/e2e-capture-modes-plan.md).
+
+**Requirements/ACs:** FR-CAP-8, FR-CAP-9, FR-CAP-10, FR-CAP-11, FR-CAP-12, FR-CAP-13, FR-CAP-2b,
+CON-CAP-1 (as amended), FR-RIG-13, FR-RIG-15, FR-AST-5, FR-AST-6, AC-129, D33, D34; E2-A02, E2-D01,
+E2-D02, E2-D03, E2-D10 ([`results/e2e-audit/checklist.md`](results/e2e-audit/checklist.md)).
+
+**What changed:**
+
+*Constitution Check.* I (uncertainty is content — the negotiated Bluetooth codec is reported
+honestly as `UNKNOWN` when the stack won't say, never guessed; a v6 row migrated forward reads as
+"not tracked" rather than a fabricated mode). II (strict TDD throughout; `RouteVerifier`'s
+Bluetooth-halts-only-on-mismatch behaviour was discriminated by reverting and restoring the
+production code, see Verified below). III (the segmenter's signature is untouched — out of scope
+for this package, not touched). IV (a Bluetooth audio drop degrades exactly like any other device
+drop — `AudioRecordSource` treats it via the same `n<0`-is-an-interruption path, never a special
+case, and never silently stops capture). VII (`:core`'s new capture types have no Android
+dependency; `:capture-android` still has no edge to `:asr-*`, `:lexicon`, `:identity`, `:rig*` —
+confirmed by `dependencyRules`, below).
+
+1. **`:core/capture`** (pure JVM, no Android): `CaptureMode` (`LOCAL_MICROPHONE`, `USB_RADIO`,
+   `BLUETOOTH_RADIO`) with the exact operator-facing labels from the design copy; `AudioRouteKind`
+   (`BUILT_IN_MIC`, `USB`, `WIRED_HEADSET`, `BLUETOOTH_SCO`, `UNKNOWN`); `BluetoothAudioProfile`
+   (`HFP_MSBC`, `HFP_CVSD`, `UNKNOWN`); `AudioRouteProvenance` (which mode preset the route,
+   whether the operator overrode it); `RigTransportKind` (`USB_SERIAL`, `BLUETOOTH_SPP` — a
+   `:core`-local mirror of `:rig`'s own transport kinds, since `:core` cannot depend on `:rig`);
+   `CapturePreset` + `CaptureModePresets.presetsFor(mode)` implementing FR-CAP-8's table, with the
+   Bluetooth-mode audio preset deliberately `WIRED_HEADSET` (a cabled route), not
+   `BLUETOOTH_SCO`, per the S00/FL7 boards and FR-CAP-9's rationale.
+
+2. **`:data` schema v7** (FR-CAP-13, AC-129): `SessionEntity` gains `captureMode: String?`,
+   `audioRouteKind: String?`, `audioRouteLabel: String?`, `bluetoothProfile: String?`,
+   `rigTransport: String?` — all nullable so a pre-v7 row reads honestly as "not tracked", stored
+   as the `:core` enums' `.name` rather than the enum types directly (`:data` only depends on
+   `:core`, and keeping the column type a plain string keeps the schema decoupled from a type a
+   later migration might otherwise be tempted to reshape). `OrtDatabase.MIGRATION_6_7` adds the
+   five columns; `SCHEMA_VERSION` bumped to 7; the exported v7 fixture
+   (`data/schemas/org.ort.data.OrtDatabase/7.json`) committed alongside the existing ones.
+   `SessionDao` gains `getCaptureInfo(id)` returning a minimal `SessionCaptureInfo` projection for
+   a later reader (WPC2/WPE/WPF) that does not need the whole entity.
+
+3. **`:capture-android` Bluetooth SCO route** (FR-CAP-11, D34): `AudioDeviceDescriptor` gains a
+   nullable `bluetoothProfile: BluetoothAudioProfile?`. `AndroidAudioIo.open()` now activates
+   Bluetooth SCO when the selection's kind is `BLUETOOTH` — `AudioManager.setCommunicationDevice`
+   on API ≥ 31, `startBluetoothSco` + `setBluetoothScoOn(true)` below it — and `close()` undoes
+   exactly what this instance activated. The negotiated codec is read back via the undocumented
+   `bt_wbs` `AudioManager` parameter as a best-effort hint only, defaulting honestly to `UNKNOWN`
+   rather than guessed (hardware row H5 is what actually proves this on the reference device).
+   `RouteVerifier.verify` needed **no** production change — it already compares purely by device
+   id, so a Bluetooth selection was already treated as an ordinary selection (halts only on
+   route ≠ selection); new tests make this explicit for Bluetooth rather than leaving it implicit.
+   `FakeAudioIo` gains `dropDeviceMidRead()` — the routed device disappears with no explicit event,
+   exactly mirroring `AndroidAudioIo`'s own documented minimal real behaviour: the next `read()`
+   returns `-1` and `routedDevice()` reports `null`, cleared by the next successful `open()`.
+
+**Verified:**
+- `./gradlew :core:test` — 57 tests, all passed (existing suites plus new `CaptureModeTest`,
+  `CaptureModePresetsTest`, `AudioRouteProvenanceTest`, `BluetoothAudioProfileTest`,
+  `AudioRouteKindTest`).
+- `./gradlew :data:testDebugUnitTest` — 91 tests, all passed on a clean `--rerun` (one earlier run
+  showed 3 transient failures — `UNIQUE constraint failed` SQLite contention this module's own
+  comments already document as a known shared-machine flake — gone on rerun with no code change).
+- `./gradlew :capture-android:testDebugUnitTest` — all passed, including new
+  `AndroidAudioIoBluetoothTest` (Robolectric, `@Config(sdk=[30])`, a real shadow `AudioManager`),
+  `FakeAudioIoTest`, and the Bluetooth-specific `RouteVerifierTest`/`AudioRecordSourceTest`
+  additions.
+- `./gradlew build dependencyRules platformGuards` — green; `dependencyRules` confirms
+  `:capture-android -> :capture-api, :core` only (no edge to `:rig*`, `:asr-*`, `:lexicon`,
+  `:identity` — E2-D10).
+- `./gradlew -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix` — 201 of 450 requirements covered (was 196); `./gradlew
+  coverageMatrixCheck` — up to date.
+- **Discrimination** (constitution II): reverted `RouteVerifier.verify` to special-case Bluetooth
+  as an always-mismatch regardless of id, re-ran `RouteVerifierTest` — the new `E2_D03`
+  Bluetooth-routed-to-itself test failed for the right reason; restored the original
+  id-comparison-only implementation and the suite passed again.
+
+**Left open / not done:**
+- The real negotiated Bluetooth codec (mSBC vs CVSD) cannot be verified against actual hardware
+  from this worktree — `detectNegotiatedBluetoothProfile()`'s `bt_wbs` parameter read is a
+  best-effort hint, honestly defaulting to `UNKNOWN`; hardware row H5 is the actual proof, not
+  built here.
+- WPC2 (pipeline wiring: `RealCaptureService` writing mode/route/transport onto the session,
+  `InputStatus`/`RigStatus`), WPD/WPE/WPF (setup/settings/status UI) all depend on this package's
+  types and are explicitly out of scope here.
+- No `results/e2e-audit/` file or register touched, per the program's builder rule — reported here
+  for the lead to update.
+- Not merged to `main` — commit left on this worktree's branch per instructions.
 
 ---
 
@@ -26470,3 +26566,4 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+

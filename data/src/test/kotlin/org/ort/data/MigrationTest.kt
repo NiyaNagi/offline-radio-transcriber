@@ -425,4 +425,108 @@ public class MigrationTest {
             db.close()
         }
     }
+
+    /**
+     * FR-CAP-13, AC-129: v6 -> v7 adds `session.captureMode` and its four siblings. Proves both
+     * halves of FR-AST-5/6: a pre-existing `session` row survives untouched, and the new columns
+     * default to `NULL` until [OrtDatabase.sessionDao]'s insert path stamps them for a v7 install.
+     */
+    @Test
+    @Requirement("AC-53", "AC-129", "FR-AST-5", "FR-AST-6", "FR-CAP-13")
+    public fun migration_from_v6_to_v7_preserves_existing_rows_and_adds_the_capture_mode_columns() {
+        val dbName = "migration-test-db-v7-capture-mode"
+        val v6 = helper.createDatabase(dbName, 6)
+        v6.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 6, 0, 0)",
+        )
+        v6.close()
+
+        helper.runMigrationsAndValidate(dbName, 7, true, OrtDatabase.MIGRATION_6_7)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val migrated = runBlocking { db.sessionDao().getById("S1") }
+            assertEquals("test", migrated!!.appVersion) // pre-existing row survives
+            assertEquals(null, migrated.captureMode) // new columns default to NULL, never fabricated
+            assertEquals(null, migrated.audioRouteKind)
+            assertEquals(null, migrated.audioRouteLabel)
+            assertEquals(null, migrated.bluetoothProfile)
+            assertEquals(null, migrated.rigTransport)
+
+            runBlocking {
+                db.sessionDao().insert(
+                    org.ort.data.entity.SessionEntity(
+                        id = "S2",
+                        startedAt = 0L,
+                        endedAt = null,
+                        profileId = null,
+                        deviceTier = null,
+                        appVersion = "test",
+                        terminationReason = null,
+                        sourceId = null,
+                        schemaVersion = 7,
+                        captureMode = "USB_RADIO",
+                        audioRouteKind = "USB",
+                        audioRouteLabel = "USB Audio Adapter",
+                        bluetoothProfile = null,
+                        rigTransport = "USB_SERIAL",
+                    ),
+                )
+            }
+            val info = runBlocking { db.sessionDao().getCaptureInfo("S2") }
+            assertEquals("USB_RADIO", info!!.captureMode) // new write/read path usable post-migration
+            assertEquals("USB", info.audioRouteKind)
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v6 — walks forward through
+     * the *entire* migration chain to v7 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns are unchanged from v1 to v6, so the same
+     * insert works unmodified against every fixture version; what varies is only which version
+     * [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach head.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
+    public fun every_prior_fixture_from_v1_to_v6_migrates_forward_to_v7_preserving_its_session_row() {
+        for (fixtureVersion in 1..6) {
+            val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
+            val fixture = helper.createDatabase(dbName, fixtureVersion)
+            fixture.execSQL(
+                "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                    "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
+                    "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, $fixtureVersion, 0, 0)",
+            )
+            fixture.close()
+
+            helper.runMigrationsAndValidate(dbName, OrtDatabase.SCHEMA_VERSION, true, *OrtDatabase.MIGRATIONS)
+
+            val db = Room.databaseBuilder(
+                ApplicationProvider.getApplicationContext(),
+                OrtDatabase::class.java,
+                dbName,
+            ).addMigrations(*OrtDatabase.MIGRATIONS).build()
+            try {
+                val migrated = runBlocking { db.sessionDao().getById("S1") }
+                assertEquals(
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v7",
+                    "test",
+                    migrated!!.appVersion,
+                )
+                assertEquals(
+                    "fixture v$fixtureVersion: the new v7 column must default to NULL, never a fabricated value",
+                    null,
+                    migrated.captureMode,
+                )
+            } finally {
+                db.close()
+            }
+        }
+    }
 }
