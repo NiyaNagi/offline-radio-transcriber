@@ -315,6 +315,32 @@ public class WorkQueueTest {
         assertTrue("a second active row for the same (transmission, pass) must violate idx_wq_active", threw)
     }
 
+    /**
+     * CI cross-platform fix (this task): the previous test proves `idx_wq_active` itself, via a
+     * raw DAO insert that deliberately bypasses [WorkQueue]. This one proves the *application*
+     * level guard [WorkQueue.enqueue] now carries for the same invariant — at most one active
+     * (`READY`/`LEASED`/`DEFERRED`) row per `(transmissionId, pass)` — through the real production
+     * entry point, so the invariant holds even on a platform where the partial unique index alone
+     * turned out not to enforce it (Linux CI; see `data/build.gradle.kts`'s comment on this task).
+     */
+    @Test
+    @Requirement("FR-RUN-2")
+    public fun FR_RUN_2_enqueue_does_not_create_a_second_active_row_for_the_same_transmission_and_pass(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+            val queue = WorkQueue(db, clock)
+
+            val firstId = queue.enqueue("TX1", PassId.B_OFFLINE)
+            // Still READY — genuinely still active — unlike re_enqueueing_a_completed_pass_succeeds.
+            val secondId = queue.enqueue("TX1", PassId.B_OFFLINE)
+
+            assertEquals(firstId, secondId)
+            val rows = db.workQueueDao().findByTransmissionAndPass("TX1", PassId.B_OFFLINE.name)
+            assertEquals(1, rows.size)
+            assertEquals(WorkQueueState.READY, rows.single().state)
+        }
+
     @Test
     @Requirement("R-426")
     public fun R_426_failPass_writes_a_durable_attempt_row_with_the_real_reason_and_timing(): Unit = runTest {

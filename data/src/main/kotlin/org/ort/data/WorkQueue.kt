@@ -33,16 +33,38 @@ public class WorkQueue(
     private val queueDao get() = db.workQueueDao()
     private val transmissionDao get() = db.transmissionDao()
 
-    /** FR-RUN-2 → AC-45: a segment is enqueued regardless of whether any pass can currently run. */
-    public suspend fun enqueue(transmissionId: String, pass: PassId, priority: Int = 0): Long = queueDao.insert(
-        WorkQueueItemEntity(
-            transmissionId = transmissionId,
-            pass = pass,
-            state = WorkQueueState.READY,
-            priority = priority,
-            enqueuedAt = clock.wallMillis(),
-        ),
-    )
+    /**
+     * FR-RUN-2 → AC-45: a segment is enqueued regardless of whether any pass can currently run.
+     *
+     * CI cross-platform fix (this task; see `idx_wq_active`'s own kdoc in [OrtDatabase] and
+     * `data/build.gradle.kts`'s comment on the same task): guards the same invariant the partial
+     * unique index `idx_wq_active` enforces — at most one active row (`READY`/`LEASED`/`DEFERRED`)
+     * per `(transmissionId, pass)` — at the application level too, inside one transaction with the
+     * read that checks it, rather than relying solely on that index. Unlike
+     * [org.ort.data.dao.TranscriptDao.supersede], which already runs its clear-then-insert as one
+     * `@Transaction` against this database's single writer connection and so is atomic with or
+     * without the index, [enqueue] previously had no such read-then-write pairing — a caller could
+     * legitimately invoke it twice for the same still-active `(transmissionId, pass)` (FR-RUN-2's
+     * "regardless of whether any pass can currently run" gives no reason to assume callers
+     * coordinate), and the index was the *only* thing preventing a real duplicate active row.
+     * Returns the existing active item's id unchanged rather than inserting a second one; a
+     * terminal `FAILED` row (outside the active-state set, same as `idx_wq_active`'s own `WHERE`)
+     * is left alone and a fresh `READY` row is inserted next to it, matching
+     * `re_enqueueing_a_completed_pass_succeeds`'s existing behaviour.
+     */
+    public suspend fun enqueue(transmissionId: String, pass: PassId, priority: Int = 0): Long = db.inWriteTransaction {
+        val existingActive = queueDao.findByTransmissionAndPass(transmissionId, pass.name)
+            .firstOrNull { it.state in ACTIVE_STATES }
+        existingActive?.id ?: queueDao.insert(
+            WorkQueueItemEntity(
+                transmissionId = transmissionId,
+                pass = pass,
+                state = WorkQueueState.READY,
+                priority = priority,
+                enqueuedAt = clock.wallMillis(),
+            ),
+        )
+    }
 
     /**
      * Leases up to [limit] ready items under [runId], setting each one's deadline from
@@ -196,5 +218,9 @@ public class WorkQueue(
 
     public companion object {
         public const val DEFAULT_MAX_ATTEMPTS: Int = 5
+
+        /** Mirrors `idx_wq_active`'s own `WHERE state IN (...)` (technical design §7.1) exactly. */
+        private val ACTIVE_STATES: Set<WorkQueueState> =
+            setOf(WorkQueueState.READY, WorkQueueState.LEASED, WorkQueueState.DEFERRED)
     }
 }
