@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -86,6 +87,7 @@ class RowsTest {
         badge: LogRowBadge? = null,
         transcript: String = "this is whiskey seven november papa charlie, monitoring",
         highlightRanges: List<IntRange> = emptyList(),
+        btAudioMark: Boolean = false,
     ) = LogRowViewState(
         id = "TX1",
         timeLabel = "02:14:07",
@@ -95,6 +97,7 @@ class RowsTest {
         attribution = attribution,
         signalLabel = "S7",
         badge = badge,
+        btAudioMark = btAudioMark,
         highlightRanges = highlightRanges,
     )
 
@@ -135,6 +138,11 @@ class RowsTest {
                         modifier = Modifier.testTag("resolving"),
                     )
                     LogRow(state = row(badge = LogRowBadge.NEW), onClick = {}, modifier = Modifier.testTag("new"))
+                    LogRow(
+                        state = row(badge = LogRowBadge.NEW, btAudioMark = true),
+                        onClick = {},
+                        modifier = Modifier.testTag("new-and-bt-audio"),
+                    )
                 }
             }
         }
@@ -147,8 +155,12 @@ class RowsTest {
         // now (an earlier entry in this file's own `CHANGELOG.md`).
         composeTestRule.onNodeWithText("hearing…", useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithText("resolving…", useUnmergedTree = true).assertExists()
-        composeTestRule.onNodeWithText("NEW", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("new").assert(hasText("new", substring = true))
         composeTestRule.onNodeWithTag("confirmed").assertHeightIsAtLeast(44.dp)
+        // E2-G04 (F23, FR-CAP-13): the `bt audio` mark coexists with an existing badge (NEW), on
+        // its own separate badge slot — never replacing the row's other real fact.
+        composeTestRule.onNodeWithTag("new-and-bt-audio").assert(hasText("new", substring = true))
+        composeTestRule.onNodeWithTag("new-and-bt-audio").assert(hasText("bt audio", substring = true))
     }
 
     @Test

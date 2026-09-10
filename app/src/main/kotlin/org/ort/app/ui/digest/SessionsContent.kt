@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.screens.LogContent
 import org.ort.app.ui.theme.OrtSpacing
 
@@ -25,7 +26,19 @@ private sealed interface SessionsPage {
     data class Detail(val sessionId: String) : SessionsPage
     data class Digest(val sessionId: String) : SessionsPage
     data class DigestItem(val sessionId: String, val item: DigestItemViewState) : SessionsPage
-    data class Log(val sessionId: String, val label: String) : SessionsPage
+
+    /**
+     * [fromMillis]/[toMillis] (E2-G07, DG05): a prose card's own `Read the overs` seeds the
+     * existing time-window filter (R-276's own precedent — `Frequency.dc.html`'s "The N overs"
+     * stat does the same) — `null` (every caller before this existed) opens unfiltered, exactly as
+     * before.
+     */
+    data class Log(
+        val sessionId: String,
+        val label: String,
+        val fromMillis: Long? = null,
+        val toMillis: Long? = null,
+    ) : SessionsPage
 }
 
 /** R-133 (register, WP10 small round): [SessionsPage] is a `private sealed interface` — not
@@ -53,7 +66,13 @@ private val SessionsPageSaver: Saver<SessionsPage, String> = Saver(
                 page.item.ambiguousTone.toString(),
                 page.item.transmissionIds.joinToString(","),
             ).joinToString(PAGE_FIELD_SEPARATOR)
-            is SessionsPage.Log -> listOf("log", page.sessionId, page.label).joinToString(PAGE_FIELD_SEPARATOR)
+            is SessionsPage.Log -> listOf(
+                "log",
+                page.sessionId,
+                page.label,
+                page.fromMillis?.toString() ?: "",
+                page.toMillis?.toString() ?: "",
+            ).joinToString(PAGE_FIELD_SEPARATOR)
         }
     },
     restore = { saved ->
@@ -72,7 +91,12 @@ private val SessionsPageSaver: Saver<SessionsPage, String> = Saver(
                     transmissionIds = if (parts[7].isEmpty()) emptyList() else parts[7].split(","),
                 ),
             )
-            "log" -> SessionsPage.Log(parts[1], parts[2])
+            "log" -> SessionsPage.Log(
+                sessionId = parts[1],
+                label = parts[2],
+                fromMillis = parts.getOrNull(3)?.takeIf { it.isNotEmpty() }?.toLongOrNull(),
+                toMillis = parts.getOrNull(4)?.takeIf { it.isNotEmpty() }?.toLongOrNull(),
+            )
             else -> SessionsPage.List
         }
     },
@@ -159,6 +183,9 @@ public fun SessionsContent(
             onBack = { page = SessionsPage.Detail(current.sessionId) },
             onOpenItem = { item -> page = SessionsPage.DigestItem(current.sessionId, item) },
             onFullLog = { page = SessionsPage.Log(current.sessionId, "Digest") },
+            // E2-G07 (DG05): a prose card's own `Read the overs` — the Log filtered to that card's
+            // own over time window.
+            onReadOvers = { from, to -> page = SessionsPage.Log(current.sessionId, "Digest", from, to) },
             modifier = modifier,
         )
 
@@ -171,10 +198,19 @@ public fun SessionsContent(
 
         is SessionsPage.Log -> Column(modifier = modifier.fillMaxSize()) {
             DrillInHeader(parentLabel = current.label, onBack = { page = SessionsPage.Detail(current.sessionId) })
+            // E2-G07: a prose card's own seeded window (both bounds present) becomes the Log's
+            // existing time-window filter — `null` (the plain "Digest"/"Log" navigation, unchanged)
+            // opens unfiltered.
+            val seededFilter = if (current.fromMillis != null && current.toMillis != null) {
+                LogFilterSelection(fromMillis = current.fromMillis, toMillis = current.toMillis)
+            } else {
+                null
+            }
             LogContent(
                 context = context,
                 sessionId = current.sessionId,
                 onOpen = onOpenTransmission,
+                initialFilter = seededFilter,
                 modifier = Modifier.fillMaxSize(),
             )
         }

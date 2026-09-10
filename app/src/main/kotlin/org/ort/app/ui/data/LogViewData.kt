@@ -6,6 +6,7 @@ import org.ort.app.ui.components.LogRowPartial
 import org.ort.app.ui.components.LogRowViewState
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
+import org.ort.core.SystemClock
 import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
@@ -99,6 +100,11 @@ public data class LogScreenViewState(
     val rejectedFocus: Boolean,
     val rejectedExplanation: String?,
     val emptyState: LogEmptyStateViewState?,
+    /** E2-G04 (F23, FR-CAP-13): `Fail-Bluetooth-Audio.dc.html`'s own footnote line — "Every over
+     * captured over Bluetooth carries the `bt audio` mark. Its accuracy is reported separately
+     * from cabled audio, never averaged in." Present exactly when this session's own audio route
+     * is Bluetooth SCO; `null` (every caller before this existed) omits the line entirely. */
+    val bluetoothAudioFootnote: String? = null,
 )
 
 // -------------------------------------------------------------------------------------------
@@ -217,7 +223,11 @@ public object LogItemsMapper {
         return detail.inspection.candidates.sortedBy { it.rank }.getOrNull(1)?.callsign
     }
 
-    public fun toRowState(detail: TransmissionDetail, isFirstHeard: Boolean): LogRowViewState {
+    public fun toRowState(
+        detail: TransmissionDetail,
+        isFirstHeard: Boolean,
+        btAudioMark: Boolean = false,
+    ): LogRowViewState {
         val partial = partialFor(detail)
         val text = if (partial != null) {
             detail.currentTranscriptText.orEmpty()
@@ -243,6 +253,7 @@ public object LogItemsMapper {
                 null
             },
             badge = badgeFor(detail, isFirstHeard, partial != null),
+            btAudioMark = btAudioMark,
         )
     }
 
@@ -251,8 +262,28 @@ public object LogItemsMapper {
      * never quiet. R-249 (V3 pass 2): the duration now goes through the one shared
      * [ReaderTransmissionViewStateMapper.durationLabel] — this used to write "38s" (no space
      * before the unit), which the board never does.
+     *
+     * E2-G04 (F23, FR-CAP-5, FR-CAP-13): [bluetoothAudioDropped] — `true` exactly when the gap is
+     * still open ([CaptureGapEntity.endedAt] `null`) on a session whose audio route is Bluetooth
+     * SCO and the cause is [CaptureGapCause.INPUT_LOST] — reads `Fail-Bluetooth-Audio.dc.html`'s
+     * own "not listening · N and counting · Bluetooth audio dropped" instead of the generic
+     * cause prose, computed from [nowMillis] against [CaptureGapEntity.startedAt] the same way
+     * every other "so far" figure in this reader is. There is no dedicated `CaptureGapCause` value
+     * for a Bluetooth-audio drop yet (`:data` still records it as `INPUT_LOST` — a later `:data`
+     * change owes a distinct cause); this is deliberately named as an inference from the session's
+     * own route, not a new fact `:data` records, and is reported as such (see this package's
+     * report). A closed gap, or one whose cause is not `INPUT_LOST`, is never rewritten this way.
      */
-    public fun gapLabel(gap: CaptureGapEntity): String {
+    public fun gapLabel(
+        gap: CaptureGapEntity,
+        nowMillis: Long? = null,
+        bluetoothAudioDropped: Boolean = false,
+    ): String {
+        if (bluetoothAudioDropped && gap.endedAt == null && gap.cause == CaptureGapCause.INPUT_LOST) {
+            val elapsed = (nowMillis ?: SystemClock.wallMillis()) - gap.startedAt
+            return "not listening · ${ReaderTransmissionViewStateMapper.durationLabel(elapsed)} and counting · " +
+                "Bluetooth audio dropped"
+        }
         val duration = gap.endedAt?.let {
             ReaderTransmissionViewStateMapper.durationLabel(it - gap.startedAt)
         } ?: "ongoing"
@@ -396,6 +427,7 @@ public object LogItemsMapper {
         details: List<TransmissionDetail>,
         selection: LogFilterSelection,
         firstHeardIds: Set<String>,
+        btAudioMark: Boolean = false,
     ): List<Timed> = details
         .filter { it.processingState != TransmissionState.REJECTED }
         .filter {
@@ -406,7 +438,7 @@ public object LogItemsMapper {
         .map { detail ->
             Timed(
                 detail.startedAtUtcMillis,
-                LogListItem.Row(toRowState(detail, detail.id in firstHeardIds)),
+                LogListItem.Row(toRowState(detail, detail.id in firstHeardIds, btAudioMark)),
                 detail.threadId,
             )
         }
@@ -432,7 +464,12 @@ public object LogItemsMapper {
             }
     }
 
-    private fun gapsAsTimed(gaps: List<CaptureGapEntity>, selection: LogFilterSelection): List<Timed> {
+    private fun gapsAsTimed(
+        gaps: List<CaptureGapEntity>,
+        selection: LogFilterSelection,
+        bluetoothAudioSession: Boolean = false,
+        nowMillis: Long? = null,
+    ): List<Timed> {
         if (!selection.showGaps) return emptyList()
         return gaps
             .filter { matchesTime(it.startedAt, selection) }
@@ -442,7 +479,7 @@ public object LogItemsMapper {
                     LogListItem.Gap(
                         id = gap.id,
                         timeLabel = ReaderTransmissionViewStateMapper.timeLabel(gap.startedAt),
-                        label = gapLabel(gap),
+                        label = gapLabel(gap, nowMillis, bluetoothAudioSession),
                     ),
                     null,
                 )
@@ -489,11 +526,16 @@ public object LogItemsMapper {
         gaps: List<CaptureGapEntity>,
         selection: LogFilterSelection,
         firstHeardIds: Set<String>,
+        // E2-G04 (F23, FR-CAP-13): the session's own Bluetooth-audio fact, threaded down to both
+        // the row mark and the gap wording — `false` (every caller before this existed) renders
+        // exactly as before.
+        bluetoothAudioSession: Boolean = false,
+        nowMillis: Long? = null,
     ): List<LogListItem> {
         val merged = (
-            rowsAsTimed(details, selection, firstHeardIds) +
+            rowsAsTimed(details, selection, firstHeardIds, bluetoothAudioSession) +
                 rejectedAsTimed(details, selection) +
-                gapsAsTimed(gaps, selection)
+                gapsAsTimed(gaps, selection, bluetoothAudioSession, nowMillis)
             ).sortedBy { it.atMillis }
         return groupRuns(merged)
     }
@@ -650,6 +692,14 @@ public object LogPolling {
         val details = entities.map { buildDetail(context, db, it) }
         val gaps = db.captureGapDao().listBySession(sessionId)
         val session = db.sessionDao().getById(sessionId)
+        // E2-G04 (F23, FR-CAP-13): the WPF seam — see that type's own kdoc.
+        val routeFacts = RoomSessionRouteFactsReader(context).forSession(sessionId)
+        val bluetoothAudioFootnote = if (routeFacts.isBluetoothAudio) {
+            "Every over captured over Bluetooth carries the bt audio mark. Its accuracy is " +
+                "reported separately from cabled audio, never averaged in."
+        } else {
+            null
+        }
         // R-248: union the rig's currently-known bands with what's actually been heard, so a
         // configured-but-silent-so-far frequency still shows its own quick-filter chip (dimmed,
         // in the unselected chip style) rather than waiting for a first over on it.
@@ -670,12 +720,20 @@ public object LogPolling {
                 rejectedFocus = true,
                 rejectedExplanation = LogItemsMapper.rejectedExplanation(items.size),
                 emptyState = emptyState,
+                bluetoothAudioFootnote = bluetoothAudioFootnote,
             )
         }
 
         val firstHeardIds = firstHeardTransmissionIds(db)
         val effectiveSelection = LogItemsMapper.selectionFor(activeQuickFilter, selection)
-        val items = LogItemsMapper.buildItems(details, gaps, effectiveSelection, firstHeardIds)
+        val items = LogItemsMapper.buildItems(
+            details,
+            gaps,
+            effectiveSelection,
+            firstHeardIds,
+            bluetoothAudioSession = routeFacts.isBluetoothAudio,
+            nowMillis = SystemClock.wallMillis(),
+        )
         val emptyState = if (items.isEmpty()) {
             LogItemsMapper.emptyStateFor(
                 hasAnyTransmission = details.isNotEmpty(),
@@ -691,6 +749,7 @@ public object LogPolling {
             rejectedFocus = false,
             rejectedExplanation = null,
             emptyState = emptyState,
+            bluetoothAudioFootnote = bluetoothAudioFootnote,
         )
     }
 

@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
@@ -82,7 +83,8 @@ class LogScreenTest {
             LogQuickFilterChipViewState(LogQuickFilterId.All, "All", true),
             LogQuickFilterChipViewState(LogQuickFilterId.Rejected, "Rejected", false),
         ),
-    ) = LogScreenViewState(items, quickFilters, rejectedFocus, rejectedExplanation, emptyState)
+        bluetoothAudioFootnote: String? = null,
+    ) = LogScreenViewState(items, quickFilters, rejectedFocus, rejectedExplanation, emptyState, bluetoothAudioFootnote)
 
     @Test
     fun `FR_UI_1 a transmission with no transcript yet shows the honest not-yet-transcribed state, not an empty row`() {
@@ -621,5 +623,44 @@ class LogScreenTest {
                 useUnmergedTree = true,
             )
             .assertExists()
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // E2-G04 (F23, FR-CAP-13): the Bluetooth-audio footnote.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `E2_G04 the Bluetooth-audio footnote renders when present`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(
+                        listOf(LogListItem.Row(rowState("TX1", "roger"))),
+                        bluetoothAudioFootnote = "Every over captured over Bluetooth carries the bt audio mark.",
+                    ),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("log-bluetooth-audio-footnote").assertExists()
+    }
+
+    @Test
+    fun `E2_G04 no footnote renders for a non-Bluetooth session`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(LogListItem.Row(rowState("TX1", "roger")))),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("log-bluetooth-audio-footnote").assertDoesNotExist()
     }
 }

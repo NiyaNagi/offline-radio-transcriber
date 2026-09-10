@@ -7,6 +7,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.core.capture.AudioRouteKind
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.RigTransportKind
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -38,6 +41,7 @@ class CaptureStatusMapperTest {
         nowMillis: Long = 100_000L,
         batteryExemptionReportsIgnoring: Boolean = true,
         gapCount: Int = 0,
+        routeFacts: SessionRouteFacts = SessionRouteFacts.NOT_TRACKED,
     ) = CaptureStatusMapper.from(
         captureState = captureState,
         shedLevel = shedLevel,
@@ -61,6 +65,7 @@ class CaptureStatusMapperTest {
         batteryPercent = 71,
         batteryCharging = true,
         batteryExemptionReportsIgnoring = batteryExemptionReportsIgnoring,
+        routeFacts = routeFacts,
     )
 
     private fun descriptor(label: String = "USB Audio Device") =
@@ -318,5 +323,139 @@ class CaptureStatusMapperTest {
     fun `a Stop action is offered only while capturing`() {
         assertEquals("Stop", state(captureState = CaptureState.State.Capturing).haltActionLabel)
         assertNull(state(captureState = CaptureState.State.Idle).haltActionLabel)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // E2-G01 (N04): the Input sub-line names the capture mode and audio route; the Radio
+    // sub-line names the rig transport.
+    // -----------------------------------------------------------------------------------------
+
+    private fun opened(label: String = "USB Audio Device") = InputStatus.State.Opened(
+        descriptor = descriptor(label),
+        nativeRateHz = 48_000,
+        resamplerId = "a41c",
+        routeVerified = true,
+        routedDeviceMatches = true,
+        openedAtMillis = 0L,
+    )
+
+    @Test
+    @Requirement("E2-G01", "FR-CAP-13")
+    fun `E2_G01 the Input sub-line names the mode and audio-by-cable route before the rate and resampler`() {
+        val view = state(
+            input = opened(),
+            routeFacts = SessionRouteFacts(
+                captureMode = CaptureMode.USB_RADIO,
+                audioRouteKind = AudioRouteKind.USB,
+                audioRouteLabel = "USB Audio Device",
+                bluetoothProfile = null,
+                rigTransport = RigTransportKind.USB_SERIAL,
+            ),
+        )
+        assertEquals(
+            "USB-connected radio · audio by cable · 48 kHz → 16 kHz · resampler a41c",
+            view.input.subLine,
+        )
+    }
+
+    @Test
+    @Requirement("E2-G01", "FR-CAP-10")
+    fun `E2_G01 the Input sub-line names room audio for a local-microphone session`() {
+        val view = state(
+            input = opened("Built-in Microphone"),
+            routeFacts = SessionRouteFacts(
+                captureMode = CaptureMode.LOCAL_MICROPHONE,
+                audioRouteKind = AudioRouteKind.BUILT_IN_MIC,
+                audioRouteLabel = "Built-in Microphone",
+                bluetoothProfile = null,
+                rigTransport = null,
+            ),
+        )
+        assertTrue(view.input.subLine!!.contains("room audio"))
+        assertTrue(view.input.subLine!!.contains("Local microphone"))
+    }
+
+    @Test
+    @Requirement("E2-G01", "FR-CAP-11")
+    fun `E2_G01 the Input sub-line names Bluetooth audio for a Bluetooth-audio session`() {
+        val view = state(
+            input = opened("Handheld BT"),
+            routeFacts = SessionRouteFacts(
+                captureMode = CaptureMode.BLUETOOTH_RADIO,
+                audioRouteKind = AudioRouteKind.BLUETOOTH_SCO,
+                audioRouteLabel = "Handheld BT",
+                bluetoothProfile = null,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP,
+            ),
+        )
+        assertTrue(view.input.subLine!!.contains("Bluetooth audio"))
+    }
+
+    @Test
+    @Requirement("E2-G01")
+    fun `E2_G01 with no route facts tracked the Input sub-line still carries the rate and resampler alone`() {
+        val view = state(input = opened())
+        assertTrue(view.input.subLine!!.contains("48 kHz"))
+        assertTrue(view.input.subLine!!.contains("a41c"))
+        assertFalse(view.input.subLine!!.contains("·  ·"))
+    }
+
+    @Test
+    @Requirement("E2-G01", "FR-RIG-14")
+    fun `E2_G01 the Radio sub-line names the transport before the band states`() {
+        val connected = RigStatus.State.Connected(
+            "TH-D75A",
+            listOf(
+                RigStatus.BandState("A", 145_230_000L, null, squelchOpen = true),
+                RigStatus.BandState("B", 146_960_000L, null, squelchOpen = false),
+            ),
+        )
+        val view = state(
+            rig = connected,
+            routeFacts = SessionRouteFacts(
+                captureMode = CaptureMode.BLUETOOTH_RADIO,
+                audioRouteKind = AudioRouteKind.WIRED_HEADSET,
+                audioRouteLabel = null,
+                bluetoothProfile = null,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP,
+            ),
+        )
+        assertEquals(
+            "Bluetooth SPP · A 145.230 open · B 146.960 closed",
+            view.radio.subLine,
+        )
+    }
+
+    @Test
+    @Requirement("E2-G01", "FR-RIG-14")
+    fun `E2_G01 RigStatus own live transportKind (WPC2) wins over the session column fallback`() {
+        val connected = RigStatus.State.Connected(
+            "TH-D75A",
+            listOf(RigStatus.BandState("A", 145_230_000L, null, squelchOpen = true)),
+            transportKind = org.ort.rig.RigTransportKind.USB_SERIAL,
+        )
+        val view = state(
+            rig = connected,
+            // The session column says Bluetooth — the live RigStatus signal must win regardless.
+            routeFacts = SessionRouteFacts(
+                captureMode = CaptureMode.BLUETOOTH_RADIO,
+                audioRouteKind = AudioRouteKind.WIRED_HEADSET,
+                audioRouteLabel = null,
+                bluetoothProfile = null,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP,
+            ),
+        )
+        assertEquals("USB serial · A 145.230 open", view.radio.subLine)
+    }
+
+    @Test
+    @Requirement("E2-G01")
+    fun `E2_G01 with no transport tracked the Radio sub-line falls back to the band states alone`() {
+        val connected = RigStatus.State.Connected(
+            "TH-D75A",
+            listOf(RigStatus.BandState("A", 145_230_000L, null, squelchOpen = true)),
+        )
+        val view = state(rig = connected)
+        assertEquals("A 145.230 open", view.radio.subLine)
     }
 }

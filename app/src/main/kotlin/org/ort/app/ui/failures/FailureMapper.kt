@@ -3,6 +3,7 @@ package org.ort.app.ui.failures
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.StagedActivation
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.pipeline.capture.CaptureState
@@ -85,6 +86,7 @@ public data class BacklogSample(
 public sealed interface FailurePresentation {
     public data class Route(public val state: RouteViewState) : FailurePresentation
     public data class Disconnect(public val state: DisconnectViewState) : FailurePresentation
+    public data class BluetoothAudioDropped(public val state: BluetoothAudioDroppedViewState) : FailurePresentation
     public data class Level(public val state: LevelViewState) : FailurePresentation
     public data class Killed(public val state: KilledViewState) : FailurePresentation
     public data class StorageWarning(public val state: StorageWarningViewState) : FailurePresentation
@@ -216,6 +218,21 @@ public object FailureMapper {
     private fun mapInputOrLevelBanner(signals: FailureSignals): FailurePresentation? {
         val input = signals.inputStatus
         if (input is InputStatus.State.Lost) {
+            // E2-G05 (F23, FR-CAP-5, D34): the real, live signal is the lost device's own
+            // descriptor kind (WPC1's `AudioDeviceDescriptor.kind`) — not a session column, so
+            // this reads correctly the instant the drop happens, before any session-level read
+            // could catch up. [BluetoothAudioDroppedViewState.retryAttempt]/[retryTotal]/
+            // [nextRetrySeconds] stay `null` — no reconnect-with-backoff counter is published by
+            // `:pipeline` yet (see that type's own kdoc); reported, not fabricated.
+            if (input.lastKnown.descriptor.kind == AudioDeviceKind.BLUETOOTH) {
+                return FailurePresentation.BluetoothAudioDropped(
+                    BluetoothAudioDroppedViewState(
+                        deviceLabel = input.lastKnown.descriptor.label,
+                        droppedAtLabel = clockLabel(input.sinceMillis),
+                        rigLinkStillUp = signals.rigStatus !is RigStatus.State.Stale,
+                    ),
+                )
+            }
             return FailurePresentation.Disconnect(
                 DisconnectViewState(
                     deviceLabel = input.lastKnown.descriptor.label,
@@ -318,10 +335,26 @@ public object FailureMapper {
         val rig = signals.rigStatus
         if (rig is RigStatus.State.Stale) {
             return FailurePresentation.Rig(
-                RigViewState(deviceLabel = rig.lastKnown.descriptor, sinceLabel = clockLabel(rig.sinceMillis)),
+                RigViewState(
+                    deviceLabel = rig.lastKnown.descriptor,
+                    sinceLabel = clockLabel(rig.sinceMillis),
+                    // E2-G06 (F9, FR-RIG-15): WPC2's own live `RigStatus.transportKind` — `null`
+                    // for a caller that predates it (a debug scenario), never fabricated.
+                    transportLabel = rigTransportLabel(rig.lastKnown.transportKind),
+                ),
             )
         }
         return null
+    }
+
+    /** E2-G06: the transport named in F9's own banner copy — "the Bluetooth SPP transport" /
+     * "the USB serial transport" — `null` when [transport] is `null` or [org.ort.rig.RigTransportKind.NONE]. */
+    private fun rigTransportLabel(transport: org.ort.rig.RigTransportKind?): String? = when (transport) {
+        org.ort.rig.RigTransportKind.USB_SERIAL -> "the USB serial transport"
+        org.ort.rig.RigTransportKind.BLUETOOTH_SPP -> "the Bluetooth SPP transport"
+        org.ort.rig.RigTransportKind.BLE -> "the Bluetooth LE transport"
+        org.ort.rig.RigTransportKind.NETWORK -> "the network transport"
+        org.ort.rig.RigTransportKind.NONE, null -> null
     }
 
     /** Register R-149/R-254: `Fail-Backlog.dc.html`'s Waiting/Rate/Capture/In-the-log rows and its

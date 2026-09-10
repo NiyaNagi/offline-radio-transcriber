@@ -11,13 +11,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -62,6 +65,9 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
             append(": ")
             append(it)
         }
+        // E2-G02 (N01b, FR-CAP-3a): the room-audio mark is content, not decoration — it belongs in
+        // the bar's own composed description too, not only its visible glyph+text.
+        if (state.localMicrophone) append(", room")
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -105,6 +111,12 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
                     Spacer(modifier = Modifier.weight(1f))
                 }
                 Spacer(modifier = Modifier.width(OrtSpacing.sm))
+                // E2-G02 (`Main-Room-Audio.dc.html`'s footer): the mic glyph + "room" mark, before
+                // the label, whenever the current session is [org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE]
+                // (FR-CAP-3a — persistent, on every screen the live bar appears on).
+                if (state.localMicrophone) {
+                    RoomAudioMark(modifier = Modifier.padding(end = OrtSpacing.xs).testTag("live-bar-room-mark"))
+                }
                 Text(
                     text = state.label,
                     style = OrtType.textAction.copy(fontWeight = FontWeight.Medium),
@@ -112,6 +124,27 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
                 )
             }
         }
+    }
+}
+
+/** `Main-Room-Audio.dc.html`'s footer mark: [OrtIcons.builtInMic] + the word "room", in
+ * `text/dim`, ahead of the label — never the *only* copy of the fact (guide's own badge rule):
+ * [LiveBar]'s own composed [description][state] already says "room" too, and `NowContent`'s own
+ * chip under the title repeats it a second time on the one destination that has room for prose. */
+@Composable
+private fun RoomAudioMark(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = OrtIcons.builtInMic,
+            contentDescription = null,
+            tint = OrtColors.textDim,
+            modifier = Modifier.size(12.dp),
+        )
+        Text(text = "room", style = OrtType.chip, color = OrtColors.textDim)
     }
 }
 
@@ -198,4 +231,9 @@ public data class LiveBarViewState(
     val label: String,
     val tone: LiveBarTone,
     val meterTone: LiveBarTone? = null,
+    /** E2-G02 (`Main-Room-Audio.dc.html`, FR-CAP-3a/FR-CAP-10): `true` exactly when the current
+     * session's capture mode is [org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE] — the one live
+     * bar every destination shares carries the persistent room-audio mark, never per-screen. `false`
+     * (every caller before this existed) renders exactly as before. */
+    val localMicrophone: Boolean = false,
 )

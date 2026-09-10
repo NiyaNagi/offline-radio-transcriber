@@ -45,6 +45,11 @@ public sealed interface NowViewState {
         val missingModel: MissingModelFacts?,
         val worthKnowing: List<WorthKnowingItem>,
         val stations: NowStationsSection,
+        /** E2-G02 (`Main-Room-Audio.dc.html`, FR-CAP-3a/FR-CAP-10): `true` exactly when the
+         * current session's capture mode is [org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE] —
+         * gates the persistent room-audio disclosure chip under the title. `false` (every caller
+         * before this existed) renders exactly as before. */
+        val isLocalMicrophone: Boolean = false,
     ) : NowViewState
 }
 

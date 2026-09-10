@@ -137,6 +137,56 @@ class FailureMapperTest {
         assertEquals("USB Audio Device", (presentation as FailurePresentation.Disconnect).state.deviceLabel)
     }
 
+    // -----------------------------------------------------------------------------------------
+    // E2-G05 (F23, FR-CAP-5): a Bluetooth-audio drop is F23, never the generic F2 disconnect.
+    // -----------------------------------------------------------------------------------------
+
+    private val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
+
+    @Test
+    @Requirement("E2-G05", "FR-CAP-5")
+    fun `E2_G05 an input lost on a Bluetooth route is F23, not the generic F2 disconnect`() {
+        val opened = InputStatus.State.Opened(btDevice, 16_000, "none", true, true, 0L)
+        val presentation = FailureMapper.map(
+            signals(inputStatus = InputStatus.State.Lost(opened, sinceMillis = 900_000L)),
+        )
+        assertTrue(presentation is FailurePresentation.BluetoothAudioDropped)
+        val state = (presentation as FailurePresentation.BluetoothAudioDropped).state
+        assertEquals("Handheld BT", state.deviceLabel)
+    }
+
+    @Test
+    @Requirement("E2-G05")
+    fun `E2_G05 F23 states whether the rig link is still up, independent of the audio drop`() {
+        val opened = InputStatus.State.Opened(btDevice, 16_000, "none", true, true, 0L)
+        val stillConnected = RigStatus.State.Connected("TH-D75A", emptyList())
+
+        val presentationRigUp = FailureMapper.map(
+            signals(
+                inputStatus = InputStatus.State.Lost(opened, sinceMillis = 900_000L),
+                rigStatus = stillConnected,
+            ),
+        )
+        assertTrue((presentationRigUp as FailurePresentation.BluetoothAudioDropped).state.rigLinkStillUp)
+
+        val presentationRigDown = FailureMapper.map(
+            signals(
+                inputStatus = InputStatus.State.Lost(opened, sinceMillis = 900_000L),
+                rigStatus = RigStatus.State.Stale(stillConnected, sinceMillis = 900_000L),
+            ),
+        )
+        assertTrue(!(presentationRigDown as FailurePresentation.BluetoothAudioDropped).state.rigLinkStillUp)
+    }
+
+    @Test
+    @Requirement("E2-G05")
+    fun `E2_G05 a takeover still outranks F23, matching the same priority every other banner has`() {
+        val presentation = FailureMapper.map(
+            signals(inputStatus = InputStatus.State.Mismatch(usbDevice, btDevice)),
+        )
+        assertTrue(presentation is FailurePresentation.Route)
+    }
+
     @Test
     @Requirement("R-112")
     fun `R_112 a quiet level below the threshold is the level banner`() {
@@ -378,6 +428,30 @@ class FailureMapperTest {
         )
         assertTrue(presentation is FailurePresentation.Rig)
         assertEquals("TH-D75A", (presentation as FailurePresentation.Rig).state.deviceLabel)
+    }
+
+    @Test
+    @Requirement("E2-G06", "FR-RIG-15")
+    fun `E2_G06 F9 names the Bluetooth transport when that is what dropped`() {
+        val connected = RigStatus.State.Connected(
+            "TH-D75A",
+            emptyList(),
+            transportKind = org.ort.rig.RigTransportKind.BLUETOOTH_SPP,
+        )
+        val presentation = FailureMapper.map(
+            signals(rigStatus = RigStatus.State.Stale(connected, sinceMillis = 900_000L)),
+        )
+        assertEquals("the Bluetooth SPP transport", (presentation as FailurePresentation.Rig).state.transportLabel)
+    }
+
+    @Test
+    @Requirement("E2-G06")
+    fun `E2_G06 F9 names no transport for a caller that predates WPC2, never fabricated`() {
+        val connected = RigStatus.State.Connected("TH-D75A", emptyList())
+        val presentation = FailureMapper.map(
+            signals(rigStatus = RigStatus.State.Stale(connected, sinceMillis = 900_000L)),
+        )
+        assertEquals(null, (presentation as FailurePresentation.Rig).state.transportLabel)
     }
 
     @Test

@@ -194,6 +194,120 @@ the lead amends the module graph.
 - USB `rigParams` (VID/PID) for `DefaultRigTransportFactory` — see the adapter entry above.
 
 ---
+## 2026-09-10 (WPF: status modes — N04, N01b room audio, DG04 session facts, the bt audio Log mark, DG05 prose, F23)
+
+### (pending) — status modes: N04 Input/Radio sub-lines, N01b room-audio disclosure, DG04 session facts, the Log's bt audio mark and footnote, F23 Bluetooth-audio-dropped, F9 transport naming, DG05 In their words
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/{CaptureStatusScreen,CaptureStatusContent,NowContent,LogContent,NowScreen,LogScreen}.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/{CaptureStatusViewState,NowViewState,LiveBarPolling,LogViewData,SessionRouteFacts}.kt` (new file: `SessionRouteFacts.kt`),
+`app/src/main/kotlin/org/ort/app/ui/components/{LiveBar,Rows}.kt` (additive),
+`app/src/main/kotlin/org/ort/app/ui/digest/{DigestViewData,DigestPolling,SessionsScreens,DigestScreens,DigestContent,SessionsContent}.kt`,
+`app/src/main/kotlin/org/ort/app/ui/failures/{FailureViewState,FailureMapper,FailureBanners,FailureHost}.kt`,
+plus tests under the matching `app/src/test/kotlin/...` paths and a new `DigestScreensTest.kt`,
+`SessionRouteFactsTest.kt`. Branch only — not merged to main.
+
+**Requirements/ACs:** FR-CAP-3a, FR-CAP-5, FR-CAP-10, FR-CAP-11, FR-CAP-13, FR-RIG-14, FR-RIG-15,
+FR-DIG-3, FR-DIG-3a, FR-DIG-6, FR-DIG-11, AC-129, AC-132, R-450 (retired for a session carrying the
+v7 facts).
+
+**What changed:**
+
+*Constitution Check.* I (every disclosure — room audio, Bluetooth degradation, the `generated`
+badge — renders from a real signal or is omitted entirely; nothing here fabricates a mode, route,
+transport or retry count no signal publishes). II (every unit built test-first against a real
+Robolectric `OrtDatabase`/process-wide holder or a hand-built view-state; DG05's "absent when
+disabled" guard shown to discriminate — reverted, the test failed for the right reason, restored).
+III (unchanged — no mode/tier reaches the segmenter). IV (F23 maps from the live
+`InputStatus.State.Lost.lastKnown.descriptor.kind`, never a stale session column, so it is correct
+the instant the drop happens). VI (F23's retry-attempt/total/next-retry fields are `null` — no such
+counter is published by `:pipeline` yet — reported honestly rather than invented; DG05's card
+subject/detail line are the thread's own real station and over count, never invented headline
+prose). VII (the new `SessionRouteFacts` seam is the one place a v7 session column is read; no
+module-boundary change).
+
+1. **The `SessionRouteFacts` seam** (new `ui/data/SessionRouteFacts.kt`): typed session
+   mode/route/profile/transport from `SessionDao.getCaptureInfo`, against `:core`'s closed
+   enums — `NOT_TRACKED` for a pre-v7 row or an unrecognised stored value, never a fabricated
+   case. `SessionRouteFactsReader` interface, `RoomSessionRouteFactsReader` (production) and
+   `FakeSessionRouteFactsReader` (behavioural fake). WPC2 landed mid-session (`e464820` merged
+   in): adapted immediately after — F23 now reads the *live* `InputStatus.State.Lost.lastKnown.
+   descriptor.kind` (WPC1's own field, unchanged by WPC2) rather than the session column, and N04's
+   Radio sub-line / F9's banner now prefer `RigStatus`'s own live `transportKind`
+   (`org.ort.rig.RigTransportKind`), falling back to the session's `rigTransport` column only for a
+   caller that predates WPC2 or a past session's `DG04` read. `SessionRouteFacts` itself is
+   otherwise unchanged and remains the single seam DG04, the Log mark and N01b/LiveBar read.
+2. **E2-G01 (N04):** Input sub-line "<mode label> · <room audio | audio by cable | Bluetooth
+   audio> · <rate> → 16 kHz · resampler …", Radio sub-line "<transport> · A … · B …" — wired into
+   production by re-deriving both rows in `CaptureStatusContent` against the live `InputStatus`/
+   `RigStatus` holders once `SessionRouteFacts` is read (`ReaderPolling.captureStatus` itself,
+   outside this package's ownership, is untouched).
+3. **E2-G02 (N01b):** `LiveBarViewState.localMicrophone` (additive) draws the mic glyph + `room`
+   mark before the label; `LiveBarPolling.current` sets it from the session's own route facts —
+   the *one* shared read path every destination's live bar already goes through (`OrtNavHost.kt`
+   calls it once; confirmed by reading it, not touched), so the mark appears on Now, Log, Threads,
+   Search, Stations and Settings roots structurally, without per-screen wiring. `NowContent`
+   enriches its own `NowViewState.Active` with the same fact and renders the "Room audio — the
+   phone's microphone, not the radio" chip (`NowScreen`'s new `onOpenCaptureMode` callback,
+   defaulted no-op pending WPE's destination).
+4. **E2-G03 (DG04):** `SessionDetailViewState` gains `modeLabel`/`rigLinkLabel`; `inputLabel` is
+   now real for a v7-tracked session ("<route label> · <type> · room/radio audio[ · Bluetooth
+   profile]") and keeps R-450's exact "not tracked per session in this build" line for a pre-v7
+   row. No rig-event history exists in `:data` to name a stale span from — `rigLinkLabel` is
+   always the transport alone (reported limitation, not silently dropped).
+5. **E2-G04 (the `bt audio` mark):** `LogRowViewState.btAudioMark` (additive); `LogScreenViewState.
+   bluetoothAudioFootnote`; `LogItemsMapper.gapLabel` reads "not listening · N and counting ·
+   Bluetooth audio dropped" for an *open* `INPUT_LOST` gap on a Bluetooth-audio session (no
+   dedicated `CaptureGapCause` value exists yet — owed to a later `:data` change, reported).
+   `LogScreen` renders the footnote once, below the row list. **Left open:** the detail headers
+   D01–D04 are outside this package's file ownership (WP5/WP8's screens) — not marked.
+6. **E2-G05/E2-G06 (F23, F9):** `FailurePresentation.BluetoothAudioDropped` maps from
+   `InputStatus.State.Lost` whose `lastKnown.descriptor.kind == BLUETOOTH`; its own banner
+   (`Retry now` / `Switch to a wired input`, the latter a new `FailureHostActions.
+   onSwitchToWiredInput`, defaulted no-op pending WPE's S04 destination); live bar reads "Input
+   lost". F9's `RigViewState.transportLabel` names the transport from `RigStatus.Stale.lastKnown.
+   transportKind` (WPC2), `null` for a caller that predates it.
+7. **E2-G07 (DG05):** `DigestViewState.prose: DigestProseSectionViewState?` — `null` entirely
+   (never an empty section) when `ProseDigestSettings` is disabled or no summary exists yet for
+   any of the session's own threads. One card per `ProseSummary` (subject = the thread's own
+   single station or "Thread", detail = its real over count, italic text, "from overs hh:mm –
+   hh:mm", `Read the overs`), footnote once. `Read the overs` seeds the Log's *existing*
+   time-window filter (`LogFilterSelection.fromMillis/toMillis`, the same mechanism R-276's
+   frequency-stat link already uses) via a new `SessionsPage.Log(fromMillis, toMillis)` — no new
+   filtering mechanism. **Discrimination performed:** the "absent when disabled" guard in
+   `DigestPolling.proseSection` was commented out, `E2_G07 the prose section is absent entirely
+   when disabled…` failed for the right reason, the guard was restored and the test passed again
+   (working tree confirmed clean after).
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.screens.*" --tests "org.ort.app.ui.digest.*" --tests "org.ort.app.ui.failures.*" --tests "org.ort.app.ui.components.*" -PortAllowMissingBundledAssets=true` — BUILD SUCCESSFUL.
+- `./gradlew :app:testDebugUnitTest -PortAllowMissingBundledAssets=true` — BUILD SUCCESSFUL (full suite, ~1200 tests).
+- `./gradlew :app:smokeTestDebugUnitTest -PortAllowMissingBundledAssets=true` — BUILD SUCCESSFUL.
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — BUILD SUCCESSFUL (`dependencyRules: OK`, 20 modules; `platformGuards: OK`, 20 modules).
+- `./gradlew -p buildSrc test -PortAllowMissingBundledAssets=true` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — 235 of 450 covered; flags the
+  new `E2-G0N` checklist ids as "orphan tests naming unknown requirements" (expected — those are
+  `results/e2e-audit/checklist.md` row ids, not functional-spec requirement ids the matrix tool
+  indexes; every test is also tagged with its real `FR-*`/`AC-*` id).
+- `./gradlew coverageMatrixCheck -PortAllowMissingBundledAssets=true` — up to date (235 of 450).
+- All Robolectric/Compose tests, all machine: this workstation, JVM per `JAVA_HOME` above.
+
+**Left open / not done:**
+- The WPC2 adapter for the live `RigStatus`/`InputStatus` shapes is folded into this same change
+  (WPC2 landed mid-task, adapted in place) rather than as a separate follow-up commit.
+- F23's `retryAttempt`/`retryTotal`/`nextRetrySeconds` stay `null` — no reconnect-with-backoff
+  counter is published by `:pipeline` yet.
+- The Log's `bt audio` mark on the Transmission-detail headers (D01–D04) is not built — those
+  screens are outside this package's file ownership.
+- The Bluetooth-audio gap wording is keyed off `CaptureGapCause.INPUT_LOST` + the session's own
+  route, since no dedicated cause value exists in `:data` yet.
+- `CaptureStatus.pendingConfiguration` (WPC2's "mode change pending" fact) is not surfaced on N04
+  — optional per the coordinator's own message, left for WPE/a later round.
+- N01b's "on every destination" claim is proven structurally (one shared `LiveBarPolling.current`
+  call site in `OrtNavHost.kt`, confirmed by reading it) and by this package's own unit tests
+  against that one function, not by six separate per-destination composable tests — `OrtNavHost.kt`
+  is outside this package's ownership.
+- Not merged to `main`; the lead merges builder branches.
 
 ## 2026-09-10 (WPC2 follow-up: real USB/Bluetooth rig transports wired behind RigTransportFactory)
 
@@ -27817,6 +27931,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

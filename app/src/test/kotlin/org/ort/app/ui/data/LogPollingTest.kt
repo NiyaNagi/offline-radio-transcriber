@@ -137,6 +137,53 @@ class LogPollingTest {
         assertTrue(gap.label.contains("incoming call"))
     }
 
+    // -- E2-G04 (F23, FR-CAP-13): the `bt audio` row mark, gap wording and footnote -------------
+
+    @Test
+    fun `E2_G04 every row from a Bluetooth-audio session carries the bt audio mark`(): Unit = runTest {
+        db.sessionDao().insert(session("BT-1", captureMode = "BLUETOOTH_RADIO", audioRouteKind = "BLUETOOTH_SCO"))
+        db.transmissionDao().insert(transmission("TX1", sessionId = "BT-1", samplePosition = 1L))
+
+        val state = LogPolling.screenState(context, "BT-1", LogFilterSelection(), LogQuickFilterId.All)
+
+        val row = (state.items.single() as LogListItem.Row).state
+        assertTrue(row.btAudioMark)
+        assertTrue(state.bluetoothAudioFootnote != null)
+    }
+
+    @Test
+    fun `E2_G04 a cabled-radio session never carries the bt audio mark or the footnote`(): Unit = runTest {
+        db.sessionDao().insert(session("USB-1", captureMode = "USB_RADIO", audioRouteKind = "USB"))
+        db.transmissionDao().insert(transmission("TX1", sessionId = "USB-1", samplePosition = 1L))
+
+        val state = LogPolling.screenState(context, "USB-1", LogFilterSelection(), LogQuickFilterId.All)
+
+        val row = (state.items.single() as LogListItem.Row).state
+        assertTrue(!row.btAudioMark)
+        assertEquals(null, state.bluetoothAudioFootnote)
+    }
+
+    @Test
+    fun `E2_G04 an open INPUT_LOST gap on a Bluetooth-audio session reads Bluetooth audio dropped`(): Unit = runTest {
+        db.sessionDao().insert(session("BT-1", captureMode = "BLUETOOTH_RADIO", audioRouteKind = "BLUETOOTH_SCO"))
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "G1",
+                sessionId = "BT-1",
+                startedAt = 0L,
+                endedAt = null,
+                cause = CaptureGapCause.INPUT_LOST,
+                recoveredAutomatically = false,
+            ),
+        )
+
+        val state = LogPolling.screenState(context, "BT-1", LogFilterSelection(), LogQuickFilterId.All)
+
+        val gap = state.items.single() as LogListItem.Gap
+        assertTrue(gap.label.contains("Bluetooth audio dropped"))
+        assertTrue(gap.label.contains("and counting"))
+    }
+
     @Test
     fun `R_106_gap_causes the real gap-call scenario shape (two distinct-cause gaps) renders both correctly`(): Unit =
         runTest {
@@ -369,17 +416,20 @@ class LogPollingTest {
         assertEquals("4 s", item.durationLabel) // the fixture's default 4_200ms transmission duration.
     }
 
-    private fun session(id: String, startedAt: Long = 0L) = SessionEntity(
-        id = id,
-        startedAt = startedAt,
-        endedAt = null,
-        profileId = null,
-        deviceTier = null,
-        appVersion = "test",
-        terminationReason = null,
-        sourceId = null,
-        schemaVersion = OrtDatabase.SCHEMA_VERSION,
-    )
+    private fun session(id: String, startedAt: Long = 0L, captureMode: String? = null, audioRouteKind: String? = null) =
+        SessionEntity(
+            id = id,
+            startedAt = startedAt,
+            endedAt = null,
+            profileId = null,
+            deviceTier = null,
+            appVersion = "test",
+            terminationReason = null,
+            sourceId = null,
+            schemaVersion = OrtDatabase.SCHEMA_VERSION,
+            captureMode = captureMode,
+            audioRouteKind = audioRouteKind,
+        )
 
     private fun transmission(
         id: String,

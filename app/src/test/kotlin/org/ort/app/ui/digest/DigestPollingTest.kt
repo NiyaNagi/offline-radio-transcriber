@@ -12,9 +12,11 @@ import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
+import org.ort.data.entity.ProseSummaryEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
@@ -276,6 +278,85 @@ class DigestPollingTest {
             assert(detail.inputLabel == "not tracked per session in this build") { "got ${detail.inputLabel}" }
         }
 
+    // -----------------------------------------------------------------------------------------
+    // E2-G03 (DG04, FR-CAP-13): Mode/Input/Rig-link fact rows from the session's own v7 columns —
+    // R-450's deviation is retired only for a session that actually carries the facts.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("E2-G03", "FR-CAP-13")
+    fun `E2_G03 a USB-radio session names its mode, input and rig link from the v7 columns`(): Unit = runTest {
+        db.sessionDao().insert(
+            session("S1", startedAt = 0L, endedAt = 3_600_000L).copy(
+                captureMode = "USB_RADIO",
+                audioRouteKind = "USB",
+                audioRouteLabel = "USB Audio Device",
+                rigTransport = "USB_SERIAL",
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", "S1"))
+
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+        assert(detail.modeLabel == "USB-connected radio · audio by cable") { "got ${detail.modeLabel}" }
+        assert(detail.inputLabel.contains("USB Audio Device")) { "got ${detail.inputLabel}" }
+        assert(detail.inputLabel.contains("radio audio")) { "got ${detail.inputLabel}" }
+        assert(!detail.inputLabel.contains("room audio")) { "got ${detail.inputLabel}" }
+        assert(detail.rigLinkLabel == "USB serial") { "got ${detail.rigLinkLabel}" }
+    }
+
+    @Test
+    @Requirement("E2-G03", "FR-CAP-11")
+    fun `E2_G03 a Bluetooth-audio session names its profile on the Input row`(): Unit = runTest {
+        db.sessionDao().insert(
+            session("BT-1", startedAt = 0L, endedAt = 3_600_000L).copy(
+                captureMode = "BLUETOOTH_RADIO",
+                audioRouteKind = "BLUETOOTH_SCO",
+                audioRouteLabel = "Handheld BT",
+                bluetoothProfile = "HFP_MSBC",
+                rigTransport = "BLUETOOTH_SPP",
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", "BT-1"))
+
+        val detail = DigestPolling.sessionDetail(context, "BT-1")!!
+
+        assert(detail.inputLabel.contains("Handheld BT")) { "got ${detail.inputLabel}" }
+        assert(detail.inputLabel.contains("wideband")) { "got ${detail.inputLabel}" }
+        assert(detail.rigLinkLabel == "Bluetooth SPP") { "got ${detail.rigLinkLabel}" }
+    }
+
+    @Test
+    @Requirement("E2-G03", "FR-CAP-10")
+    fun `E2_G03 a local-microphone session names room audio and no rig, never a fabricated transport`(): Unit =
+        runTest {
+            db.sessionDao().insert(
+                session("ROOM-1", startedAt = 0L, endedAt = 3_600_000L).copy(
+                    captureMode = "LOCAL_MICROPHONE",
+                    audioRouteKind = "BUILT_IN_MIC",
+                    audioRouteLabel = "Built-in Microphone",
+                ),
+            )
+            db.transmissionDao().insert(transmission("TX1", "ROOM-1"))
+
+            val detail = DigestPolling.sessionDetail(context, "ROOM-1")!!
+
+            assert(detail.inputLabel.contains("room audio")) { "got ${detail.inputLabel}" }
+            assert(detail.rigLinkLabel == "no rig this session") { "got ${detail.rigLinkLabel}" }
+        }
+
+    @Test
+    @Requirement("E2-G03", "R-450")
+    fun `E2_G03 a pre-v7 session with no tracked columns keeps R-450's honest not-tracked line`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1"))
+
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+        assert(detail.modeLabel == "not tracked per session in this build") { "got ${detail.modeLabel}" }
+        assert(detail.rigLinkLabel == "not tracked per session in this build") { "got ${detail.rigLinkLabel}" }
+    }
+
     @Test
     fun `R_092 digest surfaces a station heard for the first time this session, from real history`(): Unit = runTest {
         db.sessionDao().insert(session("S0", startedAt = -10_000L, endedAt = -5_000L))
@@ -392,4 +473,106 @@ class DigestPollingTest {
 
             assert(digest.items.none { it.id == "absent-W7REG" })
         }
+
+    // -----------------------------------------------------------------------------------------
+    // E2-G07 (DG05, FR-DIG-3/6/11): the "In their words" prose section.
+    // -----------------------------------------------------------------------------------------
+
+    private fun proseSettings() = SharedPreferencesProseDigestSettingsStore(context)
+
+    @Test
+    @Requirement("E2-G07", "FR-DIG-6")
+    fun `E2_G07 a stored summary for this session's thread renders as a prose card`(): Unit = runTest {
+        proseSettings().setEnabled(true)
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        val overOneAt = 2 * 3_600_000L + 17 * 60_000L // 02:17 UTC
+        val overTwoAt = 2 * 3_600_000L + 41 * 60_000L // 02:41 UTC
+        db.transmissionDao().insert(
+            transmission("TX1", "S1", startedAtUtc = overOneAt, stationId = "WA7HJR", threadId = "T1"),
+        )
+        db.transmissionDao().insert(
+            transmission("TX2", "S1", startedAtUtc = overTwoAt, stationId = "WA7HJR", threadId = "T1"),
+        )
+        db.proseSummaryDao().upsert(
+            ProseSummaryEntity(
+                threadId = "T1",
+                text = "Reported running low power from the park.",
+                sourceTransmissionIds = listOf("TX1", "TX2"),
+                generatedAtMillis = 3_600_000L * 3,
+                modelId = "gemma3-1b-it-int4",
+            ),
+        )
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val prose = digest.prose
+        assert(prose != null) { "expected a prose section" }
+        assert(prose!!.cards.size == 1) { "got ${prose.cards.size}" }
+        val card = prose.cards.single()
+        assert(card.text == "Reported running low power from the park.")
+        assert(card.oversRangeLabel.contains("02:17")) { "got ${card.oversRangeLabel}" }
+        assert(card.oversRangeLabel.contains("02:41")) { "got ${card.oversRangeLabel}" }
+        assert(card.fromMillis == overOneAt)
+        assert(card.toMillis == overTwoAt)
+    }
+
+    @Test
+    @Requirement("E2-G07", "FR-DIG-3a")
+    fun `E2_G07 the prose section is absent entirely when disabled, the rest of the digest is unchanged`(): Unit =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+            db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = "T1"))
+            db.proseSummaryDao().upsert(
+                ProseSummaryEntity(
+                    threadId = "T1",
+                    text = "prose",
+                    sourceTransmissionIds = listOf("TX1"),
+                    generatedAtMillis = 0L,
+                    modelId = "gemma3-1b-it-int4",
+                ),
+            )
+
+            proseSettings().setEnabled(true)
+            val withProse = DigestPolling.digest(context, "S1")!!
+            proseSettings().setEnabled(false)
+            val withoutProse = DigestPolling.digest(context, "S1")!!
+
+            assert(withProse.prose != null)
+            assert(withoutProse.prose == null)
+            // FR-DIG-3a: the deterministic digest is untouched either way.
+            assert(withProse.copy(prose = null) == withoutProse)
+        }
+
+    @Test
+    @Requirement("E2-G07", "FR-DIG-3a")
+    fun `E2_G07 the prose section is absent when enabled but nothing has been generated yet`(): Unit = runTest {
+        proseSettings().setEnabled(true)
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = "T1"))
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        assert(digest.prose == null)
+    }
+
+    @Test
+    @Requirement("E2-G07")
+    fun `E2_G07 a summary belonging to a different session's thread never leaks in`(): Unit = runTest {
+        proseSettings().setEnabled(true)
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = null))
+        db.proseSummaryDao().upsert(
+            ProseSummaryEntity(
+                threadId = "T-OTHER",
+                text = "prose from an unrelated thread",
+                sourceTransmissionIds = listOf("TX-OTHER"),
+                generatedAtMillis = 0L,
+                modelId = "gemma3-1b-it-int4",
+            ),
+        )
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        assert(digest.prose == null)
+    }
 }

@@ -33,6 +33,7 @@ public enum class FailureId {
     F20_MIGRATION,
     F21_ASSET_SWAP,
     F22_CALIBRATION,
+    F23_BLUETOOTH_AUDIO,
 }
 
 // -------------------------------------------------------------------------------------------
@@ -59,6 +60,29 @@ public data class RouteViewState(
 
 /** `Fail-Disconnect.dc.html`. */
 public data class DisconnectViewState(public val deviceLabel: String, public val sinceLabel: String)
+
+// -------------------------------------------------------------------------------------------
+// F23 — Fail-Bluetooth-Audio (banner). InputStatus.State.Lost on a Bluetooth route (D34).
+// -------------------------------------------------------------------------------------------
+
+/**
+ * `Fail-Bluetooth-Audio.dc.html` (FR-CAP-5, FR-CAP-11, FR-CAP-13, FR-RUN-12). [retryAttempt],
+ * [retryTotal] and [nextRetrySeconds] are `null` — not yet measured — until WPC2's own
+ * reconnect-with-backoff signal (FR-RIG-15's ladder) is published somewhere this package can read;
+ * no such counter exists in `:pipeline` today (checked before writing this), so this reports the
+ * drop honestly without a fabricated attempt count rather than inventing one (constitution I) —
+ * see this package's report. [rigLinkStillUp] is real: the rig-control transport is a separate
+ * signal (`RigStatus`) from the audio route, and FR-RIG-15/D34 both require this be stated, not
+ * merely implied by the banner's own silence about it.
+ */
+public data class BluetoothAudioDroppedViewState(
+    public val deviceLabel: String,
+    public val droppedAtLabel: String,
+    public val retryAttempt: Int? = null,
+    public val retryTotal: Int? = null,
+    public val nextRetrySeconds: Int? = null,
+    public val rigLinkStillUp: Boolean,
+)
 
 // -------------------------------------------------------------------------------------------
 // F3 — Fail-Level (banner). LevelStatus.State.Measured out of band.
@@ -155,8 +179,14 @@ public data class BacklogViewState(
 // F9 — Fail-Rig (banner). RigStatus.State.Stale.
 // -------------------------------------------------------------------------------------------
 
-/** `Fail-Rig.dc.html`. */
-public data class RigViewState(public val deviceLabel: String, public val sinceLabel: String)
+/** `Fail-Rig.dc.html`. [transportLabel] (E2-G06, FR-RIG-15, WPC2's `RigStatus.transportKind`)
+ * names the transport that dropped — "the Bluetooth SPP transport", "the USB serial transport" —
+ * `null` (every caller before this existed) when the transport is not known. */
+public data class RigViewState(
+    public val deviceLabel: String,
+    public val sinceLabel: String,
+    public val transportLabel: String? = null,
+)
 
 // -------------------------------------------------------------------------------------------
 // F14 — Fail-Clock (informational card, no runtime signal — DebugFailureOverride only).

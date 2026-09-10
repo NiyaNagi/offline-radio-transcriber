@@ -765,6 +765,12 @@ public data class LogRowViewState(
      * every existing caller is unaffected. Out-of-bounds/reversed ranges are dropped rather than
      * crashing (constitution: never fabricate, never fail loudly on bad input from a caller). */
     val highlightRanges: List<IntRange> = emptyList(),
+    /** E2-G04 (F23, FR-CAP-13): `true` for every over captured on a Bluetooth-audio session
+     * (`Fail-Bluetooth-Audio.dc.html`'s row mark) — a badge per guide §6.14 (`text/dim` on
+     * `line/chip`), never the only copy of the fact (the session's own DG04 facts, N04's Input
+     * sub-line and F23's own banner all say so too). `false` (every caller before this existed)
+     * renders exactly as before. */
+    val btAudioMark: Boolean = false,
 )
 
 /** guide §6.5/`Rows.dc.html`: the densest row in the product.
@@ -953,6 +959,7 @@ private fun logRowDescription(state: LogRowViewState): String {
             LogRowBadge.REVISED -> "revised"
         }
     }
+    if (state.btAudioMark) parts += "bt audio"
     return parts.joinToString(", ")
 }
 
@@ -1066,6 +1073,12 @@ private fun LogRowMarkerLine(state: LogRowViewState, modifier: Modifier = Modifi
                 LogRowBadge.REVISED -> "revised" to BadgeKind.REVISED
             }
             Badge(text = label, kind = kind, modifier = Modifier.align(Alignment.CenterVertically))
+        }
+        // E2-G04 (F23, FR-CAP-13): the `bt audio` mark — guide §6.14's `CORRECTED` styling
+        // (`text/dim` on a `line/chip` outline), its own badge slot beside whatever else this row
+        // already carries (a row can be both `NEW` and Bluetooth-audio at once).
+        if (state.btAudioMark) {
+            Badge(text = "bt audio", kind = BadgeKind.CORRECTED, modifier = Modifier.align(Alignment.CenterVertically))
         }
     }
 }

@@ -19,6 +19,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -195,6 +196,41 @@ class LiveBarTest {
         // finds the outer node uniquely.
         composeTestRule.onNodeWithText("Act").assertIsDisplayed()
         composeTestRule.onNodeWithTag("act-bar").assert(hasContentDescription("Act", substring = true))
+    }
+
+    @Test
+    @Requirement("E2-G02", "FR-CAP-3a")
+    fun `E2_G02 the room mark renders before the label when localMicrophone is true`() {
+        val state = LiveBarViewState(
+            level = listOf(0.1f, 0.2f, 0.1f, 0.3f),
+            partialText = "go ahead with your check-in",
+            label = "Live",
+            tone = LiveBarTone.NOMINAL,
+            localMicrophone = true,
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { LiveBar(state = state, onClick = {}, modifier = Modifier.testTag("bar")) }
+        }
+
+        composeTestRule.onNodeWithText("room", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("bar").assert(hasContentDescription("room", substring = true))
+        composeTestRule.onNodeWithTag("live-bar-room-mark", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    @Requirement("E2-G02")
+    fun `E2_G02 no room mark renders when localMicrophone is false, the default`() {
+        val state = LiveBarViewState(
+            level = listOf(0.1f),
+            partialText = null,
+            label = "Live",
+            tone = LiveBarTone.NOMINAL,
+        )
+
+        composeTestRule.setContent { OrtTheme { LiveBar(state = state, onClick = {}) } }
+
+        composeTestRule.onNodeWithText("room", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test

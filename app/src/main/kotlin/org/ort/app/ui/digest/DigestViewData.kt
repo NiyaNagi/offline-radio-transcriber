@@ -50,7 +50,22 @@ public data class SessionDetailViewState(
     val inputLabel: String,
     val tierLabel: String,
     val audioSizeLabel: String,
-)
+    /** E2-G03 (DG04, FR-CAP-13, *amended 2026-09-10*): "<mode operator label> · <room audio |
+     * audio by cable | Bluetooth audio>" from the session's own v7 columns, or R-450's original
+     * "not tracked per session in this build" for a pre-v7 row — never fabricated for either. */
+    val modeLabel: String = NOT_TRACKED_LABEL,
+    /** E2-G03: "<transport label>" from the session's own `rigTransport` column, "no rig this
+     * session" for a v7-onward session that genuinely ran without one (`LOCAL_MICROPHONE`), or
+     * R-450's original not-tracked line for a pre-v7 row. No rig-event history exists in `:data`
+     * today to name a stale span from (constitution I) — always just the transport alone. */
+    val rigLinkLabel: String = NOT_TRACKED_LABEL,
+) {
+    public companion object {
+        /** R-450's original honest line — reused by [modeLabel]/[rigLinkLabel]'s own defaults so a
+         * caller that predates E2-G03 (a fixture, an older test) reads exactly as it always did. */
+        public const val NOT_TRACKED_LABEL: String = "not tracked per session in this build"
+    }
+}
 
 public data class DigestItemViewState(
     val id: String,
@@ -62,6 +77,29 @@ public data class DigestItemViewState(
 )
 
 public data class DigestNotKnownItemViewState(val headline: String, val subLine: String)
+
+/**
+ * E2-G07 (DG05, FR-DIG-6, FR-DIG-11): one [org.ort.pipeline.digest.ProseSummary] rendered as a
+ * card. [subject] is the thread's own station callsign when every over in it came from one
+ * station, else the generic "Thread" — this reader has no other real per-thread label to show
+ * (constitution I: never invent a headline the deterministic pass did not produce). [detailLine]
+ * is the thread's own real over count. [fromMillis]/[toMillis] are [oversRangeLabel]'s own raw
+ * values, carried alongside it so `Read the overs` can seed the Log's existing time-window filter
+ * without re-parsing display text.
+ */
+public data class DigestProseCardViewState(
+    val subject: String,
+    val detailLine: String,
+    val text: String,
+    val oversRangeLabel: String,
+    val fromMillis: Long,
+    val toMillis: Long,
+)
+
+/** E2-G07: the whole "In their words" section — `null` on [DigestViewState.prose] entirely
+ * (FR-DIG-3a) when [org.ort.pipeline.digest.ProseDigestSettings] is disabled or there is nothing
+ * generated yet, never an empty section shown anyway. */
+public data class DigestProseSectionViewState(val cards: List<DigestProseCardViewState>, val footnote: String)
 
 public data class DigestViewState(
     val sessionId: String,
@@ -75,4 +113,8 @@ public data class DigestViewState(
     val notKnown: List<DigestNotKnownItemViewState>,
     val attributedPercentLabel: String,
     val rejectedCount: Int,
+    /** E2-G07 (DG05): `null` (every caller before this existed) is the honest, common case — the
+     * deterministic digest above is byte-for-byte the same whether this is `null` or populated
+     * (FR-DIG-3a). */
+    val prose: DigestProseSectionViewState? = null,
 )
