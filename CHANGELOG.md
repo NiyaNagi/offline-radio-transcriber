@@ -32,6 +32,76 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPB follow-up: rig-bluetooth lint fix — MissingPermission on the real BluetoothLink adapter)
+
+### (pending) — rig transports: AndroidBluetoothLink's five BLUETOOTH_CONNECT call sites now carry an inline lint-visible guard
+
+**Scope:** `rig-bluetooth/src/main/AndroidManifest.xml`,
+`rig-bluetooth/src/main/kotlin/org/ort/rig/bluetooth/AndroidBluetoothLink.kt`,
+`rig-bluetooth/build.gradle.kts` (Robolectric + `androidx-core-ktx` test/main deps), new
+`rig-bluetooth/src/test/kotlin/org/ort/rig/bluetooth/AndroidBluetoothLinkPermissionTest.kt`.
+Merged `main` (`b588b03`, fast-forward — WPA's descriptor engine and WPC1's mode plumbing landed;
+the pre-existing `:rig` ktlint import-order issue reported in the previous entry was already
+fixed there) before starting this fix, per the coordinator's instruction.
+
+**Requirements/ACs:** FR-PLT-2 (Bluetooth equivalent — permission absence is a structural state,
+never a thrown `SecurityException`), FR-RIG-14, constitution IV, constitution V (no lint baseline
+or suppression used to get around the check).
+
+**What changed:** `./gradlew build` on `main` (`898b8b6`) got further than it did in this
+worktree and failed on `:rig-bluetooth:lintDebug`: Android Lint's `MissingPermission` check
+flagged `AndroidBluetoothLink`'s `bondedDevices`, `device.name` and `uuids` reads (lines 47, 51,
+60) because the existing `hasConnectPermission()` guard was a call to a separate, unannotated
+method — lint's flow analysis does not trace a `checkSelfPermission` guard across a function
+boundary, only within the same method body as the gated call.
+
+- **`AndroidManifest.xml`** now declares `android.permission.BLUETOOTH_CONNECT` (no
+  `maxSdkVersion` — it is the API 31+ runtime permission) and the legacy
+  `android.permission.BLUETOOTH` with `android:maxSdkVersion="30"` for install-time coverage
+  below that. Needed a `xmlns:android` namespace declaration the file didn't have before (an
+  empty `<manifest />` never needed one).
+- **`AndroidBluetoothLink.kt`**: every one of the four platform calls the permission gates
+  (`bondedDevices`, `device.name`, `uuids`, `createRfcommSocketToServiceRecord` +
+  `BluetoothSocket.connect()`) now has the exact expression
+  `Build.VERSION.SDK_INT < 31 || ContextCompat.checkSelfPermission(context,
+  Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED` inline in its own
+  method body — not routed through a shared helper, precisely because that indirection is what
+  lint could not see through. `hasConnectPermission()` (the `BluetoothLink` interface method,
+  still used by `BluetoothSppTransport`'s own gating) carries the same expression as its body.
+  `toPairedDevice()` and `sppSupport()` (private `BluetoothDevice` extensions) are annotated
+  `@RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)` for documentation; `connect()`
+  gained the same inline guard even though lint did not flag it in this run (`hasConnectPermission
+  ()`'s early-throw was apparently already recognised there), matching the coordinator's "before
+  every stack call" instruction defensively. `implementation(libs.androidx.core.ktx)` added to
+  `rig-bluetooth/build.gradle.kts` for `ContextCompat`/`@RequiresPermission`; no new
+  `libs.versions.toml` line needed (`androidx-core-ktx` already existed for `capture-android`).
+- **`AndroidBluetoothLinkPermissionTest.kt`** (new, Robolectric — `androidx-test-core` +
+  `robolectric` + JUnit4-via-vintage added to the module's test dependencies, same pattern as
+  `capture-android`): three tests pinned to API 31 asserting `pairedDevices()` returns empty,
+  `connect()` throws `BluetoothLinkException` (never `SecurityException`), and
+  `hasConnectPermission()` tracks a Robolectric shadow's granted/denied state — written and run
+  **before** touching `AndroidBluetoothLink.kt`'s body, against the pre-existing (already
+  correct) `hasConnectPermission()`-gated code, to confirm no behavioural regression before the
+  lint-driven restructuring; re-run afterward, still green. No baseline, no suppression.
+
+**Verified:**
+- `./gradlew :rig-bluetooth:testDebugUnitTest :rig-usb:testDebugUnitTest --rerun` — 17/17 tests
+  PASSED (the 3 new `AndroidBluetoothLinkPermissionTest` cases plus the 14 from the prior entry).
+- `./gradlew :rig-bluetooth:lintDebug --rerun` — green (was 3 `MissingPermission` errors at lines
+  47/51/60 before the fix).
+- `./gradlew :rig-bluetooth:detekt :rig-bluetooth:ktlintMainSourceSetCheck
+  :rig-bluetooth:ktlintTestSourceSetCheck` — green.
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 9m 28s**, full
+  repo, zero failures (the pre-existing `:rig` ktlint issue from the previous entry is gone —
+  fixed on `main` by WPA's final commit before this merge).
+- `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — all 8 `[PASS]`.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — 450 requirements, 216 covered (up from
+  202 before the `main` merge brought WPA/WPC1's own tests in), matrix up to date.
+
+**Left open / not done:** unchanged from the previous entry — hardware rows H1–H4 for the real
+adapters, and the `usb-serial-for-android` version pinned one minor below newest pending a
+`compileSdk` bump outside this package's ownership. Not merged to `main` — left on this branch.
+
 ## 2026-09-10 (WPB: the two rig transports — USB serial and Bluetooth SPP)
 
 ### (pending) — rig transports: UsbSerialTransport, BluetoothSppTransport, their fakes, and the transport-parity test
