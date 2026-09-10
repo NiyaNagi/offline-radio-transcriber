@@ -114,16 +114,16 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-H01 | FR-AST-3, D35 | `fetchBundledAssets` fetches every manifest entry once, verifies sha256, packages under `assets/bundled/`; one build variant | build (a clean build on this machine; CI) | WPG | open |
-| E2-H02 | FR-AST-2 | A pinned-digest mismatch fails the build loudly, naming the file | build (deliberately corrupt the cache once; paste the failure) | WPG | open |
-| E2-H03 | R9, D36 | Gemma is gated: absent `HF_TOKEN` fails the build with a one-line instruction, never skips the entry | build | WPG | open |
-| E2-H04 | FR-AST-3b, AC-137 | `BundledAssetInstaller` verifies on first launch; a corrupted bundled file fails verification, leaves a stated recoverable state, never activates | unit (`AC_137`) + device (`asset-corrupt`) | WPG | open |
+| E2-H01 | FR-AST-3, D35 | `fetchBundledAssets` fetches every manifest entry once, verifies sha256, packages under `assets/bundled/`; one build variant | build (`fetchBundledAssets`: 4/5 verified and packaged, Gemma marked missing under the dev escape hatch; catalogue generated from `bundled-assets.json` at build time) | WPG | fixed — `05404ba`; the 5/5 run needs `HF_TOKEN` (CI) |
+| E2-H02 | FR-AST-2 | A pinned-digest mismatch fails the build loudly, naming the file | build (buildSrc `FetchBundledAssetsTask` test: digest mismatch names the file) | WPG | fixed — `05404ba` |
+| E2-H03 | R9, D36 | Gemma is gated: absent `HF_TOKEN` fails the build with a one-line instruction, never skips the entry | build (real run: the one-line failure; the escape hatch is explicit and loud) | WPG | fixed — `05404ba` |
+| E2-H04 | FR-AST-3b, AC-137 | `BundledAssetInstaller` verifies on first launch; a corrupted bundled file fails verification, leaves a stated recoverable state, never activates | unit (`AC_137…`, `reinstall recovers…` — shown to discriminate by disabling the post-copy digest check) + device (`asset-corrupt`, WPI) | WPG | fixed — `05404ba`; device half open |
 | E2-H05 | FR-AST-3, AC-136 | A fresh install with networking disabled reaches full capability for its tier: capture, Pass B, lexicon, deterministic digest | device (AVD with data off, `pm clear`, walk setup, capture the fake session) + hardware H9 | WPG / validators | open |
-| E2-H06 | FR-AST-3a, AC-138 | On a T0/T1 device the LLM is on disk and never loaded; resident memory within the tier budget | unit (`AC_138`: gate refuses below T3) + device (`tier0-llm-stored`) + hardware H11 | WPG / WPH | open |
-| E2-H07 | FR-AST-3a, AC-139 | Bundled storage excluded from the retention budget | unit (`AC_139`) | WPG | open |
-| E2-H08 | FR-AST-1 | Side-load and replacement still work through `ModelAcquisition`; the bundled copy remains the fallback | unit (existing `ModelsControllerTest` green + a replace-then-roll-back case) | WPG | open |
-| E2-H09 | R18 | Installed size measured and recorded with the device | `results/e2e-audit/installed-size.md` | WPG | open |
-| E2-H10 | constitution V | `platformGuards` still green with the MediaPipe AAR; no new `INTERNET` declaration outside `:net` | build | WP0' / WPH | open |
+| E2-H06 | FR-AST-3a, AC-138 | On a T0/T1 device the LLM is on disk and never loaded; resident memory within the tier budget | unit (`tierEligible` from `tiers` — WPG; `ProseDigestGateTest` tier conjunct — WPH) + device (`tier0-llm-stored`) + hardware H11 (resident memory) | WPG / WPH | fixed (unit halves) — `05404ba`, `5ee5bc4` |
+| E2-H07 | FR-AST-3a, AC-139 | Bundled storage excluded from the retention budget | unit (`StorageAccountingTest.AC_139_*`) | WPG | fixed — `05404ba` |
+| E2-H08 | FR-AST-1 | Side-load and replacement still work through `ModelAcquisition`; the bundled copy remains the fallback | unit (existing `ModelsControllerTest` green incl. side-load and download refusal; **no replace-then-roll-back case yet** — reported, owed) | WPG | fixed (partial) — `05404ba` |
+| E2-H09 | R18 | Installed size measured and recorded with the device | `results/e2e-audit/installed-size.md` — APK 204,558,738 B / 100 MB installed with four assets; projected ≈724 MB / ≈1.35 GB with Gemma | WPG | fixed — measured baseline; the complete number needs `HF_TOKEN` |
+| E2-H10 | constitution V | `platformGuards` still green with the MediaPipe AAR; no new `INTERNET` declaration outside `:net` | build (`platformGuards: OK` with the MediaPipe AAR, INTERNET only in `:net`) | WP0' / WPH | fixed — every main gate since `d30cb02` |
 
 ## I — LLM (`:llm-api`, `:llm-mediapipe`, `:pipeline/digest`)
 

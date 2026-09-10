@@ -71,6 +71,43 @@ are pure JVM with no Android dependency; `:capture-android`, `:rig-usb`, `:data`
 `:net` and `:app` are Android. The `dependencyRules` task fails the build on any forbidden
 edge — it is not a convention, it is enforced (constitution VII).
 
+## Bundled assets and `HF_TOKEN`
+
+D35/D36 (functional spec §7.15, FR-AST-3): every asset the app can use — the ASR models, the VAD,
+and the Gemma 3 1B language model behind the prose digest — ships **inside the installed
+artifact**. There is no first-run download and no network dependency between installing the app
+and capturing with it (AC-136). `bundled-assets.json` (repo root) is the single source of truth:
+`buildSrc`'s `fetchBundledAssets` Gradle task reads it, fetches each asset once into a cache shared
+across worktrees (`$GRADLE_USER_HOME/ort-bundled-assets/`, never re-downloaded per checkout),
+verifies its sha256, and packages the verified bytes into `app/src/main/assets/bundled/`
+(gitignored — only the manifest is a source file). `assembleDebug`/`assembleRelease` — and
+therefore `build` — depend on this task.
+
+**Gemma 3 1B is gated** on HuggingFace: accept its licence at
+<https://huggingface.co/litert-community/Gemma3-1B-IT>, generate an access token at
+<https://huggingface.co/settings/tokens>, and set it before building:
+
+```bash
+export HF_TOKEN=hf_your_token_here   # PowerShell: $env:HF_TOKEN = "hf_your_token_here"
+./gradlew build
+```
+
+Without `HF_TOKEN` the build fails with a one-line message naming the fix — it never silently
+skips the model (FR-AST-2). CI (`.github/workflows/`) sets `HF_TOKEN` from a repository secret.
+
+**Local-development-only escape hatch.** If you do not have a token yet and only need to work on
+something unrelated to the LLM, pass `-PortAllowMissingBundledAssets=true` (or set
+`ORT_ALLOW_MISSING_BUNDLED_ASSETS=1`) to let the build package everything it *can* fetch and mark
+the rest `missing` in the generated manifest, with a loud warning. **Never use this for a release
+build, and CI never sets it** — a build made this way is not a complete offline install (AC-136
+does not hold for it).
+
+`ModelCatalog` (`app/.../ui/data/ModelsViewData.kt`) is generated from the same manifest at build
+time (`generateBundledAssetCatalog`, needs no network), so the app and the build agree by
+construction. `Settings-Assets` reports each asset as bundled/verified with its real size; `Side-load`
+remains available to replace any of them (FR-AST-1) — the app itself never offers `Download` for a
+bundled entry.
+
 ## Reading order
 
 **If you are implementing:** functional spec, then `spec/technical-design.md`, then

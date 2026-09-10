@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.ort.app.assets.GeneratedBundledAssetManifest
 import org.ort.core.Outcome
 import org.ort.core.SystemClock
 import org.ort.data.OrtDatabase
@@ -31,6 +32,7 @@ import org.ort.net.NetCapability
 import org.ort.net.real.RealHttpRangeClient
 import org.ort.net.sha256Of
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.SileroVadLocator
 import org.ort.pipeline.passb.AsrModelLocator
 import java.io.File
@@ -68,12 +70,34 @@ import java.io.File
  *
  * No on-device install or real download was performed to produce or check these values in this
  * change; they were read from the sources above, not hashed from bytes fetched here.
+ *
+ * **WPG follow-up (D35/D36, FR-AST-3): every value above now lives in the root `bundled-assets.json`
+ * manifest, not in this file.** `buildSrc`'s `generateBundledAssetCatalog` task
+ * (`ort.android-app.gradle.kts`) reads that manifest and emits [GeneratedBundledAssetManifest] —
+ * [ModelCatalog.entries] below is built from it, so the app and the build agree by construction
+ * (a manifest entry cannot silently drift from what `ModelCatalog` reports, because there is only
+ * one typed place either of them reads). `ASR_TOKENS`'s checksum, `UnknownSideloadOnly` above
+ * (there is no *externally* published digest to verify a *download* against), is exactly the case
+ * `bundled-assets.json` calls `trust-on-first-fetch`: since D35 means the app never downloads this
+ * file at all, `buildSrc`'s `FetchBundledAssetsTask` fetched it once, computed its real sha256, and
+ * pinned that value into the manifest (recorded there, with the date and method) — so this entry's
+ * [ChecksumState] is now [ChecksumState.Known], not [ChecksumState.UnknownSideloadOnly]. This is a
+ * real, upgraded guarantee, not a relaxation: provenance (this exact file shipped inside the
+ * verified artifact) plus a digest now internally pinned and checked on every subsequent build and
+ * install (FR-AST-3b) is strictly more than "no way to verify a download at all". Adding
+ * [ModelId.LLM_GEMMA3_1B] is the same WPG change (D36).
  */
 public enum class ModelId(public val label: String) {
     ASR_ENCODER("Whisper tiny.en — encoder"),
     ASR_DECODER("Whisper tiny.en — decoder"),
     ASR_TOKENS("Whisper tiny.en — tokens"),
     VAD("Silero VAD"),
+
+    /** D36: the bundled, gated, tier-3-only language model behind the prose digest (FR-DIG-3a) —
+     * never in the callsign path (D5, untouched). [ModelCatalog]'s generated entry for this id
+     * carries `tiers = ["T3"]` and `gated = true`; [ModelsController.currentState]'s row for it
+     * reports [ModelRowViewState.tierEligible] `false` below tier 3 (AC-138: stored, never loaded). */
+    LLM_GEMMA3_1B("Gemma 3 1B int4 — prose digest"),
 }
 
 /**
@@ -92,72 +116,80 @@ public data class ModelCatalogEntry(
     val url: String,
     val destination: (filesDir: File) -> File,
     val checksumState: ChecksumState,
+    /** R18/FR-AST-3a — the real, manifest-declared size of this asset, for `Settings-Assets`'
+     * per-asset size line and [org.ort.pipeline.capture.StorageAccounting]'s bundled-storage
+     * figure. Never measured from a downloaded file here: [ModelRowViewState.sizeBytes] still
+     * reports the real on-disk size once installed; this is the manifest's own declared figure,
+     * used before anything is on disk at all. */
+    val sizeBytes: Long = 0L,
+    /** The device tiers ("T0".."T3", `:core`'s `Tier`) that may ever *load* this asset — every
+     * asset still ships on every install (FR-AST-3: one build variant); this only governs
+     * [ModelRowViewState.tierEligible] so `Settings-Assets` can say "stored, not loaded" honestly
+     * for a tier-ineligible model (FR-AST-3a, AC-138) rather than implying every row is usable. */
+    val tiers: Set<String> = emptySet(),
+    val licence: String = "",
+    val gated: Boolean = false,
+    /** FR-AST-3 (D35): every catalog entry ships inside the installed artifact — there is no
+     * "download this first" state left. [ModelsController.download] refuses unconditionally for a
+     * bundled entry (side-load remains the real replacement path, FR-AST-1). Defaults `true`
+     * because every entry [ModelCatalog] generates today is bundled; the field exists (rather than
+     * being hardcoded at the call site) so a future non-bundled entry — the TODO at FR-AST-3a about
+     * split delivery — has somewhere honest to say so. */
+    val bundled: Boolean = true,
 )
 
 public object ModelCatalog {
 
     /**
-     * R-267 (register, round 6/7 System validator): [ASR_TOKENS_UNKNOWN_REASON] is
-     * [ModelRowViewState.detail] for the `ASR_TOKENS` row when [ModelRowStatus.NOT_INSTALLED] —
-     * an operator-facing sub-line fragment (`Settings-Assets.dc.html`'s "size · checksum prefix ·
-     * tier" shape, guide §9), never a maintainer's research trail. It used to *be* that trail
-     * verbatim (SHA-1-vs-SHA-256 git-internals, which HuggingFace/sherpa-onnx endpoints were
-     * checked, the date checked) — real and cited, but the wrong audience: this developer note
-     * belongs in a code comment, not read aloud to an operator deciding whether to sideload a
-     * file. That full note now lives here instead:
-     *
-     * tiny.en-tokens.txt is not Git-LFS-tracked on HuggingFace: the repository's file-listing API
-     * reports only a 40-hex-character git blob id for it (a SHA-1 from git's own blob hashing, not
-     * a SHA-256), and no sha256 for this individual file is published anywhere else found (checked
-     * 2026-09-07: HuggingFace's raw/API endpoints for this path, and sherpa-onnx's own
-     * `checksum.txt` release manifest, which covers whole .tar.bz2 archives only, not files
-     * extracted from them). Side-load this file yourself; it cannot be checksum-verified against a
-     * known-good value.
+     * R-267 (register, round 6/7 System validator): [ASR_TOKENS_UNKNOWN_REASON] would be
+     * [ModelRowViewState.detail] for a manifest entry whose digest is still the
+     * `trust-on-first-fetch` sentinel (see [checksumStateFor]) — an operator-facing sub-line
+     * fragment (`Settings-Assets.dc.html`'s "size · checksum prefix · tier" shape, guide §9),
+     * never a maintainer's research trail. No entry in the committed manifest is in that state
+     * today (WPG pinned `ASR_TOKENS`'s real digest — see this file's top KDoc), so this reason is
+     * currently unused in practice; it stays wired for the day a newly added manifest entry is
+     * committed before its first fetch pins one.
      */
-    private const val ASR_TOKENS_UNKNOWN_REASON = "not on the published manifest"
+    private const val ASR_TOKENS_UNKNOWN_REASON = "not yet pinned — first fetch pins it"
 
     /**
-     * Individual, flat file URLs — confirmed to exist as of this change (HuggingFace mirrors the
-     * same sherpa-onnx release contents as separate files, not only the `.tar.bz2` archive
-     * `asr-sherpa/README.md` documents for the desktop-JVM test cache), so each of the three files
-     * [org.ort.pipeline.passb.AsrModelLocator] looks for can be fetched directly with no archive
-     * extraction step — deliberately avoided as a new, untested piece of infrastructure this fix
-     * does not need.
+     * Built from [GeneratedBundledAssetManifest] — `buildSrc`'s `generateBundledAssetCatalog` task
+     * reads the root `bundled-assets.json` and emits that object at build time (see this file's
+     * top KDoc for why a generated Kotlin object was chosen over a runtime resource read). Every
+     * [ModelCatalogEntry] here is therefore a straight re-shape of one generated entry — this
+     * function invents no data of its own — so a change to the manifest is the only way to change
+     * what this catalog reports.
      */
-    public val entries: List<ModelCatalogEntry> = listOf(
+    public val entries: List<ModelCatalogEntry> = GeneratedBundledAssetManifest.entries.map { generated ->
         ModelCatalogEntry(
-            id = ModelId.ASR_ENCODER,
-            url = "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/" +
-                "tiny.en-encoder.int8.onnx",
-            destination = { filesDir -> File(AsrModelLocator.modelsDir(filesDir), "tiny.en-encoder.int8.onnx") },
-            checksumState = ChecksumState.Known(
-                Checksum(value = "0ce578b827c94a961aacb8fa14b02f096504b337e5c94be37c36238cbe3e8bc6"),
-            ),
-        ),
-        ModelCatalogEntry(
-            id = ModelId.ASR_DECODER,
-            url = "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/" +
-                "tiny.en-decoder.int8.onnx",
-            destination = { filesDir -> File(AsrModelLocator.modelsDir(filesDir), "tiny.en-decoder.int8.onnx") },
-            checksumState = ChecksumState.Known(
-                Checksum(value = "06c0e6ff6348d427e51839219d1c886c18cfdf411e629e33f5e1679bff9c1527"),
-            ),
-        ),
-        ModelCatalogEntry(
-            id = ModelId.ASR_TOKENS,
-            url = "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-tokens.txt",
-            destination = { filesDir -> File(AsrModelLocator.modelsDir(filesDir), "tiny.en-tokens.txt") },
-            checksumState = ChecksumState.UnknownSideloadOnly(ASR_TOKENS_UNKNOWN_REASON),
-        ),
-        ModelCatalogEntry(
-            id = ModelId.VAD,
-            url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
-            destination = { filesDir -> SileroVadLocator.modelFile(filesDir) },
-            checksumState = ChecksumState.Known(
-                Checksum(value = "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"),
-            ),
-        ),
-    )
+            id = ModelId.valueOf(generated.id),
+            url = generated.url,
+            destination = { filesDir -> File(filesDir, generated.destination) },
+            checksumState = checksumStateFor(generated.sha256),
+            sizeBytes = generated.sizeBytes,
+            tiers = generated.tiers.toSet(),
+            licence = generated.licence,
+            gated = generated.gated,
+        )
+    }
+
+    /**
+     * Matches buildSrc's `BundledAssetManifest.TRUST_ON_FIRST_FETCH` sentinel by literal value —
+     * duplicated, not shared: buildSrc is a separate Gradle build with no classpath in common with
+     * this module's runtime code (the same reason [org.ort.app.assets.BundledAssetInstaller]
+     * duplicates buildSrc's manifest JSON parser rather than importing it).
+     */
+    private const val TRUST_ON_FIRST_FETCH_SENTINEL = "trust-on-first-fetch"
+
+    /** `internal`, not `private`: [ModelCatalogTest] exercises this pure mapping directly for the
+     * `trust-on-first-fetch` sentinel path, since no entry in the *committed* manifest is in that
+     * state today (see this file's top KDoc) — there is no real [ModelId] left to exercise
+     * [entry]/[specFor]'s own `UnknownSideloadOnly` branch through the public API alone. */
+    internal fun checksumStateFor(sha256: String): ChecksumState = if (sha256 == TRUST_ON_FIRST_FETCH_SENTINEL) {
+        ChecksumState.UnknownSideloadOnly(ASR_TOKENS_UNKNOWN_REASON)
+    } else {
+        ChecksumState.Known(Checksum(value = sha256))
+    }
 
     public fun entry(id: ModelId): ModelCatalogEntry = entries.first { it.id == id }
 
@@ -204,6 +236,19 @@ public data class ModelRowViewState(
      * is, for the same reason. Never the full digest: the board shows a prefix, not the whole
      * value, and a prefix is enough to recognise a row without wrapping. */
     val checksumPrefix: String? = null,
+    /** WPG (D35, FR-AST-3): `true` for every row today — every asset ships inside the installed
+     * artifact, so there is no "download this" state left; `Settings-Assets` reads this to say
+     * "bundled · verified" rather than offering `Download` (FR-AST-1: `Side-load` still does, for
+     * a deliberate replacement). Carried as a real field, not inferred from [status], because
+     * [ModelRowStatus.NOT_INSTALLED] is reachable both for a bundled asset the installer has not
+     * copied yet and (in principle, [ModelCatalogEntry.bundled] `false`) for one that genuinely
+     * has to be downloaded — the two must not read the same on the board. */
+    val bundled: Boolean = true,
+    /** FR-AST-3a/AC-138: `false` when this device's current tier does not include this asset in
+     * [ModelCatalogEntry.tiers] — the asset is still on disk (it shipped bundled regardless,
+     * FR-AST-3) but MUST NEVER be loaded, only stored. `Settings-Assets` reads this to say
+     * "stored, not loaded" for such a row rather than implying it is usable at the current tier. */
+    val tierEligible: Boolean = true,
 )
 
 public data class ModelsViewState(val rows: List<ModelRowViewState>, val requeuedMessage: String? = null)
@@ -626,11 +671,30 @@ public object ModelsController {
         requeuedMessage: String? = null,
         specFor: (ModelId, File) -> ModelFetchSpec? = ModelCatalog::specFor,
         stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
+        currentTierLabel: () -> String = ::realCurrentTierLabel,
     ): ModelsViewState {
         stagedActivationFlow.value = stagedStore.current()
         val filesDir = context.filesDir
-        val rows = ModelId.entries.map { id -> rowFor(id, filesDir, specFor) }
+        val tier = currentTierLabel()
+        val rows = ModelId.entries.map { id -> rowFor(id, filesDir, specFor, tier) }
         return ModelsViewState(rows = rows, requeuedMessage = requeuedMessage)
+    }
+
+    /**
+     * `"T0"`.."T3"`, the same vocabulary [ModelCatalogEntry.tiers] and `bundled-assets.json` use.
+     * `app/.../ui/settings/SettingsPolling.kt` computes the identical
+     * `(MAX_TIER - ShedStatus.currentLevel).coerceIn(0, MAX_TIER)` formula for `Settings-Tier`'s
+     * own row, but keeps it `private` (and outside this package's ownership for this change —
+     * WPG owns only `ModelsViewData.kt`) — there is no single shared accessor today, so this
+     * duplicates the formula rather than reaching across an ownership boundary for one `private`
+     * function. [currentState]'s own `currentTierLabel` parameter exists precisely so a caller (or
+     * a future refactor that does add a shared accessor) can override this default instead of this
+     * function needing to change at every call site.
+     */
+    private fun realCurrentTierLabel(): String {
+        val maxTier = 3
+        val current = (maxTier - ShedStatus.currentLevel).coerceIn(0, maxTier)
+        return "T$current"
     }
 
     /**
@@ -643,6 +707,14 @@ public object ModelsController {
      * Refuses, with no network call at all, when [id]'s checksum is unknown
      * ([ChecksumState.UnknownSideloadOnly]): there is nothing to verify a downloaded file against,
      * so a download can never be safely installed — only [sideload] is possible for such a file.
+     *
+     * **WPG (D35, FR-AST-1): also refuses, with no network call at all, when [id]'s catalog entry
+     * is [ModelCatalogEntry.bundled]** — every entry [ModelCatalog] generates today is, so this
+     * refuses unconditionally in practice. [isBundled] is a seam (mirroring [specFor]'s own
+     * pattern) rather than reading [ModelCatalog.entry] directly, so a test can still exercise the
+     * underlying fetch-through-a-client mechanism this function has carried since before D35
+     * (`ModelAcquisition`, staging, requeue) without needing a hypothetical non-bundled catalog
+     * entry to do it.
      */
     public suspend fun download(
         context: Context,
@@ -650,7 +722,14 @@ public object ModelsController {
         client: HttpRangeClient = RealHttpRangeClient(),
         specFor: (ModelId, File) -> ModelFetchSpec? = ModelCatalog::specFor,
         stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
+        isBundled: (ModelId) -> Boolean = { ModelCatalog.entry(it).bundled },
     ): ModelActionResult = withContext(Dispatchers.IO) {
+        if (isBundled(id)) {
+            return@withContext ModelActionResult.Failure(
+                "${id.label} ships bundled with the app — there is nothing to download; side-load a " +
+                    "replacement instead if you need a different copy (D35, FR-AST-1)",
+            )
+        }
         val spec = specFor(id, context.filesDir) ?: return@withContext ModelActionResult.Failure(
             "no published checksum for ${id.label} — a download cannot be verified, so it is refused; " +
                 "side-load a copy you trust instead",
@@ -749,7 +828,14 @@ public object ModelsController {
      * above, so their mere co-presence already implies the trust-on-first-use digest was recorded,
      * never that it was checked against anything external.
      */
-    private fun rowFor(id: ModelId, filesDir: File, specFor: (ModelId, File) -> ModelFetchSpec?): ModelRowViewState {
+    private fun rowFor(
+        id: ModelId,
+        filesDir: File,
+        specFor: (ModelId, File) -> ModelFetchSpec?,
+        currentTierLabel: String,
+    ): ModelRowViewState {
+        val catalogEntry = ModelCatalog.entry(id)
+        val tierEligible = catalogEntry.tiers.isEmpty() || currentTierLabel in catalogEntry.tiers
         val spec = specFor(id, filesDir)
         if (spec != null) {
             val marker = markerFile(spec.destination)
@@ -763,11 +849,19 @@ public object ModelsController {
                 checksumKnown = true,
                 sizeBytes = if (verified) spec.destination.length() else null,
                 checksumPrefix = if (verified) spec.checksum.value.take(CHECKSUM_PREFIX_LENGTH) else null,
+                bundled = catalogEntry.bundled,
+                tierEligible = tierEligible,
             )
         }
 
-        val reason = (ModelCatalog.entry(id).checksumState as ChecksumState.UnknownSideloadOnly).reason
-        val destination = ModelCatalog.entry(id).destination(filesDir)
+        // A safe cast, not `as`: [specFor] is an injectable seam (tests use it to force this
+        // branch — see ModelsControllerTest's own KDoc), so a null spec no longer guarantees the
+        // real catalog entry is itself ChecksumState.UnknownSideloadOnly the way it did before WPG
+        // (every real entry is Known today). A generic reason covers that injected case honestly
+        // without crashing; a real UnknownSideloadOnly entry still gets its own specific reason.
+        val reason = (catalogEntry.checksumState as? ChecksumState.UnknownSideloadOnly)?.reason
+            ?: "no checksum available to verify this install against"
+        val destination = catalogEntry.destination(filesDir)
         val marker = markerFile(destination)
         val installed = destination.isFile && marker.isFile
         val status = if (installed) ModelRowStatus.INSTALLED_UNVERIFIED else ModelRowStatus.NOT_INSTALLED
@@ -779,6 +873,8 @@ public object ModelsController {
             checksumKnown = false,
             sizeBytes = if (installed) destination.length() else null,
             checksumPrefix = if (installed) marker.readText().take(CHECKSUM_PREFIX_LENGTH) else null,
+            bundled = catalogEntry.bundled,
+            tierEligible = tierEligible,
         )
     }
 
