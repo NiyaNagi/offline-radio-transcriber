@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -194,15 +195,30 @@ private fun LowSpaceRows(warnAtNightsLeft: Int, hardFloorLabel: String, modifier
  * (`Settings-Storage.dc.html` line 81: `.r` — `flex-grow:1` label, a fixed value beside it,
  * `align-items: center`) at the scale where there is plenty of real room for both. Gated instead
  * on [LocalDensity.current]'s own `fontScale` — [RETENTION_ORDER_STACK_FONT_SCALE] is the
- * threshold below which real width is never actually scarce for this row's own real strings
- * (confirmed by the R_590 tests below, at both 1.0 and 2.0, not assumed) — deliberately not
- * [rememberTextMeasurer] again, for the same untrustworthy-on-this-host reason above; `fontScale`
- * itself is a plain `Float` [LocalDensity] already carries, nothing this host can misreport.
- * Below the threshold: an ordinary `Row` with **no `weight()` on either child** — the exact
- * mechanism the paragraph above names for the crush — so neither child's own measurement can ever
- * be forced smaller than it needs; `Arrangement.SpaceBetween` pushes [value] to the row's own far
- * right the same way the board's `flex-grow: 1` on the label does, without needing a `weight()` to
- * do it. At/above the threshold: the same always-safe stack as before.
+ * threshold below which real width is never actually scarce for this row's own real strings —
+ * deliberately not [rememberTextMeasurer] again, for the same untrustworthy-on-this-host reason
+ * above; `fontScale` is a plain `Float` [LocalDensity] already carries, nothing this host can
+ * misreport.
+ *
+ * R-590 round 2 (coordinator, device-confirmed): the first below-threshold attempt — a plain `Row`
+ * with **no** `weight()` on either child — read as safe from Robolectric's own geometry (never
+ * vertically stacked) but was still wrong on a real device: without a weight, [key] is a
+ * non-weighted child free to consume up to the *entire* row's own width when its content needs to
+ * wrap that far (a real device's font metrics wrap this row's own long string wide enough to do
+ * exactly that, where Robolectric's own unreliable text measurement happened not to) — leaving
+ * [value] squeezed into whatever sliver was left, wrapping "always" one character per line despite
+ * sitting beside the label rather than below it. The fix restores the ordinary, well-tested Compose
+ * shape `KeyValueRow` above already uses for a fixed-plus-growing pair — one side weighted, the
+ * other genuinely fixed — with the roles matched to *this* row's own real string: [key] (the side
+ * that needs to grow or wrap) carries `Modifier.weight(1f, fill = false)` — a ceiling, not a floor,
+ * so it never claims more than its computed share even when its own content would wrap wider given
+ * the chance — and [value] (always short) is forced to measure at its own true, single-line width
+ * regardless of what the row hands it: `softWrap = false` + `maxLines = 1` forbid it from ever
+ * wrapping onto a second line, and `Modifier.wrapContentWidth()` keeps it sized to that one line's
+ * real content rather than stretching. Between the two, [value] can never again be the one
+ * squeezed — the same fix this file's own earlier draft wrongly believed weight-order made unsafe;
+ * device evidence corrected that, not just the layout. At/above the threshold: the same always-safe
+ * stack as before, unchanged.
  */
 @Composable
 private fun RetentionOrderRow(key: String, value: String, subLine: String, modifier: Modifier = Modifier) {
@@ -238,12 +254,12 @@ private fun RetentionOrderRow(key: String, value: String, subLine: String, modif
         } else {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Neither child carries `.weight(...)` — see this composable's own doc comment for
-                // why that is the load-bearing choice here, not an oversight.
-                Column(modifier = Modifier.padding(end = OrtSpacing.sm)) {
+                // `weight(1f, fill = false)`: a ceiling on [key], never a forced floor — see this
+                // composable's own doc comment for why this side (not [value]) carries it here.
+                Column(modifier = Modifier.weight(1f, fill = false)) {
                     Text(
                         text = key,
                         style = OrtType.control,
@@ -257,11 +273,15 @@ private fun RetentionOrderRow(key: String, value: String, subLine: String, modif
                         modifier = Modifier.padding(top = 2.dp).testTag(RETENTION_ORDER_SUBLINE_TEST_TAG),
                     )
                 }
+                // `softWrap = false` + `maxLines = 1` + `wrapContentWidth()`: forced to its own
+                // true, single-line width — never the one a sibling's own wrap can squeeze.
                 Text(
                     text = value,
                     style = OrtType.control,
                     color = OrtColors.textHigh,
-                    modifier = Modifier.testTag(RETENTION_ORDER_VALUE_TEST_TAG),
+                    softWrap = false,
+                    maxLines = 1,
+                    modifier = Modifier.wrapContentWidth().testTag(RETENTION_ORDER_VALUE_TEST_TAG),
                 )
             }
         }

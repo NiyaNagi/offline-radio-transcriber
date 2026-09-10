@@ -380,6 +380,24 @@ class SettingsStorageScreenTest {
                 "key instead, consistent with the row staying stacked at a scale where there is " +
                 "real room for both side by side"
         }
+
+        // R-590 round 2 (coordinator, device-confirmed): being positioned beside the label is not
+        // enough on its own — the first below-threshold attempt sat beside the label too, and was
+        // still squeezed into a sliver that wrapped "always" one character per line real-device-
+        // side, a defect Robolectric's own unreliable width measurement never caught but a real,
+        // single-line *height* still proves either way. `KeyValueRow`'s own "Warn at" row on this
+        // same screen renders its value ("3 nights left") at a guaranteed single real line — the
+        // direct, host-independent reference `waitUntilTextExists`-style: not an absolute pixel
+        // count (this host's own font metrics, established elsewhere in this file as unreliable in
+        // absolute terms), but a comparison between two real rendered nodes on the same screen, at
+        // the same style, same density, same run.
+        val warnAtValueHeight = composeTestRule.onNodeWithText("3 nights left").fetchSemanticsNode().size.height
+        val valueHeight = value.size.height
+        assert(valueHeight <= (warnAtValueHeight * 1.6).toInt()) {
+            "expected the value 'always' to render at roughly one real line's height (the 'Warn " +
+                "at' row's own single-line value measures ${warnAtValueHeight}px here); got " +
+                "${valueHeight}px, consistent with wrapping one character per line on a real device"
+        }
     }
 
     @Test
