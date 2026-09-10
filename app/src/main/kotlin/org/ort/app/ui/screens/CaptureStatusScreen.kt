@@ -66,58 +66,21 @@ public fun CaptureStatusScreen(
     onOpenLevel: () -> Unit = {},
 ) {
     var confirmingStop by remember { mutableStateOf(false) }
+    val liveBarClearance = liveBarClearanceFor(liveBar)
 
     Column(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(OrtSpacing.lg),
+                .padding(
+                    start = OrtSpacing.lg,
+                    top = OrtSpacing.lg,
+                    end = OrtSpacing.lg,
+                    bottom = OrtSpacing.lg + liveBarClearance,
+                ),
         ) {
-            // R-412 (halt): a plain unweighted Column here let the title claim its own full
-            // intrinsic width before TextAction was ever measured — at font scale 2.0 that left
-            // "Stop" a one-character-remaining sliver, wrapping one letter per line down the right
-            // edge and overlapping the title, with or without a banner above. `weight(1f)` gives the
-            // title column only the space left after the action's own intrinsic width is honoured,
-            // so the title wraps onto a second line instead — the same shape the coordinator's own
-            // instruction names, and the same class of fix `EarlierNightMetaLine`/`LogRowMarkerLine`
-            // already established for "the last item has nowhere to go" (R-244/R-260) elsewhere in
-            // this package's row family.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top,
-            ) {
-                Column(modifier = Modifier.weight(1f).padding(end = OrtSpacing.sm)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(9.dp),
-                    ) {
-                        StateDot(tone = state.stateTone, size = 9.dp)
-                        Text(
-                            text = state.stateLabel,
-                            style = OrtType.screenTitle,
-                            color = OrtColors.textHigh,
-                            modifier = Modifier.testTag("capture-status-title"),
-                        )
-                    }
-                    Text(
-                        text = state.sinceElapsedLabel,
-                        style = OrtType.subtitle,
-                        color = OrtColors.textDim,
-                        modifier = Modifier
-                            .padding(top = 3.dp)
-                            .semantics { contentDescription = state.sinceElapsedLabel },
-                    )
-                }
-                state.haltActionLabel?.let { label ->
-                    TextAction(
-                        text = label,
-                        onClick = { confirmingStop = true },
-                        modifier = Modifier.testTag("capture-status-stop"),
-                    )
-                }
-            }
+            CaptureStatusTitleRow(state = state, onStopRequested = { confirmingStop = true })
 
             SectionHeader(label = "Audio", modifier = Modifier.padding(top = OrtSpacing.lg))
             KeyValueRowWithDot("Input", state.input, "capture-status-input")
@@ -158,6 +121,76 @@ public fun CaptureStatusScreen(
         )
     }
 }
+
+/**
+ * [CaptureStatusScreen]'s own top row — state dot, title, elapsed sub-line, and the trailing
+ * `Stop` action — split out purely to keep that function under detekt's length limit.
+ *
+ * R-412 (halt): a plain unweighted `Column` here let the title claim its own full intrinsic width
+ * before `TextAction` was ever measured — at font scale 2.0 that left "Stop" a one-character-
+ * remaining sliver, wrapping one letter per line down the right edge and overlapping the title,
+ * with or without a banner above. `weight(1f)` gives the title column only the space left after
+ * the action's own intrinsic width is honoured, so the title wraps onto a second line instead —
+ * the same class of fix `EarlierNightMetaLine`/`LogRowMarkerLine` already established for "the
+ * last item has nowhere to go" (R-244/R-260) elsewhere in this package's row family.
+ */
+@Composable
+private fun CaptureStatusTitleRow(state: CaptureStatusViewState, onStopRequested: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = OrtSpacing.sm)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                StateDot(tone = state.stateTone, size = 9.dp)
+                Text(
+                    text = state.stateLabel,
+                    style = OrtType.screenTitle,
+                    color = OrtColors.textHigh,
+                    modifier = Modifier.testTag("capture-status-title"),
+                )
+            }
+            Text(
+                text = state.sinceElapsedLabel,
+                style = OrtType.subtitle,
+                color = OrtColors.textDim,
+                modifier = Modifier
+                    .padding(top = 3.dp)
+                    .semantics { contentDescription = state.sinceElapsedLabel },
+            )
+        }
+        state.haltActionLabel?.let { label ->
+            TextAction(
+                text = label,
+                onClick = onStopRequested,
+                modifier = Modifier.testTag("capture-status-stop"),
+            )
+        }
+    }
+}
+
+/**
+ * R-613 (`storage-warn/N04-capture-status@2x-end.png`): [LiveBar] is a plain sibling of
+ * [CaptureStatusScreen]'s own scrollable `Column`, not a `FailureHost` overlay — Compose's own
+ * `weight(1f)` already gives that `Column` exactly `total - liveBar's height`, so its own bottom
+ * edge, at any scroll offset, is already flush against the bar's top with zero gap. Padding on the
+ * *outer* modifier (`CaptureStatusContent.kt`'s own seam) subtracts from that same weighted budget
+ * 1:1 rather than inserting real clearance — confirmed measured (WP11b, `f0c9ece`: a `+1.dp`
+ * attempt there measured `-12.dp` in practice). The fix belongs on the *trailing* padding inside
+ * the scrollable content instead (the same shape `FailureActionBarScaffold.kt`'s own R-292 doc
+ * comment names for "give the last real row room before whatever sits fixed below it"):
+ * [LiveBar]'s own `heightIn(min = 44.dp)` floor, reused here — not measured live (that path's own
+ * first-frame-is-still-0 timing trap is the same R-292 doc comment's own point 1), a deliberately
+ * simple, static floor rather than an over-engineered measurement for one line's worth of
+ * breathing room. `null` when there is no live bar at all — nothing to clear.
+ */
+private fun liveBarClearanceFor(liveBar: LiveBarViewState?): Dp = if (liveBar != null) LIVE_BAR_CLEARANCE else 0.dp
+
+private val LIVE_BAR_CLEARANCE = 44.dp
 
 @Composable
 private fun KeyValueRowWithDot(
