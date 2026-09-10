@@ -92,16 +92,18 @@ class NotificationsScreenTest {
     }
 
     /**
-     * R-612 (Reviewer round 6, `setup-verified/S03-notify@2x-end.png`): at font scale 2.0, a
-     * *partial* scroll (not scrolled all the way to the footer, which clips the body paragraph out
-     * of view entirely — the bug shows only while the paragraph is still partly in the viewport)
-     * showed a scrolled body line's own top edge under the fixed subtitle's own bottom edge — this
-     * scaffold's `SetupScaffold` own header (back/counter, segment bars, title/subtitle) now carries
-     * an explicit opaque background and its own draw layer (`zIndex`) so whatever the scrollable
-     * sibling does, the header's own rect is always the last word for its own pixels; this asserts
-     * the *layout* half of that never regresses — the body paragraph's own top can never sit above
-     * the header's own bottom, at any scroll position, not just the one the finding's screenshot
-     * happened to catch.
+     * R-612 (Reviewer round 6, `setup-verified/S03-notify@2x-end.png`): a structural regression
+     * guard, not proof the finding's own visual glitch is fixed — see this file's own CHANGELOG
+     * entry for the fuller, honest account. The screenshot looked like the scrolled body text
+     * rendering under/behind the fixed header, but a high-contrast diagnostic (a temporary bright
+     * background on the body `Text`, on-device) showed its own layout box starts cleanly *below*
+     * the header with no overlap at all — the glitch sits *inside* that already-correctly-placed
+     * box, on its own topmost scroll-revealed line, confirmed stable (not a transient frame) and
+     * reproducible via an ordinary swipe + real `screencap`, not just the tour's own capture. This
+     * test still asserts the *layout* invariant a real header/scroll overlap bug **would** break —
+     * the body paragraph's own top can never sit above the header's own bottom — so it stands as a
+     * regression guard for that class of defect even though it is not what R-612's own artifact
+     * turned out to be.
      */
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)

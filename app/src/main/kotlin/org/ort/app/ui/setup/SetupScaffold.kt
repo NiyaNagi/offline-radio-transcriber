@@ -23,9 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -33,7 +31,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -156,24 +153,22 @@ public fun SetupScaffold(
         )
         val contentPlaceables = subcompose(SetupScaffoldSlot.Content) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // R-612 (Reviewer round 6): at font scale 2.0, scrolled content was found bleeding
-                // up into this fixed header's own bottom few pixels (`setup-verified/
-                // S03-notify@2x-end.png` -- the paragraph's first sentence scrolled fully out of
-                // view as expected, but the next line's own top edge showed through under the
-                // subtitle rather than staying cleanly clipped below it). This scaffold's own class
-                // doc already names the precedent (R-220: "a static, reproducible ghost copy...
-                // consistent with [stale/incompletely-invalidated compositing], not anything to do
-                // with font scale itself" -- the same class of defect, a different instance of it).
-                // An explicit opaque `bgScreen` fill plus its own draw layer on *just* this
-                // non-scrolling header portion (not the screen-wide background the outer
-                // `SubcomposeLayout` modifier already carries, which sits *underneath* both this
-                // header and the scrollable sibling alike and so cannot by itself stop one from
-                // showing through the other) guarantees the header's own pixels are always the last
-                // word for its own rect, whatever the scrollable sibling below does.
+                // R-612 (Reviewer round 6): at font scale 2.0, `setup-verified/S03-notify@2x-end.png`
+                // showed the scrolled body's own first visible line looking half-occluded right under
+                // the subtitle. Investigated on-device (`emulator-5556`, a real swipe + real
+                // `screencap`, not just the tour's own capture -- reproduced identically, and stable
+                // over a 3s extra settle, ruling out a transient frame) with a temporary high-contrast
+                // background on the body `Text` itself: its own layout box starts exactly, cleanly
+                // below this header, no overlap at all -- the glitch sits *inside* that box, on its own
+                // first line, not at the header boundary. So this is not the header/scroll-overlap
+                // defect it first looked like; giving *this* header an explicit opaque background (this
+                // `Column`, not the whole-screen one `SubcomposeLayout`'s own modifier already carries)
+                // is kept anyway, since it is what a validator asked for and is harmless, but it does
+                // not by itself close R-612 -- see the register/CHANGELOG for the fuller account and
+                // what is still open.
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .zIndex(1f)
                         .background(OrtColors.bgScreen)
                         .testTag("setup-scaffold-header"),
                 ) {
@@ -192,10 +187,8 @@ public fun SetupScaffold(
                 }
                 Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .graphicsLayer()
-                        .clipToBounds()
                         .padding(horizontal = OrtSpacing.lg)
+                        .weight(1f)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(OrtSpacing.md),
                     content = content,
