@@ -42,6 +42,10 @@ class ModelsScreenTest {
         detail: String? = null,
         sizeBytes: Long? = null,
         checksumPrefix: String? = null,
+        // D35/FR-AST-1: every real [ModelId] ships bundled today (the same default
+        // [ModelRowViewState.bundled] itself carries) — a test wanting to exercise the pre-D35
+        // Download path (a hypothetical, still-fetchable asset) passes `false` explicitly.
+        bundled: Boolean = true,
     ) = ModelRowViewState(
         id,
         id.label,
@@ -50,11 +54,12 @@ class ModelsScreenTest {
         checksumKnown = checksumKnown,
         sizeBytes = sizeBytes,
         checksumPrefix = checksumPrefix,
+        bundled = bundled,
     )
 
     @Test
     @Requirement("FR-ASR-1")
-    fun `R_093 a not-installed model shows honestly and offers Download and Install from a file`() {
+    fun `R_093 a not-installed model shows honestly and offers Install from a file, never Download since D35`() {
         composeTestRule.setContent {
             OrtTheme {
                 ModelsScreen(
@@ -66,7 +71,10 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithContentDescription("Silero VAD not installed. not installed").assertExists()
-        composeTestRule.onNodeWithContentDescription("Download Silero VAD").assertExists()
+        // D35/FR-AST-1 (checklist E2-F04): a bundled asset ships inside the artifact — there is
+        // nothing to download, so this action must never appear for it, discrimination-tested
+        // below (`AC_139_offersDownload_never_true_for_a_bundled_row`).
+        composeTestRule.onNodeWithContentDescription("Download Silero VAD").assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription("Install Silero VAD from a file").assertExists()
     }
 
@@ -93,8 +101,12 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithText("ACTIVE").assertExists()
+        // `Settings-Assets.dc.html` (redrawn 2026-09-10): "Pass · size · bundled · verified
+        // sha256 <8 chars> · tiers" — VAD's own Pass is "segmentation" (`passLabelFor`).
         composeTestRule
-            .onNodeWithContentDescription("Silero VAD verified. 2 MB · sha256 9e2449e1…")
+            .onNodeWithContentDescription(
+                "Silero VAD verified. segmentation · 2 MB · bundled · verified sha256 9e2449e1 · every tier",
+            )
             .assertExists()
     }
 
@@ -105,7 +117,15 @@ class ModelsScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 ModelsScreen(
-                    state = ModelsViewState(rows = listOf(row(ModelId.ASR_ENCODER, ModelRowStatus.NOT_INSTALLED))),
+                    state = ModelsViewState(
+                        rows = listOf(
+                            // `bundled = false`: D35 refuses Download for a bundled row outright
+                            // (every real ModelId today) — this proves the tap mechanism itself
+                            // still works for the split-delivery case `ModelCatalogEntry.bundled`'s
+                            // own doc comment names as the reason that field exists at all.
+                            row(ModelId.ASR_ENCODER, ModelRowStatus.NOT_INSTALLED, bundled = false),
+                        ),
+                    ),
                     onDownload = { tapped = it },
                     onSideload = {},
                 )
@@ -191,8 +211,8 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithContentDescription(
-            "Whisper tiny.en — tokens installed, unverified. 500 KB · sha256 abc12345… · " +
-                "not verified against a published value",
+            "Whisper tiny.en — tokens installed, unverified. Pass B · 500 KB · bundled · " +
+                "verified sha256 abc12345, not against a published value · every tier",
         ).assertExists()
     }
 
@@ -301,7 +321,9 @@ class ModelsScreenTest {
         // first in family order — never a second nested row for [ModelId.ASR_DECODER]/
         // [ModelId.ASR_TOKENS] while encoder is still missing; each becomes reachable in turn once
         // the part ahead of it installs.
-        composeTestRule.onNodeWithContentDescription("Download Whisper tiny.en — encoder").assertExists()
+        // D35/FR-AST-1: encoder ships bundled (this test's own `row()` default) — never Download,
+        // only Install from a file, the one real replacement path for a bundled asset (FR-AST-1).
+        composeTestRule.onNodeWithContentDescription("Download Whisper tiny.en — encoder").assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — encoder from a file").assertExists()
         composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — decoder from a file")
             .assertDoesNotExist()
@@ -406,8 +428,11 @@ class ModelsScreenTest {
         // Aggregate size is the sum of every part's real bytes (1.0 + 2.0 + 0.5 = 3.5 MB, rounds to
         // 4 MB) — never a per-part number standing in for the whole family, and honestly "not
         // every part verified" since the tokens file is trust-on-first-use, never a false blanket
-        // "verified" claim.
-        composeTestRule.onNodeWithText("4 MB · not every part verified against a published checksum").assertExists()
+        // "verified" claim. "Pass B · ... · bundled · ..." per `Settings-Assets.dc.html`'s own
+        // "Pass · size · bundled · verified · tiers" formula (redrawn 2026-09-10).
+        composeTestRule.onNodeWithText(
+            "Pass B · 4 MB · bundled · not every part verified against a published checksum",
+        ).assertExists()
         // No loose per-part action remains once nothing is missing.
         composeTestRule.onNodeWithContentDescription(
             "Install Whisper tiny.en — tokens from a file",
@@ -529,6 +554,28 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithText("staged · activates when this session ends").assertDoesNotExist()
+    }
+
+    /**
+     * E2-F04 (`spec/e2e-capture-modes-plan.md`, D35, FR-AST-1): [offersDownload]'s own guard —
+     * discrimination-tested per constitution II: with `!row.bundled` in the real production
+     * function (as written), this passes; commenting out that clause in [offersDownload] (a real
+     * edit tried by hand while writing this test) makes it fail, for the right reason — a bundled,
+     * not-installed row's own `offersDownload` reads `true` again. Restored before this change was
+     * reported done.
+     */
+    @Test
+    @Requirement("FR-AST-3")
+    fun `AC_139 offersDownload is never true for a bundled row, discrimination-tested`() {
+        val bundledNotInstalled = row(ModelId.VAD, ModelRowStatus.NOT_INSTALLED, bundled = true)
+        val nonBundledNotInstalled = row(ModelId.VAD, ModelRowStatus.NOT_INSTALLED, bundled = false)
+
+        assert(!offersDownload(bundledNotInstalled)) {
+            "a bundled, not-installed row must never offer Download (D35, FR-AST-1)"
+        }
+        assert(offersDownload(nonBundledNotInstalled)) {
+            "a non-bundled, checksum-known, not-installed row must still offer Download"
+        }
     }
 
     @Test

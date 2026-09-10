@@ -2,60 +2,71 @@ package org.ort.app.ui.data
 
 import android.content.Context
 import org.ort.core.capture.CaptureMode
-import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.rig.CaptureConfiguration
+import org.ort.pipeline.rig.CaptureConfigurationStore
+import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 
 /**
- * WPE (`spec/e2e-capture-modes-plan.md`, FR-CAP-12, FR-CAP-13, AC-131): the seam CF02/CF11 read the
- * capture mode through, so this package never depends on `WPC2`'s still-in-flight
- * `CaptureConfigurationStore`/`pendingConfiguration` directly. Until the lead messages this
- * package's exact shape, [RealCaptureModeFacts] reads the best currently-available facts from the
- * **one source that exists on main today**: the most recent [org.ort.data.entity.SessionEntity]'s
- * own `captureMode` column (WPC1, schema v7, closed at `50bfc07`) — the running session's own
- * recorded mode while [CaptureState.isCapturing], or the last-completed session's mode otherwise
- * (the best honest guess at what the *next* session will start with, absent a real "pending mode"
- * store) — plus [CaptureState.isCapturing] itself for the live-session banner.
- *
- * A fresh install with no session yet reports [currentMode] `null` — never a fabricated default
- * (constitution I). Once WPC2's `CaptureConfigurationStore` lands, swapping [RealCaptureModeFacts]'s
- * body for a read of its real `pendingConfiguration` is a one-file change: every caller in this
- * package depends on the [CaptureModeFacts] interface, never on how it is implemented.
+ * WPE (`spec/e2e-capture-modes-plan.md`, FR-CAP-12, FR-CAP-13, AC-131): the one seam CF02/CF11 read
+ * the capture mode through. Backed for real by WPC2's [CaptureConfigurationStore] (merged
+ * `e464820`) — every caller in this package depends on this interface, never on
+ * [CaptureConfigurationStore] directly, so a future change to that store's own shape is a one-file
+ * adaptation here, not a rewrite across every screen.
  */
 public interface CaptureModeFacts {
-    /** The mode governing the live session, or — while idle — the most recently recorded mode
-     * (the best honest information available about what the *next* session will start with).
-     * `null` only when no session has ever recorded one at all. */
-    public suspend fun currentMode(): CaptureMode?
+    /** The mode in force right now — [CaptureConfigurationStore.current]'s own mode. Never
+     * `null`: that store always has a real value, [CaptureConfiguration.DEFAULT] on a fresh
+     * install (constitution I — a stated default, not an absent fact). */
+    public fun currentMode(): CaptureMode
 
-    /** True exactly while a session is live — drives CF11's "applies when it ends" banner. */
+    /** Non-null exactly when a mode change was recorded while a session was live and has not yet
+     * applied — [CaptureConfigurationStore.pendingConfiguration]'s own mode. Drives CF11's amber
+     * "applies when it ends" banner. */
+    public fun pendingMode(): CaptureMode?
+
+    /** True exactly while a session is live — [org.ort.pipeline.capture.CaptureState.isCapturing]. */
     public fun isSessionLive(): Boolean
 }
 
-/** The real [CaptureModeFacts] — see the interface's own doc comment for exactly what it reads and why. */
-public class RealCaptureModeFacts(private val context: Context) : CaptureModeFacts {
+/** [realCaptureConfigurationStore]'s own `SharedPreferences` file, shared with `:pipeline`'s
+ * `RealCaptureService` (WPC2) — `:app` opens its own instance over the same
+ * [SharedPreferencesCaptureConfigurationStore.PREFS_NAME] file rather than routing through
+ * `:pipeline` for a plain settings read/write, matching how `SettingsStore`/`SetupStore` are each
+ * opened independently over their own preferences files. */
+public fun realCaptureConfigurationStore(context: Context): CaptureConfigurationStore =
+    SharedPreferencesCaptureConfigurationStore(
+        context.applicationContext.getSharedPreferences(
+            SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        ),
+    )
 
-    override suspend fun currentMode(): CaptureMode? {
-        val db = OrtDatabase.create(context.applicationContext)
-        val liveSessionId = CaptureState.sessionId.takeIf { CaptureState.isCapturing }
-        val info = liveSessionId?.let { db.sessionDao().getCaptureInfo(it) }
-            ?: db.sessionDao().listAll().firstOrNull()?.let { db.sessionDao().getCaptureInfo(it.id) }
-        val name = info?.captureMode ?: return null
-        return CaptureMode.entries.firstOrNull { it.name == name }
-    }
+/** The real [CaptureModeFacts], backed by [store] ([realCaptureConfigurationStore] by default). */
+public class RealCaptureModeFacts(private val store: CaptureConfigurationStore) : CaptureModeFacts {
+    public constructor(context: Context) : this(realCaptureConfigurationStore(context))
 
+    override fun currentMode(): CaptureMode = store.current().mode
+    override fun pendingMode(): CaptureMode? = store.pendingConfiguration()?.mode
     override fun isSessionLive(): Boolean = CaptureState.isCapturing
 }
 
 /** The behavioural fake (constitution II) — a plain, settable [CaptureModeFacts] for tests. */
 public class FakeCaptureModeFacts(
-    private var mode: CaptureMode? = null,
+    private var mode: CaptureMode = CaptureMode.LOCAL_MICROPHONE,
+    private var pending: CaptureMode? = null,
     private var sessionLive: Boolean = false,
 ) : CaptureModeFacts {
-    override suspend fun currentMode(): CaptureMode? = mode
+    override fun currentMode(): CaptureMode = mode
+    override fun pendingMode(): CaptureMode? = pending
     override fun isSessionLive(): Boolean = sessionLive
 
-    public fun setMode(value: CaptureMode?) {
+    public fun setMode(value: CaptureMode) {
         mode = value
+    }
+
+    public fun setPending(value: CaptureMode?) {
+        pending = value
     }
 
     public fun setSessionLive(value: Boolean) {

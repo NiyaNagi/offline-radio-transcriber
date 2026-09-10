@@ -97,6 +97,23 @@ class MainActivityTest {
 
     // --- R-080: the router split -----------------------------------------------------------------
 
+    // --- E2-I03 (spec/e2e-capture-modes-plan.md, "owed by WPE") ------------------------------------
+
+    @Test
+    @Requirement("AC-87")
+    fun `E2_I03 onResume marks ForegroundActivityTracker active`() {
+        val before = org.ort.core.SystemClock.wallMillis()
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        buildAndResume()
+
+        assertTrue(
+            "expected ForegroundActivityTracker.lastActiveAtMillis to advance to at least $before, " +
+                "was ${org.ort.pipeline.digest.ForegroundActivityTracker.lastActiveAtMillis}",
+            org.ort.pipeline.digest.ForegroundActivityTracker.lastActiveAtMillis >= before,
+        )
+    }
+
     @Test
     fun `R_080 a fresh install with setup not complete is routed to SetupActivity, never shown a screen here`() {
         deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)

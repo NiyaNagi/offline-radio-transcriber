@@ -18,6 +18,7 @@ import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.core.Ulid
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.RealCaptureService
+import org.ort.pipeline.digest.ForegroundActivityTracker
 
 /**
  * The router (build-plan P8; ui-conformance-plan R-002, R-080, R-085): setup incomplete →
@@ -33,6 +34,15 @@ import org.ort.pipeline.capture.RealCaptureService
 public class MainActivity : ComponentActivity() {
 
     private var sessionId: String = ""
+
+    // WPE (E2-I03's own "owed by WPE" note, FR-DIG-5) — see `ReaderActivity.onResume`'s own doc
+    // comment for what this backs. This activity finishes immediately after routing (its own class
+    // kdoc), so `onResume` here marks only the brief moment it was genuinely in front — real,
+    // if short-lived, foreground activity, not nothing.
+    override fun onResume() {
+        super.onResume()
+        ForegroundActivityTracker.markActive()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

@@ -32,6 +32,154 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPE: settings and navigation — CF02, CF04, CF05, CF06, CF11)
+
+### (pending) — settings modes: CF02 Capture-mode row, CF11 Settings-Mode screen, CF06 real Link/Reconnect, CF04 Prose-digest/Space redraw, CF05 tier-3 language-model line
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/**` (`SettingsViewData.kt`, `SettingsPolling.kt`,
+`SettingsContent.kt`, `SettingsCaptureScreen.kt`, `SettingsRigScreen.kt`, `SettingsTierScreen.kt`,
+`SettingsStore.kt`, `SettingsRootScreen.kt`, `ModelsContent.kt`, new `SettingsModeScreen.kt`), new
+`app/src/main/kotlin/org/ort/app/ui/data/SettingsViewData.kt` (`CaptureModeFacts` seam), `app/.../ui/screens/ModelsScreen.kt`,
+`app/.../ui/navigation/ReaderActivityDestinationSmokeTest.kt` (CF11 case + one pre-existing scroll fix),
+`app/.../OrtApplication.kt` (runner call site only), `app/.../MainActivity.kt` and `app/.../ui/ReaderActivity.kt`
+(foreground-tracker call only), and tests. Implements build-plan P19/P20/P21's WPE row per
+`spec/e2e-capture-modes-plan.md`.
+
+**Requirements/ACs:** FR-CAP-12, FR-CAP-13, FR-RIG-14, FR-RIG-15, FR-AST-3, FR-AST-3a, FR-AST-3b,
+FR-DIG-3b, AC-131, AC-138, AC-139, AC-140, AC-87, D35, D36, D5, constitution I/VII.
+
+**What changed:**
+
+*Constitution Check.* I (every attribution/mode/link fact renders with its real state — CF11's
+`pending` mark is distinct from `current`, CF06 states honestly when a transport/address is not
+yet known rather than guessing, the Gemma row never carries the "active" tag AC-138 would make a
+lie). II (every screen change ships a discriminated test in the same commit — the D35 no-download
+guard was reverted, shown to fail for the right reason, and restored; see Verified). III/IV
+(nothing here touches the segmenter or the capture path). V (the Prose-digest toggle writes only
+to the local `SharedPreferencesProseDigestSettingsStore`; `:app` still cannot reach `:llm-mediapipe`
+— confirmed against `buildSrc/.../ModuleGraph.kt` before wiring the toggle, see point 4). VII
+(`CaptureModeFacts` is the one seam every screen reads the capture mode through, backed by WPC2's
+real `CaptureConfigurationStore` after merging `main`; a future store-shape change is a one-file
+adaptation).
+
+1. **CF02 (`Settings-Capture.dc.html`)** gains the leading Capture-mode row: an icon per mode
+   (`OrtIcons.builtInMic`/`usbAudio`/`rig` — no dedicated Bluetooth glyph exists in `ui/components`,
+   out of this package's ownership to add one, reported as owed), the mode label, and a derived
+   sub-line ("audio by cable · rig link over Bluetooth · a change applies at the next session",
+   matching the board's own Bluetooth-mode example verbatim) built from `CaptureModePresets`, never
+   a second hand-written copy of FR-CAP-8's table. `Change` opens CF11. The Input row's own
+   sub-line now names "room audio" or "radio audio" from the routed device's real `AudioDeviceKind`.
+2. **CF11 (`Settings-Mode.dc.html`, new `SettingsModeScreen.kt`, new `SettingsScreenId.MODE`)**: the
+   three modes as radio rows with the current one marked `current` (from
+   `CaptureModeFacts.currentMode`) and a pending pick marked `pending, applies next session` (from
+   `CaptureModeFacts.pendingMode`); the amber banner while `CaptureModeFacts.isSessionLive()`
+   (matches `design-intent.md`'s own "while a session is live" wording — a superset of, and always
+   true whenever, the store's own `pendingConfiguration() != null`, so this satisfies both readings
+   without contradicting either); "What the mode set" (Audio route, Rig link) each with `Change`
+   re-entering Setup. Picking a mode always calls
+   `CaptureConfigurationStore.update(current().copy(mode = mode))` — the store itself decides
+   whether that lands immediately or as pending, per `CaptureState.isCapturing` (FR-CAP-12,
+   AC-131); this screen never re-implements the freeze rule. Only `mode` changes on that write —
+   the audio/rig fields carry forward unchanged, since a real device/rig re-selection needs Setup's
+   own real enumeration.
+3. **CF06 (`Settings-Rig.dc.html`)** is real now for the `Connected`/`Stale` states (previously
+   both fell through to the same "No rig module is connected" `FailedState` `Stale` should never
+   have shown — a latent pre-existing bug this also fixes, since `staleSinceLabel` is non-null only
+   when `connected == false`, so the old `if (!connected) FailedState else …` branch never took the
+   `else`). Subtitle reads `Connected · <transport>` (real, from
+   `RigStatus.State.Connected.transportKind`, WPC2 merged `e464820`) / `Stale since <label>` /
+   `Not connected`. New `Connection` section: a `Link` row naming the transport and, when the
+   session's own `CaptureConfigurationStore.current().rigParams` carries one, the Bluetooth address
+   or USB VID:PID (`DefaultRigTransportFactory.ParamKeys`); `Switch` re-enters Setup at the
+   rig-transport step. `Reconnect` is enabled once a rig has ever connected; per `RigSupervisor`'s
+   own doc comment (confirmed by reading it before wiring this) reconnection is the transport's own
+   job — there is no separate entry point to call — so `Reconnect` re-reads `RigStatus` fresh via
+   the same store-version bump every other real write in this package already uses.
+4. **CF04 (`Settings-Assets.dc.html` redraw, `ModelsScreen.kt`/`ModelsContent.kt`)**: every
+   transcription-model row now reads "Pass · size · bundled · verified sha256 &lt;8 chars&gt; ·
+   tiers" (`assetFactsSubLine`/`passLabelFor`/`tiersLabelFor`); the "Assets" section is renamed
+   "Transcription" and excludes `ModelId.LLM_GEMMA3_1B`, which gets its own "Prose digest" section
+   (`ProseDigestModelRow`) — a hollow, never-"active" marker (AC-138: stored is not loaded), the
+   permanent "stored, loaded only at tier 3 while idle and charging" clause, and an honest "not in
+   this build — needs the gated download at build time" when `ModelCatalog.entry(id).gated` and the
+   row is still `NOT_INSTALLED` (the real dev-escape-hatch case, `ModelRowStatus` cannot express
+   this itself and `ui/data/ModelsViewData.kt` is WPG's file, not edited here). The
+   `Write prose summaries` toggle (`ProseDigestSectionViewState`) writes straight to
+   `SharedPreferencesProseDigestSettingsStore` and calls `ProseDigestRunner.schedule`/`.cancel` —
+   never through `ProseDigestSettings.setEnabled`, which additionally needs a live `LlmEngine`
+   `:app` cannot construct (`:app` may depend on `:llm-api`, never `:llm-mediapipe` — confirmed
+   against `ModuleGraph.kt`); the actual mid-run release guarantee (AC-140) already lives inside
+   `:pipeline`'s own `ProseDigestWorkRunner`, which re-reads this exact store live. A new `Space`
+   row shows `StorageAccounting.bundledBytes` (measured directly in `ModelsContent`, `remember`ed
+   once). **No Download action anywhere** now: `offersDownload` (`internal`, discrimination-tested)
+   refuses whenever `row.bundled` — D35's real behaviour was previously not enforced at all (a
+   bundled+not-installed row still offered Download; several pre-existing tests already
+   demonstrated this without anyone noticing, now fixed and their own assertions corrected to match
+   D35 honestly).
+5. **CF05 (`Settings-Tier.dc.html`)**: tier 3's own detail line now ends "The only tier that loads
+   the bundled language model — for prose summaries, never for callsigns" (verbatim,
+   `Settings-Tier.dc.html`); tiers 1/2 are unchanged, which is itself the honest "not this tier"
+   statement (no language-model claim to make).
+6. **Routes**: `SettingsScreenId.MODE` added to the closed set; `NavSeed`/`ReaderActivity.EXTRA_SETTINGS_SCREEN`
+   already generic over that enum, so CF11 is seedable with no `ui/navigation` changes beyond the
+   new smoke-test case. `iconFor` (`SettingsRootScreen.kt`) gets a `MODE` branch (never shown as
+   its own root row; exists only to keep that `when` exhaustive) and `SettingsRootScreenTest`'s own
+   distinct-icon invariant test gained `MODE` to its documented-fallback exclusion list alongside
+   `TIER`/`ABOUT`.
+7. **The three call sites owed to WPH (E2-I03)**: `ProseDigestRunner.schedule()` from
+   `OrtApplication.onCreate` (only when `SharedPreferencesProseDigestSettingsStore.isEnabled()`,
+   and only outside the existing Robolectric guard — never fires under test); `.cancel()` from
+   CF04's toggle off-path (point 4); `ForegroundActivityTracker.markActive()` from
+   `ReaderActivity.onResume`/`onPause` and `MainActivity.onResume`.
+8. **Two real-Activity smoke-test scroll fixes**, both discovered running the gate against the
+   grown CF02/CF06/CF11 layouts: `R_132_settings_capture_meter_opens_the_level_meter` (CF02's new
+   Capture-mode row pushed `Meter` below the fold) and the new CF11 case both needed
+   `performScrollTo()` before `performClick()` even though the clicked node carries its own
+   registered semantics `onClick` action — visibility still gates `performClick()` in this Compose
+   test version, confirmed empirically rather than assumed.
+
+**Seam for WPC2 (now resolved).** This package started against a placeholder `CaptureModeFacts`
+reading the most recent session's own `captureMode` column, per the plan's own "seam for the
+package still in flight" note. WPC2 merged (`main` at `e464820`) mid-session with the real
+`org.ort.pipeline.rig.CaptureConfigurationStore`; `CaptureModeFacts` was adapted to read/write that
+store directly (`current()`, `pendingConfiguration()`, `update()`), in a second commit on this same
+branch — the interface itself, and every call site depending on it, did not need to change shape,
+confirming the seam did its job.
+
+**Verified** (every command with `-PortAllowMissingBundledAssets=true`):
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.settings.*" --tests "org.ort.app.ui.navigation.*"` — green.
+- `:app:testDebugUnitTest` (full) — green, 1443 tests.
+- `:app:smokeTestDebugUnitTest` — green, 126 tests (the two scroll fixes above).
+- `build dependencyRules platformGuards` — green; `dependencyRules: checked 20 modules … OK`;
+  `platformGuards: checked 20 modules' external dependencies and 20 manifests … OK`.
+- `-p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `coverageMatrix` then `coverageMatrixCheck` (run separately) — `450 requirements, 233 covered`,
+  no orphan-test warning; `coverageMatrixCheck: up to date (233 covered of 450)`.
+- **Discrimination, `AC_139 offersDownload is never true for a bundled row`**: removed the
+  `!row.bundled` clause from `offersDownload` → the test failed with
+  `AssertionError: a bundled, not-installed row must never offer Download (D35, FR-AST-1)`;
+  restored the clause → the test passed again.
+
+**Left open / not done:**
+- **F23 action wiring** (`onRetryInput`/a new `onSwitchToWiredInput`) is not added to
+  `FailureHostActions`/`ReaderActivity`'s failure-actions bundle: `FailureHostActions` lives in
+  `ui/failures` (WPF's row, off-limits here) and `ReaderActivity.kt`'s own ownership this round is
+  scoped to the foreground-tracker call only. F23 itself has not landed on `main` yet either.
+  Owed to WPF once F23 and the bundle field exist.
+- **CF06's Link-row address** is real only when the session's own `rigParams` actually carry
+  `bluetoothAddress`/`usbVendorId`+`usbProductId` — an imported/generic descriptor with no such
+  param, or a session that never connected, reads "transport and address not yet reported by this
+  build" honestly rather than guessing.
+- **The banner-condition reconciliation** (point 2) is a judgement call between the coordinator's
+  literal wording (`pendingConfiguration() != null`) and `design-intent.md`'s own ("while a session
+  is live") — `isSessionLive()` is a strict superset of the former, so both are satisfied, but the
+  lead may prefer the narrower condition; a one-line change if so.
+- Every `tour`/`device` half of the E2-F0x checklist rows (WPI's tour + validators) is still owed —
+  this package closes only the `unit` half of each.
+
+---
+
 ## 2026-09-10 (WPC2 follow-up: real USB/Bluetooth rig transports wired behind RigTransportFactory)
 
 ### (pending) — DefaultRigTransportFactory now builds real UsbSerialTransport/BluetoothSppTransport; RigSupervisor no longer drives its own reconnect loop

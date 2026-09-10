@@ -4,13 +4,13 @@ import android.content.Context
 import org.ort.app.BuildConfig
 import org.ort.app.ui.data.CaptureModeFacts
 import org.ort.app.ui.data.RealCaptureModeFacts
+import org.ort.app.ui.data.realCaptureConfigurationStore
 import org.ort.app.ui.navigation.StorageFooterViewState
 import org.ort.app.ui.navigation.toGigabyteLabel
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.SystemClock
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.CaptureModePresets
-import org.ort.core.capture.RigTransportKind
 import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -22,11 +22,14 @@ import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.collectSessionStorageSummaries
 import org.ort.pipeline.capture.computeNextDeletion
 import org.ort.pipeline.capture.measureStorageAccounting
+import org.ort.pipeline.rig.DefaultRigTransportFactory
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.ort.core.capture.RigTransportKind as CorePresetRigTransportKind
+import org.ort.rig.RigTransportKind as RigLinkTransportKind
 
 /**
  * WP10's read path for the `Settings` root and its nine sub-screens (register R-090), following
@@ -149,15 +152,14 @@ public object SettingsPolling {
     private fun currentTierNumber(): Int = (MAX_TIER - ShedStatus.currentLevel).coerceIn(0, MAX_TIER)
 
     /**
-     * CF02 (amended 2026-09-10, FR-CAP-12): `suspend` now — the leading Capture-mode row's
-     * [SettingsCaptureViewState.modeLabel]/[modeSubLine] read through [modeFacts]
-     * ([org.ort.app.ui.data.CaptureModeFacts]), which queries `:data` for the most recent session's
-     * recorded mode (see that interface's own doc comment for exactly what it reads and why).
-     * [context] is new for the same reason. The Input row's own sub-line now names "room audio" or
-     * "radio audio" from the routed device's real [AudioDeviceKind] (FR-CAP-10, FR-CAP-3a) — the
-     * built-in mic is the one device kind that is ever the room, never the radio.
+     * CF02 (amended 2026-09-10, FR-CAP-12): the leading Capture-mode row's
+     * [SettingsCaptureViewState.mode]/[modeLabel]/[modeSubLine] read through [modeFacts]
+     * ([org.ort.app.ui.data.CaptureModeFacts], WPC2's `CaptureConfigurationStore` underneath —
+     * plain `SharedPreferences`, no I/O worth a coroutine). The Input row's own sub-line now names
+     * "room audio" or "radio audio" from the routed device's real [AudioDeviceKind] (FR-CAP-10,
+     * FR-CAP-3a) — the built-in mic is the one device kind that is ever the room, never the radio.
      */
-    public suspend fun capture(
+    public fun capture(
         context: Context,
         store: SettingsStore,
         modeFacts: CaptureModeFacts = RealCaptureModeFacts(context),
@@ -195,8 +197,8 @@ public object SettingsPolling {
             bandPassEnabled = store.bandPassFilterEnabled,
             manualFrequencyMhz = store.manualFrequencyMhz,
             mode = mode,
-            modeLabel = mode?.operatorLabel ?: "Not yet set",
-            modeSubLine = mode?.let { modeSubLine(it) } ?: "complete setup to record a mode",
+            modeLabel = mode.operatorLabel,
+            modeSubLine = modeSubLine(mode),
         )
     }
 
@@ -215,25 +217,24 @@ public object SettingsPolling {
         }
         val rigClause = when (preset.preferredRigTransportKind) {
             null -> "frequency by hand"
-            RigTransportKind.USB_SERIAL -> "rig link on the same cable"
-            RigTransportKind.BLUETOOTH_SPP -> "rig link over Bluetooth"
+            CorePresetRigTransportKind.USB_SERIAL -> "rig link on the same cable"
+            CorePresetRigTransportKind.BLUETOOTH_SPP -> "rig link over Bluetooth"
         }
         return "$audioClause · $rigClause · a change applies at the next session"
     }
 
     /**
      * CF11 (`Settings-Mode.dc.html`): the three-mode picker, the current one marked from
-     * [modeFacts], the live-session banner from [CaptureModeFacts.isSessionLive], and "what the
-     * mode set" from the same real [InputStatus]/[RigStatus] facts CF02/CF06 read — never a second,
-     * differently-sourced copy of either fact.
+     * [modeFacts], the live-session banner from [CaptureModeFacts.pendingMode]/[isSessionLive], and
+     * "what the mode set" from the same real [InputStatus]/[RigStatus] facts CF02/CF06 read — never
+     * a second, differently-sourced copy of either fact.
      */
-    public suspend fun modeScreen(
+    public fun modeScreen(
         context: Context,
-        store: SettingsStore,
         modeFacts: CaptureModeFacts = RealCaptureModeFacts(context),
     ): SettingsModeViewState {
         val current = modeFacts.currentMode()
-        val pending = store.pendingCaptureModeName?.let { name -> CaptureMode.entries.firstOrNull { it.name == name } }
+        val pending = modeFacts.pendingMode()
         val rows = CaptureMode.entries.map { mode ->
             SettingsModeRowViewState(
                 mode = mode,
@@ -261,8 +262,10 @@ public object SettingsPolling {
             RigStatus.State.Absent -> SettingsModeSetRowViewState("Rig link", "no radio configured")
             is RigStatus.State.Connected ->
                 SettingsModeSetRowViewState("Rig link", "${state.descriptor} · connected")
-            is RigStatus.State.Stale ->
-                SettingsModeSetRowViewState("Rig link", "${state.lastKnown.descriptor} · stale since ${state.sinceMillis}")
+            is RigStatus.State.Stale -> SettingsModeSetRowViewState(
+                "Rig link",
+                "${state.lastKnown.descriptor} · stale since ${state.sinceMillis}",
+            )
         }
         return SettingsModeViewState(
             rows = rows,
@@ -279,7 +282,17 @@ public object SettingsPolling {
         CaptureMode.BLUETOOTH_RADIO -> "CAT over Bluetooth · audio by cable or Bluetooth"
     }
 
-    public fun rig(): SettingsRigViewState = when (val state = RigStatus.state) {
+    /**
+     * CF06 (amended 2026-09-10, FR-RIG-14/15): [transportLabel] is real from
+     * `RigStatus.State.Connected.transportKind` (WPC2, merged `e464820`); [linkAddressLabel] is
+     * real from [org.ort.pipeline.rig.CaptureConfigurationStore.current]'s own `rigParams` (the same
+     * session-scoped configuration `RigSupervisor.connect` used to open this exact link) — read via
+     * [context], the session's *current* configuration (not [org.ort.app.ui.data.CaptureModeFacts],
+     * which this function has no need of: it never asks what mode this is, only what the rig link
+     * itself is doing). `null` when the connected/stale descriptor's own params carry neither key
+     * (an imported/generic descriptor, or nothing ever connected).
+     */
+    public fun rig(context: Context): SettingsRigViewState = when (val state = RigStatus.state) {
         RigStatus.State.Absent -> SettingsRigViewState(
             descriptorLabel = "No radio configured",
             connected = false,
@@ -299,6 +312,8 @@ public object SettingsPolling {
                     squelchOpen = band.squelchOpen,
                 )
             },
+            transportLabel = transportLabelFor(state.transportKind),
+            linkAddressLabel = linkAddressLabel(context),
         )
 
         is RigStatus.State.Stale -> SettingsRigViewState(
@@ -315,7 +330,26 @@ public object SettingsPolling {
                     squelchOpen = false,
                 )
             },
+            transportLabel = transportLabelFor(state.lastKnown.transportKind),
+            linkAddressLabel = linkAddressLabel(context),
         )
+    }
+
+    private fun transportLabelFor(kind: RigLinkTransportKind?): String? = when (kind) {
+        RigLinkTransportKind.USB_SERIAL -> "USB serial"
+        RigLinkTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
+        RigLinkTransportKind.BLE -> "Bluetooth LE"
+        RigLinkTransportKind.NETWORK -> "network"
+        RigLinkTransportKind.NONE, null -> null
+    }
+
+    private fun linkAddressLabel(context: Context): String? {
+        val params = realCaptureConfigurationStore(context).current().rigParams
+        params[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS]?.let { return it }
+        val vendorId = params[DefaultRigTransportFactory.ParamKeys.USB_VENDOR_ID]
+        val productId = params[DefaultRigTransportFactory.ParamKeys.USB_PRODUCT_ID]
+        if (vendorId != null && productId != null) return "vid 0x$vendorId pid 0x$productId"
+        return null
     }
 
     public fun tier(store: SettingsStore): SettingsTierViewState {

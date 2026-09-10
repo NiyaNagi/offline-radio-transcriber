@@ -79,12 +79,14 @@ public fun SettingsModeScreen(
                 value = "",
                 subLine = state.audioRoute.subLine,
                 trailingMarker = { TextAction(text = "Change", onClick = onChangeAudioRoute) },
+                modifier = Modifier.testTag(MODE_AUDIO_ROUTE_ROW_TEST_TAG),
             )
             KeyValueRow(
                 key = state.rigLink.label,
                 value = "",
                 subLine = state.rigLink.subLine,
                 trailingMarker = { TextAction(text = "Change", onClick = onChangeRigLink) },
+                modifier = Modifier.testTag(MODE_RIG_LINK_ROW_TEST_TAG),
             )
 
             Text(
@@ -111,3 +113,5 @@ private fun modeRowLabel(row: SettingsModeRowViewState): String = when {
 
 public const val MODE_LIVE_BANNER_TEST_TAG: String = "settings-mode-live-banner"
 public const val MODE_ROW_TEST_TAG_PREFIX: String = "settings-mode-row-"
+public const val MODE_AUDIO_ROUTE_ROW_TEST_TAG: String = "settings-mode-audio-route-row"
+public const val MODE_RIG_LINK_ROW_TEST_TAG: String = "settings-mode-rig-link-row"

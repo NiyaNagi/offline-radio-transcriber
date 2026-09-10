@@ -26,6 +26,7 @@ import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
+import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType

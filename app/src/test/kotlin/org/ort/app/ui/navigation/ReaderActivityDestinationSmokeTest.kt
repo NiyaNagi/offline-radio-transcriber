@@ -316,6 +316,24 @@ class ReaderActivityDestinationSmokeTest {
         }
     }
 
+    // WPE (CF11, `spec/e2e-capture-modes-plan.md` E2-F08): `SettingsScreenId.MODE` reachable and
+    // seedable — the same `initialScreen` seam `RIG` above already proves for the other eight
+    // sub-screens, except CF11's own `DrillInHeader` names its real parent, "Input and level" (CF02),
+    // not "Settings" — it is reached from CF02's own `Change` row, never from the Settings root.
+    @Test
+    fun `R_129_SETTINGS_MODE_initialScreen_composes_and_survives_recreation`() {
+        runReaderActivity(ReaderDestination.SETTINGS, settingsScreen = SettingsScreenId.MODE) { rule ->
+            rule.waitUntilContentDescriptionExists("Back to Input and level")
+            rule.assertExactlyOneContentDescription("Back to Input and level")
+            rule.waitUntilTextExists("Capture mode")
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            rule.waitUntilContentDescriptionExists("Back to Input and level")
+        }
+    }
+
     // Round 6 (register R-132): `Settings-Capture`'s `Meter` action (`SettingsCaptureScreen.kt`'s
     // `TextAction(text = "Meter", onClick = onOpenLevelMeter)`) now has a real target —
     // `NavHostCallbacks.onOpenLevelMeter` switches to `Capture` and asks `CaptureStatusContent` to
@@ -326,7 +344,13 @@ class ReaderActivityDestinationSmokeTest {
     fun `R_132_settings_capture_meter_opens_the_level_meter`() {
         runReaderActivity(ReaderDestination.SETTINGS, settingsScreen = SettingsScreenId.CAPTURE) { rule ->
             rule.waitUntilContentDescriptionExists("Back to Settings")
-            rule.onNode(hasText("Meter") and hasClickAction()).performClick()
+            // WPE (CF02, amended 2026-09-10): the new Capture-mode row above `Input` pushes `Meter`
+            // below the fold on this real activity's own window size — `performScrollTo()` first,
+            // the same fix `SettingsRigScreenTest`/`SettingsModeScreenTest` needed for an equivalent
+            // off-screen `performClick()` (confirmed by reading `SecondaryButton`/`TextAction`'s own
+            // `clearAndSetSemantics`-registered click action before concluding scroll position still
+            // matters to `performClick()` despite it).
+            rule.onNode(hasText("Meter") and hasClickAction()).performScrollTo().performClick()
             // `LevelMeterScreen.kt`'s own `DrillInHeader(parentLabel = "Capture", ...)`.
             rule.waitUntilContentDescriptionExists("Back to Capture")
 

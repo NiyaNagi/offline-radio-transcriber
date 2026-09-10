@@ -18,6 +18,7 @@ import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.digest.ForegroundActivityTracker
 
 /**
  * Hosts the Compose navigation graph (build-plan P13, D15). Not yet the app's launcher — see
@@ -116,6 +117,21 @@ import org.ort.pipeline.capture.CaptureState
  * forward any more.
  */
 public class ReaderActivity : ComponentActivity() {
+
+    // WPE (E2-I03's own "owed by WPE" note, FR-DIG-5): [ForegroundActivityTracker] is
+    // [org.ort.pipeline.digest.AndroidProseDigestDeviceSignals]'s own looser, reliable-on-ColorOS
+    // half of its idle definition (see that class's doc comment) — this is the operator's main
+    // reading surface, so its own resume/pause is the one signal in this app that most directly
+    // means "the operator is looking at this app right now" / "just stopped looking at it".
+    override fun onResume() {
+        super.onResume()
+        ForegroundActivityTracker.markActive()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        ForegroundActivityTracker.markActive()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

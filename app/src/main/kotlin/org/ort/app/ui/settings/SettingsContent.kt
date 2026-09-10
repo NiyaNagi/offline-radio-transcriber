@@ -24,10 +24,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.ort.app.diagnostics.DiagnosticsBundleBuilder
 import org.ort.app.ui.data.RealCaptureModeFacts
+import org.ort.app.ui.data.realCaptureConfigurationStore
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.theme.OrtSpacing
-import org.ort.core.capture.CaptureMode
 import java.time.LocalDate
 
 /**
@@ -120,11 +120,11 @@ public fun SettingsContent(
             storeVersion = storeVersion,
             onStoreChanged = { storeVersion++ },
             onBack = { screen = null },
-            onOpenModeSettings = { screen = SettingsScreenId.MODE },
             modifier = modifier,
             crossPackage = SettingsCrossPackageActions(
                 onOpenLevelMeter = onOpenLevelMeter,
                 onReviewSession = onReviewSession,
+                onOpenModeSettings = { screen = SettingsScreenId.MODE },
             ),
         )
     }
@@ -132,9 +132,9 @@ public fun SettingsContent(
 
 /** The nine sub-screens, split out of [SettingsContent] purely to keep that function under
  * detekt's length/complexity limits — the same reason `OrtNavHost`'s own `DestinationContent` was
- * extracted before this package existed. [crossPackage] bundles the two cross-package drill-in
- * callbacks (see [SettingsCrossPackageActions]'s own doc comment) purely to keep this function's
- * own parameter list under the same threshold. */
+ * extracted before this package existed. [crossPackage] bundles the cross-package/cross-screen
+ * drill-in callbacks (see [SettingsCrossPackageActions]'s own doc comment) purely to keep this
+ * function's own parameter list under the same threshold. */
 @Composable
 private fun SettingsSubScreen(
     context: Context,
@@ -143,7 +143,6 @@ private fun SettingsSubScreen(
     storeVersion: Int,
     onStoreChanged: () -> Unit,
     onBack: () -> Unit,
-    onOpenModeSettings: () -> Unit,
     modifier: Modifier,
     crossPackage: SettingsCrossPackageActions,
 ) {
@@ -156,18 +155,19 @@ private fun SettingsSubScreen(
             onBack = onBack,
             modifier = modifier,
             onOpenLevelMeter = crossPackage.onOpenLevelMeter,
-            onOpenModeSettings = onOpenModeSettings,
+            onOpenModeSettings = crossPackage.onOpenModeSettings,
         )
 
         SettingsScreenId.RIG -> SettingsRigScreen(
-            state = remember(storeVersion) { SettingsPolling.rig() },
+            state = remember(storeVersion) { SettingsPolling.rig(context) },
             onBack = onBack,
             modifier = modifier,
-            // TODO(WPC2): a real reconnect entry point does not exist yet (no rig-supervision call
-            // site anywhere in `:pipeline` today — grepped before writing this). Until it lands,
-            // `Reconnect` re-reads `RigStatus` fresh via the same `onStoreChanged` bump every other
-            // real write in this file already uses, which is honest (this screen never claims to
-            // have reconnected anything) rather than a no-op button with nothing behind it at all.
+            // WPC2 (`RigSupervisor`'s own doc comment, confirmed by reading `RigSupervisor.kt`
+            // before wiring this): reconnection is the transport's own job — `UsbSerialTransport`/
+            // `BluetoothSppTransport` each self-heal on their own backoff ladder; there is no
+            // separate "reconnect" entry point for this screen to call. `Reconnect` re-reads
+            // `RigStatus` fresh via the same `onStoreChanged` bump every other real write in this
+            // file already uses — an honest refresh, never a claim of having reconnected anything.
             onReconnect = onStoreChanged,
             onSwitchTransport = { openSetupAtStep(context, SETUP_STEP_RIG_TRANSPORT) },
         )
@@ -229,7 +229,6 @@ private fun SettingsSubScreen(
 
         SettingsScreenId.MODE -> SettingsModeSubScreen(
             context = context,
-            store = store,
             storeVersion = storeVersion,
             onStoreChanged = onStoreChanged,
             onBack = onBack,
@@ -242,58 +241,47 @@ private fun SettingsSubScreen(
  * CF11's own branch, split out purely to keep [SettingsSubScreen] under detekt's length limit — the
  * same reason every other real-I/O branch here already is its own function.
  *
- * Picking a mode while a session is live records it as pending
- * ([SettingsStore.pendingCaptureModeName] — see that property's own doc comment for exactly why
- * this, and not [org.ort.app.ui.data.CaptureModeFacts], is the write path) and leaves the banner
- * showing; picking one while idle re-enters setup at `MODE` (WPD's still-in-flight step name — see
- * [SettingsContent]'s own class kdoc for why a plain string, not `SetupStep.MODE`, is passed: that
- * step does not exist on `main` yet, and an unrecognised [SetupActivity.EXTRA_STEP] value is a
- * documented no-op there, so this call site is forward-compatible and inert today). `Change` on
- * either "what the mode set" row re-enters the step that row's own axis is decided by.
+ * Picking a mode always writes through [org.ort.pipeline.rig.CaptureConfigurationStore.update]
+ * (WPC2, merged `e464820`) — that store itself is what decides whether the write lands as [current]
+ * immediately or as [pendingConfiguration] instead, per [CaptureState.isCapturing]
+ * (FR-CAP-12, AC-131); this screen never re-implements that freeze rule. Only [mode] changes on the
+ * write — [selectedInputId]/[rigId]/[rigTransportKind]/[rigParams] are carried forward from
+ * [CaptureConfigurationStore.current] unchanged, since a real device/rig re-selection needs the
+ * real enumeration only Setup can do; the two "what the mode set" rows' own `Change` re-enter Setup
+ * for exactly that (S04/S09b — S09b is WPD's still-in-flight `RIG_TRANSPORT` step name, a forward-
+ * compatible, currently-inert string literal — see [openSetupAtStep]'s own doc comment).
  */
 @Composable
 private fun SettingsModeSubScreen(
     context: Context,
-    store: SettingsStore,
     storeVersion: Int,
     onStoreChanged: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier,
 ) {
-    var modeState by remember { mutableStateOf<SettingsModeViewState?>(null) }
-    LaunchedEffect(storeVersion) {
-        modeState = SettingsPolling.modeScreen(context, store, RealCaptureModeFacts(context))
-    }
-    val state = modeState
-    if (state != null) {
-        SettingsModeScreen(
-            state = state,
-            onBack = onBack,
-            onSelectMode = { mode ->
-                if (state.sessionLive) {
-                    store.pendingCaptureModeName = mode.name
-                    onStoreChanged()
-                } else {
-                    openSetupAtStep(context, SETUP_STEP_MODE)
-                }
-            },
-            onChangeAudioRoute = { openSetupAtStep(context, SetupStep.INPUT.name) },
-            onChangeRigLink = { openSetupAtStep(context, SETUP_STEP_RIG_TRANSPORT) },
-            modifier = modifier,
-        )
-    } else {
-        LoadingSettings(modifier = modifier)
-    }
+    val modeFacts = remember(context) { RealCaptureModeFacts(context) }
+    val modeState = remember(storeVersion) { SettingsPolling.modeScreen(context, modeFacts) }
+    SettingsModeScreen(
+        state = modeState,
+        onBack = onBack,
+        onSelectMode = { mode ->
+            val configStore = realCaptureConfigurationStore(context)
+            configStore.update(configStore.current().copy(mode = mode))
+            onStoreChanged()
+        },
+        onChangeAudioRoute = { openSetupAtStep(context, SetupStep.INPUT.name) },
+        onChangeRigLink = { openSetupAtStep(context, SETUP_STEP_RIG_TRANSPORT) },
+        modifier = modifier,
+    )
 }
 
-/** WPD's setup steps for capture mode/rig-transport re-entry (`spec/e2e-capture-modes-plan.md`
- * §WPD) — not yet added to `SetupStep` on `main`. Plain string literals, not `SetupStep.MODE.name`/
- * `SetupStep.RIG_TRANSPORT.name` (which do not compile against today's enum): `SetupActivity`'s own
- * `tryOpenAtRequestedStep` already falls back to its ordinary `refreshStep()` for any name it does
- * not recognise (confirmed by reading `SetupActivity.kt` before wiring this), so these two literals
- * are inert, harmless no-ops today and become real re-entry points the moment WPD's branch adds the
- * matching `SetupStep` entries — no second edit needed here when that lands. */
-private const val SETUP_STEP_MODE: String = "MODE"
+/** WPD's rig-transport re-entry step (`spec/e2e-capture-modes-plan.md` §WPD) — not yet added to
+ * `SetupStep` on `main`. A plain string literal, not `SetupStep.RIG_TRANSPORT.name` (which does not
+ * compile against today's enum): `SetupActivity`'s own `tryOpenAtRequestedStep` already falls back
+ * to its ordinary `refreshStep()` for any name it does not recognise (confirmed by reading
+ * `SetupActivity.kt` before wiring this), so this literal is an inert, harmless no-op today and
+ * becomes a real re-entry point the moment WPD's branch adds the matching `SetupStep` entry — no
+ * second edit needed here when that lands. */
 private const val SETUP_STEP_RIG_TRANSPORT: String = "RIG_TRANSPORT"
 
 private fun openSetupAtStep(context: Context, stepName: String) {
@@ -306,10 +294,10 @@ private fun openSetupAtStep(context: Context, stepName: String) {
  * length under detekt's limit — the same reason [SettingsSubScreen] itself was split out of
  * [SettingsContent].
  *
- * CF02 (amended 2026-09-10): `SettingsPolling.capture` became `suspend` (the leading Capture-mode
- * row now reads through [org.ort.app.ui.data.CaptureModeFacts], real `:data` I/O) — the same
- * `LaunchedEffect`-backed async-load shape [SettingsStorageSubScreen] already uses, keyed on
- * [storeVersion] so picking a mode (which bumps it via [onStoreChanged]) re-reads the row.
+ * CF02 (amended 2026-09-10): the leading Capture-mode row reads through
+ * [org.ort.app.ui.data.CaptureModeFacts], backed by WPC2's `CaptureConfigurationStore` — plain
+ * `SharedPreferences`, so `SettingsPolling.capture` stays the same synchronous
+ * `remember(storeVersion)` read every other cheap fact on this screen already uses.
  * [onOpenModeSettings] is CF02's own `Change` action → CF11.
  */
 @Composable
@@ -323,15 +311,8 @@ private fun SettingsCaptureSubScreen(
     onOpenLevelMeter: () -> Unit,
     onOpenModeSettings: () -> Unit,
 ) {
-    var captureState by remember { mutableStateOf<SettingsCaptureViewState?>(null) }
-    LaunchedEffect(storeVersion) { captureState = SettingsPolling.capture(context, store) }
-    val state = captureState
-    if (state == null) {
-        LoadingSettings(modifier = modifier)
-        return
-    }
     SettingsCaptureScreen(
-        state = state,
+        state = remember(storeVersion) { SettingsPolling.capture(context, store) },
         onBack = onBack,
         toggles = SettingsCaptureToggleActions(
             onToggleLevelWarn = {
