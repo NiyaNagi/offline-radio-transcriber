@@ -32,6 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP4/WP10 round 2: R-590 RetentionOrderRow font-scale gate; LevelMeterScreenTest isolated into smokeTestDebugUnitTest)
+
+### (pending) — ui-conformance WP4/WP10 round 2 · R-590 side-by-side below fontScale 1.3, stacked at/above it; LevelMeterScreenTest moved into the isolated smoke-test task per the coordinator's own jstack-confirmed wedge
+
+**Scope:** `:app` — `ui/settings/SettingsStorageScreen.kt` and its test; `app/build.gradle.kts`
+(lead-approved edit to this file only, per the coordinator's own escalation — everything else this
+round stayed this package's own row).
+
+**Requirements/ACs:** R-590 (register, Reviewer 5 round 5); none new for the gate fix (test
+infrastructure, not a requirement).
+
+**What changed:**
+- **Constitution Check.** Principle I again: R-590 exists because Reviewer 5 caught this package's
+  own R-551 fix trading one honesty gap for another — the board's own side-by-side row at 1.0 was
+  quietly replaced by a stack the design never shows there. The gate fix is the same principle one
+  layer down: a wedged shared-JVM test run reports a false "broken" signal for code that is not
+  broken, which is its own kind of silence about what the CI signal actually means.
+- **R-590 — `RetentionOrderRow` gated on real `fontScale`.** [`SettingsStorageScreen.kt`]:
+  `RETENTION_ORDER_STACK_FONT_SCALE = 1.3f`; below it, an ordinary `Row` with
+  `Arrangement.SpaceBetween` + `verticalAlignment = CenterVertically`, **no `.weight(...)` on
+  either child** — the exact mechanism R-551's own doc comment already found order-sensitive and
+  crush-prone, deliberately avoided here rather than re-risked. `Arrangement.SpaceBetween` pushes
+  the value to the row's own far right (matching `Settings-Storage.dc.html` line 81's `flex-grow:
+  1` label / fixed value) without a `weight()` needed to do it. At/above the threshold: the same
+  R-551 stack, unchanged. `rememberTextMeasurer` was **not** revisited for this — R-551's own doc
+  comment already found it unreliable on this Robolectric host, confirmed directly (a real
+  6-character string measuring a few dp regardless of its true rendered size); `fontScale` is a
+  plain `Float` `LocalDensity` already carries, nothing this host can misreport it.
+- New `RETENTION_ORDER_KEY_TEST_TAG` (`settings-storage-retention-order-key`) — the direct,
+  geometry-based proof two tests below need: compare the value's own top edge against the key's
+  own bottom edge. Side by side, they vertically overlap (a `Row` sibling beside a two-line label,
+  vertically centred); stacked, they never do (the value is the *next item down* from the key in
+  one `Column`).
+- **Gate fix (coordinator escalation): `LevelMeterScreenTest` moved into `smokeTestDebugUnitTest`.**
+  The full gate wedged 25 minutes in `:app:testDebugUnitTest` at commit `cbaca66` — `jstack` showed
+  the "Test worker" thread parked on `LevelMeterScreenTest.R_542`'s own test method while the SDK
+  34 main thread spun `RUNNABLE` inside `AbstractMainTestClock.advanceTimeByFrame` <-
+  `ComposeIdlingResource.isIdleNow` <- `RobolectricIdlingStrategy.runUntilIdle`, 1474s of CPU —
+  Compose never reaching idle, the identical signature `app/build.gradle.kts`'s own KDoc already
+  documents for the nine classes already isolated there. Read `LevelMeterScreen.kt` directly before
+  writing the `include`/`exclude` pair: unlike those nine, it carries no `LaunchedEffect`, poll or
+  animation of its own — the *exact* mechanism is not confirmed identical to theirs, only the
+  symptom (jstack) is. Isolated on that evidence rather than left in a shared JVM on an unconfirmed
+  theory, the same already-proven remedy (a task of its own, `forkEvery = 1`, so a fresh JVM/
+  Robolectric sandbox never shares process state with `testDebugUnitTest`'s ~1200 others) applied
+  to a tenth class rather than invented fresh.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.settings.SettingsStorageScreenTest`
+  — green, including new `R_590 at fontscale_1_0 the retention-order row sits side by side like
+  every sibling row` and `R_590 at fontscale_2_0 the retention-order row still stacks, never side
+  by side`, alongside the still-passing `R_551`.
+- `.\gradlew.bat :app:smokeTestDebugUnitTest --tests org.ort.app.ui.screens.LevelMeterScreenTest` —
+  green (7/7), confirming the isolated task itself resolves it.
+- `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.*'`, run in full as asked:
+  did **not** finish in a practical session window — `LevelMeterScreenTest` no longer appears
+  anywhere in the failures (confirmed by tailing the run live), but `FrequencyScreenTest` (WP8's
+  file, unrelated to this round's own change — grepped, it names neither `LevelMeterScreen` nor
+  anything this round touched) wedged the identical way, one `AppNotIdleException` per test at the
+  full 60s ceiling, for as many of its 18 tests as the run was watched through. Stopped after ~13
+  minutes of real wall time rather than let it run for however long the rest of `ui.screens.*`
+  would take at that rate.
+- Followed up with two fast, targeted runs instead, both green, that together isolate exactly what
+  changed: `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.screens.FrequencyScreenTest`
+  alone — 14/14 green in 8s (confirms this is the same "fine alone, poisoned only sharing a JVM
+  with something else" signature `app/build.gradle.kts`'s own KDoc already documents at length, not
+  a defect in the test or in `FrequencyScreen.kt`); and a 7-class slice spanning the alphabetical
+  neighbourhood `LevelMeterScreenTest` used to sit in (`LogScreenTest`, `LogFilterSheetTest`,
+  `ModelsScreenTest`, `PassFailureDetailScreenTest`, `PropagatedScreenTest`,
+  `RejectedDetailScreenTest`, `WordDiffTest`) — ~20 tests, all green in 12s, with no wedge.
+
+**Left open / not done:** `FrequencyScreenTest` (WP8's own file) independently wedges the shared
+`testDebugUnitTest` JVM the identical way the nine (now ten) already-isolated classes do — a real,
+newly-found instance of the same pre-existing class of problem, not caused by this round and not
+this package's file to add to the isolation list. Reported here and left for WP8/the lead rather
+than fixed outside this round's ownership; the full, uninterrupted wall time for
+`org.ort.app.ui.screens.*` end to end was not obtained, since `FrequencyScreenTest`'s own wedge
+makes that number about a different, unfixed problem rather than about this round's fix.
+
 ## 2026-09-09 (ui-conformance WP8: R-591 FQ03 closing paragraph narrates the cause's kind)
 
 ### (pending) — ui-conformance WP8 · R-591: narrate FQ03's cause by kind, never splice the raw list text
@@ -84,7 +163,6 @@ PASS. `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — both BUILD S
 **Left open / not done:** `ACTIVATION`/`NET` kinds have no real producer yet (named point 2
 above) — a future change that adds either must remember to set `kind` accordingly, nothing enforces
 that structurally today. Did not touch the emulator.
-
 ---
 
 ## 2026-09-09 (ui-conformance WP11b: R-562 Fail-Migration closing sentence restored; R-550 investigated, not fixed from this package's row)

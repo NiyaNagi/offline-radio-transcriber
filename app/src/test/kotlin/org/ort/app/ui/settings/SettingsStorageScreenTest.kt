@@ -338,6 +338,87 @@ class SettingsStorageScreenTest {
     }
 
     @Test
+    @Requirement("R-590")
+    fun `R_590 at fontscale_1_0 the retention-order row sits side by side like every sibling row`() {
+        // R-590 (Reviewer 5, round 5): R-551's unconditional stack fixed the 2.0 crush but broke
+        // the label-left/value-right pattern every sibling row keeps (`Settings-Storage.dc.html`
+        // line 81) at 1.0, where there is plenty of real room for both. The direct, geometry-based
+        // proof that this scale renders side by side rather than stacked: the value's own top
+        // edge sits *above* the key's own bottom edge — the two vertically overlap, exactly what
+        // `Arrangement.SpaceBetween` + `verticalAlignment = CenterVertically` produces for two
+        // siblings in one `Row`, and exactly what never happens when [value] is the *next item
+        // down* from [key] in a stacked `Column` (R-551's own layout), where [value]'s top can
+        // never be above [key]'s bottom.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 1f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(350.dp)) {
+                        SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+                    }
+                }
+            }
+        }
+
+        val verticalScroll = SemanticsMatcher("has vertical scroll axis") {
+            it.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange) != null
+        }
+        composeTestRule
+            .onNode(hasScrollAction().and(verticalScroll))
+            .performScrollToNode(hasContentDescription("the order is fixed", substring = true))
+
+        // `useUnmergedTree = true`: this row's own `mergeDescendants` boundary hides these child
+        // nodes from the default merged tree, the same allowance `R_551` above already needs.
+        val key = composeTestRule.onNodeWithTag(RETENTION_ORDER_KEY_TEST_TAG, useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val value = composeTestRule.onNodeWithTag(RETENTION_ORDER_VALUE_TEST_TAG, useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val keyBottom = key.positionInRoot.y + key.size.height
+        val valueTop = value.positionInRoot.y
+        assert(valueTop < keyBottom) {
+            "expected the value to sit beside the label (its top, ${valueTop}px, above the key's " +
+                "own bottom, ${keyBottom}px) at font scale 1.0; got a value positioned below the " +
+                "key instead, consistent with the row staying stacked at a scale where there is " +
+                "real room for both side by side"
+        }
+    }
+
+    @Test
+    @Requirement("R-590")
+    fun `R_590 at fontscale_2_0 the retention-order row still stacks, never side by side`() {
+        // R-590's other half: above the gate's own threshold, the row must still be the R-551
+        // stack — the value's own top can never be above the key's own bottom, since [value] is
+        // the very next item down from [key] in one `Column`, never a `Row` sibling beside it.
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(350.dp)) {
+                        SettingsStorageScreen(state = state(), onBack = {}, onSetBudgetGb = {}, onToggleAutoPrune = {})
+                    }
+                }
+            }
+        }
+
+        val verticalScroll = SemanticsMatcher("has vertical scroll axis") {
+            it.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange) != null
+        }
+        composeTestRule
+            .onNode(hasScrollAction().and(verticalScroll))
+            .performScrollToNode(hasContentDescription("the order is fixed", substring = true))
+
+        val key = composeTestRule.onNodeWithTag(RETENTION_ORDER_KEY_TEST_TAG, useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val value = composeTestRule.onNodeWithTag(RETENTION_ORDER_VALUE_TEST_TAG, useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val keyBottom = key.positionInRoot.y + key.size.height
+        val valueTop = value.positionInRoot.y
+        assert(valueTop >= keyBottom) {
+            "expected the value to stay stacked below the key (its top, ${valueTop}px, at or below " +
+                "the key's own bottom, ${keyBottom}px) at font scale 2.0; got a value positioned " +
+                "beside the key instead, consistent with the R-551 crush the stack exists to prevent"
+        }
+    }
+
+    @Test
     fun `R_150_R_251 the category legend wraps (FlowRow) rather than clipping at font scale 2-0`() {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = maxFontScale)) {

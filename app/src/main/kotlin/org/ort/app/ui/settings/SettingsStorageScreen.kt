@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -176,53 +177,113 @@ private fun LowSpaceRows(warnAtNightsLeft: Int, hardFloorLabel: String, modifier
  * one character per line — the register's own report, R-152's exact defect class, just triggered
  * from the opposite column this time.
  *
- * Two other layouts were tried and rejected here, both confirmed broken with this row's own real,
- * on-host measurements, not assumed: a `.weight(1f)` reassigned to the label side alone reproduces
- * the identical crush with the roles swapped (Compose's own weighted-vs-non-weighted budget split
- * is order-sensitive, not "non-weighted always measured first"); a `BoxWithConstraints` real-width
- * gate in the `rememberTimeColumnWidth`/`ColumnHeaderRow` style (`ui/components/Rows.kt`) chooses
- * correctly only if `rememberTextMeasurer` reports trustworthy widths, and on this project's own
- * Robolectric host it does not — confirmed measuring this exact row's own "always" at a few dp
- * regardless of its real rendered size, the same "a rendered pixel isn't reliably verifiable on
- * this host" limit this package's `logRowTranscriptStyle` doc comment already named elsewhere.
- * [key], [value] and [subLine] are stacked unconditionally instead — no two of them ever share a
- * `Row`, so none can ever be measured against a shared budget a sibling might claim first, on any
- * host, at any font scale, real font metrics or not. This is a deliberate departure from
- * `Settings-Storage.dc.html`'s own side-by-side row for this one row alone, in exchange for a fix
- * that is correct by construction rather than by a measurement this host cannot be trusted to make.
+ * Two other unconditional layouts were tried and rejected here, both confirmed broken with this
+ * row's own real, on-host measurements, not assumed: a `.weight(1f)` reassigned to the label side
+ * alone reproduces the identical crush with the roles swapped (Compose's own weighted-vs-non-
+ * weighted budget split is order-sensitive, not "non-weighted always measured first" — whichever
+ * child is *declared first* claims its full computed share before a later sibling is ever
+ * measured, weighted or not); a `BoxWithConstraints` real-width gate in the
+ * `rememberTimeColumnWidth`/`ColumnHeaderRow` style (`ui/components/Rows.kt`) chooses correctly
+ * only if `rememberTextMeasurer` reports trustworthy widths, and on this project's own Robolectric
+ * host it does not — confirmed measuring this exact row's own "always" at a few dp regardless of
+ * its real rendered size, the same "a rendered pixel isn't reliably verifiable on this host" limit
+ * this package's `logRowTranscriptStyle` doc comment already named elsewhere.
+ *
+ * R-590 (Reviewer 5, round 5): stacking [key]/[value]/[subLine] unconditionally, at every font
+ * scale, fixed the 2.0 crush but broke every sibling row's label-left/value-right pattern
+ * (`Settings-Storage.dc.html` line 81: `.r` — `flex-grow:1` label, a fixed value beside it,
+ * `align-items: center`) at the scale where there is plenty of real room for both. Gated instead
+ * on [LocalDensity.current]'s own `fontScale` — [RETENTION_ORDER_STACK_FONT_SCALE] is the
+ * threshold below which real width is never actually scarce for this row's own real strings
+ * (confirmed by the R_590 tests below, at both 1.0 and 2.0, not assumed) — deliberately not
+ * [rememberTextMeasurer] again, for the same untrustworthy-on-this-host reason above; `fontScale`
+ * itself is a plain `Float` [LocalDensity] already carries, nothing this host can misreport.
+ * Below the threshold: an ordinary `Row` with **no `weight()` on either child** — the exact
+ * mechanism the paragraph above names for the crush — so neither child's own measurement can ever
+ * be forced smaller than it needs; `Arrangement.SpaceBetween` pushes [value] to the row's own far
+ * right the same way the board's `flex-grow: 1` on the label does, without needing a `weight()` to
+ * do it. At/above the threshold: the same always-safe stack as before.
  */
 @Composable
 private fun RetentionOrderRow(key: String, value: String, subLine: String, modifier: Modifier = Modifier) {
     val description = "$key, $value, $subLine"
+    val stacked = LocalDensity.current.fontScale >= RETENTION_ORDER_STACK_FONT_SCALE
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
             .semantics(mergeDescendants = true) { contentDescription = description },
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs)) {
-            Text(text = key, style = OrtType.control, color = OrtColors.textDim)
-            Text(
-                text = value,
-                style = OrtType.control,
-                color = OrtColors.textHigh,
-                modifier = Modifier.padding(top = 2.dp).testTag(RETENTION_ORDER_VALUE_TEST_TAG),
-            )
-            Text(
-                text = subLine,
-                style = OrtType.subLine,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(top = 2.dp).testTag(RETENTION_ORDER_SUBLINE_TEST_TAG),
-            )
+        if (stacked) {
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs)) {
+                Text(
+                    text = key,
+                    style = OrtType.control,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.testTag(RETENTION_ORDER_KEY_TEST_TAG),
+                )
+                Text(
+                    text = value,
+                    style = OrtType.control,
+                    color = OrtColors.textHigh,
+                    modifier = Modifier.padding(top = 2.dp).testTag(RETENTION_ORDER_VALUE_TEST_TAG),
+                )
+                Text(
+                    text = subLine,
+                    style = OrtType.subLine,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp).testTag(RETENTION_ORDER_SUBLINE_TEST_TAG),
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Neither child carries `.weight(...)` — see this composable's own doc comment for
+                // why that is the load-bearing choice here, not an oversight.
+                Column(modifier = Modifier.padding(end = OrtSpacing.sm)) {
+                    Text(
+                        text = key,
+                        style = OrtType.control,
+                        color = OrtColors.textDim,
+                        modifier = Modifier.testTag(RETENTION_ORDER_KEY_TEST_TAG),
+                    )
+                    Text(
+                        text = subLine,
+                        style = OrtType.subLine,
+                        color = OrtColors.textDim,
+                        modifier = Modifier.padding(top = 2.dp).testTag(RETENTION_ORDER_SUBLINE_TEST_TAG),
+                    )
+                }
+                Text(
+                    text = value,
+                    style = OrtType.control,
+                    color = OrtColors.textHigh,
+                    modifier = Modifier.testTag(RETENTION_ORDER_VALUE_TEST_TAG),
+                )
+            }
         }
     }
 }
+
+/** R-590: below this real [LocalDensity.fontScale], `RetentionOrderRow` renders side by side
+ * (`Settings-Storage.dc.html`'s own row shape); at or above it, stacked (R-551). Not 2.0 itself —
+ * the gate needs to hold *before* the scale where R-551's crush was ever observed, with headroom
+ * confirmed by the `R_590` tests at both 1.0 and 2.0, not by this constant's value alone. */
+internal const val RETENTION_ORDER_STACK_FONT_SCALE: Float = 1.3f
 
 /** R-551 (register): stable handles so a test can measure the sub-line's and value's real,
  * rendered heights — the direct proof this row's value is never crushed to a sliver that wraps
  * one character per line. */
 internal const val RETENTION_ORDER_SUBLINE_TEST_TAG: String = "settings-storage-retention-order-subline"
 internal const val RETENTION_ORDER_VALUE_TEST_TAG: String = "settings-storage-retention-order-value"
+
+/** R-590: a stable handle onto the key/label `Text` so a test can compare its own bounds against
+ * [RETENTION_ORDER_VALUE_TEST_TAG]'s — the direct, geometry-based proof of which of the two real
+ * layouts (side by side vs. stacked) actually rendered at a given font scale. */
+internal const val RETENTION_ORDER_KEY_TEST_TAG: String = "settings-storage-retention-order-key"
 
 /**
  * `Settings-Storage.dc.html`'s "Next deletion" row (R-133, round 8): the half-filled amber marker,
