@@ -3,8 +3,10 @@ package org.ort.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,11 +30,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.ActionBar
 import org.ort.app.ui.components.AttributionMarker
@@ -41,6 +45,7 @@ import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.KeyValueRow
+import org.ort.app.ui.components.MARKER_ROW_SIZE
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
@@ -203,6 +208,7 @@ private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> U
             trailingMarker = {
                 TextAction(text = "Split", onClick = onSplit, modifier = Modifier.testTag("station-identity-split"))
             },
+            trailingMarkerLabel = "Split",
             modifier = Modifier.testTag("station-identity-nearest-other-row"),
         )
     }
@@ -210,7 +216,31 @@ private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> U
 
 /** [KeyValueRow]'s own layout plus a leading [AttributionMarker] (shape only, `showConfidence =
  * false` — this is not a real transmission attribution, just its shape vocabulary borrowed for
- * "how sure is this fact", the same convention [WhatThisSaysLine] already uses on `Station-Pattern`). */
+ * "how sure is this fact", the same convention [WhatThisSaysLine] already uses on `Station-Pattern`).
+ *
+ * R-611 (register, design): at font scale 2.0, the marker + [key] + [value] + [trailingMarker]
+ * squeezed into one `Row` (the shape below every caller before this existed) can leave the
+ * `KeyValueRow`'s own weighted value column narrower than its own longest word — "not computed
+ * yet" broke mid-word ("not" / "compute" / "d yet"), with `Split` floating between the halves,
+ * exactly the `LogRow`/[R-373] failure mode this package's own report on that row already named.
+ * The fix mirrors `LogRow`'s own [org.ort.app.ui.components.oneLineWidthFor] idiom rather than a
+ * guessed breakpoint: [BoxWithConstraints]'s real, current width against the real, current-scale
+ * measured width the one-line shape actually needs ([rememberTextMeasurer], the same tool
+ * `Rows.kt`'s own column-width helpers use) — below that, the row stacks instead (marker + key,
+ * then [value] alone on its own full-width line so it can wrap at real word boundaries, then
+ * [trailingMarker] beneath that), matching `KeyValueRow`'s own value/subLine `Column` shape one
+ * level further. [trailingMarkerLabel] is [trailingMarker]'s own visible text, needed only for
+ * this measurement (the composable itself is opaque) — `null` (no fit check at all, the one-line
+ * shape always fits without it) for every caller with no trailing marker.
+ *
+ * `RowsTest.kt`'s own `assertColumnsDoNotCollide` doc comment already names the limit this hits in
+ * a Robolectric test: "Robolectric's `Paint` returns degenerate glyph metrics for this codebase's
+ * `sans`/`mono` `fontFamily`s … regardless of a 2.0 font scale" — [rememberTextMeasurer] is
+ * correct against a real device's real fonts (R-205's own doc comment), but a Robolectric test
+ * cannot drive *this* decision by font scale the way it can on a device; `StationIdentityScreenTest`'s
+ * own `R_611` tests exercise the stacked/one-line branches directly via a real width constraint
+ * instead, the same reasoning that test file's own doc comment gives.
+ */
 @Composable
 private fun MarkedKeyValueRow(
     attribution: Attribution,
@@ -219,16 +249,84 @@ private fun MarkedKeyValueRow(
     modifier: Modifier = Modifier,
     subLine: String? = null,
     trailingMarker: (@Composable () -> Unit)? = null,
+    trailingMarkerLabel: String? = null,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Box(modifier = Modifier.padding(top = 6.dp)) {
-            AttributionMarker(attribution = attribution, showConfidence = false)
+    BoxWithConstraints(modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs)) {
+        val stacked = if (trailingMarker == null) {
+            // No trailing marker at all — `KeyValueRow`'s own one-line shape always has room
+            // (its value column is weighted, so it wraps within whatever space remains rather
+            // than needing this row's own fit check).
+            false
+        } else {
+            val measurer = rememberTextMeasurer()
+            val density = LocalDensity.current
+            val oneLineWidth = remember(density.density, density.fontScale, key, value, trailingMarkerLabel) {
+                with(density) {
+                    val keyWidth = maxOf(96.dp, measurer.measure(key, OrtType.control).size.width.toDp())
+                    val valueWidth = measurer.measure(value, OrtType.control).size.width.toDp()
+                    val trailingWidth = trailingMarkerLabel
+                        ?.let { measurer.measure(it, OrtType.textAction).size.width.toDp() }
+                        ?: 0.dp
+                    MARKER_ROW_SIZE + OrtSpacing.sm + keyWidth + OrtSpacing.sm + valueWidth + OrtSpacing.sm +
+                        trailingWidth
+                }
+            }
+            oneLineWidth > maxWidth
         }
-        Spacer(modifier = Modifier.width(OrtSpacing.sm))
-        KeyValueRow(key = key, value = value, subLine = subLine, trailingMarker = trailingMarker)
+        if (stacked) {
+            // The same merged-description/focus convention [KeyValueRow] itself uses (that
+            // function's own R-265 doc comment) — [trailingMarker] stays independently reachable
+            // regardless (`TextAction`'s own `clearAndSetSemantics`, Controls.kt's R-380 doc
+            // comment), the same way it already does nested inside [KeyValueRow]'s own merged Box.
+            val description = buildString {
+                append(key)
+                append(", ")
+                append(value)
+                subLine?.let {
+                    append(", ")
+                    append(it)
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusable()
+                    .semantics(mergeDescendants = true) { contentDescription = description },
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AttributionMarker(attribution = attribution, showConfidence = false)
+                    Text(
+                        text = key,
+                        style = OrtType.control,
+                        color = OrtColors.textDim,
+                        modifier = Modifier.padding(start = OrtSpacing.sm),
+                    )
+                }
+                Text(
+                    text = value,
+                    style = OrtType.control,
+                    color = OrtColors.textHigh,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                subLine?.let {
+                    Text(
+                        text = it,
+                        style = OrtType.subLine,
+                        color = OrtColors.textDim,
+                        modifier = Modifier.padding(top = 1.dp),
+                    )
+                }
+                Box(modifier = Modifier.padding(top = 2.dp)) { trailingMarker?.invoke() }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.Top) {
+                Box(modifier = Modifier.padding(top = 6.dp)) {
+                    AttributionMarker(attribution = attribution, showConfidence = false)
+                }
+                Spacer(modifier = Modifier.width(OrtSpacing.sm))
+                KeyValueRow(key = key, value = value, subLine = subLine, trailingMarker = trailingMarker)
+            }
+        }
     }
 }
 
@@ -277,6 +375,7 @@ private fun GivenByYouName(
                     modifier = Modifier.testTag("station-identity-rename"),
                 )
             },
+            trailingMarkerLabel = if (state.givenByYou.name != null) "Rename" else "Add",
         )
     }
 }
@@ -321,6 +420,7 @@ private fun GivenByYouNote(
                     modifier = Modifier.testTag("station-identity-add-note"),
                 )
             },
+            trailingMarkerLabel = if (state.givenByYou.note != null) "Edit" else "Add",
         )
     }
 }

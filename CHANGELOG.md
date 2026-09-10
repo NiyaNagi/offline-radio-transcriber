@@ -32,6 +32,66 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP8: R-611 Nearest-other row stacks at a narrow width, never a mid-word break)
+
+### (pending) — ui-conformance WP8 · R-611: Nearest-other row stacks below a real narrow width, no mid-word break
+
+**Scope:** `:app` — `ui/screens/StationIdentityScreen.kt`; test `ui/screens/StationIdentityScreenTest.kt`.
+`git merge main` first (main at `ba884d8`; fast-forward, no conflicts). Noted the coordinator's own
+finding that the theme now scales density at the board's 390dp width (round 2026-09-09, WP1) — a
+1080px capture is 2.769 px/dp, not 2.625 — though this fix's own testing does not depend on that
+ratio (see Verified).
+
+**Requirements/ACs:** R-611 (register, cf. R-373, R-570).
+
+**What changed:** Constitution Check — Principle VII (structural boundaries): the fix mirrors
+`LogRow`'s own already-established `BoxWithConstraints`-driven one-line/stacked idiom
+(`oneLineWidthFor`, R-373) rather than a guessed breakpoint, keeping this package's own row inside
+the same structural pattern WP2's shared components already use for the identical failure mode.
+
+`MarkedKeyValueRow` (`StationIdentityScreen.kt`'s own private row, used by every Heard/Voice/
+Given-by-you row) previously always laid marker+key+value+trailingMarker out in one plain `Row`,
+inherited from `KeyValueRow` directly. At font scale 2.0 the Nearest-other row's own trailing
+`Split` action left `KeyValueRow`'s weighted value column narrower than its own longest word —
+"not computed yet" broke mid-word ("not" / "compute" / "d yet"), with `Split` floating between the
+halves (the board and the 1.0 capture both render it on one line, `Split` flush right).
+`MarkedKeyValueRow` now measures the real, current-scale one-line width it would need
+(`rememberTextMeasurer`, `BoxWithConstraints`'s own real, current container width) and, only when
+a `trailingMarker` is present and that one-line shape does not fit, stacks instead: marker+key on
+one line, `value` alone on its own full-width line (so it wraps at real word boundaries instead of
+being squeezed), `subLine` beneath that, `trailingMarker` last — the same merged-description/focus
+semantics contract `KeyValueRow` itself carries, so accessibility is unchanged either way. New
+`trailingMarkerLabel: String?` parameter (the trailing marker's own visible text, needed only for
+this measurement since the composable slot itself is opaque) threaded through the three callers
+that pass a `trailingMarker` (Nearest-other's `Split`, Name's `Rename`/`Add`, Note's `Edit`/`Add`).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.Station*'
+--tests 'org.ort.app.ui.screens.Frequenc*' --tests 'org.ort.app.ui.data.Station*' --tests
+'org.ort.app.ui.navigation.NavSeedTest'` — BUILD SUCCESSFUL. Four `R_611` tests in
+`StationIdentityScreenTest.kt`: two named and run at font scale 1.0/2.0 as asked, asserting what a
+Robolectric host can actually verify — the value survives as one continuous phrase (never split
+into "not"/"compute"/"d yet" fragments) and `Split` stays reachable at both scales — and two more
+that drive the stacked/one-line *mechanism* itself deterministically via a real `@Config` device
+width (`w160dp`/`w800dp`) rather than font scale, checking the real rendered bounds
+(`useUnmergedTree = true` — `KeyValueRow`'s own one-line shape merges its whole row into one
+semantics node, the identical reason `RowsTest.assertColumnsDoNotCollide`'s own doc comment already
+gives for the same fix). At `w160dp`, `Split` renders below the value (stacked); at `w800dp`, `Split`
+renders flush right beside it, same line (one-line) — both confirmed via `boundsInRoot`.
+`.\gradlew.bat :app:ktlintCheck :app:detekt` — BUILD SUCCESSFUL. `.\gradlew.bat dependencyRules
+platformGuards` — BUILD SUCCESSFUL. `.\gradlew.bat :app:assembleDebug` — BUILD SUCCESSFUL. `python
+tools\spec-check\spec_check.py` — all 8 checks PASS. `.\gradlew.bat coverageMatrix` then
+`coverageMatrixCheck` — both BUILD SUCCESSFUL, no diff.
+
+**Left open / not done:** the exact font-scale-driven wrap point (1.0 vs 2.0, the register's own
+literal repro axis) cannot be verified in Robolectric at all — `RowsTest.kt`'s own
+`assertColumnsDoNotCollide` doc comment already documents why: "Robolectric's `Paint` returns
+degenerate glyph metrics for this codebase's `sans`/`mono` `fontFamily`s … regardless of a 2.0 font
+scale," reconfirmed directly here (`rememberTextMeasurer` reported the identical width at fontScale
+1.0 and 2.0 in this host, for every key on this screen). The fix is structurally the same idiom
+`LogRow`/R-373 already established and this package's own report treats as trustworthy on a real
+device; device confirmation of the exact wrap point at 1.0/2.0 is the same standing caveat R-373's
+own report already carries, not new to this fix.
+
 ## 2026-09-09 (ui-conformance WP4 round: R-613 Capture-Status trailing clearance above the live bar)
 
 ### (pending) — ui-conformance WP4 · R-613 `CaptureStatusScreen`'s scrollable content reserves real trailing clearance above `LiveBar`, per WP11b's own re-diagnosis
@@ -101,7 +161,6 @@ access as a builder — the register's own next validator/recapture pass owns th
 clearance is `LiveBar`'s own documented floor, not its measured real height at every possible
 state (deliberately, per the coordinator's own "do not over-engineer" instruction) — if `LiveBar`
 ever grows taller than 44dp in some future state, this clearance would need revisiting too.
-
 ---
 
 ## 2026-09-09 (ui-conformance WP1: board-width density scale)

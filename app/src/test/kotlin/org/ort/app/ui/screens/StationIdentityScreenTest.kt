@@ -1,5 +1,7 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -12,6 +14,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,6 +26,7 @@ import org.ort.app.ui.data.VoiceprintSplitOverViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /** R-073 (ui-conformance-plan WP8, FR-SPK-10, constitution III): how a station is known. */
 @RunWith(RobolectricTestRunner::class)
@@ -107,6 +111,97 @@ class StationIdentityScreenTest {
         composeTestRule.onNode(
             hasTestTag("station-identity-split").and(hasAnyAncestor(hasTestTag("station-identity-voiceprint-row"))),
         ).assertDoesNotExist()
+    }
+
+    // R-611's own repro is font-scale-driven (1.0 vs 2.0), but `RowsTest.assertColumnsDoNotCollide`'s
+    // own doc comment already names why that specific axis is not something a Robolectric test can
+    // drive here: "Robolectric's `Paint` returns degenerate glyph metrics for this codebase's
+    // `sans`/`mono` `fontFamily`s … regardless of a 2.0 font scale" (verified again directly for
+    // this row: `rememberTextMeasurer` reports the identical width at fontScale 1.0 and 2.0 in this
+    // host). `MarkedKeyValueRow`'s own doc comment records the same finding. The two tests below are
+    // still real, named for R-611 and run at both scales, checking what *is* deterministic
+    // regardless of the host's glyph metrics — the full phrase survives as one continuous node and
+    // `Split` stays reachable, at both scales. The two after them exercise the stacked/one-line
+    // *mechanism* itself deterministically, via a real width constraint `BoxWithConstraints` reads
+    // structurally (not font metrics) — proof the code this file added actually switches layouts;
+    // the exact wrap point at a real font scale needs a device, the same standing caveat R-373's own
+    // report already gives for this identical class of defect.
+
+    @Test
+    fun `R_611 at font scale 1_0 the value and Split both render, real facts intact`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 1f)) {
+                OrtTheme { StationIdentityScreen(state = fixtureState(), onBack = {}) }
+            }
+        }
+        composeTestRule.onNodeWithTag("station-identity-nearest-other-row").performScrollTo()
+
+        composeTestRule.onNodeWithText("not computed yet").assertExists()
+        composeTestRule.onNodeWithContentDescription("Split").assertExists()
+    }
+
+    @Test
+    fun `R_611 at font scale 2_0 the value survives as one phrase, never split mid-word, Split stays reachable`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme { StationIdentityScreen(state = fixtureState(), onBack = {}) }
+            }
+        }
+        composeTestRule.onNodeWithTag("station-identity-nearest-other-row").performScrollTo()
+
+        // The full phrase survives as one continuous string in the semantics tree — never split
+        // into "not" / "compute" / "d yet" fragments the way a forced mid-word hard-break would.
+        composeTestRule.onNodeWithText("not computed yet").assertExists()
+        composeTestRule.onNodeWithContentDescription("Split").assertExists()
+    }
+
+    @Test
+    @Config(qualifiers = "w160dp-h800dp-mdpi")
+    fun `R_611 the row stacks, Split beneath the value, when the real available width is too narrow`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                StationIdentityScreen(state = fixtureState(), onBack = {})
+            }
+        }
+        composeTestRule.onNodeWithTag("station-identity-nearest-other-row").performScrollTo()
+
+        // `useUnmergedTree = true` — `KeyValueRow`'s own one-line shape (the "not stacked" branch)
+        // wraps its whole row in `semantics(mergeDescendants = true)`; on the default merged tree
+        // `onNodeWithText`/`onNodeWithContentDescription` would both resolve to that one outer
+        // node instead of the individual `Text`/`Split`, reporting the *row's* own bounds for
+        // both and making this assertion meaningless — `RowsTest.assertColumnsDoNotCollide`'s own
+        // doc comment names the identical fix for the identical reason.
+        val valueBounds = composeTestRule.onNodeWithText("not computed yet", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val splitBounds = composeTestRule.onNodeWithContentDescription("Split", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+
+        assert(splitBounds.top >= valueBounds.bottom) {
+            "expected Split ($splitBounds) to sit below the value ($valueBounds), not beside it"
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h1000dp-mdpi")
+    fun `R_611 the row stays one line, Split flush right, when the real available width has room`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                StationIdentityScreen(state = fixtureState(), onBack = {})
+            }
+        }
+        composeTestRule.onNodeWithTag("station-identity-nearest-other-row").performScrollTo()
+
+        val valueBounds = composeTestRule.onNodeWithText("not computed yet", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val splitBounds = composeTestRule.onNodeWithContentDescription("Split", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+
+        assert(splitBounds.top < valueBounds.bottom && splitBounds.bottom > valueBounds.top) {
+            "expected Split ($splitBounds) to sit on the same line as the value ($valueBounds)"
+        }
+        assert(splitBounds.left >= valueBounds.right) {
+            "expected Split ($splitBounds) to sit to the right of the value ($valueBounds)"
+        }
     }
 
     @Test
