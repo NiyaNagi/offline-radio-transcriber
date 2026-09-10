@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -51,6 +52,11 @@ class SearchContentTest {
 
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
+    // Poison-hunt-2 (register, full-suite gate): only one test method below opens a real
+    // `OrtDatabase` (the R_202 seeding below) — nullable rather than `lateinit` so `closeDatabase`
+    // is a safe no-op for every other test in this class.
+    private var db: OrtDatabase? = null
+
     @Before
     fun openDatabase() {
         // `SearchWidenSuggestions.build` (called from this content composable's own `LaunchedEffect`)
@@ -59,6 +65,17 @@ class SearchContentTest {
         // process left behind, matching `SearchPollingTest`/`SearchWidenSuggestionsTest`'s own
         // `@Before` for the same reason (that file's own doc comment explains it).
         context.deleteDatabase(OrtDatabase.DATABASE_NAME)
+    }
+
+    // Poison-hunt-2 (register, full-suite gate): this class's own `OrtDatabase.create(context)`
+    // (R_202 below) was never closed — a leaked writer against `ort.db` for the rest of this
+    // Gradle test-worker JVM to contend against, the same shape `CorrectionPollingTest`'s own doc
+    // comment already established and `TransmissionDetailContentTest`/`NowContentTest`/
+    // `CaptureStatusContentTest` already fixed the same way. Closed here so this class stops being
+    // one of the never-closed instances.
+    @After
+    fun closeDatabase() {
+        db?.close()
     }
 
     @Test
@@ -166,11 +183,12 @@ class SearchContentTest {
 
     @Test
     fun `R_202 opening the filter sheet with a real, non-empty corpus shows real counts, never 0`(): Unit = runTest {
-        val db = OrtDatabase.create(context)
-        db.sessionDao().insert(session())
-        db.transmissionDao().insert(transmission("TX1", 1L))
-        db.transmissionDao().insert(transmission("TX2", 2L))
-        db.transmissionDao().insert(transmission("TX3", 3L))
+        db = OrtDatabase.create(context)
+        val seeded = checkNotNull(db)
+        seeded.sessionDao().insert(session())
+        seeded.transmissionDao().insert(transmission("TX1", 1L))
+        seeded.transmissionDao().insert(transmission("TX2", 2L))
+        seeded.transmissionDao().insert(transmission("TX3", 3L))
 
         composeTestRule.setContent {
             OrtTheme {

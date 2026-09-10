@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -35,7 +36,25 @@ class FrequencyDetailContentTest {
 
     @Before
     fun openDatabase() {
+        // Poison-hunt-2 (register, full-suite gate): `ort.db` is the same on-disk file for every
+        // test class in this Robolectric-sandboxed JVM run, not one sandboxed per class or per
+        // method (`CorrectionPollingTest`'s own doc comment) — deleting it first, the same fix
+        // `SearchContentTest`/`SearchPollingTest`/`SearchWidenSuggestionsTest` already established,
+        // starts this class from a clean, freshly-migrated file rather than whatever rows an earlier
+        // test class left behind, rather than only closing the connection afterward.
+        context.deleteDatabase(OrtDatabase.DATABASE_NAME)
         db = OrtDatabase.create(context)
+    }
+
+    // Poison-hunt-2 (register, full-suite gate): this class's own `OrtDatabase.create(context)`
+    // was never closed — a leaked writer against `ort.db` for the rest of this Gradle test-worker
+    // JVM to contend against, the same shape `CorrectionPollingTest`'s own doc comment already
+    // established and `TransmissionDetailContentTest`/`NowContentTest`/`CaptureStatusContentTest`
+    // already fixed the same way. Closed here so this class stops being one of the never-closed
+    // instances the jstack-confirmed `ThreadDetailScreenTest` wedge traced back to.
+    @After
+    fun closeDatabase() {
+        db.close()
     }
 
     private fun session() = SessionEntity(
