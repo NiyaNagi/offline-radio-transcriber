@@ -170,6 +170,18 @@ more often than my first guess.
 
 ## What I am seeing
 
-<!-- Add your observations here. A screen name and what looks wrong is enough; screenshots help. -->
+> Replace this block with your own observations before sending. A screen name and what looks
+> wrong is enough — you do not need to diagnose it. Screenshots help but are not required.
+>
+> For example:
+>
+> - Setup, the notifications step: the paragraph under the title is cut off mid-sentence.
+> - The log at my normal text size: the time column and the frequency column look too close
+>   together, and the callsign sits lower than the transcript next to it.
+> - Settings, storage: the bar reads almost full but I have recorded nothing.
+> - Tapping a station from the log takes me somewhere, but pressing back goes to the wrong place.
+>
+> If you have nothing specific yet, say so and ask for a guided pass instead: the session can walk
+> you through the screens in the order the tour captures them, so nothing is missed.
 
 ---
