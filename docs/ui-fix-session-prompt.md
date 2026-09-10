@@ -23,8 +23,8 @@ You are the audit lead for the UI conformance programme on this repository.
 
 ## Where things stand
 
-The interface was designed as 95 artboards under `design/canvas/`, built, then audited
-screen-by-screen against those artboards. The register holds 338 findings, 305 closed against a
+The interface was designed as 117 artboards under `design/canvas/` — 95 phone screens plus the
+foundations, flows and explorations — then built and audited screen-by-screen against them. The register holds 338 findings, 305 closed against a
 capture of the built screen. v0.1.1 is released, CI is green on Linux, and the full local gate
 passes at about 1,415 tests plus a separate smoke task.
 
