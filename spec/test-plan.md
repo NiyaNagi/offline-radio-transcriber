@@ -199,6 +199,99 @@ early, run it more than once, and run D8 first — the whole point of the "prove
 
 ---
 
+## 7.5 Visual conformance: the screenshot tour and capture review
+
+Constitution VIII makes this binding; this section is how it is actually done. It exists because
+the built app once drifted a long way from its own design without a single test failing, and
+because 338 differences were then found by looking at pictures rather than by reading code.
+
+### What is compared against what
+
+`design/design-intent.md` is the inventory: every screen and state, its artboard, the
+requirements it serves, and its status. `design/canvas/*.dc.html` are the artboards, authored at
+a fixed **390 × 844 dp** root — one artboard pixel is one dp. `design/design-guide.md` holds the
+tokens and the type ramp. Findings go in `results/ui-audit/register.md`, one row per finding:
+
+```
+| R-123 | <screen and state> | <artboard(s)>, <requirement ids> | <what is wrong, precisely,
+with the evidence path> <owner> | halt | spec | design | polish | process | open |
+```
+
+Severity is `halt` (crash, unreachable, wrong screen), `spec` (a requirement or a stated fact is
+wrong), `design` (layout or copy differs), `polish`, `process`. Status is `open` → `fixed` (a
+builder reported it) → `closed` (**evidence exists**). Only the audit lead edits the register;
+builders and reviewers report and the lead files, or two agents will fight over the file.
+
+### The screenshot tour
+
+`app/src/debug/.../tour/` plus `tools/ui-audit/tour.json` and `tour.ps1 -Port <p>`. The tour runs
+**in-process** on one emulator: for each step it loads a fixture scenario, seeds a destination and
+any drill-in through `NavSeed`, optionally overrides the font scale or scrolls to the end, and
+captures a PNG. 150 steps take about two and a half minutes and produce a complete, deterministic
+set — versus 30–70 minutes for one hand-driven pass over a fraction of the screens.
+
+Every step is one of: a root destination; a drill-in seeded by a `NavSeed` field; the same screen
+at font scale 2.0 (`@2x`); or the same screen scrolled to its end (`@2x-end`). **Judge `@2x` and
+`@2x-end` as a pair** — see the standing decision recorded as register row R-744.
+
+`tools/ui-audit/diff.py --before <git ref> --after results/ui-audit --manifest <manifest>` lists
+what changed since a previous run, which is what scopes each review round. Use a low threshold;
+the default hides real changes.
+
+### Parallel capture review
+
+Reviewers are cheap agents with no emulator. Each gets a slice of screen ids, a base number for
+its findings so ranges never collide, and the instruction to compare each capture against its own
+artboard and judge only what the row describes. Four reviewers close or file roughly fifty rows in
+fifteen minutes. Two failure modes to brief against, both observed:
+
+- **Stale evidence.** A capture taken before a fix was merged will show the defect. Always compare
+  the capture's commit against the fix's merge commit before calling a row unfixed.
+- **Expected clipping.** A horizontally scrolling chip row is clipped at the right edge in every
+  static capture. That is not a defect.
+
+Reviewers are also wrong sometimes, confidently. Check a surprising finding yourself before
+routing it — one "half-size text" report was two different scroll positions, and one "text
+rendering under the header" was disproved by a builder putting a coloured background behind the
+element.
+
+### The confirmation sweep
+
+Rows at `fixed` accumulate and hide real defects. Periodically, split every `fixed` row across a
+few reviewers and require one of three verdicts each: **confirmed** (defect absent in the current
+capture — the lead marks it closed), **still present** (with evidence; a new row reopens it), or
+**cannot judge** (with the precise reason — no capture of that state, interaction-only, or a
+data-layer claim with no visual). The third category is the valuable one: it is how you learn
+which screens your tour never reaches.
+
+### Device work that captures cannot replace
+
+- **Accessibility.** `adb shell uiautomator dump`, then read the node for the control: does the
+  node carrying the click action also carry a non-empty description? The merged test tree says yes
+  when the device says no.
+- **Touch targets.** Node bounds from the same dump, not a test's own measurement.
+- **Anything that needs a tap**: sheets, chooser flows, back-stack behaviour.
+- **Renderer artefacts.** Some defects appear only under the emulator's software renderer. Before
+  filing one as a product defect, check it on real hardware or an AVD with `-gpu host`.
+
+### Reproducing a real device's geometry
+
+`dp` is density-independent, so a layout authored at 390 dp is *correct* but proportionally
+smaller on a phone that reports 480 dp. To see what the operator sees, without building an AVD:
+
+```
+adb -s emulator-5554 shell wm size 1440x3168
+adb -s emulator-5554 shell wm density 480
+# … run the tour with -Out to a scratch directory …
+adb -s emulator-5554 shell wm size reset
+adb -s emulator-5554 shell wm density reset
+```
+
+Always send tour output for an experiment to a scratch directory so the canonical capture set
+under `results/ui-audit/` keeps matching the shipped build.
+
+---
+
 ## 8. CI pipeline
 
 GitHub Actions on every push and PR. Public repo, so minutes are free.

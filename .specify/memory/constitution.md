@@ -1,6 +1,28 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.0.1 → 1.1.0
+
+Bump rationale (1.1.0, MINOR): a new principle (VIII, Visual Conformance Is Evidence-Backed) and
+  materially expanded guidance in Principle II (test integrity) and in Development Workflow
+  (the gate is cross-platform). All three are distilled from the 2026-09-07/10 UI conformance
+  programme, which audited 103 screens against 95 artboards, catalogued 338 findings, and — in
+  the course of closing them — produced several defects that a passing test suite actively hid:
+  two tests asserting on a driver's error-message wording (green on Windows, red on Linux), two
+  asserting the absence of a loose row while never checking what the grouped row contained, one
+  scrolling with `performScrollTo()` that stopped the instant its target touched the viewport,
+  and a storage bar whose empty-state guard compared a locale-formatted string. None of these
+  were caught by review; all were caught by comparing a screenshot to its artboard, or by making
+  a test fail on purpose.
+
+Principles added:
+  VIII.  Visual Conformance Is Evidence-Backed
+
+Documents updated in the same change:
+  ✅ spec/test-plan.md — new §7.5 documents the mechanics (artboards, the screenshot tour,
+       parallel capture review, the finding register, the confirmation sweep).
+
+-- prior --
 Version change: 1.0.0 → 1.0.1
 
 Bump rationale (1.0.1, PATCH): the single Governance "Outstanding" item — the missing LICENSE —
@@ -16,7 +38,7 @@ Bump rationale: Initial ratification. Derived from the project's existing decisi
   and the testing approach agreed in test-plan.md. MAJOR baseline because it establishes
   binding governance where none previously existed.
 
-Principles defined:
+Principles defined (VIII added at 1.1.0):
   I.    Uncertainty Is Content (NON-NEGOTIABLE)
   II.   Test-Backed Change (NON-NEGOTIABLE)
   III.  Audio Is The Source Of Truth
@@ -110,9 +132,26 @@ guessed.
   did not happen.
 - **A session that cannot meet its exit criteria stops and says so.** Under AI-assisted
   throughput a skipped test is an unmet requirement wearing a disguise.
+- **A test MUST be shown to discriminate.** Before a fix is reported done, revert the production
+  change and watch the new test fail; restore it and watch it pass. A test that passes both ways
+  is a false "this is covered" signal, which is worse than no test because it stops anyone
+  looking again. This is not a formality: four such tests were found in one sweep.
+- **Assertions MUST NOT depend on prose, locale or a library's message text.** Assert the state
+  that survives — the rows in the table, the node that carries the action, the measured bounds —
+  never the wording of an exception, a formatted number, or user-facing copy that a designer may
+  legitimately change tomorrow. Message text differs by platform and by locale; two `:data` tests
+  passed on Windows and failed on Linux for exactly this reason, and the same pattern in
+  production would have crashed the storage screen on any comma-decimal locale.
+- **Prefer a capability probe to exception forensics.** Deciding what a system can do by parsing
+  the failure it produced when it could not is guesswork; ask it directly and cache the answer.
+- **When a test and a screenshot disagree, the screenshot wins** until the discrepancy is
+  explained. Robolectric's merged semantics tree, its text measurement and its idle detection all
+  differ from a device; a test asserting a node exists says nothing about whether a user can see
+  or reach it.
 
 **Rationale:** D18 makes implementation cheap and review expensive. Tests are the only artifact
-that makes "it works" checkable rather than asserted.
+that makes "it works" checkable rather than asserted — which is precisely why a test whose
+premise is wrong is more dangerous here than in a project with slower throughput.
 
 ### III. Audio Is The Source Of Truth
 
@@ -204,6 +243,41 @@ and it is not recoverable. You cannot un-see the eval fold.
 **Rationale:** Under D18, implementation is fast and vigilance is scarce. Structural enforcement
 is the only kind that survives a long project built by one person and an agent.
 
+### VIII. Visual Conformance Is Evidence-Backed
+
+The interface is specified by drawing. `design/design-intent.md` inventories every screen and
+state; `design/canvas/*.dc.html` is the artboard for each; `design/design-guide.md` holds the
+tokens. A screen is not "done" because it renders — it is done when a capture of the built screen
+has been compared against its own artboard and the difference is either absent or recorded.
+
+- **Every screen in the inventory MUST have an artboard, and every artboard MUST be reachable by
+  a capture.** A screen no capture can reach is not verified, however many tests it has. Where a
+  state is genuinely interaction-only, record that in the inventory with the reason, so it is a
+  known exclusion rather than an oversight.
+- **Findings live in one register** (`results/ui-audit/register.md`), one row each, with an owner
+  and a severity. A row moves to `fixed` on a builder's report but reaches **`closed` only on
+  evidence**: a capture of the built screen, or a device dump for anything about accessibility or
+  touch targets. "The builder says so" is not evidence.
+- **Rows sitting at `fixed` MUST be swept periodically** and each one confirmed or reopened
+  against the current captures. Unverified-but-assumed is the state in which real defects hide;
+  one sweep of 124 such rows found four screens still broken and twelve never captured at all.
+- **Judge a screen at the operator's text size as well as the default**, and judge the first
+  frame together with its scrolled-to-end companion. Content below the fold is not a defect if
+  scrolling reaches it; content unreachable after scrolling is.
+- **Accessibility is judged on a device, never from the test tree.** The merged semantics tree
+  routinely shows a labelled control where a real screen reader finds an unlabelled one.
+- **Artboards assume a fixed logical width** (390 dp here). Layout that is correct in `dp` can
+  still be wrong on a physically larger screen; verify against the geometry the operator's own
+  device reports, not the emulator's defaults.
+- **The design inventory records accepted deviations in the row itself**, with the register row
+  that decided it. A deviation that is not written down will be re-raised forever.
+
+**Rationale:** This product is a reading instrument for someone deciding whether to trust a
+record. A misaligned column or a clipped sentence is not cosmetic here — it is the same class of
+failure as a confident wrong callsign, arriving through the eye instead of the data layer. The
+technique above exists because 338 differences between the built app and its own design were
+found this way, and almost none of them by reading code.
+
 ## Development Workflow & Quality Gates
 
 - **Work proceeds by the build plan's waves.** Within a wave, units touch disjoint files; a unit
@@ -213,6 +287,18 @@ is the only kind that survives a long project built by one person and an agent.
 - **CI gates every push**: lint, dependency rules, spec-integrity checks, unit tests, the golden
   pipeline, and the coverage-matrix delta. Device and endurance tests are deliberately excluded;
   pretending a hosted runner can prove them would be false confidence.
+- **The gate is not green until it is green on CI.** A local run proves one operating system, one
+  filesystem, one locale and one machine size. Push often enough that CI is a short feedback loop
+  rather than an archaeology exercise: one 620-commit gap hid a locale-dependent crash, a
+  filesystem-ordering failure and a test-isolation defect simultaneously.
+- **Generated files MUST be byte-identical wherever they are generated.** Anything derived from a
+  directory walk is sorted before it is rendered, or the same facts produce a different file on
+  another machine and the delta gate fails for no reason.
+- **Machine-specific tuning is derived, not hardcoded.** Fork counts, heap sizes and parallelism
+  come from the machine the build is running on; a number tuned on a workstation will not hold on
+  a two-core runner, and discovering that at release time is expensive.
+- **Diagnose before repairing, and instrument the environment that actually fails.** Two blind
+  fixes for one CI failure cost more than the single instrumented run that produced the answer.
 - **Spec-integrity checks are part of CI**, covering ID contiguity, dangling references,
   traceability sync and question/decision agreement.
 - **Decisions are recorded where they are made**: a decision of record in functional spec §3, a
@@ -236,4 +322,4 @@ is the only kind that survives a long project built by one person and an agent.
 - **Outstanding.** None. *(Resolved 2026-09-07: the repository now carries an `Apache-2.0`
   `LICENSE`, chosen for the explicit patent grant and the Play Store path — D11, build-plan P1.)*
 
-**Version**: 1.0.1 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-07
+**Version**: 1.1.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-10
