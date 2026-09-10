@@ -94,3 +94,17 @@ configurations.matching { it.name.contains("UnitTest") }.configureEach {
             )
     }
 }
+
+// CI cross-platform diagnostic task (SqliteDiagnostics.kt, TranscriptVersioningTest,
+// WorkQueueTest): `ort.common.gradle.kts`'s shared `tasks.withType<Test>()` block does not set
+// `showStandardStreams`, so a test's `println` — including every SqliteDiagnostics report — is
+// captured only into this module's HTML/XML test report, never the CI console log, whether the
+// test passes or fails. Scoped to `:data` only (this module's own `build.gradle.kts`, not the
+// shared convention plugin) so the always-on diagnostic actually lands where the task asked for
+// it — the GitHub Actions workflow log — without changing console verbosity for every other
+// module.
+tasks.withType<Test>().configureEach {
+    testLogging {
+        showStandardStreams = true
+    }
+}

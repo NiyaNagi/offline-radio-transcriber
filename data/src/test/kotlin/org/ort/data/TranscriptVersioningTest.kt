@@ -1,6 +1,7 @@
 package org.ort.data
 
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -21,6 +22,10 @@ public class TranscriptVersioningTest {
     @Before
     public fun openDatabase() {
         db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        // CI cross-platform diagnostic task (see SqliteDiagnostics's own kdoc): always-on, printed
+        // for this exact instance so a Linux CI run's report is directly comparable to this class's
+        // own failing assertion below.
+        runBlocking { SqliteDiagnostics.report(db, "TranscriptVersioningTest.openDatabase") }
     }
 
     private fun transcript(id: String, transmissionId: String, text: String, current: Boolean, createdAt: Long) =
@@ -77,7 +82,14 @@ public class TranscriptVersioningTest {
             // classic framework SQLite driver used — confirmed empirically at this exact call site.
             threw = e.message?.contains("UNIQUE constraint failed") == true
         }
-        assertTrue("a second isCurrent=1 row for the same transmission must violate idx_transcript_one_current", threw)
+        // CI cross-platform diagnostic task: on failure, fold the same evidence
+        // SqliteDiagnostics.report already printed into the assertion message itself, so the
+        // index listing that disproves the constraint travels with the failure, not just the log.
+        val evidence = if (!threw) SqliteDiagnostics.report(db, "FAILURE: two_current_transcripts...") else ""
+        assertTrue(
+            "a second isCurrent=1 row for the same transmission must violate idx_transcript_one_current\n$evidence",
+            threw,
+        )
     }
 
     /**
