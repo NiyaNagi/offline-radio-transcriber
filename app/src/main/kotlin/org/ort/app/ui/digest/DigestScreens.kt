@@ -1,6 +1,7 @@
 package org.ort.app.ui.digest
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,20 +12,26 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.components.Badge
+import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
+import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.Tile
 import org.ort.app.ui.improve.Plurals
 import org.ort.app.ui.theme.OrtColors
@@ -41,6 +48,11 @@ public fun DigestScreen(
     onOpenItem: (DigestItemViewState) -> Unit,
     onFullLog: () -> Unit,
     modifier: Modifier = Modifier,
+    // E2-G07 (DG05): `Read the overs` → the Log filtered to the card's own over time window, via
+    // the same existing time-window filter seed `Frequency.dc.html`'s own "The N overs" stat
+    // already uses (R-276) — never a new filtering mechanism. Defaulted so every existing caller
+    // keeps compiling unchanged.
+    onReadOvers: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DrillInHeader(parentLabel = "Session", onBack = onBack)
@@ -81,6 +93,11 @@ public fun DigestScreen(
                 }
             }
 
+            // E2-G07 (DG05, FR-DIG-3, FR-DIG-6, FR-DIG-11): absent entirely — never an empty
+            // section — when `state.prose` is `null` (FR-DIG-3a: disabled, or nothing generated
+            // yet). Sits between Worth knowing and Not known tonight, per the board's own order.
+            state.prose?.let { prose -> DigestProseSection(prose = prose, onReadOvers = onReadOvers) }
+
             if (state.notKnown.isNotEmpty()) {
                 SectionHeader(label = "Not known tonight", modifier = Modifier.padding(top = OrtSpacing.md))
                 state.notKnown.forEach { item ->
@@ -119,6 +136,68 @@ public fun DigestScreen(
                     modifier = Modifier.weight(1f),
                 )
             }
+        }
+    }
+}
+
+/**
+ * `Digest-Prose.dc.html`'s "In their words" section (E2-G07, FR-DIG-3, FR-DIG-6, FR-DIG-11):
+ * badged `generated`, one italic card per [DigestProseSectionViewState.cards], each with its own
+ * `Read the overs` action, then [DigestProseSectionViewState.footnote] once beneath every card.
+ */
+@Composable
+private fun DigestProseSection(
+    prose: DigestProseSectionViewState,
+    onReadOvers: (Long, Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.padding(top = OrtSpacing.md)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            SectionHeader(label = "In their words", modifier = Modifier.weight(1f, fill = false))
+            Badge(text = "generated", kind = BadgeKind.TIER)
+        }
+        prose.cards.forEach { card ->
+            DigestProseCard(
+                card = card,
+                onReadOvers = { onReadOvers(card.fromMillis, card.toMillis) },
+                modifier = Modifier.padding(top = OrtSpacing.sm),
+            )
+        }
+        Text(
+            text = prose.footnote,
+            style = OrtType.subLine,
+            color = OrtColors.textDim,
+            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
+        )
+    }
+}
+
+@Composable
+private fun DigestProseCard(card: DigestProseCardViewState, onReadOvers: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(OrtColors.bgCard, RoundedCornerShape(10.dp))
+            .padding(13.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(text = card.subject, style = OrtType.callsignRow, color = OrtColors.textHigh)
+            Text(text = "·", style = OrtType.subLine, color = OrtColors.textFaint)
+            Text(text = card.detailLine, style = OrtType.subLine, color = OrtColors.textFaint)
+        }
+        Text(
+            text = card.text,
+            style = OrtType.bodyProse.copy(fontStyle = FontStyle.Italic),
+            color = OrtColors.textSecondary,
+            modifier = Modifier.padding(top = 7.dp),
+        )
+        Row(
+            modifier = Modifier.padding(top = OrtSpacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
+        ) {
+            Text(text = card.oversRangeLabel, style = OrtType.subLine, color = OrtColors.textFaint)
+            TextAction(text = "Read the overs", onClick = onReadOvers)
         }
     }
 }

@@ -32,6 +32,10 @@ public fun DigestContent(
     onOpenItem: (DigestItemViewState) -> Unit,
     onFullLog: () -> Unit,
     modifier: Modifier = Modifier,
+    // E2-G07 (DG05): a prose card's own `Read the overs` — the Log filtered to that card's over
+    // time window, distinct from `onFullLog`'s unfiltered destination. Defaulted so every existing
+    // caller keeps compiling unchanged.
+    onReadOvers: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
 ) {
     var state by remember(sessionId) { mutableStateOf<DigestViewState?>(null) }
     LaunchedEffect(sessionId) { state = DigestPolling.digest(context, sessionId) }
@@ -43,6 +47,7 @@ public fun DigestContent(
             onBack = onBack,
             onOpenItem = onOpenItem,
             onFullLog = onFullLog,
+            onReadOvers = onReadOvers,
             modifier = modifier,
         )
     } else {

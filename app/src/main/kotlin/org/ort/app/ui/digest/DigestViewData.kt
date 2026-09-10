@@ -78,6 +78,32 @@ public data class DigestItemViewState(
 
 public data class DigestNotKnownItemViewState(val headline: String, val subLine: String)
 
+/**
+ * E2-G07 (DG05, FR-DIG-6, FR-DIG-11): one [org.ort.pipeline.digest.ProseSummary] rendered as a
+ * card. [subject] is the thread's own station callsign when every over in it came from one
+ * station, else the generic "Thread" — this reader has no other real per-thread label to show
+ * (constitution I: never invent a headline the deterministic pass did not produce). [detailLine]
+ * is the thread's own real over count. [fromMillis]/[toMillis] are [oversRangeLabel]'s own raw
+ * values, carried alongside it so `Read the overs` can seed the Log's existing time-window filter
+ * without re-parsing display text.
+ */
+public data class DigestProseCardViewState(
+    val subject: String,
+    val detailLine: String,
+    val text: String,
+    val oversRangeLabel: String,
+    val fromMillis: Long,
+    val toMillis: Long,
+)
+
+/** E2-G07: the whole "In their words" section — `null` on [DigestViewState.prose] entirely
+ * (FR-DIG-3a) when [org.ort.pipeline.digest.ProseDigestSettings] is disabled or there is nothing
+ * generated yet, never an empty section shown anyway. */
+public data class DigestProseSectionViewState(
+    val cards: List<DigestProseCardViewState>,
+    val footnote: String,
+)
+
 public data class DigestViewState(
     val sessionId: String,
     val headline: String,
@@ -90,4 +116,8 @@ public data class DigestViewState(
     val notKnown: List<DigestNotKnownItemViewState>,
     val attributedPercentLabel: String,
     val rejectedCount: Int,
+    /** E2-G07 (DG05): `null` (every caller before this existed) is the honest, common case — the
+     * deterministic digest above is byte-for-byte the same whether this is `null` or populated
+     * (FR-DIG-3a). */
+    val prose: DigestProseSectionViewState? = null,
 )

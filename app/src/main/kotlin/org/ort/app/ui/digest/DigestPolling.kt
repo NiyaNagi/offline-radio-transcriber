@@ -25,6 +25,11 @@ import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.digest.ProseDigestReadApi
+import org.ort.pipeline.digest.ProseDigestSettings
+import org.ort.pipeline.digest.ProseSummaryStoreReadApi
+import org.ort.pipeline.digest.RoomProseSummaryStore
+import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -320,6 +325,50 @@ public object DigestPolling {
             notKnown = notKnown,
             attributedPercentLabel = "$attributedPercent%",
             rejectedCount = rejected,
+            prose = proseSection(context, db, transmissions),
+        )
+    }
+
+    /**
+     * E2-G07 (DG05, FR-DIG-3, FR-DIG-3a, FR-DIG-6, FR-DIG-11): `null` entirely — never an empty
+     * section — when [org.ort.pipeline.digest.ProseDigestSettings] is disabled or nothing has been
+     * generated yet for any of this session's own threads (FR-DIG-3a: the rest of [digest]'s
+     * return value is identical either way, since this is the only field this function touches).
+     */
+    private suspend fun proseSection(
+        context: Context,
+        db: OrtDatabase,
+        transmissions: List<TransmissionEntity>,
+    ): DigestProseSectionViewState? {
+        val settings = ProseDigestSettings(SharedPreferencesProseDigestSettingsStore(context))
+        if (!settings.enabled.value) return null
+        val threadIds = transmissions.mapNotNull { it.threadId }.distinct()
+        if (threadIds.isEmpty()) return null
+        val readApi: ProseDigestReadApi = ProseSummaryStoreReadApi(RoomProseSummaryStore(db))
+        val summaries = readApi.summariesForThreads(threadIds)
+        if (summaries.isEmpty()) return null
+
+        val byId = transmissions.associateBy { it.id }
+        val cards = summaries.map { summary ->
+            val overs = summary.sourceTransmissionIds.mapNotNull { byId[it] }
+            val fromMillis = overs.minOfOrNull { it.startedAtUtc } ?: summary.generatedAtMillis
+            val toMillis = overs.maxOfOrNull { it.startedAtUtc } ?: fromMillis
+            val participants = overs.mapNotNull { it.stationId }.distinct()
+            DigestProseCardViewState(
+                subject = participants.singleOrNull() ?: "Thread",
+                detailLine = Plurals.count(overs.size, "over"),
+                text = summary.text,
+                oversRangeLabel = "from overs ${CLOCK_FORMAT.format(Instant.ofEpochMilli(fromMillis))} – " +
+                    CLOCK_FORMAT.format(Instant.ofEpochMilli(toMillis)),
+                fromMillis = fromMillis,
+                toMillis = toMillis,
+            )
+        }
+        return DigestProseSectionViewState(
+            cards = cards,
+            footnote = "Written on this phone by the bundled language model from the resolved overs only. " +
+                "It never names a station the log did not — every callsign above was heard or inferred by " +
+                "the deterministic pass, and the summary can still be wrong. Off in Settings › Models.",
         )
     }
 

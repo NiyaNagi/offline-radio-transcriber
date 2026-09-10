@@ -12,9 +12,11 @@ import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
+import org.ort.data.entity.ProseSummaryEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
@@ -471,4 +473,106 @@ class DigestPollingTest {
 
             assert(digest.items.none { it.id == "absent-W7REG" })
         }
+
+    // -----------------------------------------------------------------------------------------
+    // E2-G07 (DG05, FR-DIG-3/6/11): the "In their words" prose section.
+    // -----------------------------------------------------------------------------------------
+
+    private fun proseSettings() = SharedPreferencesProseDigestSettingsStore(context)
+
+    @Test
+    @Requirement("E2-G07", "FR-DIG-6")
+    fun `E2_G07 a stored summary for this session's thread renders as a prose card`(): Unit = runTest {
+        proseSettings().setEnabled(true)
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        val overOneAt = 2 * 3_600_000L + 17 * 60_000L // 02:17 UTC
+        val overTwoAt = 2 * 3_600_000L + 41 * 60_000L // 02:41 UTC
+        db.transmissionDao().insert(
+            transmission("TX1", "S1", startedAtUtc = overOneAt, stationId = "WA7HJR", threadId = "T1"),
+        )
+        db.transmissionDao().insert(
+            transmission("TX2", "S1", startedAtUtc = overTwoAt, stationId = "WA7HJR", threadId = "T1"),
+        )
+        db.proseSummaryDao().upsert(
+            ProseSummaryEntity(
+                threadId = "T1",
+                text = "Reported running low power from the park.",
+                sourceTransmissionIds = listOf("TX1", "TX2"),
+                generatedAtMillis = 3_600_000L * 3,
+                modelId = "gemma3-1b-it-int4",
+            ),
+        )
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val prose = digest.prose
+        assert(prose != null) { "expected a prose section" }
+        assert(prose!!.cards.size == 1) { "got ${prose.cards.size}" }
+        val card = prose.cards.single()
+        assert(card.text == "Reported running low power from the park.")
+        assert(card.oversRangeLabel.contains("02:17")) { "got ${card.oversRangeLabel}" }
+        assert(card.oversRangeLabel.contains("02:41")) { "got ${card.oversRangeLabel}" }
+        assert(card.fromMillis == overOneAt)
+        assert(card.toMillis == overTwoAt)
+    }
+
+    @Test
+    @Requirement("E2-G07", "FR-DIG-3a")
+    fun `E2_G07 the prose section is absent entirely when disabled, the rest of the digest is unchanged`(): Unit =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+            db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = "T1"))
+            db.proseSummaryDao().upsert(
+                ProseSummaryEntity(
+                    threadId = "T1",
+                    text = "prose",
+                    sourceTransmissionIds = listOf("TX1"),
+                    generatedAtMillis = 0L,
+                    modelId = "gemma3-1b-it-int4",
+                ),
+            )
+
+            proseSettings().setEnabled(true)
+            val withProse = DigestPolling.digest(context, "S1")!!
+            proseSettings().setEnabled(false)
+            val withoutProse = DigestPolling.digest(context, "S1")!!
+
+            assert(withProse.prose != null)
+            assert(withoutProse.prose == null)
+            // FR-DIG-3a: the deterministic digest is untouched either way.
+            assert(withProse.copy(prose = null) == withoutProse)
+        }
+
+    @Test
+    @Requirement("E2-G07", "FR-DIG-3a")
+    fun `E2_G07 the prose section is absent when enabled but nothing has been generated yet`(): Unit = runTest {
+        proseSettings().setEnabled(true)
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = "T1"))
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        assert(digest.prose == null)
+    }
+
+    @Test
+    @Requirement("E2-G07")
+    fun `E2_G07 a summary belonging to a different session's thread never leaks in`(): Unit = runTest {
+        proseSettings().setEnabled(true)
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = null))
+        db.proseSummaryDao().upsert(
+            ProseSummaryEntity(
+                threadId = "T-OTHER",
+                text = "prose from an unrelated thread",
+                sourceTransmissionIds = listOf("TX-OTHER"),
+                generatedAtMillis = 0L,
+                modelId = "gemma3-1b-it-int4",
+            ),
+        )
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        assert(digest.prose == null)
+    }
 }

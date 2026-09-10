@@ -22,9 +22,11 @@ import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.ProseSummaryEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
@@ -209,5 +211,48 @@ class SessionsContentTest {
         composeTestRule.waitUntilTextExists("Export")
         composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Export"))
         composeTestRule.onNodeWithText("Export").assertExists()
+    }
+
+    @Test
+    @Requirement("E2-G07", "FR-DIG-11")
+    fun `E2_G07 Read the overs on a prose card opens the Log filtered to that card's own window`() {
+        SharedPreferencesProseDigestSettingsStore(context).setEnabled(true)
+        val overOneAt = 2 * 3_600_000L + 17 * 60_000L
+        val overTwoAt = 2 * 3_600_000L + 41 * 60_000L
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(
+                transmission("TX1", "WA7HJR").copy(threadId = "T1", startedAtUtc = overOneAt, endedAtUtc = overOneAt),
+            )
+            db.transmissionDao().insert(
+                transmission("TX2", "WA7HJR").copy(threadId = "T1", startedAtUtc = overTwoAt, endedAtUtc = overTwoAt),
+            )
+            db.proseSummaryDao().upsert(
+                ProseSummaryEntity(
+                    threadId = "T1",
+                    text = "prose",
+                    sourceTransmissionIds = listOf("TX1", "TX2"),
+                    generatedAtMillis = 0L,
+                    modelId = "gemma3-1b-it-int4",
+                ),
+            )
+        }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent {
+            OrtTheme { SessionsContent(context = context, onDrawer = {}, onOpenTransmission = {}) }
+        }
+
+        composeTestRule.waitUntilTextExists("Tonight")
+        composeTestRule.onNodeWithText("Tonight", substring = true).performClick()
+        composeTestRule.waitUntilTextExists("Digest")
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Digest"))
+        composeTestRule.onNodeWithText("Digest").performClick()
+
+        composeTestRule.waitUntilTextExists("Read the overs")
+        composeTestRule.onNodeWithText("Read the overs").performClick()
+
+        composeTestRule.waitUntilTextExists("TIME")
+        composeTestRule.onNodeWithText("TIME").assertExists()
     }
 }
