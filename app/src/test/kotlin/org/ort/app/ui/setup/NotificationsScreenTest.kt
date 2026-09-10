@@ -5,18 +5,21 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /** R-080 (ui-conformance-plan WP9) — `Setup-Notify.dc.html` (S03): `Allow` / `Skip`, skip never
  * gates capture. */
@@ -86,5 +89,45 @@ class NotificationsScreenTest {
             "You can skip this. Capture still runs, but you will not see it is running without " +
                 "opening the app, and the OS is more likely to end it.",
         ).performScrollTo().assertIsDisplayed()
+    }
+
+    /**
+     * R-612 (Reviewer round 6, `setup-verified/S03-notify@2x-end.png`): a structural regression
+     * guard, not proof the finding's own visual glitch is fixed — see this file's own CHANGELOG
+     * entry for the fuller, honest account. The screenshot looked like the scrolled body text
+     * rendering under/behind the fixed header, but a high-contrast diagnostic (a temporary bright
+     * background on the body `Text`, on-device) showed its own layout box starts cleanly *below*
+     * the header with no overlap at all — the glitch sits *inside* that already-correctly-placed
+     * box, on its own topmost scroll-revealed line, confirmed stable (not a transient frame) and
+     * reproducible via an ordinary swipe + real `screencap`, not just the tour's own capture. This
+     * test still asserts the *layout* invariant a real header/scroll overlap bug **would** break —
+     * the body paragraph's own top can never sit above the header's own bottom — so it stands as a
+     * regression guard for that class of defect even though it is not what R-612's own artifact
+     * turned out to be.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_612 the scrolled body paragraph never renders above the fixed header's own bottom`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme { NotificationsScreen(onAllow = {}, onSkip = {}) }
+            }
+        }
+
+        val scrollBy = androidx.compose.ui.semantics.SemanticsActions.ScrollBy
+        composeTestRule.onNode(hasScrollAction())
+            .performSemanticsAction(scrollBy) { it(0f, 40f) }
+
+        val headerBottom = composeTestRule.onNodeWithTag("setup-scaffold-header")
+            .fetchSemanticsNode().boundsInRoot.bottom
+        val bodyTop = composeTestRule.onNodeWithText(
+            "Capture runs as a foreground service. Android requires it to show a notification " +
+                "while it does, and that notification is how you check the state from the lock screen.",
+        ).fetchSemanticsNode().boundsInRoot.top
+
+        assert(bodyTop >= headerBottom) {
+            "expected the scrolled body paragraph's own top ($bodyTop) at or below the fixed " +
+                "header's own bottom ($headerBottom) -- never rendering above/under it"
+        }
     }
 }

@@ -32,6 +32,95 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (ui-conformance WP9: R-612 investigated — the diagnosis was wrong, reported honestly)
+
+### (pending) — ui-conformance WP9 · R-612: not a header/scroll overlap — a device-verified diagnostic found the real shape of the defect
+
+**Scope:** `:app` `ui/setup/SetupScaffold.kt`, `ui/setup/NotificationsScreen.kt` (touched only for a
+temporary on-device diagnostic, reverted), `ui/setup/NotificationsScreenTest.kt`. `git merge main`
+first (fast-forward; `main` carried Reviewer round 6, `ba884d8`, filing R-611/R-612/R-613).
+
+**Requirements/ACs:** R-612 — investigated, not closed. A structural regression test (`R_612`)
+added; the reported visual artifact itself remains open, root-caused to a different mechanism than
+either fix option in the filing.
+
+**What changed:**
+
+*Constitution Check.* I (uncertainty is content — the whole point of this entry: the coordinator's
+own filed diagnosis, and this package's own first two fix attempts built on it, are reported wrong
+rather than quietly declared fixed once the evidence said otherwise). II (test-backed — every claim
+below is backed by an on-device screenshot, a pixel sample, or a passing/failing test, not
+inference).
+
+- **The coordinator's own filed diagnosis** (`setup-verified/S03-notify@2x-end.png`): scrolled body
+  text at font scale 2.0 appears to render under the fixed header, half-occluded by the subtitle's
+  own bottom edge. Two fix attempts were built on that premise and **both confirmed to have zero
+  effect** on-device, byte-identical screenshots before/after in each case (SHA-256 compared,
+  reproduced via a real swipe + real `adb shell screencap`, not only the screenshot tour's own
+  capture path — so not a tour-specific artifact either):
+  1. Wrapping the header (back/counter, segment bars, title/subtitle) in its own `Column` with an
+     explicit opaque `bgScreen` background and `Modifier.zIndex(1f)`.
+  2. Giving the scrollable content `Column` its own `Modifier.graphicsLayer()` + `clipToBounds()`,
+     to force a distinct, cleanly-invalidated compositing layer (the standard fix for stale-frame
+     ghosting, this scaffold's own precedent per R-220).
+  Also confirmed **not transient**: identical after an extra 3s settle before capture, ruling out a
+  mid-animation/stale-frame race.
+- **The actual finding**, via a temporary high-contrast diagnostic (a bright magenta background on
+  the body `Text` itself, on-device, then reverted): the body paragraph's own layout box starts
+  exactly, cleanly *below* the header — **no overlap exists at all**. The visually distorted line
+  ("does, and that notification is") sits *inside* that correctly-positioned box, as its own
+  topmost, scroll-revealed line — the artifact is a glyph-rendering/clip-boundary issue confined to
+  one already-correctly-placed `Text`, not two composables' content colliding. Neither suggested fix
+  (opaque header background; scroll container structurally below the header — the latter was
+  already true) targets that.
+- **Kept anyway, harmless:** the header's own explicit opaque `bgScreen` background (not the
+  zIndex, not the scrollable `Column`'s graphicsLayer/clipToBounds — both reverted, since they added
+  real complexity/behaviour risk for a demonstrated zero benefit). It is what the filing asked for
+  and matches ordinary header design practice regardless of this specific defect's real cause.
+- **Test `R_612`** (`NotificationsScreenTest`): a structural regression guard — asserts the body
+  paragraph's own top never sits above the fixed header's own bottom, at a partial scroll (font
+  scale 2.0, `@GraphicsMode(NATIVE)` — Robolectric's default graphics shadow under-measures wrapped
+  multi-line `Text` height at large `fontScale`, the same limitation this package's own R-465 round
+  already found and worked around the same way). Passes, and would catch a *genuine* header/scroll
+  overlap regression — but, honestly, does **not** and cannot catch the actual on-device glyph
+  artifact this round found, since that lives in rendering/rasterization, not layout geometry
+  Robolectric's semantics tree can see.
+
+**Verified:**
+- On-device (`emulator-5556`): real swipe (`input swipe`) + real `screencap`, system `font_scale
+  2.0` (not the debug `EXTRA_FONT_SCALE` seam — a genuinely different capture path than the
+  screenshot tour uses), `uiautomator dump` confirming the subtitle's own real bounds
+  (`[55,455][1025,701]`) and the temporary magenta-marked body box sitting cleanly below it with no
+  intersection.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --rerun` — **BUILD
+  SUCCESSFUL**; `NotificationsScreenTest`: 5 tests, 0 failures, including `R_612`.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — **BUILD SUCCESSFUL**, clean.
+- `.\gradlew.bat dependencyRules platformGuards` — **BUILD SUCCESSFUL**.
+- `.\gradlew.bat -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — **BUILD SUCCESSFUL**, no diff.
+- `.\gradlew.bat :app:assembleDebug` — **BUILD SUCCESSFUL**.
+- Machine/provider: this worktree's Windows dev box, JDK 17.0.20.101-hotspot, Gradle 8.10.2,
+  Android emulator-5556, other worktree agents' background builds concurrently active.
+
+**Left open / not done:**
+- **R-612's own visual artifact is not fixed.** The real mechanism now looks like a glyph
+  rasterization/clip-boundary issue specific to a multi-line `Text`'s topmost line as it is
+  scroll-revealed at a large, non-integer device-pixel-ratio font scale (`2.769 px/dp` at this
+  round's own emulator, per the filing) — outside what a `SetupScaffold`-level `Modifier` change can
+  reach. Recommend routing to whoever owns text-rendering/Skia-level investigation for this
+  codebase, or re-filing narrower than "Setup screens" if it turns out to reproduce on any scrolled,
+  multi-line `Text` at this scale (not investigated beyond `NotificationsScreen`/S03 this round).
+- Not re-applied across every Setup step as the filing asked, since the header-opacity change that
+  *was* kept is shared via `SetupScaffold` already (applies everywhere that composable is used —
+  S02/S02b/S03/S06/S07/S09/S10/S11 — with no per-screen work needed) but does not itself close the
+  row.
+- A WIP checkpoint (`2821c61`, this same branch) exists from mid-investigation, before the
+  ineffective fixes were reverted and the honest write-up above was produced — superseded by this
+  commit, kept in history rather than rewritten, per this project's own no-rebase-of-shared-history
+  discipline.
+
+
 ## 2026-09-09 (ui-conformance WP8: R-611 Nearest-other row stacks at a narrow width, never a mid-word break)
 
 ### (pending) — ui-conformance WP8 · R-611: Nearest-other row stacks below a real narrow width, no mid-word break
@@ -160,8 +249,7 @@ on this screen must actually be reachable).
 access as a builder — the register's own next validator/recapture pass owns that); the 44dp
 clearance is `LiveBar`'s own documented floor, not its measured real height at every possible
 state (deliberately, per the coordinator's own "do not over-engineer" instruction) — if `LiveBar`
-ever grows taller than 44dp in some future state, this clearance would need revisiting too.
----
+ever grows taller than 44dp in some future state, this clearance would need revisiting too.---
 
 ## 2026-09-09 (ui-conformance WP1: board-width density scale)
 
