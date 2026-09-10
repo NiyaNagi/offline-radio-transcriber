@@ -60,6 +60,11 @@ public data class FailureHostActions(
      * nothing while F21 is even showing and takes real effect only once the session it was staged
      * behind has actually ended — never a forced mid-session activation. */
     public val onActivateStagedAsset: () -> Unit = {},
+    /** E2-G05 (F23, `Fail-Bluetooth-Audio.dc.html`): "Switch to a wired input" → S04 — WPE is
+     * adding the destination; defaulted to a no-op so both packages compile independently until
+     * it is wired. Deliberately its own callback, not [onChooseAnotherInput]: F23's own action
+     * names a specific route (wired), not "pick anything else" the way F2's generic recovery does. */
+    public val onSwitchToWiredInput: () -> Unit = {},
 )
 
 /**
@@ -344,6 +349,13 @@ private fun BoxScope.FailureBannerOverlay(
                 state = presentation.state,
                 onRetry = actions.onRetryInput,
                 onChooseAnotherInput = actions.onChooseAnotherInput,
+            )
+        }
+        is FailurePresentation.BluetoothAudioDropped -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
+            FailBluetoothAudioDroppedBanner(
+                state = presentation.state,
+                onRetryNow = actions.onRetryInput,
+                onSwitchToWiredInput = actions.onSwitchToWiredInput,
             )
         }
         is FailurePresentation.Level -> BannerOverlay(onBannerHeightChanged, viewportHeight) {

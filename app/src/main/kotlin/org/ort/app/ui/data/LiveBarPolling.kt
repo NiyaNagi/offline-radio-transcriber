@@ -126,6 +126,11 @@ public object LiveBarPolling {
         is FailurePresentation.Thermal, is FailurePresentation.Backlog, is FailurePresentation.Rig,
         is FailurePresentation.Call, is FailurePresentation.Clock, is FailurePresentation.Interrupted,
         is FailurePresentation.Reconcile, is FailurePresentation.Migration, is FailurePresentation.AssetSwap,
+        // E2-G05 (F23): its own board reads "Input lost" on the live bar — the real-signal branch
+        // in `toneAndLabel()` already produces exactly that from the live `InputStatus`/descriptor
+        // kind, so this falls through the same way F2/`Disconnect` does, never a second, competing
+        // override here.
+        is FailurePresentation.BluetoothAudioDropped,
         is FailurePresentation.Calibration, FailurePresentation.None, null,
         -> null
     }

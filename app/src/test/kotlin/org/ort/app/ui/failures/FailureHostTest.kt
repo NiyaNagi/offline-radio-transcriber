@@ -17,6 +17,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -81,6 +82,40 @@ class FailureHostTest {
             composeTestRule.onAllNodesWithTag("failure-route-screen").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("failure-route-screen").assertIsDisplayed()
+    }
+
+    @Test
+    fun `E2_G05 a Bluetooth-audio drop shows F23's banner with its real recovery actions`() {
+        CaptureState.capturing("s1")
+        val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
+        InputStatus.opened(btDevice, 16_000, "none", true, true, 0L)
+        InputStatus.lost(sinceMillis = 0L)
+        var retried = false
+        var switched = false
+
+        composeTestRule.setContent {
+            OrtTheme {
+                FailureHost(
+                    sessionId = null,
+                    actions = FailureHostActions(
+                        onRetryInput = { retried = true },
+                        onSwitchToWiredInput = { switched = true },
+                    ),
+                ) {
+                    Text("underlying destination", modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("failure-bluetooth-audio-banner").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("failure-bluetooth-audio-banner").assertIsDisplayed()
+
+        composeTestRule.onNodeWithText("Retry now", substring = true).performClick()
+        assertTrue(retried)
+        composeTestRule.onNodeWithText("Switch to a wired input", substring = true).performClick()
+        assertTrue(switched)
     }
 
     @Test

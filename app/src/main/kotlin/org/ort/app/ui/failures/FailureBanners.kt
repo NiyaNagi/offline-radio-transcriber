@@ -62,6 +62,41 @@ public fun FailDisconnectBanner(
 }
 
 // -------------------------------------------------------------------------------------------
+// F23 — Fail-Bluetooth-Audio (D34, FR-CAP-5, FR-CAP-11, FR-CAP-13).
+// -------------------------------------------------------------------------------------------
+
+@Composable
+public fun FailBluetoothAudioDroppedBanner(
+    state: BluetoothAudioDroppedViewState,
+    onRetryNow: () -> Unit,
+    onSwitchToWiredInput: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val retryClause = if (state.retryAttempt != null && state.retryTotal != null) {
+        "Retry ${state.retryAttempt} of ${state.retryTotal}" +
+            (state.nextRetrySeconds?.let { ", next in $it s." } ?: ".")
+    } else {
+        "Retrying automatically."
+    }
+    val rigClause = if (state.rigLinkStillUp) {
+        "The rig link over Bluetooth is separate and still up."
+    } else {
+        "The rig link is also down."
+    }
+    Banner(
+        title = "Bluetooth audio dropped at ${state.droppedAtLabel} — reconnecting",
+        body = "${state.deviceLabel} went out of range or was switched off. Nothing is being heard until it " +
+            "is back: this gap is recorded, not papered over. $retryClause $rigClause",
+        tone = BannerTone.DEGRADED,
+        primaryActionLabel = "Retry now",
+        onPrimaryAction = onRetryNow,
+        secondaryActionLabel = "Switch to a wired input",
+        onSecondaryAction = onSwitchToWiredInput,
+        modifier = modifier.testTag("failure-bluetooth-audio-banner"),
+    )
+}
+
+// -------------------------------------------------------------------------------------------
 // F3 — Fail-Level. No action row on the board itself.
 // -------------------------------------------------------------------------------------------
 
