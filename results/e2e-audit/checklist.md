@@ -22,7 +22,7 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 |---|---|---|---|---|---|
 | E2-A01 | D33–D36, FR-CAP-8..13, FR-RIG-13..19, FR-AST-3a/3b, FR-DIG-3b, AC-127..140, R17, R18 | Recorded in `spec/functional-spec.md`; `spec_check.py` 8/8 | build | lead | closed — `4fed9de`, spec-check OK |
 | E2-A02 | FR-CAP-13 | `SessionEntity` carries `captureMode`, `audioRouteKind`, `audioRouteLabel`, `bluetoothProfile`, `rigTransport`; migration 6→7 preserves every v6 fixture row | unit (`MigrationTest.migration_from_v6_to_v7_preserves_existing_rows_and_adds_the_capture_mode_columns`, `…every_prior_fixture_from_v1_to_v6_migrates_forward_to_v7…`) | WPC1 | closed — `50bfc07`, gate on main `2644c02` green |
-| E2-A03 | FR-DIG-11 | `prose_summary` table stores each summary with the over ids it came from; migration 7→8 | unit | WPH | open |
+| E2-A03 | FR-DIG-11 | `prose_summary(threadId, text, sourceTransmissionIds, generatedAtMillis, modelId)`; migration 7→8, every fixture walks to v8 | unit (`MigrationTest` v7→v8 + every-fixture-to-v8, `RoomProseSummaryStoreTest`) | WPH | closed — `0918009`, gate on main `9cc543d` green (rig-bluetooth lint excluded, unrelated) |
 | E2-A04 | constitution VII | `:llm-api`, `:llm-mediapipe`, `:rig-bluetooth` in `ModuleGraph`; `:capture-*` → `:llm-*` forbidden and shown to fail `dependencyRules` | build (WP0' report: `:capture-android -> :llm-api (explicitly forbidden…)` then OK; gate on main `d30cb02` green, 20 modules) | WP0' | closed |
 | E2-A05 | technical design §2 | Allowed-edges table names the three modules and the new forbidden edges | review (lead read the merged §2) | WP0' | closed |
 
@@ -30,24 +30,24 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-B01 | FR-RIG-1 | `RigModule` contract exactly as §7.6; `RigState` timestamped with `sourceConfidence` | unit (`FakeRigModuleTest`, `FakeRigTransportTest`) | WPA | fixed — `fdbe146`/`3bed6da`, gate on main pending |
-| E2-B02 | FR-RIG-2, FR-RIG-18 | Null module with `capabilities = {}` and manual frequency; always in the catalogue | unit (`NullRigModuleTest`, `RigCatalogueTest.AC_135_*`) | WPA | fixed — `3bed6da` |
-| E2-B03 | FR-RIG-4, FR-RIG-11 | Descriptor loader + validator; an invalid descriptor falls back to null with a stated error, never blocks | unit (`DescriptorValidatorTest` ×8 incl. `FR_AST_7_*`, `DescriptorLoaderTest` ×4) | WPA | fixed — `3bed6da` |
-| E2-B04 | FR-RIG-3, FR-RIG-14, D23 | TH-D75A descriptor: `FQ`/`BY`/`FO`/`AI`/`BL` per `docs/reference/th-d75a-cat.md`, both bands, `AI` push, **both transports with identical capabilities** | unit (`ThD75aDescriptorTest.AC_133_parity`, `D23 a BY change on band B…`) — **`MODE` deliberately not claimed**: `docs/reference/th-d75a-cat.md` marks the `FO` field position unverified, so the descriptor asserts FREQUENCY/SQUELCH_STATE/SUB_BAND only (Principle I). H1 verifies `FO` on the radio; then `MODE` is added and FR-RIG-3's minimum is met | WPA | fixed for what is verifiable — `3bed6da`; `MODE` waits on H1 |
-| E2-B05 | FR-RIG-14 | Generic ASCII CAT descriptor: frequency and mode, both transports | unit (`BundledDescriptors`/`RigCatalogueTest`) | WPA | fixed — `3bed6da` |
-| E2-B06 | FR-RIG-16, FR-RIG-17 | Catalogue generated from the descriptor set; adding a descriptor adds an entry with per-transport capabilities, no code change | unit (`RigCatalogueTest.AC_134_*`) | WPA | fixed — `3bed6da` |
-| E2-B07 | FR-RIG-19 | Descriptor import from a file validates through the same validator | unit (`RigCatalogueTest.FR_RIG_19_*`) | WPA | fixed — `3bed6da` |
-| E2-B08 | constitution II | `FakeRigTransport` can hang, fail to open, drop mid-stream, return garbage; `FakeRigModule` exists | unit (`FakeRigTransportTest` — hang, open failure, drop, garbage, push) | WPA | fixed — `3bed6da` |
-| E2-B09 | FR-RIG-6 | Rig state correlated to transmissions by time; a mid-transmission change recorded at start and flagged | unit (`DescriptorRigModuleTest.FR_RIG_6_*`; the session-side correlation is WPC2) | WPA / WPC2 | fixed (rig half) — `3bed6da` |
+| E2-B01 | FR-RIG-1 | `RigModule` contract exactly as §7.6; `RigState` timestamped with `sourceConfidence` | unit (`FakeRigModuleTest`, `FakeRigTransportTest`) | WPA | closed — `3bed6da`, gate on main `c546d70` green |
+| E2-B02 | FR-RIG-2, FR-RIG-18 | Null module with `capabilities = {}` and manual frequency; always in the catalogue | unit (`NullRigModuleTest`, `RigCatalogueTest.AC_135_*`) | WPA | closed — `3bed6da`, gate on main `c546d70` green |
+| E2-B03 | FR-RIG-4, FR-RIG-11 | Descriptor loader + validator; an invalid descriptor falls back to null with a stated error, never blocks | unit (`DescriptorValidatorTest` ×8 incl. `FR_AST_7_*`, `DescriptorLoaderTest` ×4) | WPA | closed — `3bed6da`, gate on main `c546d70` green |
+| E2-B04 | FR-RIG-3, FR-RIG-14, D23 | TH-D75A descriptor: `FQ`/`BY`/`FO`/`AI`/`BL` per `docs/reference/th-d75a-cat.md`, both bands, `AI` push, **both transports with identical capabilities** | unit (`ThD75aDescriptorTest.AC_133_parity`, `D23 a BY change on band B…`) — **`MODE` deliberately not claimed**: `docs/reference/th-d75a-cat.md` marks the `FO` field position unverified, so the descriptor asserts FREQUENCY/SQUELCH_STATE/SUB_BAND only (Principle I). H1 verifies `FO` on the radio; then `MODE` is added and FR-RIG-3's minimum is met | WPA | closed for what is verifiable — `3bed6da`, gate `c546d70`; `MODE` waits on H1 |
+| E2-B05 | FR-RIG-14 | Generic ASCII CAT descriptor: frequency and mode, both transports | unit (`BundledDescriptors`/`RigCatalogueTest`) | WPA | closed — `3bed6da`, gate on main `c546d70` green |
+| E2-B06 | FR-RIG-16, FR-RIG-17 | Catalogue generated from the descriptor set; adding a descriptor adds an entry with per-transport capabilities, no code change | unit (`RigCatalogueTest.AC_134_*`) | WPA | closed — `3bed6da`, gate on main `c546d70` green |
+| E2-B07 | FR-RIG-19 | Descriptor import from a file validates through the same validator | unit (`RigCatalogueTest.FR_RIG_19_*`) | WPA | closed — `3bed6da`, gate on main `c546d70` green |
+| E2-B08 | constitution II | `FakeRigTransport` can hang, fail to open, drop mid-stream, return garbage; `FakeRigModule` exists | unit (`FakeRigTransportTest` — hang, open failure, drop, garbage, push) | WPA | closed — `3bed6da`, gate on main `c546d70` green |
+| E2-B09 | FR-RIG-6 | Rig state correlated to transmissions by time; a mid-transmission change recorded at start and flagged | unit (`DescriptorRigModuleTest.FR_RIG_6_*`; the session-side correlation is WPC2) | WPA / WPC2 | closed (rig half) — `3bed6da`, gate `c546d70`; session half open on WPC2 |
 
 ## C — Transports (`:rig-usb`, `:rig-bluetooth`)
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-C01 | FR-RIG-3, FR-PLT-2, F16 | USB serial over CDC-ACM; a lost/absent USB permission is a transport state, never a crash | unit (Robolectric state machine) + hardware H1, H4 | WPB | open |
-| E2-C02 | FR-RIG-14 | Bluetooth SPP over RFCOMM; absent `BLUETOOTH_CONNECT` is a state; paired-device listing filters to SPP-capable devices | unit + hardware H2 | WPB | open |
-| E2-C03 | FR-RIG-15, FR-RIG-7 | A Bluetooth drop → reconnect with backoff, `Stale` reported, capture unaffected | unit (fake drop) + device (`rig-bt-lost`) + hardware H3 | WPB / WPC2 | open |
-| E2-C04 | constitution V | Neither transport module links an HTTP client or declares `INTERNET`; `platformGuards` green | build | WPB | open |
+| E2-C01 | FR-RIG-3, FR-PLT-2, F16 | USB serial over CDC-ACM; a lost/absent USB permission is a transport state, never a crash | unit (`UsbSerialTransportTest`: permission wait, denied twice, lost after re-attach, detach → backoff → reopen, device gone during read) + hardware H1, H4 | WPB | closed — `91dd929`+`cff81bb`, full gate on main `d38f1cd` green |
+| E2-C02 | FR-RIG-14 | Bluetooth SPP over RFCOMM; absent `BLUETOOTH_CONNECT` is a state; paired-device listing filters to SPP-capable devices | unit (`BluetoothSppTransportTest`: RFCOMM connect+read, `pairedDevices` YES/NO/UNKNOWN, missing `BLUETOOTH_CONNECT` as a state) + hardware H2 | WPB | closed — `91dd929`+`cff81bb`, full gate on main `d38f1cd` green |
+| E2-C03 | FR-RIG-15, FR-RIG-7 | A Bluetooth drop → reconnect with backoff, `Stale` reported, capture unaffected | unit (`BluetoothSppTransportTest` drop, `TransportParityTest` shared drop/detach — shown to discriminate) + device (`rig-bt-lost`) + hardware H3 | WPB / WPC2 | closed (transport half) — `91dd929`, gate `d38f1cd`; the `Stale`/capture-unaffected half is WPC2 |
+| E2-C04 | constitution V | Neither transport module links an HTTP client or declares `INTERNET`; `platformGuards` green | build (`platformGuards: OK`, 20 modules) | WPB | closed — `91dd929`+`cff81bb`, full gate on main `d38f1cd` green |
 
 ## D — Mode plumbing (`:core`, `:capture-android`, `:pipeline`)
 
@@ -108,7 +108,7 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 | E2-G05 | FR-CAP-5, F23 | F23 banner from `InputStatus.Lost` on a Bluetooth route: gap counting, retry ladder, `Retry now`, `Switch to a wired input`; live bar reads `Input lost` | unit (`FailureMapperTest` F23) + tour (`bt-audio-dropped/F23-now`, `-log`) + device V10 | WPF | open |
 | E2-G06 | FR-RIG-15, F9 | F9 names the Bluetooth transport when that is what dropped; `rig-bt-lost` → `rig-reconnected` fires the recovery toast | unit + device V10 (the `-NoRestart` recipe) | WPF | open |
 | E2-G07 | FR-DIG-3, FR-DIG-6, FR-DIG-11, DG05 | DG05 renders stored summaries badged `generated`, italic, attributed to overs, `Read the overs` → L01 filtered; absent entirely when disabled | unit + tour (`llm-enabled-prose/DG05-digest-prose`, `llm-disabled/DG01-digest`) | WPF / WPH | open |
-| E2-G08 | FR-DIG-4, D5 | No summary shown contains a callsign not present in the deterministic digest for that thread | unit (`CallsignShapeFilter` with the fake's deliberately invented callsign) | WPH | open |
+| E2-G08 | FR-DIG-4, D5 | No summary shown contains a callsign not present in the deterministic digest for that thread | unit (`CallsignShapeFilterTest.FR_DIG_4_filter_rejects_invented_callsign` — shown to discriminate; a documented false positive on `20m`-shaped tokens sacrifices recall, never precision) | WPH | closed — `5ee5bc4`, gate on main `9cc543d` green |
 
 ## H — Bundled assets (`buildSrc`, `app`, `pipeline`)
 
@@ -129,13 +129,13 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-I01 | FR-DIG-3 | `LlmEngine` contract; `FakeLlmEngine` can hang, fail to load, over-run its budget, and invent a callsign | unit (one test per failure mode) | WPH | open |
-| E2-I02 | FR-DIG-4, D5 | `CallsignShapeFilter` rejects any callsign-shaped token not in the supplied resolved set; the invented one from the fake is caught | unit (`FR_DIG_4_filter_rejects_invented_callsign`) | WPH | open |
-| E2-I03 | FR-DIG-5, AC-87 | `ProseDigestGate` runs only idle ∧ charging ∧ not capturing ∧ tier 3 ∧ enabled | unit (each conjunct falsified in turn) | WPH | open |
-| E2-I04 | FR-DIG-3b, AC-140 | Disabling releases the engine; `DigestPolling` output is unchanged with the engine disabled | unit (`AC_140`) | WPH | open |
-| E2-I05 | FR-DIG-11 | Every summary stored with its source over ids; DG05 can navigate to them | unit | WPH | open |
+| E2-I01 | FR-DIG-3 | `LlmEngine` contract; `FakeLlmEngine` can hang, fail to load, over-run its budget, and invent a callsign | unit (`FakeLlmEngineTest` ×6: hang ×2, fail to load, exceed budget, invent a callsign, release) | WPH | closed — `5ee5bc4`, gate on main `9cc543d` green |
+| E2-I02 | FR-DIG-4, D5 | `CallsignShapeFilter` rejects any callsign-shaped token not in the supplied resolved set; the invented one from the fake is caught | unit (`CallsignShapeFilterTest.FR_DIG_4_filter_rejects_invented_callsign`, discrimination proven) | WPH | closed — `5ee5bc4`, gate on main `9cc543d` green |
+| E2-I03 | FR-DIG-5, AC-87 | `ProseDigestGate` runs only idle ∧ charging ∧ not capturing ∧ tier 3 ∧ enabled | unit (`ProseDigestGateTest`: each of five conjuncts falsified alone, all-held, default `CaptureState` wiring) | WPH | fixed — `5ee5bc4`; the idle/charging *signals* have no production implementation yet (`ProseDigestDeviceSignals`) — a WorkManager/BatteryManager adapter is owed by WPE or WPF |
+| E2-I04 | FR-DIG-3b, AC-140 | Disabling releases the engine; `DigestPolling` output is unchanged with the engine disabled | unit (`AC140DeterministicDigestUnaffectedTest.AC_140_deterministic_digest_unchanged_with_engine_disabled`) | WPH | closed — `5ee5bc4`, gate on main `9cc543d` green |
+| E2-I05 | FR-DIG-11 | Every summary stored with its source over ids; DG05 can navigate to them | unit (`ProseDigestGeneratorTest`: one per thread, replace-not-accumulate, filtered-only storage) | WPH | closed (store half) — `0918009`, gate `9cc543d`; the DG05 navigation is WPF |
 | E2-I06 | D36 | `MediaPipeLlmEngine` loads the bundled `.task` and generates on a real device at T3 | hardware H11 | WPH / operator | hardware |
-| E2-I07 | FR-DIG-12 | The prompt supplies resolved entities and transcripts only — no station knowledge, no names, no location | unit (prompt builder test asserts the field list) | WPH | open |
+| E2-I07 | FR-DIG-12 | The prompt supplies resolved entities and transcripts only — no station knowledge, no names, no location | unit (`ProsePromptBuilderTest.FR_DIG_12_thread_digest_input_field_list_is_closed` — a reflection test on the input type) | WPH | closed — `5ee5bc4`, gate on main `9cc543d` green |
 
 ## J — Scenarios and tour (`app/src/debug`, `tools/ui-audit`)
 

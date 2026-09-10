@@ -219,6 +219,389 @@ transport modules directly).
 
 ---
 
+## 2026-09-10 (WPB follow-up: rig-bluetooth lint fix — MissingPermission on the real BluetoothLink adapter)
+
+### (pending) — rig transports: AndroidBluetoothLink's five BLUETOOTH_CONNECT call sites now carry an inline lint-visible guard
+
+**Scope:** `rig-bluetooth/src/main/AndroidManifest.xml`,
+`rig-bluetooth/src/main/kotlin/org/ort/rig/bluetooth/AndroidBluetoothLink.kt`,
+`rig-bluetooth/build.gradle.kts` (Robolectric + `androidx-core-ktx` test/main deps), new
+`rig-bluetooth/src/test/kotlin/org/ort/rig/bluetooth/AndroidBluetoothLinkPermissionTest.kt`.
+Merged `main` (`b588b03`, fast-forward — WPA's descriptor engine and WPC1's mode plumbing landed;
+the pre-existing `:rig` ktlint import-order issue reported in the previous entry was already
+fixed there) before starting this fix, per the coordinator's instruction.
+
+**Requirements/ACs:** FR-PLT-2 (Bluetooth equivalent — permission absence is a structural state,
+never a thrown `SecurityException`), FR-RIG-14, constitution IV, constitution V (no lint baseline
+or suppression used to get around the check).
+
+**What changed:** `./gradlew build` on `main` (`898b8b6`) got further than it did in this
+worktree and failed on `:rig-bluetooth:lintDebug`: Android Lint's `MissingPermission` check
+flagged `AndroidBluetoothLink`'s `bondedDevices`, `device.name` and `uuids` reads (lines 47, 51,
+60) because the existing `hasConnectPermission()` guard was a call to a separate, unannotated
+method — lint's flow analysis does not trace a `checkSelfPermission` guard across a function
+boundary, only within the same method body as the gated call.
+
+- **`AndroidManifest.xml`** now declares `android.permission.BLUETOOTH_CONNECT` (no
+  `maxSdkVersion` — it is the API 31+ runtime permission) and the legacy
+  `android.permission.BLUETOOTH` with `android:maxSdkVersion="30"` for install-time coverage
+  below that. Needed a `xmlns:android` namespace declaration the file didn't have before (an
+  empty `<manifest />` never needed one).
+- **`AndroidBluetoothLink.kt`**: every one of the four platform calls the permission gates
+  (`bondedDevices`, `device.name`, `uuids`, `createRfcommSocketToServiceRecord` +
+  `BluetoothSocket.connect()`) now has the exact expression
+  `Build.VERSION.SDK_INT < 31 || ContextCompat.checkSelfPermission(context,
+  Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED` inline in its own
+  method body — not routed through a shared helper, precisely because that indirection is what
+  lint could not see through. `hasConnectPermission()` (the `BluetoothLink` interface method,
+  still used by `BluetoothSppTransport`'s own gating) carries the same expression as its body.
+  `toPairedDevice()` and `sppSupport()` (private `BluetoothDevice` extensions) are annotated
+  `@RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)` for documentation; `connect()`
+  gained the same inline guard even though lint did not flag it in this run (`hasConnectPermission
+  ()`'s early-throw was apparently already recognised there), matching the coordinator's "before
+  every stack call" instruction defensively. `implementation(libs.androidx.core.ktx)` added to
+  `rig-bluetooth/build.gradle.kts` for `ContextCompat`/`@RequiresPermission`; no new
+  `libs.versions.toml` line needed (`androidx-core-ktx` already existed for `capture-android`).
+- **`AndroidBluetoothLinkPermissionTest.kt`** (new, Robolectric — `androidx-test-core` +
+  `robolectric` + JUnit4-via-vintage added to the module's test dependencies, same pattern as
+  `capture-android`): three tests pinned to API 31 asserting `pairedDevices()` returns empty,
+  `connect()` throws `BluetoothLinkException` (never `SecurityException`), and
+  `hasConnectPermission()` tracks a Robolectric shadow's granted/denied state — written and run
+  **before** touching `AndroidBluetoothLink.kt`'s body, against the pre-existing (already
+  correct) `hasConnectPermission()`-gated code, to confirm no behavioural regression before the
+  lint-driven restructuring; re-run afterward, still green. No baseline, no suppression.
+
+**Verified:**
+- `./gradlew :rig-bluetooth:testDebugUnitTest :rig-usb:testDebugUnitTest --rerun` — 17/17 tests
+  PASSED (the 3 new `AndroidBluetoothLinkPermissionTest` cases plus the 14 from the prior entry).
+- `./gradlew :rig-bluetooth:lintDebug --rerun` — green (was 3 `MissingPermission` errors at lines
+  47/51/60 before the fix).
+- `./gradlew :rig-bluetooth:detekt :rig-bluetooth:ktlintMainSourceSetCheck
+  :rig-bluetooth:ktlintTestSourceSetCheck` — green.
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 9m 28s**, full
+  repo, zero failures (the pre-existing `:rig` ktlint issue from the previous entry is gone —
+  fixed on `main` by WPA's final commit before this merge).
+- `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — all 8 `[PASS]`.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — 450 requirements, 216 covered (up from
+  202 before the `main` merge brought WPA/WPC1's own tests in), matrix up to date.
+
+**Left open / not done:** unchanged from the previous entry — hardware rows H1–H4 for the real
+adapters, and the `usb-serial-for-android` version pinned one minor below newest pending a
+`compileSdk` bump outside this package's ownership. Not merged to `main` — left on this branch.
+
+## 2026-09-10 (WPB: the two rig transports — USB serial and Bluetooth SPP)
+
+### (pending) — rig transports: UsbSerialTransport, BluetoothSppTransport, their fakes, and the transport-parity test
+
+**Scope:** `rig-usb/src/**`, `rig-bluetooth/src/**`, their `build.gradle.kts`, one added line in
+`gradle/libs.versions.toml` (`usb-serial-android`, `com.github.mik3y:usb-serial-for-android`).
+Built against `:rig`'s contract commit `fdbe146` (`RigModule`/`RigTransport`, band-scoped
+`RigState`, the behavioural fakes), merged from `worktree-agent-acd6750a612d51700` at that commit
+— that branch has since advanced to a further descriptor-engine commit (`3bed6da`) not included
+here, per the WPB brief's instruction to build against the contract commit specifically.
+
+**Requirements/ACs:** FR-RIG-3 (USB serial CDC-ACM), FR-RIG-7 (disconnect degrades to stale,
+never stops capture), FR-RIG-14 (Bluetooth SPP is a first-class transport, identical capabilities
+to USB), FR-RIG-15 (a Bluetooth drop degrades exactly like a USB drop), FR-PLT-2/F16 (USB
+permission is per-attachment, not persistent; a re-attach that loses it is a transport state,
+never a crash), AC-133 (TH-D75A yields the same `RigState` over either transport; a Bluetooth
+disconnect degrades to stale without stopping capture), constitution V/NFR-6 (no HTTP client, no
+`INTERNET` outside `:net`), constitution VII (module boundaries enforced by the build, not
+convention).
+
+**What changed:**
+
+*Constitution Check.* II bears directly — both transports ship with a behavioural fake
+(`FakeUsbSerialPort`, `FakeBluetoothLink`) that can be told to fail, hang-equivalent (a scripted
+permission denial that never resolves is exactly `hasPermission`/`hasConnectPermission` staying
+false), and drop mid-session; the FR-RIG-15 fix was shown to discriminate (see Verified). IV
+bears on the design, not the enforcement: a rig transport is not `:capture-*`, but the same
+"never throw into capture" discipline applies to it structurally (F16 — permission and detach
+conditions become `TransportState` values, never exceptions escaping into whatever calls
+`open()`/`readLine()`). VII bears on the module boundary: both modules depend on only `:core` and
+`:rig` in their main source sets (confirmed by `dependencyRules`), and neither links an HTTP
+client or declares `INTERNET` (confirmed by `platformGuards`).
+
+- **`UsbSerialTransport`** (`rig-usb/.../UsbSerialTransport.kt`) implements `RigTransport` as a
+  pure state machine (no Android import) over a new seam, **`UsbSerialLink`**
+  (`rig-usb/.../UsbSerialLink.kt`): `attachedDevices(vid, pid)`, `hasPermission`,
+  `requestPermission` (fire-and-forget; the answer arrives on `events`), `open`/`close`/`write`,
+  and a `suspend fun read(timeoutMs)` so a real implementation can park a coroutine around a
+  blocking serial read and a fake can honour the timeout against virtual test time. The state
+  machine: not-found → permission wait → open → read → detach → `Lost` → backoff → reopen
+  (FR-RIG-7), with USB-specific conditions carried as named `UsbSerialTransport.Reason` string
+  constants inside `TransportState.Lost` (`:rig`'s `TransportState` is a closed four-case sealed
+  interface this module cannot extend) plus a richer `permissionState: Flow<UsbPermissionState>`
+  (`UNKNOWN`/`GRANTED`/`DENIED`/`LOST`) for FR-PLT-2's exact distinction — a first-time denial and
+  a post-re-attach loss are told apart (`PERMISSION_DENIED` vs `PERMISSION_LOST`), never the same
+  reason. Reconnect uses **`UsbReconnectBackoff`** (1s/2s/5s/10s/30s, holding) — the same *policy*
+  as `capture-android/.../BackoffLadder`, copied rather than depended on since `:rig-usb` may not
+  depend on `:capture-android`. **`AndroidUsbSerialLink`** is the real adapter over
+  `usb-serial-for-android`'s `UsbSerialProber`/`UsbSerialPort`/`SerialInputOutputManager` and
+  `UsbManager` + a `PendingIntent` broadcast for permission; it is the only class in the module
+  that imports `android.hardware.usb.*`, is exercised only by hardware rows H1/H4, and carries no
+  test of its own in this package (see Left open).
+- **`BluetoothSppTransport`** (`rig-bluetooth/.../BluetoothSppTransport.kt`) is the same shape
+  over **`BluetoothLink`** (`rig-bluetooth/.../BluetoothLink.kt`): `pairedDevices()`,
+  `hasConnectPermission`, `connect(address)`/`close`/`write`, `suspend fun read(timeoutMs)`, and
+  an `events: Flow<BluetoothLinkEvent.Dropped>`. Missing `BLUETOOTH_CONNECT` is
+  `Lost(Reason.NO_PERMISSION)`, never a `SecurityException`; a drop is `Lost(Reason.DROPPED)` then
+  reconnect with **`BluetoothReconnectBackoff`** (the same 1s/2s/5s/10s/30s shape, copied again
+  rather than shared as a dependency). `BluetoothSppTransport.pairedDevices(link)` is a companion
+  function so the onboarding picker (WPD) can list bonded devices without a live transport
+  instance; each is marked `SppSupport.YES`/`NO`/`UNKNOWN` — `UNKNOWN` when the stack reports no
+  UUIDs at all, never guessed as `NO` (constitution I). **`AndroidBluetoothLink`** is the real
+  adapter over `BluetoothAdapter`/`BluetoothSocket` RFCOMM to SPP UUID
+  `00001101-0000-1000-8000-00805F9B34FB`, exercised only by hardware rows H2/H3.
+- **`FakeUsbSerialPort`** and **`FakeBluetoothLink`** ship in each module's main source set
+  (`org.ort.rig.usb.fakes` / `org.ort.rig.bluetooth.fakes`). Scripting: `attach`/`detach`,
+  `grantPermission`/`denyPermission` (call twice for "denied twice" without ever granting),
+  `failNextOpen`/`failNextConnect`, `scriptReply`/`scriptGarbage`-equivalent via `scriptReply`,
+  `dropDuringRead` (persistent or one-shot — "device/socket gone during read" with no prior
+  detach/drop), and `pair`/`drop` on the Bluetooth side.
+- **Transport-parity test** (`rig-bluetooth/src/test/.../TransportParityTest.kt`, testImplementation-only
+  dependency on `:rig-usb` — excluded from `dependencyRules` by design, since it checks only main
+  compile configurations): `:rig`'s `DescriptorRigModule`/TH-D75A descriptor had not landed on the
+  merged contract commit, so this exercises the `RigTransport` contract directly with a minimal
+  inline command/response parser standing in for the descriptor (functional spec §9.2's `FQ`
+  poll), asserting `UsbSerialTransport` over `FakeUsbSerialPort` and `BluetoothSppTransport` over
+  `FakeBluetoothLink` yield an identical `RigState` for the same scripted reply (AC-133), plus one
+  shared test that drives a USB detach and a Bluetooth drop side by side and asserts both degrade
+  to `Lost` and recover identically (FR-RIG-15).
+- **`usb-serial-for-android` version:** pinned to **3.10.0** in `gradle/libs.versions.toml`
+  (`usbSerialForAndroid`), not the newest tag (**3.11.0**, 2026-07-18): 3.11.0's AAR metadata
+  declares `minCompileSdk = 35` (via its `androidx.annotation:annotation:1.10.0` bump), and this
+  project's shared `ort.android-library` convention plugin pins `compileSdk = 34` — outside
+  `:rig-usb`/`:rig-bluetooth`'s ownership for this work package. 3.10.0 (2025-12-05) is the newest
+  tag confirmed to declare no compileSdk floor above 34. Separately, 3.11.0 also pulls
+  `kotlin-stdlib:2.1.20` transitively (via the same `androidx.annotation` bump) which Gradle's
+  highest-version-wins resolution raised past what this build's Kotlin 2.0.21 compiler can read —
+  the `rig-usb` dependency declaration excludes `org.jetbrains.kotlin:kotlin-stdlib` from
+  `usb-serial-android` defensively (usb-serial-for-android calls no Kotlin stdlib API; it is pure
+  Java at every release checked) in case a future bump reintroduces the same transitive pull.
+
+**Verified:**
+- `./gradlew :rig-usb:testDebugUnitTest :rig-bluetooth:testDebugUnitTest` — 14 tests, all green
+  (6 `UsbSerialTransportTest`, 6 `BluetoothSppTransportTest`, 2 `TransportParityTest`).
+- `./gradlew build dependencyRules platformGuards` — `dependencyRules` and `platformGuards` both
+  green; `:rig-usb`/`:rig-bluetooth` compile, test, detekt and ktlint clean. The overall `build`
+  fails only on a pre-existing `:rig` (not this package's ownership) test-file ktlint import-order
+  violation from the merged contract commit `fdbe146`
+  (`rig/src/test/kotlin/org/ort/rig/fakes/FakeRigTransportTest.kt:3` — `import
+  kotlinx.coroutines.flow.first` is out of lexicographic order) — see Left open.
+- `./gradlew -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks `[PASS]`.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — 450 requirements, 202 covered, matrix
+  up to date; `FR-RIG-3`, `FR-RIG-7`, `FR-RIG-14`, `FR-RIG-15`, `FR-PLT-2`, `AC-133` all newly
+  covered by name.
+- **Discrimination (FR-RIG-15):** reverted `BluetoothSppTransport`'s post-drop reconnect step to
+  a bare `return` (no backoff, no re-`Connecting`); `BluetoothSppTransportTest`'s and
+  `TransportParityTest`'s FR-RIG-15 tests both failed for the right reason (`expected: <Open> but
+  was: <Lost(reason=bluetooth-dropped)>`); restored, both green again.
+
+**Left open / not done:**
+- **Hardware rows H1–H4** (`results/e2e-audit/hardware-checklist.md`) — the real
+  `AndroidUsbSerialLink`/`AndroidBluetoothLink` adapters are unverified against actual hardware
+  and untested by this package (the emulator has no USB-serial or Bluetooth radio); they compile
+  against the real usb-serial-for-android/Android Bluetooth APIs but carry no unit test of their
+  own — only the state machines above do, against the fakes.
+- **The pre-existing `:rig` ktlint failure** (`FakeRigTransportTest.kt`'s import order) is outside
+  this package's file ownership (`rig/src/test/**` belongs to WPA) and was not fixed here; it is
+  the sole reason `./gradlew build` does not exit green end to end. A one-line fix (move `import
+  kotlinx.coroutines.flow.first` to before `import kotlinx.coroutines.test.runTest`) resolves it.
+- **`usb-serial-for-android` is pinned one minor below newest** (3.10.0, not 3.11.0) purely because
+  of the project's current `compileSdk = 34` ceiling — revisit when that moves to ≥ 35 (a WP0'
+  /build-infra decision, not this package's).
+- Not merged to `main` — left on this branch (`rig transports:` prefix) per the brief.
+## 2026-09-10 (WPH part 2: the prose_summary table, schema v8, RoomProseSummaryStore)
+
+### (pending) — llm: prose_summary as data migration 7-8, RoomProseSummaryStore over it
+
+**Scope:** `data/src/main/kotlin/org/ort/data/entity/ProseSummaryEntity.kt` (new),
+`data/src/main/kotlin/org/ort/data/dao/ProseSummaryDao.kt` (new), `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`
+(`ProseSummaryEntity` in the entity list, `proseSummaryDao()`, `SCHEMA_VERSION` 7→8,
+`MIGRATION_7_8`), `data/schemas/org.ort.data.OrtDatabase/8.json` (generated),
+`data/src/test/kotlin/org/ort/data/MigrationTest.kt` (v7→v8 test, the "every prior fixture"
+test extended to walk v1..v7 to v8), new `pipeline/src/main/kotlin/org/ort/pipeline/digest/RoomProseSummaryStore.kt`
+and its test. Merged `main` first (`2644c02`/`dbeddcf`) to pick up WPC1's v7 schema, per the
+lead's go-ahead — this is the follow-up the previous entry on this branch left open.
+
+**Requirements/ACs:** FR-DIG-3, FR-DIG-11, FR-AST-5, FR-AST-6, AC-53 (migration discipline).
+Closes checklist row E2-A03.
+
+**What changed:**
+
+*Constitution Check.* II — `MigrationTest`'s "every prior fixture" test now proves every
+previously released schema (v1 through v7, not just v7 itself) walks the *entire* chain to v8
+without losing a row, the same discipline every earlier migration in this file already carries.
+III/VII unaffected — no capture, segmentation or module-boundary change in this commit.
+
+- **`ProseSummaryEntity`** (`@Entity(tableName = "prose_summary")`): `threadId` (`@PrimaryKey`),
+  `text`, `sourceTransmissionIds: List<String>` (via `:data`'s existing `Converters` list
+  converter — the same non-null-`List<String>`-via-converter shape `StationSummaryEntity` already
+  uses), `generatedAtMillis`, `modelId`. One row per thread — an upsert (`OnConflictStrategy.REPLACE`)
+  replaces rather than accumulates, matching `ProseSummaryStore`'s own contract. Distinct from the
+  pre-existing `StationSummaryEntity`/`station_summary` (D29's per-*station*, cross-session
+  accumulation) — this table is the per-*thread*, single-session digest prose from D36/P21.
+- **`ProseSummaryDao`**: `upsert`, `getByThreadId`, `getByThreadIds`, `listAll`.
+- **`OrtDatabase`**: `SCHEMA_VERSION = 8`; `MIGRATION_7_8` creates `prose_summary` with exactly
+  the columns KSP's own generated `8.json` records (`threadId TEXT NOT NULL, text TEXT NOT NULL,
+  sourceTransmissionIds TEXT NOT NULL, generatedAtMillis INTEGER NOT NULL, modelId TEXT NOT NULL,
+  PRIMARY KEY(threadId)`) — hand-written SQL checked byte-for-byte against the generated schema
+  before committing, not assumed to match.
+- **`RoomProseSummaryStore`**: the production `ProseSummaryStore`, mapping `ProseSummary` to/from
+  `ProseSummaryEntity` over `OrtDatabase.proseSummaryDao()`. `InMemoryProseSummaryStore` is no
+  longer described as a production stand-in — its doc comment (and `ProseSummaryStore`'s own) now
+  says it is the fake/test double only; `FakeProseSummaryStore` (which wraps it for scriptable
+  failure) is unchanged.
+
+**The v8 column list, exactly** (as recorded by KSP's generated `8.json` and byte-matched by
+`MIGRATION_7_8`): `prose_summary(threadId TEXT NOT NULL PRIMARY KEY, text TEXT NOT NULL,
+sourceTransmissionIds TEXT NOT NULL, generatedAtMillis INTEGER NOT NULL, modelId TEXT NOT NULL)`.
+No other table's schema changed.
+
+**Verified:**
+- `./gradlew :data:kspDebugKotlin` generated `data/schemas/org.ort.data.OrtDatabase/8.json`;
+  its `prose_summary` `createSql` compared directly against `MIGRATION_7_8`'s hand-written SQL —
+  identical.
+- `./gradlew :data:testDebugUnitTest` — **BUILD SUCCESSFUL**, full `:data` suite green including
+  `MigrationTest`'s new `migration_from_v7_to_v8_preserves_existing_rows_and_adds_the_prose_summary_table`
+  and the extended `every_prior_fixture_from_v1_to_v7_migrates_forward_to_v8_preserving_its_session_row`
+  (loops fixture versions 1..7, each asserting its `session` row survives and `prose_summary` is
+  queryable at head).
+- `./gradlew :pipeline:testDebugUnitTest --tests org.ort.pipeline.digest.*` — **BUILD SUCCESSFUL**,
+  30 tests green, including the 4 new `RoomProseSummaryStoreTest` cases (round-trip through a real
+  in-memory `OrtDatabase`, replace-not-accumulate, `forThreads` filtering, `forThread` null case).
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 8m 39s** (1088
+  actionable tasks); `dependencyRules: OK`, `platformGuards: OK`.
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 210 covered` (204 before this commit, measured
+  on the previous commit on this branch pre-merge; the delta includes both this commit's own new
+  fixture-coverage tests and whatever `main`'s merged-in tests already named).
+  `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** E2-I06 (hardware H11, the real on-device MediaPipe load) remains for
+the operator. `ProseDigestDeviceSignals`' production Android implementation (idle/charging) is
+still for whichever package wires `ProseDigestGate` into a real schedule (WPE/WPF/a WorkManager
+job) — this session ships the gate's decision logic and the persistence it needs, not the
+scheduler that calls it. `:app`'s CF04 toggle and DG05 rendering are unbuilt (WPE/WPF's own rows).
+
+---
+
+## 2026-09-10 (WPH part 1: the LLM contract, MediaPipe engine and prose digest gate/generator)
+
+### (pending) — llm: llm-api contract, MediaPipe engine, prose digest gate/generator/store, in-memory pending :data v8
+
+**Scope:** `llm-api/src/**` (new: `LlmEngine`, `LlmState`, `LlmLoadResult`, `LlmRequest`,
+`LlmResult`, `CallsignShapeFilter`, `FakeLlmEngine`), `llm-mediapipe/src/**` (new:
+`MediaPipeLlmEngine`), new `pipeline/src/main/kotlin/org/ort/pipeline/digest/**`
+(`ProseSummary`, `ProseSummaryStore`/`InMemoryProseSummaryStore`/`FakeProseSummaryStore`,
+`ThreadDigestInput`/`TimestampedTranscript`/`ProsePromptBuilder`, `ProseDigestGenerator`,
+`ProseDigestGate`/`ProseDigestDeviceSignals`/`FakeProseDigestDeviceSignals`,
+`ProseDigestSettings`, `ProseDigestReadApi`) and their tests under `pipeline/src/test`;
+`llm-api/build.gradle.kts`, `llm-mediapipe/build.gradle.kts`, `pipeline/build.gradle.kts`
+(test-dependency additions only — `kotlinx-coroutines-test`, `turbine`, `kotlin("reflect")`, the
+Robolectric/JUnit4-vintage set already used elsewhere in the module). Build-plan P21, package WPH.
+
+**Requirements/ACs:** FR-DIG-3, FR-DIG-3a, FR-DIG-3b, FR-DIG-4, FR-DIG-5, FR-DIG-6, FR-DIG-11,
+FR-DIG-12, AC-84, AC-86, AC-87, AC-138, AC-140, R16, D5, D36. Checklist rows E2-I01..I05, E2-I07
+closed this session (unit-tested, listed under Verified); E2-I06 (hardware H11, the real
+on-device MediaPipe load) and E2-A03 (the `prose_summary` table) remain open per their own rows.
+
+**What changed:**
+
+*Constitution Check.* I — every `LlmState`/`LlmResult` is a closed, non-optional sealed type,
+and `CallsignShapeFilter` sacrifices recall (an occasional false-positive refusal, documented
+against a band abbreviation like `20m`) rather than ever letting an invented callsign through.
+II — `FakeLlmEngine` can hang (via `awaitCancellation`, cancelled explicitly in each hang test),
+fail to load, exceed its requested token budget, and deliberately invent a callsign outside the
+allowed set; one test exists per failure mode, plus `FR_DIG_4_filter_rejects_invented_callsign`
+built on the last one, and the filter's rejection was shown to discriminate (see Verified). IV —
+`:llm-api`/`:llm-mediapipe` remain off `:capture-*`'s dependency graph (unchanged from WP0';
+`dependencyRules` still forbids the edge, re-confirmed below). V — the LLM never touches the
+callsign path (D5): `CallsignShapeFilter` runs on already-generated text against an
+already-resolved callsign set, never the reverse, and nothing in this change adds a network call
+anywhere (`:llm-api` and `:llm-mediapipe` link no HTTP client; `platformGuards` green).
+
+- **`:llm-api`**: `LlmEngine` (`load`/`generate`/`release`/`state: StateFlow<LlmState>`),
+  `LlmState` (`Unloaded`/`Loading`/`Ready(residentBytesEstimate)`/`Failed(reason)`),
+  `LlmLoadResult`, `LlmRequest(prompt, maxTokens, allowedCallsigns)`, `LlmResult`
+  (`Text`/`Refused`/`Failed`). **`CallsignShapeFilter`**: `:llm-api` may depend only on `:core`
+  (`ModuleGraph.allowed`), so `:lexicon`'s real callsign grammar is unreachable from here — this
+  implements its own conservative, case-insensitive mirror of `:lexicon`'s
+  `LexiconImportValidator.CALLSIGN_SHAPE` regex (`^[A-Za-z0-9]{1,3}[0-9][A-Za-z]{1,4}$`), stated
+  in its own doc comment as a deliberate non-reuse, not an oversight. **`FakeLlmEngine`**:
+  scriptable `LoadBehavior`/`GenerateBehavior` enums covering hang, fail, exceed-token-budget,
+  invent-callsign, refuse and fail-to-generate.
+- **`:llm-mediapipe`**: `MediaPipeLlmEngine(context, modelPath, maxTokens)` over
+  `com.google.mediapipe.tasks.genai.llminference.LlmInference` — loads lazily on the first
+  `load()` call (never at construction, so a T0/T1/T2 device that never calls it never pays the
+  cost, FR-AST-3a), maps every exception to `LlmState.Failed`/`LlmResult.Failed`, estimates
+  resident bytes from the model file's size on disk (stated as an estimate, not a measurement —
+  constitution VI), and is doubly defensive on `release()` (swallows even `LlmInference.close()`
+  throwing).
+- **`pipeline/digest`**: `ProseSummaryStore` (interface) + `InMemoryProseSummaryStore` (the
+  production stand-in until `:data`'s v8 migration lands) + `FakeProseSummaryStore` (can be told
+  to fail a `store()` call). `ProsePromptBuilder` renders `ThreadDigestInput(threadId,
+  resolvedCallsigns, transcripts)` — FR-DIG-12's closed field list, enforced as a reflection test
+  over the data class's declared properties, not just a behavioural check on the rendered string.
+  `ProseDigestGenerator` produces one summary per thread, runs `CallsignShapeFilter` on every
+  generated text, and stores **only** filtered results (a refusal or engine failure is returned to
+  the caller but never reaches the store). `ProseDigestGate.evaluate` — idle ∧ charging ∧
+  `!isCapturing` (defaulting to the real `CaptureState.isCapturing`) ∧ `tier == T3` ∧ `enabled`,
+  returning every violated conjunct, not just the first. `ProseDigestSettings` — `setEnabled(false,
+  engine)` calls `engine.release()` *before* publishing the new value, so a reader of `enabled`
+  can never observe "disabled" while the engine is still resident. `ProseDigestReadApi` — a
+  read-only `threadId -> ProseSummary` projection for `:app`'s DG05.
+
+**The public API `:app` will read:** `org.ort.llm.LlmState` (via any `LlmEngine.state`),
+`org.ort.pipeline.digest.ProseDigestSettings` (`enabled: StateFlow<Boolean>`, `setEnabled`),
+`org.ort.pipeline.digest.ProseDigestReadApi` (`summaryForThread`, `summariesForThreads`) —
+constructed today as `ProseSummaryStoreReadApi(store)` over whichever `ProseSummaryStore` is
+wired in (`InMemoryProseSummaryStore` until the `:data` migration lands).
+
+**Verified:**
+- `./gradlew :llm-api:test` — **BUILD SUCCESSFUL**, 12 tests green (`FakeLlmEngineTest` ×6,
+  `CallsignShapeFilterTest` ×6, including `FR_DIG_4_filter_rejects_invented_callsign`).
+- `./gradlew :llm-mediapipe:testDebugUnitTest` — **BUILD SUCCESSFUL**, 4 tests green
+  (`E2_I06 missing model path yields Failed state without throwing` plus release/generate/
+  construction guards), on Robolectric.
+- `./gradlew :pipeline:testDebugUnitTest` — **BUILD SUCCESSFUL**, full existing pipeline suite
+  plus 26 new tests in `org.ort.pipeline.digest.*` green, including
+  `AC_140_deterministic_digest_unchanged_with_engine_disabled`,
+  `FR_DIG_12_thread_digest_input_field_list_is_closed`, and every `ProseDigestGate` conjunct
+  falsified individually (`FR_DIG_5_blocked_when_not_idle`/`_not_charging`/`_capturing`,
+  `AC_138_blocked_when_tier_is_below_t3`, `FR_DIG_3b_blocked_when_disabled`).
+- **Discrimination proof (constitution II):** temporarily forced `CallsignShapeFilter.filter`'s
+  offending-token match to `&& false` (never rejecting) and re-ran
+  `:llm-api:test --tests org.ort.llm.CallsignShapeFilterTest` — **3 tests FAILED**,
+  `FR_DIG_4_filter_rejects_invented_callsign` among them, each with the exact
+  `expected: <true> but was: <false>` the disabled rejection predicts. Reverted the `&& false`;
+  the same command then reported all 6 green again.
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 8m 40s** (1088
+  actionable tasks); `dependencyRules: OK` (still forbids every `:capture-* -> :llm-*` edge —
+  unchanged from WP0', re-confirmed by this run rather than re-proved, since this session added
+  no new edge to check) and `platformGuards: OK`.
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 204 covered` (was 196 before this change — 8
+  newly covered: FR-DIG-4, FR-DIG-5, FR-DIG-11, FR-DIG-12, AC-87, AC-138, AC-140, plus one more
+  picked up incidentally). `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** **E2-A03 / the `:data` v8 migration** — `ProseSummaryStore` is
+in-memory only in this commit; the lead confirmed WPC1's v7 schema has since merged to `main`
+(commit `2644c02`), so the `prose_summary` table as migration 7→8, a Room-backed
+`ProseSummaryStore`, and the `MigrationTest` extension to v8 land in the next commit on this
+branch, after merging `main`. **E2-I06 / hardware H11** — the real on-device MediaPipe load
+(a real `.task` file, real generation, measured resident memory against the T3 budget) is the
+operator's hardware protocol; nothing in this session's tests exercises the real native runtime,
+only `MediaPipeLlmEngine`'s guards ahead of it. `ProseDigestGate`'s `ProseDigestDeviceSignals`
+(idle/charging) has no production Android implementation yet — wiring a real one is for whichever
+package owns the settings/status screens (WPE/WPF) that will call `ProseDigestGate.evaluate`.
+
+---
+
 ## 2026-09-10 (WP0': Wave F module scaffolding — llm-api, llm-mediapipe, rig-bluetooth)
 
 ### (pending) — wave F scaffolding · three new modules wired empty for P19/P20's parallel builders
@@ -26880,5 +27263,6 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 

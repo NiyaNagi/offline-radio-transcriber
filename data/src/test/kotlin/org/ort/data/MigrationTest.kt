@@ -486,16 +486,64 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v6 — walks forward through
-     * the *entire* migration chain to v7 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns are unchanged from v1 to v6, so the same
-     * insert works unmodified against every fixture version; what varies is only which version
-     * [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach head.
+     * FR-DIG-3, FR-DIG-11 / T3: v7 -> v8 adds the `prose_summary` table for
+     * [org.ort.data.entity.ProseSummaryEntity]. Proves both halves of FR-AST-5/6: a pre-existing
+     * `session` row survives untouched, and the new table's write/read path
+     * ([OrtDatabase.proseSummaryDao]) is immediately usable afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-DIG-3", "FR-DIG-11")
+    public fun migration_from_v7_to_v8_preserves_existing_rows_and_adds_the_prose_summary_table() {
+        val dbName = "migration-test-db-v8-prose-summary"
+        val v7 = helper.createDatabase(dbName, 7)
+        v7.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, captureMode, " +
+                "audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 7, 0, 0, NULL, NULL, NULL, NULL, NULL)",
+        )
+        v7.close()
+
+        helper.runMigrationsAndValidate(dbName, 8, true, OrtDatabase.MIGRATION_7_8)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val migrated = runBlocking { db.sessionDao().getById("S1") }
+            assertEquals("test", migrated!!.appVersion) // pre-existing row survives
+
+            runBlocking {
+                db.proseSummaryDao().upsert(
+                    org.ort.data.entity.ProseSummaryEntity(
+                        threadId = "TH1",
+                        text = "Exchanged signal reports.",
+                        sourceTransmissionIds = listOf("TX1", "TX2"),
+                        generatedAtMillis = 1_000L,
+                        modelId = "gemma3-1b-it-int4",
+                    ),
+                )
+            }
+            val summary = runBlocking { db.proseSummaryDao().getByThreadId("TH1") }
+            assertEquals("Exchanged signal reports.", summary?.text) // new table usable post-migration
+            assertEquals(listOf("TX1", "TX2"), summary?.sourceTransmissionIds)
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v7 — walks forward through
+     * the *entire* migration chain to v8 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v7,
+     * so the same insert works unmodified against every fixture version; what varies is only which
+     * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
+     * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v6_migrates_forward_to_v7_preserving_its_session_row() {
-        for (fixtureVersion in 1..6) {
+    public fun every_prior_fixture_from_v1_to_v7_migrates_forward_to_v8_preserving_its_session_row() {
+        for (fixtureVersion in 1..7) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -515,14 +563,22 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v7",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v8",
                     "test",
                     migrated!!.appVersion,
                 )
                 assertEquals(
-                    "fixture v$fixtureVersion: the new v7 column must default to NULL, never a fabricated value",
+                    "fixture v$fixtureVersion: the v7 column must default to NULL, never a fabricated value",
                     null,
                     migrated.captureMode,
+                )
+                // The v8 table exists and is queryable from every fixture version, empty rather
+                // than absent — a missing table would throw here, not read as null.
+                val noSummaryYet = runBlocking { db.proseSummaryDao().getByThreadId("no-such-thread") }
+                assertEquals(
+                    "fixture v$fixtureVersion: prose_summary must exist and be queryable after the full chain",
+                    null,
+                    noSummaryYet,
                 )
             } finally {
                 db.close()
