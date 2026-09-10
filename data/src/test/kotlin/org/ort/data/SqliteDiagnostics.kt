@@ -1,18 +1,22 @@
 package org.ort.data
 
 import androidx.room.useReaderConnection
+import androidx.room.useWriterConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 
 /**
  * Evidence-gathering only (CI cross-platform diagnostic task; see `data/build.gradle.kts`'s own
- * comment and CHANGELOG.md for the two rounds this backs). `TranscriptVersioningTest` and
- * `WorkQueueTest` each pass on Windows and fail on Linux CI (runs 34439250807, 34440826468)
- * asserting a duplicate write violates a partial unique index (`idx_transcript_one_current`,
- * `idx_wq_active`) — on Linux the insert silently succeeds instead. A prior round's
- * dependency-substitution fix in `data/build.gradle.kts` did not resolve it: the very next CI run
- * failed identically. This file changes no production behaviour and weakens no assertion — it only
- * reports, for the *exact* [OrtDatabase] instance each failing test's own `@Before` builds
- * (see [TranscriptVersioningTest.openDatabase] and [WorkQueueTest.openDatabase]):
+ * comment and CHANGELOG.md for the rounds this backs). `TranscriptVersioningTest` and
+ * `WorkQueueTest` each pass on Windows and fail on Linux CI (runs 34439250807, 34440826468,
+ * 34442248761) asserting a duplicate write violates a partial unique index
+ * (`idx_transcript_one_current`, `idx_wq_active`) — on Linux the insert silently succeeds
+ * instead. Two prior rounds' fixes (a dependency-substitution in `data/build.gradle.kts`, then a
+ * first instrumentation pass) did not resolve it and did not explain it either: run 34442248761
+ * showed identical `sqlite_version()`, an identical index listing with the right `WHERE` clause,
+ * and exactly one driver jar on the classpath — every theory the first round could form was
+ * eliminated by its own evidence. This file changes no production behaviour and weakens no
+ * assertion — it only reports, for the *exact* [OrtDatabase] instance each failing test's own
+ * `@Before` builds (see [TranscriptVersioningTest.openDatabase] and [WorkQueueTest.openDatabase]):
  *
  * - `SELECT sqlite_version()` — which SQLite build actually answered the connection;
  * - the full `sqlite_master` index listing — whether `idx_transcript_one_current` and
@@ -25,6 +29,17 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
  *   `:data:dependencies` check in this task's report can't see) would show up here even though it
  *   didn't show up in a local, already-warm dependency resolution;
  * - `os.name`/`os.arch`, so a report can be matched to the runner that produced it.
+ *
+ * This round adds two more probes, both aimed at the one question the prior evidence left open —
+ * "the index is there and matches, so what is actually *in* the table after the second write?":
+ *
+ * - [dumpRows] — the real row content, including `typeof(...)` on the column the partial index
+ *   predicates on, so a binding/affinity difference (`isCurrent` stored as `'1'` text rather than
+ *   integer `1`, say) would show up directly instead of being inferred;
+ * - [rawDuplicateInsertProbe] — runs the identical duplicate `INSERT` as raw SQL straight through
+ *   the driver, bypassing the Room-generated DAO adapter entirely, inside its own
+ *   `SAVEPOINT`/`ROLLBACK TO` so it never leaves a lasting change behind regardless of outcome —
+ *   to tell a Room-layer behaviour difference from a SQLite-layer one.
  */
 internal object SqliteDiagnostics {
 
@@ -115,5 +130,98 @@ internal object SqliteDiagnostics {
             rows.forEach { appendLine("  - ${it.name} -> ${it.sql}") }
             appendLine("=== END SQLITE DIAGNOSTICS ($label) ===")
         }
+    }
+
+    /**
+     * The decisive question this round adds: after the write that was supposed to be rejected,
+     * what is actually in [table] for [transmissionId]? Runs [selectSql] (already scoped to
+     * [transmissionId] by its caller — see the two call sites in [TranscriptVersioningTest] and
+     * [WorkQueueTest] for the exact `SELECT ... , typeof(...)` text) against the *exact* [db]
+     * instance the failing assertion just used, with [transmissionId] bound positionally as the
+     * query's one `?` parameter, and prints every returned row rendered under [columnLabels] (one
+     * label per selected column, in order) plus the row count — the row count alone already
+     * distinguishes "two rows, index not enforcing" from "one row, this was a replace/update not
+     * a second insert".
+     */
+    suspend fun dumpRows(
+        db: OrtDatabase,
+        label: String,
+        table: String,
+        selectSql: String,
+        transmissionId: String,
+        columnLabels: List<String>,
+    ): String {
+        val rowsResult = runCatching {
+            db.useReaderConnection { connection ->
+                connection.usePrepared(selectSql) { statement ->
+                    statement.bindText(1, transmissionId)
+                    val rows = mutableListOf<List<String?>>()
+                    while (statement.step()) {
+                        rows += columnLabels.indices.map { i ->
+                            if (statement.isNull(i)) null else statement.getText(i)
+                        }
+                    }
+                    rows
+                }
+            }
+        }
+        return buildString {
+            appendLine("=== ROW DUMP ($label): $table WHERE transmissionId = '$transmissionId' ===")
+            rowsResult.fold(
+                onSuccess = { rows ->
+                    appendLine("row count = ${rows.size}")
+                    rows.forEachIndexed { index, row ->
+                        val rendered = columnLabels.zip(row).joinToString(", ") { (col, value) -> "$col=$value" }
+                        appendLine("  row[$index]: $rendered")
+                    }
+                },
+                onFailure = { e -> appendLine("row dump THREW: ${e::class.qualifiedName}: ${e.message}") },
+            )
+            appendLine("=== END ROW DUMP ($label) ===")
+        }
+    }
+
+    /**
+     * Runs [insertSql] — the identical duplicate insert a failing test's DAO call above it already
+     * attempted, restated as raw SQL with literal values so it goes straight through
+     * [BundledSQLiteDriver], never through Room's generated DAO adapter — and reports whether the
+     * driver itself throws a constraint violation. Wrapped in its own named `SAVEPOINT`, always
+     * `ROLLBACK TO`'d afterward (success or failure alike), so this probe never leaves a row behind
+     * for a later assertion in the same test to trip over.
+     *
+     * Distinguishes the two remaining explanations directly: if this throws but the DAO-level
+     * insert above it did not, the difference is in Room's generated insert (conflict strategy,
+     * bound value, or code path); if this *also* fails to throw, the constraint genuinely is not
+     * enforced at the SQLite/driver layer on this platform, independent of Room entirely.
+     */
+    suspend fun rawDuplicateInsertProbe(db: OrtDatabase, label: String, insertSql: String): String {
+        val outcome = runCatching {
+            db.useWriterConnection { connection ->
+                connection.usePrepared("SAVEPOINT sqlite_diag_probe") { it.step() }
+                val insertOutcome = runCatching { connection.usePrepared(insertSql) { it.step() } }
+                connection.usePrepared("ROLLBACK TO sqlite_diag_probe") { it.step() }
+                connection.usePrepared("RELEASE sqlite_diag_probe") { it.step() }
+                insertOutcome
+            }
+        }
+        val verdict = outcome.fold(
+            onSuccess = { insertOutcome ->
+                insertOutcome.fold(
+                    onSuccess = {
+                        "SUCCEEDED with no exception -- the raw SQLite/driver layer did not reject the " +
+                            "duplicate either (rolled back afterward; no lasting change)"
+                    },
+                    onFailure = { e ->
+                        "THREW ${e::class.qualifiedName}: ${e.message} (rolled back afterward regardless)"
+                    },
+                )
+            },
+            onFailure = { e ->
+                "PROBE HARNESS ITSELF THREW (not the insert): ${e::class.qualifiedName}: ${e.message}"
+            },
+        )
+        return "=== RAW SQL DUPLICATE INSERT PROBE ($label) ===\n" +
+            "$verdict\n" +
+            "=== END RAW SQL DUPLICATE INSERT PROBE ($label) ===\n"
     }
 }

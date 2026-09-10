@@ -34,6 +34,114 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-10 (data-diag: evidence for the Linux partial-unique-index failure — not another blind fix)
 
+### (pending) — data-probe: row-content dump and a raw-SQL bypass probe, since every prior theory was eliminated
+
+**Scope:** `data/**` only — `data/src/test/kotlin/org/ort/data/SqliteDiagnostics.kt` (two new
+functions) and `data/src/test/kotlin/org/ort/data/{TranscriptVersioningTest.kt,WorkQueueTest.kt}`
+(their one already-instrumented failing test each). Also `results/coverage-matrix.md`
+(regenerated; see below — no diff).
+
+**Requirements/ACs:** AC-31, FR-RUN-2, AC-45, register R-204. No new requirement coverage — still
+diagnostics for an existing failure, not new behaviour — `coverageMatrix` confirmed no diff.
+
+**Constitution Check:** Principle II ("a session that cannot meet its exit criteria stops and
+says so; a skipped test is an unmet requirement wearing a disguise") — neither failing test is
+weakened, skipped, or `@Ignore`d; this round adds evidence, not a third blind repair. Principle
+VI ("no number without its fold, machine and provider") — every line below is labelled Windows,
+this machine, this worktree; nothing here is asserted to hold on Linux CI until that run reports
+it.
+
+**What changed:** the prior round's diagnostics (commit 6805334, CI run 34442248761) eliminated
+every theory so far — identical `sqlite_version()`, an identical index listing with the right
+`WHERE` clause, exactly one driver jar — while the duplicate insert still silently succeeds on
+Linux. This round adds the one decisive question that evidence left open: after the second
+(third, for the queue) insert that was supposed to fail, what is actually in the table?
+
+1. **`SqliteDiagnostics.dumpRows(...)`** (new): runs a caller-supplied `SELECT ... , typeof(...)`
+   against the *exact* `OrtDatabase` instance the failing assertion just used, bound to the
+   transmission id under test, and prints every row plus the row count. Wired into both failing
+   tests' existing failure-path `evidence` string: `TranscriptVersioningTest` dumps
+   `SELECT rowid, transmissionId, isCurrent, typeof(isCurrent) FROM transcript WHERE
+   transmissionId = ?`; `WorkQueueTest` dumps `SELECT rowid, transmissionId, pass, state,
+   typeof(state) FROM work_queue_item WHERE transmissionId = ?`. Row count alone distinguishes
+   "two rows, index not enforcing" from "one row, the second write replaced rather than
+   inserted"; `typeof(...)` catches a binding/affinity difference (e.g. `isCurrent` stored as
+   `'1'` text rather than integer `1`) the row's own displayed value would hide.
+2. **`SqliteDiagnostics.rawDuplicateInsertProbe(...)`** (new): restates the identical duplicate
+   insert as raw SQL with literal values, run straight through `BundledSQLiteDriver` via
+   `useWriterConnection`/`usePrepared`, entirely bypassing Room's generated DAO adapter — inside
+   its own named `SAVEPOINT`, always `ROLLBACK TO`'d afterward regardless of outcome, so it never
+   leaves a row behind for the test's own assertions. Wired into both failing tests
+   unconditionally (not gated on failure), so it prints on every run on every platform — a direct
+   Room-layer-vs-SQLite-layer split: if the raw insert throws where the DAO one did not, the
+   difference is in Room's generated insert path; if it *also* silently succeeds, the constraint
+   is not enforced at the SQLite/driver layer on that platform, independent of Room.
+3. **`results/coverage-matrix.md`**: regenerated with `coverageMatrix`; no diff against the
+   committed file (see Verified). Investigated the CI mismatch anyway (see Left open) since the
+   task asked for a reading even where the local file looks fine.
+
+**Verified** (Windows, this worktree, `worktree-data-probe` on `0a9d63a`):
+
+- `.\gradlew.bat :data:testDebugUnitTest` (scoped, then full) — `BUILD SUCCESSFUL`; both
+  previously-flagged tests still pass on Windows. The new raw-SQL probe printed on every run of
+  both: `TranscriptVersioningTest` — `THREW android.database.SQLException: Error code: 19,
+  message: UNIQUE constraint failed: transcript.transmissionId (rolled back afterward
+  regardless)`; `WorkQueueTest` — `THREW android.database.SQLException: Error code: 19, message:
+  UNIQUE constraint failed: work_queue_item.transmissionId, work_queue_item.pass (rolled back
+  afterward regardless)`. On Windows, both the Room DAO path and the raw-SQL bypass path reject
+  the duplicate identically — this platform's own driver enforces the constraint at both layers,
+  so the row dump never executes here (it is wired to the `!threw` failure branch, which Windows
+  never takes); Linux CI's next run is what will actually exercise it.
+- `.\gradlew.bat :data:ktlintCheck :data:detekt` — `BUILD SUCCESSFUL` (three `MaxLineLength`
+  findings in the new `SqliteDiagnostics.kt` code fixed before this was green).
+- `.\gradlew.bat dependencyRules platformGuards` — `BUILD SUCCESSFUL`; 17 modules checked, no
+  forbidden edge, no stray HTTP client or INTERNET permission outside `:net`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL` (163 tasks, 7s incremental).
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (two separate
+  invocations) — both `BUILD SUCCESSFUL`; `coverageMatrix: 419 requirements, 192 covered`;
+  `coverageMatrixCheck: up to date (192 covered of 419)`; `git status --short
+  results/coverage-matrix.md` empty both before and after — the committed file already matches
+  what this machine generates.
+- `python -m pytest tools/tests tools/spec-check -q` — `17 passed`.
+
+**Reading of the coverage-matrix CI failure (this is a hypothesis from reading the generator's
+own code, not something reproduced on Linux — labelled as such):** `CoverageMatrix.testsByRequirement`
+builds each requirement's test list by `File.walkTopDown()` over the test source roots and
+appending in traversal order (`map.getOrPut(id) { mutableListOf() }.add(...)`) — it is never
+sorted, only de-duplicated. Directory-entry enumeration order is a filesystem property, not
+something Java/Kotlin guarantees, and NTFS (this machine) and Linux CI's filesystem are not
+guaranteed to enumerate the same directory's entries in the same order. Spot-checked the
+committed file directly: `results/coverage-matrix.md`'s `AC-31` row lists its tests as
+`TranscriptSeriesTest, TranscriptVersioningTest, RealCaptureServiceTest, ..., CaptureProcessingLoopTest`
+— not alphabetical, i.e. genuinely traversal-order-dependent, not incidentally sorted. `coverageMatrixCheck`'s
+own `contentMatches` only normalises line endings and a trailing newline (`CoverageMatrix.contentMatches`
+/ `normaliseLineEndings`) — it does **not** normalise list order — so a Linux runner producing the
+same coverage facts in a different per-requirement test order would render byte-different markdown
+and legitimately fail the gate, even though the committed file is not stale in the sense the task
+(F-014) cares about: no test gained or lost coverage. This is itself the cross-platform smell the
+brief asked to name — `CoverageMatrix.kt` is `buildSrc/**`, outside this round's `data/**` +
+`results/coverage-matrix.md` ownership, so no fix is applied here; flagging it for whoever owns
+`buildSrc/**` next (a `.sortedBy { it }` on each requirement's test list before rendering would
+make the output traversal-order-independent).
+
+**Left open / not done:**
+
+- The row dump (`dumpRows`) is wired and compiles but **never actually executed on Windows**,
+  because Windows never takes the `!threw` failure branch it lives on — its first real output is
+  whatever the next Linux CI run produces. That is the point of this round (per the task: "the
+  one decisive question left"), not a gap, but it means this entry cannot report what the dump
+  prints — only that it is in place and will print row count, every column, and `typeof(...)` the
+  moment CI fails again.
+- The raw-SQL probe threw correctly on Windows in both tests, meaning Windows offers no evidence
+  either way about which of the three Linux hypotheses (index not enforcing / replace-not-insert /
+  binding-affinity difference) is correct — only Linux CI's own run of the same probe, now wired
+  in, can distinguish a Room-layer difference from a SQLite-layer one there.
+- No fix applied to production code or to `buildSrc/**` — per the task's own instruction, a blind
+  fix without seeing what Linux CI's dump actually prints was explicitly out of scope; the
+  coverage-matrix ordering issue above is reported, not fixed, for the same reason (also outside
+  this round's file ownership).
+
 ### (pending) — data-diag: SqliteDiagnostics evidence for the Linux idx_transcript_one_current/idx_wq_active failure
 
 **Scope:** `data/**` only. `data/build.gradle.kts` (adds `showStandardStreams = true` for `:data`'s

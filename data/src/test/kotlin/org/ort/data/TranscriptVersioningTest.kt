@@ -82,10 +82,42 @@ public class TranscriptVersioningTest {
             // classic framework SQLite driver used — confirmed empirically at this exact call site.
             threw = e.message?.contains("UNIQUE constraint failed") == true
         }
+        // CI cross-platform diagnostic task, this round: does the *identical* duplicate insert
+        // throw when issued as raw SQL straight through the driver, bypassing Room's generated DAO
+        // adapter entirely? Run unconditionally (not just on failure) so this prints on every
+        // platform, including the Windows run this test already passes on, for a direct comparison
+        // against whatever Linux CI reports next. Its own SAVEPOINT/ROLLBACK TO means it never
+        // leaves a row behind for the assertion below.
+        val rawProbe = SqliteDiagnostics.rawDuplicateInsertProbe(
+            db,
+            "TranscriptVersioningTest.two_current_transcripts...",
+            "INSERT INTO transcript (id, transmissionId, pass, text, modelId, modelVersion, quantization, " +
+                "decodeParams, noSpeechProb, confidence, isCurrent, createdAt) VALUES ('T-RAW-PROBE', 'TX1', " +
+                "'B', 'raw probe', 'raw-probe-model', '1', NULL, NULL, NULL, NULL, 1, 99)",
+        )
+        println(rawProbe)
         // CI cross-platform diagnostic task: on failure, fold the same evidence
         // SqliteDiagnostics.report already printed into the assertion message itself, so the
         // index listing that disproves the constraint travels with the failure, not just the log.
-        val evidence = if (!threw) SqliteDiagnostics.report(db, "FAILURE: two_current_transcripts...") else ""
+        // This round adds the decisive question: what is actually in `transcript` for TX1 after
+        // the second insert that was supposed to fail? row count alone distinguishes "two rows,
+        // index not enforcing" from "one row, the second write replaced rather than inserted";
+        // typeof(isCurrent) catches a binding/affinity difference the row's own value would hide.
+        val evidence = if (!threw) {
+            SqliteDiagnostics.report(db, "FAILURE: two_current_transcripts...") +
+                SqliteDiagnostics.dumpRows(
+                    db,
+                    label = "FAILURE: two_current_transcripts...",
+                    table = "transcript",
+                    selectSql = "SELECT rowid, transmissionId, isCurrent, typeof(isCurrent) FROM transcript " +
+                        "WHERE transmissionId = ?",
+                    transmissionId = "TX1",
+                    columnLabels = listOf("rowid", "transmissionId", "isCurrent", "typeof(isCurrent)"),
+                ) +
+                rawProbe
+        } else {
+            ""
+        }
         assertTrue(
             "a second isCurrent=1 row for the same transmission must violate idx_transcript_one_current\n$evidence",
             threw,
