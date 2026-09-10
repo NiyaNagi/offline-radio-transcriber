@@ -73,6 +73,7 @@ class NowScreenTest {
             OrtTheme { NowScreen(state = activeState(isLocalMicrophone = true)) }
         }
 
+        composeTestRule.onNodeWithTag("now-room-audio-chip").assertExists()
         composeTestRule.onNodeWithText("Room audio", substring = true).assertExists()
         composeTestRule.onNodeWithText("the phone's microphone, not the radio", substring = true).assertExists()
     }

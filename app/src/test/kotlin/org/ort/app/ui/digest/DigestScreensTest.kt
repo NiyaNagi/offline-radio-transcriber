@@ -1,6 +1,7 @@
 package org.ort.app.ui.digest
 
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Rule
@@ -59,6 +60,10 @@ class DigestScreensTest {
             }
         }
 
+        composeTestRule.onNodeWithTag("digest-prose-section").assertExists()
+        composeTestRule.onNodeWithTag("digest-prose-badge").assertExists()
+        composeTestRule.onNodeWithTag("digest-prose-card").assertExists()
+        composeTestRule.onNodeWithTag("digest-prose-footnote").assertExists()
         composeTestRule.onNodeWithText("IN THEIR WORDS", substring = true).assertExists()
         composeTestRule.onNodeWithText("GENERATED", substring = true).assertExists()
         composeTestRule.onNodeWithText("WA7HJR").assertExists()

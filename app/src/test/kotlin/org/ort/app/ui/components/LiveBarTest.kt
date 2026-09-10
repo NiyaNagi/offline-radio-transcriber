@@ -215,6 +215,7 @@ class LiveBarTest {
 
         composeTestRule.onNodeWithText("room", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithTag("bar").assert(hasContentDescription("room", substring = true))
+        composeTestRule.onNodeWithTag("live-bar-room-mark", useUnmergedTree = true).assertExists()
     }
 
     @Test

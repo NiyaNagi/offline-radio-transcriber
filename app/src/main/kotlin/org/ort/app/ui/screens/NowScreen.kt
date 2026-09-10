@@ -340,7 +340,10 @@ private fun ActiveContent(
     // recorded from the room is never confusable with one from the radio. Tapping it opens the
     // settings Capture-mode screen (CF11).
     if (state.isLocalMicrophone) {
-        RoomAudioChip(onClick = onOpenCaptureMode, modifier = Modifier.padding(top = OrtSpacing.sm))
+        RoomAudioChip(
+            onClick = onOpenCaptureMode,
+            modifier = Modifier.padding(top = OrtSpacing.sm).testTag("now-room-audio-chip"),
+        )
     }
 
     if (state.overCount == 0) {

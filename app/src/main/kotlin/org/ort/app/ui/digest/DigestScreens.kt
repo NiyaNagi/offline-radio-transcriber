@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -151,10 +152,10 @@ private fun DigestProseSection(
     onReadOvers: (Long, Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.padding(top = OrtSpacing.md)) {
+    Column(modifier = modifier.padding(top = OrtSpacing.md).testTag("digest-prose-section")) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             SectionHeader(label = "In their words", modifier = Modifier.weight(1f, fill = false))
-            Badge(text = "generated", kind = BadgeKind.TIER)
+            Badge(text = "generated", kind = BadgeKind.TIER, modifier = Modifier.testTag("digest-prose-badge"))
         }
         prose.cards.forEach { card ->
             DigestProseCard(
@@ -167,7 +168,7 @@ private fun DigestProseSection(
             text = prose.footnote,
             style = OrtType.subLine,
             color = OrtColors.textDim,
-            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm),
+            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm).testTag("digest-prose-footnote"),
         )
     }
 }
@@ -178,7 +179,8 @@ private fun DigestProseCard(card: DigestProseCardViewState, onReadOvers: () -> U
         modifier = modifier
             .fillMaxWidth()
             .background(OrtColors.bgCard, RoundedCornerShape(10.dp))
-            .padding(13.dp),
+            .padding(13.dp)
+            .testTag("digest-prose-card"),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = card.subject, style = OrtType.callsignRow, color = OrtColors.textHigh)

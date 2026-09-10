@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -114,7 +115,7 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
                 // the label, whenever the current session is [org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE]
                 // (FR-CAP-3a — persistent, on every screen the live bar appears on).
                 if (state.localMicrophone) {
-                    RoomAudioMark(modifier = Modifier.padding(end = OrtSpacing.xs))
+                    RoomAudioMark(modifier = Modifier.padding(end = OrtSpacing.xs).testTag("live-bar-room-mark"))
                 }
                 Text(
                     text = state.label,
