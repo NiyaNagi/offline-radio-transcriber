@@ -32,6 +32,70 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP1: board-width density scale)
+
+### (this commit) — ui-conformance WP1 · OrtTheme scales density to the board's 390dp width (R-600 scale finding)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/theme/Theme.kt`;
+`app/src/test/kotlin/org/ort/app/ui/theme/OrtThemeScaleArithmeticTest.kt` (new),
+`app/src/test/kotlin/org/ort/app/ui/theme/OrtThemeScaleTest.kt` (new).
+
+**Requirements/ACs:** FR-A11Y-3, AC-63 (system font scale keeps working through this change —
+tested directly, not just assumed); guide §4-5 (390x844 board frame). No register id existed for
+this finding before this commit; it was briefed directly as the "scale finding" (evidence:
+`results/ui-audit-findx9/overnight/L01-log.png` at 480dp vs
+`results/ui-audit-board390/overnight/L01-log.png` at 390dp, 13 rows vs 7).
+
+**What changed:**
+
+*Constitution Check.* VII (Boundaries Are Structural) — the fix is a type-level `Density`
+computed once in `OrtTheme`, not a convention every screen would have to remember; every
+user-visible surface still obeys the accessibility floor (no clipping at maximum font scale) by
+construction, since `fontScale` is untouched. I (Uncertainty Is Content) does not bear on this —
+no attribution state is involved. II (Test-Backed Change) — arithmetic and composition each get
+their own failing-first test.
+
+Every artboard under `design/canvas/` is authored at a fixed 390dp-wide root (`design/design-guide.md`
+§4-5: 1 board px = 1 dp). Built screens use the board's own dp values directly, so on a
+wider-in-dp device (the audit emulator at 411dp, the user's Oppo Find X9 Ultra at ~480dp) the same
+layout occupies proportionally less of the real screen — more rows fit, type reads smaller —
+because nothing scales with the extra width. `OrtTheme` now wraps `MaterialTheme`/`Surface` in a
+`CompositionLocalProvider(LocalDensity provides ortScaledDensity())`: `ortScaledDensity()` reads
+`LocalConfiguration.current.screenWidthDp` (density-independent, so immune to feeding back into
+itself), computes `ortScaleFor(containerWidthDp) = (containerWidthDp / 390f).coerceIn(1.0f,
+1.35f)`, and multiplies only the ambient density's magnitude — `fontScale` is carried through from
+`LocalDensity.current` unchanged. The 1.0 floor means a phone at or under 390dp keeps its native
+layout (never shrinks, never clips); the 1.35 ceiling means a tablet/foldable stops growing rather
+than chase a proportion the board was never meant to model. Both bounds are named constants
+(`ORT_SCALE_MIN`, `ORT_SCALE_MAX`) with the reasoning in their doc comments. Composes with the
+two existing density overrides rather than replacing either: `SetupActivity.EXTRA_FONT_SCALE`
+overrides `LocalDensity` *before* `OrtTheme` runs, so `ortScaledDensity()` reads back that already
+font-scaled ambient density and applies the width scale on top; the screenshot tour's own
+per-step override sits *inside* `OrtTheme`, so it reads the already-scaled density magnitude and
+substitutes only its own `fontScale` — verified by reading `ScreenshotTourActivity.kt` before
+writing this, per the brief.
+
+**Verified:** on worktree `worktree-scale` at main `4cd35b3`:
+`.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.theme.*'` → BUILD SUCCESSFUL, all
+theme tests green including 13 new `R_600_*` tests (6 pure-arithmetic in
+`OrtThemeScaleArithmeticTest`, 7 Robolectric-measured via `@Config(qualifiers = "wNNNdp-...")` in
+`OrtThemeScaleTest`) pinning scale = 1.0 at 390dp and 360dp, ≈1.2307 at 480dp, ≈1.0538 at 411dp,
+clamped 1.35 at 600dp and 1200dp, and `fontScale` unchanged at both 1.0 and 2.0 through the scaled
+density. `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.ui.screens.*'` → BUILD
+SUCCESSFUL, no failures (the wider layout-test sweep the brief's gate asks for, to catch any
+screen test that hardcoded a width assumption — none did).
+`.\gradlew.bat :app:ktlintCheck :app:detekt` → BUILD SUCCESSFUL.
+`.\gradlew.bat dependencyRules platformGuards` → OK, 17 modules, no forbidden edge.
+`.\gradlew.bat :app:assembleDebug` → BUILD SUCCESSFUL.
+`.\gradlew.bat coverageMatrix` → 419 requirements, 192 covered (unchanged — no new FR/AC id
+established, per Requirements/ACs above); `.\gradlew.bat coverageMatrixCheck` → up to date.
+
+**Left open / not done:** `python tools\spec-check\spec_check.py` → 1 pre-existing failure
+(`ui-conformance-plan.md: reference to Q04 which is defined nowhere`), unrelated to this change —
+`ui-conformance-plan.md` is not in this package's file ownership and was not touched; reported,
+not fixed. The device comparison (390dp board vs 480dp Find X9 Ultra vs 411dp emulator, on the
+real reference phone) is the lead's, per the brief — no emulator was touched from this worktree.
+
 ## 2026-09-09 (ui-conformance phase G — close-out)
 
 ### (this commit) — ui-conformance · phase G close-out: final gate green at e24b9ef, register 327 rows (202 closed, 121 fixed, 4 not closed), design-intent all drawn + built
