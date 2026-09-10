@@ -32,6 +32,147 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (data-msg: the two partial-index tests asserted driver message text, not the invariant)
+
+### (pending) — data-msg: TranscriptVersioningTest/WorkQueueTest assert table state instead of SQLException message text
+
+**Scope:** `data/**` only — `data/src/test/kotlin/org/ort/data/{TranscriptVersioningTest.kt,WorkQueueTest.kt}`
+(their one already-instrumented failing test each). `SqliteDiagnostics.kt` untouched — its
+report/dumpRows/rawDuplicateInsertProbe diagnostics stay wired exactly as the last two rounds
+left them.
+
+**Requirements/ACs:** AC-31 (`TranscriptVersioningTest.two_current_transcripts_for_one_transmission_violate_the_partial_unique_index`,
+its own `@Requirement`), technical design §7.1 / register R-204 (`WorkQueueTest.the_active_state_index_does_not_restrict_a_terminal_failed_duplicate`,
+which carries no `@Requirement` of its own — it proves `idx_wq_active` directly, `FR-RUN-2`
+above it proves the application-level guard). No new requirement coverage: `coverageMatrix` ran
+clean with no diff against the committed file (see Verified) — this is a test-assertion fix, not
+new behaviour.
+
+**Constitution Check:** Principle II ("a session that cannot meet its exit criteria stops and
+says so; a skipped test is an unmet requirement wearing a disguise") — neither test is weakened,
+skipped, or `@Ignore`d; both assert the same invariant they always did, just through table state
+instead of a string that turned out not to carry it. Principle VI ("no number without its fold,
+machine and provider") — the three CI runs this fix is built on (34439250807, 34440826468,
+34442248761, and the decisive one, 34443347423) are cited by run id, not summarised into a vague
+"it failed on Linux".
+
+**What changed:** Three prior rounds (commits 6805334, 51580eb/0a9d63a's merge, and this
+worktree's own base 7b72f6b) instrumented these two failing tests without finding a database
+defect, because there wasn't one. CI run 34443347423's evidence is unambiguous: identical
+`sqlite_version()` on both platforms, both partial unique indexes present with the exact right
+`WHERE` clause, the raw-SQL duplicate insert (bypassing Room entirely, via
+`rawDuplicateInsertProbe`) throws on Linux exactly as it does on Windows, and the row dumps show
+the constraint doing its job on Linux — `transcript` holds 1 row after the rejected duplicate,
+`work_queue_item` holds exactly the FAILED + READY pair with the third (LEASED) insert rejected.
+What differs is only the exception's message text: both tests' `catch (e: android.database.SQLException)`
+set `threw` only if `e.message?.contains("UNIQUE constraint failed") == true`
+(`TranscriptVersioningTest.kt:83`, `WorkQueueTest.kt:318`, both before this change). Windows
+prints `Error code: 19, message: UNIQUE constraint failed: ...`; Linux prints only `Error code: `
+— no numeric result code, no message text — for the identical constraint violation. So on Linux
+the exception was thrown, `threw` stayed false because the substring match failed, and the
+assertion failed on a defect that was never in the database.
+
+Fixed both tests to stop parsing the message:
+
+1. The `catch` block now sets `threw = true` unconditionally on catching
+   `android.database.SQLException` (no longer message-dependent), with a comment recording why —
+   `android.database.SQLException` exposes no structured result-code accessor to fall back to
+   either (checked: it is a plain `RuntimeException` subtype in the Android/Robolectric surface
+   this driver targets, and the CI-observed Linux message doesn't even carry the numeric SQLite
+   result code to parse out, only Windows does — see Left open).
+2. Added the assertion that actually proves the invariant, run unconditionally after the existing
+   `assertTrue(..., threw)`: `TranscriptVersioningTest` re-reads `dao.getAllVersions("TX1")` and
+   asserts exactly one row remains, and that it is `T1` with `isCurrent = true`.
+   `WorkQueueTest` re-reads `dao.findByTransmissionAndPass("TX1", ...)` (via a new private
+   `assertOnlyTheReadyRowIsStillActive` helper, extracted to keep the test under detekt's
+   `LongMethod` line budget) and asserts exactly one row is in an active state (`READY`/`LEASED`/
+   `DEFERRED`), that it is the original `READY` row (not the rejected `LEASED` one), and that the
+   full row set is exactly `{FAILED, READY}` with no phantom third row. This is the part that
+   actually settles the requirement — table state after the rejected write — independent of
+   whatever the driver's message did or didn't say on either platform.
+3. Left `SqliteDiagnostics.report`/`dumpRows`/`rawDuplicateInsertProbe` and both tests' evidence
+   strings exactly as the prior round wired them — they are what found this, they are cheap, and
+   the task said not to delete them.
+
+**Other message-text branches found by the requested sweep** (`git grep -n 'UNIQUE constraint
+failed'`, plus `e.message`, `.message?.contains`, `getMessage` across the repo):
+
+- `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt:316` — a comment recording the history of
+  an already-fixed bug, not an assertion. No action.
+- `pipeline/src/test/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLogTest.kt:221` —
+  `simulatedEngineFailure.message!!.contains(seededCallsign)` is a sanity check on a message the
+  test itself constructed (`IllegalStateException("resolved callsign $seededCallsign ...")`), not
+  a driver-produced string — deterministic on every platform. Not the same brittleness; no action
+  needed and none taken.
+- No other test anywhere in the repo branches on a driver-produced message string — the sweep
+  found no further hits.
+- Two **production** (non-test) call sites carry the identical pattern this task fixed in tests,
+  outside this round's fix authorization (the task scoped "fix" to the tests) and flagged for
+  routing:
+  - `data/src/main/kotlin/org/ort/data/OrtDatabase.kt:369` (inside this round's own `data/**`
+    ownership, but production code, not a test) — `createFtsIndex` catches
+    `android.database.SQLException` and only swallows it (returning `false`, the "no fts5 module"
+    fallback) if `e.message?.contains("no such module: fts5") == true`, else rethrows. Given
+    today's finding that the same driver's Linux message can arrive with no text at all, a genuine
+    missing-fts5 failure on Linux risks rethrowing instead of degrading gracefully. Not touched
+    here — it is production control flow, not a test assertion, and changing it wasn't authorised
+    by this task.
+  - `app/src/main/kotlin/org/ort/app/ui/data/SearchViewData.kt:386-387,409-410,561-562` — same
+    `fts5`/`transcript_fts` substring-match fallback pattern, in `app/**` (not this round's
+    module).
+  - `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt:371`'s `isTransientlyLocked` and
+    `app/src/debug/kotlin/org/ort/app/debug/tour/TourRunner.kt:83` also branch/report on
+    `e.message`, but for a retry heuristic and a debug-tour failure label respectively — lower
+    risk (a missed retry or a less-informative debug label, not a false pass), still `app/**`.
+
+**What this means for production:** nothing changed in behaviour. `idx_transcript_one_current`
+and `idx_wq_active` were always enforcing correctly on both platforms — CI run 34443347423's raw
+SQL probe and row dumps proved it independent of Room and independent of this test's own,
+unreliable message check. This was purely a test-assertion defect: two tests happened to encode
+"the exception's English message contains a particular substring" as their proxy for "the
+constraint fired," and that proxy is not a cross-platform contract the driver actually honours.
+
+**Verified** (Windows, this worktree, `worktree-data-msg` on `7b72f6b`):
+
+- `.\gradlew.bat :data:testDebugUnitTest` (full, not scoped) — `BUILD SUCCESSFUL`, all data-module
+  tests pass, both previously-failing tests included:
+  `TranscriptVersioningTest > two_current_transcripts_for_one_transmission_violate_the_partial_unique_index PASSED`,
+  `WorkQueueTest > the_active_state_index_does_not_restrict_a_terminal_failed_duplicate PASSED`
+  (both still print `THREW android.database.SQLException: Error code: 19, message: UNIQUE
+  constraint failed: ...` from the always-on raw probe, unconditionally, exactly as before — this
+  round did not touch that instrumentation).
+- `.\gradlew.bat :data:ktlintCheck :data:detekt` — `BUILD SUCCESSFUL` (one `LongMethod` finding in
+  `WorkQueueTest.kt` from the new assertions, fixed by extracting `assertOnlyTheReadyRowIsStillActive`
+  before this was green).
+- `.\gradlew.bat dependencyRules platformGuards` — `BUILD SUCCESSFUL`; 17 modules checked, no
+  forbidden edge, no stray HTTP client or `INTERNET` permission outside `:net`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL` (163 tasks, 8s).
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (two separate
+  invocations) — both `BUILD SUCCESSFUL`; `coverageMatrix: 419 requirements, 192 covered`;
+  `coverageMatrixCheck: up to date (192 covered of 419)`; `git status --short
+  results/coverage-matrix.md` empty both before and after.
+- `python -m pytest tools/tests tools/spec-check -q` — `17 passed`.
+
+**Left open / not done:**
+
+- Could not confirm the SQLite result code (19, `SQLITE_CONSTRAINT`) is available off the
+  exception in a way that holds on both platforms, so neither test depends on it.
+  `android.database.SQLException` (the type this driver actually throws, confirmed at both call
+  sites) carries no structured error-code field in the Android-compatible surface `BundledSQLiteDriver`
+  targets — decompiled `sqlite-bundled-jvm-2.5.2.jar` (`javap` on `BundledSQLiteConnectionKt`/
+  `BundledSQLiteStatement`) shows the throw happens inside native (JNI) code, not a Kotlin helper
+  with an inspectable result-code property, and CI run 34443347423 shows the Linux message doesn't
+  even carry the numeric code as text (`Error code: ` with nothing after it) the way Windows does
+  — so there is nothing left to parse reliably on both platforms. This is a report of what was
+  checked, not a fix: if a future androidx.sqlite release exposes a structured code, revisit.
+- The two production `fts5`-fallback message-text branches (`OrtDatabase.kt:369`,
+  `SearchViewData.kt` x3) and the two debug-tooling ones (`Scenarios.kt:371`, `TourRunner.kt:83`)
+  are flagged above, not fixed — routing them (particularly `OrtDatabase.kt:369`, which sits in
+  this round's own `data/**` ownership) is for whoever picks that up next.
+
+---
+
 ## 2026-09-10 (data-diag: evidence for the Linux partial-unique-index failure — not another blind fix)
 
 ### (pending) — data-probe: row-content dump and a raw-SQL bypass probe, since every prior theory was eliminated

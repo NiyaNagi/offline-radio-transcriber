@@ -80,7 +80,16 @@ public class TranscriptVersioningTest {
             // BundledSQLiteDriver (register R-204) throws the base `android.database.SQLException`
             // for a constraint failure, not always the `SQLiteConstraintException` subclass the
             // classic framework SQLite driver used — confirmed empirically at this exact call site.
-            threw = e.message?.contains("UNIQUE constraint failed") == true
+            // CI run 34443347423 established that its message text is NOT a stable cross-platform
+            // contract: on Windows this exact call site prints `Error code: 19, message: UNIQUE
+            // constraint failed: ...`, but on Linux it prints only `Error code: ` — no numeric SQLite
+            // result code, no "UNIQUE constraint failed" text — for the identical constraint
+            // violation against an identical index (confirmed via the raw-SQL probe and row dumps
+            // below on both platforms). `android.database.SQLException` exposes no structured
+            // result-code accessor either, so there is nothing reliable left to parse off the
+            // exception itself; this flag only records that the driver threw at all. The assertion
+            // that actually proves the invariant is the row-state check below, not this flag.
+            threw = true
         }
         // CI cross-platform diagnostic task, this round: does the *identical* duplicate insert
         // throw when issued as raw SQL straight through the driver, bypassing Room's generated DAO
@@ -122,6 +131,21 @@ public class TranscriptVersioningTest {
             "a second isCurrent=1 row for the same transmission must violate idx_transcript_one_current\n$evidence",
             threw,
         )
+
+        // The part that actually proves the invariant (message text above is not trustworthy — see
+        // the catch clause): after the rejected duplicate, `transcript` must still hold exactly one
+        // row for TX1, and it must be T1 with isCurrent = true. Asserted through the real DAO,
+        // independent of whatever the exception's message did or didn't say.
+        val rowsAfter = dao.getAllVersions("TX1")
+        assertEquals(
+            "transcript must still hold exactly one row for TX1 after the rejected duplicate insert; " +
+                "rows = ${rowsAfter.map { it.id to it.isCurrent }}",
+            1,
+            rowsAfter.size,
+        )
+        val onlyRow = rowsAfter.single()
+        assertEquals("T1", onlyRow.id)
+        assertEquals(true, onlyRow.isCurrent)
     }
 
     /**
