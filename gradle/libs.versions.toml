@@ -24,6 +24,14 @@ activityCompose = "1.9.3"
 # https://dl.google.com/dl/android/maven2/com/google/mediapipe/group-index.xml (tasks-genai's
 # versions attribute) on 2026-09-10. Consumed only by :llm-mediapipe.
 mediapipeTasksGenai = "0.10.35"
+# WPB (P19/P20 Wave F): the newest 3.x tag at https://github.com/mik3y/usb-serial-for-android
+# releases on 2026-09-10 is v3.11.0 (2026-07-18), but its AAR metadata declares
+# minCompileSdk = 35 (its own androidx.annotation bump), and this project's shared
+# ort.android-library convention plugin — outside :rig-usb/:rig-bluetooth's ownership for this
+# work package — pins compileSdk 34. v3.10.0 (2025-12-05) is the newest tag that still declares
+# no compileSdk floor above 34; confirmed against its published AAR metadata. Revisit once
+# compileSdk moves to >= 35 (a WP0'-owned change). Consumed only by :rig-usb.
+usbSerialForAndroid = "3.10.0"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -59,6 +67,7 @@ compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 mediapipe-tasks-genai = { module = "com.google.mediapipe:tasks-genai", version.ref = "mediapipeTasksGenai" }
+usb-serial-android = { module = "com.github.mik3y:usb-serial-for-android", version.ref = "usbSerialForAndroid" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

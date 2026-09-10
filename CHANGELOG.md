@@ -32,6 +32,131 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPB: the two rig transports — USB serial and Bluetooth SPP)
+
+### (pending) — rig transports: UsbSerialTransport, BluetoothSppTransport, their fakes, and the transport-parity test
+
+**Scope:** `rig-usb/src/**`, `rig-bluetooth/src/**`, their `build.gradle.kts`, one added line in
+`gradle/libs.versions.toml` (`usb-serial-android`, `com.github.mik3y:usb-serial-for-android`).
+Built against `:rig`'s contract commit `fdbe146` (`RigModule`/`RigTransport`, band-scoped
+`RigState`, the behavioural fakes), merged from `worktree-agent-acd6750a612d51700` at that commit
+— that branch has since advanced to a further descriptor-engine commit (`3bed6da`) not included
+here, per the WPB brief's instruction to build against the contract commit specifically.
+
+**Requirements/ACs:** FR-RIG-3 (USB serial CDC-ACM), FR-RIG-7 (disconnect degrades to stale,
+never stops capture), FR-RIG-14 (Bluetooth SPP is a first-class transport, identical capabilities
+to USB), FR-RIG-15 (a Bluetooth drop degrades exactly like a USB drop), FR-PLT-2/F16 (USB
+permission is per-attachment, not persistent; a re-attach that loses it is a transport state,
+never a crash), AC-133 (TH-D75A yields the same `RigState` over either transport; a Bluetooth
+disconnect degrades to stale without stopping capture), constitution V/NFR-6 (no HTTP client, no
+`INTERNET` outside `:net`), constitution VII (module boundaries enforced by the build, not
+convention).
+
+**What changed:**
+
+*Constitution Check.* II bears directly — both transports ship with a behavioural fake
+(`FakeUsbSerialPort`, `FakeBluetoothLink`) that can be told to fail, hang-equivalent (a scripted
+permission denial that never resolves is exactly `hasPermission`/`hasConnectPermission` staying
+false), and drop mid-session; the FR-RIG-15 fix was shown to discriminate (see Verified). IV
+bears on the design, not the enforcement: a rig transport is not `:capture-*`, but the same
+"never throw into capture" discipline applies to it structurally (F16 — permission and detach
+conditions become `TransportState` values, never exceptions escaping into whatever calls
+`open()`/`readLine()`). VII bears on the module boundary: both modules depend on only `:core` and
+`:rig` in their main source sets (confirmed by `dependencyRules`), and neither links an HTTP
+client or declares `INTERNET` (confirmed by `platformGuards`).
+
+- **`UsbSerialTransport`** (`rig-usb/.../UsbSerialTransport.kt`) implements `RigTransport` as a
+  pure state machine (no Android import) over a new seam, **`UsbSerialLink`**
+  (`rig-usb/.../UsbSerialLink.kt`): `attachedDevices(vid, pid)`, `hasPermission`,
+  `requestPermission` (fire-and-forget; the answer arrives on `events`), `open`/`close`/`write`,
+  and a `suspend fun read(timeoutMs)` so a real implementation can park a coroutine around a
+  blocking serial read and a fake can honour the timeout against virtual test time. The state
+  machine: not-found → permission wait → open → read → detach → `Lost` → backoff → reopen
+  (FR-RIG-7), with USB-specific conditions carried as named `UsbSerialTransport.Reason` string
+  constants inside `TransportState.Lost` (`:rig`'s `TransportState` is a closed four-case sealed
+  interface this module cannot extend) plus a richer `permissionState: Flow<UsbPermissionState>`
+  (`UNKNOWN`/`GRANTED`/`DENIED`/`LOST`) for FR-PLT-2's exact distinction — a first-time denial and
+  a post-re-attach loss are told apart (`PERMISSION_DENIED` vs `PERMISSION_LOST`), never the same
+  reason. Reconnect uses **`UsbReconnectBackoff`** (1s/2s/5s/10s/30s, holding) — the same *policy*
+  as `capture-android/.../BackoffLadder`, copied rather than depended on since `:rig-usb` may not
+  depend on `:capture-android`. **`AndroidUsbSerialLink`** is the real adapter over
+  `usb-serial-for-android`'s `UsbSerialProber`/`UsbSerialPort`/`SerialInputOutputManager` and
+  `UsbManager` + a `PendingIntent` broadcast for permission; it is the only class in the module
+  that imports `android.hardware.usb.*`, is exercised only by hardware rows H1/H4, and carries no
+  test of its own in this package (see Left open).
+- **`BluetoothSppTransport`** (`rig-bluetooth/.../BluetoothSppTransport.kt`) is the same shape
+  over **`BluetoothLink`** (`rig-bluetooth/.../BluetoothLink.kt`): `pairedDevices()`,
+  `hasConnectPermission`, `connect(address)`/`close`/`write`, `suspend fun read(timeoutMs)`, and
+  an `events: Flow<BluetoothLinkEvent.Dropped>`. Missing `BLUETOOTH_CONNECT` is
+  `Lost(Reason.NO_PERMISSION)`, never a `SecurityException`; a drop is `Lost(Reason.DROPPED)` then
+  reconnect with **`BluetoothReconnectBackoff`** (the same 1s/2s/5s/10s/30s shape, copied again
+  rather than shared as a dependency). `BluetoothSppTransport.pairedDevices(link)` is a companion
+  function so the onboarding picker (WPD) can list bonded devices without a live transport
+  instance; each is marked `SppSupport.YES`/`NO`/`UNKNOWN` — `UNKNOWN` when the stack reports no
+  UUIDs at all, never guessed as `NO` (constitution I). **`AndroidBluetoothLink`** is the real
+  adapter over `BluetoothAdapter`/`BluetoothSocket` RFCOMM to SPP UUID
+  `00001101-0000-1000-8000-00805F9B34FB`, exercised only by hardware rows H2/H3.
+- **`FakeUsbSerialPort`** and **`FakeBluetoothLink`** ship in each module's main source set
+  (`org.ort.rig.usb.fakes` / `org.ort.rig.bluetooth.fakes`). Scripting: `attach`/`detach`,
+  `grantPermission`/`denyPermission` (call twice for "denied twice" without ever granting),
+  `failNextOpen`/`failNextConnect`, `scriptReply`/`scriptGarbage`-equivalent via `scriptReply`,
+  `dropDuringRead` (persistent or one-shot — "device/socket gone during read" with no prior
+  detach/drop), and `pair`/`drop` on the Bluetooth side.
+- **Transport-parity test** (`rig-bluetooth/src/test/.../TransportParityTest.kt`, testImplementation-only
+  dependency on `:rig-usb` — excluded from `dependencyRules` by design, since it checks only main
+  compile configurations): `:rig`'s `DescriptorRigModule`/TH-D75A descriptor had not landed on the
+  merged contract commit, so this exercises the `RigTransport` contract directly with a minimal
+  inline command/response parser standing in for the descriptor (functional spec §9.2's `FQ`
+  poll), asserting `UsbSerialTransport` over `FakeUsbSerialPort` and `BluetoothSppTransport` over
+  `FakeBluetoothLink` yield an identical `RigState` for the same scripted reply (AC-133), plus one
+  shared test that drives a USB detach and a Bluetooth drop side by side and asserts both degrade
+  to `Lost` and recover identically (FR-RIG-15).
+- **`usb-serial-for-android` version:** pinned to **3.10.0** in `gradle/libs.versions.toml`
+  (`usbSerialForAndroid`), not the newest tag (**3.11.0**, 2026-07-18): 3.11.0's AAR metadata
+  declares `minCompileSdk = 35` (via its `androidx.annotation:annotation:1.10.0` bump), and this
+  project's shared `ort.android-library` convention plugin pins `compileSdk = 34` — outside
+  `:rig-usb`/`:rig-bluetooth`'s ownership for this work package. 3.10.0 (2025-12-05) is the newest
+  tag confirmed to declare no compileSdk floor above 34. Separately, 3.11.0 also pulls
+  `kotlin-stdlib:2.1.20` transitively (via the same `androidx.annotation` bump) which Gradle's
+  highest-version-wins resolution raised past what this build's Kotlin 2.0.21 compiler can read —
+  the `rig-usb` dependency declaration excludes `org.jetbrains.kotlin:kotlin-stdlib` from
+  `usb-serial-android` defensively (usb-serial-for-android calls no Kotlin stdlib API; it is pure
+  Java at every release checked) in case a future bump reintroduces the same transitive pull.
+
+**Verified:**
+- `./gradlew :rig-usb:testDebugUnitTest :rig-bluetooth:testDebugUnitTest` — 14 tests, all green
+  (6 `UsbSerialTransportTest`, 6 `BluetoothSppTransportTest`, 2 `TransportParityTest`).
+- `./gradlew build dependencyRules platformGuards` — `dependencyRules` and `platformGuards` both
+  green; `:rig-usb`/`:rig-bluetooth` compile, test, detekt and ktlint clean. The overall `build`
+  fails only on a pre-existing `:rig` (not this package's ownership) test-file ktlint import-order
+  violation from the merged contract commit `fdbe146`
+  (`rig/src/test/kotlin/org/ort/rig/fakes/FakeRigTransportTest.kt:3` — `import
+  kotlinx.coroutines.flow.first` is out of lexicographic order) — see Left open.
+- `./gradlew -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks `[PASS]`.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — 450 requirements, 202 covered, matrix
+  up to date; `FR-RIG-3`, `FR-RIG-7`, `FR-RIG-14`, `FR-RIG-15`, `FR-PLT-2`, `AC-133` all newly
+  covered by name.
+- **Discrimination (FR-RIG-15):** reverted `BluetoothSppTransport`'s post-drop reconnect step to
+  a bare `return` (no backoff, no re-`Connecting`); `BluetoothSppTransportTest`'s and
+  `TransportParityTest`'s FR-RIG-15 tests both failed for the right reason (`expected: <Open> but
+  was: <Lost(reason=bluetooth-dropped)>`); restored, both green again.
+
+**Left open / not done:**
+- **Hardware rows H1–H4** (`results/e2e-audit/hardware-checklist.md`) — the real
+  `AndroidUsbSerialLink`/`AndroidBluetoothLink` adapters are unverified against actual hardware
+  and untested by this package (the emulator has no USB-serial or Bluetooth radio); they compile
+  against the real usb-serial-for-android/Android Bluetooth APIs but carry no unit test of their
+  own — only the state machines above do, against the fakes.
+- **The pre-existing `:rig` ktlint failure** (`FakeRigTransportTest.kt`'s import order) is outside
+  this package's file ownership (`rig/src/test/**` belongs to WPA) and was not fixed here; it is
+  the sole reason `./gradlew build` does not exit green end to end. A one-line fix (move `import
+  kotlinx.coroutines.flow.first` to before `import kotlinx.coroutines.test.runTest`) resolves it.
+- **`usb-serial-for-android` is pinned one minor below newest** (3.10.0, not 3.11.0) purely because
+  of the project's current `compileSdk = 34` ceiling — revisit when that moves to ≥ 35 (a WP0'
+  /build-infra decision, not this package's).
+- Not merged to `main` — left on this branch (`rig transports:` prefix) per the brief.
+
 ## 2026-09-10 (WP0': Wave F module scaffolding — llm-api, llm-mediapipe, rig-bluetooth)
 
 ### (pending) — wave F scaffolding · three new modules wired empty for P19/P20's parallel builders
