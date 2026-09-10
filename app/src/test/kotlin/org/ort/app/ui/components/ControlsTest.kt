@@ -572,6 +572,40 @@ class ControlsTest {
     }
 
     @Test
+    fun `R_381_search_field_node`() {
+        // Device iteration (`emulator-5554`, this round's own `CHANGELOG.md`): a real device's own
+        // exported `EditText` still shows `content-desc=""`, with "Search text" landing on a
+        // separate, non-focusable child instead, across every candidate this round tried — a
+        // genuine, disclosed Robolectric-vs-device gap, not assumed. What *is* checkable here,
+        // host-independently: on the *unmerged* tree, the one physical node that carries
+        // `SemanticsActions.SetText` (the real, framework-owned editable-text action — the same
+        // node a real `EditText` classification is built from) also carries this composable's own
+        // `SemanticsProperties.ContentDescription`, i.e. both live on the same node in Compose's own
+        // semantics tree even where the platform bridge that exports it to a real device's
+        // accessibility tree does not yet reflect that. Regresses if a future change moves either
+        // property to a different node.
+        composeTestRule.setContent {
+            OrtTheme {
+                TextField(
+                    value = "",
+                    onValueChange = {},
+                    contentDescriptionText = "Search text",
+                    modifier = Modifier.testTag("search-field"),
+                )
+            }
+        }
+
+        val node = composeTestRule.onNodeWithTag("search-field", useUnmergedTree = true).fetchSemanticsNode()
+        assert(node.config.getOrNull(SemanticsActions.SetText) != null) {
+            "expected the search field's own node to carry the real SetText action"
+        }
+        val description = node.config.getOrNull(SemanticsProperties.ContentDescription)?.joinToString()
+        assert(description == "Search text") {
+            "expected the same node (carrying SetText) to also carry the description, got $description"
+        }
+    }
+
+    @Test
     fun `R_063_degraded_error_tone_is_amber_not_halt`() {
         composeTestRule.setContent {
             OrtTheme {
