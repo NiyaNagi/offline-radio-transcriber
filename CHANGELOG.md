@@ -32,6 +32,193 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPC2: pipeline wiring — rig supervision, session facts, mode changes, Bluetooth drops)
+
+### (pending) — pipeline modes: `CaptureConfigurationStore`, `RigSupervisor`, session facts on start, a frozen mid-session mode, the two kinds of Bluetooth drop
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/{RealCaptureService,InputStatus,RigStatus}.kt`,
+new `pipeline/src/main/kotlin/org/ort/pipeline/rig/**`, `pipeline/src/main/kotlin/org/ort/pipeline/CaptureStatus.kt`,
+tests under `pipeline/src/test/**`. WPC2 of [`spec/e2e-capture-modes-plan.md`](spec/e2e-capture-modes-plan.md).
+No file outside this package's ownership touched — `InputStatus.kt` needed no code change (see
+What changed).
+
+**Requirements/ACs:** FR-CAP-5, FR-CAP-11, FR-CAP-12, FR-CAP-13, FR-RUN-12, FR-RIG-1, FR-RIG-2,
+FR-RIG-6, FR-RIG-7, FR-RIG-8, FR-RIG-9, FR-RIG-11, FR-RIG-13, FR-RIG-14, FR-RIG-15, FR-SEG-7,
+AC-129, AC-131. Checklist rows closed: E2-D04, E2-D05, E2-D06 (partial — see Left open), E2-D07,
+E2-D08, E2-D09; E2-B09's session half.
+
+**What changed:**
+
+*Constitution Check.* I (an attribution without its confidence state is a bug, extended: `RigState`
+staleness and frequency provenance are never conflated — a stale rig reading still carries
+provenance `rig`, only its `RigStateConfidence` says it is stale; `FrequencyReading.UNKNOWN` is
+returned rather than a fabricated `0`/`null` pairing). II (every new class ships a test file in the
+same commit; the E2-D08 "no gap" claim was discriminated by sabotage — see Verified). III (the
+segmenter's constructor is asserted, by reflection, to still take no `CaptureMode`/`Tier` — FR-SEG-7,
+E2-D09). IV (a rig-control drop degrades to `Stale` and never opens a `CaptureGap` — the two failure
+domains, audio route and rig control, are kept structurally separate by `RigSupervisor` never
+referencing `GapPersister`/`GapTracker`/`OrtDatabase` at all; a Bluetooth *audio* drop is handled by
+the existing generic interruption path, unchanged, and does open one). VII (`RigTransportFactory`
+is the one seam `:rig-usb`/`:rig-bluetooth` plug into; `RigSupervisor` depends on it, never on the
+transport modules directly).
+
+1. **`CaptureConfigurationStore`** (`pipeline/rig/CaptureConfigurationStore.kt`, FR-CAP-12,
+   AC-131) — the exact interface:
+   ```kotlin
+   interface CaptureConfigurationStore {
+       fun current(): CaptureConfiguration
+       fun pendingConfiguration(): CaptureConfiguration?
+       fun update(configuration: CaptureConfiguration)
+       fun activateForNewSession(): CaptureConfiguration
+   }
+   ```
+   `update` checks `CaptureState.isCapturing` itself (injectable in the constructor for tests), so
+   the freeze rule cannot be forgotten by a caller: a write while capture is running becomes
+   `pendingConfiguration` and leaves `current` untouched; `activateForNewSession` — called once, by
+   `RealCaptureService.startCapture()`, before anything about the session is decided — promotes a
+   pending write and clears it, returning the value the caller freezes for the whole session.
+   `InMemoryCaptureConfigurationStore` (the fake, constitution II) and
+   `SharedPreferencesCaptureConfigurationStore` (real) both ship. The real store is a **shared,
+   file-backed contract** — WPD's `SetupStore` and WPE's Settings-Mode screen are expected to open
+   their own instance over the same preferences file
+   (`SharedPreferencesCaptureConfigurationStore.PREFS_NAME`), not to be handed an object across a
+   module boundary that does not exist.
+
+2. **`CaptureConfiguration`** (`pipeline/rig/CaptureConfiguration.kt`) — `mode: CaptureMode`,
+   `selectedInputId: String?`, `rigId: String` (a `RigCatalogue` entry id, `NullRigModule.ID`
+   default), `rigTransportKind: org.ort.rig.RigTransportKind?`, `rigParams: Map<String, String>`.
+
+3. **`RigTransportFactory`** (`pipeline/rig/RigTransportFactory.kt`) — `fun interface
+   RigTransportFactory { fun create(kind: RigTransportKind, params: Map<String, String>):
+   RigTransport }`, matching `DescriptorRigModule`'s own constructor shape via a method reference.
+   `DefaultRigTransportFactory` (production wiring) threw `UnsupportedRigTransportException` for
+   every kind at the time this was written — WPB's transports were not yet on `main`; see Left
+   open for the follow-up commit that wires them in.
+
+4. **`RigSupervisor`** (`pipeline/rig/RigSupervisor.kt`, FR-RIG-2/6/7/8/9/13/14/15) — builds the
+   configured rig (a real `DescriptorRigModule` resolved from the bundled TH-D75A/generic-ASCII-CAT
+   descriptors by id, or `NullRigModule` for no rig / an unknown id / a failed connect — never
+   throws, matching FR-RIG-11's "never blocks") over a `RigTransportFactory`-supplied transport,
+   and republishes `RigStatus` (`Connected`/`Stale`/`Absent`) as readings arrive. Reconnects on
+   `BackoffLadder` — the same ladder `AudioRecordSource` uses for the audio route — retrying forever
+   until `disconnect()`. `frequencyForTransmission(band, startNanos, endNanos)` returns a
+   `FrequencyReading(frequencyHz, provenance, changedDuringTransmission)`: a manual override
+   (`setManualFrequencyOverrideHz`) always wins with provenance `manual` (FR-RIG-8); otherwise the
+   rig's own `DescriptorRigModule.stateForTransmission` reading, provenance `rig`, with FR-RIG-6's
+   mid-transmission-change flag threaded straight through; `FrequencyReading.UNKNOWN` when nothing
+   is known. **Never references `GapPersister`, `GapTracker` or `OrtDatabase`** — see Constitution
+   Check and Verified (E2-D08's discrimination).
+
+5. **`RigStatus`** (`pipeline/capture/RigStatus.kt`) gains `transportKind: RigTransportKind? =
+   null` and `descriptorId: String? = null` on `State.Connected` (E2-B09) — both trailing and
+   defaulted, so every pre-existing 2-arg call site across `:app`'s screen tests and the debug
+   scenarios keeps compiling unchanged (confirmed: `:app`'s own `build.gradle.kts` already declares
+   `implementation(project(":rig"))` directly, so the new `RigTransportKind`-typed field does not
+   leak an unresolvable type into `:app`'s compile classpath).
+
+6. **`CaptureStatus`** (`pipeline/CaptureStatus.kt`) gains `pendingConfiguration: CaptureConfiguration?
+   = null`, threaded through `CaptureStatusRepository.current(...)`'s new optional parameter of the
+   same name — CF11's amber banner reads this field directly. Both trailing and defaulted for the
+   same reason as (5); `:app`'s existing `ReaderPolling.currentStatus` call (named arguments, no
+   trailing comma issue) and `StatusViewStateMapperTest`'s direct `CaptureStatus(...)` construction
+   both keep compiling.
+
+7. **`RealCaptureService`** (`pipeline/capture/RealCaptureService.kt`) — `startCapture()` now: (a)
+   calls `dependencies.captureConfigurationStore(applicationContext).activateForNewSession()` once,
+   assigning the result to a new `activeConfiguration` field frozen for the session (AC-131); (b)
+   builds a `RigSupervisor` from `dependencies.rigTransportFactory()` and connects it with
+   `activeConfiguration`, replacing the old `RigStatus.absent()` stub; (c) the session-row insert in
+   `runCaptureFlow` now writes `captureMode`, `audioRouteKind` (mapped from `AudioDeviceKind` via a
+   new `audioRouteKindFor`), `audioRouteLabel`, `bluetoothProfile` and `rigTransport` (AC-129); (d)
+   `RealSegmentSink` gains an injected `frequencyProvider: (startNanos, endNanos) -> FrequencyReading`
+   (default: always-unknown, so its own existing tests keep compiling), called at segment close with
+   `sampleClock.monotonicNanosAt(record.startSample/endSample)` to populate `frequencyHz`/
+   `frequencyProvenance` instead of the previous hardcoded `null`/`"unknown"`; (e)
+   `stopCaptureInternal` now disconnects the session's `RigSupervisor` on every path that ends a
+   session, clean or unclean, same discipline as `LevelStatus.reset()`/`InputStatus.reset()`.
+   `Dependencies` gains `captureConfigurationStore` (defaults to the real
+   `SharedPreferencesCaptureConfigurationStore`) and `rigTransportFactory` (defaults to
+   `DefaultRigTransportFactory()`).
+
+8. **`InputStatus`** — **no code change.** `State.Lost.lastKnown: Opened` already carries the full
+   `AudioDeviceDescriptor` (kind + `bluetoothProfile`), so "InputStatus goes Lost with the route kind
+   and profile" (E2-D07) already held before this package started; a new test
+   (`RealCaptureServiceBluetoothDropTest`) makes it explicit for the Bluetooth case rather than
+   leaving it implicit. The Bluetooth audio drop path itself is unchanged from the generic
+   interruption path `AudioRecordSource`/`GapTracker`/`GapPersister` already implement — a
+   `TYPE_BLUETOOTH_SCO` device dropping mid-read is not special-cased, by design (constitution IV:
+   a route that is not the selected device halts; a route that drops resumes on the same ladder
+   regardless of kind).
+
+**Verified:**
+- `./gradlew :pipeline:testDebugUnitTest` — all tests green, including the full pre-existing suite
+  (no regressions) and every new test named below.
+- `./gradlew build dependencyRules platformGuards` — green (10m41s, full monorepo including `:app`);
+  `dependencyRules` confirms `:capture-android -> :capture-api, :core` only (no edge to `:rig*`,
+  `:asr-*`, `:llm-*` — E2-D10, re-checked); `platformGuards` confirms no analytics/telemetry SDK, no
+  HTTP client outside `:net`, `android.permission.INTERNET` declared only by `:net`.
+- `./gradlew -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix` — 450 requirements, 217 covered (was 216); `./gradlew
+  coverageMatrixCheck` (run as a separate invocation, per the build-plan's own note that the two
+  must not share one Gradle command) — up to date, 217 of 450.
+- **Discrimination (E2-D08, constitution II):** temporarily added a `debugSabotageOnControlDrop`
+  hook to `RigSupervisor`, wired from `RealCaptureService` to call `gapPersister.persist(...)` on
+  every `TRANSPORT_LOST` health event, and re-ran `RealCaptureServiceRigDropTest` — it failed for
+  the right reason (`a rig control drop must never produce a CaptureGap row (FR-RIG-15)`); both
+  temporary edits were then reverted and the suite passed again.
+- Tests established, named for the E2 row they close:
+  - **E2-D04** (FR-CAP-13, AC-129) — `RealCaptureServiceCaptureModeTest`'s `AC_129 session records
+    mode, route, label, bluetooth profile and rig transport` and `AC_129 a USB session with a rig
+    transport records it, and a mic session records none`.
+  - **E2-D05** (FR-CAP-12, AC-131) — `RealCaptureServiceCaptureModeTest`'s `AC_131 a mode change
+    written mid-session leaves the running session's row unchanged` (full two-session
+    integration), plus `CaptureConfigurationStoreTest`/`SharedPreferencesCaptureConfigurationStoreTest`'s
+    unit-level `AC_131 *` cases for both store implementations.
+  - **E2-D07** (FR-CAP-5, F23) — `RealCaptureServiceBluetoothDropTest`'s `E2_D07 a Bluetooth audio
+    drop opens a gap naming the route and profile, then recovers`.
+  - **E2-D08** (FR-RIG-15) — `RealCaptureServiceRigDropTest`'s `E2_D08 a rig control drop degrades
+    to Stale and produces no CaptureGap row` (the integration-level discriminating proof), plus
+    `RigSupervisorTest`'s unit-level `FR_RIG_7`/`FR_RIG_15` cases.
+  - **E2-D09** (constitution III, FR-SEG-7) — `SegmenterHasNoModeOrTierTest`'s reflection-based
+    `Segmenter's constructor takes no CaptureMode and no Tier parameter` (exactly 4 parameters:
+    `SegmentConfig`, `Vad`, `SegmentSink`, an optional `originSample` — unchanged from before this
+    wave).
+  - **E2-B09** (session half, FR-RIG-6) — `RigSupervisorTest`'s `FR_RIG_6 a rig reading in force at
+    transmission start is reported with provenance rig`; `RigStatusTest`'s three new cases for the
+    transport-kind/descriptor-id fields.
+
+**Left open / not done:**
+- **Real transports.** `DefaultRigTransportFactory` had no real `UsbSerialTransport`/
+  `BluetoothSppTransport` to register at the time this commit landed (WPB not yet on `main`); it
+  threw `UnsupportedRigTransportException` for every kind, caught defensively by `RigSupervisor`
+  (falls back to the null module, never crashes). A follow-up commit on this same branch wires the
+  real factory once WPB merges — see the next CHANGELOG entry.
+- **Band-scoped frequency attribution.** `RigSupervisor.frequencyForTransmission` is always called
+  with `band = null` from `RealCaptureService` — the TH-D75A's dual-receive squelch-to-band
+  correlation (D23) is not wired at the segment/transmission level; `stateForTransmission` itself
+  (built in WPA) already supports a real band argument, so this is a follow-up wiring gap, not a
+  missing capability.
+- **FR-RIG-6's mid-transmission-change flag is computed but not persisted.** `FrequencyReading.
+  changedDuringTransmission` is available to `RealSegmentSink`'s `frequencyProvider` call but there
+  is no `TransmissionEntity` column to write it to. The exact addition this package would make in
+  `:data` (not touched, per file ownership): `TransmissionEntity.rigStateChangedMidTransmission:
+  Boolean = false`.
+- **`CaptureGapCause` has no Bluetooth-specific value.** A Bluetooth audio drop currently maps to
+  the existing `CaptureGapCause.INPUT_LOST` via `GapPersister.causeFor`'s "device"/"read error"
+  branch — the closest existing value. The exact addition this package would make in `:data` (not
+  touched): `CaptureGapCause.BLUETOOTH_AUDIO_LOST`, distinguished from a generic `INPUT_LOST` by
+  cross-referencing the session's `audioRouteKind == "BLUETOOTH_SCO"` at read time (a screen already
+  has both facts available, so this is a UI-layer improvement more than a hard blocker).
+- **`SessionEntity.rigTransport` stores `:rig`'s `RigTransportKind.name`, a superset of `:core`'s
+  own (mirrored) 2-value enum** the column's kdoc names — `:core`'s type cannot express `BLE`/
+  `NETWORK`, which a real `CaptureConfiguration` can carry. `USB_SERIAL`/`BLUETOOTH_SPP` (the two
+  values that exist in both enums) read identically either way; this only diverges for a transport
+  kind `:core` was never given a value for in the first place.
+- Not merged to `main` — commit left on this worktree's branch per instructions.
+
+---
+
 ## 2026-09-10 (WP0': Wave F module scaffolding — llm-api, llm-mediapipe, rig-bluetooth)
 
 ### (pending) — wave F scaffolding · three new modules wired empty for P19/P20's parallel builders
