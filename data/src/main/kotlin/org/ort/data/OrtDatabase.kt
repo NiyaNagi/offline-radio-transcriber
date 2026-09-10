@@ -17,6 +17,7 @@ import org.ort.data.dao.ActivityDao
 import org.ort.data.dao.CaptureGapDao
 import org.ort.data.dao.CatalogDao
 import org.ort.data.dao.CorrectionDao
+import org.ort.data.dao.ProseSummaryDao
 import org.ort.data.dao.SearchDao
 import org.ort.data.dao.SessionDao
 import org.ort.data.dao.ShedEventDao
@@ -35,6 +36,7 @@ import org.ort.data.entity.LexiconVersionEntity
 import org.ort.data.entity.OperatorLocationEntity
 import org.ort.data.entity.PhoneticLatticeEntity
 import org.ort.data.entity.PriorAdjustmentEntity
+import org.ort.data.entity.ProseSummaryEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.ShedEventEntity
 import org.ort.data.entity.StationEntity
@@ -66,7 +68,9 @@ import java.util.concurrent.Executors
  * reason, not just the queue item's own `attemptCount`/`lastError` (the latest attempt only);
  * v7 adds [SessionEntity.captureMode] and its four siblings (FR-CAP-13, AC-129) so a session
  * records which capture mode, audio route and rig transport produced it — see that entity's own
- * doc comment for why all five are nullable.
+ * doc comment for why all five are nullable; v8 adds [ProseSummaryEntity] (FR-DIG-3, FR-DIG-11 /
+ * T3) so a generated per-thread prose summary persists across process death — see that entity's
+ * own doc comment for how it differs from [StationSummaryEntity]'s per-station accumulation.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -95,6 +99,7 @@ import java.util.concurrent.Executors
         PriorAdjustmentEntity::class,
         LatticeSlotEntity::class,
         WorkAttemptEntity::class,
+        ProseSummaryEntity::class,
     ],
     version = OrtDatabase.SCHEMA_VERSION,
     exportSchema = true,
@@ -113,9 +118,10 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun correctionDao(): CorrectionDao
     public abstract fun shedEventDao(): ShedEventDao
     public abstract fun stationIdentityDao(): StationIdentityDao
+    public abstract fun proseSummaryDao(): ProseSummaryDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 7
+        public const val SCHEMA_VERSION: Int = 8
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -271,10 +277,34 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v7 → v8 (FR-DIG-3, FR-DIG-11 / T3): adds the `prose_summary` table for
+         * [ProseSummaryEntity] — one row per thread, written by `:pipeline`'s
+         * `RoomProseSummaryStore`. No existing table or column is touched or dropped; every v7 row
+         * survives untouched (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
+         */
+        public val MIGRATION_7_8: Migration = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `prose_summary` (" +
+                        "`threadId` TEXT NOT NULL, `text` TEXT NOT NULL, " +
+                        "`sourceTransmissionIds` TEXT NOT NULL, `generatedAtMillis` INTEGER NOT NULL, " +
+                        "`modelId` TEXT NOT NULL, PRIMARY KEY(`threadId`))",
+                )
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
-        public val MIGRATIONS: Array<Migration> =
-            arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+        public val MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7,
+            MIGRATION_7_8,
+        )
 
         private suspend fun PooledConnection.exec(sql: String) {
             usePrepared(sql) { it.step() }
