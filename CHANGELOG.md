@@ -32,6 +32,162 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (fts-fallback: the two production fts5-availability branches no longer parse a driver message)
+
+### (pending) — fts-fallback: OrtDatabase/SearchViewData decide fts5 availability by a positive capability probe, not SQLException text
+
+**Scope:** `data/**` (`data/src/main/kotlin/org/ort/data/OrtDatabase.kt`, new
+`data/src/test/kotlin/org/ort/data/FtsCapabilityProbeTest.kt`) and
+`app/src/main/kotlin/org/ort/app/ui/data/SearchViewData.kt` (plus its test,
+`app/src/test/kotlin/org/ort/app/ui/data/SearchPollingTest.kt`, and a new
+`app/src/test/kotlin/org/ort/app/ui/data/SearchTextAvailabilityTest.kt`), per this task's explicit
+ownership grant of those two paths.
+
+**Requirements/ACs:** `FR-UI-3`, register `R-204` (both already-established ids — no new
+requirement coverage, `coverageMatrix` only gained new test names under the existing rows, see
+Verified).
+
+**Constitution Check:** Principle I ("uncertainty is content... a weaker device may know less; it
+MUST NOT be more wrong") — this is exactly the defect being fixed: a genuinely missing-fts5 build
+whose driver message happened to arrive wordless (proven real on the Linux CI runner, commit
+5a9f53a) would have rethrown instead of degrading to the honest `Search-Unavailable` state, i.e.
+been *wrong* (a crash presented as available) rather than merely limited. Principle VII
+("guarantees are expressed as types/structure where possible... a rule a person must remember is a
+rule that will eventually be forgotten") — the fix replaces an English-substring judgment call
+with a structural fact (`PRAGMA compile_options`'s `ENABLE_FTS5`, and downstream, whether
+`transcript_fts` exists in `sqlite_master`), so there is no wording to get out of sync across
+platforms. Principle II (strict TDD, failure paths tested) — every new test is written to fail for
+a real reason first (confirmed by running the suite before the fix existed) and both directions of
+the decision are pinned, with the untestable half named explicitly rather than skipped silently.
+
+**What changed:**
+
+1. **`OrtDatabase.kt`** — `createFtsIndex` no longer catches `android.database.SQLException` and
+   parses its message for `"no such module: fts5"`. It now asks a new, cached, private
+   `isFts5Supported(connection)` — `PRAGMA compile_options` for the `ENABLE_FTS5` flag — *before*
+   attempting `CREATE VIRTUAL TABLE ... USING fts5(...)` at all. When unsupported, it returns
+   `false` without ever running the statement — nothing to catch or mis-parse. When supported, the
+   statement is expected to succeed; if it (or a trigger statement) throws anyway, that exception
+   is left to propagate uncaught — a real, unrelated database error (corruption, a disk fault) is
+   never folded into the "no fts5" fallback. A test-only seam,
+   `OrtDatabase.fts5SupportOverrideForTest` (a `@Volatile internal var`, `null` in production),
+   lets a test force either answer without needing a genuinely fts5-less SQLite build, which no
+   build reachable from this project's own test suite is (`BundledSQLiteDriver` always ships fts5
+   compiled in).
+2. **`OrtDatabase.kt`** — added `public suspend fun OrtDatabase.hasTextSearchIndex(): Boolean`, a
+   positive, schema-level check (`SELECT count(*) FROM sqlite_master WHERE type='table' AND
+   name='transcript_fts'`) that `:app` now uses instead of catching and parsing an exception.
+3. **`SearchViewData.kt`** — all three sites that previously caught `SQLException` and checked
+   `e.message?.contains("fts5"...)`/`"transcript_fts"` (`SearchPolling.search`,
+   `SearchPolling.facetCounts`, `SearchWidenSuggestions`' private `countMatching`) now call
+   `db.hasTextSearchIndex()` up front (only when there is actually free text to search — the
+   `||` short-circuit avoids the extra query on a filters-only search, exactly as before) and route
+   the decision through one new pure function, `internal fun resolveTextSearch(requestedText:
+   String?, indexAvailable: Boolean): TextSearchOutcome`, shared by all three call sites. No
+   `catch (e: SQLException)` remains in this file for this purpose; a real query exception now
+   propagates unconditionally.
+4. **Reviewed, not fixed (outside this task's ownership or lower-stakes, both flagged by the prior
+   `data-msg` round):** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt:371`'s
+   `isTransientlyLocked` retry heuristic and
+   `app/src/debug/kotlin/org/ort/app/debug/tour/TourRunner.kt:83` both still branch on
+   `e.message` — a missed retry or a less-informative debug label if the message text differs,
+   not a false pass. Not touched; `app/src/debug/**` is not this task's ownership.
+5. **Discovered, not fixed (out of scope for this task):** while proving the fts5-absent path at
+   the `:app` layer, found that `OrtDatabase.create`'s own instance cache (the `instances` map,
+   keyed by on-disk path, documented at length in this file as a fix for connection-pool
+   contention) never actually hits for a non-in-memory database — `RoomDatabase.isOpen` reads
+   `false` for a driver-based (`.setDriver(BundledSQLiteDriver())`) `OrtDatabase` in this Room
+   version (2.7.2) even immediately after a successful open, so `cached.isOpen && File(path).exists()`
+   is never true and every `create()` call rebuilds a fresh instance (and re-runs
+   `applyHandWrittenSchema`, including the FTS5 self-heal, synchronously). This does not affect the
+   *correctness* of this task's fix — the fts5 decision is driven by a real per-connection probe of
+   the driver's actual, unchanging capability, not by the cache — but it does mean a schema-tampering
+   test cannot simulate "index missing" by dropping a table on a live handle (a fresh, self-healing
+   instance opens under the very next `create()` call, exactly as R-204 designed it to). Not
+   investigated further or fixed; flagged for whoever owns `OrtDatabase.create`'s caching next.
+
+**Tests added:**
+
+- `data/src/test/kotlin/org/ort/data/FtsCapabilityProbeTest.kt` (new file):
+  `FR_UI_3_the_probe_itself_reports_fts5_present_on_the_real_driver`,
+  `FR_UI_3_hasTextSearchIndex_is_true_once_the_database_is_open`,
+  `FR_UI_3_a_build_without_fts5_opens_honestly_without_the_index_instead_of_throwing` (the last one
+  uses `fts5SupportOverrideForTest = false` and proves `OrtDatabase.create` does not throw, the
+  index is honestly absent, and ordinary reads/writes — including the other hand-written
+  indexes — still work).
+- `app/src/test/kotlin/org/ort/app/ui/data/SearchTextAvailabilityTest.kt` (new file, plain JUnit,
+  no Robolectric): `FR_UI_3_no_requested_text_never_touches_the_index_and_is_never_unavailable`,
+  `FR_UI_3_requested_text_with_the_index_available_runs_for_real`,
+  `FR_UI_3_requested_text_without_the_index_degrades_honestly_instead_of_running` — pins both
+  directions of `resolveTextSearch` directly, independent of any database.
+- `app/src/test/kotlin/org/ort/app/ui/data/SearchPollingTest.kt`: added
+  `FR_UI_3 a real database error still propagates, not mistaken for missing fts5` (drops the
+  unrelated `transmission` table with `transcript_fts` left intact, so `hasTextSearchIndex()`
+  reports "available" and the only way the call can fail is the query itself — proves the failure
+  reaches the caller as a real `SQLException`, not a silent fallback). An earlier version of this
+  test tried to simulate a genuinely fts5-less build by dropping `transcript_fts` on this class's
+  `db` handle — removed once item 5 above explained why it cannot work in this environment (every
+  `OrtDatabase.create()` call, including the one inside `SearchPolling.search` itself, self-heals
+  the index because the real driver genuinely has fts5); the comment left in its place explains why
+  and points at the two tests that cover the fts5-absent half instead.
+
+**What this does and does not prove:** the fts5-*present* half of both decisions (the index gets
+built and search works; `SearchPolling` runs the real query) is proven end to end against the real
+`BundledSQLiteDriver`, which genuinely has fts5 in every environment this project's test suite
+runs in — `FtsIndexRepairTest`, `SearchDaoFullTextTest` and `SearchPollingTest`'s existing tests
+all still pass unchanged. The fts5-*absent* half cannot be proven end to end the same way, because
+no SQLite build reachable from this test suite genuinely lacks fts5; it is proven instead at two
+narrower seams this task introduced specifically for that reason: `OrtDatabase`'s own
+`fts5SupportOverrideForTest` (one layer down, at the capability probe and `OrtDatabase.create`
+itself) and `resolveTextSearch` (at `:app`'s own decision logic, independent of any database). What
+is **not** covered by any test: whether a real, non-BundledSQLiteDriver SQLite build's
+`PRAGMA compile_options` genuinely omits `ENABLE_FTS5` the way this fix assumes — that assumption
+rests on SQLite's own documented behavior (https://sqlite.org/compile.html), not on anything this
+suite can execute.
+
+**Can a real database error still reach the user as a real error?** Yes, by construction, not by
+convention: the fts5-availability decision in both files no longer touches a `catch` block at all
+in the fts5-present case — `createFtsIndex` only guards the statement with `isFts5Supported`, never
+wraps it in `try`, so any exception from the `CREATE VIRTUAL TABLE`/`CREATE TRIGGER` statements
+(once fts5 is confirmed present) propagates unconditionally; `SearchViewData.kt`'s three call sites
+have no `catch (e: SQLException)` left for this purpose at all. `SearchPollingTest`'s new
+"a real database error still propagates" test exercises this directly against the real driver.
+
+**Verified** (Windows, this worktree, `worktree-fts-fallback` on `57c7c4f`):
+
+- `.\gradlew.bat :data:testDebugUnitTest` (full, not scoped) — `BUILD SUCCESSFUL`, every data-module
+  test passes, including the three new `FtsCapabilityProbeTest` cases.
+- `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.Search*"` — `BUILD SUCCESSFUL`,
+  37 tests, all `PASSED` (`SearchPollingTest`, `SearchTextAvailabilityTest`,
+  `SearchFacetCountsTest`, `SearchFilterParserTest`, `SearchWidenSuggestionsTest`).
+- `.\gradlew.bat :data:ktlintCheck :data:detekt` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — `BUILD SUCCESSFUL` (one import-order violation in
+  `SearchPollingTest.kt` found and fixed before this was green).
+- `.\gradlew.bat dependencyRules platformGuards` — `BUILD SUCCESSFUL`; 17 modules checked, no
+  forbidden edge, no stray HTTP client or `INTERNET` permission outside `:net`.
+- `.\gradlew.bat :app:assembleDebug` — `BUILD SUCCESSFUL` (163 tasks, 10s).
+- `python tools\spec-check\spec_check.py` — all 8 checks `[PASS]`.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (two separate
+  invocations) — both `BUILD SUCCESSFUL`; `coverageMatrix: 419 requirements, 192 covered`;
+  `coverageMatrixCheck: up to date (192 covered of 419)`; the regenerated
+  `results/coverage-matrix.md` only gains the new test names under the existing `FR-UI-3`/`R-204`
+  rows (diff inspected directly).
+
+**Left open / not done:**
+
+- Item 5 above (`OrtDatabase.create`'s instance cache never hitting for a non-in-memory database,
+  because `RoomDatabase.isOpen` reads `false` for a driver-based database in this Room version) is
+  discovered and reported, not investigated further or fixed — it is a real, pre-existing
+  correctness-of-caching (not correctness-of-fts5-decision) issue outside this task's scope.
+- `Scenarios.kt:371` and `TourRunner.kt:83`'s own message-text branches (item 4 above) reviewed and
+  left as they were, per this task's instruction.
+- The `PRAGMA compile_options` assumption (`ENABLE_FTS5` is absent when and only when fts5 is
+  genuinely unavailable) is not verified against a real non-bundled, fts5-less SQLite build — none
+  is reachable from this project's toolchain; it rests on SQLite's own documented compile-options
+  contract.
+
+---
+
 ## 2026-09-09 (data-msg: the two partial-index tests asserted driver message text, not the invariant)
 
 ### (pending) — data-msg: TranscriptVersioningTest/WorkQueueTest assert table state instead of SQLException message text
