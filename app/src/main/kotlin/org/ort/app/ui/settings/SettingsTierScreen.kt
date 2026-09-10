@@ -109,8 +109,14 @@ private val TIER_CAPABILITIES: List<TierCapability> = listOf(
     TierCapability(
         ordinal = 3,
         title = "Everything",
+        // Amended 2026-09-10 (`Settings-Tier.dc.html`, FR-DIG-3b, D5): names the prose-digest
+        // capability — the *only* tier that ever loads the bundled language model, and only for
+        // prose summaries, never for callsigns. Lower tiers need no matching sentence of their
+        // own: neither mentions loading a language model at all, which is itself the honest "not
+        // this tier" statement (constitution I — an absent claim, not a second negative one).
         detail = "Pass C resolves callsigns against the audio itself, not the transcript. The most " +
-            "callsigns, and the ones it is least sure of are still marked that way.",
+            "callsigns, and the ones it is least sure of are still marked that way. The only tier " +
+            "that loads the bundled language model — for prose summaries, never for callsigns.",
     ),
 )
 

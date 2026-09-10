@@ -5,9 +5,12 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.SystemClock
+import org.ort.pipeline.digest.ForegroundActivityTracker
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -31,6 +34,26 @@ class ReaderActivityTest {
 
     @get:Rule
     val composeTestRule = createAndroidComposeRule<ReaderActivity>()
+
+    // --- E2-I03 (spec/e2e-capture-modes-plan.md, "owed by WPE") ------------------------------------
+
+    @Test
+    fun `E2_I03 the rule's own resumed activity has already marked ForegroundActivityTracker active`() {
+        // `createAndroidComposeRule` resumes the activity before this test body ever runs — the
+        // same moment `ReaderActivity.onResume` marks the tracker — so this asserts the effect of a
+        // resume the test never has to drive itself. Compared against "now", not a "before" this
+        // test captured earlier: the rule's own resume already happened before this method started,
+        // so a timestamp taken here would already postdate it.
+        val recentWindowMillis = 60_000L
+        val now = SystemClock.wallMillis()
+
+        val lastActive = ForegroundActivityTracker.lastActiveAtMillis
+        assertTrue(
+            "expected ForegroundActivityTracker.lastActiveAtMillis ($lastActive) to be within the last " +
+                "$recentWindowMillis ms of now ($now)",
+            now - lastActive in 0..recentWindowMillis,
+        )
+    }
 
     @Test
     fun `R_001 ReaderActivity window has no action bar`() {

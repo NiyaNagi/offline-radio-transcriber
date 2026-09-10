@@ -26,25 +26,40 @@ import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.SecondaryButton
 import org.ort.app.ui.components.SectionHeader
+import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 
 /**
- * `Settings-Rig.dc.html` (FR-RIG). FR-RIG-1..12 describe a full rig-module contract with a
- * built-in TH-D75A module and a null module for manual entry — none of it is built yet (register
- * R-084's plan-level note), so [SettingsRigViewState.connected] is `false` on every build today.
- * This renders that honestly as a [FailedState] rather than a fabricated "Reconnect"/"Change radio"
- * pair with nothing behind them.
+ * `Settings-Rig.dc.html` (FR-RIG; amended 2026-09-10, FR-RIG-14/15). FR-RIG-1..12 describe a full
+ * rig-module contract with a built-in TH-D75A module and a null module for manual entry —
+ * [SettingsRigViewState.connected] is `false` on every build today whenever no rig has ever been
+ * configured (register R-084's plan-level note; the debug scenario simulator is the only current
+ * producer of a `Connected`/`Stale` state — see `SettingsPolling.rig`'s own doc comment), and this
+ * renders that honestly as a [FailedState] rather than a fabricated `Reconnect`/`Change radio` pair
+ * with nothing behind them.
+ *
+ * Once a rig *has* connected (or gone stale), the Link/Reconnect actions below are real: `Switch`
+ * re-enters setup at the rig-transport step (WPD's still-in-flight `RIG_TRANSPORT`, forward-
+ * compatible today — see [SettingsContent]'s own doc comment), and `Reconnect` — until WPC2's real
+ * reconnect entry point exists — re-reads [RigStatus] fresh via [onReconnect], `TODO(WPC2)`d in
+ * this one place so the real call is a one-line swap later.
  */
 @Composable
-public fun SettingsRigScreen(state: SettingsRigViewState, onBack: () -> Unit, modifier: Modifier = Modifier) {
+public fun SettingsRigScreen(
+    state: SettingsRigViewState,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    onReconnect: () -> Unit = {},
+    onSwitchTransport: () -> Unit = {},
+) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DrillInHeader(parentLabel = "Settings", onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
             Text(text = state.descriptorLabel, style = OrtType.screenTitle, color = OrtColors.textHigh)
             Text(
-                text = if (state.connected) "Connected" else "Not connected",
+                text = rigSubtitle(state),
                 style = OrtType.subtitle,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
@@ -55,7 +70,7 @@ public fun SettingsRigScreen(state: SettingsRigViewState, onBack: () -> Unit, mo
                 BandTilesRow(bands = state.bands, modifier = Modifier.padding(top = OrtSpacing.sm))
             }
 
-            if (!state.connected) {
+            if (!state.connected && state.staleSinceLabel == null) {
                 // R-444 (register, Reviewer D): "FR-RIG's module contract (…)" named the
                 // requirement, not a fact this screen's own operator would recognise — guide §9's
                 // discipline `CaptureStatusViewState.radioFacts` (R-263) already established for
@@ -69,19 +84,46 @@ public fun SettingsRigScreen(state: SettingsRigViewState, onBack: () -> Unit, mo
                     modifier = Modifier.padding(top = OrtSpacing.lg),
                 )
             } else {
-                state.staleSinceLabel?.let {
-                    KeyValueRow(key = "Status", value = "Stale", subLine = "last known reading, $it")
-                }
+                SectionHeader(label = "Connection", modifier = Modifier.padding(top = OrtSpacing.md))
+                KeyValueRow(
+                    key = "Link",
+                    value = "",
+                    subLine = state.transportLabel?.let { transport ->
+                        "$transport" + (state.linkAddressLabel?.let { " · $it" } ?: "")
+                    } ?: "transport and address not yet reported by this build",
+                    trailingMarker = { TextAction(text = "Switch", onClick = onSwitchTransport) },
+                )
+                KeyValueRow(
+                    key = "If it disconnects",
+                    value = "",
+                    // `Settings-Rig.dc.html`'s own "If it disconnects" row is shown regardless of
+                    // whether the link is currently stale — a standing policy statement — with the
+                    // real, live fact (`state.staleSinceLabel` — already worded "since <label>",
+                    // `SettingsPolling.rig`) folded in only when it is actually true right now.
+                    subLine = "Capture continues on the last-known frequency, marked stale" +
+                        (state.staleSinceLabel?.let { " — it is now, $it" } ?: "") +
+                        " · every over logged meanwhile carries a stale mark · the link is retried with " +
+                        "backoff · you are told loudly, and again when it is back",
+                )
             }
 
             SecondaryButton(
                 text = "Reconnect",
-                enabled = false,
-                onClick = {},
+                enabled = state.connected || state.staleSinceLabel != null,
+                onClick = onReconnect,
                 modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
             )
         }
     }
+}
+
+/** CF06's subtitle line: `Connected [· <transport>]`, `Stale since <label>`, or `Not connected` —
+ * never a differently-worded restatement of the same three facts elsewhere on this screen. */
+private fun rigSubtitle(state: SettingsRigViewState): String = when {
+    state.connected -> "Connected" + (state.transportLabel?.let { " · $it" } ?: "")
+    // [SettingsRigViewState.staleSinceLabel] is already worded "since <label>" (`SettingsPolling.rig`).
+    state.staleSinceLabel != null -> "Stale ${state.staleSinceLabel}"
+    else -> "Not connected"
 }
 
 /**

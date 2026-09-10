@@ -41,7 +41,7 @@ class SettingsPollingTest {
 
     @Test
     fun `R_090 capture with no input selected reads honestly, not fabricated`() {
-        val state = SettingsPolling.capture(InMemorySettingsStore())
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
         assert(state.inputLabel == "No input selected")
         assert(state.levelLabel == "Not measured")
     }
@@ -56,7 +56,7 @@ class SettingsPollingTest {
             routedDeviceMatches = true,
             openedAtMillis = 0L,
         )
-        val state = SettingsPolling.capture(InMemorySettingsStore())
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
         assert(state.inputLabel == "USB Audio Device")
         assert(state.inputSubLine.contains("verified"))
         assert(state.inputSubLine.contains("48000 Hz"))
@@ -76,14 +76,14 @@ class SettingsPollingTest {
             ),
             peakHistoryDbfs = emptyList(),
         )
-        val state = SettingsPolling.capture(InMemorySettingsStore())
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
         assert(state.levelLabel.contains("-14"))
         assert(state.levelSubLine.contains("-58"))
     }
 
     @Test
     fun `R_090 rig with no rig configured is honest, not a fabricated connection`() {
-        val state = SettingsPolling.rig()
+        val state = SettingsPolling.rig(context)
         assert(!state.connected)
         assert(state.descriptorLabel == "No radio configured")
         assert(state.bands.isEmpty())

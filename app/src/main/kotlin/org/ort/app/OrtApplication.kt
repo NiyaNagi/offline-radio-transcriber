@@ -10,6 +10,8 @@ import kotlinx.coroutines.launch
 import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetState
+import org.ort.pipeline.digest.ProseDigestRunner
+import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 
 /**
  * Application shell. The Hilt graph, capture service wiring and onboarding arrive with
@@ -48,6 +50,14 @@ class OrtApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         if (isRunningUnderRobolectric()) return
+        // WPE (E2-I03's own "owed by WPE" note, FR-DIG-5): schedules the prose-digest work chain
+        // on every launch — a no-op if it is already scheduled (`ProseDigestRunner.schedule`'s own
+        // `ExistingWorkPolicy.KEEP`) — but only when the operator has not disabled it (CF04's
+        // toggle writes this same store's flag straight through `.cancel()`, so a disabled state
+        // must never be silently re-armed just because the process restarted).
+        if (SharedPreferencesProseDigestSettingsStore(this).isEnabled()) {
+            ProseDigestRunner.schedule(this)
+        }
         backgroundScope.launch {
             val results = BundledAssetInstaller.installAll(filesDir, AndroidBundledAssetSource(this@OrtApplication))
             results.forEach { result ->

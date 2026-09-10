@@ -22,7 +22,14 @@ import org.ort.app.ui.data.ModelDownloadFailureViewState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.ModelsScreenStatus
+import org.ort.app.ui.screens.ModelsExtrasViewState
 import org.ort.app.ui.screens.ModelsScreen
+import org.ort.app.ui.screens.ProseDigestSectionViewState
+import org.ort.data.OrtDatabase
+import org.ort.pipeline.capture.measureStorageAccounting
+import org.ort.pipeline.digest.ProseDigestRunner
+import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
+import java.io.File
 import java.io.IOException
 
 /**
@@ -78,6 +85,8 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
     }
     val stagedActivation by ModelsController.stagedActivation.collectAsState()
 
+    val extras = rememberModelsExtras(context)
+
     val lexiconFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         scope.launch {
             onLexiconFilePicked(context, uri) { result ->
@@ -120,7 +129,6 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
 
     ModelsScreen(
         state = state,
-        busy = busy,
         status = ModelsScreenStatus(
             lastMessage = lastMessage,
             downloadFailure = lastDownloadFailure,
@@ -139,7 +147,46 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
             onInstall = { lexiconFilePicker.launch(arrayOf("*/*")) },
             onDismissResult = { lexiconImportResult = null },
         ),
+        extras = extras.copy(busy = busy),
     )
+}
+
+/**
+ * CF04's Prose-digest toggle and Space row, split out of [ModelsContent] purely to keep that
+ * function under detekt's length limit (the same reason [onLexiconFilePicked]/[onModelFilePicked]/
+ * [runDownload] already are). See [ModelsContent]'s own doc comment for why the toggle writes
+ * straight to [SharedPreferencesProseDigestSettingsStore] rather than through
+ * [org.ort.pipeline.digest.ProseDigestSettings.setEnabled].
+ */
+@Composable
+private fun rememberModelsExtras(context: android.content.Context): ModelsExtrasViewState {
+    val proseDigestStore = remember(context) { SharedPreferencesProseDigestSettingsStore(context) }
+    var proseDigestEnabled by remember { mutableStateOf(proseDigestStore.isEnabled()) }
+    var bundledBytesLabel by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        val dbFile = context.getDatabasePath(OrtDatabase.DATABASE_NAME)
+        val databaseFiles = listOf(dbFile, File(dbFile.path + "-wal"), File(dbFile.path + "-shm"))
+        val accounting = measureStorageAccounting(context.filesDir, databaseFiles)
+        bundledBytesLabel = formatBundledBytes(accounting.bundledBytes)
+    }
+    return ModelsExtrasViewState(
+        proseDigest = ProseDigestSectionViewState(
+            enabled = proseDigestEnabled,
+            onToggle = { enabled ->
+                proseDigestStore.setEnabled(enabled)
+                proseDigestEnabled = enabled
+                if (enabled) ProseDigestRunner.schedule(context) else ProseDigestRunner.cancel(context)
+            },
+        ),
+        spaceUsedBytesLabel = bundledBytesLabel,
+    )
+}
+
+/** CF04's own Space-row precision (`Settings-Assets.dc.html`'s own "635 MB" example) — a plain
+ * `toGigabyteLabel()` would round today's real bundled figure (tens to hundreds of MB) to `0.0 GB`. */
+private fun formatBundledBytes(bytes: Long): String {
+    val mb = bytes / 1_000_000.0
+    return if (mb >= 1000.0) "%.2f GB".format(mb / 1000.0) else "%.0f MB".format(mb)
 }
 
 private const val LEXICON_CACHE_FILE_NAME = "lexicon-sideload"

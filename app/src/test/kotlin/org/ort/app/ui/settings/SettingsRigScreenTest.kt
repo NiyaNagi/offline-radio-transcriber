@@ -5,9 +5,13 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import org.junit.Rule
@@ -94,5 +98,98 @@ class SettingsRigScreenTest {
 
         composeTestRule.onNodeWithText("No radio support in this build yet", substring = true).assertExists()
         composeTestRule.onNodeWithText("FR-RIG", substring = true).assertDoesNotExist()
+    }
+
+    // --- CF06 (`spec/e2e-capture-modes-plan.md` E2-F03, FR-RIG-14/15) — the Link/Reconnect rewrite ---
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `E2_F03 a connected rig names its transport in the subtitle`() {
+        val state = connectedState().copy(transportLabel = "Bluetooth SPP")
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Connected · Bluetooth SPP").assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `E2_F03 the Link row names the address when known, and honestly says so when it is not`() {
+        val known = connectedState().copy(transportLabel = "Bluetooth SPP", linkAddressLabel = "D8:3A:DD:41:0C:7F")
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = known, onBack = {}) } }
+        composeTestRule.onNodeWithText("Bluetooth SPP · D8:3A:DD:41:0C:7F", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `E2_F03 an unknown link address reads honestly, never fabricated`() {
+        val unknown = connectedState()
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = unknown, onBack = {}) } }
+        composeTestRule
+            .onNodeWithText("transport and address not yet reported by this build", substring = true)
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `E2_F03 Switch on the Link row calls back`() {
+        var switched = false
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsRigScreen(state = connectedState(), onBack = {}, onSwitchTransport = { switched = true })
+            }
+        }
+        composeTestRule.onNodeWithText("Switch").performClick()
+        assert(switched) { "expected Switch to call onSwitchTransport" }
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `E2_F03 Reconnect is enabled once a rig has ever connected`() {
+        composeTestRule.setContent {
+            OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}) }
+        }
+        composeTestRule.onNodeWithText("Reconnect").assertIsEnabled()
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `E2_F03 Reconnect calls back`() {
+        var reconnected = false
+        composeTestRule.setContent {
+            OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}, onReconnect = { reconnected = true }) }
+        }
+        composeTestRule.onNodeWithText("Reconnect").performScrollTo().performClick()
+        assert(reconnected) { "expected Reconnect to call onReconnect" }
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `E2_F03 Reconnect is disabled while no rig has ever connected`() {
+        val disconnected = SettingsRigViewState(
+            descriptorLabel = "TH-D75A",
+            connected = false,
+            staleSinceLabel = null,
+            bands = emptyList(),
+        )
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = disconnected, onBack = {}) } }
+        composeTestRule.onNodeWithText("Reconnect").assertIsNotEnabled()
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `E2_F03 a stale rig shows the subtitle, retry-ladder sentence and Link row, not the no-rig FailedState`() {
+        val stale = SettingsRigViewState(
+            descriptorLabel = "TH-D75A",
+            connected = false,
+            staleSinceLabel = "since 04:02",
+            bands = emptyList(),
+            transportLabel = "USB serial",
+        )
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = stale, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Stale since 04:02").assertExists()
+        composeTestRule.onNodeWithText("the link is retried with backoff", substring = true).assertExists()
+        composeTestRule.onNodeWithText("No radio support in this build yet", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Reconnect").assertIsEnabled()
     }
 }
