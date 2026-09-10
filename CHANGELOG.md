@@ -230,6 +230,133 @@ confirmed by `dependencyRules`, below).
 - Not merged to `main` — commit left on this worktree's branch per instructions.
 
 ---
+## 2026-09-10 (WPA: rig core — contract, descriptors, catalogue, fakes)
+
+### (pending) — WPA · the RigModule contract, the descriptor engine, the TH-D75A and generic ASCII CAT descriptors, the onboarding catalogue and the behavioural fakes
+
+**Scope:** `rig/build.gradle.kts` (added kotlinx.serialization); everything under `rig/src/**`
+(new module content — `:rig` was previously scaffolded but empty). No file outside `rig/` was
+touched.
+
+**Requirements/ACs:** FR-RIG-1, FR-RIG-2, FR-RIG-4, FR-RIG-6, FR-RIG-7, FR-RIG-11, FR-RIG-14,
+FR-RIG-16, FR-RIG-17, FR-RIG-18, FR-RIG-19, FR-AST-7, D23, AC-133, AC-134, AC-135. Cited but left
+open: FR-RIG-3 (mode extraction — see below), FR-RIG-5, FR-RIG-9, FR-RIG-10, FR-RIG-12, FR-RIG-13,
+FR-RIG-15 (touched only by the shared contract, no code for them yet).
+
+**Constitution Check:** II (strict TDD throughout — every source file below has a test file
+written against it, in the same commit; three behavioural fakes ship in the same change:
+`FakeRigTransport`, `FakeRigModule`, and `NullRigModule` doubling as the manual-entry path). III/
+IV do not bear on this package (no audio or capture path here). I (uncertainty is content — the
+TH-D75A descriptor claims only `FREQUENCY`/`SQUELCH_STATE`/`SUB_BAND`, not `MODE`, because the
+`FO` reply's exact comma position for the mode field is one of the reference document's own
+"still to verify" items; asserting it now would be exactly the silent guess Principle I forbids).
+VII (`:rig` stays pure JVM, `:core`-only, per `ModuleGraph`; the physical USB/Bluetooth transports
+are deliberately left to `:rig-usb` and a future Bluetooth module, both out of scope here).
+
+**What changed:**
+
+*The contract* (`RigModule.kt`, `RigTransport.kt`, `RigCapability.kt`, `RigTransportKind.kt`,
+`RigState.kt`, `RigHealth.kt`, `RigConfigSchema.kt`, `Connection.kt`, `RigBand.kt`) — `RigModule`
+exactly per FR-RIG-1's block (`id`, `displayName`, `transports: Set<RigTransportKind>`,
+`capabilities(transport)`, `configSchema`, `connect(transport, params): Result<Connection>`,
+`disconnect()`, `observe(): Flow<RigState>`, `health(): Flow<RigHealth>`). `RigState.sourceConfidence`
+is non-optional (constitution I). `RigBand` (A/B) is an addition beyond FR-RIG-1's original sketch,
+required by `docs/reference/th-d75a-cat.md`/D23: the TH-D75A receives on two bands at once and
+every state command is band-scoped, so `RigState` needs to say which band a reading describes.
+
+*The fakes* (`fakes/FakeRigTransport.kt`, `fakes/FakeRigModule.kt`) — `FakeRigTransport` can be
+told to fail to open, hang on read, drop mid-stream, return garbage, and push unsolicited lines;
+all incoming lines (scripted replies and pushes alike) share one FIFO, matching a real serial
+wire where nothing distinguishes a solicited reply from the radio talking on its own. One test
+per failure mode.
+
+*The descriptor model and validator* (`descriptor/RigDescriptor.kt`, `DescriptorError.kt`,
+`DescriptorValidator.kt`, `DescriptorLoader.kt`) — JSON via `kotlinx.serialization` (already in
+`gradle/libs.versions.toml`), per technical design §11. Validates on load: unknown transport
+kind, missing/invalid/catastrophically-complex expect regex, a capability no command can derive,
+and a `schemaVersion` newer than supported (FR-AST-7) — the last case fails fast, reporting only
+that error, before any other validation runs, so a newer descriptor visibly "applies nothing."
+A failing descriptor loads a `NullRigModule` with the error attached (`descriptorError`), never
+throws to the caller (FR-RIG-11).
+
+*The engine* (`descriptor/DescriptorRigModule.kt`) — polls per the descriptor and applies
+`AI`-style unsolicited pushes through **one** read loop that matches every incoming line against
+every known pattern (poll and unsolicited alike), because a line-oriented ASCII link gives no way
+to tell a solicited reply from a push apart on the wire — this also means push support falls out
+for free once poll support exists, no separate code path needed. Timestamps every state
+(injected `Clock`, defaulting to `SystemClock`); `stateForTransmission(band, start, end)` reports
+the reading in force at a transmission's start and flags a later change in the same band before
+it ended (FR-RIG-6). A lost transport re-emits the last known reading per band with
+`sourceConfidence = STALE` and reports `RigHealth.Degraded(TRANSPORT_LOST)` (FR-RIG-7), without
+stopping the read/poll loops. A hung transport (one that ignores its own `readLine` timeout) is
+still bounded by the module's own `withTimeoutOrNull` watchdog, so health keeps reporting rather
+than the module hanging forever.
+
+*The null module* (`NullRigModule.kt`) — FR-RIG-2, first-class manual frequency entry, and the
+landing place `DescriptorLoader` uses for a descriptor that failed validation.
+
+*The bundled descriptors* (`resources/descriptors/kenwood-thd75a.json`,
+`generic-ascii-cat.json`, loaded via `descriptor/BundledDescriptors.kt`) — the TH-D75A descriptor
+declares `FQ`/`BY`/`AI` band-scoped per `docs/reference/th-d75a-cat.md`, identical capability
+sets over `usb_serial` and `bluetooth_spp` (AC-133), `bands: [0, 1]`, and an `unsolicited` block
+mirroring the reference's own draft. It deliberately does **not** claim `MODE` or poll `FO`/`BL`
+— see Left open. The generic ASCII CAT descriptor uses functional spec §9.2's own `FA;`/`MD;`
+sketch (frequency + mode, both transports, a `lookup` table for the mode code) since it is
+explicitly a template, not a claim about a specific unverified radio.
+
+*The catalogue* (`catalogue/RigCatalogue.kt`) — `RigCatalogue.fromDescriptors(set)` always leads
+with the null module and the generic ASCII CAT entry (loaded from this package's own bundled
+resource, not passed in) regardless of `set` (AC-135), and a descriptor added to `set` appears
+with its declared per-transport capabilities and no code change (AC-134). `RigCatalogue.import`
+(text or `File`) validates through the same `DescriptorValidator` FR-RIG-19 requires.
+
+**Definition-of-done note:** `spec/e2e-capture-modes-plan.md` and `results/e2e-audit/checklist.md`
+— named in this package's brief as required reading and as the source of the E2-B0x row list to
+close — do not exist anywhere in this repository's git history (`git log --all` finds no commit,
+on any branch, ever adding either path). I could not read them or cite E2-B rows against tests as
+instructed. I proceeded instead directly from `spec/functional-spec.md` §7.6/§9,
+`spec/technical-design.md` §2/§11, and `docs/reference/th-d75a-cat.md`, and named every test for
+the FR-RIG/AC/D id it establishes, per `AGENTS.md`'s general rule ("when you write a test, name it
+for the id it establishes"). This gap should be flagged to whoever owns the e2e-capture-modes plan.
+
+**Verified:**
+- `./gradlew :rig:test` — 39/39 passing (fakes: 8, contract/null module: 4, descriptor
+  validator: 8, descriptor loader: 4, descriptor engine: 5, TH-D75A descriptor: 3, generic ASCII
+  CAT descriptor: 2, catalogue: 5).
+- `./gradlew build dependencyRules platformGuards` — BUILD SUCCESSFUL (851 tasks); `:rig` stays
+  `:core`-only per `ModuleGraph`, no telemetry/HTTP-client/INTERNET-permission violation.
+- `./gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — all 8 checks PASS.
+- `./gradlew coverageMatrix` — 450 requirements, 208 covered (up from before this package).
+- `./gradlew coverageMatrixCheck` — up to date against the regenerated matrix (committed in the
+  same change).
+- **Discrimination**: `DescriptorRigModule`'s per-band `lastKnown` map started as a
+  `ConcurrentHashMap<RigBand?, RigState>` — which throws `NullPointerException` on the `null`
+  (unscoped) key every unbanded descriptor's reading uses, silently killing the poll coroutine
+  with no visible failure anywhere else. `FR_RIG_7_drop` (the state-goes-stale-on-disconnect test)
+  caught this: reverting the fix (`ConcurrentHashMap` in place of the synchronized `HashMap`) and
+  rerunning `:rig:test --tests "...DescriptorRigModuleTest"` reproduces the exact failure
+  (`assertNotNull(fresh)` fails because no state was ever emitted, with the NPE visible in the
+  worker-thread stack trace); restoring the fix returns the suite to 39/39 green.
+
+**Left open:**
+- The TH-D75A descriptor claims only `FREQUENCY`/`SQUELCH_STATE`/`SUB_BAND`. `docs/reference/th-d75a-cat.md`
+  itself lists the `FO` mode field's exact comma position and the mode table's 0–7 values as
+  "still to verify with the radio in hand" — fabricating a regex against an unverified field
+  position would be exactly the silent guess constitution I forbids, so `MODE` and `BL` (battery)
+  are not implemented for this rig yet.
+- VID/PID confirmation under Android, the command terminator (`;`, unconfirmed for this radio),
+  and safe `BY` poll rate limits are all still open per the reference document — none of these
+  block the level-1 descriptor design, which is exactly what this package demonstrates.
+- `spec/e2e-capture-modes-plan.md` and `results/e2e-audit/checklist.md` do not exist in this
+  repository; the E2-B0x checklist rows this package was meant to close by name could not be
+  identified or cited.
+- No code in this package touches `:rig-usb` or a Bluetooth transport implementation — both are
+  out of scope (owned by other packages) and `DescriptorRigModule` takes a `RigTransport` via an
+  injected factory precisely so those modules can supply the real hardware-backed transport
+  without this package changing.
+- `results/coverage-matrix.md` is included in this commit (regenerated, not hand-edited) so
+  `coverageMatrixCheck` stays green for the next builder without them having to regenerate it.
 
 ## 2026-09-10 (idle-root: CI's AppNotIdleException root-caused to a real ordering bug, not just isolated)
 
@@ -26566,4 +26693,5 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 

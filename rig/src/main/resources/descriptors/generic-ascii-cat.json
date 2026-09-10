@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "generic-ascii-cat",
+  "displayName": "Generic ASCII CAT",
+  "verified": false,
+  "transports": [
+    {
+      "kind": "usb_serial",
+      "serial": { "baud": 9600, "dataBits": 8, "stopBits": 1, "parity": "none" },
+      "capabilities": ["FREQUENCY", "MODE"]
+    },
+    {
+      "kind": "bluetooth_spp",
+      "capabilities": ["FREQUENCY", "MODE"]
+    }
+  ],
+  "poll": {
+    "intervalMs": 500,
+    "commands": [
+      { "send": "FA;", "expect": "^FA(\\d{11});$", "map": { "frequencyHz": "$1" } },
+      {
+        "send": "MD;",
+        "expect": "^MD(\\d);$",
+        "map": { "mode": "$1" },
+        "lookup": { "mode": { "1": "LSB", "2": "USB", "3": "CW", "4": "FM", "5": "AM" } }
+      }
+    ]
+  }
+}
