@@ -170,7 +170,10 @@ public fun OrtNavHost(
     failureActions: FailureHostActions = FailureHostActions(),
 ) {
     val context = LocalContext.current
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    // WP12 (screenshot-tour gap, register R-010..R-014/R-334): `seed.openDrawer` starts the drawer
+    // open on first composition — `NavSeed.openDrawer`'s own doc comment for why this, not a
+    // synthesised tap on the header's drawer icon.
+    val drawerState = rememberDrawerState(if (seed?.openDrawer == true) DrawerValue.Open else DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     // Hoisted into `navigator` (round 3) so `ReaderActivity`'s `FailureHostActions`, mounted above
     // this composable, can also switch destinations — see `ReaderNavigator.kt`'s own doc comment.

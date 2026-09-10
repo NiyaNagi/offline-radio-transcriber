@@ -32,6 +32,137 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP12d: screenshot tour — the drawer (N00) and every other never-captured screen R-770 could reach)
+
+### (pending) — ui-conformance WP12d · R-010..R-014/R-334/R-770: N00 drawer, T03, F04, S05, CF04/DG04 @2x now in the tour; the rest reported unreachable
+
+**Scope:** `tools/ui-audit/tour.json`; `app/src/debug/kotlin/org/ort/app/debug/tour/{TourIds.kt,TourSpec.kt}` and
+their tests; one field + one dispatch line in `app/src/main/kotlin/org/ort/app/ui/navigation/{NavSeed.kt,OrtNavHost.kt}`
+(WP3's files — the coordinator's own brief for this round authorized exactly this, see What changed).
+
+**Requirements/ACs:** R-010, R-011, R-012, R-013, R-014, R-334, R-770 (register).
+
+**Constitution Check:** Principle VII (structural boundaries) governs this round's only cross-package
+touch — `NavSeed`/`OrtNavHost` are WP3's files; the coordinator's brief explicitly authorized adding
+one field plus its dispatch line, following the exact established pattern every other seedable field
+(`openCaptureLevelMeter`, `frequencyInitialView`, `openStationSubScreen`, …) already uses, and this
+report says so plainly. No other file outside this package's own row was touched: every screen this
+round could not reach (D05, D08-D11, R02-R04, DG01/DG02, L05's own dedicated view, F02/F10/F11) needs
+a seam or fixture in a file this package does not own, and is reported below rather than faked.
+**Never report a number without its fold/machine/provider** — every screenshot below was captured on
+a real device (emulator-5554, 1080x2400 @420dpi), not asserted from Robolectric alone.
+
+**What changed:**
+
+1. **`NavSeed.openDrawer: Boolean?`** (new field, `NavSeed.kt`) + **one dispatch line** in
+   `OrtNavHost.kt`: `rememberDrawerState(if (seed?.openDrawer == true) DrawerValue.Open else
+   DrawerValue.Closed)`. `TourIds.resolveSeed` resolves `drillIn["openDrawer"] == "true"` into it;
+   `TourStep.SUPPORTED_DRILL_IN_KEYS` gained `"openDrawer"`. Three new tour steps:
+   `overnight/N00-drawer`, `overnight/N00-drawer@2x`, `storage-warn/N00-drawer` (R-334's own
+   banner-over-drawer case — the row was already closed on a wiring test; this gives it a real
+   capture, confirmed on-device: the banner stays dimmed behind the scrim, all nine rows reachable).
+2. **`transmission: "rejected"`** (new symbolic value, `TourIds.resolveTransmissionId`, filters on
+   `TransmissionState.REJECTED` — a `processingState`, not an `AttributionState`, so it could not
+   share the existing state-keyed lookup) + step `overnight/F04-rejected-detail` (F04
+   `Fail-Hallucination.dc.html`'s own detail — `overnight`'s own tx8 row, real audio retained).
+3. **`field-tier1/T03-threads-ungrouped`** (new step, no new code): `field-tier1` is a real,
+   current session whose overs never carry a `threadId` (only `OvernightScenario` sets one), so
+   `ThreadListMapper.listState` renders the honest Ungrouped board (`Threads-Ungrouped.dc.html`).
+   Tried `stations-14-nights` first — confirmed empirically on-device that its own transmissions
+   belong to no single "current" session `ThreadPolling`/`ThreadContent` reads, so it renders
+   *Empty* instead (a latent pre-existing mislabel worth a look: the existing, unmodified
+   `stations-14-nights/T01-threads` step likely captures the same Empty screen it always has, not a
+   `Grouped` card list — left alone, not this round's file to fix). `waitMillis: 2000` — the async
+   poll genuinely had not completed by the 600ms destination-settle window on an isolated single-step
+   run, confirmed by a 0-wait capture actually showing the stale `Empty` default.
+4. **`setup-verified/S05-verify`** (new step, no new code — `SetupStepIds` already mapped `S05` to
+   `VERIFY`). Reachable, but captures the real pre-check state (every check row pending, `Continue`
+   disabled) rather than a passing/animated one — `EXTRA_STEP=VERIFY` sets `SetupActivity.step`
+   directly, bypassing the real `RealRouteCheck` flow S04→S05 would otherwise drive, confirmed
+   honest in the capture below, reported as a limitation rather than claimed as the full board.
+5. **`model-missing/CF04-settings-assets@2x`**, **`stations-14-nights/DG04-session-review@2x`** —
+   plain `fontScale: 2.0` siblings of two existing steps, no new code.
+6. **`TourStepsTest.kt`**: `Expected.DisplayedTag` (new) — `Expected.Tag`'s bare existence check
+   would have passed even with `openDrawer` silently broken, since `ModalNavigationDrawer` always
+   composes `drawerContent`, open or closed (confirmed directly: see the bug this caught, below);
+   `DisplayedTag` additionally requires `assertIsDisplayed()`. `expectedForStepId` (new, id-keyed,
+   checked before the existing shape-keyed `expectedForDrillIn`/`expectedForDestination`) proves T03
+   by its own real "Conversations are not built on this phone yet" prose and F04 by the real
+   `rejected-section` testTag, distinguishing both from a same-shaped sibling step.
+7. **`TourDrawerSeedTest.kt`** (new): proves `openDrawer` through the real `TourIds.resolveSeed`
+   path (not a hand-built `NavSeed(openDrawer = true)`, which would not have caught the bug below),
+   and that a `null` seed leaves the same real drawer content off-screen — the "lands on the drawer,
+   not the destination beneath it" proof this round's own brief asked for.
+8. **`TourIdsTest.kt`**: `R_TOUR_IDS_TRANSMISSION_REJECTED`.
+
+**A real bug this round's own device verification caught and fixed, recorded here since it would
+otherwise look like routine polish**: `TourIds.resolveSeed` built every `NavSeed` field from
+`drillIn` *except* `openDrawer` — the field and its `OrtNavHost` dispatch line were both right, and
+the Robolectric suite (`TourStepsTest`'s original `Expected.Tag("drawer-rows")`) passed anyway,
+because the drawer's own content is always in the semantics tree, open or closed. The very first
+on-device capture (`overnight/N00-drawer.png`) showed a plain closed `Now` screen, no drawer at all
+— caught only by actually reading the PNG, not by the test suite. Fixed by adding the missing
+`openDrawer = drillIn["openDrawer"]?.let { it.equals("true", ignoreCase = true) }` line and
+replacing the weak existence check with `Expected.DisplayedTag` (#6 above) so this exact class of
+regression fails loudly in Robolectric next time, not only on a real device.
+
+**Screens this round could not reach — reported, not faked** (each needs a seam or fixture this
+package does not own; every reason below was confirmed by reading the real file, not guessed):
+- **S02b** (`Setup-Mic-Denied`): `SetupActivity.onResume` re-checks and redirects away from
+  `MICROPHONE_DENIED` whenever `RECORD_AUDIO` is already granted — needed for every other setup
+  step on the same emulator (register R-410's own prior finding; unchanged).
+- **S06** (`Setup-Route-Mismatch`): `RenderRouteMismatch` reads `verifyState as? RouteCheckState.Mismatch`,
+  private in-memory state only `onVerifyStateChanged` sets during a live `RealRouteCheck` run —
+  `EXTRA_STEP=ROUTE_MISMATCH` alone renders nothing. Needs a new `SetupActivity` seam (WP9's file).
+- **S10/S11** (`Setup-Rig-Usb`/`Setup-Rig-Verified`): design-intent's own accepted deviation — FR-RIG
+  is genuinely unbuilt in this build; not a tour gap.
+- **D05** (`Detail-Why`): `TransmissionDetailContent`'s `destination` state has no seam analogous to
+  its own `initialRevisionsOpen` for `DetailDestination.Why` — needs a new param on that file (WP6's).
+- **D08-D11** (the correction sheets, `Detail-Propagated`): `DetailDestination.Correcting` plus a
+  nested `CorrectionTier` picker, genuinely interaction-only local state with no seed at all — the
+  coordinator's own brief named these as the expected unseedable case; not faked.
+- **R02-R04** (`Improve-Select/Running/Done`): `ImproveContent`'s `page` is unseeded local state
+  (`remember { mutableStateOf(ImprovePage.Root) }`) — needs a new param on that file (WP10's).
+- **DG01/DG02** (`Digest`/`Digest-Item`): `SessionsContent.initialSessionId` seeds only as far as
+  `SessionsPage.Detail` (DG04) — no seam reaches `SessionsPage.Digest`/`DigestItem`. Needs a new
+  param on that file (WP10's).
+- **L05**'s own dedicated Rejected quick-chip view (distinct from the interleaved `showRejected`
+  toggle `NavSeed.pendingLogFilter` could already carry): `LogContent`'s `initialFilter` only ever
+  derives the starting quick-filter chip as `Frequency`/`All`, never `Rejected` — needs a new param
+  on that file (WP5's).
+- **F02** (`Fail-Disconnect`): no scenario ever calls `InputStatus.lost(...)`, the real signal
+  `FailurePresentation.Disconnect` maps from — needs a new scenario in `Scenarios.kt`, outside this
+  package's own row (`app/src/debug/kotlin/org/ort/app/debug/tour/**` only).
+- **F10/F11** (`Fail-Cluster`/`Fail-Wrong`): no scenario or `FailurePresentation` case exists for
+  either at all in this codebase — same reason as F02.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*"` — BUILD
+SUCCESSFUL, 33 tests across the package's 6 test classes (`TourDrawerSeedTest`'s 2 new;
+`TourIdsTest`'s `R_TOUR_IDS_TRANSMISSION_REJECTED` new), all green, including `R_TOUR_STEPS` (walks
+every one of 150 real `tour.json` destination steps against the real `OrtNavHost`).
+`.\gradlew.bat :app:ktlintCheck :app:detekt dependencyRules platformGuards :app:assembleDebug` —
+BUILD SUCCESSFUL. `python tools\spec-check\spec_check.py` — OK, all 8 checks pass.
+`.\gradlew.bat coverageMatrix` then `coverageMatrixCheck` — 192 of 419 covered, unchanged (no new
+FR/AC citation this round), `results/coverage-matrix.md` regenerated identical, not committed.
+On `emulator-5554` (1080x2400 @420dpi, matching the canonical capture set): `tools\ui-audit\install.ps1
+-Port 5554 -Clear` then `tools\ui-audit\tour.ps1 -Port 5554 -Only <glob> -Out <scratch dir>` per new
+step, each preceded by `adb shell am force-stop org.ort.app` + `run-as … rm -f files/tour/manifest.json`
+(a stale on-device manifest from the previous isolated run otherwise gets re-read instead of a fresh
+one — found by actually reading a suspiciously-fast "0.1s" elapsed line, not by inspection) — all 8
+steps `ok: true`, every PNG read and visually confirmed against its artboard (`design/canvas/Menu.dc.html`
+for the drawer). Scratch captures deleted after review, nothing written under `results/ui-audit/`.
+
+**Left open / not done:** the eleven screens listed above, each with its own precise reason, for the
+coordinator to record in `design/design-intent.md` (interaction-only) or route to the owning
+package (a new seam). `stations-14-nights/T01-threads`'s own possible Empty-vs-Grouped mislabel
+(found investigating T03, not this round's file to fix). `setup-verified/S05-verify` captures the
+real pre-check state, not the passing/animated one the board's own title implies — a `RealRouteCheck`-driven
+capture would need a real signal source the emulator's silent mic cannot supply (`setupVerified`'s
+own doc comment already explains why S07/S12 needed their own scenarios for the identical reason).
+
+---
+
+
 ## 2026-09-10 (ui-conformance WP4 round: R-771 the INFERRED fixture's own missing lattice slots seeded)
 
 ### (pending) — ui-conformance WP4 round · R-771 `OvernightScenario.kt`'s INFERRED over (D02) now carries a real, ordered lattice, so a capture can actually exercise the board's inferred-case grid
@@ -576,7 +707,6 @@ inference).
   ineffective fixes were reverted and the honest write-up above was produced — superseded by this
   commit, kept in history rather than rewritten, per this project's own no-rebase-of-shared-history
   discipline.
-
 
 ## 2026-09-09 (ui-conformance WP8: R-611 Nearest-other row stacks at a narrow width, never a mid-word break)
 

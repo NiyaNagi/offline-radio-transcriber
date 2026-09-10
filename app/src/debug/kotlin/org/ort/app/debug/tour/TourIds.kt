@@ -7,6 +7,7 @@ import org.ort.app.ui.data.StationSubScreen
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.core.AttributionState
+import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 
 /**
@@ -19,8 +20,10 @@ import org.ort.data.OrtDatabase
  * Every key here maps to exactly one [NavSeed] field:
  *
  * - `transmission`: `confirmed` | `inferred` | `ambiguous` | `unknown` (the first transmission in
- *   [sessionId] carrying that [AttributionState]), or a literal transmission id as a fallback for a
- *   case this table does not name.
+ *   [sessionId] carrying that [AttributionState]), `rejected` (v7, register R-010..R-014/R-334/
+ *   R-770 — the first transmission in [sessionId] with [org.ort.core.TransmissionState.REJECTED] as
+ *   its own `processingState`, F04 `Fail-Hallucination.dc.html`'s own detail), or a literal
+ *   transmission id as a fallback for a case this table does not name.
  * - `station`: a callsign (looked up against every station this database knows, not scoped to one
  *   session — stations persist across sessions), or a literal station id.
  * - `frequency`: a literal Hz value (`"145230000"`, the coordinator's own example — a frequency is
@@ -50,6 +53,8 @@ import org.ort.data.OrtDatabase
  * - `logSheetOpen` (v4): `true` opens `Log`'s own filter sheet (L02) on first composition.
  * - `revisionsOpen` (v4): a companion to `transmission` (the same relationship `frequencyInitialView`
  *   has to `frequency`) — `true` opens the revisions list (D07) on the resolved transmission.
+ * - `openDrawer` (v7, register R-010..R-014/R-334/R-770): `true` opens the drawer (N00) over
+ *   whichever [org.ort.app.ui.navigation.ReaderDestination] the step names — [NavSeed.openDrawer].
  *
  * A key naming a symbolic value this table does not recognise, and that also does not resolve as a
  * literal id/number, throws — caught by [TourRunner] the same as any other per-step failure, never
@@ -85,10 +90,12 @@ public object TourIds {
             searchFiltersOpen = drillIn["searchFiltersOpen"]?.let { it.equals("true", ignoreCase = true) },
             logSheetOpen = drillIn["logSheetOpen"]?.let { it.equals("true", ignoreCase = true) },
             openTransmissionRevisions = drillIn["revisionsOpen"]?.let { it.equals("true", ignoreCase = true) },
+            openDrawer = drillIn["openDrawer"]?.let { it.equals("true", ignoreCase = true) },
         )
     }
 
     private suspend fun resolveTransmissionId(db: OrtDatabase, sessionId: String?, value: String): String {
+        if (value == "rejected") return resolveRejectedTransmissionId(db, sessionId)
         val state = when (value) {
             "confirmed" -> AttributionState.CONFIRMED
             "inferred" -> AttributionState.INFERRED
@@ -101,6 +108,19 @@ public object TourIds {
         val match = db.transmissionDao().listBySession(session).firstOrNull { it.attributionState == state }
         return requireNotNull(match?.id) {
             "no $state transmission found in session '$session' for drillIn transmission:'$value'"
+        }
+    }
+
+    /** `rejected` (v7): [TransmissionState.REJECTED] is a `processingState`, not an
+     * [AttributionState] — a genuinely rejected segment's own `attributionState` stays whatever it
+     * was last set to (`UNKNOWN` in every fixture today), so this cannot share
+     * [resolveTransmissionId]'s own `AttributionState`-keyed lookup above. */
+    private suspend fun resolveRejectedTransmissionId(db: OrtDatabase, sessionId: String?): String {
+        val session = requireNotNull(sessionId) { "transmission:'rejected' needs a session, but this step loaded none" }
+        val match = db.transmissionDao().listBySession(session)
+            .firstOrNull { it.processingState == TransmissionState.REJECTED }
+        return requireNotNull(match?.id) {
+            "no REJECTED transmission found in session '$session' for drillIn transmission:'rejected'"
         }
     }
 
