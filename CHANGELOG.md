@@ -101,6 +101,138 @@ boundary, only within the same method body as the gated call.
 **Left open / not done:** unchanged from the previous entry — hardware rows H1–H4 for the real
 adapters, and the `usb-serial-for-android` version pinned one minor below newest pending a
 `compileSdk` bump outside this package's ownership. Not merged to `main` — left on this branch.
+## 2026-09-10 (WPH follow-up: ProseDigestGate's production inputs — signals, WorkManager runner, persisted settings)
+
+### (pending) — llm: AndroidProseDigestDeviceSignals, ProseDigestRunner over WorkManager, SharedPreferences-backed ProseDigestSettings
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/digest/{AndroidProseDigestDeviceSignals,
+ThreadDigestSource, ProseDigestWorkRunner, LlmModelLocator, ProseDigestRunner}.kt`; rewrote
+`ProseDigestSettings.kt` to add `ProseDigestSettingsStore` / `InMemoryProseDigestSettingsStore` /
+`SharedPreferencesProseDigestSettingsStore` and back `ProseDigestSettings` by a store rather than
+a raw boolean; updated `ProseDigestSettingsTest.kt` and `AC140DeterministicDigestUnaffectedTest.kt`
+for the new constructor; `gradle/libs.versions.toml` (new `androidxWork` entry + two library
+aliases) and `pipeline/build.gradle.kts` (the first real `androidx.work` dependency in this
+project); nine new test files under `pipeline/src/test/kotlin/org/ort/pipeline/digest/`.
+
+**Requirements/ACs:** FR-DIG-5, AC-87, FR-DIG-3b, D36. Constitution IV (never
+`isIgnoringBatteryOptimizations()`).
+
+**What changed:**
+
+*Constitution Check.* IV bears directly — [`AndroidProseDigestDeviceSignals`] never calls
+`isIgnoringBatteryOptimizations()`; charging comes from `BatteryManager.isCharging()` and idle
+from *either* `PowerManager.isDeviceIdleMode()` (a real Doze window) *or* no recorded foreground
+activity for 5 minutes (`ForegroundActivityTracker`, a process-wide holder — the same shape
+`CaptureState`/`ShedStatus` already use) — the second half exists because Doze windows are rare
+and OEM-delayed on exactly the reference device (ColorOS), so the OS signal alone would almost
+never let this run there. I/II — `ProseDigestWorkRunner` re-evaluates the gate before starting
+and again before every thread (AC-87's "never during capture" plus "stops if the gate flips
+mid-run"), and a mid-run stop releases the engine itself as a second, independent guarantee
+alongside whatever already called `ProseDigestSettings.setEnabled` (FR-DIG-3b) — tested by
+flipping `isCapturing` as a side effect of the first thread's own storage, proving the *per-thread*
+recheck fires, not only the pre-flight one.
+
+- **`AndroidProseDigestDeviceSignals`** (production `ProseDigestDeviceSignals`): `isCharging()`
+  reads `BatteryManager.isCharging()`, `false` on any failure (conservative — never "assume
+  charging"). `isDeviceIdle()` — the rule, stated once in its own doc comment — `PowerManager
+  .isDeviceIdleMode() OR no ForegroundActivityTracker activity for idleAfterMillis (default 5
+  min)`. Takes an injected `org.ort.core.Clock` for the foreground-gap half, so tests never wait
+  real minutes.
+- **`ThreadDigestSource`**: the real "which threads need a summary" query — ended sessions only
+  (`session.endedAt != null`), threads `ProseSummaryStore` has no row for yet, callsigns resolved
+  only from `CONFIRMED`/`INFERRED` attributions (never `AMBIGUOUS`/`UNKNOWN`). Reads only through
+  DAOs `:data` already exposes — no new query added to any DAO outside this package's ownership.
+- **`ProseDigestWorkRunner`**: the pure, WorkManager-free decision/run loop — evaluates the gate,
+  loads the engine only if pending threads exist, generates each via `ProseDigestGenerator`,
+  re-checks the gate before every thread, and releases the engine on any mid-run stop.
+  `ProseDigestRunOutcome` (`NotEligible` / `Completed` / `StoppedMidRun` / `EngineLoadFailed`) —
+  never silently nothing.
+- **`LlmModelLocator`**: mirrors `org.ort.pipeline.passb.AsrModelLocator`'s exact pattern — a
+  fixed, documented `filesDir/models/gemma3-1b-it-int4/gemma3-1b-it-int4.task` path, `null` when
+  absent, never fabricated.
+- **`ProseDigestRunner`** (`androidx.work.CoroutineWorker`): the thin real-Android adapter.
+  **Scheduling**: a self-rescheduling chain of **unique one-time work** (`"prose-digest"`), not
+  `PeriodicWorkRequest` — `schedule()` enqueues the first run (`ExistingWorkPolicy.KEEP`, safe to
+  call from every app launch); `doWork()` re-enqueues the next run one hour later
+  (`ExistingWorkPolicy.REPLACE`) in a `finally` block regardless of outcome. Chosen over
+  `PeriodicWorkRequest` specifically to sidestep its 15-minute floor and avoid any doubt about
+  constraint-combination support — `OneTimeWorkRequest` places no restriction on combining
+  `setRequiresCharging(true)` with `setRequiresDeviceIdle(true)`. `cancel()` stops the chain
+  outright. A missing bundled model is `Result.success()` — nothing to do yet, never a failure.
+- **`ProseDigestSettingsStore`** (interface) + **`InMemoryProseDigestSettingsStore`** (the fake,
+  process-lifetime only) + **`SharedPreferencesProseDigestSettingsStore`** (production, one
+  boolean, prefs name `prose_digest_settings`, key `enabled`, default `true` per D36/FR-DIG-3b).
+  `ProseDigestSettings`'s constructor now takes a `ProseDigestSettingsStore` (default
+  `InMemoryProseDigestSettingsStore()`, so the no-arg case behaves exactly as before) and both
+  seeds its `StateFlow` from the store and persists every `setEnabled` call through it — so
+  `ProseDigestRunner`, constructed fresh in a possibly-new process, sees the same value WPE's CF04
+  toggle last wrote, never a reset-to-default in-memory guess.
+- **`gradle/libs.versions.toml`**: `androidxWork = "2.9.1"` — the newest *stable* release at
+  `https://dl.google.com/dl/android/maven2/androidx/work/work-runtime-ktx/maven-metadata.xml`
+  (fetched 2026-09-10) is 2.11.2, but 2.10.0 and later declare `minCompileSdk = 35` in their AAR
+  metadata (confirmed directly: `:pipeline:checkDebugUnitTestAarMetadata` failed naming exactly
+  that requirement against 2.11.2), and this project's shared `ort.android-library` convention
+  plugin — outside this follow-up's ownership — pins `compileSdk 34`, the same shape WPB's
+  `usbSerialForAndroid` pin already documents. 2.9.1 is the newest release with no floor above 34;
+  confirmed by the same check passing once pinned there. `androidx-work-runtime-ktx` (main) and
+  `androidx-work-testing` (test, for `TestListenableWorkerBuilder`/`WorkManagerTestInitHelper`)
+  added as library aliases. **Not previously a project dependency anywhere** (confirmed by search
+  before adding, despite AGENTS.md's Stack line naming WorkManager) — this is the first module to
+  actually link it.
+
+**The scheduler's constraints, exactly:** `Constraints.Builder().setRequiresCharging(true)
+.setRequiresDeviceIdle(true).build()`, applied to every enqueue (first and rescheduled alike) of
+unique one-time work named `"prose-digest"`.
+
+**The settings store API, exactly:**
+```kotlin
+interface ProseDigestSettingsStore {
+    fun isEnabled(): Boolean
+    fun setEnabled(enabled: Boolean)
+}
+// production: SharedPreferencesProseDigestSettingsStore(context) — prefs "prose_digest_settings", key "enabled", default true
+// fake:       InMemoryProseDigestSettingsStore(initiallyEnabled = true)
+```
+`ProseDigestSettings(store: ProseDigestSettingsStore = InMemoryProseDigestSettingsStore())` is
+what WPE's CF04 toggle constructs (with the `SharedPreferences`-backed store) to read `.enabled:
+StateFlow<Boolean>` and call `.setEnabled(value, engine)`.
+
+**Verified:**
+- `git merge --no-edit main` — clean fast-forward to `e55e465` (this branch's own two prior
+  commits were already merged into `main` as `9cc543d`); no conflicts.
+- `./gradlew :pipeline:dependencies --configuration debugRuntimeClasspath` — confirmed
+  `androidx.work:work-runtime-ktx:2.9.1` resolves with no transitive HTTP client or analytics
+  coordinate.
+- `./gradlew :llm-api:test :llm-mediapipe:testDebugUnitTest :pipeline:testDebugUnitTest` —
+  **BUILD SUCCESSFUL**; `org.ort.pipeline.digest.*` alone is 55 tests green, including
+  `AndroidProseDigestDeviceSignalsTest` (6, Robolectric shadows for `BatteryManager`/
+  `PowerManager`), `ThreadDigestSourceTest` (3, real in-memory `OrtDatabase`), 9
+  `ProseDigestWorkRunnerTest` cases (the signals fake driving the gate, `AC_87_the_runner_refuses_
+  while_capturing`, `FR_DIG_3b_disabling_mid_run_releases_the_engine`, the mid-run-flip stop, an
+  engine load failure, empty-pending-threads, a below-T3 tier), 4 `ProseDigestRunnerTest` cases
+  (real `WorkManagerTestInitHelper`/`TestListenableWorkerBuilder`), `SharedPreferencesProseDigest
+  SettingsStoreTest` (3), `LlmModelLocatorTest` (2).
+- `./gradlew build dependencyRules platformGuards -x :rig-bluetooth:lintDebug` — **BUILD
+  SUCCESSFUL in 8m 5s** (1102 actionable tasks); excluded exactly the one pre-existing failure the
+  lead named as a WPB fix already in flight on `main`, nothing else. `dependencyRules: OK` — the
+  printed edge list still has no `:capture-android`/`:capture-api` row naming `:llm-api` or
+  `:llm-mediapipe`. `platformGuards: OK` — 20 modules, no analytics/HTTP-client coordinate, only
+  `:net` declares `INTERNET` (androidx.work declares none).
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 225 covered` (was 210 before this commit — +15,
+  this session's own new fixture coverage). `./gradlew coverageMatrixCheck` — up to date.
+
+**Left open / not done:** `ProseDigestRunner.schedule()`/`.cancel()` are not yet called from
+anywhere real — wiring them into `Application.onCreate` (schedule) and the CF04 toggle's disable
+path (cancel, alongside `ProseDigestSettings.setEnabled`) is `:app`'s job (WPE), out of this
+package's ownership. `ForegroundActivityTracker.markActive()` likewise has no real caller yet —
+WPE/WPF's screen-lifecycle owner must call it (a `DisposableEffect` on `LocalLifecycleOwner`, or
+`Activity.onResume`, is the natural hook) or the idle-after-N-minutes half of the rule never
+actually fires on a real device. E2-I06 (hardware H11, the real on-device MediaPipe load) remains
+for the operator, unchanged from the previous entry.
+
+---
 
 ## 2026-09-10 (WPB: the two rig transports — USB serial and Bluetooth SPP)
 
@@ -27076,6 +27208,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 
