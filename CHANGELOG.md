@@ -32,6 +32,109 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WP0': Wave F module scaffolding — llm-api, llm-mediapipe, rig-bluetooth)
+
+### (pending) — wave F scaffolding · three new modules wired empty for P19/P20's parallel builders
+
+**Scope:** new modules `llm-api/`, `llm-mediapipe/`, `rig-bluetooth/` (each `build.gradle.kts`
+plus one `package-info.kt`, and an `AndroidManifest.xml` for the two Android ones);
+`settings.gradle.kts`; `buildSrc/src/main/kotlin/org/ort/gradle/ModuleGraph.kt`;
+`gradle/libs.versions.toml`; `pipeline/build.gradle.kts`; `app/build.gradle.kts`;
+`eval/build.gradle.kts`; `spec/technical-design.md` §2. No feature code — this is scaffolding
+only, so later Wave F builders can compile against these modules in parallel (spec/build-plan.md
+P19/P20).
+
+**Requirements/ACs:** D34 (Bluetooth audio permitted, FR-RIG-14/15), D36 (the LLM is bundled,
+still post-hoc — FR-DIG-3, FR-DIG-3a, FR-DIG-3b, FR-ASR-15/16), FR-AST-3a (T3-only LLM load,
+AC-138), FR-RIG-16 (setup UI reads the rig catalogue). Constitution IV (capture never blocks on
+inference — extended to the two new inference-shaped modules), VII (boundaries are structural).
+No test ids established — a scaffolding-only change has no behaviour to name a test after; the
+build gate is the check (see Verified).
+
+**What changed:**
+
+*Constitution Check.* IV bears directly: an on-device LLM is inference exactly as much as ASR,
+the lexicon or identity are, so `:capture-api`/`:capture-android` must never reach `:llm-api` or
+`:llm-mediapipe` — added to `ModuleGraph.explicitlyForbidden` rule 2 alongside the existing
+asr/lexicon/identity entries. VII bears on the whole change: the new modules, their permitted
+edges and the two new forbidden edges are enforced by `dependencyRules`/`platformGuards`, not by
+a comment anyone has to remember.
+
+- **`:llm-api`** (`ort.jvm-library`, depends only on `:core`, package `org.ort.llm`) — the
+  on-device LLM contract: post-hoc rescoring (FR-ASR-15/16) and digest prose (FR-DIG-3), never
+  in the callsign path (D5, constitution I). `package-info.kt` states the fake-ships-with-every-
+  engine obligation (constitution II) since there is no other file yet to carry it.
+- **`:llm-mediapipe`** (`ort.android-library`, depends on `:core` + `:llm-api`, package
+  `org.ort.llm.mediapipe`) — the MediaPipe LLM Inference implementation, T3-only load (FR-AST-3a,
+  AC-138). Adds `com.google.mediapipe:tasks-genai` to `gradle/libs.versions.toml` as
+  `mediapipe-tasks-genai` (version key `mediapipeTasksGenai`), pinned to **0.10.35** — the
+  highest version listed for `tasks-genai` in both
+  `https://dl.google.com/dl/android/maven2/com/google/mediapipe/group-index.xml` (its
+  comma-separated `versions` attribute) and the artifact's own `maven-metadata.xml`, fetched
+  2026-09-10. Declared `implementation` in `:llm-mediapipe` only; `:llm-mediapipe:dependencies`
+  confirms it resolves, and `platformGuards` passed with it present — no HTTP client or
+  analytics coordinate came in transitively, so the dependency stays live rather than commented
+  out.
+- **`:rig-bluetooth`** (`ort.android-library`, depends on `:core` + `:rig`, package
+  `org.ort.rig.bluetooth`) — the Bluetooth SPP/BLE rig transport (FR-RIG-14, FR-RIG-15, D34)
+  behind the existing `:rig` transport contract; a behavioural fake ships alongside it once the
+  transport itself is built (not yet — this session is scaffolding only).
+- **`settings.gradle.kts`**: all three registered, JVM modules (`:llm-api`) grouped with the
+  existing JVM-only list, Android ones (`:llm-mediapipe`, `:rig-bluetooth`) with the Android-only
+  six, matching the file's existing comment.
+- **`ModuleGraph.kt`**: `allowed` gains the three modules with exactly the edges above;
+  `:pipeline` gains `:llm-api`, `:llm-mediapipe`, `:rig-bluetooth`; `:eval` gains `:llm-api`;
+  `:app` gains `:rig` (FR-RIG-16 — the setup UI reads the rig catalogue directly) and `:llm-api`
+  (FR-DIG-3b — the Settings LLM toggle reads engine state through the contract). No edge added
+  here is on the forbidden list. `explicitlyForbidden` rule 2 (capture never blocks on
+  inference) is extended with `:llm-api`/`:llm-mediapipe`; rule 3's Android list is extended with
+  `:rig-bluetooth`/`:llm-mediapipe`. `ModuleGraphTest`'s self-consistency test
+  (`the real design graph has no violations against itself`) needed no change — it asserts
+  against `ModuleGraph.allowed` directly, so it covers the new modules automatically; no test
+  asserts a fixed module count.
+- **`pipeline/build.gradle.kts`** gains `implementation(project(":llm-api"))`,
+  `implementation(project(":llm-mediapipe"))`, `implementation(project(":rig-bluetooth"))`.
+  **`app/build.gradle.kts`** gains `implementation(project(":rig"))` and
+  `implementation(project(":llm-api"))`. **`eval/build.gradle.kts`** gains
+  `implementation(project(":llm-api"))`. Real edges, not just permitted ones, per the package
+  brief.
+- **`spec/technical-design.md` §2**: the module table gains `:rig-bluetooth`, `:llm-api`,
+  `:llm-mediapipe` in the same `[JVM]`/`[AND]` style as the existing rows, citing D34/FR-RIG-14/15
+  and D36/FR-AST-3a; the Android-only prose list, the allowed-edges table and the forbidden-edges
+  paragraph are all updated to name the two new forbidden-edge extensions.
+
+**Verified:**
+- **Discrimination proof (constitution II):** temporarily added
+  `implementation(project(":llm-api"))` to `capture-android/build.gradle.kts`, ran
+  `./gradlew dependencyRules` — **FAILED**, naming the edge exactly:
+  `:capture-android  ->  :llm-api   (explicitly forbidden by technical design §2)`. Reverted the
+  edge; `./gradlew dependencyRules` then reported `OK` again, listing all 20 modules' real edges
+  (JAVA_HOME/ANDROID_HOME set per the package brief; both runs on this machine).
+- `./gradlew :llm-mediapipe:dependencies --configuration debugRuntimeClasspath` shows
+  `com.google.mediapipe:tasks-genai:0.10.35` resolved with its transitive tree — real network
+  resolution, not a cached/offline guess.
+- `./gradlew build dependencyRules platformGuards` — **BUILD SUCCESSFUL in 8m 12s** (1078
+  actionable tasks: 955 executed, 114 from cache, 9 up-to-date); `dependencyRules: OK` and
+  `platformGuards: OK` (checked 20 modules' external dependencies and 20 manifests — no
+  analytics/telemetry SDK, no HTTP client outside `:net`, `android.permission.INTERNET` declared
+  by `:net` and only `:net`) confirmed again standalone afterwards.
+- `./gradlew -p buildSrc test` — **BUILD SUCCESSFUL**, `ModuleGraphTest`/`PlatformGuardsTest`
+  green against the extended graph.
+- `python tools/spec-check/spec_check.py` — all 8 checks `[PASS]`.
+- `./gradlew coverageMatrix` — `450 requirements, 196 covered` (unchanged from before this
+  change: scaffolding establishes no test ids); `./gradlew coverageMatrixCheck` — up to date,
+  confirming the committed `results/coverage-matrix.md` needed no regeneration.
+
+**Left open / not done:** no feature code in any of the three modules — the Bluetooth transport
+(P19), the MediaPipe engine implementation and its behavioural fake, and the LLM contract's
+actual interfaces all remain for the sessions that own those prompts. `:rig-bluetooth`'s fake is
+explicitly deferred with it, per constitution II's "ships in the same change [as the real
+transport]" — there is no real transport yet for it to ship alongside. The `mediapipe-tasks-genai`
+pin will need revisiting if a later session finds a newer release; this session recorded where
+and when 0.10.35 was read so that check is possible without re-deriving it.
+
+---
+
 ## 2026-09-10 (idle-root: CI's AppNotIdleException root-caused to a real ordering bug, not just isolated)
 
 ### (pending) — capturemodes · capture becomes a named mode (local mic, USB radio, Bluetooth radio), Bluetooth audio is permitted with its cost marked, and every asset ships in the artifact

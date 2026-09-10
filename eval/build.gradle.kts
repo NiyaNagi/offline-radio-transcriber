@@ -14,5 +14,8 @@ dependencies {
     implementation(project(":lexicon"))
     implementation(project(":identity"))
     implementation(project(":rig"))
+    // Wave F scaffolding (WP0'): the eval harness will need the LLM contract to measure
+    // FR-ASR-15/16 rescoring and FR-DIG-3's digest quality; wired empty ahead of that wave.
+    implementation(project(":llm-api"))
     implementation(project(":testing"))
 }
