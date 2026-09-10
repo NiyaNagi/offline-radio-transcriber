@@ -32,6 +32,78 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP4 round: R-613 Capture-Status trailing clearance above the live bar)
+
+### (pending) — ui-conformance WP4 · R-613 `CaptureStatusScreen`'s scrollable content reserves real trailing clearance above `LiveBar`, per WP11b's own re-diagnosis
+
+**Scope:** `:app` — `ui/screens/CaptureStatusScreen.kt` and its test only. `git merge main`
+(fast-forward to `307c7e7`, no conflicts) brought in the board-width density scale (register
+R-600) and WP11b's own re-diagnosis of this exact row, routed to this package.
+
+**Requirements/ACs:** R-613 (register, WP11b diagnosed/routed, fixed here); FR-UI-7 (every fact
+on this screen must actually be reachable).
+
+**What changed:**
+- **Constitution Check.** Principle I: FR-UI-7 names Storage and Battery as facts this screen
+  must show — a real value that exists in the view-state but can never be scrolled into view past
+  a live bar is the identical silence the principle exists to catch, just at the layout layer
+  rather than the data layer.
+- **The fix, exactly as diagnosed**: `LiveBar` is a plain sibling of `CaptureStatusScreen`'s own
+  scrollable `Column`, not a `FailureHost` overlay — Compose's own `weight(1f)` already gives that
+  `Column` exactly `total - liveBar's height`, so its own bottom edge sits flush against the bar's
+  top at *any* scroll offset, with zero breathing room. WP11b already proved, measured (`f0c9ece`),
+  that padding on the outer modifier (`CaptureStatusContent.kt`'s own seam) subtracts from that
+  same weighted budget 1:1 rather than inserting clearance — not repeated here. The one-line fix:
+  the scrollable `Column`'s own trailing padding is now `OrtSpacing.lg + liveBarClearance` instead
+  of the uniform `OrtSpacing.lg` on all sides, where the clearance is `LiveBar`'s own
+  `heightIn(min = 44.dp)` floor (a deliberately simple, static value — not measured live, the same
+  first-frame-is-still-0 timing trap `FailureActionBarScaffold.kt`'s own R-292 doc comment already
+  names for a *different* reason not to) — `0.dp` when there is no live bar to clear at all.
+  `liveBarClearanceFor(liveBar)` and the title row (`CaptureStatusTitleRow`) were split out of
+  `CaptureStatusScreen` purely to keep that function under detekt's length limit once its own doc
+  comment moved to a named helper rather than an inline block — no behaviour change from that
+  split.
+- **New `R_613` test**, font scale 2.0, a real "Low storage" live bar present: forces a genuine
+  maximum scroll (`SemanticsActions.ScrollBy` with an oversized delta, clamped by the scroll state
+  itself to its own real end) rather than `performScrollTo()` on the Battery row alone — confirmed
+  directly that the latter is *not* "scrolled to the end" at all: it stops the instant Battery's
+  own bottom touches the viewport's bottom, which happens at the identical ~1dp gap with or
+  without this fix, since that scroll never reaches the trailing padding past Battery either way.
+  Asserts the real gap between Battery's bottom and the live bar's top is at least 22dp (half this
+  fix's own 44dp clearance, margin against measurement noise) — confirmed this assertion actually
+  discriminates: reverted to zero added clearance, the identical test measured a 21dp gap and
+  failed; restored, it measured comfortably past the threshold and passed.
+- **What this test proves, and what it does not** (per the coordinator's own instruction,
+  `Theme.kt`'s own kdoc on this host's unreliable text measurement): it is a real, structural
+  geometry check — one real node's bottom against another real node's top, both read from the same
+  composed tree at the same density and font scale, after a real maximum scroll — not a claim that
+  it reproduces a real device's *exact* pixel gap. It proves the trailing clearance this fix adds
+  is real, present, and reached by scrolling all the way down; it does not prove the precise dp a
+  real device needs, since this host's own font line-height is not trustworthy in absolute terms.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.screens.CaptureStatusScreenTest` —
+  green (11/11), including new `R_613 at fontscale_2_0 scrolled to the end the Battery row clears
+  the live bar`. Directly confirmed the test's own discriminating power by temporarily reverting
+  the fix (zero added clearance) and re-running just that test: failed at a measured 21dp gap
+  against the 22dp floor; restored, passed.
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.screens.NowScreenTest` (spot-check,
+  same package) — green, no regression from the `CaptureStatusScreen.kt` refactor.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+- `.\gradlew.bat dependencyRules platformGuards` — green.
+- `.\gradlew.bat :app:assembleDebug` — green.
+- `python tools\spec-check\spec_check.py` — 8/8.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — 192/419, up
+  to date.
+
+**Left open / not done:** not re-verified on a real device or emulator this round (no device
+access as a builder — the register's own next validator/recapture pass owns that); the 44dp
+clearance is `LiveBar`'s own documented floor, not its measured real height at every possible
+state (deliberately, per the coordinator's own "do not over-engineer" instruction) — if `LiveBar`
+ever grows taller than 44dp in some future state, this clearance would need revisiting too.
+
+---
+
 ## 2026-09-09 (ui-conformance WP1: board-width density scale)
 
 ### (this commit) — ui-conformance WP1 · OrtTheme scales density to the board's 390dp width (R-600 scale finding)

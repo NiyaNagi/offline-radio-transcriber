@@ -1,6 +1,7 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
@@ -11,16 +12,20 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LiveBarTone
+import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.data.CaptureStateTone
 import org.ort.app.ui.data.CaptureStatusViewState
 import org.ort.app.ui.data.KeyValueFacts
@@ -184,6 +189,69 @@ class CaptureStatusScreenTest {
             "expected Stop to render at roughly one reference line's height (${referenceHeight}px); " +
                 "got ${stopHeight}px, consistent with wrapping one character per line",
             stopHeight <= referenceHeight * 2,
+        )
+    }
+
+    @Test
+    @Requirement("R-613")
+    fun `R_613 at fontscale_2_0 scrolled to the end the Battery row clears the live bar`() {
+        // R-613 (`storage-warn/N04-capture-status@2x-end.png`): at font scale 2.0, scrolled to the
+        // end, the Tier row's own sub-line was clipped by the "Low storage" live bar and the
+        // Storage/Battery rows FR-UI-7 requires were never reached. `LiveBar` is a plain sibling of
+        // this screen's own scrollable `Column`, not a `FailureHost` overlay — Compose's own
+        // `weight(1f)` already gives that `Column` exactly `total - liveBar's height`, so its own
+        // bottom edge sits flush against the bar's top at *any* scroll offset, with zero breathing
+        // room, before this fix (WP11b measured padding on the *outer* modifier subtracting from
+        // that same budget 1:1 instead of inserting clearance — not repeated here).
+        //
+        // `performScrollTo()` on the Battery node alone is *not* "scrolled to the end" — it scrolls
+        // only the minimum needed to bring Battery's own bounds into the viewport, which stops the
+        // instant Battery's bottom touches the viewport's own bottom edge regardless of how much
+        // trailing padding follows it (confirmed directly: with and without this fix, that scroll
+        // produced the identical ~1dp gap — the scroll mechanics themselves, not this fix, decided
+        // that number). Forcing a real max scroll — an oversized `ScrollBy` the scroll state itself
+        // clamps to its own true end — is what actually reaches the trailing clearance this fix
+        // adds, the same way an operator dragging to the literal bottom of the screen would.
+        //
+        // What this proves, and what it does not (`Theme.kt`'s own kdoc: this host's own text
+        // measurement is not trustworthy in absolute terms): this is a real, structural geometry
+        // check — one real node's bottom position against another real node's top position, both
+        // read from the same composed tree at the same density and font scale, after a real
+        // maximum scroll — not a claim that this reproduces a real device's exact pixel gap. It
+        // proves the trailing clearance this fix adds is real, present, and reachable by scrolling
+        // all the way down, not the precise dp a real device would need.
+        val liveBar = LiveBarViewState(
+            level = listOf(0.1f, 0.2f, 0.1f),
+            partialText = null,
+            label = "Low storage",
+            tone = LiveBarTone.DEGRADED,
+        )
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp).height(844.dp)) {
+                        CaptureStatusScreen(state = baseState, liveBar = liveBar)
+                    }
+                }
+            }
+        }
+
+        val scrollable = composeTestRule.onNode(hasScrollAction())
+        scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+        composeTestRule.waitForIdle()
+
+        val batteryBottom = composeTestRule.onNodeWithTag("capture-status-battery").getUnclippedBoundsInRoot().bottom
+        val liveBarTop = composeTestRule.onNodeWithTag("capture-status-livebar").getUnclippedBoundsInRoot().top
+        // Half of this fix's own `LIVE_BAR_CLEARANCE` (44dp), as a margin against measurement
+        // noise — proves a *meaningful* gap exists (the fix's clearance, not just any positive
+        // number performScrollTo's own stopping point would already have given for free).
+        val minimumExpectedGap = 22.dp
+        assertTrue(
+            "expected the Battery row's own bottom ($batteryBottom) to clear the live bar's own " +
+                "top ($liveBarTop) by at least $minimumExpectedGap after a real max scroll at font " +
+                "scale 2.0; got a gap of ${liveBarTop - batteryBottom}, consistent with R-613's own " +
+                "report of a row clipped by the live bar",
+            liveBarTop - batteryBottom >= minimumExpectedGap,
         )
     }
 
