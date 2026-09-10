@@ -315,7 +315,16 @@ public class WorkQueueTest {
             // BundledSQLiteDriver (register R-204) throws the base `android.database.SQLException`
             // for a constraint failure, not always the `SQLiteConstraintException` subclass the
             // classic framework SQLite driver used — confirmed empirically at this exact call site.
-            threw = e.message?.contains("UNIQUE constraint failed") == true
+            // CI run 34443347423 established that its message text is NOT a stable cross-platform
+            // contract: on Windows this exact call site prints `Error code: 19, message: UNIQUE
+            // constraint failed: ...`, but on Linux it prints only `Error code: ` — no numeric SQLite
+            // result code, no "UNIQUE constraint failed" text — for the identical constraint
+            // violation against an identical index (confirmed via the raw-SQL probe and row dumps
+            // below on both platforms). `android.database.SQLException` exposes no structured
+            // result-code accessor either, so there is nothing reliable left to parse off the
+            // exception itself; this flag only records that the driver threw at all. The assertion
+            // that actually proves the invariant is the row-state check below, not this flag.
+            threw = true
         }
         // CI cross-platform diagnostic task, this round: does the *identical* duplicate insert
         // throw when issued as raw SQL straight through the driver, bypassing Room's generated DAO
@@ -358,6 +367,31 @@ public class WorkQueueTest {
             "a second active row for the same (transmission, pass) must violate idx_wq_active\n$evidence",
             threw,
         )
+
+        // The part that actually proves the invariant — message text above is not trustworthy, see
+        // the catch clause.
+        assertOnlyTheReadyRowIsStillActive(dao, readyId)
+    }
+
+    /**
+     * After the rejected duplicate insert, `work_queue_item` must still hold exactly the FAILED +
+     * READY pair, with only the READY row active — never the LEASED row the rejected insert
+     * attempted. Asserted through the real DAO, independent of whatever the driver exception's
+     * message did or didn't say (see the catch clause above this call site).
+     */
+    private suspend fun assertOnlyTheReadyRowIsStillActive(dao: org.ort.data.dao.WorkQueueDao, readyId: Long) {
+        val rowsAfter = dao.findByTransmissionAndPass("TX1", PassId.B_OFFLINE.name)
+        val activeStates = setOf(WorkQueueState.READY, WorkQueueState.LEASED, WorkQueueState.DEFERRED)
+        val activeRows = rowsAfter.filter { it.state in activeStates }
+        assertEquals(
+            "exactly one active row must remain for (TX1, B_OFFLINE) after the rejected duplicate; " +
+                "rows = ${rowsAfter.map { it.id to it.state }}",
+            1,
+            activeRows.size,
+        )
+        assertEquals(readyId, activeRows.single().id)
+        assertEquals(setOf(WorkQueueState.FAILED, WorkQueueState.READY), rowsAfter.map { it.state }.toSet())
+        assertEquals(2, rowsAfter.size)
     }
 
     /**
