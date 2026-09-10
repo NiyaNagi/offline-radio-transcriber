@@ -19,7 +19,13 @@ dependencies {
     implementation(project(":identity"))
     implementation(project(":rig"))
     implementation(project(":rig-usb"))
+    implementation(project(":rig-bluetooth"))
     implementation(project(":data"))
+    // Wave F scaffolding (WP0'): the LLM contract (post-hoc rescoring/digest, FR-ASR-15/16,
+    // FR-DIG-3) and its MediaPipe implementation are wired here empty; feature code lands with
+    // the wave that owns P20.
+    implementation(project(":llm-api"))
+    implementation(project(":llm-mediapipe"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.androidx.core.ktx)
     // :data's Room types (OrtDatabase, its DAOs) are used directly by this module's real capture

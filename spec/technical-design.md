@@ -63,7 +63,10 @@ Gradle multi-module, Kotlin, JVM toolchain 17, `compileSdk` current, `minSdk` 26
 :identity        [JVM]  embeddings interface, incremental clustering, threading
 :rig             [JVM]  RigModule contract, descriptor engine, fakes
 :rig-usb         [AND]  usb-serial-for-android transport
+:rig-bluetooth   [AND]  Bluetooth SPP/BLE transport (D34, FR-RIG-14/15)
 :data            [AND]  Room entities, DAOs, FTS5, migrations, audio store, work queue
+:llm-api         [JVM]  on-device LLM contract — rescoring, digest prose, fakes   ← PURE
+:llm-mediapipe   [AND]  MediaPipe LLM Inference implementation (D36, FR-AST-3a)
 :pipeline        [AND]  pass orchestration, shed controller, tier detector, reprocess engine
 :net             [AND]  the ONLY module allowed an HTTP client. Asset download, QRZ (opt-in)
 :eval            [JVM]  evaluation harness, corpus manifest, metrics, reliability diagrams  ← PURE
@@ -74,7 +77,8 @@ Gradle multi-module, Kotlin, JVM toolchain 17, `compileSdk` current, `minSdk` 26
 The `-api` / `-impl` split exists for one reason: **the evaluation harness must run the
 complete pipeline on a desktop JVM** (AC-35, AC-89). sherpa-onnx ships JVM bindings with
 native libraries for both desktop and Android, so `:asr-sherpa` is genuinely one code path;
-only `:capture-android`, `:rig-usb`, `:data`, `:pipeline`, `:net` and `:app` are Android-only.
+only `:capture-android`, `:rig-usb`, `:rig-bluetooth`, `:data`, `:llm-mediapipe`, `:pipeline`,
+`:net` and `:app` are Android-only.
 The harness composes `:capture-api` (WAV source) + `:segment` + `:asr-sherpa` + `:lexicon` +
 `:identity` and never touches the Android modules.
 
@@ -85,15 +89,17 @@ build on violation):
 |---|---|
 | `:core` | — |
 | `:onnx` | `:core` |
-| `:capture-api`, `:lexicon`, `:rig` | `:core` |
+| `:capture-api`, `:lexicon`, `:rig`, `:llm-api` | `:core` |
 | `:segment`, `:asr-api`, `:identity` | `:core`, `:onnx` |
 | `:asr-sherpa` | `:core`, `:onnx`, `:asr-api` |
 | `:capture-android` | `:core`, `:capture-api` |
+| `:rig-usb`, `:rig-bluetooth` | `:core`, `:rig` |
+| `:llm-mediapipe` | `:core`, `:llm-api` |
 | `:data` | `:core` |
 | `:net` | `:core` |
-| `:pipeline` | `:core`, `:onnx`, `:capture-*`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig*`, `:data` |
-| `:app` | `:pipeline`, `:data`, `:net`, UI-facing APIs |
-| `:eval` | `:core`, `:onnx`, `:capture-api`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig`, `:testing` |
+| `:pipeline` | `:core`, `:onnx`, `:capture-*`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig*`, `:data`, `:llm-api`, `:llm-mediapipe` |
+| `:app` | `:pipeline`, `:data`, `:net`, `:rig`, `:llm-api`, UI-facing APIs |
+| `:eval` | `:core`, `:onnx`, `:capture-api`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig`, `:llm-api`, `:testing` |
 
 `:onnx` exists because `:segment` cannot compile without it. Silero VAD arrives through
 sherpa-onnx, so the draft-1 table — which gave `:segment` only `:core` — described a module
@@ -103,6 +109,12 @@ must not drag a transcription engine into its dependency graph.
 
 The forbidden edges that matter: `:capture-*` → `:asr-*` (rule 2), **anything → `:net` except
 `:app`** (rule 5), and `:lexicon` / `:eval` / `:core` → anything Android (rule 3).
+
+**Wave F (D34/D36, WP0') extends both named rules.** Rule 2 now also forbids `:capture-*` →
+`:llm-api` / `:llm-mediapipe`: an on-device LLM is inference exactly as much as ASR, the
+lexicon or identity are, and capture must never block on any of them (constitution IV,
+FR-RIG-14). Rule 3's Android list gains `:rig-bluetooth` and `:llm-mediapipe`, which are as
+Android-only as `:rig-usb` and `:data` already were.
 
 Rule 5 admits no exception for `:pipeline`. Draft 1 carved one out for an "asset installer",
 which would have put a network-capable dependency inside the module that runs the capture

@@ -31,13 +31,16 @@ include(
     ":lexicon",
     ":identity",
     ":rig",
+    ":llm-api",
     ":eval",
     ":testing",
     // Android-only
     ":capture-android",
     ":rig-usb",
+    ":rig-bluetooth",
     ":data",
     ":net",
+    ":llm-mediapipe",
     ":pipeline",
     ":app",
 )

@@ -75,6 +75,10 @@ dependencies {
     // LexiconImportValidator/LexiconImportInstaller directly. Previously test-only below;
     // promoted to main so ModelsViewData.kt can call it from real (non-test) code.
     implementation(project(":lexicon"))
+    // Wave F scaffolding (WP0'): the setup UI reads the rig catalogue directly (FR-RIG-16) and
+    // the Settings LLM toggle reads engine state through the :llm-api contract (FR-DIG-3b).
+    implementation(project(":rig"))
+    implementation(project(":llm-api"))
     implementation(libs.androidx.core.ktx)
     // :data's Room types (OrtDatabase, its DAOs) are used directly by StatusActivity/
     // TransmissionListActivity's real-data polling (v0 smoke test — see RealCaptureService's doc

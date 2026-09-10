@@ -20,6 +20,10 @@ sherpaOnnx = "1.13.7"
 # (buildSrc/build.gradle.kts), so it has no version entry of its own here.
 composeBom = "2024.09.03"
 activityCompose = "1.9.3"
+# WP0' (Wave F scaffolding, D36/FR-AST-3a): newest published at fetch time, read from
+# https://dl.google.com/dl/android/maven2/com/google/mediapipe/group-index.xml (tasks-genai's
+# versions attribute) on 2026-09-10. Consumed only by :llm-mediapipe.
+mediapipeTasksGenai = "0.10.35"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -54,6 +58,7 @@ compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+mediapipe-tasks-genai = { module = "com.google.mediapipe:tasks-genai", version.ref = "mediapipeTasksGenai" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
