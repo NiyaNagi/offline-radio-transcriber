@@ -32,6 +32,45 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPD follow-up: Scenarios.kt captureMode seed, S12 Models row reads WPG's ModelsController)
+
+### be0fcc8 — WPD follow-up · lead-approved Scenarios.kt fix; Models row reads real bundled state
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (lead-approved, mechanical-only
+boundary exception — two lines plus imports, nothing else in that WPI-owned file touched),
+`app/src/main/kotlin/org/ort/app/ui/setup/{ReadyScreen,SetupActivity}.kt`,
+`app/src/test/kotlin/org/ort/app/ui/setup/ReadyRowsForTest.kt`.
+**Requirements/ACs:** FR-CAP-8, E2-E13, FR-AST-3.
+**What changed:**
+1. `Scenarios.kt`'s shared `verifiedInputStore` (base for `setup-verified`/`setup-level`/
+   `setup-radio`/`seedConfiguredDeviceState`) now also seeds `store.captureMode = CaptureMode.USB_RADIO`
+   (matching the `usb-1` input fixture every caller already seeds), and the two call sites that seed
+   `radioChoice = RadioChoice.NONE` also seed `store.rigTransport = RigTransportKind.USB_SERIAL` —
+   `SetupStateMachine.stepFor` now resumes at each scenario's own documented step again now that
+   `SetupStep.MODE` gates first. `setup-radio` deliberately leaves `radioChoice`/`rigTransport`
+   unset, unchanged, so `stepFor` still stops at `RADIO` (the one gate that scenario exists to
+   test).
+2. `ReadyScreen.readyRowsFor`'s `asrState: AsrAvailability.State` parameter is replaced with
+   `modelsState: ModelsViewState` (WPG's `ModelsController.currentState`, `app/.../ui/data/ModelsViewData.kt`
+   — read only, not edited). `modelsRow` now reads green + "`N` bundled · checksums verified" +
+   `ready` when every row is `bundled && status == ModelRowStatus.INSTALLED`; otherwise the same
+   amber `Install` row as before. `SetupActivity.RenderReady` calls
+   `ModelsController.currentState(this)` and passes it through — the one place allowed to touch
+   `Context`, per this file's own established pattern for every other S12 fact.
+**Verified:**
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.debug.ScenariosTest"`
+  — green (all four previously-failing `ScenariosTest` cases now pass for the right reason).
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**
+  (previously 4/1494).
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt`/`:app:ktlintCheck` — green.
+**Left open / not done:** none new beyond what the entry below already lists (real `:rig-bluetooth`
+wiring still awaits the `:pipeline` bridge; WPI still owns adding new scenarios to this file).
+
+---
+
 ## 2026-09-10 (WPD: setup UI for D33 capture modes, Bluetooth permission, the rig catalogue picker)
 
 ### 4f35f96 — WPD · adapt SetupStore facts into WPC2's CaptureConfigurationStore
