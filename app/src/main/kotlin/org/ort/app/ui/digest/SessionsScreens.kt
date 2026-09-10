@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -244,7 +245,15 @@ public fun SessionDetailScreen(
             )
             KeyValueRow(key = "Stations", value = "${state.stationCount}")
             KeyValueRow(key = "Frequencies", value = state.frequencyLabels.joinToString(" · ").ifEmpty { "none" })
-            KeyValueRow(key = "Input", value = state.inputLabel)
+            // E2-G03 (DG04, FR-CAP-13, amended 2026-09-10): Mode leads the v7 fact rows, per
+            // `Session.dc.html`'s own order — Mode, Input, Rig link.
+            KeyValueRow(key = "Mode", value = state.modeLabel, modifier = Modifier.testTag("session-detail-mode"))
+            KeyValueRow(key = "Input", value = state.inputLabel, modifier = Modifier.testTag("session-detail-input"))
+            KeyValueRow(
+                key = "Rig link",
+                value = state.rigLinkLabel,
+                modifier = Modifier.testTag("session-detail-rig-link"),
+            )
             KeyValueRow(key = "Tier", value = state.tierLabel)
             KeyValueRow(key = "Audio", value = "${state.audioSizeLabel} retained · lossless")
             // R-145: `Models.dc.html`'s row names the exact ASR/VAD/lexicon versions a session ran

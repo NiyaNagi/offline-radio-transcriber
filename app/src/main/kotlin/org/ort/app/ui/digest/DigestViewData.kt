@@ -50,7 +50,22 @@ public data class SessionDetailViewState(
     val inputLabel: String,
     val tierLabel: String,
     val audioSizeLabel: String,
-)
+    /** E2-G03 (DG04, FR-CAP-13, *amended 2026-09-10*): "<mode operator label> · <room audio |
+     * audio by cable | Bluetooth audio>" from the session's own v7 columns, or R-450's original
+     * "not tracked per session in this build" for a pre-v7 row — never fabricated for either. */
+    val modeLabel: String = NOT_TRACKED_LABEL,
+    /** E2-G03: "<transport label>" from the session's own `rigTransport` column, "no rig this
+     * session" for a v7-onward session that genuinely ran without one (`LOCAL_MICROPHONE`), or
+     * R-450's original not-tracked line for a pre-v7 row. No rig-event history exists in `:data`
+     * today to name a stale span from (constitution I) — always just the transport alone. */
+    val rigLinkLabel: String = NOT_TRACKED_LABEL,
+) {
+    public companion object {
+        /** R-450's original honest line — reused by [modeLabel]/[rigLinkLabel]'s own defaults so a
+         * caller that predates E2-G03 (a fixture, an older test) reads exactly as it always did. */
+        public const val NOT_TRACKED_LABEL: String = "not tracked per session in this build"
+    }
+}
 
 public data class DigestItemViewState(
     val id: String,

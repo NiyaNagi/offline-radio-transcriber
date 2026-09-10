@@ -6,12 +6,17 @@ import org.ort.app.ui.data.GapWindow
 import org.ort.app.ui.data.HourActivityBucket
 import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.data.NightlyDeparture
+import org.ort.app.ui.data.RoomSessionRouteFactsReader
+import org.ort.app.ui.data.SessionRouteFacts
 import org.ort.app.ui.data.SessionWindow
 import org.ort.app.ui.improve.Plurals
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
 import org.ort.core.Tier
 import org.ort.core.TransmissionState
+import org.ort.core.capture.AudioRouteKind
+import org.ort.core.capture.BluetoothAudioProfile
+import org.ort.core.capture.RigTransportKind
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
@@ -100,6 +105,9 @@ public object DigestPolling {
         val transmissions = db.transmissionDao().listBySession(sessionId)
         val gapEntities = db.captureGapDao().listBySession(sessionId)
         val end = session.endedAt
+        // E2-G03 (DG04, FR-CAP-13): the WPF seam — see that type's own kdoc for why this reads the
+        // v7 columns rather than any live process-wide holder (this is a *past* session's own row).
+        val routeFacts = RoomSessionRouteFactsReader(context).forSession(sessionId)
 
         val window = SessionWindow(
             startedAtUtc = session.startedAt,
@@ -140,18 +148,70 @@ public object DigestPolling {
             stationCount = transmissions.mapNotNull { it.stationId }.distinct().size,
             frequencyLabels = transmissions.mapNotNull { it.frequencyHz }.distinct().sorted()
                 .map { "%.3f".format(Locale.ROOT, it / 1_000_000.0) },
-            // R-450 (register, Reviewer D): "see Settings › Input and level" was a redirect, not a
-            // fact — but there is genuinely no per-session input route persisted anywhere in this
-            // schema to redirect *from*: `SessionEntity` carries no input-device/route column at
-            // all (checked before writing this), and `RealCaptureService` itself always writes
-            // `deviceTier = null` for a real session too, so neither field this row could plausibly
-            // read is ever real for a session captured today. Left as the same honest,
-            // no-real-source wording `Models` below already uses (an accepted deviation, reported —
-            // a real per-session input route needs a new `:data` schema column, not a WP10 fix).
-            inputLabel = "not tracked per session in this build",
+            // R-450 (register, Reviewer D) / E2-G03 (*amended 2026-09-10*, FR-CAP-13): retired for
+            // any session that actually carries the v7 columns — [routeFacts] below — and kept as
+            // R-450's own honest line for a pre-v7 row, which genuinely has nothing to read
+            // (`SessionDetailViewState.NOT_TRACKED_LABEL`'s own default, applied here explicitly
+            // rather than relied on, so this stays correct if that default is ever narrowed later).
+            inputLabel = inputLabel(routeFacts),
             tierLabel = sessionTierLabel(transmissions),
             audioSizeLabel = audioSizeLabel(context, sessionId),
+            modeLabel = modeLabel(routeFacts),
+            rigLinkLabel = rigLinkLabel(routeFacts),
         )
+    }
+
+    /** E2-G03 (DG04): "<mode operator label> · <room audio | audio by cable | Bluetooth audio>" —
+     * the same three-way route disclosure N04's own Input sub-line uses
+     * ([org.ort.app.ui.data.CaptureStatusMapper]), so the two screens never name a route
+     * differently for the same session. */
+    private fun modeLabel(routeFacts: SessionRouteFacts): String {
+        val mode = routeFacts.captureMode ?: return SessionDetailViewState.NOT_TRACKED_LABEL
+        val route = when (routeFacts.audioRouteKind) {
+            AudioRouteKind.BUILT_IN_MIC -> "room audio"
+            AudioRouteKind.USB, AudioRouteKind.WIRED_HEADSET -> "audio by cable"
+            AudioRouteKind.BLUETOOTH_SCO -> "Bluetooth audio"
+            AudioRouteKind.UNKNOWN, null -> null
+        }
+        return listOfNotNull(mode.operatorLabel, route).joinToString(" · ")
+    }
+
+    /** E2-G03 (DG04, FR-CAP-13): "<route label> · <type> · room audio | radio audio[ · <Bluetooth
+     * profile>]" — the two-way room-vs-radio distinction FR-CAP-13 exists to record, plus the
+     * Bluetooth profile when the route genuinely was Bluetooth SCO (FR-CAP-11). */
+    private fun inputLabel(routeFacts: SessionRouteFacts): String {
+        val mode = routeFacts.captureMode ?: return SessionDetailViewState.NOT_TRACKED_LABEL
+        val typeLabel = when (routeFacts.audioRouteKind) {
+            AudioRouteKind.BUILT_IN_MIC -> "built-in mic"
+            AudioRouteKind.USB -> "USB"
+            AudioRouteKind.WIRED_HEADSET -> "wired"
+            AudioRouteKind.BLUETOOTH_SCO -> "Bluetooth"
+            AudioRouteKind.UNKNOWN, null -> null
+        }
+        val roomOrRadio = if (mode == org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE) "room audio" else "radio audio"
+        val profileLabel = routeFacts.bluetoothProfile?.let { bluetoothProfileLabel(it) }
+        return listOfNotNull(routeFacts.audioRouteLabel, typeLabel, roomOrRadio, profileLabel).joinToString(" · ")
+    }
+
+    private fun bluetoothProfileLabel(profile: BluetoothAudioProfile): String = when (profile) {
+        BluetoothAudioProfile.HFP_MSBC -> "Bluetooth (wideband)"
+        BluetoothAudioProfile.HFP_CVSD -> "Bluetooth (narrowband)"
+        BluetoothAudioProfile.UNKNOWN -> "Bluetooth (profile unknown)"
+    }
+
+    /**
+     * E2-G03 (DG04, FR-RIG-14/FR-RIG-15): the transport alone — no rig-event history is persisted
+     * anywhere in `:data` today (checked before writing this) to name a stale span from, so "stale
+     * spans from the session's rig events if recorded" never fires yet; this is an honest, reported
+     * limitation (constitution I), not silently dropped functionality.
+     */
+    private fun rigLinkLabel(routeFacts: SessionRouteFacts): String {
+        if (routeFacts.captureMode == null) return SessionDetailViewState.NOT_TRACKED_LABEL
+        val transport = routeFacts.rigTransport ?: return "no rig this session"
+        return when (transport) {
+            RigTransportKind.USB_SERIAL -> "USB serial"
+            RigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
+        }
     }
 
     /** R-450 (register): the real per-transmission [TransmissionEntity.processedTier] (schema v4)

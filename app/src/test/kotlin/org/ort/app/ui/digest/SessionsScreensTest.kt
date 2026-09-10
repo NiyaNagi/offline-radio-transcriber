@@ -5,7 +5,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -110,5 +113,70 @@ class SessionsScreensTest {
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithText("Tonight").assertExists()
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // E2-G03 (DG04, FR-CAP-13): the Mode/Input/Rig-link fact rows render from the view-state.
+    // -----------------------------------------------------------------------------------------
+
+    private fun detailState(modeLabel: String, inputLabel: String, rigLinkLabel: String) = SessionDetailViewState(
+        id = "S1",
+        label = "Tonight",
+        timeRangeLabel = "23:32 – 00:32",
+        durationLabel = "1 h 0 m",
+        uncleanEndLabel = null,
+        coverage = emptyList(),
+        notListeningLabel = null,
+        gaps = emptyList(),
+        overCount = 1,
+        rejectedCount = 0,
+        failedCount = 0,
+        stationCount = 1,
+        frequencyLabels = listOf("145.230"),
+        inputLabel = inputLabel,
+        tierLabel = "tier 3",
+        audioSizeLabel = "1.0 GB",
+        modeLabel = modeLabel,
+        rigLinkLabel = rigLinkLabel,
+    )
+
+    @Test
+    @Requirement("E2-G03", "FR-CAP-13")
+    fun `E2_G03 Mode Input and Rig link render as their own fact rows`() {
+        val state = detailState(
+            modeLabel = "Bluetooth-connected radio · audio by cable",
+            inputLabel = "USB Audio Device · USB · radio audio",
+            rigLinkLabel = "Bluetooth SPP",
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("session-detail-mode").assertExists()
+        composeTestRule.onNodeWithText("Bluetooth-connected radio · audio by cable", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("session-detail-input").assertExists()
+        composeTestRule.onNodeWithText("USB Audio Device · USB · radio audio", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("session-detail-rig-link").assertExists()
+        composeTestRule.onNodeWithText("Bluetooth SPP", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("E2-G03", "R-450")
+    fun `E2_G03 a pre-v7 session still reads R-450's honest not-tracked line`() {
+        val state = detailState(
+            modeLabel = SessionDetailViewState.NOT_TRACKED_LABEL,
+            inputLabel = SessionDetailViewState.NOT_TRACKED_LABEL,
+            rigLinkLabel = SessionDetailViewState.NOT_TRACKED_LABEL,
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("session-detail-mode")
+            .assert(hasText("not tracked per session in this build", substring = true))
+        composeTestRule.onNodeWithTag("session-detail-rig-link")
+            .assert(hasText("not tracked per session in this build", substring = true))
     }
 }

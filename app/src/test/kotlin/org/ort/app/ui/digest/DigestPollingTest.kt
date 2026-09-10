@@ -276,6 +276,85 @@ class DigestPollingTest {
             assert(detail.inputLabel == "not tracked per session in this build") { "got ${detail.inputLabel}" }
         }
 
+    // -----------------------------------------------------------------------------------------
+    // E2-G03 (DG04, FR-CAP-13): Mode/Input/Rig-link fact rows from the session's own v7 columns —
+    // R-450's deviation is retired only for a session that actually carries the facts.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("E2-G03", "FR-CAP-13")
+    fun `E2_G03 a USB-radio session names its mode, input and rig link from the v7 columns`(): Unit = runTest {
+        db.sessionDao().insert(
+            session("S1", startedAt = 0L, endedAt = 3_600_000L).copy(
+                captureMode = "USB_RADIO",
+                audioRouteKind = "USB",
+                audioRouteLabel = "USB Audio Device",
+                rigTransport = "USB_SERIAL",
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", "S1"))
+
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+        assert(detail.modeLabel == "USB-connected radio · audio by cable") { "got ${detail.modeLabel}" }
+        assert(detail.inputLabel.contains("USB Audio Device")) { "got ${detail.inputLabel}" }
+        assert(detail.inputLabel.contains("radio audio")) { "got ${detail.inputLabel}" }
+        assert(!detail.inputLabel.contains("room audio")) { "got ${detail.inputLabel}" }
+        assert(detail.rigLinkLabel == "USB serial") { "got ${detail.rigLinkLabel}" }
+    }
+
+    @Test
+    @Requirement("E2-G03", "FR-CAP-11")
+    fun `E2_G03 a Bluetooth-audio session names its profile on the Input row`(): Unit = runTest {
+        db.sessionDao().insert(
+            session("BT-1", startedAt = 0L, endedAt = 3_600_000L).copy(
+                captureMode = "BLUETOOTH_RADIO",
+                audioRouteKind = "BLUETOOTH_SCO",
+                audioRouteLabel = "Handheld BT",
+                bluetoothProfile = "HFP_MSBC",
+                rigTransport = "BLUETOOTH_SPP",
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", "BT-1"))
+
+        val detail = DigestPolling.sessionDetail(context, "BT-1")!!
+
+        assert(detail.inputLabel.contains("Handheld BT")) { "got ${detail.inputLabel}" }
+        assert(detail.inputLabel.contains("wideband")) { "got ${detail.inputLabel}" }
+        assert(detail.rigLinkLabel == "Bluetooth SPP") { "got ${detail.rigLinkLabel}" }
+    }
+
+    @Test
+    @Requirement("E2-G03", "FR-CAP-10")
+    fun `E2_G03 a local-microphone session names room audio and no rig, never a fabricated transport`(): Unit =
+        runTest {
+            db.sessionDao().insert(
+                session("ROOM-1", startedAt = 0L, endedAt = 3_600_000L).copy(
+                    captureMode = "LOCAL_MICROPHONE",
+                    audioRouteKind = "BUILT_IN_MIC",
+                    audioRouteLabel = "Built-in Microphone",
+                ),
+            )
+            db.transmissionDao().insert(transmission("TX1", "ROOM-1"))
+
+            val detail = DigestPolling.sessionDetail(context, "ROOM-1")!!
+
+            assert(detail.inputLabel.contains("room audio")) { "got ${detail.inputLabel}" }
+            assert(detail.rigLinkLabel == "no rig this session") { "got ${detail.rigLinkLabel}" }
+        }
+
+    @Test
+    @Requirement("E2-G03", "R-450")
+    fun `E2_G03 a pre-v7 session with no tracked columns keeps R-450's honest not-tracked line`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1"))
+
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
+
+        assert(detail.modeLabel == "not tracked per session in this build") { "got ${detail.modeLabel}" }
+        assert(detail.rigLinkLabel == "not tracked per session in this build") { "got ${detail.rigLinkLabel}" }
+    }
+
     @Test
     fun `R_092 digest surfaces a station heard for the first time this session, from real history`(): Unit = runTest {
         db.sessionDao().insert(session("S0", startedAt = -10_000L, endedAt = -5_000L))
