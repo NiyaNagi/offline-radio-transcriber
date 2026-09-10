@@ -98,8 +98,18 @@ the seam did its job).
   `/*` inside a KDoc path reference — Kotlin's block comments nest, unlike Java/C — and an
   `isBlank()` check that wrongly rejected a legitimate whitespace line terminator; both fixed, not
   suppressed).
-- Full monorepo `build dependencyRules platformGuards`, `-p buildSrc test`, `spec_check.py`,
-  `coverageMatrix`/`coverageMatrixCheck` re-run after this commit — see the closing report.
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green
+  (9m29s, full monorepo including `:app`, after merging `main` twice more for WPB's rig-bluetooth
+  lint fix and WPG's bundled assets); `dependencyRules` confirms `:capture-android -> :capture-api,
+  :core` only, unchanged; `platformGuards` confirms no analytics/telemetry SDK, no HTTP client
+  outside `:net`.
+- `./gradlew -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — 450 requirements, 232 covered, no
+  orphan-test warnings (every `@Requirement` id across this package's tests is a real spec id — the
+  E2-* checklist ids from the plan are named in test kdoc/comments instead, not in the annotation,
+  since `coverageMatrix` does not recognise that id shape); `coverageMatrixCheck` (separate
+  invocation) — up to date.
 
 **Left open / not done:**
 - **VID/PID and the line terminator have no home in `RigDescriptor` yet.** They are read from
