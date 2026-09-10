@@ -10,6 +10,7 @@ import org.ort.data.dao.CorrectionDao
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.CorrectionEntity
+import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.LatticeSource
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.ThreadEntity
@@ -170,6 +171,36 @@ internal object OvernightScenario {
                 priorBreakdown = mapOf("callsign-history" to 0.0, "propagation" to -0.42, "database" to 0.8),
             ),
         )
+        // R-771 (register, confirmation sweep): unlike tx1/tx3/tx6 below, tx2's own transcript
+        // ("roger that, good copy on the repeater this morning") never spells K7LWH phonetically —
+        // this over's attribution comes from a voice match against the station's own voiceprint,
+        // not from what was said, which is the whole point of the INFERRED case D02 exists to show.
+        // `ScenarioFixtures.latticeSlots(...)` cannot seed this: it *requires* each unit's spoken
+        // word to be found as a real substring of the transcript (its own doc comment's invariant,
+        // enforced by a `check()`), which is exactly the ACOUSTIC-not-TEXT_DERIVED shape this
+        // lattice already correctly has (the `lattice(...)` call two lines above never passes
+        // `source = TEXT_DERIVED`, unlike tx1/tx3/tx6's). So these rows are built directly instead,
+        // `charStart`/`charEnd` both `null` — [org.ort.data.entity.LatticeSlotEntity]'s own doc
+        // comment: exactly the state an acoustic lattice's slots carry, never a span into text that
+        // was never derived from. Scores are real but deliberately weaker than tx1's confirmed
+        // 0.98..0.90 run (matched by ear, on a weaker `signalStrength = 5.0` over, not confirmed by
+        // what was heard) — still a real, ordered per-unit lattice for D02's grid to render, not a
+        // copy of tx1's own stronger one.
+        listOf("K" to "kilo", "7" to "seven", "L" to "lima", "W" to "whiskey", "H" to "hotel")
+            .mapIndexed { index, (unit, _) ->
+                LatticeSlotEntity(
+                    id = "$tx2-c1-slot$index",
+                    transmissionId = tx2,
+                    candidateId = "$tx2-c1",
+                    index = index,
+                    unit = unit,
+                    score = (0.74 - index * 0.03).coerceAtLeast(0.5),
+                    keptAlternate = null,
+                    charStart = null,
+                    charEnd = null,
+                )
+            }
+            .forEach { db.catalogDao().insert(it) }
 
         // -- 3. AMBIGUOUS: two close candidates, neither chosen (attributionFrom() always maps ----
         //       AMBIGUOUS to Attribution.ambiguous() — no station on the transmission row itself). -

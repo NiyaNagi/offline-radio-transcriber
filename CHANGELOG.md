@@ -32,6 +32,69 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (ui-conformance WP4 round: R-771 the INFERRED fixture's own missing lattice slots seeded)
+
+### (pending) — ui-conformance WP4 round · R-771 `OvernightScenario.kt`'s INFERRED over (D02) now carries a real, ordered lattice, so a capture can actually exercise the board's inferred-case grid
+
+**Scope:** `:app` — `app/src/debug/kotlin/org/ort/app/debug/OvernightScenario.kt` only (lead-
+directed exception to this round's own file row — WP6's own R-720 fix exposed the gap while
+touching a different file); new `app/src/test/kotlin/org/ort/app/debug/InferredLatticeFixtureTest.kt`.
+`git merge main` (fast-forward to `1027bc7`, no conflicts) brought in WP6's own R-720/R-721 merge
+that found this gap while wiring the real per-slot grid into the inline Detail preview.
+
+**Requirements/ACs:** R-771 (register, confirmation sweep — fixed).
+
+**What changed:**
+- **Constitution Check.** Principle I: D01 and D03 rendered WP6's own real per-slot grid once
+  R-720 landed; D02 alone fell back to the honest "not recorded yet" line — not because the board's
+  inferred case has nothing to show, but because this fixture never gave it anything to read. An
+  honest fallback is still the wrong fact when the real thing was reachable and simply never seeded.
+- **The fix.** `tx2` (the scenario's own INFERRED over, station K7LWH) already had a `lattice` row
+  and a selected `candidate` row, but never called `ScenarioFixtures.latticeSlots(...)` the way
+  `tx1`/`tx3`/`tx6` do. It could not, either: that helper requires each unit's own spoken word to
+  be a real substring of the transmission's transcript (its own doc comment's invariant, enforced
+  by a `check()`) — and `tx2`'s real transcript ("roger that, good copy on the repeater this
+  morning") never spells K7LWH phonetically. That absence is the *point* of this over: its
+  attribution comes from a voice match against the station's own voiceprint, not from what was
+  said — exactly what an INFERRED case, as opposed to a CONFIRMED one, means. `tx2`'s own
+  `lattice(...)` call was already correctly `ACOUSTIC` (never `TEXT_DERIVED`), so five
+  `LatticeSlotEntity` rows are now built directly for K-7-L-W-H, `charStart`/`charEnd` both `null` —
+  exactly the state `LatticeSlotEntity`'s own doc comment gives an acoustic lattice's slots, never
+  a fabricated span into text that was never derived from. Scores run `0.74` down to `0.62`
+  (`(0.74 - index * 0.03).coerceAtLeast(0.5)`), deliberately weaker than `tx1`'s confirmed
+  `0.98`–`0.90` run — a real, ordered lattice for an inferred, not confirmed, attribution, never a
+  copy of the stronger CONFIRMED one.
+- **New `InferredLatticeFixtureTest.kt`** (`R_771`, split out of `ScenariosTest.kt` the same way
+  `AmbiguousCandidatesFixtureTest.kt`/`FieldTier1AudioTest.kt` already are): loads `overnight`,
+  looks up `tx2` by its own scenario-assigned id directly (`listBySession().single { INFERRED }`
+  is not unique — the scenario's own later generated overs, case 5 onward, also produce more than
+  one INFERRED transmission), reads it through the real production path
+  (`CorrectionPolling.inspectionWithSlots`), and asserts the winning candidate's own `slots` are
+  non-empty and every real score sits within a real, ordered `[0.5, 1.0]` range.
+- Confirmed the test's own discriminating power directly: temporarily disabled the new fixture
+  block and re-ran — failed (no winning candidate/empty slots); restored, passed.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.debug.InferredLatticeFixtureTest` —
+  green.
+- `.\gradlew.bat :app:testDebugUnitTest --tests 'org.ort.app.debug.*'` — green, full package (no
+  regressions in `ScenariosTest`/`AmbiguousCandidatesFixtureTest`/tour tests/etc.).
+- Regression-discrimination check (temporary revert, restored before this commit) — see "What
+  changed" above.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+- `.\gradlew.bat dependencyRules platformGuards` — green.
+- `.\gradlew.bat :app:assembleDebug` — green.
+- `python tools\spec-check\spec_check.py` — 8/8.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — 192/419, up
+  to date.
+
+**Left open / not done:** not re-verified on a real device or emulator this round (no device
+access as a builder — the register's own next validator/recapture pass owns rendering D02's real
+grid on screen); `gap-call`/`overnight-live` share `OvernightScenario.kt`'s own `build(...)`, so
+they inherit this same fix automatically — not independently re-verified per scenario name here.
+
+---
+
 ## 2026-09-10 (first-push CI fix: idx_transcript_one_current/idx_wq_active enforced cross-platform, coverage matrix regenerated)
 
 ### (pending) — data-ci · exactly one BundledSQLiteDriver artifact on the Robolectric test classpath, WorkQueue.enqueue guards idx_wq_active at the application level, coverage matrix regenerated
@@ -143,7 +206,6 @@ R-204 (the FTS5/`BundledSQLiteDriver` merge this hazard descends from), constitu
   classpath duplication — out of this task's `data/**` ownership; worth the same fix if the
   Linux `android`/`unit` CI jobs (`:net`, `:rig-usb`, `:capture-android`, `:pipeline`, `:app`
   Robolectric tests) show the same symptom.
-
 
 
 ## 2026-09-10 (ui-conformance WP6 round 15: R-720 real per-slot lattice grid wired into the inline preview; R-721 all four Detail-Unknown tried steps, honestly)
