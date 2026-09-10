@@ -32,6 +32,70 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-09 (ui-conformance WP4/WP10 round 3: R-590 fixed for real — device-confirmed regression from round 2's own `SpaceBetween`-without-weights attempt)
+
+### (pending) — ui-conformance WP4/WP10 round 3 · R-590's below-threshold branch rebuilt on `KeyValueRow`'s own proven weight(label)/fixed(value) shape, after round 2's un-weighted `SpaceBetween` attempt read safe under Robolectric but crushed the value on a real device
+
+**Scope:** `:app` — `ui/settings/SettingsStorageScreen.kt` and its test only. `git merge main`
+(fast-forward to `55d0bcc`, no conflicts) brought in WP8's own unrelated `StationPolling`/
+`StationsAndFrequencies` work and the register's own recapture evidence for this exact regression.
+
+**Requirements/ACs:** R-590 (register, Reviewer's round-5 device recapture — closed for real this
+round).
+
+**What changed:**
+- **Constitution Check.** Principle I, directly: round 2's own fix *read* correct from this host's
+  own tests (the row was never vertically stacked) while being wrong on the one thing that
+  actually mattered — the value's real width on a real device — because the test only checked
+  *position*, never *size*. A test that cannot see the failure it exists to catch is its own kind
+  of silence; this round's own new assertion is built to see it (a real, comparable height, not a
+  position alone).
+- **Root cause, device-confirmed** (`results/ui-audit/overnight/CF03-settings-storage.png`, tour
+  capture, font scale 1.0, main `72a08b1`): round 2's `Row` + `Arrangement.SpaceBetween` with
+  **no** `weight()` on either child let [key] — a non-weighted child free to consume up to the
+  entire row's width once its own real content needs to wrap that far — claim nearly all of it on
+  a real device's font metrics (where Robolectric's own unreliable text measurement happened not
+  to reproduce the same wrap), leaving [value] squeezed into a sliver and wrapping "always" one
+  character per line, sitting *beside* the label rather than below it — passing round 2's own
+  position-only test while still visibly broken.
+- **The fix**: restores the ordinary, already-proven Compose shape `KeyValueRow` itself uses for a
+  fixed-plus-growing pair, with the roles matched to this row's own real strings. [key] (the side
+  that needs to grow or wrap) now carries `Modifier.weight(1f, fill = false)` — a *ceiling*, never
+  a forced floor, so it claims at most its computed share even when its content would wrap wider
+  given the room. [value] (always short) is forced to its own true single-line width regardless of
+  what the row hands it: `softWrap = false` + `maxLines = 1` forbid a second line outright, and
+  `Modifier.wrapContentWidth()` keeps it sized to that one line rather than stretched.
+  `horizontalArrangement` changed from `SpaceBetween` to `Arrangement.spacedBy(OrtSpacing.sm)` —
+  `KeyValueRow`'s own spacing, not invented fresh. Round 2's own "no `weight()` on either child"
+  reasoning is now retired from this composable's own doc comment as the wrong lesson from a real
+  defect — the actual fault was the *arrangement* choice, not `weight()` itself, which is the
+  standard tool for exactly this shape once it sits on the side that needs it.
+- **New `R_590` assertion, per the coordinator's own instruction**: a real, comparable *height*
+  check, not a position check alone — `KeyValueRow`'s own "Warn at" row on the same screen renders
+  its value ("3 nights left") at a guaranteed single real line; [value]'s own height must stay
+  within `1.6×` of that same-screen, same-run reference. Height is what a Robolectric host can
+  compare meaningfully even when it cannot be trusted to report absolute widths (this file's own
+  established finding, `R_551`'s doc comment) — the position-only check from round 2 stays too, but
+  no longer stands alone.
+
+**Verified:**
+- `.\gradlew.bat :app:testDebugUnitTest --tests org.ort.app.ui.settings.SettingsStorageScreenTest`
+  — green, including the strengthened `R_590 at fontscale_1_0 …` (now asserting both position and
+  height) and the unchanged `R_590 at fontscale_2_0 …`/`R_551`.
+- `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+- `.\gradlew.bat dependencyRules platformGuards` — green.
+- `.\gradlew.bat :app:assembleDebug` — green.
+- `python tools\spec-check\spec_check.py` — 8/8.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate) — 192/419, up
+  to date.
+
+**Left open / not done:** this fix was not re-verified on a real device this round (no emulator/
+device access as a builder — the register's own next validator pass owns that); the height-based
+assertion is a same-run, same-screen *comparison*, not an absolute-pixel proof, by design (this
+host's own font metrics are not trustworthy in absolute terms, per `R_551`'s own doc comment).
+
+---
+
 ## 2026-09-09 (ui-conformance WP4/WP10 round 2: R-590 RetentionOrderRow font-scale gate; LevelMeterScreenTest isolated into smokeTestDebugUnitTest)
 
 ### (pending) — ui-conformance WP4/WP10 round 2 · R-590 side-by-side below fontScale 1.3, stacked at/above it; LevelMeterScreenTest moved into the isolated smoke-test task per the coordinator's own jstack-confirmed wedge
