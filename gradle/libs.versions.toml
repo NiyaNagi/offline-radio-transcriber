@@ -32,6 +32,18 @@ mediapipeTasksGenai = "0.10.35"
 # no compileSdk floor above 34; confirmed against its published AAR metadata. Revisit once
 # compileSdk moves to >= 35 (a WP0'-owned change). Consumed only by :rig-usb.
 usbSerialForAndroid = "3.10.0"
+# WPH follow-up (P21, FR-DIG-5): the newest *stable* (non-`-rc`/`-alpha`/`-beta`) version at
+# https://dl.google.com/dl/android/maven2/androidx/work/work-runtime-ktx/maven-metadata.xml,
+# fetched 2026-09-10, is 2.11.2 (`maven-metadata.xml`'s own `latest` field names 2.12.0-rc01, a
+# release candidate skipped for exactly that reason) — but 2.10.0 and later's AAR metadata
+# declares minCompileSdk = 35 (confirmed directly: `:pipeline:checkDebugUnitTestAarMetadata`
+# failed naming exactly that requirement against 2.11.2), and this project's shared
+# ort.android-library convention plugin — outside this follow-up's ownership — pins
+# compileSdk 34, the same shape WPB's usbSerialForAndroid pin above already documents. 2.9.1 is
+# the newest release that still declares no compileSdk floor above 34; confirmed by
+# `:pipeline:checkDebugUnitTestAarMetadata` passing with it. Revisit once compileSdk moves to
+# >= 35. Consumed by :pipeline for ProseDigestRunner's charging+idle-constrained schedule.
+androidxWork = "2.9.1"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -68,6 +80,8 @@ compose-foundation = { module = "androidx.compose.foundation:foundation" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 mediapipe-tasks-genai = { module = "com.google.mediapipe:tasks-genai", version.ref = "mediapipeTasksGenai" }
 usb-serial-android = { module = "com.github.mik3y:usb-serial-for-android", version.ref = "usbSerialForAndroid" }
+androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "androidxWork" }
+androidx-work-testing = { module = "androidx.work:work-testing", version.ref = "androidxWork" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

@@ -28,6 +28,10 @@ dependencies {
     implementation(project(":llm-mediapipe"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.androidx.core.ktx)
+    // WPH follow-up (P21, FR-DIG-5): ProseDigestRunner's charging+idle-constrained schedule.
+    // Not previously a project dependency anywhere (confirmed by search before adding) despite
+    // AGENTS.md's Stack line naming WorkManager — this is the first module to actually link it.
+    implementation(libs.androidx.work.runtime.ktx)
     // :data's Room types (OrtDatabase, its DAOs) are used directly by this module's real capture
     // wiring (RealCaptureService, a v0 smoke test — see its own doc comment) — :data itself only
     // has `implementation` on Room, so it is not on this module's main classpath transitively,
@@ -39,6 +43,8 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.turbine)
+    // WPH follow-up: TestListenableWorkerBuilder for ProseDigestRunnerTest.
+    testImplementation(libs.androidx.work.testing)
     // WPH (build-plan P21): ProsePromptBuilderTest's FR_DIG_12 closed-field-list check reflects
     // over ThreadDigestInput's declared properties, the same reason :segment's own build.gradle.kts
     // already carries this for its AC-94 constructor-signature check.
