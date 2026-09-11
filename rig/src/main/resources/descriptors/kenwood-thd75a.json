@@ -7,11 +7,13 @@
     {
       "kind": "usb_serial",
       "serial": { "baud": 9600, "dataBits": 8, "stopBits": 1, "parity": "none" },
-      "capabilities": ["FREQUENCY", "SQUELCH_STATE", "SUB_BAND"]
+      "capabilities": ["FREQUENCY", "SQUELCH_STATE", "SUB_BAND"],
+      "lineTerminator": ";"
     },
     {
       "kind": "bluetooth_spp",
-      "capabilities": ["FREQUENCY", "SQUELCH_STATE", "SUB_BAND"]
+      "capabilities": ["FREQUENCY", "SQUELCH_STATE", "SUB_BAND"],
+      "lineTerminator": ";"
     }
   ],
   "bands": [0, 1],

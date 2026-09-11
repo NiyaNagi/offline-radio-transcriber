@@ -45,7 +45,17 @@ public data class TransmissionRigState(public val atStart: RigState, public val 
  */
 public class DescriptorRigModule(
     private val descriptor: RigDescriptor,
-    private val transportFactory: (RigTransportKind, Map<String, String>) -> RigTransport,
+    /**
+     * WPC3 (FR-RIG-3): the matching [TransportSpec] for the [RigTransportKind] being connected —
+     * `null` only when the descriptor declares no spec for that kind at all, which
+     * [DescriptorValidator]'s [DescriptorError.NoTransports]/[DescriptorError.UnknownTransportKind]
+     * already guard against for anything this class was actually built from. Passed through
+     * unchanged from [connect] so a real factory
+     * ([org.ort.pipeline.rig.DefaultRigTransportFactory]) can read `usbVendorId`/`usbProductId`/
+     * `lineTerminator` from the descriptor itself, falling back to its own `params` only for
+     * whatever the descriptor did not declare — see [TransportSpec]'s own kdoc.
+     */
+    private val transportFactory: (RigTransportKind, TransportSpec?, Map<String, String>) -> RigTransport,
     private val clock: Clock = SystemClock,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val readTimeoutMs: Long = 1_000,
@@ -87,12 +97,15 @@ public class DescriptorRigModule(
     private var stateWatchJob: Job? = null
 
     override fun capabilities(transport: RigTransportKind): Set<RigCapability> {
-        val spec = descriptor.transports.firstOrNull { wireTransportKind(it.kind) == transport } ?: return emptySet()
+        val spec = transportSpecFor(transport) ?: return emptySet()
         return spec.capabilities.mapNotNull { runCatching { RigCapability.valueOf(it) }.getOrNull() }.toSet()
     }
 
+    private fun transportSpecFor(transport: RigTransportKind): TransportSpec? =
+        descriptor.transports.firstOrNull { wireTransportKind(it.kind) == transport }
+
     override fun connect(transport: RigTransportKind, params: Map<String, String>): Result<Connection> {
-        val opened = transportFactory(transport, params)
+        val opened = transportFactory(transport, transportSpecFor(transport), params)
         return try {
             opened.open()
             this.transport = opened
@@ -129,6 +142,30 @@ public class DescriptorRigModule(
         return TransmissionRigState(atStart, changedDuring)
     }
 
+    /**
+     * D23: the timestamp at which [band]'s squelch most recently, continuously, transitioned to
+     * open, looking no later than [atOrBeforeNanos]. `null` when [band]'s squelch is not open at
+     * that time, or nothing about [band] has ever been recorded — a caller
+     * ([org.ort.pipeline.rig.RigSupervisor.bandAtTransmissionStart]) never guesses which band a
+     * transmission belongs to from this alone (constitution I); it uses this to compare bands, not
+     * to assert one.
+     */
+    public fun squelchOpenedAtNanos(band: RigBand, atOrBeforeNanos: Long): Long? {
+        val snapshot = synchronized(history) { history.toList() }
+            .filter { it.band == band && it.timestampNanos <= atOrBeforeNanos }
+        val latest = snapshot.lastOrNull() ?: return null
+        if (latest.squelchOpen != true) return null
+        var openSinceNanos = latest.timestampNanos
+        for (index in snapshot.size - 2 downTo 0) {
+            if (snapshot[index].squelchOpen == true) {
+                openSinceNanos = snapshot[index].timestampNanos
+            } else {
+                break
+            }
+        }
+        return openSinceNanos
+    }
+
     private fun startLoops(opened: RigTransport) {
         descriptor.unsolicited?.let { unsolicited -> runCatching { opened.write(unsolicited.enable) } }
 
@@ -137,6 +174,19 @@ public class DescriptorRigModule(
                 val line = withTimeoutOrNull(readTimeoutMs) { opened.readLine(readTimeoutMs) }
                 if (line == null) {
                     healthFlow.tryEmit(RigHealth.Degraded(clock.monotonicNanos(), RigHealthIssue.TIMEOUT))
+                    // WPC3 finding: a RigTransport that is not Open at all (still Connecting, or
+                    // Lost between reconnect attempts -- both real states for UsbSerialTransport/
+                    // BluetoothSppTransport, whose own connect runs asynchronously after open()
+                    // returns) returns null from readLine() SYNCHRONOUSLY, with no suspension at
+                    // all. Without a genuine suspension point here, this loop would busy-spin one
+                    // CPU core at 100% for as long as the transport stays not-Open, AND -- since
+                    // Kotlin coroutine cancellation is cooperative -- would make disconnect()'s
+                    // readJob.cancel() silently ineffective for as long as that spin continued,
+                    // permanently starving any other coroutine sharing this scope's dispatcher
+                    // (reproduced deterministically: WPC3's RigLinkBridgeTest against the real
+                    // Bluetooth/USB transports). delay() is itself a cancellation point, so this
+                    // both stops the spin and makes disconnect() take effect promptly.
+                    delay(READ_RETRY_BACKOFF_MS)
                 } else {
                     handleLine(line)
                 }
@@ -240,6 +290,11 @@ public class DescriptorRigModule(
     public companion object {
         private const val HISTORY_LIMIT = 512
         private const val LINE_DETAIL_LIMIT = 64
+
+        /** WPC3: the read loop's backoff after a null [RigTransport.readLine] result -- see that
+         * call site's own kdoc for why this exists at all (a not-Open transport returns null with
+         * no suspension, which would otherwise busy-spin and defeat cooperative cancellation). */
+        private const val READ_RETRY_BACKOFF_MS = 50L
 
         internal fun wireTransportKind(raw: String): RigTransportKind? = when (raw.lowercase()) {
             "usb_serial" -> RigTransportKind.USB_SERIAL

@@ -49,6 +49,16 @@ public object DescriptorValidator {
             if (transport.kind.lowercase() !in KNOWN_TRANSPORT_KINDS) {
                 errors += DescriptorError.UnknownTransportKind(transport.kind)
             }
+            // FR-RIG-3: a USB hardware identity is both-or-neither -- half of one is worse than
+            // none, since it would name a real vendor with no product to match (constitution I).
+            if (transport.kind.lowercase() == "usb_serial" &&
+                (transport.usbVendorId == null) != (transport.usbProductId == null)
+            ) {
+                errors += DescriptorError.IncompleteUsbIdentity(transport.kind)
+            }
+            if (transport.lineTerminator != null && transport.lineTerminator.isEmpty()) {
+                errors += DescriptorError.EmptyLineTerminator(transport.kind)
+            }
         }
 
         val allCommands = descriptor.poll?.commands.orEmpty() + descriptor.poll?.perBand.orEmpty()

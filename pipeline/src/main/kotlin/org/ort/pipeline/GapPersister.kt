@@ -14,13 +14,25 @@ import org.ort.data.entity.CaptureGapEntity
  */
 public class GapPersister(private val dao: CaptureGapDao, private val clock: Clock) {
 
-    public suspend fun persist(sessionId: String, gap: GapRecord): CaptureGapEntity {
+    /**
+     * WPC3 (FR-CAP-5, F23): [isBluetoothAudioRoute] tells [causeFor] whether the session's
+     * currently-selected audio route is Bluetooth at the moment this gap is persisted — the caller
+     * ([org.ort.pipeline.capture.RealCaptureService]'s own `gapRelay`) reads that live, not at
+     * construction time, so a gap always reflects the route that actually dropped. `false` by
+     * default so every other caller of this class (the F5 unclean-end gap, which names a previous
+     * session, not a route) is unaffected.
+     */
+    public suspend fun persist(
+        sessionId: String,
+        gap: GapRecord,
+        isBluetoothAudioRoute: Boolean = false,
+    ): CaptureGapEntity {
         val entity = CaptureGapEntity(
             id = Ulid.generate(clock).toString(),
             sessionId = sessionId,
             startedAt = gap.startWallMillis,
             endedAt = gap.endWallMillis,
-            cause = causeFor(gap.cause),
+            cause = causeFor(gap.cause, isBluetoothAudioRoute),
             recoveredAutomatically = true,
         )
         dao.insert(entity)
@@ -48,11 +60,20 @@ public class GapPersister(private val dao: CaptureGapDao, private val clock: Clo
      *   debug scenario simulator (`gap-call`) writes a `CALL`-caused gap directly, bypassing this
      *   function entirely.
      * - **[CaptureGapCause.INPUT_LOST]** — the more precisely-named successor to
-     *   [CaptureGapCause.DEVICE_LOST] for a bare "read error" or a "device" reference. F-010's
-     *   dropped-span encoding (`"dropped samples: ..."`) is left mapped to `DEVICE_LOST`
-     *   unchanged — an established, tested behaviour ([GapPersisterTest]'s own F-010 case) — so
-     *   only the two causes that mapped to it *without* a more specific match before now resolve
-     *   to `INPUT_LOST` instead.
+     *   [CaptureGapCause.DEVICE_LOST] for a bare "read error" or a "device" reference **on a
+     *   non-Bluetooth route** — see [CaptureGapCause.BLUETOOTH_AUDIO_LOST] immediately below for
+     *   the Bluetooth case of the exact same underlying signal. F-010's dropped-span encoding
+     *   (`"dropped samples: ..."`) is left mapped to `DEVICE_LOST` unchanged — an established,
+     *   tested behaviour ([GapPersisterTest]'s own F-010 case) — so only the two causes that mapped
+     *   to it *without* a more specific match before now resolve to `INPUT_LOST`/
+     *   `BLUETOOTH_AUDIO_LOST` instead.
+     * - **[CaptureGapCause.BLUETOOTH_AUDIO_LOST]** (WPC3, FR-CAP-5, F23) — the *same* "device"/"read
+     *   error" signal as [CaptureGapCause.INPUT_LOST] above, distinguished only by
+     *   [isBluetoothAudioRoute] — [org.ort.pipeline.capture.RealCaptureService] passes that from
+     *   the session's currently-selected [org.ort.capture.android.AudioDeviceDescriptor.kind],
+     *   read live at persist time (not derived from the cause string itself, which carries no route
+     *   information at all: `AudioRecordSource` emits the identical `"read error"` regardless of
+     *   which route dropped).
      * - **[CaptureGapCause.ROUTE_LOST]** — **no code path reaches this today.**
      *   [org.ort.capture.android.AudioRecordSource] reports a route mismatch as
      *   [org.ort.captureapi.CaptureEvent.Failed] ("route mismatch: …"), which halts capture
@@ -61,7 +82,7 @@ public class GapPersister(private val dao: CaptureGapDao, private val clock: Clo
      *   the way a gap does. The mapping below is reserved for if that ever changes; it cannot be
      *   exercised by the app as built.
      */
-    private fun causeFor(cause: String): CaptureGapCause = when {
+    private fun causeFor(cause: String, isBluetoothAudioRoute: Boolean): CaptureGapCause = when {
         cause.contains("os stopped", ignoreCase = true) -> CaptureGapCause.OS_STOPPED
         cause.contains("route mismatch", ignoreCase = true) -> CaptureGapCause.ROUTE_LOST
         cause.contains("route", ignoreCase = true) -> CaptureGapCause.ROUTE_CHANGE
@@ -75,7 +96,7 @@ public class GapPersister(private val dao: CaptureGapDao, private val clock: Clo
         // rather than moving to INPUT_LOST -- GapPersisterTest's F-010 case depends on it.
         cause.startsWith("dropped samples:", ignoreCase = true) -> CaptureGapCause.DEVICE_LOST
         cause.contains("device", ignoreCase = true) || cause.contains("read error", ignoreCase = true) ->
-            CaptureGapCause.INPUT_LOST
+            if (isBluetoothAudioRoute) CaptureGapCause.BLUETOOTH_AUDIO_LOST else CaptureGapCause.INPUT_LOST
         cause.contains("storage", ignoreCase = true) -> CaptureGapCause.STORAGE
         else -> CaptureGapCause.UNKNOWN
     }

@@ -105,6 +105,19 @@ public class RealCaptureServiceBluetoothDropTest {
                 BluetoothAudioProfile.HFP_MSBC,
                 lost.lastKnown.descriptor.bluetoothProfile,
             )
+            // F23 (WPC3): the first retry's own ladder numbers, from the real BackoffLadder --
+            // never fabricated (constitution I).
+            assertEquals("F23 names the first retry attempt", 1, lost.attempt)
+            assertEquals(
+                "F23 names the ladder's own step count",
+                RealCaptureService.RECONNECT_LADDER_STEPS,
+                lost.ofTotal,
+            )
+            assertEquals(
+                "F23 names BackoffLadder's own first-step delay, not an invented number",
+                org.ort.capture.android.BackoffLadder.delayMillisFor(1),
+                lost.nextRetryInMillis,
+            )
 
             // BackoffLadder's first retry (1s) reopens FakeAudioIo, which clears droppedMidRead
             // unconditionally (a fresh open() mirrors a real reconnect) -- capture resumes on its
@@ -118,10 +131,11 @@ public class RealCaptureServiceBluetoothDropTest {
             assertTrue("a Bluetooth audio drop must open a real, bounded gap (FR-RUN-12)", gaps.isNotEmpty())
             val gap = gaps.first()
             assertEquals(sessionId, gap.sessionId)
-            // See GapPersister.causeFor's own kdoc / this package's report: INPUT_LOST is the
-            // closest existing CaptureGapCause value -- a dedicated BLUETOOTH_AUDIO_LOST value
-            // does not exist in :data today (see this package's report for the exact addition).
-            assertEquals(CaptureGapCause.INPUT_LOST, gap.cause)
+            // WPC3: RealCaptureService's gapRelay reads the selected route's kind live at persist
+            // time and passes isBluetoothAudioRoute = true for a Bluetooth device (see
+            // GapPersister.causeFor's own kdoc) -- a Bluetooth audio drop is now distinguishable
+            // in the log from a USB/built-in-mic one.
+            assertEquals(CaptureGapCause.BLUETOOTH_AUDIO_LOST, gap.cause)
             assertTrue("a recovered gap must be closed with a real end time", (gap.endedAt ?: -1L) >= gap.startedAt)
         } finally {
             controller.destroy()

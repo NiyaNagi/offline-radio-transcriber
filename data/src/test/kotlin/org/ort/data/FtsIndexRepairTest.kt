@@ -84,9 +84,9 @@ public class FtsIndexRepairTest {
                     "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
                     "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
                     "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
-                    "isReprocessCandidate) VALUES ('TX1', 'S1', NULL, 0, 1000, 1000, 'flac/16k/mono', 200, 200, " +
-                    "NULL, 'measured', NULL, NULL, NULL, NULL, 'UNKNOWN', NULL, NULL, NULL, 0, 'CAPTURED', NULL, " +
-                    "0, 0, 0, NULL, '', NULL, 0)",
+                    "isReprocessCandidate, rigStateChangedMidTransmission) VALUES ('TX1', 'S1', NULL, 0, 1000, " +
+                    "1000, 'flac/16k/mono', 200, 200, NULL, 'measured', NULL, NULL, NULL, NULL, 'UNKNOWN', NULL, " +
+                    "NULL, NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, 0)",
             )
             fixture.execSQL(
                 "INSERT INTO transcript (id, transmissionId, pass, text, modelId, modelVersion, quantization, " +

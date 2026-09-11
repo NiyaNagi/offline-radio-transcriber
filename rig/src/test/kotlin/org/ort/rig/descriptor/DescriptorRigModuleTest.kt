@@ -1,6 +1,12 @@
 package org.ort.rig.descriptor
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -12,11 +18,27 @@ import org.ort.rig.RigBand
 import org.ort.rig.RigHealth
 import org.ort.rig.RigHealthIssue
 import org.ort.rig.RigStateConfidence
+import org.ort.rig.RigTransport
 import org.ort.rig.RigTransportKind
+import org.ort.rig.TransportState
 import org.ort.rig.fakes.FakeRigTransport
 import org.ort.testing.TestClock
+import java.util.concurrent.Executors
 
 private const val TEST_READ_TIMEOUT_MS = 60L
+
+/** A [RigTransport] that never opens -- [readLine] always returns `null` synchronously, exactly
+ * as `UsbSerialTransport`/`BluetoothSppTransport` do while `Connecting`/`Lost` (their real
+ * `open()` launches an async connect and returns immediately, before the link is actually up).
+ * `:rig` cannot depend on `:rig-usb`/`:rig-bluetooth` to reuse those classes directly, so this
+ * reproduces the one behaviour that matters for this test. */
+private class NeverOpenTransport : RigTransport {
+    override val state: Flow<TransportState> = MutableStateFlow(TransportState.Connecting)
+    override fun open() = Unit
+    override fun close() = Unit
+    override fun write(line: String) = Unit
+    override suspend fun readLine(timeoutMs: Long): String? = null
+}
 
 private fun pollingFrequencyDescriptor(): RigDescriptor = RigDescriptor(
     schemaVersion = 1,
@@ -54,7 +76,7 @@ class DescriptorRigModuleTest {
         transport.hangOnNextRead()
         val module = DescriptorRigModule(
             pollingFrequencyDescriptor(),
-            { _, _ -> transport },
+            { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
         )
         try {
@@ -75,7 +97,7 @@ class DescriptorRigModuleTest {
         transport.scriptGarbage("FQ", "NOPE THIS IS NOT A REPLY")
         val module = DescriptorRigModule(
             pollingFrequencyDescriptor(),
-            { _, _ -> transport },
+            { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
         )
         try {
@@ -97,7 +119,7 @@ class DescriptorRigModuleTest {
         transport.scriptReply("FQ", "FQ0014250000")
         val module = DescriptorRigModule(
             pollingFrequencyDescriptor(),
-            { _, _ -> transport },
+            { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
         )
         try {
@@ -131,7 +153,7 @@ class DescriptorRigModuleTest {
         val transport = FakeRigTransport()
         val module = DescriptorRigModule(
             pushOnlyDescriptor(),
-            { _, _ -> transport },
+            { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
         )
         try {
@@ -159,7 +181,7 @@ class DescriptorRigModuleTest {
         val clock = TestClock(startMonotonicNanos = 1_000_000_000L)
         val module = DescriptorRigModule(
             pushOnlyDescriptor(),
-            { _, _ -> transport },
+            { _, _, _ -> transport },
             clock = clock,
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
         )
@@ -200,6 +222,117 @@ class DescriptorRigModuleTest {
             assertEquals(true, changed!!.changedDuringTransmission)
         } finally {
             module.disconnect()
+        }
+    }
+
+    @Test
+    fun `D23 squelchOpenedAtNanos reports null when the band has never been open`() = runBlocking {
+        val transport = FakeRigTransport()
+        val module = DescriptorRigModule(
+            pushOnlyDescriptor(),
+            { _, _, _ -> transport },
+            readTimeoutMs = TEST_READ_TIMEOUT_MS,
+        )
+        try {
+            module.connect(RigTransportKind.USB_SERIAL, emptyMap())
+            transport.pushUnsolicited("BY 0,0")
+            awaitStateWhere(module) { it.band == RigBand.A && it.squelchOpen == false }
+
+            assertNull(module.squelchOpenedAtNanos(RigBand.A, Long.MAX_VALUE / 2))
+            assertNull(module.squelchOpenedAtNanos(RigBand.B, Long.MAX_VALUE / 2))
+        } finally {
+            module.disconnect()
+        }
+    }
+
+    @Test
+    fun `D23 squelchOpenedAtNanos reports the timestamp of the earliest contiguous open reading`() = runBlocking {
+        val transport = FakeRigTransport()
+        val clock = TestClock(startMonotonicNanos = 1_000_000_000L)
+        val module = DescriptorRigModule(
+            pushOnlyDescriptor(),
+            { _, _, _ -> transport },
+            clock = clock,
+            readTimeoutMs = TEST_READ_TIMEOUT_MS,
+        )
+        try {
+            module.connect(RigTransportKind.USB_SERIAL, emptyMap())
+
+            transport.pushUnsolicited("BY 0,1")
+            val opened = awaitStateWhere(module) { it.band == RigBand.A && it.squelchOpen == true }
+            val openedAtNanos = opened.timestampNanos
+
+            // A later, still-open reading for the same band must not move "opened since" forward --
+            // the contiguous run started at the FIRST open reading, not the most recent one.
+            clock.advanceNanos(500)
+            transport.pushUnsolicited("BY 0,1")
+            awaitStateWhere(module) { it.band == RigBand.A && it.timestampNanos > openedAtNanos }
+
+            assertEquals(openedAtNanos, module.squelchOpenedAtNanos(RigBand.A, Long.MAX_VALUE / 2))
+        } finally {
+            module.disconnect()
+        }
+    }
+
+    @Test
+    fun `WPC3 connect passes this transport's matching TransportSpec to the factory`() = runBlocking {
+        val transport = FakeRigTransport()
+        var seenSpec: TransportSpec? = null
+        val descriptor = BundledDescriptors.kenwoodThD75a()
+        val module = DescriptorRigModule(
+            descriptor,
+            { kind, spec, _ ->
+                if (kind == RigTransportKind.USB_SERIAL) seenSpec = spec
+                transport
+            },
+        )
+        try {
+            module.connect(RigTransportKind.USB_SERIAL, emptyMap())
+            assertEquals(
+                descriptor.transports.single { it.kind == "usb_serial" },
+                seenSpec,
+                "the factory must see the descriptor's own USB TransportSpec, not just the kind",
+            )
+        } finally {
+            module.disconnect()
+        }
+    }
+
+    @Test
+    fun `WPC3 the read loop yields even when the transport never opens, so it never starves its scope`() = runBlocking {
+        // A single, dedicated thread: if readJob busy-spins (no genuine suspension point when
+        // readLine() returns null synchronously, as a not-yet-Open real transport does), NOTHING
+        // else on this one-thread scope -- including the plain probe coroutine below -- ever gets
+        // to run at all. This is exactly what WPC3's RigLinkBridgeTest reproduced against the real
+        // UsbSerialTransport/BluetoothSppTransport: a deterministic, permanent timeout.
+        val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        try {
+            val singleThreadScope = CoroutineScope(SupervisorJob() + dispatcher)
+            val module = DescriptorRigModule(
+                pollingFrequencyDescriptor(),
+                { _, _, _ -> NeverOpenTransport() },
+                scope = singleThreadScope,
+                readTimeoutMs = 10,
+            )
+            try {
+                module.connect(RigTransportKind.USB_SERIAL, emptyMap())
+
+                val probeRan = withTimeoutOrNull(5_000) {
+                    singleThreadScope.launch {}.join()
+                    true
+                }
+
+                assertEquals(
+                    true,
+                    probeRan,
+                    "a plain coroutine on the same single-thread scope must still get to run -- " +
+                        "readJob must not be an uncancellable, unyielding busy-spin",
+                )
+            } finally {
+                module.disconnect()
+            }
+        } finally {
+            dispatcher.close()
         }
     }
 }

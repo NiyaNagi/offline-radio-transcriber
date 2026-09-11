@@ -30,5 +30,15 @@ public sealed class DescriptorError(public val message: String) {
 
     public data class MalformedJson(val reason: String) : DescriptorError("malformed descriptor JSON: $reason")
 
+    /** FR-RIG-3: a USB transport declaring exactly one of `usbVendorId`/`usbProductId` — a
+     * hardware identity is both-or-neither, never half-guessed (constitution I). */
+    public data class IncompleteUsbIdentity(val transportKind: String) :
+        DescriptorError("transport '$transportKind' declares only one of usbVendorId/usbProductId — both or neither")
+
+    /** FR-RIG-3: a transport declaring `lineTerminator` as an explicit empty string — a missing
+     * terminator is `null` (absent), never an empty one that would silently never terminate a line. */
+    public data class EmptyLineTerminator(val transportKind: String) :
+        DescriptorError("transport '$transportKind' declares an empty lineTerminator")
+
     override fun toString(): String = message
 }

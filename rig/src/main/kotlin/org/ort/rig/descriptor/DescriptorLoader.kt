@@ -39,7 +39,7 @@ public object DescriptorLoader {
      */
     public fun loadModule(
         text: String,
-        transportFactory: (RigTransportKind, Map<String, String>) -> RigTransport,
+        transportFactory: (RigTransportKind, TransportSpec?, Map<String, String>) -> RigTransport,
     ): RigModule = when (val result = load(text)) {
         is DescriptorLoadResult.Loaded -> DescriptorRigModule(result.descriptor, transportFactory)
         is DescriptorLoadResult.Rejected -> NullRigModule(

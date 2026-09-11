@@ -87,7 +87,7 @@ class RigSupervisorRealTransportTest {
             port.scriptReply("FA;", "FA00014230000;", lineConfig = lineConfig)
             port.scriptReply("MD;", "MD4;", lineConfig = lineConfig)
 
-            val factory = RigTransportFactory { _, _ ->
+            val factory = RigTransportFactory { _, _, _ ->
                 UsbSerialTransport(device.vendorId, device.productId, lineConfig, port)
             }
             val rigSupervisor = RigSupervisor(factory, scope)
@@ -123,7 +123,7 @@ class RigSupervisorRealTransportTest {
             link.scriptReply("FA;", "FA00014230000;", terminator = terminator)
             link.scriptReply("MD;", "MD4;", terminator = terminator)
 
-            val factory = RigTransportFactory { _, _ -> BluetoothSppTransport(address, link, terminator) }
+            val factory = RigTransportFactory { _, _, _ -> BluetoothSppTransport(address, link, terminator) }
             val rigSupervisor = RigSupervisor(factory, scope)
             supervisor = rigSupervisor
             rigSupervisor.connect(

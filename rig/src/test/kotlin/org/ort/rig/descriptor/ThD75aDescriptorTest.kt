@@ -38,7 +38,7 @@ class ThD75aDescriptorTest {
 
     @Test
     fun `AC_133_parity capabilities are identical over USB serial and Bluetooth SPP`() {
-        val module = DescriptorRigModule(BundledDescriptors.kenwoodThD75a(), { _, _ -> FakeRigTransport() })
+        val module = DescriptorRigModule(BundledDescriptors.kenwoodThD75a(), { _, _, _ -> FakeRigTransport() })
 
         val usb = module.capabilities(RigTransportKind.USB_SERIAL)
         val bluetooth = module.capabilities(RigTransportKind.BLUETOOTH_SPP)
@@ -51,7 +51,11 @@ class ThD75aDescriptorTest {
     @Test
     fun `both bands report their own frequency from AI push lines`() = runBlocking {
         val transport = FakeRigTransport()
-        val module = DescriptorRigModule(BundledDescriptors.kenwoodThD75a(), { _, _ -> transport }, readTimeoutMs = 60)
+        val module = DescriptorRigModule(
+            BundledDescriptors.kenwoodThD75a(),
+            { _, _, _ -> transport },
+            readTimeoutMs = 60,
+        )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
 
@@ -76,7 +80,11 @@ class ThD75aDescriptorTest {
     @Test
     fun `D23 a BY change on band B attributes squelch to B, not A`() = runBlocking {
         val transport = FakeRigTransport()
-        val module = DescriptorRigModule(BundledDescriptors.kenwoodThD75a(), { _, _ -> transport }, readTimeoutMs = 60)
+        val module = DescriptorRigModule(
+            BundledDescriptors.kenwoodThD75a(),
+            { _, _, _ -> transport },
+            readTimeoutMs = 60,
+        )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
 
