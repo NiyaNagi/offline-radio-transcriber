@@ -32,6 +32,59 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI R-982: TourAccessibilityScroll.scrollToEnd now repeats to a genuine stable position; two new 1.0 -end steps — held for "run 7 go")
+
+### fa4e4f51 — R-982: scrollToEnd was landing one page short on tall screens; fixed with a real scroll-position comparison, verified live on both named screens
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourAccessibilityScroll.kt`, `tools/ui-audit/tour.json`,
+two new PNGs, `results/ui-audit/tour-manifest.json`. No `main` merge this round (holding per the
+coordinator's own "hold until WPE/WPD/WPF's rounds merge — I'll say").
+
+**Requirements/ACs:** R-982.
+
+**What changed:** `scrollToEnd` used to stop the moment one `ACTION_SCROLL_FORWARD` call reported
+`moved = false` — but that call only *enqueues* the scroll; it can return before Compose's own
+layout pass for it has run, so a second call issued immediately can read the *pre-scroll* extent
+and honestly (not falsely) report "moved nothing further" on a screen that has, in fact, moved
+nothing further **yet**. Reviewer E1 found this concretely: `rig-bt-connected/
+CF06-settings-rig@2x-end` stopped inside the Link row's own sub-line (Auto-information/Radio
+battery, the `Reconnect`/`Change radio` buttons never reached), `model-missing/
+CF04-settings-assets@2x-end` stopped with the `LEXICON` header a bare sliver at the bottom edge.
+Fixed: `scrollToEnd` is now `suspend`, and after each `ACTION_SCROLL_FORWARD` it `delay`s (yielding
+back to the main-thread `Choreographer` so the scroll's own layout pass actually runs) and compares
+a real scroll position — `AccessibilityNodeInfo.rangeInfo.current` (Compose's own
+`verticalScrollAxisRange` semantics, confirmed present on this exact scroll container by reading a
+live dump before writing this) — against the value from before that action, looping (bounded by the
+existing `MAX_SCROLL_ACTIONS`) until the position genuinely holds steady, not merely until one
+`performAction` call happens to claim it does. Falls back to the pre-R-982 signal alone when
+`rangeInfo` is absent for some other scroll container shape — never worse than before.
+
+Also added two new 1.0-scale `-end` steps per the coordinator's own ask — the dumps from the
+previous round showed both screens need a scroll even at 1.0 on a live session (the last row sits
+right at the viewport edge): `mode-change-pending/CF02-settings-capture-end` and
+`model-missing/CF04-settings-assets-end`.
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — BUILD
+  SUCCESSFUL. `coverageMatrix`/`coverageMatrixCheck` (separate invocations) — both green.
+- Live, on-device, both of E1's own named screens: `rig-bt-connected/CF06-settings-rig@2x-end` now
+  reaches the real end — the `Reconnect`/`Change radio` buttons are visible, with genuine blank
+  space below them before the live bar (not a truncated sub-line). `model-missing/
+  CF04-settings-assets@2x-end` now shows the full `SPACE`/`REPLACING AN ASSET` sections and the
+  closing checksum paragraph, not the `LEXICON` header sliver.
+- Live, on-device, both new 1.0-scale `-end` steps: `mode-change-pending/
+  CF02-settings-capture-end` shows the full closing paragraph ("The level is set on the radio, not
+  here...adjusts gain on the way in, so what is retained is what the radio put out.") complete, with
+  real trailing space before the live bar. `model-missing/CF04-settings-assets-end` shows the full
+  `LEXICON`/`SPACE`/`REPLACING AN ASSET` sections and the closing paragraph complete.
+- Master manifest: 219/219 ok (217 + 2 new steps), apkHash unchanged from run 6 (`a98ecde`) on
+  every freshly re-captured/new PNG this round (no `main` merge landed between builds).
+
+**Left open / not done:** the tour run itself (these four steps plus anything else queued) held for
+the coordinator's explicit "run 7 go", after WPE/WPD/WPF's own rounds merge.
+
+---
+
 ## 2026-09-11 (WPI run 6: R-943/R-944/R-945/R-955/R-956/R-960 steps captured; R-933/R-957 diagnosed — the tour harness is not the suspect)
 
 ### 0a50bf28 — run 6: 217/217 ok on main a98ecde0; CF02/CF04 verdict — drawToBitmap() and a real screencap agree, both truncated at the same point
