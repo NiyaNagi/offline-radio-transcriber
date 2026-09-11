@@ -32,6 +32,83 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPE R-957 device verification: CF02/CF04's live-session truncation not reproduced on a real device)
+
+### <pending> — settings modes: R-957 investigated on device — CF02 and CF04 render completely under a real, freshly-installed live session
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/settings/SettingsCaptureScreenTest.kt` (two new
+regression tests; no `app/src/main` change — the device evidence below found nothing to fix in
+this package's own screens). Installed the current main tip (`30bb0d8c`, well past the
+coordinator's own `d9702dc0` floor) on `emulator-5556` via `install.ps1 -Port 5556 -Clear`.
+
+**Requirements/ACs:** R-957 (addendum to R-933).
+
+**What changed:** *Constitution check.* VIII (a claim of "fixed" or "root-caused" needs the same
+evidence a defect claim does — this entry reports a negative result plainly rather than inventing
+a speculative fix for a hypothesis the device itself refutes). II (both new tests are real,
+discriminating regression coverage for an invariant that was previously untested, even though
+neither could be made to fail against the current code).
+
+1. **Investigated the coordinator's own hypothesis** ("the scroll container's height is reduced by
+   the bar twice", or a non-scrolling container clipping the tail) by reading `OrtNavHost.kt`'s
+   `NavHostBody`: it *does* wrap every destination's content in `Box(Modifier.weight(1f)
+   .padding(top = clearance, bottom = liveBarHeight))` — a real, measured reservation — while
+   `SettingsCaptureScreen`/`ModelsScreen` each *also* add their own static 44dp bottom padding
+   inside their own `verticalScroll` (R-826/R-933's own fix, written before `NavHostBody`'s real
+   measurement existed). Two new Robolectric tests modelled this exact double-reservation shape
+   faithfully (the R-826 test above them never had the ancestor box's own `padding(bottom =
+   liveBarHeight)` at all, only a sibling occupying that space) — one with the reservation static
+   from frame one, one with it arriving asynchronously *after* the first max-scroll (mirroring
+   `NavHostBody`'s own `liveBarHeight` starting at `0.dp` and updating only once `LiveBar` itself
+   reports its real size). Both pass: Compose's own scroll state correctly recomputes its max
+   extent either way — a real inefficiency (redundant blank trailing space) but not, by itself, a
+   truncation.
+2. **Reproduced the real device state directly**, since the code investigation above did not
+   settle it: built and installed the current main tip on `emulator-5556` (`install.ps1 -Port 5556
+   -Clear`), loaded `mode-change-pending` and `model-missing` via `scenario.ps1`, launched
+   `ScenarioReaderActivity` straight at CF02/CF04 (`--es destination SETTINGS --es settings_screen
+   CAPTURE`/`ASSETS` — the same `NavSeed` extras `tour.json`'s own steps resolve), performed two
+   real `input swipe` gestures to force a genuine max scroll, then `uiautomator dump` + a real
+   `screencap`. **Both screens render completely and correctly**: CF02's closing paragraph ("The
+   level is set on the radio…") is the full three-line sentence, well clear of the live bar, and
+   CF04's Lexicon row shows its title, "not installed" sub-line, *and* "Install a lexicon from a
+   file" (plus Space and Replacing-an-asset below it) — matching every other scenario's own
+   capture, with no truncation and a normal trailing gap before the live bar on both. Dump excerpt
+   (CF02, post-max-scroll): `<node index="14" text="The level is set on the radio, not here. The
+   app reads it and tells you when it drifts; it never adjusts gain on the way in, so what is
+   retained is what the radio put out." … bounds="[55,1766][1025,1910]" />` — the complete sentence,
+   comfortably inside the visible frame (live bar starts at y=2212 of 2400).
+3. **Conclusion reported, not fixed here**: this package's own screens render this state correctly
+   on a real, freshly-installed device. The two reviewers' own captures came from the automated
+   tour (`ScreenshotTourActivity`), which this round's own device reproduction did not use — the
+   likely site of the real defect, if the symptom is reproducible at all, is the tour's own
+   scroll-then-capture settle timing (the same class of race `R-971`'s own `awaitStableSemantics`
+   fix already closed once for a different symptom), not `ui/settings`'s own layout. Routed back to
+   the coordinator/WPI rather than guessed at from outside that file's ownership.
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green, full suite
+  (5m53s).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green (3m7s).
+- `./gradlew -PortAllowMissingBundledAssets=true ktlintTestSourceSetFormat detekt` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true dependencyRules platformGuards` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`.
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 241 covered;
+  `coverageMatrixCheck` — up to date.
+- Real device: `emulator-5556`, main tip `30bb0d8c`, `install.ps1 -Port 5556 -Clear`; CF02 under
+  `mode-change-pending` and CF04 under `model-missing`, both scrolled to a real max via `adb shell
+  input swipe`, both `uiautomator dump`+`screencap`-verified complete (excerpts and PNGs captured
+  to this session's own scratchpad, not the repo — the register/evidence tree is the lead's own to
+  file).
+
+**Left open / not done:**
+- R-957 stays open on the register, re-scoped: not reproduced via real device interaction in this
+  package's own screens; recommend the coordinator route the tour-capture-timing half to WPI with
+  this round's own dump excerpt as the counter-evidence against a `ui/settings` layout defect.
+
+---
+
 ## 2026-09-11 (WPI run 5: closing evidence — the full 207-step screenshot tour, every step green, on the final merged main)
 
 ### aa510f44 — run 5: full tour green (207/207) on main 686212f4, both permission passes for S02c, closing evidence for the WPI program
