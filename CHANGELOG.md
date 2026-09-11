@@ -267,6 +267,103 @@ computed; `null` in, `null` out). VII (`onRetryInput`/`onSwitchToWiredInput` reu
   for the Log row's own `bt audio` mark (a fact no gap-level cause can carry, since ordinary
   transmission rows have no gap at all) — only the gap-wording use of it was retired.
 - Not merged to `main`; the lead merges builder branches.
+## 2026-09-10 (WPI: debug scenarios and tour steps for D33-D36's capture modes, Bluetooth, bundled assets and the LLM)
+
+### f9826fb — WPI · seventeen new debug scenarios and their tour steps for every new state
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,ScenarioFixtures}.kt` (`ScenarioFixtures`'s
+own v7-column additions and the seventeen new scenario builders were mostly landed by an earlier,
+rate-limit-interrupted session in this same package; this session merged main forward, fixed the
+resulting ktlint/detekt violations, added the missing test coverage, the README documentation, and
+ran the tour), `app/src/debug/kotlin/org/ort/app/debug/tour/SetupStepIds.kt`, `tools/ui-audit/tour.json`,
+`results/ui-audit/README.md`, `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt` (new),
+`results/ui-audit/**` (the tour's own screenshots and manifest), `results/coverage-matrix.md`
+(regenerated).
+**Requirements/ACs:** checklist E2-J01/E2-J02/E2-J03; D33, D34, D36, FR-CAP-3a/5/8/9/10/11/12/13,
+FR-RIG-13/14/15, FR-AST-3/3a/3b, FR-DIG-3/3b/6/11, AC-128, AC-129, AC-130, AC-131, AC-137, AC-138,
+AC-140, F9, F23.
+**What changed:**
+1. Merged `main` forward from `1db7e15` to pick up WPE's settings-mode package (`SettingsScreenId.MODE`,
+   `SettingsModeScreen`, the `NavSeed settingsScreen: "MODE"` seam CF11's tour step needs) — a clean,
+   conflict-free merge; no scenario/tour file this package owns collided with WPE's.
+2. Seventeen new debug scenarios in `Scenarios.kt`, each seeding the real store/holder/DB the plan
+   asks for (never a UI stand-in): `setup-mode`/`setup-bt-permission`/`setup-rig-transport`/
+   `setup-rig-bluetooth` (the four new resumable `SetupStore` gates S00/S02c/S09b/S10b, via the real
+   `SharedPreferencesSetupStore`); `mode-local-mic`/`mode-usb`/`mode-bluetooth` (a live session per
+   `CaptureMode`, the real v7 session columns FR-CAP-13 added — `captureMode`/`audioRouteKind`/
+   `audioRouteLabel`/`bluetoothProfile`/`rigTransport` — plus the real `InputStatus`/`RigStatus`
+   holders and a matching S04 preset-chip `SetupStore` state); `bt-audio-session` (an ended
+   Bluetooth-audio night, two real overs); `bt-audio-dropped` (F23: a live `InputStatus.Lost` with
+   a Bluetooth `lastKnown`, a real, open `CaptureGapEntity`); `rig-bt-connected`/`rig-bt-lost`
+   (`RigStatus.Connected`/`Stale` naming the Bluetooth SPP transport, CF06/F9); `mode-change-pending`
+   (a real `SharedPreferencesCaptureConfigurationStore.pendingConfiguration` write frozen behind a
+   live session, CF11's banner); `assets-bundled`/`asset-corrupt` (the real `BundledAssetInstaller`
+   driven through a `FakeBundledAssetSource` built from `ModelCatalog.entries` itself, so AC-137's
+   corruption case is genuine); `llm-enabled-prose`/`llm-disabled` (the real `overnight` fixture plus
+   a second thread, two real, stored `ProseSummary` rows via `RoomProseSummaryStore`, the real prose
+   settings toggle); `tier0-llm-stored` (the LLM asset genuinely installed, `ShedStatus` forced below
+   T3 so `tierEligible` genuinely reads `false`, AC-138).
+3. `ScenarioFixtures.session(...)` gained the five v7 columns as optional named parameters, all
+   defaulting `null` so every pre-P19 caller keeps rendering an honest "not tracked" row unchanged.
+4. `SetupStepIds` gained the S00/S02c/S09b/S10b → `SetupStep` mappings D33's four new setup steps
+   need.
+5. `tools/ui-audit/tour.json` gained the tour steps the plan's input list names: S00/S02c/S09b/S10b
+   (each with an `@2x` sibling), S04 per mode lane, S11/S12 under `rig-bt-connected`/`assets-bundled`,
+   N01b (`Now`) under `mode-local-mic` plus L01/T01/Q01/ST01/CF01/DG04 under the same scenario for the
+   live-bar mark, N04 under `mode-usb`/`mode-bluetooth`, DG04 under `bt-audio-session`, L01 under
+   `bt-audio-session`, F23 under `bt-audio-dropped` (`Now` and `Log`), F9 under `rig-bt-lost`, DG05
+   under `llm-enabled-prose`, DG01 under `llm-disabled`, CF04 under `assets-bundled`/`asset-corrupt`/
+   `tier0-llm-stored`, CF06 under `rig-bt-connected`, CF02 under `mode-bluetooth`, CF11 under
+   `mode-change-pending` (`settingsScreen: "MODE"`, resolved against WPE's merged `SettingsScreenId.MODE`).
+6. **New:** `WpiScenariosTest.kt` — one JUnit/Robolectric case per scenario (split from `ScenariosTest.kt`
+   the same way `FailureOverrideScenariosTest.kt` already was, once this file's own size crossed
+   detekt's `LargeClass` threshold), each asserting the real store/holder/DB state the scenario's own
+   doc comment claims — `SetupStateMachine.stepFor` resolving to the right `SetupStep`, the real v7
+   session columns, `RigStatus`/`InputStatus` holder states, the real `CaptureConfigurationStore`
+   pending/current split, real files on disk at `ModelCatalog`'s own production destinations (see the
+   note below on why `ModelsController.currentState` itself cannot verify a scenario-installed file),
+   and real, stored `ProseSummary` rows.
+7. `results/ui-audit/README.md`: documented all seventeen scenarios, the S02c `BLUETOOTH_CONNECT`
+   `pm grant`/`pm revoke` recipe (a live `PackageManager` permission, not a `SetupStore` field), and
+   the one real gap this package found and reported rather than working around — `SetupActivity`
+   constructs its own `RigLinkPort` as a hardcoded, empty `InMemoryRigLinkPort()` with no debug-build
+   injection seam, so `setup-rig-bluetooth`'s S10b paired-device list renders honestly empty; the
+   exact main-source hook needed (a `DebugFailureOverride`-shaped holder) is spelled out for whoever
+   picks it up. Also documented why `ModelsController.currentState` cannot be used to verify
+   `assets-bundled`/`asset-corrupt`/`tier0-llm-stored` (it checks a scenario-installed marker against
+   `ModelCatalog`'s hardcoded, generated production checksum, never against the fixture's own
+   synthetic bytes) and what to check on the filesystem instead.
+**Verified:**
+- `:app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green, all seventeen new
+  `WpiScenariosTest` cases pass plus every pre-existing debug-package test.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — green.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`, 20 modules; `platformGuards: OK`, 20 modules.
+- `-PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks `[PASS]`.
+- `-PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 240 covered; orphan list
+  is exactly the pre-existing `E2-G0{1,2,3,5,6,7}` rows from WPF's own files (outside this package's
+  ownership) — no new orphan from this change.
+- `-PortAllowMissingBundledAssets=true coverageMatrixCheck` — up to date (240 of 450).
+- Screenshot tour, port 5558 (`tools/ui-audit/install.ps1 -Port 5558 -Clear` with
+  `ORT_ALLOW_MISSING_BUNDLED_ASSETS=1` set — `install.ps1` calls `gradlew.bat` with no
+  `-PortAllowMissingBundledAssets` flag of its own, and the gated `LLM_GEMMA3_1B` fetch needs the
+  escape hatch on a machine with no `HF_TOKEN`; the whole tour, `tools/ui-audit/tour.ps1 -Port 5558`
+  with no `-Only` filter, finished in 180.2s — well inside the 15-minute budget): **steps: 191
+  ok: 191 errors: 0.** Every one of the seventeen new scenarios produced real PNGs under
+  `results/ui-audit/<scenario>/`.
+**Left open / not done:**
+- The `RigLinkPort` injection seam for `setup-rig-bluetooth`'s S10b paired-device list — needs a
+  main-source change to `SetupActivity.kt`, outside this package's file ownership; reported in
+  `results/ui-audit/README.md` and above with the exact hook.
+- `checklist.md`'s E2-J01/E2-J02/E2-J03 rows are left for the lead to mark, per this package's file
+  ownership (`results/e2e-audit/` is out of scope here).
+- The pre-existing `E2-G01`/`E2-G02`/`E2-G03`/`E2-G05`/`E2-G06`/`E2-G07` orphan-requirement lines in
+  `coverageMatrix`'s output predate this change (WPF's own test files) and are not this package's to
+  fix.
+
+---
 
 ## 2026-09-10 (WPD follow-up: Scenarios.kt captureMode seed, S12 Models row reads WPG's ModelsController)
 
@@ -28461,6 +28558,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

@@ -42,6 +42,14 @@ internal object ScenarioFixtures {
     fun sessionId(scenario: String, suffix: String = ""): String =
         if (suffix.isEmpty()) "$SESSION_PREFIX$scenario" else "$SESSION_PREFIX$scenario-$suffix"
 
+    /**
+     * `captureMode`/`audioRouteKind`/`audioRouteLabel`/`bluetoothProfile`/`rigTransport` are the
+     * v7 columns FR-CAP-13 added (`SessionEntity`'s own kdoc) — stored as `:core`/`:rig` enum
+     * `.name` strings, exactly as `RealCaptureService` itself writes them (never a shortcut schema
+     * for scenario data). All five default `null` ("not tracked"), matching a pre-v7 row honestly,
+     * so every scenario written before P19/WPI keeps compiling and rendering unchanged.
+     */
+    @Suppress("LongParameterList")
     fun session(
         id: String,
         startedAt: Long,
@@ -49,6 +57,11 @@ internal object ScenarioFixtures {
         deviceTier: String? = null,
         terminationReason: TerminationReason? = null,
         gapCount: Int = 0,
+        captureMode: String? = null,
+        audioRouteKind: String? = null,
+        audioRouteLabel: String? = null,
+        bluetoothProfile: String? = null,
+        rigTransport: String? = null,
     ): SessionEntity = SessionEntity(
         id = id,
         startedAt = startedAt,
@@ -60,6 +73,11 @@ internal object ScenarioFixtures {
         sourceId = null,
         schemaVersion = org.ort.data.OrtDatabase.SCHEMA_VERSION,
         gapCount = gapCount,
+        captureMode = captureMode,
+        audioRouteKind = audioRouteKind,
+        audioRouteLabel = audioRouteLabel,
+        bluetoothProfile = bluetoothProfile,
+        rigTransport = rigTransport,
     )
 
     /**

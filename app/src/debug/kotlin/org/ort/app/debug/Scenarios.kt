@@ -3,8 +3,13 @@ package org.ort.app.debug
 import android.content.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import org.ort.app.assets.BundledAssetInstaller
+import org.ort.app.assets.BundledAssetState
+import org.ort.app.assets.FakeBundledAssetSource
 import org.ort.app.ui.data.DebugLexiconImportOverride
 import org.ort.app.ui.data.DebugSearchOverride
+import org.ort.app.ui.data.ModelCatalog
+import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.failures.AssetSwapOption
 import org.ort.app.ui.failures.AssetSwapViewState
 import org.ort.app.ui.failures.CalibrationViewState
@@ -32,6 +37,8 @@ import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
+import org.ort.core.capture.AudioRouteKind
+import org.ort.core.capture.BluetoothAudioProfile
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.RigTransportKind
 import org.ort.data.OrtDatabase
@@ -41,6 +48,9 @@ import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TerminationReason
+import org.ort.data.entity.ThreadEntity
+import org.ort.data.entity.ThreadKind
+import org.ort.data.entity.ThreadKindSource
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.WorkAttemptEntity
 import org.ort.data.entity.WorkAttemptOutcome
@@ -57,8 +67,16 @@ import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
+import org.ort.pipeline.digest.ProseSummary
+import org.ort.pipeline.digest.RoomProseSummaryStore
+import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.pipeline.reprocess.ReprocessStatus
+import org.ort.pipeline.rig.CaptureConfiguration
+import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
+import org.ort.rig.descriptor.BundledDescriptors
 import java.io.File
+import java.security.MessageDigest
+import org.ort.rig.RigTransportKind as RigModuleTransportKind
 
 /**
  * spec/ui-conformance-plan.md WP0, register R-110 — the debug scenario simulator's fixture
@@ -107,6 +125,27 @@ public object Scenarios {
      * [setupVerified]'s, [setupLevel]'s and [setupRadio]'s own doc comments for why (S05's
      * `SetupStore` gates, not a runtime signal, are what block S07/S09/S12 from ever being reached
      * on an emulator with no real signal to hear).
+     *
+     * **P19/WPI (`spec/e2e-capture-modes-plan.md`, E2-J01) adds seventeen names** for D33–D36's
+     * capture modes, Bluetooth and bundled/LLM assets: `setup-mode`/`setup-bt-permission`/
+     * `setup-rig-transport`/`setup-rig-bluetooth` (the four new resumable `SetupStore` gates —
+     * S00/S02c/S09b/S10b — reached the same "seed the real preferences file, no override" way
+     * [setupVerified] already established); `mode-local-mic`/`mode-usb`/`mode-bluetooth` (a live
+     * session per [org.ort.core.capture.CaptureMode], the v7 session columns FR-CAP-13 added, plus
+     * — since a `SetupStore` and a `:data` session row are two independent stores — that same
+     * mode's own S04 preset chip left mid-way, for the "S04 in a lane per mode" tour coverage);
+     * `bt-audio-session` (an ended Bluetooth-audio night, the `bt audio` row mark) and
+     * `bt-audio-dropped` (F23: a live `InputStatus.Lost` with a Bluetooth `lastKnown`, an open gap);
+     * `rig-bt-connected`/`rig-bt-lost` (CF06/F9 naming the Bluetooth SPP transport); `mode-change-pending`
+     * (CF11's amber banner, a real pending [org.ort.pipeline.rig.CaptureConfigurationStore] write);
+     * `assets-bundled`/`asset-corrupt` (the real [org.ort.app.assets.BundledAssetInstaller], driven
+     * against a synthetic manifest so AC-137's corruption case is genuine, never hand-set); `llm-enabled-prose`/
+     * `llm-disabled` (real, stored [org.ort.pipeline.digest.ProseSummary] rows, the real prose-digest
+     * settings toggle); `tier0-llm-stored` (the LLM asset installed but this device's own tier below
+     * T3, so [org.ort.app.ui.data.ModelRowViewState.tierEligible] genuinely reads `false`). See each
+     * function's own doc comment below for the exact facts it seeds and, for `setup-rig-bluetooth`,
+     * the one real gap this package found and reported rather than working around (no `:app`-reachable
+     * seam exists to script [org.ort.app.ui.setup.SetupActivity]'s own paired-device list).
      */
     public val NAMES: List<String> = listOf(
         "empty",
@@ -151,6 +190,24 @@ public object Scenarios {
         // production validator (LexiconCorruptScenario.run) rather than hand-setting a
         // FailurePresentation override — see that file's own kdoc for why.
         "lexicon-corrupt",
+        // P19/WPI (spec/e2e-capture-modes-plan.md, E2-J01) — see this list's own doc comment above.
+        "setup-mode",
+        "setup-bt-permission",
+        "setup-rig-transport",
+        "setup-rig-bluetooth",
+        "mode-local-mic",
+        "mode-usb",
+        "mode-bluetooth",
+        "bt-audio-session",
+        "bt-audio-dropped",
+        "rig-bt-connected",
+        "rig-bt-lost",
+        "mode-change-pending",
+        "assets-bundled",
+        "asset-corrupt",
+        "llm-enabled-prose",
+        "llm-disabled",
+        "tier0-llm-stored",
     )
 
     public suspend fun load(context: Context, name: String): LoadResult {
@@ -214,6 +271,23 @@ public object Scenarios {
             "asset-swap" -> assetSwap(context, db)
             "calibration" -> calibration(context, db)
             "lexicon-corrupt" -> LexiconCorruptScenario.run(context, db)
+            "setup-mode" -> setupMode(context)
+            "setup-bt-permission" -> setupBtPermission(context)
+            "setup-rig-transport" -> setupRigTransport(context)
+            "setup-rig-bluetooth" -> setupRigBluetooth(context)
+            "mode-local-mic" -> modeLocalMic(context, db)
+            "mode-usb" -> modeUsb(context, db)
+            "mode-bluetooth" -> modeBluetooth(context, db)
+            "bt-audio-session" -> btAudioSession(context, db)
+            "bt-audio-dropped" -> btAudioDropped(context, db)
+            "rig-bt-connected" -> rigBtConnected(context, db)
+            "rig-bt-lost" -> rigBtLost(context, db)
+            "mode-change-pending" -> modeChangePending(context, db)
+            "assets-bundled" -> assetsBundled(context)
+            "asset-corrupt" -> assetCorrupt(context)
+            "llm-enabled-prose" -> llmEnabledProse(context, db)
+            "llm-disabled" -> llmDisabled(context, db)
+            "tier0-llm-stored" -> tier0LlmStored(context)
             else -> error("unreachable — guarded by the require() above")
         }
     }
@@ -292,6 +366,23 @@ public object Scenarios {
         File(context.filesDir, "audio").listFiles { f -> f.name.startsWith(ScenarioFixtures.SESSION_PREFIX) }
             ?.forEach { it.deleteRecursively() }
         File(context.filesDir, "heartbeat.txt").delete()
+
+        // P19/WPI: two more `SharedPreferences` files a P19 scenario can write outside :data —
+        // cleared unconditionally (a no-op if nothing was ever written), the same "start from a
+        // known, honest default" guarantee this function already gives every other process-wide
+        // facet. `mode-change-pending` is the only writer of the first (a stale pending
+        // configuration must never leak into a scenario that never asked for one); `llm-enabled-prose`/
+        // `llm-disabled` are the only writers of the second (D36's own default is enabled — clearing
+        // resets to that default, never to a leaked "disabled" from whichever LLM scenario loaded
+        // previously in this process).
+        context.applicationContext.getSharedPreferences(
+            SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        ).edit().clear().apply()
+        context.applicationContext.getSharedPreferences(
+            SharedPreferencesProseDigestSettingsStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        ).edit().clear().apply()
     }
 
     private suspend fun clearScenarioRowsInOneTransaction(db: OrtDatabase) {
@@ -1690,4 +1781,781 @@ public object Scenarios {
         )
         return LoadResult(0, 1, sessionId)
     }
+
+    // ---------------------------------------------------------------------------------------
+    // P19/WPI (spec/e2e-capture-modes-plan.md, E2-J01) — capture modes, Bluetooth, bundled
+    // assets and the LLM. See NAMES's own doc comment above for the one-paragraph summary of
+    // every scenario below.
+    // ---------------------------------------------------------------------------------------
+
+    /** The one `SetupStore` state every P19 setup scenario below starts from: the real
+     * `SharedPreferences` file wiped outright, not merely overwritten field by field — persistence
+     * across scenario loads ([empty]'s own established caveat) means a partial overwrite would
+     * leave whatever an *earlier* scenario in this process wrote (e.g. `setupVerified`'s `radioChoice`)
+     * behind for a field this function's own caller never mentions. */
+    private fun freshSetupStore(context: Context): SharedPreferencesSetupStore {
+        val prefs = context.applicationContext.getSharedPreferences(
+            SharedPreferencesSetupStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        prefs.edit().clear().apply()
+        return SharedPreferencesSetupStore(prefs)
+    }
+
+    /** `setup-mode` — D33/FR-CAP-8, S00: a completely fresh install, so
+     * [SetupStateMachine.stepFor] resumes at [SetupStep.MODE] directly from a cold `MainActivity`
+     * launch — no mode has ever been chosen. */
+    private fun setupMode(context: Context): LoadResult {
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-bt-permission` — D33, S02c: Bluetooth mode chosen, mic already granted (the tour/
+     * validator grants `RECORD_AUDIO` before every scenario, `results/ui-audit/README.md`'s
+     * established recipe), `BLUETOOTH_CONNECT` genuinely not yet decided — `stepFor` resumes at
+     * [SetupStep.BLUETOOTH_PERMISSION] as long as the OS permission itself is not already granted.
+     * **The OS permission is live [android.content.pm.PackageManager] state, not a preference this
+     * scenario can seed** (`SetupStateMachine`'s own `PermissionsState` gate, the same reason
+     * [setupVerified]'s doc comment gives for `RECORD_AUDIO`/`POST_NOTIFICATIONS`) — see
+     * `results/ui-audit/README.md` for the exact `pm grant`/`pm revoke` recipe this state needs.
+     */
+    private fun setupBtPermission(context: Context): LoadResult {
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.BLUETOOTH_RADIO
+        store.bluetoothPermissionDeclined = false
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-rig-transport` — D33/FR-RIG-13, S09b: Bluetooth mode, a verified wired-headset input
+     * (AC-130's own "Bluetooth control with wired audio" pairing — the preset
+     * [org.ort.core.capture.CaptureModePresets.presetsFor] proposes for this mode), the TH-D75A
+     * chosen at S09 ([RadioChoice.TH_D75A], [org.ort.rig.NullRigModule.ID] untouched — this is
+     * `:rig`'s own catalogue id, [org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a]), but
+     * [SetupStore.rigTransport] genuinely left unset — `stepFor`'s `needsRigTransport` gate resumes
+     * here directly from a cold launch, the same "leave the one gate this screen exists to test
+     * unset" recipe [setupLevel]/[setupRadio] already establish. **Also needs `BLUETOOTH_CONNECT`
+     * already granted** (see [setupBtPermission]'s own doc comment) — without it, `stepFor` stops
+     * one step earlier, at S02c, not here.
+     */
+    private fun setupRigTransport(context: Context): LoadResult {
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.BLUETOOTH_RADIO
+        store.notificationsSkipped = true
+        store.selectedInputId = "wired-1"
+        store.selectedInputLabel = "Wired headset"
+        store.inputVerified = true
+        store.verifiedNativeRateHz = 48_000
+        store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.TH_D75A
+        store.rigId = BundledDescriptors.kenwoodThD75a().id
+        store.rigTransport = null
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-rig-bluetooth` — D33/D34, S10b: the same base [setupRigTransport] seeds, but
+     * [SetupStore.rigTransport] is now [RigTransportKind.BLUETOOTH_SPP] and
+     * [SetupStore.rigBluetoothVerified] genuinely left `false` — `stepFor`'s `needsRigBluetoothLink`
+     * gate resumes at [SetupStep.RIG_BLUETOOTH] directly from a cold launch.
+     *
+     * **The one real gap this package found and reported, not worked around**
+     * (`spec/e2e-capture-modes-plan.md` WPI's own instruction): [org.ort.app.ui.setup.SetupActivity]
+     * constructs its own `RigLinkPort` as a hardcoded field —
+     * `private val rigLinkPort: RigLinkPort = InMemoryRigLinkPort()`, an *empty* paired-device list,
+     * with no companion `var`, no test-only setter, no debug-build conditional — unlike every other
+     * process-wide fact a scenario seeds ([RigStatus], [InputStatus], [CaptureState], ... or
+     * `org.ort.app.ui.failures.DebugFailureOverride`/`org.ort.app.ui.data.DebugSearchOverride`, both
+     * *main*-source, debug-settable holders this same file already writes to). There is therefore no
+     * seam `app/src/debug` can reach to publish a scripted [org.ort.app.ui.setup.InMemoryRigLinkPort]
+     * (`TH-D75A` SPP-capable, `Handheld BT` headset-only) into a real `SetupActivity` composition —
+     * doing so needs a **main-source change to `app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt`**
+     * (WPD's file, outside this package's row), e.g. a small main-source holder mirroring
+     * `DebugFailureOverride`'s own shape (`@Volatile var override: RigLinkPort? = null`, gated on
+     * `isDebugBuild`, read by `SetupActivity` in place of the hardcoded `InMemoryRigLinkPort()`).
+     * This scenario still seeds every real `SetupStore` fact S10b needs to *resume* here — only the
+     * paired-device list itself renders honestly empty until that hook exists. Reported in this
+     * package's own report, not fixed here.
+     */
+    private fun setupRigBluetooth(context: Context): LoadResult {
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.BLUETOOTH_RADIO
+        store.notificationsSkipped = true
+        store.selectedInputId = "wired-1"
+        store.selectedInputLabel = "Wired headset"
+        store.inputVerified = true
+        store.verifiedNativeRateHz = 48_000
+        store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.TH_D75A
+        store.rigId = BundledDescriptors.kenwoodThD75a().id
+        store.rigTransport = RigTransportKind.BLUETOOTH_SPP
+        store.rigBluetoothVerified = false
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `mode-local-mic` — FR-CAP-3a/10, AC-128/129: a live session whose v7 columns genuinely read
+     * `captureMode = LOCAL_MICROPHONE`/`audioRouteKind = BUILT_IN_MIC` (`SessionRouteFacts`'
+     * `isLocalMicrophone`, N01b's chip and every live-bar `room` mark). Also leaves the real
+     * `SetupStore` mid-way at S04 with the Local-microphone preset chip showing (independent of the
+     * `:data` session row above — a `SharedPreferences` file and a Room table share nothing) for the
+     * "S04 in a lane per mode" tour coverage. `frequencyHz` is honestly `null` — local-mic mode has
+     * no rig at all (FR-CAP-2b).
+     */
+    private suspend fun modeLocalMic(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("mode-local-mic")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 20 * 60_000L,
+                endedAt = null,
+                captureMode = CaptureMode.LOCAL_MICROPHONE.name,
+                audioRouteKind = AudioRouteKind.BUILT_IN_MIC.name,
+                audioRouteLabel = "Built-in microphone",
+            ),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        val txId = "$sessionId-tx1"
+        val startedAt = SystemClock.wallMillis() - 5 * 60_000L
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = startedAt,
+                samplePosition = 1L,
+                frequencyHz = null,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "W7NPC",
+                attributionConfidence = 0.9,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txId-t1",
+                transmissionId = txId,
+                text = "this is whiskey seven november papa charlie, from the kitchen table",
+                isCurrent = true,
+                createdAt = startedAt + 1_000L,
+            ),
+        )
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.LOCAL_MICROPHONE
+        store.notificationsSkipped = true
+        return LoadResult(1, 1, sessionId)
+    }
+
+    /** `mode-usb` — FR-CAP-13, AC-129: a live session over USB, `RigStatus.Connected` naming the
+     * USB-serial transport and the TH-D75A descriptor (F9/CF06). See [modeLocalMic]'s own doc
+     * comment for why the S04 preset-chip seeding alongside it is not a conflict. */
+    private suspend fun modeUsb(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("mode-usb")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 20 * 60_000L,
+                endedAt = null,
+                captureMode = CaptureMode.USB_RADIO.name,
+                audioRouteKind = AudioRouteKind.USB.name,
+                audioRouteLabel = "USB Audio Device",
+                rigTransport = RigTransportKind.USB_SERIAL.name,
+            ),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+            transportKind = RigModuleTransportKind.USB_SERIAL,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val txId = "$sessionId-tx1"
+        val startedAt = SystemClock.wallMillis() - 5 * 60_000L
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = startedAt,
+                samplePosition = 1L,
+                frequencyHz = 145_230_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "K7LWH",
+                attributionConfidence = 0.92,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txId-t1",
+                transmissionId = txId,
+                text = "kilo seven lima whiskey hotel, copy on the repeater",
+                isCurrent = true,
+                createdAt = startedAt + 1_000L,
+            ),
+        )
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.USB_RADIO
+        store.notificationsSkipped = true
+        return LoadResult(1, 1, sessionId)
+    }
+
+    /** `mode-bluetooth` — D34/FR-CAP-11/13: a live session over Bluetooth audio (SCO, mSBC) *and*
+     * Bluetooth rig control (SPP) at once — the combination H6's own hardware row is honest about
+     * stock Android never offering from a single peer, but perfectly real as two independent
+     * Bluetooth links (a headset-class audio source, the TH-D75A's own SPP control link). See
+     * [modeLocalMic]'s own doc comment for why the S04 preset-chip seeding alongside it is not a
+     * conflict. */
+    private suspend fun modeBluetooth(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("mode-bluetooth")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 20 * 60_000L,
+                endedAt = null,
+                captureMode = CaptureMode.BLUETOOTH_RADIO.name,
+                audioRouteKind = AudioRouteKind.BLUETOOTH_SCO.name,
+                audioRouteLabel = "Bluetooth headset",
+                bluetoothProfile = BluetoothAudioProfile.HFP_MSBC.name,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+            ),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor(
+                "bt-1",
+                AudioDeviceKind.BLUETOOTH,
+                "Bluetooth headset",
+                bluetoothProfile = BluetoothAudioProfile.HFP_MSBC,
+            ),
+            nativeRateHz = 16_000,
+            resamplerId = "identity/16000",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = false),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = true),
+            ),
+            transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val txId = "$sessionId-tx1"
+        val startedAt = SystemClock.wallMillis() - 5 * 60_000L
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = startedAt,
+                samplePosition = 1L,
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "WA7HJR",
+                attributionConfidence = 0.88,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txId-t1",
+                transmissionId = txId,
+                text = "whiskey alpha seven hotel juliet romeo, over the bluetooth link",
+                isCurrent = true,
+                createdAt = startedAt + 1_000L,
+            ),
+        )
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.BLUETOOTH_RADIO
+        store.notificationsSkipped = true
+        return LoadResult(1, 1, sessionId)
+    }
+
+    /** `bt-audio-session` — FR-CAP-13: an *ended* session captured over Bluetooth audio, two overs,
+     * for the Log's `bt audio` row mark (E2-G04) and DG04's session-review facts. */
+    private suspend fun btAudioSession(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("bt-audio-session")
+        val start = SystemClock.wallMillis() - 3 * 3_600_000L
+        val end = SystemClock.wallMillis() - 2 * 3_600_000L
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = start,
+                endedAt = end,
+                captureMode = CaptureMode.BLUETOOTH_RADIO.name,
+                audioRouteKind = AudioRouteKind.BLUETOOTH_SCO.name,
+                audioRouteLabel = "Bluetooth headset",
+                bluetoothProfile = BluetoothAudioProfile.HFP_MSBC.name,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+            ),
+        )
+        val tx1 = "$sessionId-tx1"
+        val tx2 = "$sessionId-tx2"
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = tx1,
+                sessionId = sessionId,
+                startedAtUtc = start + 5 * 60_000L,
+                samplePosition = 1L,
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "WA7HJR",
+                attributionConfidence = 0.9,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$tx1-t1",
+                transmissionId = tx1,
+                text = "whiskey alpha seven hotel juliet romeo, monitoring",
+                isCurrent = true,
+                createdAt = start + 5 * 60_000L + 1_000L,
+            ),
+        )
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = tx2,
+                sessionId = sessionId,
+                startedAtUtc = start + 8 * 60_000L,
+                samplePosition = 2L,
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "KJ7ABC",
+                attributionConfidence = 0.87,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$tx2-t1",
+                transmissionId = tx2,
+                text = "kilo juliet seven alpha bravo charlie, copy",
+                isCurrent = true,
+                createdAt = start + 8 * 60_000L + 1_000L,
+            ),
+        )
+        return LoadResult(2, 1, sessionId)
+    }
+
+    /**
+     * `bt-audio-dropped` — F23, FR-CAP-5: a *live* Bluetooth session whose audio just stopped —
+     * [InputStatus.State.Lost] with a genuine Bluetooth `lastKnown` (via [InputStatus.opened] then
+     * [InputStatus.lost], the only way [InputStatus.lost] ever transitions — see that function's own
+     * doc comment), plus a real, open [CaptureGapEntity]. The rig's own *control* link is left
+     * `Connected` (still Bluetooth SPP) — this is an audio-only drop, distinct from [rigBtLost]'s
+     * control-only one (FR-RIG-15's own distinction). Cause is [CaptureGapCause.INPUT_LOST], not a
+     * dedicated Bluetooth-audio cause — `CaptureGapCause.BLUETOOTH_AUDIO_LOST` does not exist in this
+     * schema yet (owed to WPC3, checklist E2-A06/E2-D07) — the same honest stand-in the real
+     * `RealCaptureService` itself reports today.
+     */
+    private suspend fun btAudioDropped(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("bt-audio-dropped")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 40 * 60_000L,
+                endedAt = null,
+                captureMode = CaptureMode.BLUETOOTH_RADIO.name,
+                audioRouteKind = AudioRouteKind.BLUETOOTH_SCO.name,
+                audioRouteLabel = "Bluetooth headset",
+                bluetoothProfile = BluetoothAudioProfile.HFP_MSBC.name,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+            ),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        val descriptor = AudioDeviceDescriptor(
+            "bt-1",
+            AudioDeviceKind.BLUETOOTH,
+            "Bluetooth headset",
+            bluetoothProfile = BluetoothAudioProfile.HFP_MSBC,
+        )
+        InputStatus.opened(
+            descriptor = descriptor,
+            nativeRateHz = 16_000,
+            resamplerId = "identity/16000",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis() - 40 * 60_000L,
+        )
+        val lostSinceMillis = SystemClock.wallMillis() - 45_000L
+        InputStatus.lost(lostSinceMillis)
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+            transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "$sessionId-gap-bt-audio",
+                sessionId = sessionId,
+                startedAt = lostSinceMillis,
+                endedAt = null,
+                cause = CaptureGapCause.INPUT_LOST,
+                recoveredAutomatically = false,
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `rig-bt-connected` — CF06: a live session whose rig link is `RigStatus.Connected` over
+     * Bluetooth SPP, transport and descriptor both named. Also leaves the real `SetupStore` at
+     * S11/`SetupStep.RADIO_VERIFIED` — a genuinely resumable state to land on directly (`stepFor`'s
+     * own natural resume point is [SetupStep.READY], strictly after [SetupStep.RADIO_VERIFIED] in
+     * its declared order, so [org.ort.app.ui.setup.SetupActivity.EXTRA_STEP]'s own "at or before the
+     * natural resume point" rule honors the request — `SetupActivity.kt`'s own doc comment) — with
+     * the global [RigStatus] this function already publishes above read once, honestly, at
+     * `SetupActivity` construction (E2-E12: S11's own transport subtitle, "Bluetooth SPP").
+     */
+    private suspend fun rigBtConnected(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("rig-bt-connected")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 5 * 3_600_000L,
+                endedAt = null,
+                captureMode = CaptureMode.BLUETOOTH_RADIO.name,
+                audioRouteKind = AudioRouteKind.WIRED_HEADSET.name,
+                audioRouteLabel = "Wired headset",
+                rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+            ),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+            transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.BLUETOOTH_RADIO
+        store.notificationsSkipped = true
+        store.selectedInputId = "wired-1"
+        store.selectedInputLabel = "Wired headset"
+        store.inputVerified = true
+        store.verifiedNativeRateHz = 48_000
+        store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.TH_D75A
+        store.rigId = BundledDescriptors.kenwoodThD75a().id
+        store.rigTransport = RigTransportKind.BLUETOOTH_SPP
+        store.rigBluetoothVerified = true
+        store.setupComplete = false
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** `rig-bt-lost` — F9, FR-RIG-15: [RigStatus.State.Stale] whose own `lastKnown` names the
+     * Bluetooth SPP transport and the TH-D75A descriptor — unlike [rigLost] (the pre-P19 scenario,
+     * transport/descriptor both `null`), F9's board can now name what dropped. */
+    private suspend fun rigBtLost(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("rig-bt-lost")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 5 * 3_600_000L,
+                endedAt = null,
+                captureMode = CaptureMode.BLUETOOTH_RADIO.name,
+                audioRouteKind = AudioRouteKind.WIRED_HEADSET.name,
+                audioRouteLabel = "Wired headset",
+                rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+            ),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        val lastKnown = RigStatus.State.Connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+            transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        RigStatus.stale(lastKnown, sinceMillis = SystemClock.wallMillis() - 12 * 60_000L)
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `mode-change-pending` — FR-CAP-12, AC-131: a live USB-radio session, plus a real
+     * [org.ort.pipeline.rig.CaptureConfigurationStore] write requesting Bluetooth for the *next*
+     * session — written after [ScenarioFixtures.markCapturing] so [CaptureState.isCapturing] is
+     * already true and the store's own freeze rule genuinely lands it as
+     * [org.ort.pipeline.rig.CaptureConfigurationStore.pendingConfiguration], never touching
+     * [org.ort.pipeline.rig.CaptureConfigurationStore.current] (CF11's amber banner).
+     */
+    private suspend fun modeChangePending(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("mode-change-pending")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 15 * 60_000L,
+                endedAt = null,
+                captureMode = CaptureMode.USB_RADIO.name,
+                audioRouteKind = AudioRouteKind.USB.name,
+                audioRouteLabel = "USB Audio Device",
+                rigTransport = RigTransportKind.USB_SERIAL.name,
+            ),
+        )
+        val configStore = SharedPreferencesCaptureConfigurationStore(
+            context.applicationContext.getSharedPreferences(
+                SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+                Context.MODE_PRIVATE,
+            ),
+        )
+        configStore.update(
+            CaptureConfiguration(
+                mode = CaptureMode.USB_RADIO,
+                selectedInputId = "usb-1",
+                rigId = BundledDescriptors.kenwoodThD75a().id,
+                rigTransportKind = RigModuleTransportKind.USB_SERIAL,
+            ),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        configStore.update(
+            CaptureConfiguration(
+                mode = CaptureMode.BLUETOOTH_RADIO,
+                selectedInputId = "wired-1",
+                rigId = BundledDescriptors.kenwoodThD75a().id,
+                rigTransportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * WPG/WPH's real [BundledAssetInstaller], driven through a [FakeBundledAssetSource] built from
+     * [ModelCatalog.entries] itself — never a hand-typed manifest that could silently drift from
+     * what the catalog actually declares. Every byte and every sha256 below is computed here, from
+     * placeholder content (this package's own brief: fictional/synthetic fixture data only, never a
+     * real published asset's bytes). [corruptId], when given, is served real placeholder bytes but
+     * declared under a manifest sha256 computed from *different* bytes — the same "declared digest
+     * disagrees with what actually arrived" shape a truncated download or a bit-flipped copy
+     * produces, so [BundledAssetInstaller.installOne]'s own real comparison genuinely fails for that
+     * one entry (AC-137) while every other entry installs for real. [ScenarioFixtures.uninstallEveryModelFixture]
+     * runs first so a prior `overnight`/`stations-14-nights` load's own installed-fixture markers
+     * (a different code path, [ScenarioFixtures.installEveryModelFixture]) never masquerade as this
+     * scenario's own result.
+     */
+    private fun installBundledAssetsFixture(context: Context, corruptId: ModelId? = null): List<BundledAssetState> {
+        ScenarioFixtures.uninstallEveryModelFixture(context)
+        val filesDir = context.filesDir
+        File(filesDir, "bundled_assets.manifest").delete()
+        val files = mutableMapOf<String, ByteArray>()
+        val manifestEntries = ModelCatalog.entries.joinToString(",\n") { entry ->
+            val relativeDestination = entry.destination(filesDir).relativeTo(filesDir).invariantSeparatorsPath
+            val content = "bundled-fixture:${entry.id.name}".toByteArray()
+            files["bundled/$relativeDestination"] = content
+            val declaredSha256 = if (entry.id == corruptId) {
+                sha256Hex(content + "corrupt".toByteArray())
+            } else {
+                sha256Hex(content)
+            }
+            """{"id": "${entry.id.name}", "destination": "$relativeDestination", "sha256": "$declaredSha256"}"""
+        }
+        files["bundled/manifest.json"] = "{\"assets\": [$manifestEntries]}".toByteArray()
+        return BundledAssetInstaller.installAll(filesDir, FakeBundledAssetSource(files))
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /**
+     * `assets-bundled` — FR-AST-3/3b, AC-137: every real [BundledAssetInstaller] result is
+     * [BundledAssetState.Installed]. Also leaves the real `SetupStore` at S12/[SetupStep.READY]
+     * (a verified USB input, no rig — the same honest "no rig module built yet" pairing
+     * [seedConfiguredDeviceState] already establishes) so S12's own Mode row and Models row render
+     * against this scenario's real, just-installed bundled assets (E2-E13's tour coverage) — never
+     * `setup-verified`'s own unrelated, unbundled state.
+     */
+    private fun assetsBundled(context: Context): LoadResult {
+        installBundledAssetsFixture(context)
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.USB_RADIO
+        store.notificationsSkipped = true
+        store.selectedInputId = "usb-1"
+        store.selectedInputLabel = "USB Audio Device"
+        store.inputVerified = true
+        store.verifiedNativeRateHz = 48_000
+        store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.rigTransport = null
+        store.manualFrequencyHz = 145_230_000L
+        store.setupComplete = false
+        return LoadResult(0, 0, null)
+    }
+
+    /** `asset-corrupt` — AC-137: one entry ([ModelId.ASR_ENCODER]) genuinely fails its post-copy
+     * digest check ([BundledAssetState.Failed]); every other entry still installs for real. */
+    private fun assetCorrupt(context: Context): LoadResult {
+        installBundledAssetsFixture(context, corruptId = ModelId.ASR_ENCODER)
+        return LoadResult(0, 0, null)
+    }
+
+    /** `tier0-llm-stored` — FR-AST-3a, AC-138: [ModelId.LLM_GEMMA3_1B] installs for real, but this
+     * device's own tier is forced below T3 ([ShedStatus] is `ModelsController.realCurrentTierLabel`'s
+     * own real input — that function's own kdoc), so [org.ort.app.ui.data.ModelRowViewState.tierEligible]
+     * genuinely reads `false` for it — stored, never loaded (AC-138's own distinction). `backlog`
+     * stays `0`: this is a tier fact, not F8's backlog failure, which gates on the queue depth alone. */
+    private fun tier0LlmStored(context: Context): LoadResult {
+        installBundledAssetsFixture(context)
+        ShedStatus.update(level = 1, backlog = 0)
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * The shared body of [llmEnabledProse] and [llmDisabled] (FR-DIG-3/6/11, D36): the real
+     * `overnight` fixture (so the QSO thread's own four real over ids exist to attribute a summary
+     * to — FR-DIG-11), one more small thread of two overs on the same session (the "one other"
+     * thread DG05's own board draws a second card for), a real prose-settings toggle
+     * ([SharedPreferencesProseDigestSettingsStore]), and two real, stored [ProseSummary] rows via
+     * the real [RoomProseSummaryStore] — never a UI stand-in for any of the three.
+     */
+    private suspend fun proseDigestScenario(context: Context, db: OrtDatabase, enabled: Boolean): LoadResult {
+        val base = OvernightScenario.overnight(context, db)
+        val sessionId = ScenarioFixtures.sessionId("overnight")
+        SharedPreferencesProseDigestSettingsStore(context).setEnabled(enabled)
+
+        val otherThreadId = "$sessionId-thread-other"
+        val other1 = "$sessionId-llm-tx1"
+        val other2 = "$sessionId-llm-tx2"
+        val otherStart = SystemClock.wallMillis() - 5 * 3_600_000L
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = other1,
+                sessionId = sessionId,
+                threadId = otherThreadId,
+                startedAtUtc = otherStart,
+                samplePosition = 9_001L,
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "KJ7ABC",
+                attributionConfidence = 0.9,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$other1-t1",
+                transmissionId = other1,
+                text = "kilo juliet seven alpha bravo charlie, activating the summit for an hour",
+                isCurrent = true,
+                createdAt = otherStart + 1_000L,
+            ),
+        )
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = other2,
+                sessionId = sessionId,
+                threadId = otherThreadId,
+                startedAtUtc = otherStart + 60_000L,
+                samplePosition = 9_002L,
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "N7XYZ",
+                attributionConfidence = 0.86,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$other2-t1",
+                transmissionId = other2,
+                text = "november seven x-ray yankee zulu, copy, logging you for the activation",
+                isCurrent = true,
+                createdAt = otherStart + 60_000L + 1_000L,
+            ),
+        )
+        db.catalogDao().insert(
+            ThreadEntity(
+                id = otherThreadId,
+                sessionId = sessionId,
+                startedAt = otherStart,
+                endedAt = otherStart + 65_000L,
+                frequencyHz = 146_960_000L,
+                transmissionCount = 2,
+                participantStationIds = listOf("KJ7ABC", "N7XYZ"),
+                digestText = null,
+                kind = ThreadKind.QSO,
+                kindSource = ThreadKindSource.DETECTED,
+                participantOrder = listOf("KJ7ABC", "N7XYZ"),
+            ),
+        )
+
+        val summaryStore = RoomProseSummaryStore(db)
+        summaryStore.store(
+            ProseSummary(
+                threadId = "$sessionId-thread1",
+                text = "Whiskey Seven November Papa Charlie and Kilo Seven Lima Whiskey Hotel traded " +
+                    "signal reports and closed out the repeater for the night.",
+                sourceTransmissionIds = listOf(
+                    "$sessionId-qso1",
+                    "$sessionId-qso2",
+                    "$sessionId-qso3",
+                    "$sessionId-qso4",
+                ),
+                generatedAtMillis = SystemClock.wallMillis(),
+                modelId = "gemma3-1b-it-int4",
+            ),
+        )
+        summaryStore.store(
+            ProseSummary(
+                threadId = otherThreadId,
+                text = "Kilo Juliet Seven Alpha Bravo Charlie activated a summit for an hour; November " +
+                    "Seven X-ray Yankee Zulu logged the contact.",
+                sourceTransmissionIds = listOf(other1, other2),
+                generatedAtMillis = SystemClock.wallMillis(),
+                modelId = "gemma3-1b-it-int4",
+            ),
+        )
+        return LoadResult(base.transmissionCount + 2, base.sessionCount, base.primarySessionId)
+    }
+
+    /** `llm-enabled-prose` — DG05, FR-DIG-3/6/11: prose enabled, two real stored summaries. */
+    private suspend fun llmEnabledProse(context: Context, db: OrtDatabase): LoadResult =
+        proseDigestScenario(context, db, enabled = true)
+
+    /** `llm-disabled` — DG01, FR-DIG-3b, AC-140: the same two summaries are genuinely stored, but
+     * prose is disabled — DG05's "In their words" section must render absent entirely (E2-G07's own
+     * discriminating test), not merely empty. */
+    private suspend fun llmDisabled(context: Context, db: OrtDatabase): LoadResult =
+        proseDigestScenario(context, db, enabled = false)
 }
