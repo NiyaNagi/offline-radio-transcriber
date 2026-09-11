@@ -32,6 +32,134 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPE round 3: tour findings R-840/R-841 and register findings R-821/R-826/R-835/R-839/R-845)
+
+### (pending) — settings modes: R-840 Digest nav seed, R-841 CF04 copy audit, R-821 honest not-set mode, R-826 CF02 live-bar clearance, R-835/R-839/R-845 CF06's missing board and retired build-limitation copy
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/**` (`SettingsViewData.kt`, `SettingsPolling.kt`,
+`SettingsCaptureScreen.kt`, `SettingsRigScreen.kt`), `app/.../ui/data/SettingsViewData.kt`
+(`CaptureModeFacts` seam), `app/.../ui/screens/ModelsScreen.kt`, `app/.../ui/navigation/NavSeed.kt`
+and `OrtNavHost.kt` (new `ReviewSessionView`/`reviewSessionView` seed field), and tests. One
+targeted, minimal edit outside this round's usual boundary — `app/.../ui/digest/SessionsContent.kt`
+gained a single new `openDigest: Boolean = false` parameter (see point 1 and "Left open" below):
+`ui/digest` is this package's explicitly off-limits territory, but R-840's own instruction
+("`OrtNavHost` dispatches to the Digest screen for the seeded session") has no path that does not
+touch that composable's own `page` seed — there is no seam to land on `SessionsPage.Digest` from
+outside it. Flagged here rather than silently crossed.
+
+**Requirements/ACs:** FR-CAP-12, FR-RIG-14, FR-RIG-15, FR-AST-3, FR-DIG-3b, AC-139, AC-131,
+constitution I/II/VIII.
+
+**What changed:**
+
+*Constitution Check.* I (R-821/R-835/R-839 are all the same failure mode in different places — a
+holder's own collapsed default, or an absent producer, rendered as though it were a real chosen or
+measured fact; each now reads "not set"/"not reported by this rig module" instead). II (every fix
+below ships a discrimination test in this same round — reverted, shown to fail for the right
+reason, restored; see Verified). VIII (R-841 is a byte-level audit of `ModelsScreen.kt` against
+`Settings-Assets.dc.html`, `Settings-Rig.dc.html` re-read in full for R-835/R-839/R-845).
+
+1. **R-840**: `NavSeed` gains `reviewSessionView: ReviewSessionView? = null`
+   (`ReviewSessionView { SESSION, DIGEST }`, extra key `nav_review_session_view`) — companion to the
+   existing `pendingReviewSessionId`, the same relationship `frequencyInitialView` already has to
+   `openFrequencyHz`. `OrtNavHost` threads it through `NavHostNavState`/`DestinationInitialState`
+   into `SessionsContent`'s new `openDigest` parameter. **The exact seed for the tour**:
+   `NavSeed(pendingReviewSessionId = <id>, reviewSessionView = ReviewSessionView.DIGEST)`, or via
+   intent extras `nav_pending_review_session_id=<id> nav_review_session_view=DIGEST`. New
+   `ReaderActivityDestinationSmokeTest` case asserts the real `Digest` header ("Back to Session")
+   renders, not the `Session` detail's own ("Back to Earlier nights").
+2. **R-841**: audited every string on CF04 against `Settings-Assets.dc.html` byte-for-byte. Fixed:
+   the subtitle (was the pre-D35 "Installed by you, from a file…" line, now "Bundled with the app
+   and verified on first launch. Nothing is downloaded."); section order (Transcription → Prose
+   digest → Lexicon → Space → Replacing an asset, was Transcription → Lexicon → Prose digest →
+   Space, missing Replacing an asset entirely); a new `ReplacingAnAssetSection` composable (the
+   board's own copy, verbatim); `LexiconAssetRow`'s caption changed from a plain styled `Text` to a
+   real `SectionHeader` (the board's own `.lbl` treatment, which `LexiconAssetRow` never had); the
+   VAD row's sub-line formula dropped the word "sha256" and the trailing tier clause (board-verbatim
+   for that one row, not the universal formula every other row still uses correctly); a bundled,
+   not-yet-verified row now says "not yet verified on this launch" rather than the generic
+   "not installed", and `GroupedAssetRow`'s "N of 3 parts missing" now leads with the same honest,
+   per-row-state phrase instead of a blanket "not installed".
+3. **R-821 (halt)**: `CaptureModeFacts.currentMode()` is now `CaptureMode?` — `null` exactly when
+   the operator has never chosen a mode (the raw `SharedPreferences` key underneath
+   `CaptureConfigurationStore.current()`, `"current.mode"`, absent — that store's own contract
+   collapses "never written" and "written, LOCAL_MICROPHONE" to the identical
+   `CaptureConfiguration.DEFAULT`, confirmed by reading `SharedPreferencesCaptureConfigurationStore
+   .current` before writing this fix). CF02's Capture-mode row and CF11's picker both now read
+   "Not set"/mark no row current in that case, never a fabricated "Built-in microphone". Flagged as
+   a coupling risk in `SettingsViewData.kt`'s own doc comment: the raw key is a literal mirror of
+   `:pipeline`'s own private constant, not an exposed accessor — a real
+   `CaptureConfigurationStore.hasBeenConfigured(): Boolean` is the robust long-term fix, owed to
+   WPC2, not built here (`:pipeline` is outside this package's ownership).
+4. **R-826**: CF02's closing paragraph was clipped behind the live bar at font scale 1.0. Fixed the
+   R-613 shape (`CaptureStatusScreen.kt`'s own precedent): a static `44.dp` trailing padding on the
+   scroll container itself, not the live bar's real measured height from `NavHostBody`'s own R-262
+   mechanism — `SettingsCaptureScreen` has no `liveBar` parameter of its own to make that
+   conditional the way `CaptureStatusScreen` does, so this floor applies unconditionally (cheap even
+   when unused, the same defence that file's own doc comment already makes).
+5. **R-835/R-839/R-845 (CF06, `Settings-Rig.dc.html` re-read in full)**: retired "No radio support
+   in this build yet" for "No rig configured — overs are logged against the frequency you set"
+   (R-839), with a real, live `Change radio` button now shown beside `Reconnect` in every state, not
+   only a dead FailedState. Added the "How overs are attributed to a band" row (static app policy,
+   board-verbatim), a real "Rig module" row (`<descriptor id> · built in · verified command set
+   <caps>` — real `RigCapability` names from the matched bundled descriptor, `BundledDescriptors`,
+   never the board mockup's raw CAT mnemonics `FQ BY FO BC MR ME AI BL`, which no accessible source
+   in this build carries), a fuller Link sub-line ("paired in system settings" for a Bluetooth link,
+   the descriptor's other declared transport named plainly with real vid/pid only when the
+   descriptor itself states them — `kenwood-thd75a.json` leaves both `null`, "still to verify", so
+   this never invents the board's own `vid 0x0451 pid 0x16a8`), an "Auto-information" row (only when
+   the matched descriptor declares an `unsolicited` push block — a plain `KeyValueRow` reading "On",
+   not `ToggleRow`: this build has no real preference behind the fact, and a live-looking toggle
+   with no effect would be a worse dishonesty than a solid value), and a "Radio battery, BL" row
+   (always the honest `not reported by this rig module` fallback — no battery reader exists
+   anywhere in `:pipeline` today). Band tiles gained a per-band over-count line — also always the
+   honest fallback (see "Left open"). R-845: the title strips the connected descriptor's own leading
+   manufacturer word ("Kenwood TH-D75A" → "TH-D75A") via a general rule (keep from the first
+   space-separated word containing a digit onward), not a hardcoded `"Kenwood "` replace; the
+   subtitle's "reading both bands unpolled" clause now comes from `pollingClause`, real from the
+   matched descriptor's own `unsolicited`/`poll` blocks (`"polled every N s"` from the descriptor's
+   own real `poll.intervalMs` when it declares no push — e.g. the generic ASCII CAT descriptor's
+   real `0.5 s`), never a hardcoded claim.
+
+**Verified** (every command with `-PortAllowMissingBundledAssets=true`):
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` — green (R-840).
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreen*Test"` — green (R-841).
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.settings.*" --tests "org.ort.app.ui.data.CaptureModeFactsTest"` — green (R-821/R-826/R-835/R-839/R-845).
+- `:app:testDebugUnitTest` (full) and `:app:smokeTestDebugUnitTest` (full) — green.
+- `:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` — green (after `ktlintMainSourceSetFormat`/`ktlintTestSourceSetFormat`).
+- `:app:detekt` — green (`NavSeed.putExtras` split into `putExtras`/`putRemainingExtras` — R-840's new field pushed its `CyclomaticComplexMethod` to the threshold).
+- `build dependencyRules platformGuards` — green.
+- `-p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `coverageMatrix` then `coverageMatrixCheck` (run separately) — green.
+- **Discrimination, R-821**: reverted `RealCaptureModeFacts.currentMode()` to the unconditional
+  `store.current().mode` → `CaptureModeFactsTest`/`SettingsPollingTest`'s R-821 cases failed for the
+  right reason → restored → passed again.
+- **Discrimination, R-826**: reverted the trailing scroll padding → the new geometry test (real
+  max-scroll, sibling live-bar box, `getUnclippedBoundsInRoot`) failed with less than the expected
+  clearance → restored → passed again.
+- **Discrimination, R-835/R-845**: reverted `matchedDescriptor` to always return `null` and
+  `stripManufacturerPrefix` to identity → five `SettingsPollingTest` cases (title, both polling
+  clauses, rig-module label, auto-information) failed for the right reason → restored → passed.
+
+**Left open / not done:**
+- **Per-band over counts** (R-835's "318 overs"/"94 overs") are always the honest
+  `not reported by this rig module` fallback: the real, correct attribution needs
+  `RigSupervisor.bandAtTransmissionStart`'s own logic (band-at-record-time, not a naive match
+  against a band's *current* frequency, which would silently mis-count a band retuned mid-session)
+  — no `:pipeline`/`:data` accessor exposes the already-attributed count, and adding one is outside
+  this package's ownership (`:pipeline`/`:data` both off-limits). A real
+  `RigStatus.State.Connected.bandOverCounts`, or a `:data` DAO query, is the right fix, owed to
+  WPC2/WPF.
+- **`SessionsContent.openDigest`** (point 1) is the one line landed outside this round's own file
+  list — a minimal, additive, backward-compatible parameter (default `false`, every existing caller
+  unchanged), not a rewrite of that package's own navigation. Flagged for the lead's review rather
+  than silently absorbed into "routine WPE work."
+- **A real `CaptureConfigurationStore.hasBeenConfigured()`** (R-821's own doc comment) would replace
+  this round's raw-`SharedPreferences`-key mirror with a real, stable accessor — owed to WPC2.
+
+---
+
 ## 2026-09-10 (WPG follow-up: E2-H08's replace-then-roll-back case)
 
 ### (pending) — bundled assets: side-load replaces a bundled model, BundledAssetInstaller.reinstall rolls it back

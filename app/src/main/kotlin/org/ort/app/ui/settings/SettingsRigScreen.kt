@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -36,15 +37,23 @@ import org.ort.app.ui.theme.OrtType
  * rig-module contract with a built-in TH-D75A module and a null module for manual entry —
  * [SettingsRigViewState.connected] is `false` on every build today whenever no rig has ever been
  * configured (register R-084's plan-level note; the debug scenario simulator is the only current
- * producer of a `Connected`/`Stale` state — see `SettingsPolling.rig`'s own doc comment), and this
- * renders that honestly as a [FailedState] rather than a fabricated `Reconnect`/`Change radio` pair
- * with nothing behind them.
+ * producer of a `Connected`/`Stale` state — see `SettingsPolling.rig`'s own doc comment).
  *
- * Once a rig *has* connected (or gone stale), the Link/Reconnect actions below are real: `Switch`
- * re-enters setup at the rig-transport step (WPD's still-in-flight `RIG_TRANSPORT`, forward-
- * compatible today — see [SettingsContent]'s own doc comment), and `Reconnect` — until WPC2's real
- * reconnect entry point exists — re-reads [RigStatus] fresh via [onReconnect], `TODO(WPC2)`d in
- * this one place so the real call is a one-line swap later.
+ * Register R-839 (retired the old "no radio support in this build yet" copy): a genuinely
+ * unconfigured rig is an ordinary, expected state — not a build limitation — so this reads "No rig
+ * configured — overs are logged against the frequency you set" with a real, live `Change radio`
+ * action (the same [onSwitchTransport] the `Link` row's own `Switch` and the bottom `Change radio`
+ * button both call — one real re-entry point, `SettingsContent`'s own doc comment), never a dead
+ * end. Still drawn via [FailedState] (guide §6.8's own "a capability is missing" amber shape still
+ * applies — there genuinely is no rig doing anything right now), just with honest copy and a real
+ * action instead of a claim about "this build."
+ *
+ * Once a rig *has* connected (or gone stale), the full `Connection` section (register R-835) is
+ * real: `Switch`/`Change radio` re-enter setup at the rig-transport step (WPD's still-in-flight
+ * `RIG_TRANSPORT`, forward-compatible today — see [SettingsContent]'s own doc comment), and
+ * `Reconnect` re-reads [org.ort.pipeline.capture.RigStatus] fresh via [onReconnect] — reconnection
+ * itself is the transport's own self-healing job (`RigSupervisor`'s own doc comment), not something
+ * this screen triggers directly.
  */
 @Composable
 public fun SettingsRigScreen(
@@ -71,28 +80,19 @@ public fun SettingsRigScreen(
             }
 
             if (!state.connected && state.staleSinceLabel == null) {
-                // R-444 (register, Reviewer D): "FR-RIG's module contract (…)" named the
-                // requirement, not a fact this screen's own operator would recognise — guide §9's
-                // discipline `CaptureStatusViewState.radioFacts` (R-263) already established for
-                // the identical fact: "no radio support in this build yet", verbatim, never a
-                // second differently-worded claim about the same thing.
+                // R-839 (register): retired "no radio support in this build yet" — see this
+                // screen's own doc comment.
+                // The `Change radio` action itself lives only in the bottom row below (shown in
+                // every state, connected/stale/absent alike) — not duplicated here via `FailedState
+                // .actionLabel`, which would render the identical action twice on one screen.
                 FailedState(
-                    title = "No rig module is connected",
-                    body = "No radio support in this build yet. Capture is unaffected — " +
-                        "frequencies are logged from Settings › Input and level's manual entry " +
-                        "until a rig module exists.",
+                    title = "No rig configured",
+                    body = "Overs are logged against the frequency you set in Settings › Input " +
+                        "and level's manual entry, until a radio is connected.",
                     modifier = Modifier.padding(top = OrtSpacing.lg),
                 )
             } else {
-                SectionHeader(label = "Connection", modifier = Modifier.padding(top = OrtSpacing.md))
-                KeyValueRow(
-                    key = "Link",
-                    value = "",
-                    subLine = state.transportLabel?.let { transport ->
-                        "$transport" + (state.linkAddressLabel?.let { " · $it" } ?: "")
-                    } ?: "transport and address not yet reported by this build",
-                    trailingMarker = { TextAction(text = "Switch", onClick = onSwitchTransport) },
-                )
+                RigConnectionSection(state = state, onSwitchTransport = onSwitchTransport)
                 KeyValueRow(
                     key = "If it disconnects",
                     value = "",
@@ -107,20 +107,95 @@ public fun SettingsRigScreen(
                 )
             }
 
-            SecondaryButton(
-                text = "Reconnect",
-                enabled = state.connected || state.staleSinceLabel != null,
-                onClick = onReconnect,
+            Row(
                 modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
-            )
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+            ) {
+                SecondaryButton(
+                    text = "Reconnect",
+                    enabled = state.connected || state.staleSinceLabel != null,
+                    onClick = onReconnect,
+                    modifier = Modifier.weight(1f),
+                )
+                // R-835/R-839: a second, always-live way to re-enter setup at the rig-transport
+                // step — identical to the `Link` row's own `Switch` above, shown beside `Reconnect`
+                // regardless of connection state (unlike `Reconnect`, choosing a different radio
+                // never depends on one already having connected).
+                SecondaryButton(
+                    text = "Change radio",
+                    enabled = true,
+                    onClick = onSwitchTransport,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }
 
-/** CF06's subtitle line: `Connected [· <transport>]`, `Stale since <label>`, or `Not connected` —
- * never a differently-worded restatement of the same three facts elsewhere on this screen. */
+/**
+ * Register R-835: CF06's `Connection` section, real once a rig is connected or stale — the
+ * attribution explanation (static app policy, not a per-rig fact), `Rig module`, `Link`, and,
+ * where the matched descriptor states them, `Auto-information`/`Radio battery`. Split out of
+ * [SettingsRigScreen] purely to keep that composable under detekt's `LongMethod` limit.
+ */
+@Composable
+private fun RigConnectionSection(
+    state: SettingsRigViewState,
+    onSwitchTransport: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        SectionHeader(label = "How overs are attributed to a band", modifier = Modifier.padding(top = OrtSpacing.md))
+        KeyValueRow(
+            key = "By squelch state, BY",
+            value = "",
+            subLine = "the radio mixes both bands into one audio stream · whichever squelch opened " +
+                "owns the over · both open at once is logged as both, marked so",
+        )
+
+        SectionHeader(label = "Connection", modifier = Modifier.padding(top = OrtSpacing.md))
+        KeyValueRow(key = "Rig module", value = "", subLine = state.rigModuleLabel)
+        KeyValueRow(
+            key = "Link",
+            value = "",
+            subLine = listOfNotNull(
+                state.transportLabel?.let { transport ->
+                    transport + (state.linkAddressLabel?.let { " · $it" } ?: "")
+                } ?: "transport and address not yet reported by this build",
+                "paired in system settings".takeIf { state.transportLabel?.contains("Bluetooth") == true },
+                state.otherTransportLabel,
+            ).joinToString(" · "),
+            trailingMarker = { TextAction(text = "Switch", onClick = onSwitchTransport) },
+        )
+        // A plain `KeyValueRow`, not `ToggleRow` (`ui/components`, not mine to add an `enabled`
+        // param to): this build has no real preference behind this fact — it is the connected
+        // descriptor's own fixed, structural behaviour (`unsolicited` push, always on when the
+        // descriptor declares it), not something this screen can actually let the operator flip.
+        // A live-looking toggle with no real effect on tap would be a worse dishonesty than a
+        // plain "On" value.
+        state.autoInformation?.let { ai ->
+            KeyValueRow(key = ai.label, value = "On", subLine = ai.subLine)
+        }
+        KeyValueRow(
+            key = "Radio battery, BL",
+            value = "",
+            subLine = state.batteryLabel,
+        )
+    }
+}
+
+/** CF06's subtitle line: `Connected [· <transport>][· <polling clause>]`, `Stale since <label>`,
+ * or `Not connected` — never a differently-worded restatement of the same facts elsewhere on this
+ * screen. Register R-845: the trailing polling clause (`state.pollingClause` — "reading both bands
+ * unpolled" only while the connected descriptor's own push is real, else "polled every N s", both
+ * from `SettingsPolling.rig`) is appended only while actually connected — a stale link is not
+ * currently being read at all, polled or otherwise. */
 private fun rigSubtitle(state: SettingsRigViewState): String = when {
-    state.connected -> "Connected" + (state.transportLabel?.let { " · $it" } ?: "")
+    state.connected -> listOfNotNull(
+        "Connected",
+        state.transportLabel,
+        state.pollingClause.takeIf { it != NOT_REPORTED_BY_RIG_MODULE },
+    ).joinToString(" · ")
     // [SettingsRigViewState.staleSinceLabel] is already worded "since <label>" (`SettingsPolling.rig`).
     state.staleSinceLabel != null -> "Stale ${state.staleSinceLabel}"
     else -> "Not connected"
@@ -182,6 +257,14 @@ private fun BandTile(band: SettingsRigBandViewState, modifier: Modifier = Modifi
             color = OrtColors.textFaint,
             modifier = Modifier.padding(top = 2.dp),
         )
+        // R-835: the board's own per-band over count — see `SettingsRigBandViewState
+        // .overCountLabel`'s own doc comment for why this is always the honest fallback today.
+        Text(
+            text = band.overCountLabel,
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = 1.dp).testTag(BAND_TILE_OVER_COUNT_TEST_TAG),
+        )
     }
 }
 
@@ -206,3 +289,4 @@ private const val BAND_FREQUENCY_SAMPLE = "146.960?"
  * wraps) at both font scale 1.0 and 2.0 — the direct proof of the fix. */
 internal const val BAND_TILE_TEST_TAG: String = "settings-rig-band-tile"
 internal const val BAND_TILE_FREQUENCY_TEST_TAG: String = "settings-rig-band-tile-frequency"
+internal const val BAND_TILE_OVER_COUNT_TEST_TAG: String = "settings-rig-band-tile-over-count"

@@ -70,7 +70,12 @@ class ModelsScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithContentDescription("Silero VAD not installed. not installed").assertExists()
+        // R-841 (round 1, tour finding): a bundled row reading `NOT_INSTALLED` means the
+        // installer has not verified it this launch yet — never "not installed", which D35 makes
+        // an operator-owed-action claim that is untrue for a bundled asset.
+        composeTestRule
+            .onNodeWithContentDescription("Silero VAD not installed. not yet verified on this launch")
+            .assertExists()
         // D35/FR-AST-1 (checklist E2-F04): a bundled asset ships inside the artifact — there is
         // nothing to download, so this action must never appear for it, discrimination-tested
         // below (`AC_139_offersDownload_never_true_for_a_bundled_row`).
@@ -101,11 +106,12 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithText("ACTIVE").assertExists()
-        // `Settings-Assets.dc.html` (redrawn 2026-09-10): "Pass · size · bundled · verified
-        // sha256 <8 chars> · tiers" — VAD's own Pass is "segmentation" (`passLabelFor`).
+        // `Settings-Assets.dc.html` verbatim: "segmentation · 2 MB · bundled · verified
+        // 9e2449e1" — no "sha256" word, no trailing tiers clause (unlike the Whisper family row,
+        // a different formula — see `assetFactsSubLine`'s own doc comment for why).
         composeTestRule
             .onNodeWithContentDescription(
-                "Silero VAD verified. segmentation · 2 MB · bundled · verified sha256 9e2449e1 · every tier",
+                "Silero VAD verified. segmentation · 2 MB · bundled · verified 9e2449e1",
             )
             .assertExists()
     }
@@ -212,7 +218,7 @@ class ModelsScreenTest {
 
         composeTestRule.onNodeWithContentDescription(
             "Whisper tiny.en — tokens installed, unverified. Pass B · 500 KB · bundled · " +
-                "verified sha256 abc12345, not against a published value · every tier",
+                "verified abc12345, not against a published value",
         ).assertExists()
     }
 
@@ -363,13 +369,20 @@ class ModelsScreenTest {
         // all three parts under the one family description below, so counting *that* shape directly
         // — rather than re-deriving it from `onNodeWithText` alone — is the precise, structural check.
         composeTestRule.onNodeWithText("Whisper tiny.en (speech to text)").assertExists()
+        // R-841 (round 1, tour finding): a genuinely bundled, non-gated family reading
+        // `NOT_INSTALLED` on a clean install means the installer has not verified it yet this
+        // launch — never "not installed", which D35 makes an operator-owed-action claim that is
+        // untrue for a bundled asset.
         composeTestRule
             .onNodeWithContentDescription(
-                "Whisper tiny.en (speech to text) not installed. not installed · 3 of 3 parts missing",
+                "Whisper tiny.en (speech to text) not installed. not yet verified on this launch · " +
+                    "3 of 3 parts missing",
             )
             .assertExists()
         composeTestRule
-            .onAllNodesWithContentDescription("Whisper tiny.en — encoder not installed. not installed")
+            .onAllNodesWithContentDescription(
+                "Whisper tiny.en — encoder not installed. not yet verified on this launch",
+            )
             .assertCountEquals(0)
 
         // R-761 (register, design, confirmation sweep): this test's own premise, before this round,

@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -119,8 +120,12 @@ public fun ModelsScreen(
         onBack?.let { back -> DrillInHeader(parentLabel = "Settings", onBack = back) }
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Text(text = "Models and lexicon", style = OrtType.screenTitle, color = OrtColors.textHigh)
+            // R-841 (round 1, tour finding): the pre-D35 subtitle ("Installed by you, from a
+            // file…") described a download-and-sideload screen that no longer exists — every
+            // asset ships inside the artifact now (D35). `Settings-Assets.dc.html`'s own redrawn
+            // subtitle, verbatim.
             Text(
-                text = "Installed by you, from a file. This app never downloads anything without a tap.",
+                text = "Bundled with the app and verified on first launch. Nothing is downloaded.",
                 style = OrtType.subtitle,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
@@ -155,6 +160,12 @@ public fun ModelsScreen(
                 onSideload = onSideload,
                 stagedAssetId = stagedActivation?.assetId,
             )
+            // R-841 (round 1, tour finding): `Settings-Assets.dc.html`'s own section order is
+            // Transcription, Prose digest, Lexicon, Space, Replacing an asset — Prose digest sits
+            // here, before Lexicon, never bundled with Space after it (order is binding,
+            // constitution VIII).
+            ProseDigestSection(rows = state.rows, proseDigest = extras?.proseDigest)
+
             // R-154 (round 5): the callsign lexicon is a real asset ([org.ort.data.entity.LexiconVersionEntity],
             // via [org.ort.app.ui.data.ModelsController.lexiconRow]) with no [ModelId] of its own —
             // it gets its own family caption and row rather than joining `groupAssetRows` above,
@@ -168,7 +179,9 @@ public fun ModelsScreen(
                 )
             }
 
-            ProseDigestAndSpaceSections(rows = state.rows, extras = extras)
+            SpaceSection(spaceUsedBytesLabel = extras?.spaceUsedBytesLabel)
+
+            ReplacingAnAssetSection()
 
             Text(
                 text = "Checksum and record count are verified before anything replaces the current " +
@@ -202,31 +215,39 @@ public data class ModelsExtrasViewState(
  * CF04's own "Write prose summaries" toggle. */
 public const val PROSE_DIGEST_TOGGLE_TEST_TAG: String = "settings-assets-prose-digest-toggle"
 
-/** The Prose-digest and Space sections, split out of [ModelsScreen] purely to keep that function
- * under detekt's length limit — the same reason [AssetGroupsList]/[ModelsNotices] already are. */
+/** The Prose-digest section, split out of [ModelsScreen] purely to keep that function under
+ * detekt's length limit — the same reason [AssetGroupsList]/[ModelsNotices] already are. */
 @Composable
-private fun ProseDigestAndSpaceSections(
+private fun ProseDigestSection(
     rows: List<ModelRowViewState>,
-    extras: ModelsExtrasViewState?,
+    proseDigest: ProseDigestSectionViewState?,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
-        rows.firstOrNull { it.id == ModelId.LLM_GEMMA3_1B }?.let { gemmaRow ->
+    rows.firstOrNull { it.id == ModelId.LLM_GEMMA3_1B }?.let { gemmaRow ->
+        Column(modifier = modifier) {
             SectionHeader(label = "Prose digest", modifier = Modifier.padding(top = OrtSpacing.lg))
             ProseDigestModelRow(row = gemmaRow)
-            extras?.proseDigest?.let { proseDigest ->
+            proseDigest?.let {
                 ToggleRow(
                     label = "Write prose summaries",
-                    checked = proseDigest.enabled,
-                    onCheckedChange = proseDigest.onToggle,
+                    checked = it.enabled,
+                    onCheckedChange = it.onToggle,
                     subLine = "an addition to the digest, never a replacement · marked as generated · " +
                         "frees its memory when off",
                     modifier = Modifier.testTag(PROSE_DIGEST_TOGGLE_TEST_TAG),
                 )
             }
         }
+    }
+}
 
-        extras?.spaceUsedBytesLabel?.let { sizeLabel ->
+/** The Space row, split out of [ModelsScreen] for the same reason [ProseDigestSection] is —
+ * `Settings-Assets.dc.html`'s own section, positioned after Lexicon, never bundled with
+ * Prose-digest (R-841: order is binding). */
+@Composable
+private fun SpaceSection(spaceUsedBytesLabel: String?, modifier: Modifier = Modifier) {
+    spaceUsedBytesLabel?.let { sizeLabel ->
+        Column(modifier = modifier) {
             SectionHeader(label = "Space", modifier = Modifier.padding(top = OrtSpacing.lg))
             Text(
                 text = "Bundled assets use $sizeLabel",
@@ -241,6 +262,42 @@ private fun ProseDigestAndSpaceSections(
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = 2.dp),
             )
+        }
+    }
+}
+
+/**
+ * R-841 (round 1, tour finding — a whole section omitted from the redraw): `Settings-Assets.dc.html`'s
+ * own "Replacing an asset" row — a standing policy statement, always shown (never conditioned on
+ * anything actually being staged right now; [StagedBadgeText] on the row itself is the *live*
+ * version of this same fact). The half-filled amber marker is the board's own "pending/cost"
+ * bullet, per register R-801's own note that this exact half-circle is reused across boards
+ * (`Setup-Rig-Usb`, `Fail-Rig`) as a pending/cost marker outside attribution.
+ */
+@Composable
+private fun ReplacingAnAssetSection(modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        SectionHeader(label = "Replacing an asset", modifier = Modifier.padding(top = OrtSpacing.lg))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+        ) {
+            Canvas(modifier = Modifier.padding(top = 5.dp).size(9.dp)) {
+                drawCircle(
+                    brush = Brush.horizontalGradient(0.5f to OrtColors.accentAmber, 0.5f to Color.Transparent),
+                )
+                drawCircle(color = OrtColors.accentAmber, style = Stroke(1.5.dp.toPx()))
+            }
+            Column {
+                Text(text = "Takes effect at the next session", style = OrtType.rowTitle, color = OrtColors.textHigh)
+                Text(
+                    text = "a model or lexicon is never swapped under a running capture · the bundled copy " +
+                        "stays as the fallback",
+                    style = OrtType.subLine,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }
@@ -397,9 +454,7 @@ private fun AssetRow(
     }
     val subLine = when {
         isBusy -> "downloading…"
-        row.status == ModelRowStatus.NOT_INSTALLED && row.checksumKnown -> "not installed"
-        row.status == ModelRowStatus.NOT_INSTALLED && !row.checksumKnown ->
-            "not installed · sideload only, " + row.detail.orEmpty()
+        row.status == ModelRowStatus.NOT_INSTALLED -> notInstalledLabel(row)
         else -> assetFactsSubLine(row, passLabelFor(row.id))
     }
     val description = describeStaged("${row.label} $statusWord. $subLine", staged)
@@ -508,7 +563,14 @@ private fun GroupedAssetRow(
                 "$passLabel · $size · $bundledNote · not every part verified against a published checksum"
             }
         }
-        else -> "not installed · ${missing.size} of ${parts.size} parts missing"
+        else -> {
+            // R-841 (round 1, tour finding): "not installed" implies an operator owes this an
+            // action, which D35 makes untrue for a bundled family — [notInstalledLabel]'s own
+            // per-part reasoning, folded to the worst (least honest-sounding-as-fine) case among
+            // the missing parts, same as the marker's own aggregate above.
+            val lead = missing.map { notInstalledLeadFor(it) }.distinct().singleOrNull() ?: "not installed"
+            "$lead · ${missing.size} of ${parts.size} parts missing"
+        }
     }
     val description =
         describeStaged("$familyLabel ${if (fullyInstalled) "installed" else "not installed"}. $subLine", staged)
@@ -574,12 +636,11 @@ private fun LexiconAssetRow(
     // matching parameter.
     staged: Boolean = false,
 ) {
-    Text(
-        text = "Callsign lexicon",
-        style = OrtType.subLine,
-        color = OrtColors.textFaint,
-        modifier = Modifier.padding(top = OrtSpacing.sm),
-    )
+    // R-841 (round 1, tour finding): `Settings-Assets.dc.html`'s own "LEXICON" caption is a real
+    // `.lbl` section header — the same treatment "Transcription"/"Prose digest"/"Space" already
+    // get — not a family-caption-style `Text` (this row's own asset name, "Callsign lexicon",
+    // already appears on the row itself, just below).
+    SectionHeader(label = "Lexicon", modifier = Modifier.padding(top = OrtSpacing.lg))
     val description = describeStaged(
         "Callsign lexicon ${if (row.installed) "installed" else "not installed"}. ${row.label}",
         staged,
@@ -875,24 +936,24 @@ private fun formatAssetSize(bytes: Long): String {
 }
 
 /**
- * `Settings-Assets.dc.html` (redrawn 2026-09-10, FR-AST-3): every model row reads
- * "Pass · size · bundled · verified sha256 &lt;8 chars&gt; · tiers" — this is that formula, shared
- * by [AssetRow] and (per-part) [GroupedAssetRow] so the two never drift into two different
- * wordings of the same four facts. [row.bundled] is always `true` today (D35 — every asset ships
- * inside the installed artifact); the wording still branches on it rather than hardcoding "bundled"
- * so a future non-bundled entry ([org.ort.app.ui.data.ModelCatalogEntry.bundled] `false`, the
- * split-delivery TODO that field's own doc comment names) reads honestly instead of silently lying.
+ * R-841 (round 1, tour finding — audited against `Settings-Assets.dc.html` verbatim, not a
+ * hypothesised universal formula): the board's own Silero VAD row reads "segmentation · 2 MB ·
+ * bundled · verified 9e2449e1" — no "sha256" word, no trailing tiers clause (unlike the Whisper
+ * family row, which is [GroupedAssetRow]'s own, separate formula and does carry both). [AssetRow]'s
+ * only real caller today is VAD (the one single-file family — Whisper is always three files,
+ * always grouped), so this matches that row's own board text exactly rather than forcing a
+ * uniform shape the board itself does not use.
  */
 private fun assetFactsSubLine(row: ModelRowViewState, passLabel: String): String {
     val size = row.sizeBytes?.let { formatAssetSize(it) } ?: "size unknown"
     val bundledNote = if (row.bundled) "bundled" else "not bundled"
-    val checksum = row.checksumPrefix?.let { "verified sha256 $it" } ?: "checksum unknown"
+    val checksum = row.checksumPrefix?.let { "verified $it" } ?: "checksum unknown"
     val verifiedNote = if (row.status == ModelRowStatus.INSTALLED_UNVERIFIED) {
         "$checksum, not against a published value"
     } else {
         checksum
     }
-    return "$passLabel · $size · $bundledNote · $verifiedNote · ${tiersLabelFor(row)}"
+    return "$passLabel · $size · $bundledNote · $verifiedNote"
 }
 
 /** `Settings-Assets.dc.html`'s own per-asset "Pass" label — the same [Pass][org.ort.core.Tier]
@@ -911,6 +972,34 @@ private fun passLabelFor(id: ModelId): String = when (id) {
 private fun tiersLabelFor(row: ModelRowViewState): String = if (row.tierEligible) "every tier" else "this tier only"
 
 /**
+ * R-841 (round 1, tour finding): "not installed · N of 3 parts missing" told the operator they
+ * owed this an install action, which D35 makes untrue for a bundled asset — every real `ModelId`
+ * ships inside the artifact. `NOT_INSTALLED` for a bundled, non-gated row means
+ * [org.ort.app.assets.BundledAssetInstaller] has not (yet, or successfully) copied and verified it
+ * this launch, never that the operator must do something; "not in this build" is reserved for the
+ * one state [ModelRowStatus] cannot express directly — [org.ort.app.ui.data.ModelCatalogEntry.gated]
+ * true and still missing (the dev escape hatch, confirmed by reading `ModelsController.currentState`/
+ * `rowFor` before writing this: an absent `.sha256` marker alone cannot distinguish the two cases;
+ * `gated` is the one real field that can). A genuinely non-bundled row (hypothetical today —
+ * [org.ort.app.ui.data.ModelCatalogEntry.bundled] `false`, the split-delivery TODO that field's own
+ * doc comment names) keeps the plain "not installed" an operator really would need to act on.
+ */
+private fun notInstalledLeadFor(row: ModelRowViewState): String = when {
+    ModelCatalog.entry(row.id).gated -> "not in this build — needs the gated download at build time"
+    row.bundled -> "not yet verified on this launch"
+    else -> "not installed"
+}
+
+/** [AssetRow]'s/[ProseDigestModelRow]'s own full `NOT_INSTALLED` sub-line — [notInstalledLeadFor]'s
+ * lead phrase, plus the real sideload-only reason when [ModelRowViewState.checksumKnown] is false
+ * (unrelated to whether the row is bundled — a checksum-unknown asset needs sideload regardless). */
+private fun notInstalledLabel(row: ModelRowViewState): String = if (!row.checksumKnown) {
+    "not installed · sideload only, " + row.detail.orEmpty()
+} else {
+    notInstalledLeadFor(row)
+}
+
+/**
  * `Settings-Assets.dc.html` (D35, FR-AST-1): a bundled asset already ships inside the installed
  * artifact — there is nothing to download, and offering the action anyway would silently lie about
  * what a tap does. `row.checksumKnown` still gates it too (a row with no published digest can never
@@ -922,26 +1011,23 @@ internal fun offersDownload(row: ModelRowViewState): Boolean =
 
 /**
  * CF04's Gemma row (`Settings-Assets.dc.html`, D36, FR-AST-3a, FR-DIG-3b) — its own composable
- * (not [AssetRow]) because every one of its three facts reads differently from an ordinary model:
- * never an "active" tag (AC-138 — stored is not loaded, and a solid marker would imply otherwise),
- * a permanent "stored, loaded only at tier 3 while idle and charging" clause regardless of the
- * *current* tier (matching the board's own example, drawn at tier 3, still showing this line), and
- * — for the one state [ModelRowStatus] cannot itself express — an honest "not in this build" when
- * [org.ort.app.ui.data.ModelCatalogEntry.gated] is true and the row is still
- * [ModelRowStatus.NOT_INSTALLED] (the dev escape hatch, `HF_TOKEN` absent at build time, WPG's own
- * `results/e2e-audit/checklist.md` E2-H01/H03 rows), never the generic "not installed" wording a
- * genuinely-missing bundled asset would never actually produce.
+ * (not [AssetRow]) because its installed marker reads differently from an ordinary model: never an
+ * "active" tag (AC-138 — stored is not loaded, and a solid marker would imply otherwise). Its own
+ * `NOT_INSTALLED` case shares [notInstalledLabel] with every other row (the gated/bundled/plain
+ * three-way split lives there, once, not duplicated here).
  */
 @Composable
 private fun ProseDigestModelRow(row: ModelRowViewState, modifier: Modifier = Modifier) {
-    val gated = ModelCatalog.entry(row.id).gated
     val subLine = when {
-        row.status == ModelRowStatus.NOT_INSTALLED && gated ->
-            "not in this build — needs the gated download at build time"
-        row.status == ModelRowStatus.NOT_INSTALLED -> "not installed"
+        row.status == ModelRowStatus.NOT_INSTALLED -> notInstalledLabel(row)
         else -> {
+            // R-841/R-842: the board's own Gemma line reads "verified e3d981c0" — no "sha256"
+            // word (`Settings-Assets.dc.html` verbatim) — and states the tier-3-only load rule
+            // regardless of *this device's* current tier (`row.tierEligible` is never consulted
+            // here): AC-138 means "stored, loaded only at tier 3" is permanently true of this
+            // asset, not a fact that changes with the phone it happens to run on.
             val size = row.sizeBytes?.let { formatAssetSize(it) } ?: "size unknown"
-            val checksum = row.checksumPrefix?.let { "verified sha256 $it" } ?: "checksum unknown"
+            val checksum = row.checksumPrefix?.let { "verified $it" } ?: "checksum unknown"
             "$size · bundled · $checksum · stored, loaded only at tier 3 while idle and charging"
         }
     }

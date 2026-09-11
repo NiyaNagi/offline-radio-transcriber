@@ -197,10 +197,16 @@ public object SettingsPolling {
             bandPassEnabled = store.bandPassFilterEnabled,
             manualFrequencyMhz = store.manualFrequencyMhz,
             mode = mode,
-            modeLabel = mode.operatorLabel,
-            modeSubLine = modeSubLine(mode),
+            modeLabel = mode?.operatorLabel ?: NOT_SET_MODE_LABEL,
+            modeSubLine = mode?.let { modeSubLine(it) } ?: NOT_SET_MODE_SUB_LINE,
         )
     }
+
+    // R-821 (halt): the honest copy CF02/CF11 show before setup has ever chosen a mode — never
+    // [CaptureMode.LOCAL_MICROPHONE]'s own label/sub-line, which would silently claim a choice
+    // nobody made.
+    internal const val NOT_SET_MODE_LABEL: String = "Not set"
+    internal const val NOT_SET_MODE_SUB_LINE: String = "pick a mode to start capturing"
 
     /**
      * CF02/CF11's per-mode sub-line, e.g. "audio by cable · rig link over Bluetooth · a change
@@ -300,40 +306,48 @@ public object SettingsPolling {
             bands = emptyList(),
         )
 
-        is RigStatus.State.Connected -> SettingsRigViewState(
-            descriptorLabel = state.descriptor,
-            connected = true,
-            staleSinceLabel = null,
-            bands = state.bands.map { band ->
-                SettingsRigBandViewState(
-                    label = band.band,
-                    frequencyLabel = band.frequencyHz?.let { "%.3f".format(Locale.ROOT, it / 1_000_000.0) } ?: "—",
-                    statusLabel = (band.mode ?: "—") + " · " + if (band.squelchOpen) "squelch open" else "closed",
-                    squelchOpen = band.squelchOpen,
-                )
-            },
-            transportLabel = transportLabelFor(state.transportKind),
-            linkAddressLabel = linkAddressLabel(context),
-        )
+        is RigStatus.State.Connected -> {
+            val descriptor = matchedDescriptor(state.descriptorId)
+            val transportKind = state.transportKind
+            SettingsRigViewState(
+                descriptorLabel = stripManufacturerPrefix(state.descriptor),
+                connected = true,
+                staleSinceLabel = null,
+                bands = state.bands.map { it.toViewState(stale = false) },
+                transportLabel = transportLabelFor(transportKind),
+                linkAddressLabel = linkAddressLabel(context),
+                rigModuleLabel = rigModuleLabel(state.descriptorId, descriptor, transportKind),
+                otherTransportLabel = otherTransportLabel(descriptor, transportKind),
+                autoInformation = autoInformationFor(descriptor),
+                pollingClause = pollingClauseFor(descriptor),
+            )
+        }
 
-        is RigStatus.State.Stale -> SettingsRigViewState(
-            descriptorLabel = state.lastKnown.descriptor,
-            connected = false,
-            staleSinceLabel = "since ${state.sinceMillis}",
-            bands = state.lastKnown.bands.map { band ->
-                SettingsRigBandViewState(
-                    label = band.band,
-                    frequencyLabel = (
-                        band.frequencyHz?.let { "%.3f".format(Locale.ROOT, it / 1_000_000.0) } ?: "—"
-                        ) + "?",
-                    statusLabel = "stale",
-                    squelchOpen = false,
-                )
-            },
-            transportLabel = transportLabelFor(state.lastKnown.transportKind),
-            linkAddressLabel = linkAddressLabel(context),
-        )
+        is RigStatus.State.Stale -> {
+            val descriptor = matchedDescriptor(state.lastKnown.descriptorId)
+            val transportKind = state.lastKnown.transportKind
+            SettingsRigViewState(
+                descriptorLabel = stripManufacturerPrefix(state.lastKnown.descriptor),
+                connected = false,
+                staleSinceLabel = "since ${state.sinceMillis}",
+                bands = state.lastKnown.bands.map { it.toViewState(stale = true) },
+                transportLabel = transportLabelFor(transportKind),
+                linkAddressLabel = linkAddressLabel(context),
+                rigModuleLabel = rigModuleLabel(state.lastKnown.descriptorId, descriptor, transportKind),
+                otherTransportLabel = otherTransportLabel(descriptor, transportKind),
+                autoInformation = autoInformationFor(descriptor),
+                pollingClause = pollingClauseFor(descriptor),
+            )
+        }
     }
+
+    private fun RigStatus.BandState.toViewState(stale: Boolean) = SettingsRigBandViewState(
+        label = band,
+        frequencyLabel = (frequencyHz?.let { "%.3f".format(Locale.ROOT, it / 1_000_000.0) } ?: "—") +
+            (if (stale) "?" else ""),
+        statusLabel = if (stale) "stale" else (mode ?: "—") + " · " + if (squelchOpen) "squelch open" else "closed",
+        squelchOpen = if (stale) false else squelchOpen,
+    )
 
     private fun transportLabelFor(kind: RigLinkTransportKind?): String? = when (kind) {
         RigLinkTransportKind.USB_SERIAL -> "USB serial"
@@ -350,6 +364,120 @@ public object SettingsPolling {
         val productId = params[DefaultRigTransportFactory.ParamKeys.USB_PRODUCT_ID]
         if (vendorId != null && productId != null) return "vid 0x$vendorId pid 0x$productId"
         return null
+    }
+
+    /**
+     * Register R-845: [org.ort.pipeline.capture.RigStatus.State.Connected.descriptor] is
+     * `RigDescriptor.displayName` verbatim (`RigSupervisor`'s own real producer, confirmed by
+     * reading its source before writing this) — "Kenwood TH-D75A" for the one bundled, verified
+     * radio (`rig/src/main/resources/descriptors/kenwood-thd75a.json`). CF06's own title drops the
+     * leading manufacturer word(s): the general, principled rule this applies (rather than a
+     * hardcoded `"Kenwood "` string replace, which would silently stop working for any future
+     * second manufacturer) is "keep from the first space-separated word that itself contains a
+     * digit onward" — a model designator like `TH-D75A` always has one, a plain manufacturer or
+     * generic-protocol word (`Kenwood`, `Generic`, `ASCII`, `CAT`) never does. A name with no such
+     * word at all (`"Generic ASCII CAT"`, `NullRigModule.DISPLAY_NAME`) is returned unchanged —
+     * there is no manufacturer prefix to drop from a name that is not `<manufacturer> <model>`
+     * shaped in the first place.
+     */
+    internal fun stripManufacturerPrefix(displayName: String): String {
+        val words = displayName.split(' ')
+        val modelIndex = words.indexOfFirst { word -> word.any { it.isDigit() } }
+        return if (modelIndex <= 0) displayName else words.subList(modelIndex, words.size).joinToString(" ")
+    }
+
+    /** Register R-835: the bundled [org.ort.rig.descriptor.RigDescriptor] whose own `id` matches
+     * [descriptorId] — `null` for an operator-imported descriptor this build has no bundled copy
+     * of to introspect, or when nothing ever reported one. A plain `id`-keyed lookup over the two
+     * bundled resources (`org.ort.rig.descriptor.BundledDescriptors`, real, cheap — a resource
+     * read of a file already on the classpath, not I/O worth caching) rather than the full
+     * `org.ort.rig.catalogue.RigCatalogue` (which also merges in operator-imported descriptors this
+     * function has no access to without reading `SetupStore`, WPD's file, out of this package's
+     * ownership) — this only ever needs the two bundled ones' own static shape. */
+    private fun matchedDescriptor(descriptorId: String?): org.ort.rig.descriptor.RigDescriptor? = when (descriptorId) {
+        org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a().id ->
+            org.ort.rig.descriptor.BundledDescriptors
+                .kenwoodThD75a()
+        org.ort.rig.descriptor.BundledDescriptors.genericAsciiCat().id ->
+            org.ort.rig.descriptor.BundledDescriptors
+                .genericAsciiCat()
+        else -> null
+    }
+
+    private fun descriptorTransportKindOf(kind: String): RigLinkTransportKind = when (kind.lowercase()) {
+        "usb_serial" -> RigLinkTransportKind.USB_SERIAL
+        "bluetooth_spp" -> RigLinkTransportKind.BLUETOOTH_SPP
+        "ble" -> RigLinkTransportKind.BLE
+        "network" -> RigLinkTransportKind.NETWORK
+        else -> RigLinkTransportKind.NONE
+    }
+
+    /** `<descriptor id> · built in · verified command set <caps>` — [org.ort.rig.RigCapability]
+     * names real for the transport currently in use, from the matched bundled descriptor's own
+     * declared capability list — never the board mockup's raw CAT mnemonics (`FQ BY FO BC...`),
+     * which no accessible source in this build carries (see [SettingsRigViewState]'s own doc
+     * comment). [NOT_REPORTED_BY_RIG_MODULE] for an unmatched (operator-imported) descriptor. */
+    private fun rigModuleLabel(
+        descriptorId: String?,
+        descriptor: org.ort.rig.descriptor.RigDescriptor?,
+        transportKind: RigLinkTransportKind?,
+    ): String {
+        if (descriptor == null || descriptorId == null) return NOT_REPORTED_BY_RIG_MODULE
+        val transport = descriptor.transports.firstOrNull { descriptorTransportKindOf(it.kind) == transportKind }
+            ?: descriptor.transports.firstOrNull()
+        val caps = transport?.capabilities?.joinToString(", ") ?: return NOT_REPORTED_BY_RIG_MODULE
+        return "$descriptorId · built in · verified command set $caps"
+    }
+
+    /** The descriptor's *other* declared transport, named plainly — real `vid`/`pid` appended only
+     * when the descriptor itself states them (`kenwood-thd75a.json` leaves both `null`, "still to
+     * verify" — this never invents the board mockup's own `vid 0x0451 pid 0x16a8`). `null` when the
+     * descriptor is unmatched or declares only the one transport currently in use. */
+    private fun otherTransportLabel(
+        descriptor: org.ort.rig.descriptor.RigDescriptor?,
+        transportKind: RigLinkTransportKind?,
+    ): String? {
+        val other = descriptor?.transports?.firstOrNull { descriptorTransportKindOf(it.kind) != transportKind }
+            ?: return null
+        val label = transportLabelFor(descriptorTransportKindOf(other.kind)) ?: return null
+        val vidPid = if (other.usbVendorId != null && other.usbProductId != null) {
+            ", vid 0x%04x pid 0x%04x".format(Locale.ROOT, other.usbVendorId, other.usbProductId)
+        } else {
+            ""
+        }
+        return "$label also supported$vidPid"
+    }
+
+    /** `null` (the row is omitted, a structural absence — see [SettingsRigViewState.autoInformation]'s
+     * own doc comment) unless the matched descriptor declares an `unsolicited` push block. */
+    private fun autoInformationFor(
+        descriptor: org.ort.rig.descriptor.RigDescriptor?,
+    ): SettingsRigAutoInformationViewState? {
+        val unsolicited = descriptor?.unsolicited ?: return null
+        val pollClause = descriptor.poll?.let { "fallback poll every ${pollSecondsLabel(it.intervalMs)} if it stops" }
+        return SettingsRigAutoInformationViewState(
+            label = "Auto-information, ${unsolicited.enable}",
+            subLine = listOfNotNull("changes arrive without polling", pollClause).joinToString(" · "),
+        )
+    }
+
+    /** "reading both bands unpolled" when the matched descriptor declares `unsolicited` (sent on
+     * every connect per that field's own contract — real, structural, not a live-observed flag no
+     * holder in this build exposes); "polled every N s" from the descriptor's own real
+     * `poll.intervalMs` when it declares only that; [NOT_REPORTED_BY_RIG_MODULE] otherwise. */
+    private fun pollingClauseFor(descriptor: org.ort.rig.descriptor.RigDescriptor?): String {
+        val pollIntervalMs = descriptor?.poll?.intervalMs
+        return when {
+            descriptor?.unsolicited != null -> "reading both bands unpolled"
+            pollIntervalMs != null -> "polled every ${pollSecondsLabel(pollIntervalMs)}"
+            else -> NOT_REPORTED_BY_RIG_MODULE
+        }
+    }
+
+    private fun pollSecondsLabel(intervalMs: Long): String = if (intervalMs % 1000 == 0L) {
+        "${intervalMs / 1000} s"
+    } else {
+        "%.1f s".format(Locale.ROOT, intervalMs / 1000.0)
     }
 
     public fun tier(store: SettingsStore): SettingsTierViewState {

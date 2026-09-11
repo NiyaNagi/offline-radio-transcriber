@@ -700,6 +700,32 @@ class ReaderActivityDestinationSmokeTest {
     }
 
     /**
+     * R-840 (tour finding, round 3): before this, no `NavSeed` field could land `Earlier nights`
+     * on a session's own `Digest` (DG01/DG05) at all — only ever the `Session` (DG04) detail
+     * [pendingReviewSessionId] alone already reached ([R_133_settings_storage_review_link_opens
+     * _the_session...] above). `NavSeed(pendingReviewSessionId = sessionId, reviewSessionView =
+     * ReviewSessionView.DIGEST)` is the exact seed shape the tour builder should use — the real
+     * intent extras this drives are `nav_pending_review_session_id` and
+     * `nav_review_session_view=DIGEST` (`NavSeed.EXTRA_PENDING_REVIEW_SESSION_ID`/
+     * `EXTRA_REVIEW_SESSION_VIEW`).
+     *
+     * Asserts the real `Digest` header ("Back to Session", `DigestScreens.kt`'s own
+     * `DrillInHeader(parentLabel = "Session", ...)`) rather than the `Session` detail's own header
+     * ("Back to Earlier nights") — proof this landed on the *other* screen, not a false positive
+     * from `Earlier nights` composing at all.
+     */
+    @Test
+    fun `R_840_reviewSessionView_DIGEST_seed_opens_the_session_digest_not_its_detail`() {
+        runReaderActivity(
+            ReaderDestination.EARLIER_NIGHTS,
+            seed = NavSeed(pendingReviewSessionId = sessionId, reviewSessionView = ReviewSessionView.DIGEST),
+        ) { rule ->
+            rule.waitUntilContentDescriptionExists("Back to Session")
+            rule.onNodeWithContentDescription("Back to Earlier nights").assertDoesNotExist()
+        }
+    }
+
+    /**
      * Register R-350 (round 12's host wire, round 14 updated now that the pipeline half is real
      * too): `ImproveContent` gained `onOpenModels` (WP10's `94c946c`), and `OrtNavHost.kt`'s
      * `IMPROVE_RECORDS` dispatch passes it the same real `NavHostCallbacks.onOpenModels`
