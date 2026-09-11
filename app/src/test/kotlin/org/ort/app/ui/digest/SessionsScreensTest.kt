@@ -140,9 +140,10 @@ class SessionsScreensTest {
         rigLinkLabel = rigLinkLabel,
     )
 
+    // checklist row E2-G03 (DG04's session facts).
     @Test
-    @Requirement("E2-G03", "FR-CAP-13")
-    fun `E2_G03 Mode Input and Rig link render as their own fact rows`() {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 Mode Input and Rig link render as their own fact rows`() {
         val state = detailState(
             modeLabel = "Bluetooth-connected radio · audio by cable",
             inputLabel = "USB Audio Device · USB · radio audio",
@@ -162,8 +163,8 @@ class SessionsScreensTest {
     }
 
     @Test
-    @Requirement("E2-G03", "R-450")
-    fun `E2_G03 a pre-v7 session still reads R-450's honest not-tracked line`() {
+    @Requirement("FR-CAP-13", "R-450")
+    fun `FR_CAP_13 a pre-v7 session still reads R-450's honest not-tracked line`() {
         val state = detailState(
             modeLabel = SessionDetailViewState.NOT_TRACKED_LABEL,
             inputLabel = SessionDetailViewState.NOT_TRACKED_LABEL,

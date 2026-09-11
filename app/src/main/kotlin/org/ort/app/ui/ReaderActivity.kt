@@ -98,11 +98,21 @@ import org.ort.pipeline.digest.ForegroundActivityTracker
  *   `Settings-Rig`; the round-3 comment that guessed `Rig` was wrong, corrected here.
  * - `onChooseAnotherInput` still calls [org.ort.app.ui.navigation.ReaderNavigator.openSetupInput] —
  *   see that function's own doc comment for why it cannot reliably reach Setup's `Input` step.
- * - `onRetryInput`/`onEndSession`/`onRequestUsbPermission` stay documented no-op stubs: "retry the
- *   current input", "end the session" and "grant USB permission" are capture/system actions, not
- *   navigation — this package's row is everything under `ui/navigation`, and neither
- *   `:capture-android` nor `:pipeline` exposes a callable entry point for any of the three today
- *   (checked again this round; unchanged from round 3/4's own finding).
+ * - **WPF (checklist row E2-F08, F23):** `onRetryInput`/`onSwitchToWiredInput` — F23's own two
+ *   recovery actions (`Fail-Bluetooth-Audio.dc.html`) — now call the same
+ *   [org.ort.app.ui.navigation.ReaderNavigator.openSetupInput] `onChooseAnotherInput` already uses:
+ *   there is no separate "just retry the current device" or "just pick wired" primitive under
+ *   `:capture-android`/`:pipeline` today (checked again this round), and Setup's own `Input` step
+ *   is the one real surface that re-verifies a route and lets the operator choose a different,
+ *   wired device — the honest destination for both, not a fabricated shortcut. `onRetryInput` is
+ *   shared with F2's `FailDisconnectBanner` ("Retry"), which gets the identical, real behaviour for
+ *   the first time in the same change — checked directly, no F2 test regressed. WPE's own row
+ *   report named exactly these two lines as owed to this package (`FailureHostActions` is
+ *   `ui/failures`, this package's row is `ui/navigation` plus this activity's own wiring).
+ * - `onEndSession`/`onRequestUsbPermission` stay documented no-op stubs: "end the session" and
+ *   "grant USB permission" are capture/system actions, not navigation, and neither
+ *   `:capture-android` nor `:pipeline` exposes a callable entry point for either today (checked
+ *   again this round; unchanged from round 3/4's own finding).
  * - "N06 `Adjust`" (round 5 brief) has no real target to route: `LevelMeterScreen.kt`'s own text
  *   ("In the band. Nothing to adjust.", R-175) is a status sentence, not a button — grepped
  *   `CaptureStatusContent.kt`/`LevelMeterScreen.kt` for "Adjust" again this round and found nothing,
@@ -160,6 +170,12 @@ public class ReaderActivity : ComponentActivity() {
                     navigator = navigator,
                     failureActions = FailureHostActions(
                         onChooseAnotherInput = { navigator.openSetupInput() },
+                        // WPF (checklist row E2-F08, F23): both of F23's own recovery actions
+                        // route to the same real re-verify entry `onChooseAnotherInput` already
+                        // uses — see this class's own doc comment above for why there is no
+                        // separate real target for either.
+                        onRetryInput = { navigator.openSetupInput() },
+                        onSwitchToWiredInput = { navigator.openSetupInput() },
                         onOpenBatteryExemptionSettings = {
                             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                         },

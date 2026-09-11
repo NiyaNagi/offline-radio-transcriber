@@ -213,9 +213,10 @@ class SessionsContentTest {
         composeTestRule.onNodeWithText("Export").assertExists()
     }
 
+    // checklist row E2-G07 (DG05's prose block).
     @Test
-    @Requirement("E2-G07", "FR-DIG-11")
-    fun `E2_G07 Read the overs on a prose card opens the Log filtered to that card's own window`() {
+    @Requirement("FR-DIG-11")
+    fun `FR_DIG_11 Read the overs on a prose card opens the Log filtered to that card's own window`() {
         SharedPreferencesProseDigestSettingsStore(context).setEnabled(true)
         val overOneAt = 2 * 3_600_000L + 17 * 60_000L
         val overTwoAt = 2 * 3_600_000L + 41 * 60_000L

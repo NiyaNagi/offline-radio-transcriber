@@ -198,9 +198,10 @@ class LiveBarTest {
         composeTestRule.onNodeWithTag("act-bar").assert(hasContentDescription("Act", substring = true))
     }
 
+    // checklist row E2-G02 (N01b's persistent room-audio disclosure).
     @Test
-    @Requirement("E2-G02", "FR-CAP-3a")
-    fun `E2_G02 the room mark renders before the label when localMicrophone is true`() {
+    @Requirement("FR-CAP-3a")
+    fun `FR_CAP_3a the room mark renders before the label when localMicrophone is true`() {
         val state = LiveBarViewState(
             level = listOf(0.1f, 0.2f, 0.1f, 0.3f),
             partialText = "go ahead with your check-in",
@@ -219,8 +220,8 @@ class LiveBarTest {
     }
 
     @Test
-    @Requirement("E2-G02")
-    fun `E2_G02 no room mark renders when localMicrophone is false, the default`() {
+    @Requirement("FR-CAP-3a")
+    fun `FR_CAP_3a no room mark renders when localMicrophone is false, the default`() {
         val state = LiveBarViewState(
             level = listOf(0.1f),
             partialText = null,

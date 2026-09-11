@@ -220,6 +220,19 @@ private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -
                 Spacer(modifier = Modifier.width(OrtSpacing.xs))
                 Text(text = "or $alternate", style = OrtType.subLine, color = OrtColors.accentAmber)
             }
+            // E2-G04 (D01-D04, FR-CAP-13, FR-CAP-11): the `bt audio` mark, beside the attribution
+            // row — guide §6.14's badge shape, the same one the Log's own row mark uses
+            // (`text/dim` on a `line/chip` outline) — for every over from a Bluetooth-audio
+            // session, never the only copy of the fact (DG04's own session facts and the Log's
+            // row mark both say so too).
+            if (state.btAudioMark) {
+                Spacer(modifier = Modifier.width(OrtSpacing.xs))
+                Badge(
+                    text = "bt audio",
+                    kind = BadgeKind.CORRECTED,
+                    modifier = Modifier.testTag("detail-bt-audio-badge"),
+                )
+            }
         }
         if (detail.attribution.corrected) {
             Badge(text = "corrected", kind = BadgeKind.CORRECTED, modifier = Modifier.padding(top = OrtSpacing.xs))

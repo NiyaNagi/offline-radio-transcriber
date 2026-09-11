@@ -195,6 +195,12 @@ public data class DetailViewState(
      * the transcript ([org.ort.app.ui.data.CorrectionPolling.winningCharSpan]) — `null` when no
      * winning candidate has one (no candidate, or a lattice that was not text-anchored). */
     val transcriptCharSpan: IntRange? = null,
+    /** E2-G04 (D01-D04, FR-CAP-13, FR-CAP-11): `true` exactly when this over's own session was
+     * captured over Bluetooth audio (read through [SessionRouteFacts] — the same seam the Log's
+     * own `bt audio` row mark uses) — never the only copy of the fact (the session's own DG04
+     * facts and the Log's row mark both say so too). `false` (every caller before this existed)
+     * renders exactly as before. */
+    val btAudioMark: Boolean = false,
 )
 
 public object DetailViewStateMapper {
@@ -216,6 +222,8 @@ public object DetailViewStateMapper {
      * resolve, or a caller that has not looked it up yet) falls back to the honest generic phrasing
      * rather than fabricating a time.
      */
+    @Suppress("LongParameterList") // every parameter after `detail` is an additive, defaulted fact
+    // a caller opts into once it has looked one up — see each parameter's own doc comment above.
     public fun from(
         detail: TransmissionDetailViewState,
         passFailure: PassFailureViewState? = null,
@@ -236,6 +244,10 @@ public object DetailViewStateMapper {
         // (a caller that has not looked it up, or a non-UNKNOWN over that never will) keeps the
         // honest two-step shape this mapper always had, never four fabricated steps.
         unknownContext: UnknownTriedContextViewState? = null,
+        // E2-G04 (D01-D04): the session's own real Bluetooth-audio fact — defaulted to `false` so
+        // every existing call site compiles unchanged; a caller that has looked it up via
+        // `SessionRouteFacts` (`TransmissionDetailContent`) passes it through.
+        btAudioMark: Boolean = false,
     ): DetailViewState = DetailViewState(
         detail = detail,
         body = bodyFor(detail, sourceOverTimeLabel, ambiguousEvidence, unknownContext),
@@ -244,6 +256,7 @@ public object DetailViewStateMapper {
         rejected = rejected,
         transcriptConfidence = transcriptConfidence,
         transcriptCharSpan = transcriptCharSpan,
+        btAudioMark = btAudioMark,
     )
 
     private fun bodyFor(

@@ -46,9 +46,10 @@ class DigestScreensTest {
         toMillis = toMillis,
     )
 
+    // checklist row E2-G07 (DG05's prose block).
     @Test
-    @Requirement("E2-G07", "FR-DIG-6")
-    fun `E2_G07 the prose section renders a card, badged generated, with the footnote`() {
+    @Requirement("FR-DIG-6")
+    fun `FR_DIG_6 the prose section renders a card, badged generated, with the footnote`() {
         val prose = DigestProseSectionViewState(
             cards = listOf(card()),
             footnote = "Written on this phone by the bundled language model from the resolved overs only.",
@@ -73,8 +74,8 @@ class DigestScreensTest {
     }
 
     @Test
-    @Requirement("E2-G07", "FR-DIG-3a")
-    fun `E2_G07 the section is absent entirely when prose is null, never an empty header`() {
+    @Requirement("FR-DIG-3a")
+    fun `FR_DIG_3a the section is absent entirely when prose is null, never an empty header`() {
         composeTestRule.setContent {
             OrtTheme {
                 DigestScreen(state = baseState(null), onBack = {}, onOpenItem = {}, onFullLog = {})
@@ -85,8 +86,8 @@ class DigestScreensTest {
     }
 
     @Test
-    @Requirement("E2-G07")
-    fun `E2_G07 Read the overs invokes onReadOvers with the card's own over window`() {
+    @Requirement("FR-DIG-11")
+    fun `FR_DIG_11 Read the overs invokes onReadOvers with the card's own over window`() {
         val prose = DigestProseSectionViewState(
             cards = listOf(card(fromMillis = 8_220_000L, toMillis = 9_660_000L)),
             footnote = "footnote",

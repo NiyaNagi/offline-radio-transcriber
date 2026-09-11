@@ -1,6 +1,7 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -68,7 +69,7 @@ class TransmissionDetailContentTest {
         db = OrtDatabase.create(context)
     }
 
-    private fun session() = SessionEntity(
+    private fun session(captureMode: String? = null, audioRouteKind: String? = null) = SessionEntity(
         id = "S1",
         startedAt = 0L,
         endedAt = null,
@@ -78,6 +79,8 @@ class TransmissionDetailContentTest {
         terminationReason = null,
         sourceId = null,
         schemaVersion = OrtDatabase.SCHEMA_VERSION,
+        captureMode = captureMode,
+        audioRouteKind = audioRouteKind,
     )
 
     private fun transmission(id: String, stationId: String?, voiceprintId: String? = "V1") = TransmissionEntity(
@@ -113,6 +116,10 @@ class TransmissionDetailContentTest {
         waitUntil(timeoutMillis) { onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty() }
     }
 
+    private fun ComposeContentTestRule.waitUntilTagExists(tag: String, timeoutMillis: Long = 5_000) {
+        waitUntil(timeoutMillis) { onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() }
+    }
+
     private fun ComposeContentTestRule.waitUntilDescriptionExists(description: String, timeoutMillis: Long = 5_000) {
         waitUntil(timeoutMillis) {
             onAllNodes(hasContentDescription(description, substring = true)).fetchSemanticsNodes().isNotEmpty()
@@ -140,6 +147,57 @@ class TransmissionDetailContentTest {
         composeTestRule.waitUntilDescriptionExists("K7LWH")
 
         composeTestRule.onNodeWithContentDescription("K7LWH", substring = true).assertExists()
+    }
+
+    /**
+     * D01-D04 (checklist row E2-G04, FR-CAP-13): the header's own `bt audio` mark, read through
+     * the real `SessionRouteFacts` seam from the transmission's own session row — the same real
+     * read path N04/DG04/the Log's row mark all use.
+     */
+    @Test
+    fun `FR_CAP_13 the header carries the bt audio mark for a transmission from a Bluetooth-audio session`() {
+        runBlocking {
+            db.sessionDao().insert(session(captureMode = "BLUETOOTH_RADIO", audioRouteKind = "BLUETOOTH_SCO"))
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTagExists("detail-bt-audio-badge")
+
+        composeTestRule.onNodeWithTag("detail-bt-audio-badge").assertExists()
+    }
+
+    @Test
+    fun `FR_CAP_13 no bt audio mark for a transmission from a cabled session`() {
+        runBlocking {
+            db.sessionDao().insert(session(captureMode = "USB_RADIO", audioRouteKind = "USB"))
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilDescriptionExists("K7LWH")
+
+        composeTestRule.onNodeWithTag("detail-bt-audio-badge").assertDoesNotExist()
     }
 
     /**

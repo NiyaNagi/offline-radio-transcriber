@@ -279,13 +279,14 @@ class DigestPollingTest {
         }
 
     // -----------------------------------------------------------------------------------------
-    // E2-G03 (DG04, FR-CAP-13): Mode/Input/Rig-link fact rows from the session's own v7 columns —
-    // R-450's deviation is retired only for a session that actually carries the facts.
+    // Mode/Input/Rig-link fact rows from the session's own v7 columns (checklist row E2-G03,
+    // DG04, FR-CAP-13) — R-450's deviation is retired only for a session that actually carries
+    // the facts.
     // -----------------------------------------------------------------------------------------
 
     @Test
-    @Requirement("E2-G03", "FR-CAP-13")
-    fun `E2_G03 a USB-radio session names its mode, input and rig link from the v7 columns`(): Unit = runTest {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 a USB-radio session names its mode, input and rig link from the v7 columns`(): Unit = runTest {
         db.sessionDao().insert(
             session("S1", startedAt = 0L, endedAt = 3_600_000L).copy(
                 captureMode = "USB_RADIO",
@@ -306,8 +307,8 @@ class DigestPollingTest {
     }
 
     @Test
-    @Requirement("E2-G03", "FR-CAP-11")
-    fun `E2_G03 a Bluetooth-audio session names its profile on the Input row`(): Unit = runTest {
+    @Requirement("FR-CAP-11")
+    fun `FR_CAP_11 a Bluetooth-audio session names its profile on the Input row`(): Unit = runTest {
         db.sessionDao().insert(
             session("BT-1", startedAt = 0L, endedAt = 3_600_000L).copy(
                 captureMode = "BLUETOOTH_RADIO",
@@ -327,8 +328,8 @@ class DigestPollingTest {
     }
 
     @Test
-    @Requirement("E2-G03", "FR-CAP-10")
-    fun `E2_G03 a local-microphone session names room audio and no rig, never a fabricated transport`(): Unit =
+    @Requirement("FR-CAP-10")
+    fun `FR_CAP_10 a local-microphone session names room audio and no rig, never a fabricated transport`(): Unit =
         runTest {
             db.sessionDao().insert(
                 session("ROOM-1", startedAt = 0L, endedAt = 3_600_000L).copy(
@@ -346,8 +347,8 @@ class DigestPollingTest {
         }
 
     @Test
-    @Requirement("E2-G03", "R-450")
-    fun `E2_G03 a pre-v7 session with no tracked columns keeps R-450's honest not-tracked line`(): Unit = runTest {
+    @Requirement("FR-CAP-13", "R-450")
+    fun `FR_CAP_13 a pre-v7 session with no tracked columns keeps R-450's honest not-tracked line`(): Unit = runTest {
         db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
         db.transmissionDao().insert(transmission("TX1", "S1"))
 
@@ -475,14 +476,14 @@ class DigestPollingTest {
         }
 
     // -----------------------------------------------------------------------------------------
-    // E2-G07 (DG05, FR-DIG-3/6/11): the "In their words" prose section.
+    // The "In their words" prose section (checklist row E2-G07, DG05, FR-DIG-3/6/11).
     // -----------------------------------------------------------------------------------------
 
     private fun proseSettings() = SharedPreferencesProseDigestSettingsStore(context)
 
     @Test
-    @Requirement("E2-G07", "FR-DIG-6")
-    fun `E2_G07 a stored summary for this session's thread renders as a prose card`(): Unit = runTest {
+    @Requirement("FR-DIG-6")
+    fun `FR_DIG_6 a stored summary for this session's thread renders as a prose card`(): Unit = runTest {
         proseSettings().setEnabled(true)
         db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
         val overOneAt = 2 * 3_600_000L + 17 * 60_000L // 02:17 UTC
@@ -517,8 +518,8 @@ class DigestPollingTest {
     }
 
     @Test
-    @Requirement("E2-G07", "FR-DIG-3a")
-    fun `E2_G07 the prose section is absent entirely when disabled, the rest of the digest is unchanged`(): Unit =
+    @Requirement("FR-DIG-3a")
+    fun `FR_DIG_3a the prose section is absent entirely when disabled, the rest of the digest is unchanged`(): Unit =
         runTest {
             db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
             db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = "T1"))
@@ -544,8 +545,8 @@ class DigestPollingTest {
         }
 
     @Test
-    @Requirement("E2-G07", "FR-DIG-3a")
-    fun `E2_G07 the prose section is absent when enabled but nothing has been generated yet`(): Unit = runTest {
+    @Requirement("FR-DIG-3a")
+    fun `FR_DIG_3a the prose section is absent when enabled but nothing has been generated yet`(): Unit = runTest {
         proseSettings().setEnabled(true)
         db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
         db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = "T1"))
@@ -556,8 +557,8 @@ class DigestPollingTest {
     }
 
     @Test
-    @Requirement("E2-G07")
-    fun `E2_G07 a summary belonging to a different session's thread never leaks in`(): Unit = runTest {
+    @Requirement("FR-DIG-11")
+    fun `FR_DIG_11 a summary belonging to a different session's thread never leaks in`(): Unit = runTest {
         proseSettings().setEnabled(true)
         db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
         db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = null))

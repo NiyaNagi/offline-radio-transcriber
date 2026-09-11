@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.core.Attribution
 import org.ort.core.TransmissionId
+import org.ort.testing.Requirement
 
 /**
  * ui-conformance WP6, R-050/R-051/R-053/R-057: the per-state "why this callsign" and body
@@ -229,5 +230,59 @@ class DetailViewStateMapperTest {
         assertEquals(null, priors.getValue("Recent corrections").valueLabel)
         assertTrue(priors.getValue("Time of day").arguedAgainst)
         assertFalse(priors.getValue("Heard acoustically").arguedAgainst)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The `bt audio` header mark (checklist row E2-G04, D01-D04), threaded through for all four
+    // attribution states the detail header shares one `DetailViewState`/`HeaderSection` for.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 btAudioMark defaults to false so every existing call site is unaffected`() {
+        val state = DetailViewStateMapper.from(detail(Attribution.confirmed("W7NPC", 0.94)))
+        assertFalse(state.btAudioMark)
+    }
+
+    @Test
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 CONFIRMED (D01) carries the mark when the caller passes it`() {
+        val state = DetailViewStateMapper.from(detail(Attribution.confirmed("W7NPC", 0.94)), btAudioMark = true)
+        assertTrue(state.btAudioMark)
+    }
+
+    @Test
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 INFERRED (D02) carries the mark when the caller passes it`() {
+        val state = DetailViewStateMapper.from(detail(Attribution.inferred("K7LWH", 0.82)), btAudioMark = true)
+        assertTrue(state.btAudioMark)
+    }
+
+    @Test
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 AMBIGUOUS (D03) carries the mark when the caller passes it`() {
+        val inspection = InspectionViewState(
+            lattice = null,
+            candidates = listOf(
+                CandidateInspectionViewState("KE7QRS", 0, 0.51, true, true, false, emptyList()),
+                CandidateInspectionViewState("KE7QRF", 1, 0.46, true, false, false, emptyList()),
+            ),
+        )
+        val state = DetailViewStateMapper.from(detail(Attribution.ambiguous(), inspection), btAudioMark = true)
+        assertTrue(state.btAudioMark)
+    }
+
+    @Test
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 UNKNOWN (D04) carries the mark when the caller passes it`() {
+        val state = DetailViewStateMapper.from(detail(Attribution.unknown()), btAudioMark = true)
+        assertTrue(state.btAudioMark)
+    }
+
+    @Test
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 a non-Bluetooth session never carries the mark`() {
+        val state = DetailViewStateMapper.from(detail(Attribution.confirmed("W7NPC", 0.94)), btAudioMark = false)
+        assertFalse(state.btAudioMark)
     }
 }

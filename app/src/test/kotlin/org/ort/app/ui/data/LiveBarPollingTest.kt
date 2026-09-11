@@ -309,9 +309,10 @@ class LiveBarPollingTest {
         captureMode = captureMode,
     )
 
+    // checklist row E2-G02 (N01b's persistent room-audio disclosure).
     @Test
-    @Requirement("E2-G02", "FR-CAP-3a")
-    fun `E2_G02 a local-microphone session sets the room mark`() = runTest {
+    @Requirement("FR-CAP-3a")
+    fun `FR_CAP_3a a local-microphone session sets the room mark`() = runTest {
         val db = OrtDatabase.create(context)
         db.sessionDao().insert(session("ROOM-1", captureMode = "LOCAL_MICROPHONE"))
         CaptureState.capturing("ROOM-1")
@@ -322,8 +323,8 @@ class LiveBarPollingTest {
     }
 
     @Test
-    @Requirement("E2-G02")
-    fun `E2_G02 a radio session never carries the room mark`() = runTest {
+    @Requirement("FR-CAP-3a")
+    fun `FR_CAP_3a a radio session never carries the room mark`() = runTest {
         val db = OrtDatabase.create(context)
         db.sessionDao().insert(session("RADIO-1", captureMode = "USB_RADIO"))
         CaptureState.capturing("RADIO-1")
@@ -333,9 +334,10 @@ class LiveBarPollingTest {
         assertEquals(false, state.localMicrophone)
     }
 
+    // checklist row E2-G05 (F23's live-bar label).
     @Test
-    @Requirement("E2-G05", "FR-CAP-5")
-    fun `E2_G05 a Bluetooth-audio input Lost reads Input lost, not the generic Gap`() = runTest {
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 a Bluetooth-audio input Lost reads Input lost, not the generic Gap`() = runTest {
         CaptureState.capturing("s1")
         val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
         InputStatus.opened(btDevice, 16_000, "none", true, true, 0L)
@@ -348,8 +350,8 @@ class LiveBarPollingTest {
     }
 
     @Test
-    @Requirement("E2-G02")
-    fun `E2_G02 no session id never carries the room mark, never a fabricated fact`() = runTest {
+    @Requirement("FR-CAP-3a")
+    fun `FR_CAP_3a no session id never carries the room mark, never a fabricated fact`() = runTest {
         CaptureState.capturing("s1")
 
         val state = LiveBarPolling.current(context, null)

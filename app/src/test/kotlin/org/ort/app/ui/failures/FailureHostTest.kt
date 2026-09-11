@@ -41,6 +41,7 @@ import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -84,8 +85,10 @@ class FailureHostTest {
         composeTestRule.onNodeWithTag("failure-route-screen").assertIsDisplayed()
     }
 
+    // checklist row E2-G05 (F23's banner).
     @Test
-    fun `E2_G05 a Bluetooth-audio drop shows F23's banner with its real recovery actions`() {
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 a Bluetooth-audio drop shows F23's banner with its real recovery actions`() {
         CaptureState.capturing("s1")
         val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
         InputStatus.opened(btDevice, 16_000, "none", true, true, 0L)

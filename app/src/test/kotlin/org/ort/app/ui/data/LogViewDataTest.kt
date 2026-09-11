@@ -12,6 +12,7 @@ import org.ort.core.TransmissionState
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.TranscriptPass
+import org.ort.testing.Requirement
 
 /**
  * R-040/R-041/R-042/R-043/R-045 (ui-conformance WP5): [LogItemsMapper]'s pure rules — partial
@@ -233,41 +234,50 @@ class LogViewDataTest {
         assertTrue(LogItemsMapper.gapLabel(g).startsWith("not listening · ongoing"))
     }
 
-    // -- E2-G04 (F23, FR-CAP-13): the `bt audio` row/gap-row marks ----------------------------
+    // -- the `bt audio` row/gap-row marks (checklist row E2-G04) ------------------------------
 
     @Test
-    fun `E2_G04 toRowState carries the bt audio mark when told to, never by default`() {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 toRowState carries the bt audio mark when told to, never by default`() {
         val d = detail()
 
         assertTrue(LogItemsMapper.toRowState(d, isFirstHeard = false, btAudioMark = true).btAudioMark)
         assertTrue(!LogItemsMapper.toRowState(d, isFirstHeard = false).btAudioMark)
     }
 
-    @Test
-    fun `E2_G04 an ongoing Bluetooth-session INPUT_LOST gap reads and-counting, Bluetooth audio dropped`() {
-        val g = gap(startedAt = 100_000L, endedAt = null, cause = CaptureGapCause.INPUT_LOST)
+    // WPC3 (schema v9): these three now construct the real CaptureGapCause.BLUETOOTH_AUDIO_LOST
+    // directly rather than pairing a generic INPUT_LOST cause with a caller-supplied
+    // `bluetoothAudioDropped` boolean — gapLabel's own doc comment ("Round 2") records why the
+    // boolean parameter is gone: the gap's own cause is now the real, gap-level fact.
 
-        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L, bluetoothAudioDropped = true)
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 an ongoing BLUETOOTH_AUDIO_LOST gap reads and-counting, Bluetooth audio dropped`() {
+        val g = gap(startedAt = 100_000L, endedAt = null, cause = CaptureGapCause.BLUETOOTH_AUDIO_LOST)
+
+        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L)
 
         assertEquals("not listening · 1 m 40 s and counting · Bluetooth audio dropped", label)
     }
 
     @Test
-    fun `E2_G04 a closed gap is never rewritten as Bluetooth audio dropped, only an ongoing one is`() {
-        val g = gap(startedAt = 0L, endedAt = 38_000L, cause = CaptureGapCause.INPUT_LOST)
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 a closed BLUETOOTH_AUDIO_LOST gap is never rewritten, only an ongoing one is`() {
+        val g = gap(startedAt = 0L, endedAt = 38_000L, cause = CaptureGapCause.BLUETOOTH_AUDIO_LOST)
 
-        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L, bluetoothAudioDropped = true)
+        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L)
 
-        assertEquals("not listening · 38 s · input lost", label)
+        assertEquals("not listening · 38 s · Bluetooth audio lost", label)
     }
 
     @Test
-    fun `E2_G04 a non-Bluetooth session never reads Bluetooth audio dropped, even for the same cause`() {
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 an open INPUT_LOST gap never reads Bluetooth audio dropped, even mid-Bluetooth-session`() {
         val g = gap(startedAt = 100_000L, endedAt = null, cause = CaptureGapCause.INPUT_LOST)
 
-        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L, bluetoothAudioDropped = false)
+        val label = LogItemsMapper.gapLabel(g, nowMillis = 200_000L)
 
-        assertTrue(label.startsWith("not listening · ongoing"))
+        assertEquals("not listening · ongoing · input lost", label)
     }
 
     @Test
