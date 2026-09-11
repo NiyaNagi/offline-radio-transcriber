@@ -98,14 +98,33 @@ public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
     ) {
         state.rows.forEach { row -> ReadySetupRow(row) }
         Text(
-            text = "Capture works without a model — audio is kept, and every over already " +
-                "recorded is transcribed once one is installed. The two amber items are worth " +
-                "fixing before an overnight run.",
+            text = readyFooterText(state.rows),
             style = OrtType.cardBody,
             color = OrtColors.textDim,
             modifier = Modifier.padding(top = 4.dp),
         )
     }
+}
+
+/**
+ * R-812 (reviewer finding, halt): the footer used to hardcode "The two amber items are worth
+ * fixing" regardless of how many rows were actually amber — a fabricated count, wrong the moment
+ * anything but exactly two rows needed fixing (constitution I: never assert a number the state
+ * does not back). `Setup-Done.dc.html`'s own first sentence ("Every model this app can use shipped
+ * with it and was verified against its checksum on first launch — nothing was downloaded.") is
+ * unconditional; its second sentence is generated from [rows] — dropped entirely when nothing is
+ * amber, singular for exactly one, and named with the real count otherwise.
+ */
+internal fun readyFooterText(rows: List<ReadyRow>): String {
+    val firstSentence = "Every model this app can use shipped with it and was verified against " +
+        "its checksum on first launch — nothing was downloaded."
+    val amberCount = rows.count { !it.ok }
+    val secondSentence = when (amberCount) {
+        0 -> null
+        1 -> "The amber item is worth fixing before an overnight run."
+        else -> "The $amberCount amber items are worth fixing before an overnight run."
+    }
+    return listOfNotNull(firstSentence, secondSentence).joinToString(" ")
 }
 
 /**

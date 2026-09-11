@@ -141,9 +141,12 @@ public class SetupActivity : ComponentActivity() {
     private var rigLinkRunToken by mutableStateOf(0)
 
     /** WPD's own `:app`-local seam (`RigLinkPort.kt`'s doc comment has the full account) — the
-     * real link now runs over WPC3's `RigLinkBridge` (`:pipeline`, merged `8e40041`), never
-     * `:rig-bluetooth` directly (constitution VII); see [BridgeRigLinkPort]'s own doc comment. */
-    private val rigLinkPort: RigLinkPort = BridgeRigLinkPort(DefaultRigLinkBridge(this))
+     * real link runs over WPC3's `RigLinkBridge` (`:pipeline`, merged `8e40041`), never
+     * `:rig-bluetooth` directly (constitution VII); see [BridgeRigLinkPort]'s own doc comment.
+     * Set once in [onCreate], from [DebugRigLinkPortOverride.activeOverride] first — the tour
+     * cannot reach S10b's paired-device states over real Bluetooth hardware no AVD has
+     * ([DebugRigLinkPortOverride]'s own doc comment). */
+    private lateinit var rigLinkPort: RigLinkPort
 
     private val openDescriptorLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -195,6 +198,7 @@ public class SetupActivity : ComponentActivity() {
         captureConfigStore = SharedPreferencesCaptureConfigurationStore(
             getSharedPreferences(SharedPreferencesCaptureConfigurationStore.PREFS_NAME, MODE_PRIVATE),
         )
+        rigLinkPort = DebugRigLinkPortOverride.activeOverride ?: BridgeRigLinkPort(DefaultRigLinkBridge(this))
         audioIo = AndroidAudioIo(this)
         selectedInputId = store.selectedInputId
         selectedInputLabel = store.selectedInputLabel
@@ -729,11 +733,16 @@ public class SetupActivity : ComponentActivity() {
 
     @Composable
     private fun RenderInput() {
-        val presetLabel = store.captureMode?.operatorLabel?.takeUnless { store.modeOverriddenAudio }
+        val chipState = presetChipStateFor(store.captureMode, store.modeOverriddenAudio, inputRoutes)
         val presetRouteId = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRouteKind
             ?.let { kind -> inputRoutes.firstOrNull { it.routeKind == kind }?.id }
         InputScreen(
-            state = InputViewState(routes = inputRoutes, selectedId = selectedInputId, presetLabel = presetLabel),
+            state = InputViewState(
+                routes = inputRoutes,
+                selectedId = selectedInputId,
+                presetLabel = chipState.modeLabel,
+                presetUnavailableText = chipState.presetUnavailableText,
+            ),
             onSelect = {
                 if (presetRouteId != null && it != presetRouteId) store.modeOverriddenAudio = true
                 onSelectInput(it)
@@ -747,11 +756,16 @@ public class SetupActivity : ComponentActivity() {
     @Composable
     private fun RenderRadioPicker() {
         val presetLabel = store.captureMode?.operatorLabel?.takeUnless { store.modeOverriddenRig }
+        val catalogue = radioCatalogue
+        // R-815: the currently chosen/preset rig, else the catalogue's own verified entry --
+        // RadioPickerViewState's own doc comment has the full account.
+        val emphasizedEntryId = store.rigId ?: catalogue.entries().firstOrNull { it.verified }?.id
         RadioScreen(
             state = RadioPickerViewState(
-                catalogue = radioCatalogue,
+                catalogue = catalogue,
                 presetLabel = presetLabel,
                 importError = radioImportError,
+                emphasizedEntryId = emphasizedEntryId,
             ),
             onChoose = ::onChooseRig,
             onImport = ::onImportRig,

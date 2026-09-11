@@ -369,21 +369,32 @@ public fun NumberedStep(index: Int, text: String, modifier: Modifier = Modifier)
  * caller omits this composable entirely once the operator has overridden that axis's preset
  * (`Setup-Rig-Transport.dc.html`'s own note: "hidden when the operator overrode") — this
  * composable itself carries no such logic, it only draws the pill it is given.
+ *
+ * R-816 (reviewer finding, FR-CAP-9): [unavailableText], when non-null, replaces the normal "preset
+ * by <mode>" two-span text with one honest sentence instead — the case where the mode's preferred
+ * route was never actually enumerated, so there is nothing to credibly call "preset" at all
+ * (never claiming a preset that matched no route, constitution I). Exactly one of [modeLabel]/
+ * [unavailableText] is non-null at any call site; [modeLabel] is nullable only so this composable
+ * itself enforces nothing about which is supplied — the caller's own view-state does.
  */
 @Composable
-public fun PresetChip(modeLabel: String, modifier: Modifier = Modifier) {
+public fun PresetChip(modeLabel: String? = null, modifier: Modifier = Modifier, unavailableText: String? = null) {
     Row(
         modifier = modifier
             .border(1.dp, OrtColors.lineDefault, RoundedCornerShape(14.dp))
             .padding(horizontal = 11.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(text = "preset by", style = OrtType.chip, color = OrtColors.textDim)
-        Text(
-            text = modeLabel,
-            style = OrtType.chip.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
-            color = OrtColors.textHigh,
-        )
+        if (unavailableText != null) {
+            Text(text = unavailableText, style = OrtType.chip, color = OrtColors.accentAmberText)
+        } else if (modeLabel != null) {
+            Text(text = "preset by", style = OrtType.chip, color = OrtColors.textDim)
+            Text(
+                text = modeLabel,
+                style = OrtType.chip.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+                color = OrtColors.textHigh,
+            )
+        }
     }
 }
 
@@ -398,6 +409,12 @@ public fun NavigationRow(
     titleColor: Color = OrtColors.textBody,
     enabled: Boolean = true,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    /** R-815 (reviewer finding): `null` keeps the pre-existing default (`accentGreen` while
+     * [enabled], `textIconDim` while not) — every caller but S09's own emphasis logic is
+     * unaffected. A non-null value overrides that default outright, decoupled from [enabled] so a
+     * row can stay fully clickable while still rendered as visually unemphasized (S09's other
+     * catalogue rows beside the one preset/verified entry the board emphasizes). */
+    iconTint: Color? = null,
 ) {
     Row(
         modifier = modifier
@@ -412,7 +429,7 @@ public fun NavigationRow(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = if (enabled) OrtColors.accentGreen else OrtColors.textIconDim,
+                tint = iconTint ?: if (enabled) OrtColors.accentGreen else OrtColors.textIconDim,
                 modifier = Modifier.size(20.dp),
             )
         }
