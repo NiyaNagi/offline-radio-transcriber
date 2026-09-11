@@ -50,6 +50,18 @@ public interface CaptureConfigurationStore {
      * next session's own call to this method (AC-131).
      */
     public fun activateForNewSession(): CaptureConfiguration
+
+    /**
+     * R-821 follow-up (E2-A07): `true` once [update] (while not capturing) or
+     * [activateForNewSession] (promoting a pending write) has ever actually written [current],
+     * `false` for a genuinely fresh store. Exists because [current] alone cannot tell "the operator
+     * has never been through setup, so this is [CaptureConfiguration.DEFAULT]'s own fallback" from
+     * "the operator explicitly chose [org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE]" — the two
+     * read identically otherwise. WPE's Settings-Mode screen reads this directly instead of the
+     * `SharedPreferences` key `SharedPreferencesCaptureConfigurationStore` happens to store
+     * [current] under, which was a coupling that would have broken the moment that key changed.
+     */
+    public fun hasBeenConfigured(): Boolean
 }
 
 /**
@@ -69,15 +81,21 @@ public class InMemoryCaptureConfigurationStore(
     @Volatile
     private var pending: CaptureConfiguration? = null
 
+    @Volatile
+    private var configuredAtLeastOnce = false
+
     override fun current(): CaptureConfiguration = currentConfig
 
     override fun pendingConfiguration(): CaptureConfiguration? = pending
+
+    override fun hasBeenConfigured(): Boolean = configuredAtLeastOnce
 
     override fun update(configuration: CaptureConfiguration) {
         if (isCapturing()) {
             pending = configuration
         } else {
             currentConfig = configuration
+            configuredAtLeastOnce = true
             pending = null
         }
     }
@@ -85,6 +103,7 @@ public class InMemoryCaptureConfigurationStore(
     override fun activateForNewSession(): CaptureConfiguration {
         pending?.let {
             currentConfig = it
+            configuredAtLeastOnce = true
             pending = null
         }
         return currentConfig
@@ -106,6 +125,12 @@ public class SharedPreferencesCaptureConfigurationStore(
 
     override fun pendingConfiguration(): CaptureConfiguration? =
         if (prefs.getBoolean(KEY_HAS_PENDING, false)) readFrom(PREFIX_PENDING) else null
+
+    /** R-821 follow-up: [PREFIX_CURRENT]'s own mode key exists exactly when [writeTo] has ever
+     * written [PREFIX_CURRENT] — the same condition [readFrom] uses to decide whether to fall back
+     * to [CaptureConfiguration.DEFAULT] — so this reads the identical fact [current] already keys
+     * its own fallback on, rather than a second, independently-tracked flag that could drift from it. */
+    override fun hasBeenConfigured(): Boolean = prefs.contains(key(PREFIX_CURRENT, KEY_MODE))
 
     override fun update(configuration: CaptureConfiguration) {
         if (isCapturing()) {

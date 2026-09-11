@@ -27,6 +27,12 @@ public interface CaptureModeFacts {
 
     /** True exactly while a session is live — [org.ort.pipeline.capture.CaptureState.isCapturing]. */
     public fun isSessionLive(): Boolean
+
+    /** R-821 (E2-A07 follow-up): [CaptureConfigurationStore.hasBeenConfigured] — `false` only for a
+     * genuinely fresh install that has never been through setup, distinguishing that from an
+     * operator who explicitly chose [CaptureMode.LOCAL_MICROPHONE] (otherwise indistinguishable via
+     * [currentMode] alone, since both read the same value). */
+    public fun hasBeenConfigured(): Boolean
 }
 
 /** [realCaptureConfigurationStore]'s own `SharedPreferences` file, shared with `:pipeline`'s
@@ -49,6 +55,7 @@ public class RealCaptureModeFacts(private val store: CaptureConfigurationStore) 
     override fun currentMode(): CaptureMode = store.current().mode
     override fun pendingMode(): CaptureMode? = store.pendingConfiguration()?.mode
     override fun isSessionLive(): Boolean = CaptureState.isCapturing
+    override fun hasBeenConfigured(): Boolean = store.hasBeenConfigured()
 }
 
 /** The behavioural fake (constitution II) — a plain, settable [CaptureModeFacts] for tests. */
@@ -56,10 +63,12 @@ public class FakeCaptureModeFacts(
     private var mode: CaptureMode = CaptureMode.LOCAL_MICROPHONE,
     private var pending: CaptureMode? = null,
     private var sessionLive: Boolean = false,
+    private var configured: Boolean = true,
 ) : CaptureModeFacts {
     override fun currentMode(): CaptureMode = mode
     override fun pendingMode(): CaptureMode? = pending
     override fun isSessionLive(): Boolean = sessionLive
+    override fun hasBeenConfigured(): Boolean = configured
 
     public fun setMode(value: CaptureMode) {
         mode = value
@@ -71,5 +80,9 @@ public class FakeCaptureModeFacts(
 
     public fun setSessionLive(value: Boolean) {
         sessionLive = value
+    }
+
+    public fun setConfigured(value: Boolean) {
+        configured = value
     }
 }

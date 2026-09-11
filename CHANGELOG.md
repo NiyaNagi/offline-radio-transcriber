@@ -71,6 +71,97 @@ committed.
 **Left open / not done:** none for this fix; `TourStepsTest`'s own device-side rerun is the
 lead's/WPI's to confirm.
 
+## 2026-09-10 (E2-A07: session-level rig descriptor id, route-verified flag and native rate; R-821 hasBeenConfigured)
+
+### (pending) — SessionEntity v10 (rigDescriptorId, audioRouteVerified, audioNativeRateHz), RealCaptureService writes all three, SessionRouteFacts renders them, CaptureConfigurationStore.hasBeenConfigured()
+
+**Scope:** `data/src/main/kotlin/org/ort/data/{OrtDatabase,entity/SessionEntity,dao/SessionDao}.kt`
++ `data/schemas/org.ort.data.OrtDatabase/10.json` + `data/src/test/.../MigrationTest.kt` (v10);
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt` +
+`pipeline/src/test/.../RealCaptureServiceCaptureModeTest.kt`;
+`pipeline/src/main/kotlin/org/ort/pipeline/rig/CaptureConfigurationStore.kt` + its two test files
+(R-821); `app/src/main/kotlin/org/ort/app/ui/data/SessionRouteFacts.kt` (the row's own file) and, as
+an out-of-row touch reported below, `app/.../ui/digest/DigestPolling.kt` +
+`app/src/test/.../DigestPollingTest.kt`, `app/.../ui/data/SettingsViewData.kt` +
+`app/src/test/.../RealCaptureModeFactsTest.kt` (R-821's WPE mirror).
+
+**Requirements/ACs:** E2-A07, FR-CAP-13, AC-129, FR-CAP-3, R-821.
+
+**What changed:** *Constitution check.* I (every new field nullable, never fabricated — `null` means
+"not yet known", not "false"; `hasBeenConfigured()` exists precisely so "never configured" is never
+conflated with "explicitly LOCAL_MICROPHONE"). II (every new field ships a discriminating test — the
+migration, the live-session write, and the render logic each proven separately). III/VII unaffected
+(no segmenter/module-boundary change). VIII not applicable (no new screen).
+
+1. **Schema v10** (`MIGRATION_9_10`): `session.rigDescriptorId TEXT`, `.audioRouteVerified INTEGER`,
+   `.audioNativeRateHz INTEGER`, all nullable `ADD COLUMN`s — every v9 row survives untouched.
+   `SessionDao.getCaptureInfo` extended to select all three; a new `setAudioRouteVerified(id,
+   verified)` update. `MigrationTest` adds the v9→v10 case (pre-existing row survives, new columns
+   default `NULL`, the new write paths work) and extends the every-fixture walk to 1..9→v10.
+
+2. **`RealCaptureService`** writes `rigDescriptorId` (from `activeConfiguration.rigId`, the sentinel
+   `NullRigModule.ID` normalised to `null`) and `audioNativeRateHz` (`audioSource.deviceFormat
+   .sampleRate` — known synchronously once the device opens, before any frame is ever read) at the
+   session-start insert. `audioRouteVerified` is **not** known at insert time (the OS has not routed
+   anything yet — the same reasoning `InputStatus.opened(routeVerified = false)` already documents),
+   so it is written once, separately, the first time either outcome resolves: `true` from the
+   `CaptureEvent.Frames` branch that already gates `inputRouteConfirmedThisSession` (a real match —
+   `AudioRecordSource` never reaches `Frames` before its own route check passes), `false` from the
+   existing route-mismatch `CaptureEvent.Failed` branch. A new `audioRouteVerifiedWrittenThisSession`
+   flag guards against a later, unrelated `refreshInputStatusFromRoute` call (a mid-session
+   `RouteChanged`, a reconnect) overwriting the session's own *first* outcome.
+
+3. **`SessionRouteFacts`** (the WPF file this row owns) gains the three fields plus `rigLabel()`
+   ("Kenwood TH-D75A · Bluetooth SPP" when `rigDescriptorId` resolves against
+   `RigPickerCatalogue.build()`, the transport alone otherwise) and `inputRowLabel(baseLabel)`
+   ("`<baseLabel> · verified · 48 kHz · radio audio`", each clause independently omittable, never a
+   dangling separator).
+
+4. **Out-of-row touch, reported as instructed:** `DigestPolling.kt`'s existing `inputLabel`/
+   `rigLinkLabel` — whose own kdocs explicitly named this exact gap ("`:data` has no persisted
+   per-session route-verified flag or native sample rate", "a past session has no persisted
+   rig-descriptor id to fall back to") — now call `SessionRouteFacts.inputRowLabel`/`.rigLabel()` to
+   close it; every pre-existing test keeps passing unchanged (the new fields are `null` for every
+   fixture that does not set them, so the inserted clauses stay omitted). `DigestPollingTest` gains
+   three cases: a pre-v10-shaped row asserting `verified`/`kHz` are absent, a fully-populated row
+   asserting the composed rig label and Input clauses, and an explicit `audioRouteVerified = false`
+   case.
+
+5. **R-821**: `CaptureConfigurationStore.hasBeenConfigured()` (`true` once `update`/
+   `activateForNewSession` has ever actually written `current`) on both implementations —
+   `SharedPreferencesCaptureConfigurationStore` reads the same `PREFIX_CURRENT` mode key `current()`
+   already keys its own `DEFAULT` fallback on (no second, driftable flag), `InMemoryCaptureConfigurationStore`
+   tracks a plain written-once flag. `CaptureModeFacts`/`RealCaptureModeFacts`/`FakeCaptureModeFacts`
+   (`SettingsViewData.kt`, touched for this row per the coordinator's explicit permission) pass it
+   through. **No raw `SharedPreferences` key read was found in this checkout's `SettingsViewData.kt`
+   to delete** — `RealCaptureModeFacts` read only `store.current().mode` before this change; the
+   coordinator's description may refer to a not-yet-merged WPE change. The `hasBeenConfigured()`
+   capability itself is now in place either way, so WPE's mirror (whichever form it takes) can be
+   deleted in favour of it.
+
+**Verified:** `./gradlew -PortAllowMissingBundledAssets=true :data:testDebugUnitTest` green (incl.
+`migration_from_v9_to_v10_...` and the every-fixture 1..9→v10 walk); `:pipeline:testDebugUnitTest`
+green (incl. both extended `AC_129_*` cases and the six new `CaptureConfigurationStore`/
+`SharedPreferencesCaptureConfigurationStore` `R_821_*` cases); `:app:testDebugUnitTest --tests
+"org.ort.app.ui.digest.DigestPollingTest"` green (39/39, all pre-existing cases unchanged plus the
+three new E2-A07 cases); `:app:testDebugUnitTest --tests
+"org.ort.app.ui.data.RealCaptureModeFactsTest"` green (3/3); full gate — `./gradlew
+-PortAllowMissingBundledAssets=true build dependencyRules platformGuards`, `-p buildSrc test`,
+`python tools/spec-check/spec_check.py`, `coverageMatrix`, `coverageMatrixCheck` — pasted in the
+report for both this round and the heartbeat fix above, run together against the combined working
+tree.
+
+**Left open / not done:** `RealCaptureService`'s `audioRouteVerified` write only fires from the
+`Frames`/mismatch-`Failed` branches — a route confirmed only via a mid-session `RouteChanged` before
+any frame ever arrived (a real but unlikely ordering) would leave it `null` rather than `true`;
+noted, not fixed, to keep this round's diff to what the row asked for. WPI scenario seeding: **the
+lead asked which scenarios should carry the new columns rather than have this package touch
+`Scenarios.kt`** — `mode-usb`/`mode-bluetooth` (rigDescriptorId `"kenwood-thd75a"`,
+audioRouteVerified `true`, audioNativeRateHz e.g. `48000`) and `mode-local-mic`
+(rigDescriptorId `null`, audioRouteVerified `true`, audioNativeRateHz the mic's own native rate) are
+the natural carriers; `setup-rig-transport`/`setup-rig-bluetooth` do not seed a session row at all so
+need no change.
+
 ---
 
 ## 2026-09-10 (WPD follow-up: the tour-injection seam for S10b, and reviewer findings R-812..R-816)

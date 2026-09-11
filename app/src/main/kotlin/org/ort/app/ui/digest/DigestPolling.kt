@@ -204,11 +204,19 @@ public object DigestPolling {
      * `audioRouteKind` — checked before writing this), and constitution I forbids inventing either
      * (reported, not silently dropped — see this package's report). */
     private fun inputLabel(routeFacts: SessionRouteFacts): String {
-        val mode = routeFacts.captureMode ?: return SessionDetailViewState.NOT_TRACKED_LABEL
+        routeFacts.captureMode ?: return SessionDetailViewState.NOT_TRACKED_LABEL
         val typeLabel = typeClauseOrNull(routeFacts)
-        val roomOrRadio = if (mode == org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE) "room audio" else "radio audio"
         val profileLabel = routeFacts.bluetoothProfile?.let { bluetoothProfileLabel(it) }
-        return listOfNotNull(routeFacts.audioRouteLabel, typeLabel, roomOrRadio, profileLabel).joinToString(" · ")
+        // E2-A07 (out-of-row touch, reported to the lead): SessionRouteFacts now carries
+        // audioRouteVerified/audioNativeRateHz (schema v10) -- the gap this function's own kdoc
+        // above named as "not added ... :data has no persisted per-session route-verified flag or
+        // native sample rate" is closed. inputRowLabel("") composes exactly "verified · 48 kHz ·
+        // radio audio" (each clause independently omittable) so the wording/ordering for those
+        // three lives in one place; typeLabel and the Bluetooth profile stay this function's own
+        // R-825/R-834 concerns, appended around it.
+        val verifiedRateAndRoom = routeFacts.inputRowLabel("")
+        return listOfNotNull(routeFacts.audioRouteLabel, typeLabel, verifiedRateAndRoom.ifBlank { null }, profileLabel)
+            .joinToString(" · ")
     }
 
     /** R-825/R-834: the generic route-kind word, dropped when [SessionRouteFacts.audioRouteLabel]
@@ -257,8 +265,15 @@ public object DigestPolling {
             RigTransportKind.USB_SERIAL -> "USB serial"
             RigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
         }
-        val rigName = if (live) liveRigNameFor(transport) else null
-        return listOfNotNull(rigName, transportLabel).joinToString(" · ")
+        if (live) {
+            val rigName = liveRigNameFor(transport)
+            return listOfNotNull(rigName, transportLabel).joinToString(" · ")
+        }
+        // E2-A07 (out-of-row touch, reported to the lead): SessionEntity.rigDescriptorId (schema
+        // v10) closes the gap this function's own kdoc named -- "a past session has no persisted
+        // rig-descriptor id to fall back to". SessionRouteFacts.rigLabel() resolves it against the
+        // same catalogue S09/S09b use, falling back to the transport alone when it does not.
+        return routeFacts.rigLabel() ?: transportLabel
     }
 
     /** R-833: the rig's own real name for the *live* transport this session's own row recorded —

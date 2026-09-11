@@ -589,17 +589,78 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v8 — walks forward through
-     * the *entire* migration chain to v9 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v8,
+     * E2-A07: v9 → v10 adds `session.rigDescriptorId`, `.audioRouteVerified` and
+     * `.audioNativeRateHz`. Proves both halves of FR-AST-5/6: a pre-existing `session` row
+     * survives untouched with all three new columns `NULL`, and the new write paths
+     * ([OrtDatabase.sessionDao]'s insert and [org.ort.data.dao.SessionDao.setAudioRouteVerified])
+     * are immediately usable afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
+    public fun migration_from_v9_to_v10_preserves_existing_rows_and_adds_the_session_route_facts_columns() {
+        val dbName = "migration-test-db-v10-session-route-facts"
+        val v9 = helper.createDatabase(dbName, 9)
+        v9.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, captureMode, " +
+                "audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 9, 0, 0, 'USB_RADIO', 'USB', " +
+                "'USB Audio Adapter', NULL, 'USB_SERIAL')",
+        )
+        v9.close()
+
+        helper.runMigrationsAndValidate(dbName, 10, true, OrtDatabase.MIGRATION_9_10)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val migrated = runBlocking { db.sessionDao().getById("S1") }
+            assertEquals("test", migrated!!.appVersion) // pre-existing row survives
+            assertEquals(null, migrated.rigDescriptorId) // new columns default to NULL
+            assertEquals(null, migrated.audioRouteVerified)
+            assertEquals(null, migrated.audioNativeRateHz)
+
+            runBlocking {
+                db.sessionDao().insert(
+                    org.ort.data.entity.SessionEntity(
+                        id = "S2",
+                        startedAt = 0L,
+                        endedAt = null,
+                        profileId = null,
+                        deviceTier = null,
+                        appVersion = "test",
+                        terminationReason = null,
+                        sourceId = null,
+                        schemaVersion = 10,
+                        rigDescriptorId = "kenwood-thd75a",
+                        audioRouteVerified = false,
+                        audioNativeRateHz = 48_000,
+                    ),
+                )
+                db.sessionDao().setAudioRouteVerified("S2", true)
+            }
+            val info = runBlocking { db.sessionDao().getCaptureInfo("S2") }
+            assertEquals("kenwood-thd75a", info!!.rigDescriptorId) // new write/read path usable post-migration
+            assertEquals(true, info.audioRouteVerified) // setAudioRouteVerified overwrites the insert-time value
+            assertEquals(48_000, info.audioNativeRateHz)
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v9 — walks forward through
+     * the *entire* migration chain to v10 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v9,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v8_migrates_forward_to_v9_preserving_its_session_row() {
-        for (fixtureVersion in 1..8) {
+    public fun every_prior_fixture_from_v1_to_v9_migrates_forward_to_v10_preserving_its_session_row() {
+        for (fixtureVersion in 1..9) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -619,7 +680,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v9",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v10",
                     "test",
                     migrated!!.appVersion,
                 )
@@ -627,6 +688,11 @@ public class MigrationTest {
                     "fixture v$fixtureVersion: the v7 column must default to NULL, never a fabricated value",
                     null,
                     migrated.captureMode,
+                )
+                assertEquals(
+                    "fixture v$fixtureVersion: the v10 rigDescriptorId column must default to NULL",
+                    null,
+                    migrated.rigDescriptorId,
                 )
                 // The v8 table exists and is queryable from every fixture version, empty rather
                 // than absent — a missing table would throw here, not read as null.

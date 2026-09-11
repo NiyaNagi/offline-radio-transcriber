@@ -78,6 +78,9 @@ public class RealCaptureServiceCaptureModeTest {
         )
         val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
         fakeIo.forceRoutedDevice(device)
+        // E2-A07: at least one real frame so the route verifier's own outcome actually resolves
+        // (AudioRecordSource never verifies before its first real read -- see that class's kdoc).
+        repeat(5) { fakeIo.enqueueFrames(ShortArray(1_600) { 6_000 }) }
         val config = CaptureConfiguration(
             mode = CaptureMode.BLUETOOTH_RADIO,
             selectedInputId = device.id,
@@ -97,6 +100,12 @@ public class RealCaptureServiceCaptureModeTest {
             assertEquals("Fake Bluetooth headset", row.audioRouteLabel)
             assertEquals(BluetoothAudioProfile.HFP_MSBC.name, row.bluetoothProfile)
             assertNull("no rig transport was configured", row.rigTransport)
+            // E2-A07.
+            assertNull("no rig was configured", row.rigDescriptorId)
+            assertEquals("known synchronously once the device opened", 16_000, row.audioNativeRateHz)
+            waitUntil(10_000) {
+                runBlocking { db.sessionDao().getCaptureInfo(sessionId) }?.audioRouteVerified == true
+            }
         } finally {
             controller.destroy()
         }
@@ -107,7 +116,7 @@ public class RealCaptureServiceCaptureModeTest {
     public fun `AC_129 a USB session with a rig transport records it, and a mic session records none`() {
         val db = OrtDatabase.create(context, inMemory = true)
         val device = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "Fake USB adapter")
-        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        val fakeIo = FakeAudioIo(deviceSampleRate = 44_100, devices = listOf(device))
         fakeIo.forceRoutedDevice(device)
         val config = CaptureConfiguration(
             mode = CaptureMode.USB_RADIO,
@@ -128,6 +137,14 @@ public class RealCaptureServiceCaptureModeTest {
             assertEquals("Fake USB adapter", row.audioRouteLabel)
             assertNull("a non-Bluetooth route carries no profile", row.bluetoothProfile)
             assertEquals(RigTransportKind.USB_SERIAL.name, row.rigTransport)
+            // E2-A07.
+            assertEquals("kenwood-thd75a", row.rigDescriptorId)
+            assertEquals(
+                "the device's own native rate, not the model's 16kHz output rate",
+                44_100,
+                row.audioNativeRateHz,
+            )
+            assertNull("no frame has been read yet -- the route verifier has not resolved", row.audioRouteVerified)
         } finally {
             controller.destroy()
         }
