@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (register R-885: every Migration now overrides migrate(SQLiteConnection), the path a real device actually opens through)
 
-### (pending) — R-883: the failure banner overlay now leaves real daylight below itself and shows a scroll hint while its message is cut off
+### `77013ab8` — R-883: the failure banner overlay now leaves real daylight below itself and shows a scroll hint while its message is cut off
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt`,
 `app/src/test/kotlin/org/ort/app/ui/failures/FailureHostTest.kt`, `results/ui-audit/register.md`.
