@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (WPI run 4b: live-session screenshot tour, R-910/R-911's mode-usb/mode-bluetooth timeout diagnosed as environmental, R-944 level envelope, R-973 generalised settle)
 
-### <pending> — run 4b: full tour green (204/204), R-910/R-911 timeout root-caused to host/emulator resource starvation not a product defect, R-944 speech-shaped level envelope, R-973 generalises R-971's settle into a stable-snapshot rule
+### 3dc6f99b — run 4b: full tour green (204/204), R-910/R-911 timeout root-caused to host/emulator resource starvation not a product defect, R-944 speech-shaped level envelope, R-973 generalises R-971's settle into a stable-snapshot rule
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios.kt,tour/ScreenshotTourActivity.kt,tour/TourAccessibilityScroll.kt}`,
 `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `results/ui-audit/**` (204-entry manifest
