@@ -163,6 +163,76 @@ attempt verifies, so a `lastRejection` this code is ever handed was necessarily 
 of it).
 
 ---
+## 2026-09-11 (WPI: tour run 4a on WPD/WPE rounds 4-5 — 202 of 203 ok; R-910/R-911's live-bar settle needed 20s, not 5s, on a real device)
+
+### e600ff08 — run 4a: setup-*, setup-radio, rig-bt-connected S11/CF06, mode-*/S04, mode-bluetooth/CF02, mode-change-pending/CF11, overnight CF02/CF05, mode-local-mic/CF01, assets-bundled, asset-corrupt, tier0-llm-stored, model-missing/CF04, llm-enabled-prose/DG05, llm-disabled/DG01 — 202/203 ok, one genuine settle timeout
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt`,
+`results/ui-audit/tour-manifest.json` and every PNG this round's requested step list touched,
+`results/ui-audit/setup-verified-local-mic/`, `results/ui-audit/setup-rig-transport-preset/`
+(new).
+
+**Requirements/ACs:** R-910, R-911 (settle-timing fix), no new product requirement — this round
+is a tour run plus one settle-infrastructure fix the run itself surfaced.
+
+**What changed:** *Constitution check.* I/VIII (the settle-wait's own job is proving a capture is
+real, not merely timely — widening its bound is honest once the *cause* of every observed timeout
+is understood, never a way to make failures quietly disappear; the one step that still fails after
+widening is reported as a real `error`, not hidden or retried away).
+
+1. Merged `main` through `729c689e` (WPD rounds 4-5 and WPE round 4: S04/S09b pre-selection, S11
+   subtitle/marker, S12 Models state, CF01/CF02/CF04/CF05/CF06/CF11 fixes, the Digest single
+   header) — fast-forward, no conflicts. Full gate green before running anything.
+2. Ran the tour (`tour.ps1 -Only`, on-device manifest deleted before each invocation — using
+   `tour.ps1`'s own single-combined-string-argument form for the `run-as ... sh -c 'rm -f ...'`
+   command; four separate PowerShell tokens after `shell` reproduces the exact "the file never
+   actually gets deleted" defect this file's own `.DESCRIPTION` already documents for a similar
+   payload, confirmed by hitting it directly) for every step group the coordinator named:
+   `setup-*` (38, covers every `setup-*` scenario including the two new E2-J04 bases and all four
+   `setup-rig-bluetooth*`), `rig-bt-connected/*` (2), `mode-*/S04*` (3), `mode-bluetooth/CF02*` (1,
+   the one genuine failure — see below), `mode-change-pending/CF11*` (1), `overnight/CF0[25]*` (2),
+   `mode-local-mic/CF01*` (1), `assets-bundled/*` (3), `asset-corrupt/*` (1), `tier0-llm-stored/*`
+   (1), `model-missing/CF04*` (3), `llm-enabled-prose/DG05*` (2), `llm-disabled/DG01*` (1) — 59
+   steps total, merged into the existing 198-entry manifest (198 + 6 new ids from this and the
+   prior round − 1 not yet run, `bt-audio-dropped/F23-now@2x-end`, deferred with the rest of the
+   live-session screens to run 4b = 203).
+3. **R-910/R-911's own settle-wait needed 20s, not 5s, on a real device — found by this run, fixed
+   in the same round.** The first pass showed `rig-bt-connected/CF06-settings-rig` and
+   `mode-bluetooth/CF02-settings-capture` both timing out waiting for the live bar
+   (`liveBar=null` after 5000ms) despite the destination/drawer state settling correctly and
+   quickly. Bisected directly on-device (not assumed): a non-Settings live destination
+   (`mode-usb/N04-capture-status`) showed the identical timeout at 5s and succeeded at 20s,
+   ruling out a Settings-specific or scenario-specific cause — the live bar's own first
+   `rememberDrawerLiveState` poll tick does several real, cold suspend reads (a directory listing,
+   two DB queries, a `RigStatus` read) before it ever reaches the live-bar computation, a real cost
+   this class's own Robolectric-based JVM tests (synchronous, no real device scheduling) could
+   never surface. `STATE_WAIT_TIMEOUT_MILLIS` raised from `5_000L` to `20_000L`, documented with
+   the exact bisection. `rig-bt-connected/CF06` and `mode-usb/N04` (diagnostic only, not part of
+   this round's official step list) both then passed on retest.
+4. **One genuine, reproducible failure remains**: `mode-bluetooth/CF02-settings-capture` still
+   times out waiting for the live bar even at 20s (confirmed twice, not a flake) — `mode-usb`,
+   `rig-bt-connected` and `mode-change-pending` (all also live, capturing sessions) all pass;
+   only `mode-bluetooth` (the one scenario whose *current* audio route is genuinely Bluetooth
+   audio, `AudioRouteKind.BLUETOOTH_SCO`/`BluetoothAudioProfile.HFP_MSBC`) fails. The scenario's
+   own `sessionId`/`CaptureState.sessionId` match was re-verified by reading `modeBluetooth`'s own
+   function body line by line; no code-level cause was found before this round's own time budget
+   closed. Recorded as one honest `error` line in the manifest — not silently retried past, not
+   worked around with a fabricated capture. Left for the coordinator/WPF to route.
+
+**Verified:** `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+— green, both before this round's merge (confirming the merge target) and after the
+`STATE_WAIT_TIMEOUT_MILLIS` change (a debug-only constant, `app/src/debug` scope). Tour run: 202 of
+203 steps `ok`, 1 `error` (documented above), one `note` (`setup-rig-bluetooth/S10b-rig-bluetooth@2x-end`:
+`"no scroll — fits"`, the honest R-460 path — this screen fits at 2x even scrolled to its end).
+
+**Left open / not done:** `mode-bluetooth/CF02-settings-capture`'s own settle timeout — a real,
+reproducible defect (Bluetooth-audio-route-specific, not fixed this round, root cause not yet
+found). Live-session screens (`mode-*` N01b/N04/DG04/L01/T01/ST01, `bt-audio-*`, `rig-bt-lost`,
+`rig-reconnected`, `overnight`/`overnight-live`/`gap-call` DG04, `llm-enabled-prose/DG05` again)
+deferred to run 4b per the coordinator's own instruction, pending WPF's live-bar round. Two
+diagnostic-only captures (`mode-usb/N04-capture-status`, a bare retest of
+`rig-bt-connected/CF06-settings-rig`) were taken to bisect the timeout and are not part of this
+commit — 4b's own official run covers those steps for real.
 
 ## 2026-09-11 (WPD follow-up: S09b pre-selects the mode preset transport, the same rule R-902 applies to S04, E2-E09)
 
@@ -30479,6 +30549,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

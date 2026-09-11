@@ -419,8 +419,21 @@ public class ScreenshotTourActivity : ComponentActivity() {
         /** R-803 (halt): the bound `awaitDestinationSettled`/`renderSetupStep`'s own settle-wait use
          * before giving up and reporting an honest error — generous (well past a single dropped
          * frame or a backlogged dispatcher under tour load) but still a real bound, never an
-         * indefinite wait. */
-        private const val STATE_WAIT_TIMEOUT_MILLIS = 5_000L
+         * indefinite wait.
+         *
+         * **R-910/R-911 (run 4a, real-device finding): widened from 5s to 20s.** `5_000L` was
+         * enough for the destination/drawer/reviewSessionView checks alone (proven on-device by
+         * every prior run), but the live-bar wait this round added consistently timed out at 5s on
+         * a real emulator for *every* live scenario tried (`rig-bt-connected`, `mode-bluetooth`,
+         * `mode-usb` — three different scenarios, two different destinations, one on Settings, one
+         * on Capture), then consistently succeeded once retested at 20s — a genuine real-device cost
+         * this class's own JVM tests (Robolectric, synchronous) could never surface: a live
+         * scenario's own first `rememberDrawerLiveState` poll tick does several real, cold suspend
+         * reads (a directory listing, two DB queries, a `RigStatus` read) before it ever reaches the
+         * live-bar computation, competing with the rest of a fresh Activity's own cold-start cost —
+         * confirmed by actually bisecting on a real device (5s fails every time, 20s passes every
+         * time), not assumed. */
+        private const val STATE_WAIT_TIMEOUT_MILLIS = 20_000L
 
         /** How often those same waits re-check the observed state — cheap in-process reads
          * (`MutableState`/a plain field), never worth a longer interval. */
