@@ -109,6 +109,164 @@ package landed in this round.
 
 ---
 
+## 2026-09-11 (WPI: mode-change-pending's live holders, tier0-llm-stored's real installer, install.ps1's escape hatch; R-862 reported, not fixed)
+
+### adedd40c — R-860/R-861 mode-change-pending opens InputStatus/RigStatus; R-865 tier0-llm-stored installs its four non-gated entries for real; R-868 install.ps1 passes -PortAllowMissingBundledAssets through
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,ScenarioFixtures}.kt`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/install.ps1`,
+`results/ui-audit/README.md`. Merged `main` first (`9eede972`, the WPI round-4 register/checklist
+entry recording run 3 pending — landed clean, no conflicts).
+
+**Requirements/ACs:** R-860, R-861, R-862 (reported, not fixed — see below), R-865, R-868,
+FR-CAP-12, FR-AST-3, FR-AST-3b, AC-137.
+
+**What changed:** *Constitution check.* I (every fixture honest about what it actually installed —
+`tier0-llm-stored`'s own four non-gated entries no longer read `INSTALLED` off a fabricated
+placeholder marker when the real installer could, and did, install them for real). II (a
+discriminating test for each fix — `R_860`'s own assertion would fail against the pre-fix scenario,
+since `InputStatus`/`RigStatus` default to their idle/absent states; `R_865`'s own `sizeBytes != 64L`
+check would fail against the pre-fix fixture, whose every entry was exactly 64 bytes).
+
+1. **R-860/R-861** — `mode-change-pending` is a live USB session exactly like `mode-usb`'s own, but
+   never opened the process-wide `InputStatus`/`RigStatus` holders CF02/CF11 actually read (only the
+   `:data` session row and `CaptureConfigurationStore` entries were written) — the *current* session
+   rendered as if nothing were open, only the *pending* Bluetooth change showing anything real. Now
+   opens both, identically to `mode-usb`'s own shape, positioned after `markCapturing` (so the
+   `CaptureConfigurationStore` freeze rule still lands the second, pending update correctly) and
+   before the pending-Bluetooth `configStore.update`.
+
+2. **R-865** — `tier0-llm-stored` previously ran every entry (including the four non-gated ones)
+   through `ScenarioFixtures.installEveryModelFixture`'s own fabricated placeholder-plus-real-checksum
+   marker, the exact R-841/843 defect class already fixed for `assets-bundled`/`asset-corrupt` but
+   never carried over to this scenario — S12's Models row and CF04's own count could never disagree
+   with what the *real* installer did, because the real installer never ran for any of the four.
+   `installEveryModelFixture`'s single-entry body is split out as
+   `ScenarioFixtures.installModelFixture(context, id)`; `tier0LlmStored` now calls
+   `installRealBundledAssets(context)` (the same real `AndroidBundledAssetSource` path
+   `assets-bundled` uses) for the four non-gated entries, then `installModelFixture` for exactly
+   `ModelId.LLM_GEMMA3_1B` alone — the one entry this build's own escape hatch (no `HF_TOKEN`)
+   genuinely cannot install for real, so the placeholder is the honest ceiling for that one row, not
+   a shortcut around a fixable gap.
+
+3. **R-868** — `install.ps1` gained a `-PortAllowMissingBundledAssets` switch (defaults **on**,
+   pass `-PortAllowMissingBundledAssets:$false` to require the real gated asset), passed through to
+   `gradlew :app:assembleDebug` as `-PortAllowMissingBundledAssets=true`/`=false` — this script is a
+   local validator tool, never CI's own build (CI does not invoke it), so the escape hatch every
+   other Gradle invocation in this package's own gate already uses now applies here too, without a
+   validator needing to remember the separate `ORT_ALLOW_MISSING_BUNDLED_ASSETS` env-var workaround.
+
+4. **R-862 (investigated, reported to the coordinator, not fixed here — outside this package's
+   `app/src/debug` ownership)**: `ReadyScreen.modelsRow`'s own all-or-nothing gate
+   (`rows.isNotEmpty() && rows.all { it.bundled && it.status == INSTALLED }`) requires *every*
+   `ModelId` — the gated `LLM_GEMMA3_1B` included — to read `INSTALLED` before S12's Models row ever
+   shows the green "ready" state; `ModelsController.currentState` builds `rows` from
+   `ModelId.entries` unconditionally, with no row status distinct from `NOT_INSTALLED` for "genuinely
+   not offered in this build" (`ModelsViewData.kt` line ~679). A no-`HF_TOKEN` build's
+   `assets-bundled`/`asset-corrupt` (real installer, four non-gated entries genuinely installed,
+   Gemma honestly absent) can therefore never satisfy the gate — S12 reads "No transcription model
+   yet" regardless. `tier0-llm-stored` never exposed this because its own placeholder (before this
+   round's own R-865 fix, still true after it — Gemma's placeholder marker is unchanged) makes all
+   five rows read `INSTALLED`, masking the gate's own blind spot rather than exercising it. Full
+   diagnosis in `results/ui-audit/README.md`'s new "R-862 (open, reported to the coordinator, not
+   fixed here)" section.
+
+**Verified:** `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` —
+green (`BUILD SUCCESSFUL in 10m 36s`, 1107 actionable tasks, `dependencyRules: OK`, `platformGuards:
+OK`). `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — 8/8 PASS.
+`./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (two separate invocations — see the
+prior entry's own note on why) — 450 requirements, 240 covered, no orphan-id warning,
+`coverageMatrixCheck: up to date`. `./gradlew :app:testDebugUnitTest --tests
+"org.ort.app.debug.WpiScenariosTest"` — 34/34 green, including the two new cases this round added
+(`R_860_mode-change-pending opens the live InputStatus and RigStatus holders for its USB session`,
+`R_865_tier0-llm-stored installs its four non-gated entries through the real installer`).
+
+**Left open / not done:** R-862 itself — a real `ReadyScreen.kt`/`ModelsViewData.kt` production-code
+gap, reported above and in the README for the coordinator to route to WPD, not fixed in this package.
+`install.ps1`'s R-868 change has no JVM test (it is a PowerShell script outside the Gradle/Robolectric
+test surface this package's tests exercise) — verified instead by reading the resulting script and
+by every prior `install.ps1` invocation this session already made succeeding with the flag passed
+through.
+## 2026-09-11 (WPF: R-863 — TextAction never shrinks below its own text's intrinsic width)
+
+### (pending) — status modes: TextAction (Controls.kt) fixed once so a trailing action never wraps to one word per line when a leading sibling squeezes it — CF04, DG05 and (already fixed locally) S10b all covered by the one change
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Controls.kt`, matching test files
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/digest/DigestScreensTest.kt`. `results/ui-audit/register.md`
+row R-863 updated in place. Branch only — not merged to `main`.
+
+**Requirements/ACs:** none new (a rendering-defect fix, register row R-863; guide §5's own "44dp
+target, real affordance" rule is what it restores).
+
+**What changed:**
+
+*Constitution Check.* II (Test-Backed Change) is the whole story here: `Modifier.width
+(IntrinsicSize.Max)` was the first thing tried, following the coordinator's own suggested
+technique — both new tests (`ModelsScreenTest`/`DigestScreensTest`) were written and run against
+it *before* it was declared done, and both **failed** (measured `0` wide, not merely "still
+wrapped") on the real CF04/DG05 sites, while the pre-existing `RigBluetoothScreenTest.R_805` case
+kept passing throughout (that site pairs `TextAction` with a `weight(1f)`-ed sibling, which masked
+the same underlying problem). This is exactly the discipline constitution II names: a fix is not
+reported done because it matches the suggested technique or reads as though it should work; it is
+done once its own test is seen to pass, and here that meant discovering the first technique does
+not actually hold and revising it before landing anything. VIII (Visual Conformance) — the register
+row itself records both the failed attempt and why, not just the final fix, so the next reader does
+not re-try the same dead end.
+
+1. **The failed attempt, kept in the doc comment as a record.** `Modifier.width(IntrinsicSize.Max)`
+   on `TextAction`'s own `Box`, placed before the caller's modifier is folded in — CF04's "Install
+   from a file" (the Whisper family's still-missing-part row, its own long leading label "Whisper
+   tiny.en — encoder") and DG05's "Read the overs" (its own leading "from overs HH:MM – HH:MM"
+   label) both reproduced `0 x 471`/`0 x 607` — a *worse* failure than the original bug (zero
+   width, not just excessive height), while S10b's own `Refresh` (paired with a `weight(1f)`
+   leading sibling) stayed correctly wide. Reverted once the new tests proved it wrong, not kept as
+   a partial fix.
+2. **The real fix:** `Modifier.wrapContentWidth(align = Alignment.Start, unbounded = true)` in its
+   place — the identical technique `ActivityPatternChart`'s own hour-axis labels already use in
+   this codebase for an equivalent "a tight column forces this label to wrap" defect (confirmed by
+   reading that file before reusing its pattern, not guessed). Measuring this action's own content
+   against an unbounded width means it always lays out on one line at its real text width,
+   regardless of what the incoming `Row` constraint offers; a `Row` with no other flexible child
+   then has nowhere to put the leading content but to let it wrap, matching S10b's own manual
+   `weight(1f)`-on-the-sibling fix without requiring every call site to remember it. Placed before
+   the caller's own modifier in the chain, so S10b's own leading `Refresh`-sibling `weight(1f)` call
+   still works unchanged (`weight` is read by the parent `Row` from outside and hands this node a
+   fixed constraint the new modifier cannot exceed either way).
+3. **Tests**, both `@GraphicsMode(NATIVE)` at font scale 2.0 (this package's own established
+   discipline — the default graphics mode does not reliably reproduce real glyph-wrap
+   measurement) and both driving the real production path, not a hand-built row list standing in
+   for it: `ModelsScreenTest.R_863_*` uses `ModelsController.currentState` on a genuinely clean
+   Robolectric context (the same one `R_443_clean_install_groups` already proves reaches this exact
+   nested Whisper-family row); `DigestScreensTest.R_863_*` uses a real `DigestProseSectionViewState`
+   through `DigestScreen`. Both assert the action's own fetched semantics-node bounds are wider than
+   tall (single line), the same shape `RigBluetoothScreenTest.R_805` already established — confirmed
+   still green, unchanged, after this session's edit.
+
+**Verified** (all on this workstation, `JAVA_HOME`/`ANDROID_HOME` as this session's own preamble,
+`-PortAllowMissingBundledAssets=true` on every invocation):
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreenTest" --tests
+  "org.ort.app.ui.digest.DigestScreensTest" --tests "org.ort.app.ui.setup.RigBluetoothScreenTest"`
+  — the discrimination run: FAILED with `IntrinsicSize.Max` (2 of 34), BUILD SUCCESSFUL (34 of 34)
+  with `wrapContentWidth(unbounded = true)`.
+- `./gradlew :app:testDebugUnitTest` — BUILD SUCCESSFUL, full suite, no regression across
+  `TextAction`'s many other call sites.
+- `./gradlew :app:smokeTestDebugUnitTest` — BUILD SUCCESSFUL.
+- `./gradlew build dependencyRules platformGuards` — BUILD SUCCESSFUL; `dependencyRules: OK`, 20
+  modules; `platformGuards: OK`, 20 modules.
+- `./gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix` — 240 of 450 covered; no orphan-test line.
+- `./gradlew coverageMatrixCheck` — up to date (240 of 450).
+- `./gradlew :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL, no new findings.
+
+**Left open / not done:**
+- Device/tour re-capture of `validation/V9/assets-bundled/` and `llm-enabled-prose/` — this session
+  is unit-only; the register row is `fixed`, not `closed` (constitution VIII).
+- Not merged to `main`; the lead merges builder branches.
+
+---
+
 ## 2026-09-11 (WPI: R-840 Digest review-session view, the rig-Bluetooth checklist's four states, E2-A07 v10 seeding)
 
 ### b0edcc06 — DG05/DG01 land on Digest not Session (R-840); setup-rig-bluetooth's connect/identify/verify/drop checklist reachable via a new SetupActivity extra; every real TH-D75A scenario seeds the v10 session-route-facts columns
@@ -29538,6 +29696,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

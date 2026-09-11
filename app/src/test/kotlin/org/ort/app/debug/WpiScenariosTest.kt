@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -25,6 +26,7 @@ import org.ort.app.ui.setup.RigLinkState
 import org.ort.app.ui.setup.SetupStateMachine
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.AttributionState
 import org.ort.core.capture.AudioRouteKind
 import org.ort.core.capture.BluetoothAudioProfile
@@ -515,6 +517,29 @@ class WpiScenariosTest {
     }
 
     /**
+     * R-860/R-861 (halt, coordinator spot-check): before this fix, `mode-change-pending` wrote its
+     * live USB session's own `:data` row and `CaptureConfigurationStore` entries but never opened the
+     * process-wide [InputStatus]/[RigStatus] holders `mode-usb` itself always does — CF02/CF11 read
+     * those holders directly, never the session row, so the *current* USB session rendered as if
+     * nothing were open at all, only the pending Bluetooth change (this test's sibling above) showing
+     * anything real.
+     */
+    @Test
+    @Requirement("FR-CAP-12", "R-860", "R-861")
+    fun `R_860_mode-change-pending opens the live InputStatus and RigStatus holders for its USB session`() = runTest {
+        Scenarios.load(context, "mode-change-pending")
+
+        val input = InputStatus.state
+        assertTrue("the current USB session must show a real, open input", input is InputStatus.State.Opened)
+        input as InputStatus.State.Opened
+        assertEquals(AudioDeviceKind.USB_DEVICE, input.descriptor.kind)
+
+        val rig = RigStatus.state
+        assertTrue("the current USB session must show a real, connected rig", rig is RigStatus.State.Connected)
+        assertEquals(RigModuleTransportKind.USB_SERIAL, (rig as RigStatus.State.Connected).transportKind)
+    }
+
+    /**
      * E2-A07 (schema v10): every real TH-D75A session scenario writes [SessionEntity.rigDescriptorId]
      * as the real catalogue id, [SessionEntity.audioRouteVerified] `true` (the coordinator's own
      * seeding instruction — this fixture data claims a session whose route the OS already confirmed,
@@ -631,6 +656,37 @@ class WpiScenariosTest {
             assertEquals("stored — AC-138's own distinction", ModelRowStatus.INSTALLED, llmRow.status)
             assertFalse("stored, never loaded — AC-138's own distinction", llmRow.tierEligible)
         }
+
+    /**
+     * R-865 (halt, coordinator spot-check): before this fix, every entry here — the four non-gated
+     * ones included — went through [ScenarioFixtures.installModelFixture]'s own 64-byte placeholder,
+     * so `ModelsController.currentState` reported them `INSTALLED` without the real installer ever
+     * having genuinely copied or verified anything. `sizeBytes` (real disk size for a verified row —
+     * [org.ort.app.ui.data.ModelRowViewState]'s own kdoc) is exactly 64 for that placeholder shape and
+     * some real, much larger value for a genuinely installed asset — the discriminating fact this test
+     * checks directly, the same way `R_841_assets-bundled...` already does for the real-installer
+     * scenarios.
+     */
+    @Test
+    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137", "R-865")
+    fun `R_865_tier0-llm-stored installs its four non-gated entries through the real installer`() = runTest {
+        Scenarios.load(context, "tier0-llm-stored")
+
+        val rows = ModelsController.currentState(context).rows.associateBy { it.id }
+        nonGatedModelIds.forEach { id ->
+            val row = rows.getValue(id)
+            assertEquals(
+                "$id must read INSTALLED through the real ModelsController",
+                ModelRowStatus.INSTALLED,
+                row.status,
+            )
+            assertNotEquals(
+                "$id must be the real installed asset's own size, not installModelFixture's 64-byte placeholder",
+                64L,
+                row.sizeBytes,
+            )
+        }
+    }
 
     @Test
     @Requirement("FR-DIG-3", "FR-DIG-6", "FR-DIG-11")
