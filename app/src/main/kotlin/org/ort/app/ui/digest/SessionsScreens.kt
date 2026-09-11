@@ -203,8 +203,16 @@ public fun SessionDetailScreen(
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
             Text(text = state.label, style = OrtType.screenTitle, color = OrtColors.textHigh)
             Text(
-                text = "${state.timeRangeLabel} · ${state.durationLabel} · " +
-                    (state.uncleanEndLabel ?: "ended cleanly"),
+                // R-824 (register, halt): a session CaptureState itself reports as still capturing
+                // must say so, never a duration-as-final/"ended cleanly" claim it has not reached
+                // yet — the fabricated clean end the register's own capture caught
+                // (`mode-local-mic/DG04-session.png`, "03:53 – – · 0 h 20 m · ended cleanly" on a
+                // session whose own live bar read `Live`).
+                text = if (state.live) {
+                    "${state.timeRangeLabel} · Live · ${state.durationLabel} so far"
+                } else {
+                    "${state.timeRangeLabel} · ${state.durationLabel} · " + (state.uncleanEndLabel ?: "ended cleanly")
+                },
                 style = OrtType.subtitle,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
@@ -219,6 +227,14 @@ public fun SessionDetailScreen(
                 title = null,
                 summaryLabel = "Session coverage",
                 notListeningLabel = state.notListeningLabel,
+                // R-844 (register, polish, guide §8): the chart's own mono start/end axis labels —
+                // guide §8 requires one at each end of every activity chart; this call passed
+                // neither, so a session with no not-listening hours at all (a solid green block)
+                // rendered no axis row whatsoever (`ActivityPatternChart`'s own gating: an axis row
+                // only ever appears when `axisStart`/`axisEnd` are given or a not-listening hour
+                // exists to legend).
+                axisStart = state.coverageStartLabel,
+                axisEnd = state.coverageEndLabel,
                 modifier = Modifier.padding(top = OrtSpacing.sm),
             )
 

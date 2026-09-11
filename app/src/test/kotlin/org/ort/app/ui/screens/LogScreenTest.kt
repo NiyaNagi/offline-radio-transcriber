@@ -328,6 +328,34 @@ class LogScreenTest {
         composeTestRule.onNodeWithText("not listening · 38s · incoming call").assertExists()
     }
 
+    // R-838 (register, design): LogScreen's own gap-row dispatch must actually forward the item's
+    // real bluetoothAudioDropped flag to GapRow, not just default it away — RowsTest/RejectedRowTest
+    // already prove GapRow's own icon choice; this proves the wiring one level up.
+    @Test
+    fun `R_838 LogScreen forwards the bluetoothAudioDropped flag to the gap row's own icon`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(
+                        listOf(
+                            LogListItem.Gap(
+                                "G1",
+                                "02:15:00",
+                                "not listening · 38 s and counting · Bluetooth audio dropped",
+                                bluetoothAudioDropped = true,
+                            ),
+                        ),
+                    ),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("gap-row-icon-interrupted", useUnmergedTree = true).assertExists()
+    }
+
     private val rejectedExplanationText =
         "1 segment rejected tonight. Audio for every one is kept; opening a row plays it."
 

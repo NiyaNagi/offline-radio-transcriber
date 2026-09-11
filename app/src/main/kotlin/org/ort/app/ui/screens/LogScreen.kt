@@ -137,7 +137,11 @@ private fun LogListItemRow(
     when (item) {
         is LogListItem.Group -> LogGroupHeader(label = item.label, onClick = { onOpenThread(item.threadId) })
         is LogListItem.Row -> LogRow(state = item.state, onClick = { onOpen(item.state.id) })
-        is LogListItem.Gap -> GapRow(timeLabel = item.timeLabel, label = item.label)
+        is LogListItem.Gap -> GapRow(
+            timeLabel = item.timeLabel,
+            label = item.label,
+            bluetoothAudioDropped = item.bluetoothAudioDropped,
+        )
         is LogListItem.RejectedItem -> RejectedRow(
             timeLabel = item.timeLabel,
             frequencyLabel = item.frequencyLabel,

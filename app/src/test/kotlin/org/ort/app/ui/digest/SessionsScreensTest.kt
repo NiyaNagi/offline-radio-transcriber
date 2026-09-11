@@ -180,4 +180,66 @@ class SessionsScreensTest {
         composeTestRule.onNodeWithTag("session-detail-rig-link")
             .assert(hasText("not tracked per session in this build", substring = true))
     }
+
+    // -----------------------------------------------------------------------------------------
+    // R-824 (register, halt): a live session's header must say so, never a duration-as-final or
+    // "ended cleanly"/unclean-termination claim it has not reached yet.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_824 a live session header reads Live, never ended cleanly`() {
+        val state = detailState(modeLabel = "m", inputLabel = "i", rigLinkLabel = "r").copy(live = true)
+
+        composeTestRule.setContent {
+            OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
+        }
+
+        composeTestRule.onNodeWithText("Live", substring = true).assertExists()
+        composeTestRule.onNodeWithText("ended cleanly", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_824 a live session header never claims an unclean termination either`() {
+        // Defends the same fact from the other direction: even if a stale/placeholder
+        // uncleanEndLabel were ever present alongside live=true, the header must still prefer
+        // "Live" — a session cannot be both currently capturing and already terminated.
+        val state = detailState(modeLabel = "m", inputLabel = "i", rigLinkLabel = "r")
+            .copy(live = true, uncleanEndLabel = "ended unclean — the app crashed")
+
+        composeTestRule.setContent {
+            OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
+        }
+
+        composeTestRule.onNodeWithText("Live", substring = true).assertExists()
+        composeTestRule.onNodeWithText("ended unclean", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_824 an ended session keeps reading ended cleanly or its own unclean reason`() {
+        val state = detailState(modeLabel = "m", inputLabel = "i", rigLinkLabel = "r").copy(live = false)
+
+        composeTestRule.setContent {
+            OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
+        }
+
+        composeTestRule.onNodeWithText("ended cleanly", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Live", substring = true).assertDoesNotExist()
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // R-844 (register, polish, guide §8): the coverage chart's own mono start/end axis labels.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_844 the coverage chart renders its own real start and end clock labels`() {
+        val state = detailState(modeLabel = "m", inputLabel = "i", rigLinkLabel = "r")
+            .copy(coverageStartLabel = "22:50", coverageEndLabel = "05:58")
+
+        composeTestRule.setContent {
+            OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
+        }
+
+        composeTestRule.onNodeWithText("22:50").assertExists()
+        composeTestRule.onNodeWithText("05:58").assertExists()
+    }
 }

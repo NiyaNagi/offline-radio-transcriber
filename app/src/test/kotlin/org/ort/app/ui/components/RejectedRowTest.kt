@@ -77,6 +77,36 @@ class RejectedRowTest {
         composeTestRule.onNodeWithTag("gap").assertHeightIsAtLeast(44.dp)
     }
 
+    // R-838 (register, design): a Bluetooth-audio-dropped gap draws the interrupted-connector
+    // glyph, never the ordinary gapWarn circle every other cause still uses.
+    @Test
+    fun `R_838 a Bluetooth-audio-dropped gap draws the interrupted-connector icon`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                GapRow(
+                    timeLabel = "02:15:0",
+                    label = "not listening · 38 s and counting · Bluetooth audio dropped",
+                    bluetoothAudioDropped = true,
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("gap-row-icon-interrupted", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("gap-row-icon-default", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_838 every other gap cause keeps the ordinary gapWarn icon`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                GapRow(timeLabel = "02:15:0", label = "not listening · 38 s · incoming call")
+            }
+        }
+
+        composeTestRule.onNodeWithTag("gap-row-icon-default", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("gap-row-icon-interrupted", useUnmergedTree = true).assertDoesNotExist()
+    }
+
     @Test
     fun `a log group header names the thread and a column header row names every column`() {
         composeTestRule.setContent {

@@ -48,7 +48,17 @@ public sealed interface LogListItem {
         override val key: String get() = "row-${state.id}"
     }
 
-    public data class Gap(val id: String, val timeLabel: String, val label: String) : LogListItem {
+    public data class Gap(
+        val id: String,
+        val timeLabel: String,
+        val label: String,
+        /** R-838 (register, design): `true` exactly when [org.ort.data.entity.CaptureGapEntity.cause]
+         * is [org.ort.data.entity.CaptureGapCause.BLUETOOTH_AUDIO_LOST] — the real, structural fact
+         * `GapRow`'s own icon choice gates on, never a check against [label]'s own prose (constitution
+         * II: assertions/decisions must not depend on wording a designer may change tomorrow).
+         * `false` (every caller before this existed) renders the ordinary gap icon exactly as before. */
+        val bluetoothAudioDropped: Boolean = false,
+    ) : LogListItem {
         override val key: String get() = "gap-$id"
     }
 
@@ -489,6 +499,8 @@ public object LogItemsMapper {
                         // longer needs the session-level bluetoothAudioSession fact this call once
                         // threaded through (see gapLabel's own doc comment, "Round 2").
                         label = gapLabel(gap, nowMillis),
+                        // R-838: the identical real cause, for the row's own icon choice.
+                        bluetoothAudioDropped = gap.cause == CaptureGapCause.BLUETOOTH_AUDIO_LOST,
                     ),
                     null,
                 )

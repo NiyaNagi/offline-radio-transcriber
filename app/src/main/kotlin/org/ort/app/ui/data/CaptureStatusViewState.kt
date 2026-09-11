@@ -384,12 +384,7 @@ public object CaptureStatusMapper {
      * (a debug scenario, a screen-level test) or a past session's own [RigStatus]-less `DG04` read.
      */
     public fun radioFacts(rig: RigStatus.State, routeFacts: SessionRouteFacts): KeyValueFacts = when (rig) {
-        // R-263: guide §9 — operator copy never carries a spec id. "FR-RIG" named the requirement,
-        // not a fact this screen's own operator would recognise; "no radio support in this build
-        // yet" says the same real thing (the rig module is genuinely unbuilt — register R-084)
-        // without it.
-        RigStatus.State.Absent ->
-            KeyValueFacts(value = "No rig configured", subLine = "no radio support in this build yet")
+        RigStatus.State.Absent -> absentRigFacts(routeFacts)
         is RigStatus.State.Connected -> KeyValueFacts(
             value = rig.descriptor,
             subLine = radioSubLine(rig.transportKind, routeFacts, bandsLabel(rig.bands)),
@@ -409,6 +404,33 @@ public object CaptureStatusMapper {
             trailingDot = CaptureStateTone.DEGRADED,
             trailingText = "disconnected",
         )
+    }
+
+    /**
+     * R-839 (register, halt): [RigStatus.State.Absent] means "nothing is live right now", never
+     * "this build has no radio support" — the old "no radio support in this build yet" sentence
+     * (register R-263/R-444's pre-P19 fallback, from when the rig module genuinely was unbuilt)
+     * survived past the point it stopped being true (WPA/WPB/WPC shipped full USB/Bluetooth rig
+     * support). A session that recorded a real [SessionRouteFacts.rigTransport] (v7 columns)
+     * renders that fact honestly instead — with no live band/connection status to show, since
+     * `RigStatus` genuinely is `Absent` — never a fabricated "connected"; only a session that
+     * genuinely never had one still says so.
+     */
+    private fun absentRigFacts(routeFacts: SessionRouteFacts): KeyValueFacts {
+        val transport = routeFacts.rigTransport
+        return if (transport != null) {
+            KeyValueFacts(
+                value = rigTransportSessionLabel(transport),
+                subLine = "not connected right now — from this session's own record",
+            )
+        } else {
+            KeyValueFacts(value = "No rig configured", subLine = "no rig for this session")
+        }
+    }
+
+    private fun rigTransportSessionLabel(transport: RigTransportKind): String = when (transport) {
+        RigTransportKind.USB_SERIAL -> "USB serial"
+        RigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
     }
 
     private fun bandsLabel(bands: List<RigStatus.BandState>): String = bands.joinToString(" · ") { band ->

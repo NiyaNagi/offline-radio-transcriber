@@ -24,6 +24,7 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TerminationReason
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.digest.ProseDigestReadApi
 import org.ort.pipeline.digest.ProseDigestSettings
@@ -133,14 +134,22 @@ public object DigestPolling {
         // because nothing was heard.
         val coverage = sessionCoverageBuckets(window, transmissions.map { it.startedAtUtc }, SystemClock.wallMillis())
         val notListeningSeconds = gapEntities.sumOf { ((it.endedAt ?: SystemClock.wallMillis()) - it.startedAt) / 1000 }
+        // R-824 (register, halt): the identical fact SessionRowViewState.live already computes for
+        // the row list — a live session's own header must say so, never a clean-end/duration claim
+        // it has not reached yet (see SessionDetailViewState.live's own kdoc).
+        val live = CaptureState.isCapturing && CaptureState.sessionId == session.id
+        val coverageEndMillis = end ?: SystemClock.wallMillis()
 
         return SessionDetailViewState(
             id = session.id,
             label = sessionLabel(session),
             timeRangeLabel = timeRangeLabel(session.startedAt, session.endedAt),
-            durationLabel = durationLabel(session.startedAt, end ?: SystemClock.wallMillis()),
+            durationLabel = durationLabel(session.startedAt, coverageEndMillis),
             uncleanEndLabel = uncleanEndLabel(session),
             coverage = coverage,
+            live = live,
+            coverageStartLabel = CLOCK_FORMAT.format(Instant.ofEpochMilli(session.startedAt)),
+            coverageEndLabel = CLOCK_FORMAT.format(Instant.ofEpochMilli(coverageEndMillis)),
             notListeningLabel = if (gapEntities.isNotEmpty()) {
                 "${Plurals.count(gapEntities.size, "gap")} · ${secondsLabel(notListeningSeconds)}"
             } else {
@@ -162,7 +171,7 @@ public object DigestPolling {
             tierLabel = sessionTierLabel(transmissions),
             audioSizeLabel = audioSizeLabel(context, sessionId),
             modeLabel = modeLabel(routeFacts),
-            rigLinkLabel = rigLinkLabel(routeFacts),
+            rigLinkLabel = rigLinkLabel(routeFacts, live),
         )
     }
 
@@ -183,25 +192,49 @@ public object DigestPolling {
 
     /** E2-G03 (DG04, FR-CAP-13): "<route label> · <type> · room audio | radio audio[ · <Bluetooth
      * profile>]" — the two-way room-vs-radio distinction FR-CAP-13 exists to record, plus the
-     * Bluetooth profile when the route genuinely was Bluetooth SCO (FR-CAP-11). */
+     * Bluetooth profile when the route genuinely was Bluetooth SCO (FR-CAP-11).
+     *
+     * **R-825/R-834 amendment (register)**: [typeClauseOrNull] drops the generic route-kind word
+     * ("built-in mic", "Bluetooth") whenever the session's own real device label already names it
+     * — the exact captures the register cites ("Built-in microphone · built-in mic · room audio",
+     * "Bluetooth headset · Bluetooth · radio audio · Bluetooth (wideband)") repeated the same fact
+     * two or three times over. This does not add "verified"/a native rate to match
+     * `Session.dc.html`'s own literal USB example further: `:data` has no persisted per-session
+     * route-verified flag or native sample rate (only [SessionEntity.audioRouteLabel]/
+     * `audioRouteKind` — checked before writing this), and constitution I forbids inventing either
+     * (reported, not silently dropped — see this package's report). */
     private fun inputLabel(routeFacts: SessionRouteFacts): String {
         val mode = routeFacts.captureMode ?: return SessionDetailViewState.NOT_TRACKED_LABEL
-        val typeLabel = when (routeFacts.audioRouteKind) {
-            AudioRouteKind.BUILT_IN_MIC -> "built-in mic"
-            AudioRouteKind.USB -> "USB"
-            AudioRouteKind.WIRED_HEADSET -> "wired"
-            AudioRouteKind.BLUETOOTH_SCO -> "Bluetooth"
-            AudioRouteKind.UNKNOWN, null -> null
-        }
+        val typeLabel = typeClauseOrNull(routeFacts)
         val roomOrRadio = if (mode == org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE) "room audio" else "radio audio"
         val profileLabel = routeFacts.bluetoothProfile?.let { bluetoothProfileLabel(it) }
         return listOfNotNull(routeFacts.audioRouteLabel, typeLabel, roomOrRadio, profileLabel).joinToString(" · ")
     }
 
+    /** R-825/R-834: the generic route-kind word, dropped when [SessionRouteFacts.audioRouteLabel]
+     * — the session's own real device label — already names it (case-insensitive substring: "Built-in
+     * microphone" already contains "built-in mic", "Bluetooth headset" already contains "Bluetooth").
+     * A device label that does *not* name its own kind (most real product names) keeps the type
+     * clause, so it is never silently dropped when it would still add real information. */
+    private fun typeClauseOrNull(routeFacts: SessionRouteFacts): String? {
+        val type = when (routeFacts.audioRouteKind) {
+            AudioRouteKind.BUILT_IN_MIC -> "built-in mic"
+            AudioRouteKind.USB -> "USB"
+            AudioRouteKind.WIRED_HEADSET -> "wired"
+            AudioRouteKind.BLUETOOTH_SCO -> "Bluetooth"
+            AudioRouteKind.UNKNOWN, null -> null
+        } ?: return null
+        val label = routeFacts.audioRouteLabel ?: return type
+        return type.takeUnless { label.contains(it, ignoreCase = true) }
+    }
+
+    /** R-834 (register, DG04 Input row): "HFP mSBC"/"HFP CVSD"/"profile not reported" — the real
+     * HFP codec names, never the word "Bluetooth" a third time (the type clause and the device
+     * label both already carry it whenever the route genuinely is Bluetooth). */
     private fun bluetoothProfileLabel(profile: BluetoothAudioProfile): String = when (profile) {
-        BluetoothAudioProfile.HFP_MSBC -> "Bluetooth (wideband)"
-        BluetoothAudioProfile.HFP_CVSD -> "Bluetooth (narrowband)"
-        BluetoothAudioProfile.UNKNOWN -> "Bluetooth (profile unknown)"
+        BluetoothAudioProfile.HFP_MSBC -> "HFP mSBC"
+        BluetoothAudioProfile.HFP_CVSD -> "HFP CVSD"
+        BluetoothAudioProfile.UNKNOWN -> "profile not reported"
     }
 
     /**
@@ -209,14 +242,33 @@ public object DigestPolling {
      * anywhere in `:data` today (checked before writing this) to name a stale span from, so "stale
      * spans from the session's rig events if recorded" never fires yet; this is an honest, reported
      * limitation (constitution I), not silently dropped functionality.
+     *
+     * **R-833 amendment**: [live] (this session is the one `CaptureState` reports as currently
+     * capturing) unlocks [liveRigNameFor] — the rig's own real name, read off `RigStatus`'s live
+     * state exactly the way N04/F9 already prefer it over any session column. A past session has no
+     * persisted rig-descriptor id to fall back to (`SessionEntity` carries only `rigTransport`, the
+     * kind, never which physical rig), so its row stays the transport alone — reported, not
+     * fabricated.
      */
-    private fun rigLinkLabel(routeFacts: SessionRouteFacts): String {
+    private fun rigLinkLabel(routeFacts: SessionRouteFacts, live: Boolean): String {
         if (routeFacts.captureMode == null) return SessionDetailViewState.NOT_TRACKED_LABEL
         val transport = routeFacts.rigTransport ?: return "no rig this session"
-        return when (transport) {
+        val transportLabel = when (transport) {
             RigTransportKind.USB_SERIAL -> "USB serial"
             RigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
         }
+        val rigName = if (live) liveRigNameFor(transport) else null
+        return listOfNotNull(rigName, transportLabel).joinToString(" · ")
+    }
+
+    /** R-833: the rig's own real name for the *live* transport this session's own row recorded —
+     * `null` when `RigStatus` is `Absent` or has moved on to reporting a different transport than
+     * the one this session started with (a reconfiguration mid-review; never a mismatched guess). */
+    private fun liveRigNameFor(transport: RigTransportKind): String? = when (val rig = RigStatus.state) {
+        is RigStatus.State.Connected -> rig.descriptor.takeIf { rig.transportKind?.name == transport.name }
+        is RigStatus.State.Stale ->
+            rig.lastKnown.descriptor.takeIf { rig.lastKnown.transportKind?.name == transport.name }
+        RigStatus.State.Absent -> null
     }
 
     /** R-450 (register): the real per-transmission [TransmissionEntity.processedTier] (schema v4)

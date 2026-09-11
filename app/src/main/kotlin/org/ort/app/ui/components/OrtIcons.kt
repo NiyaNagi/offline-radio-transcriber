@@ -108,6 +108,33 @@ public object OrtIcons {
         strokePath("M3,12 A9,9 0 1,0 21,12 A9,9 0 1,0 3,12 M12 7v5l3 2", 2f)
     }
 
+    /** R-837 (register, design, `Fail-Bluetooth-Audio.dc.html`): F23's own broken-link glyph — two
+     * link-chain capsules with a deliberate gap between them (no connecting bar, unlike an intact
+     * link) plus a diagonal slash across the whole mark, so "broken" reads even at 17px without
+     * colour. The register's own path text was corrupted in transcription (a garbled `M7 7l10
+     * 10-5 5V2l5 5L7 17` produces no recognisable shape); this is a clean redraw of the same
+     * standard "link-off" glyph guide §7's stroke-icon set already uses this file's own conventions
+     * for (24 viewBox, round caps/joins), not a byte-for-byte trace — reported here rather than
+     * silently presented as one. */
+    public val brokenLink: ImageVector = buildIcon("brokenLink") {
+        strokePath(
+            "M10,13.5 L7.5,16 A3,3 0 1,1 4,12.5 L6.5,10 " +
+                "M14,10.5 L16.5,8 A3,3 0 1,1 20,11.5 L17.5,14 " +
+                "M4 4l16 16",
+            2f,
+        )
+    }
+
+    /** R-838 (register, design, `Fail-Bluetooth-Audio.dc.html`): the Log gap row's own interrupted-
+     * connector glyph for a Bluetooth-audio-dropped gap — a cable cut mid-span (two straight leads
+     * from each edge, a jagged break between them), distinct from [gapWarn]'s generic circle so a
+     * Bluetooth-audio drop reads differently from an ordinary gap even at 13px. Guide §7 stroke
+     * conventions (round caps/joins); the same "clean redraw, not a board trace" caveat as
+     * [brokenLink] applies — no literal path was given for this one in the register at all. */
+    public val interruptedConnector: ImageVector = buildIcon("interruptedConnector") {
+        strokePath("M3 12h5M10 9l1.5 3L10 15M14 9l-1.5 3L14 15M16 12h5", 2f)
+    }
+
     /** "Never leaves" — a lock (guide's `lock` name in the required set). */
     public val lock: ImageVector = buildIcon("lock") {
         strokePath(
