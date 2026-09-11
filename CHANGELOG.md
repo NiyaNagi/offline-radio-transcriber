@@ -32,9 +32,108 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-11 (WPF run-4 validator findings: R-870/872/874/875/942/970 fixed, R-871 diagnosed and routed to WPE, R-873/876 left to WPI)
+## 2026-09-11 (WPE run-4a/5 findings: R-950/R-951/R-974/R-871 fixed; R-972 investigated, not a code defect; R-973 investigated, not reproduced)
 
-### <pending> — status modes: R-870/R-872/R-874/R-875/R-942/R-970 fixed; R-871 diagnosed (CF06/CF11, WPE's); R-873/R-876 unaddressed (WPI's)
+### <pending> — settings modes: R-950/R-951/R-974/R-871 fixed; R-972 investigated (no code change); R-973 investigated, not reproduced; SettingsPolling split for LargeClass
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/{SettingsPolling.kt,SettingsRigFacts.kt (new),
+SettingsTierScreen.kt}`, matching test files (`SettingsPollingTest.kt`, `SettingsRigFactsTest.kt`
+(new), `SettingsTierScreenTest.kt`), plus one new reproduction test,
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenLexiconMissingTest.kt`. Merged `main` twice
+this round (fast-forward to `ee3b027f` for reviewer B3/D3's run-4a findings; a real merge to
+`7eb69a75` after a WIP commit, bringing in WPF's round-5 fixes and R-871's diagnosis).
+
+**Requirements/ACs:** R-950, R-951, R-972 (investigated, no defect found), R-973 (investigated, not
+reproduced), R-974, R-871.
+
+**What changed:** *Constitution check.* I (every fallback here reads a real store or a real
+formatter, never fabricates a fact — the Setup-time frequency fallback, the CAT mnemonic table, the
+tier cost lines). II (each fix below has its own discriminating test, watched to fail for the
+stated reason, then pass once the fix landed — R-871's `sinceClockLabel` was reverted to raw millis
+and all three sites failed before being restored). VIII (R-972/R-973 are reported honestly as not
+reproduced/not a code defect rather than a fabricated fix).
+
+1. **R-950 (spec)** — CF11's live Rig-link row read the raw descriptor name with no transport or
+   address clause ("Kenwood TH-D75A · connected") — the manufacturer prefix undropped and the
+   transport/address axis CF06's own Link row already carries simply missing. New
+   `SettingsRigFacts.rigLinkSubLine` renders `name · transport · address when known · state`, the
+   same shared `stripManufacturerPrefix`/`linkAddressLabel` CF06 already uses.
+2. **R-951 (halt)** — CF02's "Log overs against" read "not set" under `overnight`, though that
+   fixture hand-enters 145.230 MHz. Root, by reading both stores before writing anything: the
+   scenario (and the real onboarding flow it mirrors — `SetupActivity.kt` never touches
+   `SettingsStore` at all, confirmed by grep) only ever records that entry to
+   `SetupStore.manualFrequencyHz`, never to `SettingsStore.manualFrequencyMhz` (the separate field
+   this row reads/writes going forward) — a real product gap, not only a scenario one. Fixed with an
+   honest fallback: an explicit Settings-time edit always wins; the genuinely-untouched case now
+   reads the real Setup-time entry instead of a bare "not set".
+3. **R-972 (spec, investigated)** — "Callsian lexicon" grepped across the entire source tree:
+   zero hits, in this file or any other. No other domain-term typo found either. Concluded this is a
+   reviewer transcription/OCR artifact against a real screenshot, not a reachable string in this
+   build — no code change made for a string that does not exist.
+4. **R-973 (halt, investigated exhaustively, not reproduced)** — under `model-missing`, CF04 was
+   reported rendering only its own title with nothing below it, not scrollable. Reproduced the exact
+   scenario two ways: (a) a hand-built fresh `ModelsController.currentState` plus a real
+   not-installed `LexiconAssetActions` fed straight into `ModelsScreen`, and (b) the real
+   `Scenarios.load(context, "model-missing")` path (real DB, real `CaptureState`/
+   `AsrAvailability`, real `ModelsController.currentState`/`lexiconRow`) driving the real
+   `ModelsContent` composable end to end. Both compose completely — every row, every sub-line, every
+   action reachable via `performScrollTo()` — in this Robolectric/Compose harness. No crash path, no
+   early return, no state this build can construct that stops rendering after the Lexicon title was
+   found by reading `ModelsScreen.kt`'s full render order or `LexiconAssetRow`'s own body. Kept test
+   (b) as new regression coverage for a real combination no existing test exercised before. Reported
+   as not reproduced rather than a fabricated fix — most likely a real-device/live-overlay timing
+   issue outside what this harness can construct, the same class of finding R-853/R-873 already
+   escalated to on-device diagnosis in this program.
+5. **R-974 (polish)** — CF05's "Hold at tier 0" and "Hold at tier 1" carried no cost/trade-off
+   sub-line while "Let the phone choose" and "Hold at tier 2" both did. Added real sub-lines to
+   `OVERRIDE_CONSEQUENCES` for `T0`/`T1`, sourced from `TIER_CAPABILITIES`'s own ordinal-1/ordinal-2
+   detail text (never invented) — the same cost/trade-off shape T2's own pre-existing line already
+   has.
+6. **R-871 (spec)** — WPF traced "Stale since 1789125179230" (a raw epoch-millisecond value) to two
+   places in this package: CF11's Rig-link row (`SettingsPolling.modeScreen()`'s `rigLink` Stale
+   branch) and CF06's `staleSinceLabel` (`SettingsRigFacts.rig()`'s Stale branches). A third site of
+   the same defect class was found while fixing it: CF02's Input row ("input lost since
+   &lt;millis&gt;", `SettingsPolling.capture()`'s `InputStatus.State.Lost` branch). New
+   `sinceClockLabel(millis)` renders `"since &lt;clock&gt; · &lt;duration&gt;"` via the real,
+   already-tested `FailureMapper.clockLabel`/`FailureMapper.durationLabel` (`ui/failures`, read
+   across package, never edited — the same formatters F9's own title already uses for the identical
+   shape) — never a second, differently-formatted copy invented here. All three sites now use it.
+7. **Housekeeping** — `SettingsPolling.kt` tripped detekt's `LargeClass` after this round's
+   additions; the CF06/CF11 rig-facts block (the `rig()` entry point and every private helper it
+   uses) was split out verbatim into a new `SettingsRigFacts.kt` in the same package, with
+   `SettingsPolling.rig`/`.stripManufacturerPrefix` kept as one-line delegates so every existing
+   caller (including `ui/setup/RadioVerifiedScreen.kt`, outside this package's ownership) keeps
+   compiling unchanged. `SettingsPollingTest.kt` was split the same way into
+   `SettingsRigFactsTest.kt` once it hit the same threshold from the new tests above.
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green, full suite
+  (7m31s).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green (3m33s).
+- `./gradlew -PortAllowMissingBundledAssets=true ktlintMainSourceSetFormat
+  ktlintTestSourceSetFormat detekt` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true dependencyRules platformGuards` — green (20
+  modules checked, both OK).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK` (all 8 checks pass).
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 241 covered ->
+  `results/coverage-matrix.md`; `coverageMatrixCheck` — up to date.
+- R-871 discrimination: `sinceClockLabel` reverted to raw-millis formatting — all three new tests
+  (`SettingsPollingTest.R_871...Input row...`, `SettingsRigFactsTest.R_871...stale Rig-link
+  row...`, `SettingsRigFactsTest.R_871...staleSinceLabel...`) failed with the raw epoch value in the
+  assertion message; restored, all three pass.
+- Every other fix above (R-950, R-951, R-974) was likewise written failing first and watched to fail
+  for the stated reason before its own code change landed.
+
+**Left open / not done:**
+- R-972: no code change (the reported string does not exist in source) — reported to the coordinator
+  as likely a transcription artifact rather than closed by a fix.
+- R-973: not reproduced in this JVM/Robolectric harness despite two independent, faithful attempts;
+  stays open pending on-device diagnosis (a uiautomator dump or logcat trace at the moment of the
+  original capture would localize it further, matching R-853/R-873's own precedent in this program).
+- R-865 (render half, reopened): still blocked — re-checked `ModelRowStatus`/`ModelRowViewState`
+  after this round's second main merge and WPG's "marker present, bytes missing" state has not
+  landed yet (`ModelRowStatus` still has exactly three values). Nothing to render until it does.
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/{failures/FailureMapper.kt,components/Controls.kt,components/ActivityPatternChart.kt,digest/DigestScreens.kt,screens/ModelsScreen.kt,setup/RigBluetoothScreen.kt (test only)}`,
 `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, matching test files. Merged `main` twice this

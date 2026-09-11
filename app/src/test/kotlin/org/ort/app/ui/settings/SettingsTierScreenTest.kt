@@ -88,4 +88,22 @@ class SettingsTierScreenTest {
 
         assert(picked == "T2") { "expected the real override id T2, got $picked" }
     }
+
+    @Test
+    @Requirement("FR-TIER-1")
+    fun `R_974 Hold at tier 0 and 1 carry their own cost trade-off line, not silence`() {
+        composeTestRule.setContent {
+            OrtTheme { SettingsTierScreen(state = state(), onBack = {}, onSelectOverride = {}) }
+        }
+
+        // T0 gives up voice matching and threads entirely (the tier table's own ordinal-1 detail);
+        // T1 restores those but still leaves Pass C off (ordinal-2's own detail) — the same
+        // cost/trade-off shape "Hold at tier 2" already carries, never silence for these two rows.
+        composeTestRule
+            .onNodeWithText("no voice matching, no threads", substring = true)
+            .assertExists()
+        composeTestRule
+            .onNodeWithText("Pass C still off", substring = true)
+            .assertExists()
+    }
 }
