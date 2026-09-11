@@ -19,6 +19,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /** R-080..R-084 (ui-conformance-plan WP9) — `Setup-Done.dc.html` (S12). */
@@ -283,5 +284,132 @@ class ReadyScreenTest {
         }
         val heightDp = composeTestRule.onNodeWithText("Install").fetchSemanticsNode().size.height
         assert(heightDp >= 44) { "expected Install >= 44dp at scale 2.0 (density 1.0px/dp here), was ${heightDp}px" }
+    }
+
+    // --- R-882 (register, validator V11, halt): every fact row's value stays a real, wrapping ------
+    // --- column at font scale 2.0 -- never squeezed to one letter per line -------------------------
+
+    /**
+     * The real-device shape from `results/ui-audit/validation/V11/rig-bt-connected/
+     * S11-radio-verified.png`+`.xml` -- the one row carrying both [ReadyRow.statusText] ("verified")
+     * and [ReadyRow.actionLabel] ("Change") together ([radioRow]'s own R-285 doc comment), the
+     * combination that collapsed the label to invisible and the value to one letter per line at
+     * font scale 2.0. [ReadyFactColumns] (this file's own doc comment has the full account) is
+     * asserted here three ways: the label is still on screen at its full text, the value node is
+     * wider than it is tall (a one-letter-per-line collapse is always taller than wide), and the
+     * value node's bounds sit fully inside its row's own bounds.
+     *
+     * `@Config(qualifiers = "w360dp-h800dp-xhdpi")`: Robolectric's own un-configured default screen
+     * (a bare `createComposeRule()` with no qualifiers) measures only 320dp wide -- narrower than
+     * `results/ui-audit/validation/V11`'s real device (`S11-radio-verified.xml`'s own root node,
+     * `bounds="[0,0][1080,2400]"` at 3x density, is 360dp) -- and on that unrealistically narrow
+     * default even the exact *old*, pre-fix shape (rebuilt from the real, still-unmodified
+     * `org.ort.app.ui.components.KeyValueRow`/`TextAction`) and this fix measure identically
+     * squeezed, proving 320dp is simply too narrow to discriminate anything here, not evidence for
+     * or against the fix. 360dp, the real validated width (matching `OrtThemeScaleTest`'s own
+     * `@Config(qualifiers = "w390dp-h844dp-xhdpi")` pattern for the same reason), is what this test
+     * asserts against; at 360dp neither the old nor the new shape actually collapses on the real
+     * "Kenwood TH-D75A · 2 bands" string either (a `results/ui-audit`-class "could not reproduce"
+     * finding, CHANGELOG's own "Left open" entry has the account) -- this test still asserts the
+     * new shape's invariant holds, defensively, as the coordinator's fix literally instructed.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w360dp-h800dp-xhdpi")
+    fun `R_882 the radio row's label stays visible and its value stays wider than tall at scale 2_0`() {
+        val row = ReadyRow(
+            "Radio",
+            "TH-D75A · 2 bands",
+            ok = true,
+            statusText = "verified",
+            actionLabel = "Change",
+            onAction = {},
+        )
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme { ReadyScreen(state = ReadyViewState(listOf(row)), onStartCapture = {}) }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-ready-row-radio-label", useUnmergedTree = true).assertIsDisplayed()
+        val rowBounds = composeTestRule.onNodeWithTag("setup-ready-row-radio").fetchSemanticsNode().boundsInRoot
+        val valueNode = composeTestRule.onNodeWithTag("setup-ready-row-radio-value", useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val valueSize = valueNode.size
+        val valueBounds = valueNode.boundsInRoot
+        assert(valueSize.width > valueSize.height) {
+            "expected the Radio value node wider than tall (not one letter per line), was $valueSize"
+        }
+        assert(
+            valueBounds.left >= rowBounds.left &&
+                valueBounds.right <= rowBounds.right &&
+                valueBounds.top >= rowBounds.top &&
+                valueBounds.bottom <= rowBounds.bottom,
+        ) { "expected the value node inside its row, row=$rowBounds value=$valueBounds" }
+    }
+
+    /** The same assertion generalised across every [ReadyScreen] fact row the coordinator named
+     * (Mode, Input, Radio, Models, Overnight) -- each built with a genuinely long value so a
+     * regression of the same collapse would fail this test the same way R-882 failed on the
+     * device, regardless of which row it recurred on. Same `@Config` as the test above, same
+     * reason -- the real validated device width, not Robolectric's narrower unconfigured default. */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w360dp-h800dp-xhdpi")
+    fun `R_882 every fact row's value node is wider than tall and stays inside its row at scale 2_0`() {
+        val rows = listOf(
+            ReadyRow(
+                "Mode",
+                "Bluetooth-connected radio · audio by cable",
+                ok = true,
+                statusText = null,
+                actionLabel = "Change",
+            ),
+            ReadyRow(
+                "Input",
+                "USB Audio Device (Kenwood TH-D75A)",
+                ok = true,
+                statusText = "verified",
+                actionLabel = null,
+            ),
+            ReadyRow(
+                "Radio",
+                "TH-D75A · 2 bands, connected over Bluetooth SPP",
+                ok = true,
+                statusText = "verified",
+                actionLabel = "Change",
+            ),
+            ReadyRow(
+                "Models",
+                "4 of 5 bundled · ready — Gemma 3 1B not in this build",
+                ok = true,
+                statusText = "ready",
+                actionLabel = null,
+            ),
+            ReadyRow("Overnight", "Battery exemption skipped", ok = false, statusText = null, actionLabel = "Fix"),
+        )
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme { ReadyScreen(state = ReadyViewState(rows), onStartCapture = {}) }
+            }
+        }
+
+        rows.forEach { row ->
+            val tag = "setup-ready-row-${row.label.lowercase()}"
+            val rowBounds = composeTestRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            val valueNode = composeTestRule.onNodeWithTag("$tag-value", useUnmergedTree = true)
+                .fetchSemanticsNode()
+            val valueSize = valueNode.size
+            val valueBounds = valueNode.boundsInRoot
+            assert(valueSize.width > valueSize.height) {
+                "${row.label}: expected the value node wider than tall, was $valueSize"
+            }
+            assert(
+                valueBounds.left >= rowBounds.left &&
+                    valueBounds.right <= rowBounds.right &&
+                    valueBounds.top >= rowBounds.top &&
+                    valueBounds.bottom <= rowBounds.bottom,
+            ) { "${row.label}: expected the value node inside its row, row=$rowBounds value=$valueBounds" }
+        }
     }
 }

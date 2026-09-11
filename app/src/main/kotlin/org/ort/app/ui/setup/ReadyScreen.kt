@@ -4,11 +4,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,7 +23,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
-import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.ModelCatalog
@@ -28,6 +30,7 @@ import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
 import org.ort.app.ui.data.ModelsViewState
+import org.ort.app.ui.settings.SettingsPolling
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.capture.CaptureMode
@@ -182,16 +185,7 @@ private fun ReadySetupRow(row: ReadyRow) {
             } else {
                 AmberHalfMarker()
             }
-            KeyValueRow(
-                key = row.label,
-                value = row.value,
-                modifier = Modifier.weight(1f).padding(start = 12.dp),
-                trailingMarker = {
-                    row.statusText?.let { statusText ->
-                        Text(text = statusText, style = OrtType.signal, color = OrtColors.accentGreenDim)
-                    }
-                },
-            )
+            ReadyFactColumns(row, modifier = Modifier.weight(1f).padding(start = 12.dp))
         }
         // R-361: TextAction is always a genuine sibling *outside* the clearAndSetSemantics boundary
         // above, never inside KeyValueRow's own trailingMarker -- confirmed on a real device
@@ -212,6 +206,56 @@ private fun ReadySetupRow(row: ReadyRow) {
  * account). What [ReadySetupRow] actually announces for every row shape. */
 internal fun readyRowFactsDescription(row: ReadyRow): String =
     listOfNotNull(row.label, row.value, row.statusText).joinToString(", ")
+
+/**
+ * R-882 (register, validator V11, halt): replaces WP2's shared `KeyValueRow` for this screen's own
+ * fact rows — at font scale 2.0, the Radio row (uniquely carrying both a [ReadyRow.statusText] and
+ * an [ReadyRow.actionLabel] together, [radioRow]'s own R-285 doc comment) collapsed its label to
+ * invisible and its value to one letter per line
+ * (`results/ui-audit/validation/V11/rig-bt-connected/S11-radio-verified.png`+`.xml`) — the exact
+ * defect class R-863 already found and fixed for `TextAction`: an unweighted sibling with no floor
+ * on its own reported width can be squeezed to (or past) zero by however a `Row` divides space
+ * among several non-weighted children, starving whichever one this screen actually needs full
+ * width for. The **label** gets `wrapContentWidth(unbounded = true)` — the identical technique
+ * [org.ort.app.ui.components.TextAction] already uses — so it always measures at its own true,
+ * single-line width no matter how little the incoming constraint offers, applied *outside* (not
+ * instead of) the `widthIn(min = 96.dp)` floor R-226 already established so every row's value
+ * column still starts at the same x position; [ReadyRow.statusText] gets the identical protection.
+ * The **value** stays the one genuinely flexible sibling (`weight(1f)`) — once the label/status
+ * never over- or under-report their own true width, the value reliably receives whatever real
+ * space is left, wrapping at word boundaries the normal way `Text` already does once given a real
+ * width to wrap within, rather than collapsing to nothing and falling back to one letter per line.
+ */
+@Composable
+private fun ReadyFactColumns(row: ReadyRow, modifier: Modifier = Modifier) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = row.label,
+            style = OrtType.control,
+            color = OrtColors.textDim,
+            modifier = Modifier
+                .wrapContentWidth(unbounded = true)
+                .widthIn(min = 96.dp)
+                .testTag("setup-ready-row-${row.label.lowercase()}-label"),
+        )
+        Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+            Text(
+                text = row.value,
+                style = OrtType.control,
+                color = OrtColors.textHigh,
+                modifier = Modifier.testTag("setup-ready-row-${row.label.lowercase()}-value"),
+            )
+        }
+        row.statusText?.let { statusText ->
+            Text(
+                text = statusText,
+                style = OrtType.signal,
+                color = OrtColors.accentGreenDim,
+                modifier = Modifier.wrapContentWidth(unbounded = true).padding(start = 8.dp),
+            )
+        }
+    }
+}
 
 @Composable
 private fun AmberHalfMarker() {
@@ -371,9 +415,13 @@ private fun radioRowForCatRig(
 ): ReadyRow = when (rigStatus) {
     is RigStatus.State.Connected -> {
         val bandCount = rigStatus.bands.size
+        // R-882: the same manufacturer-prefix strip R-845 (CF06), R-903 (S11) and R-941 (S09b)
+        // already reuse rather than duplicate — "Kenwood TH-D75A" -> "TH-D75A", also shortening
+        // the value text this row's own new ReadyFactColumns must wrap at font scale 2.0.
+        val descriptor = SettingsPolling.stripManufacturerPrefix(rigStatus.descriptor)
         ReadyRow(
             label = "Radio",
-            value = "${rigStatus.descriptor} · $bandCount band${if (bandCount == 1) "" else "s"}",
+            value = "$descriptor · $bandCount band${if (bandCount == 1) "" else "s"}",
             ok = true,
             statusText = "verified",
             actionLabel = "Change",
@@ -382,7 +430,7 @@ private fun radioRowForCatRig(
     }
     is RigStatus.State.Stale -> ReadyRow(
         label = "Radio",
-        value = "${rigStatus.lastKnown.descriptor} · stale",
+        value = "${SettingsPolling.stripManufacturerPrefix(rigStatus.lastKnown.descriptor)} · stale",
         ok = false,
         statusText = null,
         actionLabel = "Fix",
