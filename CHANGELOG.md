@@ -32,6 +32,72 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPD follow-up: S10b tour-drive extra, R-802 paired-list refresh on entry, R-805 Refresh single-line at 2x)
+
+### (pending) — EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS, refreshPairedDevices() on every entry to RIG_BLUETOOTH, Refresh keeps its intrinsic width
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{SetupActivity,RigBluetoothScreen}.kt`,
+matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-RIG-14, FR-RIG-15, FR-PLT-2, constitution I.
+
+**What changed:**
+
+1. **`SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` (new, debug-only intent extra) — the
+   tour-builder follow-up.** The screenshot tour can only relaunch `SetupActivity` with intent
+   extras, never tap inside it, so S10b's connect -> identify -> verify checklist and its
+   drop/failure banners (only ever reachable from a tap on a paired-device row,
+   `onSelectRigBluetoothDevice`) were unreachable by the tour. This extra, read once in `onCreate`
+   right after the step resolves (via `applyDebugRigBluetoothAddressExtra`), calls that exact same
+   function when the resolved step is `RIG_BLUETOOTH` — honoured only when the new
+   `SetupActivity.isDebugBuild` seam (identical shape to `DebugRigLinkPortOverride.isDebugBuild`)
+   reports true, so a release build never even reads it. `app/src/debug` untouched — WPI wires the
+   tour's own four new steps to set this extra alongside `DebugRigLinkPortOverride`'s scripted
+   port.
+2. **R-802 (halt) — S10b's paired list rendered empty on a cold/resumed entry.**
+   `refreshPairedDevices()` previously ran only from `onSelectRigTransport`'s forward path and the
+   explicit `Refresh` action, so an operator whose process died mid-S10b (or the tour/debug extra
+   cold-opening straight onto this step) saw an empty list until a manual `Refresh` tap — a real
+   defect, not just a tour gap, since `SetupStateMachine`'s `RIG_BLUETOOTH` gate is resumable by
+   design (unlike `RADIO_USB`/`RADIO_VERIFIED`). `SetupActivity.step` is now a property with a
+   custom setter (backed by a plain `mutableStateOf`) that calls `refreshPairedDevices()` whenever
+   the new value is `RIG_BLUETOOTH` — covering every path that can produce that value
+   (`refreshStep`'s cold/gate resume, `tryOpenAtRequestedStep`'s debug entry, `navigateForward`'s
+   forward action, `onBack`), not only the one `onSelectRigTransport` already called explicitly
+   (left in place — a second, idempotent `pairedDevices()` read, harmless).
+3. **R-805 — S10b's `Refresh` text action rendered one letter per line down the right edge at font
+   scale 2.0.** With neither of the row's two `TextAction`s weighted, `Pair a device in system
+   settings`'s own long single-line text (at 2x scale) claimed almost the entire row's width before
+   `Refresh` was measured at all, squeezing it into a sliver that then wrapped letter-by-letter.
+   `Modifier.weight(1f)` on the left action alone means Compose measures the unweighted `Refresh`
+   first, at its own intrinsic (never-shrunk) natural width, then gives the left action only
+   whatever remains to wrap into.
+
+**Verified:**
+- New tests: `SetupActivityTest`'s `R_802_*` (2: cold-open lists both paired devices without a
+  Refresh tap; cold-open with `denyPermission()` shows `NoPermission` immediately) and
+  `tour-builder EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS *` (2: selects the device in a debug build and
+  drives `InMemoryRigLinkPort`'s scripted sequence to a real `Verified` end-to-end through a real
+  `AndroidComposeTestRule.waitForIdle()`; ignored — no selection at all — when the new
+  `SetupActivity.isDebugBuild` seam reports false). `RigBluetoothScreenTest`'s `R_805_*` (1, under
+  `@GraphicsMode(GraphicsMode.Mode.NATIVE)` — Robolectric's default graphics shadow does not vary
+  `Text` measurement with `LocalDensity`'s `fontScale` at all, the same finding
+  `SetupActivityTest`'s pre-existing `R_TOUR_setup_font_scale` test already made; confirmed as a
+  real discrimination test by reverting the `weight(1f)` fix and re-running — fails with `Refresh`
+  measured `0 x 233`, one letter per line, matching the finding exactly).
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — 240 of 450 requirements covered, up to date.
+**Left open / not done:** the extra's own name/constant for WPI to wire —
+`SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` (a `String` extra carrying the paired device's
+Bluetooth MAC address, e.g. `"AA:BB:CC:11:22:33"`) — reported to the coordinator alongside this
+entry for the four new tour steps that need it.
+
+---
+
 ## 2026-09-10 (WPI follow-up: first-tour-run fixes — real bundled-asset install, BLUETOOTH_CONNECT reachability, CaptureConfigurationStore/station/ladder seeding, WPD's RigLinkPort seam)
 
 ### 74adf1c — WPI follow-up · reviewer findings from the first tour run, fixed and re-captured
