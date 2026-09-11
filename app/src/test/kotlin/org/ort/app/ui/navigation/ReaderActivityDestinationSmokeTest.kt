@@ -48,6 +48,8 @@ import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.robolectric.RobolectricTestRunner
 import java.io.File
+import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
@@ -1208,19 +1210,43 @@ class ReaderActivityDestinationSmokeTest {
      * fixed-epoch transmission [seedSession] gives every other case in this class (which never
      * needs a real night pattern). Three "usual" nights (one over each, `daysAgo` 1..3) and
      * "tonight" (`daysAgo` 0, [TONIGHT_OVER_COUNT] overs — more than double the usual average of
-     * 1) — all anchored to the real wall clock at test run time (`ZonedDateTime.now`), the same
-     * clock `NightlyDeparture`/`FrequencyPolling` read in production. Returns "tonight"'s own
-     * session id, the one [runReaderActivity] must launch with: `LogPolling`'s quick-filter chip
-     * list is scoped to the *launched* session (`db.transmissionDao().listBySession`, confirmed by
-     * reading `LogViewData.kt` before relying on it), not the corpus as a whole.
+     * 1). Returns "tonight"'s own session id, the one [runReaderActivity] must launch with:
+     * `LogPolling`'s quick-filter chip list is scoped to the *launched* session
+     * (`db.transmissionDao().listBySession`, confirmed by reading `LogViewData.kt` before relying
+     * on it), not the corpus as a whole.
+     *
+     * Register R-276/R-432 (halt, constitution II — a test that only sometimes proves what it
+     * claims is not a passing test): each night's own window used to be anchored to the real wall
+     * clock at test run time (`ZonedDateTime.now(zone).minusDays(daysAgo)`) — every over then fell
+     * at `windowStart + 10..70` minutes, where `windowStart` is 90 minutes *before* that. Run this
+     * suite in the first ~80 minutes after local midnight and `windowStart` (and therefore every
+     * one of "tonight"'s own overs) falls on *yesterday's* calendar day, while
+     * `ActivityPattern.buildNightlySequence` buckets by local calendar day
+     * ([org.ort.app.ui.data.ActivityPatternMapper.buildNightlySequence]'s own `epochDay`) — so
+     * "tonight" (`today - 0`) came back with zero heard overs, `isBusierThanUsual` read `false`,
+     * and `FrequencyHeaderSection`'s "Busier than usual" action never rendered: exactly the gate
+     * failure this fixes (`ReaderActivityDestinationSmokeTest.R_432_activation_thread_route`/
+     * `R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window`, "could not find
+     * any node … 'Busier than usual'", both reproduced running across a real local midnight). Fixed
+     * by anchoring every night's window to a **fixed local time of that calendar day**
+     * ([NIGHT_WINDOW_END_LOCAL_TIME], 21:00 — comfortably clear of both a real evening's own
+     * transmissions and midnight itself) on `today.minusDays(daysAgo)`, where `today` is [now]'s own
+     * calendar date — read *once*, as a date only, never as a time-of-day anchor — so every over
+     * this seeds lands on the same calendar day [buildNightlySequence] buckets it into regardless of
+     * what the real wall clock reads when the suite happens to run. [R_276_seeding_pattern_is_immune
+     * _to_a_real_midnight_boundary] below pins this directly against the real
+     * `ActivityPatternMapper`/`NightlyDeparture` production functions, with a synthetic `now` of
+     * 00:05 local — the exact boundary this class's own real-Activity cases cannot deterministically
+     * exercise on demand.
      */
     private fun seedFrequencyOversPattern(): String = runBlocking {
         val db = OrtDatabase.create(context)
         val zone = ZoneId.systemDefault()
         val now = ZonedDateTime.now(zone)
+        val today = now.toLocalDate()
 
         suspend fun seedNight(id: String, daysAgo: Long, overCount: Int) {
-            val windowEnd = now.minusDays(daysAgo)
+            val windowEnd = today.minusDays(daysAgo).atTime(NIGHT_WINDOW_END_LOCAL_TIME).atZone(zone)
             val windowStart = windowEnd.minusMinutes(NIGHT_WINDOW_MINUTES)
             db.sessionDao().insert(
                 SessionEntity(
@@ -1275,6 +1301,61 @@ class ReaderActivityDestinationSmokeTest {
         seedNight("overs-usual-3", daysAgo = 3, overCount = 1)
         seedNight(TONIGHT_SESSION_ID, daysAgo = 0, overCount = TONIGHT_OVER_COUNT)
         TONIGHT_SESSION_ID
+    }
+
+    /**
+     * Register R-276/R-432 (constitution II — pins the exact boundary the gate failed on, rather
+     * than trusting the fix by inspection): a plain unit test over the real
+     * [org.ort.app.ui.data.ActivityPatternMapper.buildNightlySequence]/
+     * [org.ort.app.ui.data.NightlyDeparture] production functions, no `Activity`/Robolectric/
+     * database needed — [seedFrequencyOversPattern]'s own fixed-local-time construction
+     * (`today.minusDays(daysAgo).atTime(NIGHT_WINDOW_END_LOCAL_TIME)`), reproduced here against a
+     * synthetic `now` of 00:05 local, the exact boundary that broke the *old*
+     * `now.minusDays(daysAgo)` formula (`windowStart`, 90 minutes earlier, would have fallen on
+     * yesterday's calendar day at that `now`). Asserts "tonight" still reads
+     * [TONIGHT_OVER_COUNT]/"usual" still reads `1.0`/[NightlyDeparture.isBusierThanUsual] still
+     * reads `true` — proving the seeding formula [seedFrequencyOversPattern] now uses is immune to
+     * *when* the suite happens to run, not merely that it worked the one time this was written.
+     */
+    @Test
+    fun `R_276_R_432_seeding_pattern_is_immune_to_a_real_midnight_boundary`() {
+        val zone = ZoneId.systemDefault()
+        val now = LocalDate.of(2026, 3, 15).atTime(0, 5).atZone(zone)
+        val today = now.toLocalDate()
+
+        fun seedNight(daysAgo: Long, overCount: Int): Pair<org.ort.app.ui.data.SessionWindow, List<Long>> {
+            val windowEnd = today.minusDays(daysAgo).atTime(NIGHT_WINDOW_END_LOCAL_TIME).atZone(zone)
+            val windowStart = windowEnd.minusMinutes(NIGHT_WINDOW_MINUTES)
+            val timestamps = (0 until overCount).map { index ->
+                windowStart.plusMinutes(10L + index * 15L).toInstant().toEpochMilli()
+            }
+            val window = org.ort.app.ui.data.SessionWindow(
+                startedAtUtc = windowStart.toInstant().toEpochMilli(),
+                endedAtUtc = windowEnd.toInstant().toEpochMilli(),
+                gaps = emptyList(),
+            )
+            return window to timestamps
+        }
+
+        val nights = listOf(seedNight(3, 1), seedNight(2, 1), seedNight(1, 1), seedNight(0, TONIGHT_OVER_COUNT))
+        val sequence = org.ort.app.ui.data.ActivityPatternMapper.buildNightlySequence(
+            sessions = nights.map { it.first },
+            matchingTransmissionTimestamps = nights.flatMap { it.second },
+            nowMillis = now.toInstant().toEpochMilli(),
+            nights = 4,
+            zone = zone,
+        )
+
+        val tonight = sequence.last()
+        assert(tonight.heardCount == TONIGHT_OVER_COUNT) {
+            "expected tonight's heardCount to stay $TONIGHT_OVER_COUNT at a 00:05 local now, got " +
+                "${tonight.heardCount} (sequence=$sequence) — R-276/R-432's own midnight-anchoring bug"
+        }
+        val usualAverage = org.ort.app.ui.data.NightlyDeparture.usualAverage(sequence)
+        assert(usualAverage == 1.0) { "expected the usual average to stay 1.0, got $usualAverage" }
+        assert(org.ort.app.ui.data.NightlyDeparture.isBusierThanUsual(sequence)) {
+            "expected isBusierThanUsual to stay true at a 00:05 local now — the exact R-276/R-432 boundary case"
+        }
     }
 
     /**
@@ -1364,8 +1445,17 @@ class ReaderActivityDestinationSmokeTest {
         // `NightlyDeparture.isBusierThanUsual` checks — with room to spare, not a boundary value.
         const val TONIGHT_OVER_COUNT = 5
 
-        // Each seeded night's own listening window — short enough to stay clear of a calendar-day
-        // boundary this test does not control (the real wall clock at whatever time it runs).
+        // Each seeded night's own listening window's length. Register R-276/R-432: this alone
+        // never kept a night clear of a calendar-day boundary — only anchoring [NIGHT_WINDOW_END_LOCAL_TIME]
+        // to a fixed local time (rather than the real wall clock) actually does, see
+        // `seedFrequencyOversPattern`'s own doc comment.
         const val NIGHT_WINDOW_MINUTES = 90L
+
+        // Register R-276/R-432: each seeded night's own window ends at this fixed local time on
+        // its own calendar day — 21:00, comfortably clear of local midnight in both directions by
+        // more than [NIGHT_WINDOW_MINUTES], so every over this seeds is guaranteed to land on the
+        // same calendar day `ActivityPatternMapper.buildNightlySequence` buckets it into, no matter
+        // what the real wall clock reads when this suite happens to run.
+        val NIGHT_WINDOW_END_LOCAL_TIME: LocalTime = LocalTime.of(21, 0)
     }
 }
