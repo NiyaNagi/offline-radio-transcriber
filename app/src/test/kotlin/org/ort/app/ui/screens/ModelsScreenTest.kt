@@ -1,11 +1,14 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
@@ -19,6 +22,7 @@ import org.ort.app.ui.data.StagedActivation
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * R-093 (`Settings-Assets.dc.html`, guide §6.7): the rebuilt Models/lexicon presentation — one row
@@ -399,6 +403,37 @@ class ModelsScreenTest {
             .assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription("Install Whisper tiny.en — tokens from a file")
             .assertDoesNotExist()
+    }
+
+    /** R-863 (register, design, validator V9): at font scale 2.0, "Install from a file" (CF04)
+     * used to wrap one word per line down the right edge because the family row's own long leading
+     * label ("Whisper tiny.en — encoder") took the row's width with neither side weighted — R-805's
+     * exact defect class, fixed once and centrally in `TextAction` itself now (`Controls.kt`). This
+     * drives the real production path end to end (`ModelsController.currentState` on a genuinely
+     * clean context, the same one `R_443_clean_install_groups` above proves reaches this exact
+     * nested row) — never a hand-built row list standing in for it. `GraphicsMode.NATIVE`: the
+     * default graphics mode does not reliably reproduce real glyph-wrap measurement (this package's
+     * own established discipline, `RigBluetoothScreenTest`'s `R_805` case). */
+    @Test
+    @Requirement("R-863")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_863 CF04 Install from a file keeps its intrinsic single-line width at font scale 2_0`() {
+        val freshContext = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val cleanInstallState = ModelsController.currentState(freshContext)
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme { ModelsScreen(state = cleanInstallState, onDownload = {}, onSideload = {}) }
+            }
+        }
+
+        val size = composeTestRule
+            .onNodeWithContentDescription("Install Whisper tiny.en — encoder from a file")
+            .fetchSemanticsNode()
+            .size
+        assert(size.width > size.height) {
+            "expected 'Install from a file' wider than tall (single line), was ${size.width} x ${size.height}"
+        }
     }
 
     @Test
