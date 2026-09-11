@@ -798,16 +798,33 @@ class WpiScenariosTest {
         }
     }
 
+    // R-865 follow-up (WPG, coordinator-assigned, same reopened bug this scenario itself
+    // reproduces): `ModelsController.currentState` now refuses `INSTALLED` for any part whose
+    // on-disk length disagrees with the manifest's declared size — this fixture's own 64-byte
+    // placeholder for the gated LLM (`ScenarioFixtures.installModelFixture`'s own doc comment,
+    // written when R-865 was believed already closed) is exactly that shape against Gemma's real
+    // 554,661,243-byte declared size, so it now honestly reads as the new `truncated` fact instead
+    // of a fabricated `INSTALLED`. AC-138's own real concern — a tier-ineligible model is stored
+    // but never loaded — does not depend on `status` at all: `tierEligible` is computed
+    // independently of it, and the file genuinely is on disk (just not verified as the real
+    // asset), so both assertions below still hold what AC-138 actually asks for. This test's own
+    // name and status assertion are updated to the corrected behavior; not a weakening — the old
+    // assertion was the exact bug the register reopened this row to fix.
     @Test
-    @Requirement("FR-AST-3a", "AC-138", "R-842")
-    fun `R_842_tier0-llm-stored reports the LLM INSTALLED but tier-ineligible below T3, through ModelsController`() =
+    @Requirement("FR-AST-3a", "AC-138", "R-842", "R-865")
+    fun `R_842_tier0-llm-stored reports the LLM truncated (a placeholder, not the real asset), tier-ineligible`() =
         runTest {
             Scenarios.load(context, "tier0-llm-stored")
 
             val llmRow = ModelsController.currentState(context).rows.associateBy {
                 it.id
             }.getValue(ModelId.LLM_GEMMA3_1B)
-            assertEquals("stored — AC-138's own distinction", ModelRowStatus.INSTALLED, llmRow.status)
+            assertEquals(
+                "a 64-byte placeholder is not the real 555 MB asset — R-865",
+                ModelRowStatus.NOT_INSTALLED,
+                llmRow.status,
+            )
+            assertTrue("expected the R-865 truncated fact for this placeholder", llmRow.truncated != null)
             assertFalse("stored, never loaded — AC-138's own distinction", llmRow.tierEligible)
         }
 
