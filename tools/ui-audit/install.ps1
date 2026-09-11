@@ -24,10 +24,20 @@
 .EXAMPLE
   # A shared AVD a previous session may have left a stray real capture session running on:
   .\install.ps1 -Port 5554 -Clear
+
+.PARAMETER PortAllowMissingBundledAssets
+  R-868: passed straight through to `gradlew :app:assembleDebug` as
+  `-PortAllowMissingBundledAssets=true`/`=false` — the same escape hatch every other Gradle
+  invocation this package's own gate uses for a local, no-`HF_TOKEN` build (`fetchBundledAssets`
+  would otherwise fail hard on the gated LLM). Defaults **on**: this script is a local validator
+  tool, never CI's own build (CI does not invoke this script at all, and carries its own `HF_TOKEN`
+  or accepts the real failure on purpose) — pass `-PortAllowMissingBundledAssets:$false` only to
+  deliberately require the gated asset be genuinely present for this one install.
 #>
 param(
     [Parameter(Mandatory = $true)][int]$Port,
-    [switch]$Clear
+    [switch]$Clear,
+    [switch]$PortAllowMissingBundledAssets = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,7 +51,8 @@ $packageId = "org.ort.app"
 
 Push-Location $repoRoot
 try {
-    & "$repoRoot\gradlew.bat" ":app:assembleDebug"
+    $assetsFlag = "-PortAllowMissingBundledAssets=$(if ($PortAllowMissingBundledAssets) { 'true' } else { 'false' })"
+    & "$repoRoot\gradlew.bat" ":app:assembleDebug" $assetsFlag
     if ($LASTEXITCODE -ne 0) { throw "gradlew :app:assembleDebug failed with exit code $LASTEXITCODE" }
 }
 finally {

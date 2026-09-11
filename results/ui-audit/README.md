@@ -38,7 +38,7 @@ an identical second AVD for port 5556; at most two AVDs run at once
 |---|---|
 | `boot.ps1 -Avd <name> -Port <n>` | Boots the named AVD headless and waits for `sys.boot_completed`. |
 | `create-avd.ps1 -Name <name>` | Creates a Pixel 6 / API 34 / x86_64 / google_apis AVD (`ort_audit_2` for port 5556). |
-| `install.ps1 -Port <n> [-Clear]` | `:app:assembleDebug`, installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`/`BLUETOOTH_CONNECT` (the last one R-810/R-811's own fix — see "Reaching S02c" below, since it makes S02c itself unreachable by default). `-Clear` runs `adb shell pm clear org.ort.app` right after install and re-grants all three permissions — see "Known gaps / hygiene" below for why. |
+| `install.ps1 -Port <n> [-Clear] [-PortAllowMissingBundledAssets:$false]` | `:app:assembleDebug` (R-868: passes `-PortAllowMissingBundledAssets=true` through to Gradle by default — a local validator tool, never CI's own build, so the gated-LLM escape hatch is on unless explicitly turned off), installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`/`BLUETOOTH_CONNECT` (the last one R-810/R-811's own fix — see "Reaching S02c" below, since it makes S02c itself unreachable by default). `-Clear` runs `adb shell pm clear org.ort.app` right after install and re-grants all three permissions — see "Known gaps / hygiene" below for why. |
 | `scenario.ps1 -Port <n> -Name <scenario> [-NoRestart]` | Force-stops the app (unless `-NoRestart`), broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`, then a best-effort warning if a real (non-scenario) session is still in the app's own database (see "Known gaps / hygiene"). |
 | `shoot.ps1 -Port <n> -Scenario <s> -Screen <name>` | `screencap -p` to a device file, then `adb pull` — to `results/ui-audit/<s>/<name>.png`. |
 | `nav.ps1 -Port <n> -Screen <name>` | Replays the tap sequence for `<name>` from `screens.json`. |
@@ -238,7 +238,7 @@ store/holder/DB, not merely that the scenario loads.
 | `asset-corrupt` | AC-137, R-841: one entry (`ModelId.ASR_ENCODER`) is served genuinely corrupted bytes (one byte flipped) by `Scenarios.CorruptingBundledAssetSource`, a thin wrapper around the same real `AndroidBundledAssetSource` — the manifest's own real, declared digest for that entry is untouched, so `BundledAssetInstaller.installOne`'s own real comparison genuinely fails (never activated, no file left at its destination) while every other non-gated entry installs for real through the identical real source. |
 | `llm-enabled-prose` | DG05, FR-DIG-3/6/11: the real `overnight` fixture (so the QSO thread's own four real over ids exist to attribute a summary to), one more small thread of two overs on the same session (DG05's own second card), prose enabled via the real `SharedPreferencesProseDigestSettingsStore`, and two real, stored `ProseSummary` rows via the real `RoomProseSummaryStore`. |
 | `llm-disabled` | DG01, FR-DIG-3b, AC-140: the same two summaries genuinely stored, but prose is disabled — DG05's "In their words" section must render absent entirely (E2-G07's own discriminating test), not merely empty. |
-| `tier0-llm-stored` | FR-AST-3a, AC-138, R-842: `ModelId.LLM_GEMMA3_1B` reads `INSTALLED` through `ModelsController.currentState` via `ScenarioFixtures.installEveryModelFixture` (the same established shortcut `overnight`/`stations-14-nights` already use — a placeholder file plus the *real*, pinned `ModelCatalog` checksum as the marker), deliberately **not** the real installer this build's own escape hatch genuinely cannot satisfy for a ~550 MB gated asset. This device's own `ShedStatus` level is forced so the current tier sits below T3, so `ModelRowViewState.tierEligible` genuinely reads `false` for it — stored, never loaded. |
+| `tier0-llm-stored` | FR-AST-3a, AC-138, R-842, R-865: the four non-gated entries install through the REAL `installRealBundledAssets` — the same real `AndroidBundledAssetSource` path `assets-bundled` uses, so S12's Models row and CF04's own count genuinely agree with what actually installed, never a fabricated "verified" for entries the real installer never touched (R-865's own fix — the scenario's earlier shape ran every entry, this one gated LLM included, through the placeholder-marker shortcut below, which meant the four real entries were never genuinely exercised here). Only `ModelId.LLM_GEMMA3_1B` still gets `ScenarioFixtures.installModelFixture` (the single-entry form of the shortcut `overnight`/`stations-14-nights` use for the same reason — a placeholder file plus the *real*, pinned `ModelCatalog` checksum as the marker), since this build's own escape hatch genuinely cannot satisfy the real installer for a ~550 MB gated asset absent from `bundled/manifest.json` — `ModelsController.currentState` reads it `INSTALLED` all the same, real enough for this scenario's own purpose. This device's own `ShedStatus` level is forced so the current tier sits below T3, so `ModelRowViewState.tierEligible` genuinely reads `false` for it — stored, never loaded. |
 
 ### R-841/R-842/R-843 (halt, fixed): the `ModelsController` verification bug and its fix
 
@@ -254,11 +254,31 @@ on CF04 (`not installed · 3 of 3 parts missing`) and S12's Models row (`No tran
 in the first tour run.
 
 **The fix**: install through the REAL `org.ort.app.assets.AndroidBundledAssetSource` (`assets-bundled`/
-`asset-corrupt`) or the same real-checksum shortcut `overnight` already uses (`tier0-llm-stored`, for
-the one entry this build's escape hatch genuinely cannot fetch) — see `Scenarios.installRealBundledAssets`'s
-own kdoc for the full diagnosis and the race-with-`OrtApplication`'s-own-background-install note.
-`WpiScenariosTest.kt`'s three asset tests now assert `ModelsController.currentState` directly, per
-the coordinator's own instruction, not a file on disk.
+`asset-corrupt`, and — R-865 — `tier0-llm-stored`'s own four non-gated entries too now) — see
+`Scenarios.installRealBundledAssets`'s own kdoc for the full diagnosis and the
+race-with-`OrtApplication`'s-own-background-install note. The one entry this build's escape hatch
+genuinely cannot fetch (`ModelId.LLM_GEMMA3_1B`, no `HF_TOKEN`) still uses the same real-checksum
+shortcut `overnight`/`stations-14-nights` already established (now `ScenarioFixtures.installModelFixture`,
+the single-entry form R-865 split out) — a genuinely no-token build has no real Gemma bytes to install
+at all, so this is not a shortcut around a fixable gap, it is the honest ceiling of what this build can
+ever do for that one entry. `WpiScenariosTest.kt`'s asset tests assert `ModelsController.currentState`
+directly, per the coordinator's own instruction, not a file on disk.
+
+**R-862 (open, reported to the coordinator, not fixed here)**: `ReadyScreen.modelsRow`'s own
+all-or-nothing gate (`rows.isNotEmpty() && rows.all { it.bundled && it.status == INSTALLED }`) requires
+*every* `ModelId` — the gated Gemma included — to read `INSTALLED` before S12's Models row will ever
+show the green "N bundled · checksums verified" state; short of that it shows the amber "No
+transcription model yet" regardless of how many entries are genuinely, verifiably installed.
+`ModelsController.currentState` builds `rows` from `ModelId.entries` unconditionally (`ModelsViewData.kt`
+line ~679) — there is no "genuinely not offered in this build" row status distinct from `NOT_INSTALLED`
+for `rowFor` to report, so a no-`HF_TOKEN` build's `assets-bundled`/`asset-corrupt` (real installer, 4/4
+non-gated entries genuinely installed, Gemma honestly absent) can never satisfy the gate — `S12` reads
+"No transcription model yet" forever in this build even though CF04's own count agrees the four real
+entries are installed. `tier0-llm-stored` never showed this because its own placeholder marker made all
+five rows read `INSTALLED`, masking the gate's own blind spot rather than exercising it. This is a real
+production-code gap in `ReadyScreen.kt`/`ModelsViewData.kt` (both outside this package's `app/src/debug`
+ownership), not a scenario-seeding defect — reported per the coordinator's own instruction rather than
+fixed here.
 
 ### Reaching S02c (register/plan D33, checklist E2-J01, R-810/R-811)
 

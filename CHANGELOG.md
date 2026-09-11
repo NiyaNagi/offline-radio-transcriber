@@ -32,6 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI: mode-change-pending's live holders, tier0-llm-stored's real installer, install.ps1's escape hatch; R-862 reported, not fixed)
+
+### adedd40c — R-860/R-861 mode-change-pending opens InputStatus/RigStatus; R-865 tier0-llm-stored installs its four non-gated entries for real; R-868 install.ps1 passes -PortAllowMissingBundledAssets through
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,ScenarioFixtures}.kt`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/install.ps1`,
+`results/ui-audit/README.md`. Merged `main` first (`9eede972`, the WPI round-4 register/checklist
+entry recording run 3 pending — landed clean, no conflicts).
+
+**Requirements/ACs:** R-860, R-861, R-862 (reported, not fixed — see below), R-865, R-868,
+FR-CAP-12, FR-AST-3, FR-AST-3b, AC-137.
+
+**What changed:** *Constitution check.* I (every fixture honest about what it actually installed —
+`tier0-llm-stored`'s own four non-gated entries no longer read `INSTALLED` off a fabricated
+placeholder marker when the real installer could, and did, install them for real). II (a
+discriminating test for each fix — `R_860`'s own assertion would fail against the pre-fix scenario,
+since `InputStatus`/`RigStatus` default to their idle/absent states; `R_865`'s own `sizeBytes != 64L`
+check would fail against the pre-fix fixture, whose every entry was exactly 64 bytes).
+
+1. **R-860/R-861** — `mode-change-pending` is a live USB session exactly like `mode-usb`'s own, but
+   never opened the process-wide `InputStatus`/`RigStatus` holders CF02/CF11 actually read (only the
+   `:data` session row and `CaptureConfigurationStore` entries were written) — the *current* session
+   rendered as if nothing were open, only the *pending* Bluetooth change showing anything real. Now
+   opens both, identically to `mode-usb`'s own shape, positioned after `markCapturing` (so the
+   `CaptureConfigurationStore` freeze rule still lands the second, pending update correctly) and
+   before the pending-Bluetooth `configStore.update`.
+
+2. **R-865** — `tier0-llm-stored` previously ran every entry (including the four non-gated ones)
+   through `ScenarioFixtures.installEveryModelFixture`'s own fabricated placeholder-plus-real-checksum
+   marker, the exact R-841/843 defect class already fixed for `assets-bundled`/`asset-corrupt` but
+   never carried over to this scenario — S12's Models row and CF04's own count could never disagree
+   with what the *real* installer did, because the real installer never ran for any of the four.
+   `installEveryModelFixture`'s single-entry body is split out as
+   `ScenarioFixtures.installModelFixture(context, id)`; `tier0LlmStored` now calls
+   `installRealBundledAssets(context)` (the same real `AndroidBundledAssetSource` path
+   `assets-bundled` uses) for the four non-gated entries, then `installModelFixture` for exactly
+   `ModelId.LLM_GEMMA3_1B` alone — the one entry this build's own escape hatch (no `HF_TOKEN`)
+   genuinely cannot install for real, so the placeholder is the honest ceiling for that one row, not
+   a shortcut around a fixable gap.
+
+3. **R-868** — `install.ps1` gained a `-PortAllowMissingBundledAssets` switch (defaults **on**,
+   pass `-PortAllowMissingBundledAssets:$false` to require the real gated asset), passed through to
+   `gradlew :app:assembleDebug` as `-PortAllowMissingBundledAssets=true`/`=false` — this script is a
+   local validator tool, never CI's own build (CI does not invoke it), so the escape hatch every
+   other Gradle invocation in this package's own gate already uses now applies here too, without a
+   validator needing to remember the separate `ORT_ALLOW_MISSING_BUNDLED_ASSETS` env-var workaround.
+
+4. **R-862 (investigated, reported to the coordinator, not fixed here — outside this package's
+   `app/src/debug` ownership)**: `ReadyScreen.modelsRow`'s own all-or-nothing gate
+   (`rows.isNotEmpty() && rows.all { it.bundled && it.status == INSTALLED }`) requires *every*
+   `ModelId` — the gated `LLM_GEMMA3_1B` included — to read `INSTALLED` before S12's Models row ever
+   shows the green "ready" state; `ModelsController.currentState` builds `rows` from
+   `ModelId.entries` unconditionally, with no row status distinct from `NOT_INSTALLED` for "genuinely
+   not offered in this build" (`ModelsViewData.kt` line ~679). A no-`HF_TOKEN` build's
+   `assets-bundled`/`asset-corrupt` (real installer, four non-gated entries genuinely installed,
+   Gemma honestly absent) can therefore never satisfy the gate — S12 reads "No transcription model
+   yet" regardless. `tier0-llm-stored` never exposed this because its own placeholder (before this
+   round's own R-865 fix, still true after it — Gemma's placeholder marker is unchanged) makes all
+   five rows read `INSTALLED`, masking the gate's own blind spot rather than exercising it. Full
+   diagnosis in `results/ui-audit/README.md`'s new "R-862 (open, reported to the coordinator, not
+   fixed here)" section.
+
+**Verified:** `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` —
+green (`BUILD SUCCESSFUL in 10m 36s`, 1107 actionable tasks, `dependencyRules: OK`, `platformGuards:
+OK`). `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — 8/8 PASS.
+`./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (two separate invocations — see the
+prior entry's own note on why) — 450 requirements, 240 covered, no orphan-id warning,
+`coverageMatrixCheck: up to date`. `./gradlew :app:testDebugUnitTest --tests
+"org.ort.app.debug.WpiScenariosTest"` — 34/34 green, including the two new cases this round added
+(`R_860_mode-change-pending opens the live InputStatus and RigStatus holders for its USB session`,
+`R_865_tier0-llm-stored installs its four non-gated entries through the real installer`).
+
+**Left open / not done:** R-862 itself — a real `ReadyScreen.kt`/`ModelsViewData.kt` production-code
+gap, reported above and in the README for the coordinator to route to WPD, not fixed in this package.
+`install.ps1`'s R-868 change has no JVM test (it is a PowerShell script outside the Gradle/Robolectric
+test surface this package's tests exercise) — verified instead by reading the resulting script and
+by every prior `install.ps1` invocation this session already made succeeding with the flag passed
+through.
+
 ## 2026-09-11 (WPI: R-840 Digest review-session view, the rig-Bluetooth checklist's four states, E2-A07 v10 seeding)
 
 ### b0edcc06 — DG05/DG01 land on Digest not Session (R-840); setup-rig-bluetooth's connect/identify/verify/drop checklist reachable via a new SetupActivity extra; every real TH-D75A scenario seeds the v10 session-route-facts columns
