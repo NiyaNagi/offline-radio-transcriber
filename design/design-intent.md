@@ -224,7 +224,7 @@ did about it, and carries the recovery action. None of these is a bare error.
 | F10 | `Fail-Cluster.dc.html` | F10 cluster mis-merge | Split, re-derive, mark corrected | FR-SPK-7 | drawn + built |
 | F11 | `Fail-Wrong.dc.html` | F11 confident but wrong | Lattice and candidates always shown; correction one tap | FR-UI-8, P2 | drawn + built |
 | F12 | `Fail-Lexicon.dc.html` | F12 lexicon import corrupt | Reject import, keep previous, report | FR-LEX-12 | drawn + built |
-| F13 | `Fail-Model.dc.html` | F13 model missing/incompatible | Fall back to lower tier, surface it | FR-AST-3, P11 | drawn + built |
+| F13 | `Fail-Model.dc.html` | F13 model missing/incompatible | Fall back to lower tier, surface it | FR-AST-3, P11 | drawn + built — accepted deviation (R-034/R-139, reconfirmed on tour run 3 by reviewer D2): the genuinely-no-model case renders as the Now screen's inline amber card with `Install a model`, not the board's full-screen narrative; the board still governs the load-failure/incompatible case (`model-missing` vs `asset-corrupt` scenarios) |
 | F14 | `Fail-Clock.dc.html` | F14 clock/DST change | Durations from monotonic clock; both times stored | FR-RUN-15 | drawn + built |
 | F15 | `Fail-Call.dc.html` | F15 phone call took the mic | CaptureGap recorded, resumed automatically | FR-RUN-11, FR-UI-12 | drawn + built |
 | F16 | `Fail-Usb.dc.html` | F16 USB permission lost on re-attach | **Surfaced loudly** — a realistic way to lose an overnight run | FR-PLT-2 | drawn + built |
